@@ -164,7 +164,7 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/presentations/1.24.0/skill.json"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.3.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.4.0/skill.json"
         )),
         "internal_skill_template_creator" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/template-creator/1.2.0/skill.json"
@@ -254,7 +254,7 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/presentations/1.24.0/instructions.md"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.3.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.4.0/instructions.md"
         )),
         "internal_skill_template_creator" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/template-creator/1.2.0/instructions.md"
@@ -338,7 +338,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "2c33a8b15ba87e181403d8cc4328210835a2521e0a3056b26e0ff593becabfcd"
+            "e77e59dc908731b8e248575d872ddabedde72c3368e9c752cde35ae20df1cb5a"
         );
     }
 
@@ -354,7 +354,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "85161d5822c35a1679d8b946b4a7788fb3d85926e2ca10213cb7b85a86282f6b"
+            "708f0c3a0f07340e0e5a0045e5ecb9c990d0375188ccd510d7195c1b72871816"
         );
     }
 }

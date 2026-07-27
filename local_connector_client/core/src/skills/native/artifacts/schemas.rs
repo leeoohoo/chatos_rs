@@ -55,6 +55,7 @@ pub(super) fn tool_definitions(skill_id: &str) -> Vec<Value> {
             create_xlsx_tool(),
             update_xlsx_range_tool(),
             create_csv_tool(),
+            update_csv_range_tool(),
             create_tsv_tool(),
             update_tsv_range_tool(),
         ],
@@ -1105,9 +1106,13 @@ fn update_xlsx_range_tool() -> Value {
 fn create_csv_tool() -> Value {
     tool(
         "create_csv",
-        "Create an RFC 4180-style UTF-8 CSV file locally from a two-dimensional JSON array.",
-        table_output_schema(".csv"),
+        "Create a bounded RFC 4180-style UTF-8 CSV with CRLF records and spreadsheet formula-injection protection for string cells.",
+        text_table_output_schema(".csv"),
     )
+}
+
+fn update_csv_range_tool() -> Value {
+    update_delimited_range_tool("update_csv_range", "CSV", ".csv")
 }
 
 fn create_tsv_tool() -> Value {
@@ -1119,18 +1124,22 @@ fn create_tsv_tool() -> Value {
 }
 
 fn update_tsv_range_tool() -> Value {
+    update_delimited_range_tool("update_tsv_range", "TSV", ".tsv")
+}
+
+fn update_delimited_range_tool(name: &str, label: &str, extension: &str) -> Value {
     tool(
-        "update_tsv_range",
-        "Safely replace one exact rectangular A1 range in a bounded rectangular UTF-8 TSV, using the source SHA-256 returned by inspect_spreadsheet and a distinct output path while preserving every unchanged cell.",
+        name,
+        format!("Safely replace one exact rectangular A1 range in a bounded rectangular UTF-8 {label}, using the source SHA-256 returned by inspect_spreadsheet and a distinct output path while preserving every unchanged cell.").as_str(),
         json!({
             "type":"object",
             "properties":{
-                "path":{"type":"string","description":"Workspace-relative regular non-symlink source .tsv path."},
+                "path":{"type":"string","description":format!("Workspace-relative regular non-symlink source {extension} path.")},
                 "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact source SHA-256 returned by inspect_spreadsheet."},
                 "start_cell":{"type":"string","pattern":"^[A-Za-z]{1,3}(?:[1-9][0-9]{0,3}|10000)$","description":"Inclusive top-left cell in A1 notation."},
                 "end_cell":{"type":"string","pattern":"^[A-Za-z]{1,3}(?:[1-9][0-9]{0,3}|10000)$","description":"Inclusive bottom-right cell in A1 notation."},
                 "values":text_table_rows_schema(true),
-                "target_path":{"type":"string","description":"Distinct workspace-relative .tsv output path."},
+                "target_path":{"type":"string","description":format!("Distinct workspace-relative {extension} output path.")},
                 "overwrite":{"type":"boolean","default":false}
             },
             "required":["path","expected_sha256","start_cell","end_cell","values","target_path"],
@@ -1794,20 +1803,6 @@ fn path_only_schema() -> Value {
         "type":"object",
         "properties":{"path":{"type":"string"}},
         "required":["path"],
-        "additionalProperties":false
-    })
-}
-
-fn table_output_schema(extension: &str) -> Value {
-    json!({
-        "type":"object",
-        "properties":{
-            "target_path":{"type":"string","description":format!("Workspace-relative {extension} output path.")},
-            "sheet_name":{"type":"string","default":"Sheet1"},
-            "rows":{"type":"array","items":{"type":"array","items":{}},"maxItems":10000},
-            "overwrite":{"type":"boolean","default":false}
-        },
-        "required":["target_path","rows"],
         "additionalProperties":false
     })
 }

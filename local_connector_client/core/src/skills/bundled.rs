@@ -57,7 +57,7 @@ pub(crate) fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../skill_bundles/internal/presentations/1.24.0/skill.json"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
-            "../../../skill_bundles/internal/spreadsheets/1.3.0/skill.json"
+            "../../../skill_bundles/internal/spreadsheets/1.4.0/skill.json"
         )),
         "internal_skill_template_creator" => Some(include_str!(
             "../../../skill_bundles/internal/template-creator/1.2.0/skill.json"
@@ -147,7 +147,7 @@ pub(crate) fn internal_skill_instructions(skill_id: &str) -> Option<&'static str
             "../../../skill_bundles/internal/presentations/1.24.0/instructions.md"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
-            "../../../skill_bundles/internal/spreadsheets/1.3.0/instructions.md"
+            "../../../skill_bundles/internal/spreadsheets/1.4.0/instructions.md"
         )),
         "internal_skill_template_creator" => Some(include_str!(
             "../../../skill_bundles/internal/template-creator/1.2.0/instructions.md"

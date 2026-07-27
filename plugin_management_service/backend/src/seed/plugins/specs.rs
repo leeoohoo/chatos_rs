@@ -91,9 +91,9 @@ static BUNDLED_PLUGIN_SPECS: [BundledPluginSpec; 12] = [
             "internal_skill_spreadsheets",
             "internal_skill_excel_live_control",
         ],
-        "1.7.0",
-        "2026-07-26T21:00:00Z",
-        "spreadsheets-1.7.0",
+        "1.8.0",
+        "2026-07-26T22:00:00Z",
+        "spreadsheets-1.8.0",
     ),
     bundled_plugin_release(
         "presentations",

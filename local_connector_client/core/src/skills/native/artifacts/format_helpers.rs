@@ -38,22 +38,6 @@ pub(super) fn empty_relationships() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#.to_string()
 }
 
-pub(super) fn csv_cell(value: &Value) -> String {
-    let mut raw = match value {
-        Value::Null => String::new(),
-        Value::String(value) => value.clone(),
-        other => other.to_string(),
-    };
-    if matches!(value, Value::String(_)) && csv_formula_injection_risk(raw.as_str()) {
-        raw.insert(0, '\'');
-    }
-    if raw.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", raw.replace('"', "\"\""))
-    } else {
-        raw
-    }
-}
-
 pub(super) fn csv_formula_injection_risk(value: &str) -> bool {
     let trimmed = value.trim_start_matches([' ', '\t', '\r', '\n']);
     value.starts_with(['\t', '\r', '\n'])
@@ -61,26 +45,6 @@ pub(super) fn csv_formula_injection_risk(value: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|character| matches!(character, '=' | '+' | '-' | '@'))
-}
-
-pub(super) fn parse_csv_line(line: &str) -> Vec<String> {
-    let mut cells = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut chars = line.chars().peekable();
-    while let Some(character) = chars.next() {
-        match character {
-            '"' if quoted && chars.peek() == Some(&'"') => {
-                current.push('"');
-                chars.next();
-            }
-            '"' => quoted = !quoted,
-            ',' if !quoted => cells.push(std::mem::take(&mut current)),
-            _ => current.push(character),
-        }
-    }
-    cells.push(current);
-    cells
 }
 
 pub(super) fn read_template_manifest(directory: &Path) -> Result<Value> {
