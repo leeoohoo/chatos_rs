@@ -149,6 +149,7 @@ struct PresentationTable {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PresentationChartType {
     Column,
+    Bar,
     Line,
     Pie,
     Area,
@@ -449,6 +450,7 @@ impl PresentationChartType {
     fn parse(value: &str) -> Result<Self> {
         match value {
             "column" => Ok(Self::Column),
+            "bar" => Ok(Self::Bar),
             "line" => Ok(Self::Line),
             "pie" => Ok(Self::Pie),
             "area" => Ok(Self::Area),
@@ -460,6 +462,7 @@ impl PresentationChartType {
     fn as_str(self) -> &'static str {
         match self {
             Self::Column => "column",
+            Self::Bar => "bar",
             Self::Line => "line",
             Self::Pie => "pie",
             Self::Area => "area",
@@ -469,6 +472,38 @@ impl PresentationChartType {
 
     fn is_part_to_whole(self) -> bool {
         matches!(self, Self::Pie | Self::Doughnut)
+    }
+
+    fn primary_category_axis_position(self) -> &'static str {
+        if self == Self::Bar {
+            "l"
+        } else {
+            "b"
+        }
+    }
+
+    fn secondary_category_axis_position(self) -> &'static str {
+        if self == Self::Bar {
+            "r"
+        } else {
+            "t"
+        }
+    }
+
+    fn primary_value_axis_position(self) -> &'static str {
+        if self == Self::Bar {
+            "b"
+        } else {
+            "l"
+        }
+    }
+
+    fn secondary_value_axis_position(self) -> &'static str {
+        if self == Self::Bar {
+            "t"
+        } else {
+            "r"
+        }
     }
 }
 
@@ -679,6 +714,7 @@ struct PptxChartSeriesInspection {
 #[derive(Clone, Debug, Default)]
 struct PptxChartGroupInspection {
     chart_type: String,
+    bar_direction: Option<String>,
     axis_ids: Vec<String>,
 }
 
@@ -3066,9 +3102,21 @@ pub(super) fn inspect_pptx_charts(
                 .filter(|(_, series)| series.value_axis == "secondary")
                 .map(|(index, _)| index + 1)
                 .collect::<Vec<_>>();
-            let value_axis = pptx_chart_value_axis_by_position(chart.axes.as_slice(), "l");
-            let secondary_value_axis =
-                pptx_chart_value_axis_by_position(chart.axes.as_slice(), "r");
+            let horizontal_bar = pptx_chart_inspection_is_horizontal_bar(&chart);
+            let value_axis_position = if horizontal_bar { "b" } else { "l" };
+            let secondary_value_axis_position = if horizontal_bar { "t" } else { "r" };
+            let value_axis =
+                pptx_chart_value_axis_by_position(chart.axes.as_slice(), value_axis_position);
+            let secondary_value_axis = pptx_chart_value_axis_by_position(
+                chart.axes.as_slice(),
+                secondary_value_axis_position,
+            );
+            let bar_directions = chart
+                .chart_groups
+                .iter()
+                .filter(|group| group.chart_type == "bar")
+                .map(|group| group.bar_direction.clone())
+                .collect::<Vec<_>>();
             let mut metadata = json!({
                 "slide_number": slide_number,
                 "chart_number": chart_index + 1,
@@ -3076,6 +3124,7 @@ pub(super) fn inspect_pptx_charts(
                 "part": reference.part,
                 "chart_xml_sha256": hex::encode(Sha256::digest(chart_xml.as_bytes())),
                 "chart_types": chart.chart_types,
+                "bar_directions": bar_directions,
                 "chart_group_count": chart.chart_groups.len(),
                 "axis_count": chart.axes.len(),
                 "title": chart.title,
@@ -5193,6 +5242,7 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
             "between"
         };
         let axes = presentation_chart_axes_xml(
+            chart.chart_type,
             PPTX_PRIMARY_CATEGORY_AXIS_ID,
             PPTX_PRIMARY_VALUE_AXIS_ID,
             cross_between,
@@ -5220,6 +5270,7 @@ fn presentation_chart_xml(chart: &PresentationChart) -> Result<String> {
             format!(
                 "{primary_group}{secondary_group}{axes}{}",
                 presentation_chart_secondary_axes_xml(
+                    chart.chart_type,
                     PPTX_SECONDARY_CATEGORY_AXIS_ID,
                     PPTX_SECONDARY_VALUE_AXIS_ID,
                     cross_between,
@@ -5295,6 +5346,9 @@ fn presentation_chart_group_xml(
     match chart_type {
         PresentationChartType::Column => format!(
             r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{series}{data_labels}<c:gapWidth val="150"/><c:overlap val="0"/><c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:barChart>"#
+        ),
+        PresentationChartType::Bar => format!(
+            r#"<c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/><c:varyColors val="0"/>{series}{data_labels}<c:gapWidth val="150"/><c:overlap val="0"/><c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:barChart>"#
         ),
         PresentationChartType::Line => format!(
             r#"<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>{series}{data_labels}<c:marker val="1"/><c:smooth val="0"/><c:axId val="{category_axis_id}"/><c:axId val="{value_axis_id}"/></c:lineChart>"#
@@ -5483,14 +5537,29 @@ fn canonical_pptx_chart_snapshot(
         ));
     }
     let chart_type = match inspection.chart_types[0].as_str() {
-        "bar" => PresentationChartType::Column,
+        "bar" => {
+            let directions = inspection
+                .chart_groups
+                .iter()
+                .map(|group| group.bar_direction.as_deref())
+                .collect::<BTreeSet<_>>();
+            if directions.len() == 1 && directions.contains(&Some("col")) {
+                PresentationChartType::Column
+            } else if directions.len() == 1 && directions.contains(&Some("bar")) {
+                PresentationChartType::Bar
+            } else {
+                return Err(anyhow!(
+                    "canonical bar chart groups require one consistent col or bar direction"
+                ));
+            }
+        }
         "line" => PresentationChartType::Line,
         "pie" => PresentationChartType::Pie,
         "area" => PresentationChartType::Area,
         "doughnut" => PresentationChartType::Doughnut,
         _ => {
             return Err(anyhow!(
-                "chart type is outside the canonical column, line, pie, area, or doughnut contract"
+                "chart type is outside the canonical column, bar, line, pie, area, or doughnut contract"
             ));
         }
     };
@@ -5560,14 +5629,19 @@ fn canonical_pptx_chart_snapshot(
     let (value_axis_options, secondary_value_axis_options) = if chart_type.is_part_to_whole() {
         (default_axis_options(), default_axis_options())
     } else {
-        let primary_axis = pptx_chart_value_axis_by_position(inspection.axes.as_slice(), "l")
-            .ok_or_else(|| anyhow!("canonical chart is missing its primary left value axis"))?;
+        let primary_axis = pptx_chart_value_axis_by_position(
+            inspection.axes.as_slice(),
+            chart_type.primary_value_axis_position(),
+        )
+        .ok_or_else(|| anyhow!("canonical chart is missing its primary value axis"))?;
         let primary_options = canonical_pptx_chart_axis_options(primary_axis, "primary")?;
-        let secondary_options =
-            match pptx_chart_value_axis_by_position(inspection.axes.as_slice(), "r") {
-                Some(axis) => canonical_pptx_chart_axis_options(axis, "secondary")?,
-                None => default_axis_options(),
-            };
+        let secondary_options = match pptx_chart_value_axis_by_position(
+            inspection.axes.as_slice(),
+            chart_type.secondary_value_axis_position(),
+        ) {
+            Some(axis) => canonical_pptx_chart_axis_options(axis, "secondary")?,
+            None => default_axis_options(),
+        };
         (primary_options, secondary_options)
     };
     if inspection.series.is_empty() || inspection.series.len() > MAX_PPTX_CREATE_CHART_SERIES {
@@ -5708,6 +5782,7 @@ fn canonical_pptx_chart_snapshot(
 }
 
 fn presentation_chart_axes_xml(
+    chart_type: PresentationChartType,
     category_axis_id: u32,
     value_axis_id: u32,
     cross_between: &str,
@@ -5740,12 +5815,15 @@ fn presentation_chart_axes_xml(
     let value_axis_tick_marks =
         presentation_chart_axis_tick_marks_xml(major_tick_mark, minor_tick_mark);
     let value_axis_units = presentation_chart_axis_units_xml(major_unit, minor_unit);
+    let category_axis_position = chart_type.primary_category_axis_position();
+    let value_axis_position = chart_type.primary_value_axis_position();
     format!(
-        r#"<c:catAx><c:axId val="{category_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>{category_axis_title}<c:tickLblPos val="nextTo"/><c:crossAx val="{value_axis_id}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="{value_axis_id}"/>{value_axis_scaling}<c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/>{value_axis_title}{value_axis_number_format}{value_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{category_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="{cross_between}"/>{value_axis_units}</c:valAx>"#
+        r#"<c:catAx><c:axId val="{category_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="{category_axis_position}"/>{category_axis_title}<c:tickLblPos val="nextTo"/><c:crossAx val="{value_axis_id}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="{value_axis_id}"/>{value_axis_scaling}<c:delete val="0"/><c:axPos val="{value_axis_position}"/><c:majorGridlines/>{value_axis_title}{value_axis_number_format}{value_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{category_axis_id}"/><c:crosses val="autoZero"/><c:crossBetween val="{cross_between}"/>{value_axis_units}</c:valAx>"#
     )
 }
 
 fn presentation_chart_secondary_axes_xml(
+    chart_type: PresentationChartType,
     category_axis_id: u32,
     value_axis_id: u32,
     cross_between: &str,
@@ -5772,8 +5850,10 @@ fn presentation_chart_secondary_axes_xml(
     let value_axis_tick_marks =
         presentation_chart_axis_tick_marks_xml(major_tick_mark, minor_tick_mark);
     let value_axis_units = presentation_chart_axis_units_xml(major_unit, minor_unit);
+    let category_axis_position = chart_type.secondary_category_axis_position();
+    let value_axis_position = chart_type.secondary_value_axis_position();
     format!(
-        r#"<c:catAx><c:axId val="{category_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="1"/><c:axPos val="t"/><c:tickLblPos val="none"/><c:crossAx val="{value_axis_id}"/><c:crosses val="max"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="{value_axis_id}"/>{value_axis_scaling}<c:delete val="0"/><c:axPos val="r"/>{value_axis_title}{value_axis_number_format}{value_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{category_axis_id}"/><c:crosses val="max"/><c:crossBetween val="{cross_between}"/>{value_axis_units}</c:valAx>"#
+        r#"<c:catAx><c:axId val="{category_axis_id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="1"/><c:axPos val="{category_axis_position}"/><c:tickLblPos val="none"/><c:crossAx val="{value_axis_id}"/><c:crosses val="max"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="{value_axis_id}"/>{value_axis_scaling}<c:delete val="0"/><c:axPos val="{value_axis_position}"/>{value_axis_title}{value_axis_number_format}{value_axis_tick_marks}<c:tickLblPos val="nextTo"/><c:crossAx val="{category_axis_id}"/><c:crosses val="max"/><c:crossBetween val="{cross_between}"/>{value_axis_units}</c:valAx>"#
     )
 }
 
@@ -9415,6 +9495,7 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
                     }
                     current_chart_group = Some(PptxChartGroupInspection {
                         chart_type: chart_type.to_string(),
+                        bar_direction: None,
                         axis_ids: Vec::new(),
                     });
                 }
@@ -9760,21 +9841,31 @@ fn inspect_standard_pptx_chart_xml(xml: &str) -> Result<PptxChartInspection> {
             resolve_pptx_chart_series_value_axis(item, chart_groups.as_slice(), axes.as_slice());
     }
     let title_truncated = title.chars().count() > 1_000;
+    let horizontal_bar = pptx_chart_is_horizontal_bar(&chart_types, &chart_groups);
+    let category_axis_position = if horizontal_bar { "l" } else { "b" };
+    let value_axis_position = if horizontal_bar { "b" } else { "l" };
+    let secondary_value_axis_position = if horizontal_bar { "t" } else { "r" };
     let category_axis = axes
         .iter()
-        .find(|axis| axis.axis_type == "category" && axis.position.as_deref() == Some("b"))
+        .find(|axis| {
+            axis.axis_type == "category" && axis.position.as_deref() == Some(category_axis_position)
+        })
         .or_else(|| axes.iter().find(|axis| axis.axis_type == "category"));
     let value_axis = axes
         .iter()
-        .find(|axis| axis.axis_type == "value" && axis.position.as_deref() == Some("l"))
+        .find(|axis| {
+            axis.axis_type == "value" && axis.position.as_deref() == Some(value_axis_position)
+        })
         .or_else(|| {
-            axes.iter()
-                .find(|axis| axis.axis_type == "value" && axis.position.as_deref() != Some("r"))
+            axes.iter().find(|axis| {
+                axis.axis_type == "value"
+                    && axis.position.as_deref() != Some(secondary_value_axis_position)
+            })
         })
         .or_else(|| axes.iter().find(|axis| axis.axis_type == "value"));
-    let secondary_value_axis = axes
-        .iter()
-        .find(|axis| axis.axis_type == "value" && axis.position.as_deref() == Some("r"));
+    let secondary_value_axis = axes.iter().find(|axis| {
+        axis.axis_type == "value" && axis.position.as_deref() == Some(secondary_value_axis_position)
+    });
     let (category_axis_title, category_axis_title_formula, category_axis_title_truncated) =
         pptx_chart_axis_title_fields(category_axis);
     let (value_axis_title, value_axis_title_formula, value_axis_title_truncated) =
@@ -9819,7 +9910,26 @@ fn record_pptx_chart_structure_element(
 ) -> Result<()> {
     let qualified = event.name().as_ref().to_vec();
     let parent = stack.last().map(String::as_str);
-    if qualified.as_slice() == b"c:axId" {
+    if qualified.as_slice() == b"c:barDir" && parent == Some("barChart") {
+        let value = required_xml_attribute(reader, event, "val")?;
+        if value.is_empty() || value.len() > 128 {
+            return Err(anyhow!(
+                "PPTX chart bar direction is empty or exceeds the safety limit"
+            ));
+        }
+        let chart_group = chart_group
+            .ok_or_else(|| anyhow!("PPTX chart bar direction is outside a bar chart group"))?;
+        if chart_group.chart_type != "bar" {
+            return Err(anyhow!(
+                "PPTX chart bar direction is attached to a non-bar chart group"
+            ));
+        }
+        if chart_group.bar_direction.replace(value).is_some() {
+            return Err(anyhow!(
+                "PPTX chart bar group contains multiple bar directions"
+            ));
+        }
+    } else if qualified.as_slice() == b"c:axId" {
         let value = required_xml_attribute(reader, event, "val")?;
         if parent.and_then(standard_pptx_chart_type_local).is_some() {
             let chart_group = chart_group
@@ -10274,11 +10384,34 @@ fn resolve_pptx_chart_series_value_axis(
     if positions.len() != 1 {
         return "unknown".to_string();
     }
-    match positions.iter().next().copied() {
-        Some("l") => "primary".to_string(),
-        Some("r") => "secondary".to_string(),
+    let horizontal_bar = group.chart_type == "bar" && group.bar_direction.as_deref() == Some("bar");
+    match (horizontal_bar, positions.iter().next().copied()) {
+        (false, Some("l")) | (true, Some("b")) => "primary".to_string(),
+        (false, Some("r")) | (true, Some("t")) => "secondary".to_string(),
         _ => "unknown".to_string(),
     }
+}
+
+fn pptx_chart_is_horizontal_bar(
+    chart_types: &BTreeSet<String>,
+    chart_groups: &[PptxChartGroupInspection],
+) -> bool {
+    chart_types.len() == 1
+        && chart_types.contains("bar")
+        && !chart_groups.is_empty()
+        && chart_groups
+            .iter()
+            .all(|group| group.chart_type == "bar" && group.bar_direction.as_deref() == Some("bar"))
+}
+
+fn pptx_chart_inspection_is_horizontal_bar(inspection: &PptxChartInspection) -> bool {
+    inspection.chart_types.len() == 1
+        && inspection.chart_types[0] == "bar"
+        && !inspection.chart_groups.is_empty()
+        && inspection
+            .chart_groups
+            .iter()
+            .all(|group| group.chart_type == "bar" && group.bar_direction.as_deref() == Some("bar"))
 }
 
 fn pptx_chart_axis_title_fields(
@@ -10424,6 +10557,7 @@ fn ensure_standard_pptx_chart_namespace(qualified: &[u8], local: &str) -> Result
             | "dLbls"
             | "showVal"
             | "showPercent"
+            | "barDir"
             | "axId"
             | "axPos"
             | "scaling"

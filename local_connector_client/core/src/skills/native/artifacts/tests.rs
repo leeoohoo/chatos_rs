@@ -4002,6 +4002,299 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
 }
 
 #[test]
+fn creates_appends_and_replaces_canonical_clustered_bar_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"bar-charts.pptx",
+            "slides":[{
+                "title":"Regional performance",
+                "layout":"chart",
+                "chart":{
+                    "type":"bar",
+                    "title":"Revenue by region",
+                    "categories":["North","South","West"],
+                    "series":[
+                        {"name":"Revenue","values":[10,20,30],"color":"#2255AA"},
+                        {"name":"Margin","values":[12,18,25],"value_axis":"secondary","color":"#EE8800"}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Region",
+                    "value_axis_title":"Revenue",
+                    "secondary_value_axis_title":"Margin",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":40,
+                    "value_axis_major_unit":10,
+                    "value_axis_number_format":"integer",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":30,
+                    "secondary_value_axis_major_unit":5,
+                    "secondary_value_axis_number_format":"decimal_1"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical clustered bar chart");
+    let source = root.join("bar-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("bar chart source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"bar-charts.pptx"}), &state, &request)
+            .expect("inspect canonical clustered bar chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types/0"),
+        Some(&json!("bar"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bar_directions"),
+        Some(&json!(["bar", "bar"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("bar"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/category_axis_title"),
+        Some(&json!("Region"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_title"),
+        Some(&json!("Revenue"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
+        Some(&json!("Margin"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/value_axis"),
+        Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_maximum"),
+        Some(&json!("40"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_number_format"),
+        Some(&json!("decimal_1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("bar chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("bar chart snapshot")
+        .clone();
+    let mut source_archive =
+        ZipArchive::new(File::open(source.as_path()).expect("bar chart source"))
+            .expect("bar chart source ZIP");
+    let source_chart =
+        read_zip_text(&mut source_archive, "ppt/charts/chart1.xml").expect("bar chart XML");
+    assert_eq!(source_chart.matches("<c:barChart>").count(), 2);
+    assert_eq!(source_chart.matches("<c:barDir val=\"bar\"/>").count(), 2);
+    assert_eq!(source_chart.matches("<c:axPos val=\"l\"/>").count(), 1);
+    assert_eq!(source_chart.matches("<c:axPos val=\"r\"/>").count(), 1);
+    assert_eq!(source_chart.matches("<c:axPos val=\"b\"/>").count(), 1);
+    assert_eq!(source_chart.matches("<c:axPos val=\"t\"/>").count(), 1);
+    drop(source_archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"bar-charts.pptx",
+            "target_path":"bar-charts-appended.pptx",
+            "slides":[{
+                "title":"Backlog",
+                "layout":"chart",
+                "chart":{
+                    "type":"bar",
+                    "categories":["Open","Blocked"],
+                    "series":[{"name":"Items","values":[8,3]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical clustered bar chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"bar-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended clustered bar chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/bar_directions"),
+        Some(&json!(["bar"]))
+    );
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/self_contained_edit_snapshot/type"),
+        Some(&json!("bar"))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"bar-charts.pptx",
+            "target_path":"bar-to-column.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"column",
+                "title":"Revenue by region",
+                "categories":["North","South","West"],
+                "series":[{"name":"Revenue","values":[11,21,31],"color":"#2255AA"}],
+                "legend_position":"bottom",
+                "data_labels":"value",
+                "category_axis_title":"Region",
+                "value_axis_title":"Revenue",
+                "value_axis_minimum":0,
+                "value_axis_maximum":40,
+                "value_axis_major_unit":10,
+                "value_axis_number_format":"integer"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace bar chart with canonical column chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("bar chart source after replacement"),
+        source_before
+    );
+    let replaced =
+        presentation::inspect_pptx_charts(&json!({"path":"bar-to-column.pptx"}), &state, &request)
+            .expect("inspect bar-to-column replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/bar_directions"),
+        Some(&json!(["col"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("column"))
+    );
+    let mut replaced_archive =
+        ZipArchive::new(File::open(root.join("bar-to-column.pptx")).expect("column replacement"))
+            .expect("column replacement ZIP");
+    let replaced_chart = read_zip_text(&mut replaced_archive, "ppt/charts/chart1.xml")
+        .expect("column replacement XML");
+    assert!(replaced_chart.contains("<c:barDir val=\"col\"/>"));
+    assert!(replaced_chart.contains("<c:axPos val=\"b\"/>"));
+    assert!(replaced_chart.contains("<c:axPos val=\"l\"/>"));
+    assert!(!replaced_chart.contains("<c:axPos val=\"t\"/>"));
+    assert!(!replaced_chart.contains("<c:axPos val=\"r\"/>"));
+    drop(replaced_archive);
+
+    fs::copy(source.as_path(), root.join("custom-bar-direction.pptx"))
+        .expect("copy custom bar direction fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-bar-direction.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| xml.replacen("<c:barDir val=\"bar\"/>", "<c:barDir val=\"cone\"/>", 1),
+    );
+    let custom = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-bar-direction.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect custom bar direction");
+    assert_eq!(
+        custom.pointer("/chart_metadata/0/bar_directions"),
+        Some(&json!(["cone", "bar"]))
+    );
+    assert_eq!(
+        custom.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+    assert!(custom
+        .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| reason.contains("consistent col or bar direction")));
+
+    for (filename, replacement) in [
+        ("missing-bar-direction.pptx", ""),
+        (
+            "attributed-bar-direction.pptx",
+            "<c:barDir val=\"bar\" custom=\"1\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical bar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:barDir val=\"bar\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical bar direction");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-bar-direction.pptx",
+            "<c:barDir val=\"bar\"/><c:barDir val=\"bar\"/>",
+            "multiple bar directions",
+        ),
+        (
+            "wrong-namespace-bar-direction.pptx",
+            "<a:barDir val=\"bar\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid bar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:barDir val=\"bar\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid bar direction must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-bar-direction.pptx"))
+        .expect("copy oversized bar direction fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-bar-direction.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:barDir val=\"bar\"/>",
+                format!("<c:barDir val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-bar-direction.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized bar direction must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("bar direction is empty or exceeds the safety limit"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_relationships() {
     let (root, state, request) = test_context();
     presentation::create_pptx(

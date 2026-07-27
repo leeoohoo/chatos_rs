@@ -276,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.27.0");
+    assert_eq!(catalog_item.version, "1.28.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -313,6 +313,11 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("Line series also accept boolean `smooth`"));
     assert!(instructions.contains("one exact direct-series `c:smooth` boolean"));
     assert!(instructions.contains("over-limit series smoothing"));
+    assert!(instructions.contains("2D clustered horizontal `bar`"));
+    assert!(instructions.contains("raw per-group bar direction"));
+    assert!(instructions.contains("exact `c:barDir val=\"bar\"`"));
+    assert!(instructions.contains("visible left category axis with bottom primary value axis"));
+    assert!(instructions.contains("missing, inconsistent, duplicated, attributed"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -466,6 +471,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
             .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/smooth/type"),
         Some(&json!(["boolean", "null"]))
     );
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("bar"))));
     let replace_chart = tools
         .iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
@@ -854,7 +863,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "f3ef5c3ca4e0ca316bbe47e1c18df0565b953c69fc14ea7ff1c13db65ae4f886"
+        "040add2481ae387d458bf83d58cdb10e717d2e9b11d8f5959a271a02b6df2124"
     );
 }
 
@@ -869,7 +878,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "fb40fec30210da55549af244386cbe48524c1ed336ad18a53330a37ea9624920"
+        "4f726298daf3246c49d022a0a3c81a6f52903c39fb64743fc446157ec0a7b981"
     );
 }
 
