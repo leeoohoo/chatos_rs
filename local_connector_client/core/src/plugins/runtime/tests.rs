@@ -1960,6 +1960,483 @@ async fn workspace_write_hook_requires_one_invocation_user_approval() {
     assert!(!workspace_root.join("hook-was-here").exists());
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn signed_packaged_connector_hooks_run_end_to_end_without_a_listener() {
+    let temp = TempDir::new().expect("temp directory");
+    let package = TestSigner::new().package_with_packaged_hook_suite(temp.path(), "1.0.0");
+    let installer = PluginInstaller::new(temp.path().join("installed-plugins"));
+    let installed = installer
+        .install_archive(package.install_request())
+        .expect("install signed packaged Hook Plugin");
+    let mut component_keys = installed
+        .installed_version
+        .inventory
+        .components
+        .iter()
+        .map(|component| component.component_key.as_str())
+        .collect::<Vec<_>>();
+    component_keys.sort_unstable();
+    assert_eq!(
+        component_keys,
+        vec!["packaged-lifecycle-hooks", "packaged-workspace-hooks"]
+    );
+
+    let release_id = installed.installed_version.release_id.clone();
+    let artifact_sha256 = installed.installed_version.artifact_sha256.clone();
+    let lifecycle_sha256 =
+        installed.installed_version.package_file_sha256["hooks-lifecycle.json"].clone();
+    let workspace_sha256 =
+        installed.installed_version.package_file_sha256["hooks-workspace.json"].clone();
+    let workspace_root = temp.path().join("workspace");
+    fs::create_dir_all(workspace_root.join(".git")).expect("create packaged Hook workspace");
+    fs::write(workspace_root.join(".git/HEAD"), "ref: refs/heads/main\n")
+        .expect("write protected Git sentinel");
+    let local_state = Arc::new(RwLock::new(LocalState {
+        workspaces: vec![WorkspaceState {
+            id: "workspace-a".to_string(),
+            absolute_root: workspace_root.clone(),
+            alias: "workspace-a".to_string(),
+            fingerprint: "workspace-a-fingerprint".to_string(),
+            project_config_trust: None,
+        }],
+        ..LocalState::default()
+    }));
+    let host = PluginRuntimeHost::new(
+        PluginSkillLoader::new(installer.clone()),
+        PluginMcpAdapter::new(installer),
+    )
+    .with_local_state(local_state)
+    .with_approval_state_path(temp.path().join("approval-state.json"));
+
+    let service_relay = ConnectorRelay::default();
+    let (service_outbound, mut connector_inbound) = mpsc::channel(8);
+    service_relay
+        .register_session(
+            "device-a".to_string(),
+            "owner-a".to_string(),
+            "packaged-hook-session".to_string(),
+            service_outbound,
+        )
+        .await;
+    let connector_relay = service_relay.clone();
+    let connector_host = host.clone();
+    let packaged_connector = tokio::spawn(async move {
+        while let Some(text) = connector_inbound.recv().await {
+            let request: ServiceRelayRequest =
+                serde_json::from_str(text.as_str()).expect("decode packaged Hook relay request");
+            assert_eq!(request.owner_user_id, "owner-a");
+            assert_eq!(request.device_id, "device-a");
+            assert_eq!(request.workspace_id, "workspace-a");
+            assert_eq!(request.method, "POST");
+            assert!(request.headers.is_empty());
+            let request_value =
+                serde_json::to_value(&request).expect("encode packaged Connector request");
+            let response = match request.message_type.as_str() {
+                "plugin_prepare_request" => {
+                    assert_eq!(request.path, "/plugins/prepare");
+                    connector_host.handle_prepare(request_value).await
+                }
+                "plugin_execute_request" => {
+                    assert_eq!(request.path, "/plugins/execute");
+                    connector_host.handle_execute(request_value).await
+                }
+                "plugin_cancel_request" => {
+                    assert_eq!(request.path, "/plugins/cancel");
+                    connector_host.handle_cancel(request_value).await
+                }
+                other => panic!("unexpected packaged Hook relay request: {other}"),
+            };
+            assert!(connector_relay
+                .handle_inbound_text(response.to_string().as_str())
+                .await
+                .expect("complete packaged Hook relay response"));
+        }
+    });
+
+    let relay_request = |action: &str, body: Value| ServiceRelayRequest {
+        message_type: format!("plugin_{action}_request"),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: "owner-a".to_string(),
+        device_id: "device-a".to_string(),
+        workspace_id: "workspace-a".to_string(),
+        method: "POST".to_string(),
+        path: format!("/plugins/{action}"),
+        headers: BTreeMap::new(),
+        body,
+    };
+    let dispatch = |component_key: &str, adapter_session_id: &str| {
+        relay_request(
+            "execute",
+            json!({
+                "run_id": "run-packaged-hook",
+                "plugin_id": PLUGIN_ID,
+                "release_id": release_id,
+                "artifact_sha256": artifact_sha256,
+                "component_key": component_key,
+                "adapter_session_id": adapter_session_id,
+                "operation": "dispatch_hook_event",
+                "event": "SessionStart",
+                "context": {
+                    "agentKey": "task_runner_run_phase",
+                    "summarySha256": hex::encode(Sha256::digest(b"private user content")),
+                },
+            }),
+        )
+    };
+
+    let lifecycle_prepare = service_relay
+        .dispatch(
+            relay_request(
+                "prepare",
+                json!({
+                    "run_id": "run-packaged-hook",
+                    "plugin_id": PLUGIN_ID,
+                    "release_id": release_id,
+                    "artifact_sha256": artifact_sha256,
+                    "component_key": "packaged-lifecycle-hooks",
+                    "content_sha256": lifecycle_sha256,
+                    "permission_snapshot": ["process.spawn"],
+                }),
+            ),
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("relay packaged lifecycle Hook prepare");
+    assert_eq!(lifecycle_prepare.status, 200);
+    assert_eq!(
+        lifecycle_prepare.body.get("operations"),
+        Some(&json!(["dispatch_hook_event"]))
+    );
+    assert_eq!(
+        lifecycle_prepare
+            .body
+            .pointer("/hooks/0/component_key")
+            .and_then(Value::as_str),
+        Some("packaged-lifecycle-hooks")
+    );
+    assert!(lifecycle_prepare
+        .body
+        .pointer("/hooks/0/command_sha256_by_hook/packaged-audit")
+        .and_then(Value::as_str)
+        .is_some_and(|digest| digest.len() == 64));
+    let lifecycle_snapshot_sha256 = lifecycle_prepare.body["hooks"][0]["snapshot_sha256"]
+        .as_str()
+        .expect("packaged lifecycle Hook snapshot")
+        .to_string();
+    let lifecycle_session_id = lifecycle_prepare.body["adapter_session_id"]
+        .as_str()
+        .expect("packaged lifecycle Hook session")
+        .to_string();
+
+    let lifecycle_execute = service_relay
+        .dispatch(
+            dispatch("packaged-lifecycle-hooks", lifecycle_session_id.as_str()),
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("relay packaged lifecycle Hook dispatch");
+    assert_eq!(lifecycle_execute.status, 200);
+    assert_eq!(
+        lifecycle_execute
+            .body
+            .pointer("/result/snapshot_sha256")
+            .and_then(Value::as_str),
+        Some(lifecycle_snapshot_sha256.as_str())
+    );
+    let lifecycle_execution = lifecycle_execute
+        .body
+        .pointer("/result/executions/0")
+        .expect("packaged lifecycle Hook execution");
+    assert_eq!(
+        lifecycle_execution
+            .get("succeeded")
+            .and_then(Value::as_bool),
+        Some(true),
+        "{lifecycle_execution:#}"
+    );
+    assert_eq!(
+        lifecycle_execution
+            .get("stdout_sha256")
+            .and_then(Value::as_str),
+        Some(hex::encode(Sha256::digest(b"packaged-hook-stdout-secret\n")).as_str())
+    );
+    assert_eq!(
+        lifecycle_execution
+            .get("stderr_sha256")
+            .and_then(Value::as_str),
+        Some(hex::encode(Sha256::digest(b"packaged-hook-stderr-secret\n")).as_str())
+    );
+    let lifecycle_response_text = lifecycle_execute.body.to_string();
+    assert!(!lifecycle_response_text.contains("packaged-hook-stdout-secret"));
+    assert!(!lifecycle_response_text.contains("packaged-hook-stderr-secret"));
+    assert!(!lifecycle_response_text.contains("private user content"));
+
+    let tamper_prepare = service_relay
+        .dispatch(
+            relay_request(
+                "prepare",
+                json!({
+                    "run_id": "run-packaged-hook",
+                    "plugin_id": PLUGIN_ID,
+                    "release_id": release_id,
+                    "artifact_sha256": artifact_sha256,
+                    "component_key": "packaged-lifecycle-hooks",
+                    "content_sha256": lifecycle_sha256,
+                    "permission_snapshot": ["process.spawn"],
+                }),
+            ),
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("relay packaged tamper Hook prepare");
+    assert_eq!(tamper_prepare.status, 200);
+    let tamper_session_id = tamper_prepare.body["adapter_session_id"]
+        .as_str()
+        .expect("packaged tamper Hook session")
+        .to_string();
+
+    let workspace_prepare = service_relay
+        .dispatch(
+            relay_request(
+                "prepare",
+                json!({
+                    "run_id": "run-packaged-hook",
+                    "plugin_id": PLUGIN_ID,
+                    "release_id": release_id,
+                    "artifact_sha256": artifact_sha256,
+                    "component_key": "packaged-workspace-hooks",
+                    "content_sha256": workspace_sha256,
+                    "permission_snapshot": ["process.spawn", "workspace.write"],
+                }),
+            ),
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("relay packaged workspace Hook prepare");
+    assert_eq!(workspace_prepare.status, 200);
+    let workspace_session_id = workspace_prepare.body["adapter_session_id"]
+        .as_str()
+        .expect("packaged workspace Hook session")
+        .to_string();
+
+    let denied_request = dispatch("packaged-workspace-hooks", workspace_session_id.as_str());
+    let denied_approval_request_id = format!(
+        "{}:plugin-hook:packaged-workspace-write",
+        denied_request.request_id
+    );
+    let denied_task = tokio::spawn({
+        let relay = service_relay.clone();
+        async move {
+            relay
+                .dispatch(denied_request, std::time::Duration::from_secs(10))
+                .await
+        }
+    });
+    let denied_pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(item) = list_pending_approvals()
+                .await
+                .into_iter()
+                .find(|item| item.request_id == denied_approval_request_id)
+            {
+                break item;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("packaged workspace Hook denial approval request");
+    assert_eq!(denied_pending.source, "plugin_hook_workspace_write");
+    assert!(!denied_pending.available_decisions.contains(
+        &CommandExecutionApprovalDecision::Simple(
+            SimpleCommandExecutionApprovalDecision::AcceptForSession,
+        )
+    ));
+    assert!(approve_pending_approval(
+        denied_pending.id.as_str(),
+        CommandExecutionApprovalDecision::Simple(SimpleCommandExecutionApprovalDecision::Decline),
+        None,
+        None,
+    )
+    .await
+    .expect("deny packaged workspace Hook"));
+    let denied = denied_task
+        .await
+        .expect("join denied packaged Hook dispatch")
+        .expect("relay denied packaged Hook dispatch");
+    assert_eq!(denied.status, 200);
+    assert_eq!(
+        denied
+            .body
+            .pointer("/result/executions/0/workspace_write_approved")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        denied
+            .body
+            .pointer("/result/executions/0/succeeded")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert!(!workspace_root.join("hook-was-here").exists());
+
+    let approved_request = dispatch("packaged-workspace-hooks", workspace_session_id.as_str());
+    let approved_approval_request_id = format!(
+        "{}:plugin-hook:packaged-workspace-write",
+        approved_request.request_id
+    );
+    let approved_task = tokio::spawn({
+        let relay = service_relay.clone();
+        async move {
+            relay
+                .dispatch(approved_request, std::time::Duration::from_secs(10))
+                .await
+        }
+    });
+    let approved_pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(item) = list_pending_approvals()
+                .await
+                .into_iter()
+                .find(|item| item.request_id == approved_approval_request_id)
+            {
+                break item;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("packaged workspace Hook approval request");
+    assert!(approve_pending_approval(
+        approved_pending.id.as_str(),
+        CommandExecutionApprovalDecision::Simple(SimpleCommandExecutionApprovalDecision::Accept),
+        None,
+        None,
+    )
+    .await
+    .expect("approve packaged workspace Hook"));
+    let approved = approved_task
+        .await
+        .expect("join approved packaged Hook dispatch")
+        .expect("relay approved packaged Hook dispatch");
+    assert_eq!(approved.status, 200);
+    assert_eq!(
+        approved
+            .body
+            .pointer("/result/executions/0/workspace_write_approved")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        approved
+            .body
+            .pointer("/result/executions/0/succeeded")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        fs::read_to_string(workspace_root.join("hook-was-here"))
+            .expect("read packaged Hook output"),
+        "created by packaged Hook\n"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace_root.join(".git/HEAD")).expect("read protected Git sentinel"),
+        "ref: refs/heads/main\n"
+    );
+    assert!(!workspace_root.join(".git/plugin-hook-probe").exists());
+    let approved_response_text = approved.body.to_string();
+    assert!(!approved_response_text.contains("packaged-write-stdout-secret"));
+    assert!(!approved_response_text.contains("packaged-write-stderr-secret"));
+
+    for (component_key, adapter_session_id) in [
+        ("packaged-lifecycle-hooks", lifecycle_session_id.as_str()),
+        ("packaged-workspace-hooks", workspace_session_id.as_str()),
+    ] {
+        let cancelled = service_relay
+            .dispatch(
+                relay_request(
+                    "cancel",
+                    json!({
+                        "run_id": "run-packaged-hook",
+                        "plugin_id": PLUGIN_ID,
+                        "release_id": release_id,
+                        "artifact_sha256": artifact_sha256,
+                        "component_key": component_key,
+                        "adapter_session_id": adapter_session_id,
+                    }),
+                ),
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .expect("relay packaged Hook cancel");
+        assert_eq!(cancelled.status, 200);
+        assert_eq!(
+            cancelled.body.get("cancelled").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+    let after_cancel = service_relay
+        .dispatch(
+            dispatch("packaged-lifecycle-hooks", lifecycle_session_id.as_str()),
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("relay cancelled packaged Hook dispatch");
+    assert_eq!(after_cancel.status, 410);
+
+    fs::write(
+        installed.installation_path.join("hooks-lifecycle.json"),
+        "{\"schemaVersion\":1,\"hooks\":[]}",
+    )
+    .expect("tamper installed packaged Hook source");
+    let tampered = service_relay
+        .dispatch(
+            dispatch("packaged-lifecycle-hooks", tamper_session_id.as_str()),
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("relay tampered packaged Hook dispatch");
+    assert_eq!(tampered.status, 409);
+    assert!(tampered
+        .body
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(|error| error.contains("installed Plugin files")));
+    let tamper_cancelled = service_relay
+        .dispatch(
+            relay_request(
+                "cancel",
+                json!({
+                    "run_id": "run-packaged-hook",
+                    "plugin_id": PLUGIN_ID,
+                    "release_id": release_id,
+                    "artifact_sha256": artifact_sha256,
+                    "component_key": "packaged-lifecycle-hooks",
+                    "adapter_session_id": tamper_session_id,
+                }),
+            ),
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("relay tampered packaged Hook cancel");
+    assert_eq!(tamper_cancelled.status, 200);
+
+    let telemetry = host.telemetry_snapshot();
+    let telemetry_text = serde_json::to_string(&telemetry).expect("encode Hook telemetry");
+    assert!(!telemetry_text.contains("packaged-hook-stdout-secret"));
+    assert!(!telemetry_text.contains("packaged-hook-stderr-secret"));
+    assert!(!telemetry_text.contains("private user content"));
+
+    service_relay
+        .unregister_session("device-a", "packaged-hook-session")
+        .await;
+    packaged_connector
+        .await
+        .expect("packaged Hook Connector relay task");
+}
+
 #[tokio::test]
 async fn plugin_relay_rejects_identity_snapshot_and_release_changes() {
     let temp = TempDir::new().expect("temp directory");
