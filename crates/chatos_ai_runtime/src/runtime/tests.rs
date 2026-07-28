@@ -43,6 +43,19 @@ impl RuntimeLifecycleHook for TestLifecycleHook {
     }
 }
 
+struct FilterToolsLifecycleHook;
+
+#[async_trait]
+impl RuntimeLifecycleHook for FilterToolsLifecycleHook {
+    async fn before_model_request(
+        &self,
+        _context: RuntimeIterationContext,
+    ) -> Result<RuntimeBeforeModelRequest, String> {
+        Ok(RuntimeBeforeModelRequest::unchanged()
+            .with_disabled_tool_names(["read_file", "list_tasks"]))
+    }
+}
+
 #[tokio::test]
 async fn lifecycle_hook_builds_ephemeral_iteration_request() {
     let request = ModelRequest::openai_compatible(
@@ -65,6 +78,33 @@ async fn lifecycle_hook_builds_ephemeral_iteration_request() {
     assert_eq!(iteration_request.input.as_array().expect("input").len(), 2);
     assert!(iteration_request.tools.is_empty());
     assert!(!directive.stream_output);
+}
+
+#[tokio::test]
+async fn lifecycle_hook_can_disable_selected_tools_for_one_iteration() {
+    let request = ModelRequest::openai_compatible(
+        "http://localhost",
+        "key",
+        "model",
+        "openai_compatible",
+        json!([{"role": "user", "content": "hello"}]),
+    )
+    .with_tools(vec![
+        json!({"name": "read_file"}),
+        json!({"type": "function", "function": {"name": "list_tasks"}}),
+        json!({"name": "write_file"}),
+    ]);
+    let options = AiRuntimeOptions::for_conversation("session-1")
+        .with_lifecycle_hook(Some(Arc::new(FilterToolsLifecycleHook)));
+
+    let (iteration_request, directive) =
+        prepare_iteration_request(&request, &options, 1, "initial")
+            .await
+            .expect("iteration request");
+
+    assert_eq!(iteration_request.tools, vec![json!({"name": "write_file"})]);
+    assert_eq!(directive.disabled_tool_names, ["read_file", "list_tasks"]);
+    assert_eq!(request.tools.len(), 3);
 }
 
 #[test]

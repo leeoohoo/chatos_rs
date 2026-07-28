@@ -179,7 +179,7 @@ pub(super) async fn prepare_model_execution(
             sandbox_run_fact_input_item(task.mcp_config.locale(), context.run_workspace.as_str()),
         );
     }
-    let memory_scope = build_memory_scope(service, task);
+    let memory_scope = build_memory_scope(service, task, run);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
     if !loaded_external_mcp.summaries.is_empty() {
@@ -342,13 +342,28 @@ fn task_runner_agent_for_task(task: &TaskRecord) -> TaskRunnerAgent {
     }
 }
 
-fn build_memory_scope(service: &RunService, task: &TaskRecord) -> MemoryScope {
-    MemoryScope::thread(
+fn build_memory_scope(service: &RunService, task: &TaskRecord, run: &TaskRunRecord) -> MemoryScope {
+    let scope = MemoryScope::thread(
         task.tenant_id.clone(),
         service.config.memory_engine_source_id.clone(),
         task.memory_thread_id.clone(),
     )
-    .with_subject_id(task.subject_id.clone())
+    .with_subject_id(task.subject_id.clone());
+    if run
+        .input_snapshot
+        .get("retry_of_run_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return scope.with_policy(ComposeContextPolicy {
+            include_recent_records: Some(false),
+            include_thread_summary: Some(false),
+            include_subject_memory: Some(false),
+            recent_record_limit: Some(1),
+            summary_limit: Some(1),
+        });
+    }
+    scope
 }
 
 async fn build_runtime_config(
@@ -565,6 +580,31 @@ mod tests {
         assert!(content.contains("历史记忆"));
         assert!(content.contains("重新打开并继续执行"));
         assert!(content.contains("`/workspace`"));
+    }
+
+    #[test]
+    fn retry_run_uses_clean_memory_context_instead_of_failed_attempt_history() {
+        let service = test_run_service(test_config());
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let mut run = sample_run(&task);
+        run.input_snapshot = json!({ "retry_of_run_id": "run-old" });
+
+        let policy = build_memory_scope(&service, &task, &run)
+            .policy
+            .expect("retry memory policy");
+
+        assert_eq!(policy.include_recent_records, Some(false));
+        assert_eq!(policy.include_thread_summary, Some(false));
+        assert_eq!(policy.include_subject_memory, Some(false));
+    }
+
+    #[test]
+    fn initial_run_keeps_default_memory_context_policy() {
+        let service = test_run_service(test_config());
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let run = sample_run(&task);
+
+        assert!(build_memory_scope(&service, &task, &run).policy.is_none());
     }
 
     fn test_config() -> AppConfig {

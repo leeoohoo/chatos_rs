@@ -18,6 +18,7 @@ use chatos_mcp_runtime::{
     builtin_servers_from_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
     McpExecutorBuilder, McpHttpServer, McpStdioServer,
 };
+use memory_engine_sdk::ComposeContextPolicy;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};

@@ -16,6 +16,46 @@ use crate::services::unfinished_subtasks_error;
 use crate::store::AppStore;
 
 const MAX_RUN_CHECKLIST_TASKS: usize = 32;
+const TASK_RELEVANCE_MARKERS: &[&str] = &[
+    "oms",
+    "sales_order",
+    "salesorder",
+    "订单",
+    "客户",
+    "图号",
+    "材质",
+    "审核",
+    "内联",
+    "建档",
+    "mdm",
+    "主数据",
+    "postgresql",
+    "postgres",
+    "库存",
+    "inventory",
+    "bom",
+    "planning",
+    "设备",
+    "推荐",
+    "device",
+    "生产",
+    "采购",
+    "procurement",
+    "quality",
+    "qms",
+    "质检",
+    "t09",
+    "iam",
+    "workflow",
+    "原型",
+    "导航",
+    "小程序",
+    "bi",
+    "uat",
+    "迁移",
+    "上线",
+    "报表",
+];
 
 impl TaskService {
     pub(super) async fn create_followup_task_for_tool(
@@ -47,6 +87,9 @@ impl TaskService {
         let title = draft.title.trim().to_string();
         let description = normalized_optional(Some(draft.details.clone()));
         let objective = description.clone().unwrap_or_else(|| title.clone());
+        if scope == TaskManagerScope::RunChecklist && draft.required_for_parent_completion {
+            validate_run_checklist_task_relevance(&parent, title.as_str(), objective.as_str())?;
+        }
         let idempotency_key = normalized_optional(draft.idempotency_key.clone())
             .unwrap_or_else(|| task_semantic_fingerprint(title.as_str(), objective.as_str()));
         let current_session_tasks = self
@@ -251,6 +294,7 @@ impl TaskService {
 
         let now = now_rfc3339();
         let previous_status = task.status;
+        let patch = neutralize_internal_tool_availability_blocker_patch(patch);
         apply_manager_patch(&mut task, patch, false, now.as_str())?;
         if task.parent_task_id.is_none()
             && previous_status == TaskStatus::Succeeded
@@ -388,6 +432,7 @@ impl TaskService {
         decisions: Vec<SharedTaskClosureDecision>,
     ) -> Result<Value, String> {
         let mut prepared = Vec::with_capacity(decisions.len());
+        let mut rejected_internal_tool_blockers = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for decision in decisions {
             validate_required("task_id", &decision.task_id)?;
@@ -410,6 +455,18 @@ impl TaskService {
                     "任务 {} 以 {} 收口时必须提供 reason",
                     decision.task_id, decision.closure_state
                 ));
+            }
+            if closure_state == TaskClosureState::BlockedTerminal
+                && closure_decision_looks_like_internal_tool_availability_blocker(&decision)
+            {
+                rejected_internal_tool_blockers.push(json!({
+                    "task_id": decision.task_id,
+                    "title": task.title,
+                    "closure_state": decision.closure_state,
+                    "reason": "internal_tool_availability_blocker",
+                    "message": "不能仅因为本轮仓库读取或终端工具未暴露、被临时限制、不可用而将任务标记为 blocked_terminal；这类情况属于执行过程保护或运行配置问题，不是业务终态阻塞。请基于已取得的真实证据继续实现/验证，或说明具体缺失的外部 artifact、服务、凭据或人工决策。",
+                }));
+                continue;
             }
             prepared.push((task, decision, closure_state));
         }
@@ -445,9 +502,18 @@ impl TaskService {
         }
 
         let snapshot = load_task_session_snapshot(&self.store, root_task_id, run_id).await?;
+        let rejected_count = rejected_internal_tool_blockers.len();
+        let has_rejected = rejected_count > 0;
         Ok(json!({
-            "reconciled": true,
+            "reconciled": !has_rejected,
             "reconciled_count": reconciled.len(),
+            "rejected_count": rejected_count,
+            "rejected": rejected_internal_tool_blockers,
+            "guidance": if has_rejected {
+                json!("blocked_terminal must describe a real external blocker such as a missing artifact, service, credential, or user decision. Temporary absence or rate-limiting of read/terminal tools is not a business terminal blocker; keep tasks open, continue from available evidence, or let the completion gate close the run.")
+            } else {
+                Value::Null
+            },
             "tasks": reconciled.iter().map(super::support::task_to_manager_value).collect::<Vec<_>>(),
             "session": task_session_snapshot_value(&snapshot),
         }))
@@ -501,6 +567,44 @@ impl TaskService {
     }
 }
 
+fn validate_run_checklist_task_relevance(
+    parent: &TaskRecord,
+    title: &str,
+    objective: &str,
+) -> Result<(), String> {
+    let parent_text = format!(
+        "{}\n{}\n{}",
+        parent.title,
+        parent.description.as_deref().unwrap_or_default(),
+        parent.objective,
+    );
+    let parent_markers = task_relevance_markers(parent_text.as_str());
+    let child_text = format!("{title}\n{objective}");
+    let child_markers = task_relevance_markers(child_text.as_str());
+    if parent_markers.is_empty()
+        || child_markers.is_empty()
+        || child_markers
+            .iter()
+            .any(|marker| parent_markers.contains(marker))
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "运行内必需清单「{}」偏离父任务「{}」的当前目标；请不要把其他需求、页面、T09、库存、设备推荐等无关工作加入本轮必需清单。",
+        title.trim(),
+        parent.title.trim(),
+    ))
+}
+
+fn task_relevance_markers(text: &str) -> Vec<&'static str> {
+    let normalized = text.to_ascii_lowercase();
+    TASK_RELEVANCE_MARKERS
+        .iter()
+        .copied()
+        .filter(|marker| normalized.contains(marker))
+        .collect()
+}
+
 fn tool_prerequisite_task_ids(draft: &SharedTaskDraft) -> Vec<String> {
     let mut ids = draft.prerequisite_task_ids.clone();
     if let Some(id) = draft.prerequisite_task_id.clone() {
@@ -526,6 +630,130 @@ fn task_closure_state_from_label(value: &str) -> Result<TaskClosureState, String
         "waived" => Ok(TaskClosureState::Waived),
         other => Err(format!("unsupported closure_state: {other}")),
     }
+}
+
+fn closure_decision_looks_like_internal_tool_availability_blocker(
+    decision: &SharedTaskClosureDecision,
+) -> bool {
+    let mut text = String::new();
+    text.push_str(decision.reason.as_str());
+    text.push('\n');
+    text.push_str(decision.outcome_summary.as_str());
+    text.push('\n');
+    text.push_str(decision.resume_hint.as_str());
+    for item in &decision.outcome_items {
+        text.push('\n');
+        text.push_str(item.text.as_str());
+    }
+    text_looks_like_internal_tool_availability_blocker(text.as_str())
+}
+
+fn neutralize_internal_tool_availability_blocker_patch(
+    mut patch: SharedTaskUpdatePatch,
+) -> SharedTaskUpdatePatch {
+    let requests_blocked = patch
+        .status
+        .as_deref()
+        .is_some_and(|status| task_status_from_manager_status(status) == TaskStatus::Blocked);
+    if !requests_blocked || !update_patch_looks_like_internal_tool_availability_blocker(&patch) {
+        return patch;
+    }
+
+    patch.status = None;
+    patch.blocker_reason = None;
+    patch.blocker_needs = None;
+    patch.blocker_kind = None;
+    patch.outcome_items = None;
+    patch.outcome_summary = Some(
+        "任务仍未完成；不能仅因本轮仓库读取或终端工具临时不可用而标记为业务阻塞。".to_string(),
+    );
+    patch.resume_hint = Some(
+        "继续基于已取得的真实证据实现/验证；如确有外部 artifact、服务、凭据或人工决策缺失，请说明具体对象。"
+            .to_string(),
+    );
+    patch
+}
+
+fn update_patch_looks_like_internal_tool_availability_blocker(
+    patch: &SharedTaskUpdatePatch,
+) -> bool {
+    let mut text = String::new();
+    if let Some(value) = &patch.outcome_summary {
+        text.push_str(value);
+    }
+    if let Some(value) = &patch.resume_hint {
+        text.push('\n');
+        text.push_str(value);
+    }
+    if let Some(value) = &patch.blocker_reason {
+        text.push('\n');
+        text.push_str(value);
+    }
+    if let Some(values) = &patch.blocker_needs {
+        for value in values {
+            text.push('\n');
+            text.push_str(value);
+        }
+    }
+    if let Some(values) = &patch.outcome_items {
+        for value in values {
+            text.push('\n');
+            text.push_str(value.text.as_str());
+        }
+    }
+    text_looks_like_internal_tool_availability_blocker(text.as_str())
+}
+
+fn text_looks_like_internal_tool_availability_blocker(text: &str) -> bool {
+    let normalized = text.to_ascii_lowercase();
+    let mentions_tool_surface = [
+        "仓库读取",
+        "读取能力",
+        "文件读取",
+        "源码读取",
+        "未读取",
+        "读取工具",
+        "读文件工具",
+        "代码读取",
+        "真实文件",
+        "schema",
+        "测试执行能力",
+        "执行能力",
+        "验证能力",
+        "运行测试",
+        "终端",
+        "执行工具",
+        "工具清单",
+        "read tool",
+        "read-file",
+        "read_file",
+        "terminal",
+        "tool surface",
+        "tool list",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let mentions_availability = [
+        "未暴露",
+        "未能",
+        "没有",
+        "缺少",
+        "无法",
+        "不能",
+        "不可用",
+        "临时限制",
+        "临时不可用",
+        "被限制",
+        "not exposed",
+        "unavailable",
+        "temporarily unavailable",
+        "disabled",
+        "rate-limited",
+        "rate limited",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    mentions_tool_surface && mentions_availability
 }
 
 fn task_semantic_fingerprint(title: &str, objective: &str) -> String {
@@ -619,9 +847,9 @@ mod tests {
     use crate::config::{AppConfig, StoreMode};
     use crate::models::{CancelTaskRequest, CreateTaskRequest, TaskRunStatus, UpdateTaskRequest};
     use crate::services::task_manager_lifecycle::{
-        adopt_task_session_entries_for_retry, block_open_required_task_session_entries,
-        effective_task_closure_state, effective_task_required_for_parent_completion,
-        finalize_task_session_entries, load_task_session_snapshot,
+        block_open_required_task_session_entries, effective_task_closure_state,
+        effective_task_required_for_parent_completion, finalize_task_session_entries,
+        load_task_session_snapshot,
     };
     use crate::store::AppStore;
     use std::net::{IpAddr, Ipv4Addr};
@@ -743,6 +971,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_checklist_rejects_required_tasks_from_unrelated_domain() {
+        let service = test_service().await;
+        let parent = create_task(
+            &service,
+            "实现 OMS 订单录入、审核与内联建档流程",
+            TaskStatus::Ready,
+        )
+        .await;
+
+        for title in [
+            "核对 T09 需求与仓库现状",
+            "补齐库存校验页实现并验证",
+            "实现 Planning 设备推荐编排",
+        ] {
+            let err = service
+                .create_followup_task_for_tool(
+                    parent.id.as_str(),
+                    "run-1",
+                    task_draft(title, "todo"),
+                )
+                .await
+                .expect_err("unrelated checklist task must be rejected");
+
+            assert!(err.contains("偏离父任务"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn run_checklist_allows_generic_or_overlapping_required_tasks() {
+        let service = test_service().await;
+        let parent = create_task(
+            &service,
+            "实现 OMS 订单录入、审核与内联建档流程",
+            TaskStatus::Ready,
+        )
+        .await;
+
+        let generic = service
+            .create_followup_task_for_tool(
+                parent.id.as_str(),
+                "run-1",
+                task_draft("执行验证并整理证据", "todo"),
+            )
+            .await
+            .expect("generic verification checklist should be allowed");
+        assert_eq!(generic.title, "执行验证并整理证据");
+
+        let overlapping = service
+            .create_followup_task_for_tool(
+                parent.id.as_str(),
+                "run-1",
+                task_draft("实现 OMS 订单审核 API", "todo"),
+            )
+            .await
+            .expect("same-domain checklist should be allowed");
+        assert_eq!(overlapping.title, "实现 OMS 订单审核 API");
+    }
+
+    #[tokio::test]
     async fn done_followup_task_clears_blocker_metadata() {
         let service = test_service().await;
         let parent = create_task(&service, "parent", TaskStatus::Ready).await;
@@ -815,6 +1102,51 @@ mod tests {
         assert_eq!(completed.task_tool_state.blocker_reason, None);
         assert!(completed.task_tool_state.blocker_needs.is_empty());
         assert_eq!(completed.task_tool_state.blocker_kind, None);
+    }
+
+    #[tokio::test]
+    async fn update_task_soft_rejects_internal_tool_availability_blocker_status() {
+        let service = test_service().await;
+        let parent = create_task(&service, "parent", TaskStatus::Ready).await;
+        let child = service
+            .create_followup_task_for_tool(parent.id.as_str(), "run-1", task_draft("child", "todo"))
+            .await
+            .expect("create child");
+
+        let updated = service
+            .update_task_from_tool_in_session(
+                parent.id.as_str(),
+                Some("run-1"),
+                child.id.as_str(),
+                SharedTaskUpdatePatch {
+                    status: Some("blocked".to_string()),
+                    outcome_summary: Some(
+                        "当前会话未暴露仓库读取或终端执行工具，无法继续核对真实代码。".to_string(),
+                    ),
+                    blocker_reason: Some(
+                        "缺少源码读取与测试执行能力，无法确定真实修改点。".to_string(),
+                    ),
+                    blocker_kind: Some("tooling".to_string()),
+                    blocker_needs: Some(vec!["仓库读取能力".to_string(), "终端能力".to_string()]),
+                    ..SharedTaskUpdatePatch::default()
+                },
+            )
+            .await
+            .expect("internal tool availability blocker update should be neutralized");
+
+        assert_eq!(updated.status, TaskStatus::Ready);
+        assert_eq!(
+            effective_task_closure_state(&updated),
+            TaskClosureState::Open
+        );
+        assert_eq!(updated.task_tool_state.blocker_reason, None);
+        assert!(updated.task_tool_state.blocker_needs.is_empty());
+        assert_eq!(updated.task_tool_state.blocker_kind, None);
+        assert!(updated
+            .result_summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("不能仅因本轮仓库读取或终端工具临时不可用"));
     }
 
     #[tokio::test]
@@ -972,6 +1304,61 @@ mod tests {
             .await
             .expect_err("terminal blocker must prevent success");
         assert!(err.contains("应进入 blocked"));
+    }
+
+    #[tokio::test]
+    async fn terminal_blocker_rejects_internal_tool_availability_reasons() {
+        let service = test_service().await;
+        let parent = create_task(&service, "parent", TaskStatus::Ready).await;
+        let child = service
+            .create_followup_task_for_tool(
+                parent.id.as_str(),
+                "run-1",
+                task_draft("blocked child", "todo"),
+            )
+            .await
+            .expect("create child");
+
+        let result = service
+            .reconcile_tool_tasks(
+                parent.id.as_str(),
+                "run-1",
+                vec![SharedTaskClosureDecision {
+                    task_id: child.id.clone(),
+                    closure_state: "blocked_terminal".to_string(),
+                    reason: "当前运行未暴露仓库读取工具与终端执行工具，无法继续。".to_string(),
+                    outcome_summary: "缺少读取/终端能力。".to_string(),
+                    outcome_items: vec![SharedTaskOutcomeItem {
+                        kind: "blocker".to_string(),
+                        text: "没有终端执行能力，无法运行测试。".to_string(),
+                        importance: Some("high".to_string()),
+                        refs: Vec::new(),
+                    }],
+                    resume_hint: "后续暴露读取工具后再重试。".to_string(),
+                }],
+            )
+            .await
+            .expect("internal tool availability blocker should be soft-rejected");
+
+        assert_eq!(
+            result.get("reconciled").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            result.get("rejected_count").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(result
+            .get("guidance")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("Temporary absence or rate-limiting"));
+        let child = service
+            .get_task(child.id.as_str())
+            .await
+            .expect("get child")
+            .expect("child");
+        assert_eq!(effective_task_closure_state(&child), TaskClosureState::Open);
     }
 
     #[tokio::test]
@@ -1206,7 +1593,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retry_adopts_previous_checklist_and_idempotently_reuses_it() {
+    async fn retry_keeps_failed_checklist_isolated_in_previous_session() {
         let service = test_service().await;
         let parent = create_task(&service, "parent", TaskStatus::Ready).await;
         let draft = task_draft("implement endpoint", "todo");
@@ -1223,30 +1610,26 @@ mod tests {
         .await
         .expect("finalize previous run");
 
-        let adopted = adopt_task_session_entries_for_retry(
-            &service.store,
-            parent.id.as_str(),
-            "run-1",
-            "run-2",
-        )
-        .await
-        .expect("adopt checklist");
-        assert_eq!(adopted.len(), 1);
-        assert_eq!(adopted[0].id, original.id);
+        let previous_snapshot =
+            load_task_session_snapshot(&service.store, parent.id.as_str(), "run-1")
+                .await
+                .expect("load previous snapshot");
+        assert_eq!(previous_snapshot.entries.len(), 1);
         assert_eq!(
-            effective_task_closure_state(&adopted[0]),
-            TaskClosureState::Open
+            effective_task_closure_state(&previous_snapshot.entries[0]),
+            TaskClosureState::Orphaned
         );
 
-        let reused = service
+        let retried = service
             .create_followup_task_for_tool(parent.id.as_str(), "run-2", draft)
             .await
-            .expect("reuse adopted checklist");
-        assert_eq!(reused.id, original.id);
+            .expect("create clean retry checklist");
+        assert_ne!(retried.id, original.id);
         let snapshot = load_task_session_snapshot(&service.store, parent.id.as_str(), "run-2")
             .await
             .expect("load retry snapshot");
         assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].id, retried.id);
     }
 
     #[tokio::test]

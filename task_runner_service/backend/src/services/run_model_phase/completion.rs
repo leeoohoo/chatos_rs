@@ -287,25 +287,133 @@ impl RunService {
 }
 
 fn terminal_blocked_tasks_summary(tasks: &[TaskRecord]) -> String {
-    let examples = tasks
+    let mut reason_groups = Vec::<(String, Vec<String>)>::new();
+    for task in tasks {
+        let raw_reason = task
+            .task_tool_state
+            .closure_reason
+            .as_deref()
+            .or(task.task_tool_state.blocker_reason.as_deref())
+            .unwrap_or("未提供阻塞原因");
+        let reason = user_facing_terminal_block_reason(raw_reason);
+        if let Some((_, titles)) = reason_groups
+            .iter_mut()
+            .find(|(existing, _)| existing == &reason)
+        {
+            titles.push(task.title.trim().to_string());
+        } else {
+            reason_groups.push((reason, vec![task.title.trim().to_string()]));
+        }
+    }
+
+    if let [(reason, titles)] = reason_groups.as_slice() {
+        return format!(
+            "本次运行未完成：{} 个必需步骤未完成。共同原因：{}。未完成步骤：{}",
+            tasks.len(),
+            reason,
+            summarized_blocked_titles(titles)
+        );
+    }
+
+    let details = reason_groups
         .iter()
-        .take(5)
-        .map(|task| {
-            let reason = task
-                .task_tool_state
-                .closure_reason
-                .as_deref()
-                .or(task.task_tool_state.blocker_reason.as_deref())
-                .unwrap_or("未提供阻塞原因");
-            format!("{}：{}", task.title.trim(), reason)
+        .take(3)
+        .map(|(reason, titles)| {
+            format!(
+                "{}（{} 个步骤：{}）",
+                reason,
+                titles.len(),
+                summarized_blocked_titles(titles)
+            )
         })
         .collect::<Vec<_>>()
         .join("；");
     format!(
-        "当前运行有 {} 个已确认的终态阻塞任务，父任务已进入 blocked：{}",
+        "本次运行未完成：{} 个必需步骤未完成。阻塞明细：{}",
         tasks.len(),
-        examples
+        details
     )
+}
+
+fn user_facing_terminal_block_reason(reason: &str) -> String {
+    if reason_looks_like_internal_tool_availability_blocker(reason) {
+        return "当前运行没有可继续使用的仓库读取或终端能力，模型未完成必要实现或验证；这属于执行收口原因，不代表业务任务已完成或沙箱初始化失败"
+            .to_string();
+    }
+    if reason.contains("连续两次 Task Manager 校验没有状态进展") {
+        return "模型结束前仍未完成必要的代码修改或验证，系统连续两次检查都没有看到实际进展"
+            .to_string();
+    }
+    if reason.contains("达到 Task Manager 最大收口轮次") {
+        return "模型在允许的收尾轮次内仍未完成必要步骤".to_string();
+    }
+    reason.trim().to_string()
+}
+
+fn reason_looks_like_internal_tool_availability_blocker(reason: &str) -> bool {
+    let normalized = reason.to_ascii_lowercase();
+    let mentions_tool_surface = [
+        "仓库读取",
+        "读取能力",
+        "文件读取",
+        "源码读取",
+        "未读取",
+        "读取工具",
+        "读文件工具",
+        "代码读取",
+        "真实文件",
+        "schema",
+        "测试执行能力",
+        "执行能力",
+        "验证能力",
+        "运行测试",
+        "终端",
+        "执行工具",
+        "工具清单",
+        "read tool",
+        "read-file",
+        "read_file",
+        "terminal",
+        "tool surface",
+        "tool list",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let mentions_availability = [
+        "未暴露",
+        "未能",
+        "没有",
+        "缺少",
+        "无法",
+        "不能",
+        "不可用",
+        "临时限制",
+        "临时不可用",
+        "被限制",
+        "not exposed",
+        "unavailable",
+        "temporarily unavailable",
+        "disabled",
+        "rate-limited",
+        "rate limited",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    mentions_tool_surface && mentions_availability
+}
+
+fn summarized_blocked_titles(titles: &[String]) -> String {
+    let shown = titles
+        .iter()
+        .take(5)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("、");
+    if titles.len() > 5 {
+        format!("{} 等 {} 个", shown, titles.len())
+    } else {
+        shown
+    }
 }
 
 fn report_json_with_outputs(
@@ -776,5 +884,38 @@ mod tests {
             .expect("get parent")
             .expect("parent");
         assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn terminal_blocked_summary_groups_repeated_internal_reason() {
+        let (task_service, _) = test_services().await;
+        let reason = "模型完成声明后，连续两次 Task Manager 校验没有状态进展；仍有必需清单未完成，父任务不能标记为成功";
+        let mut first = create_task(&task_service, "实现后端", TaskStatus::Blocked).await;
+        first.task_tool_state.closure_reason = Some(reason.to_string());
+        let mut second = create_task(&task_service, "执行验证", TaskStatus::Blocked).await;
+        second.task_tool_state.closure_reason = Some(reason.to_string());
+
+        let summary = terminal_blocked_tasks_summary(&[first, second]);
+
+        assert!(summary.contains("本次运行未完成：2 个必需步骤未完成"));
+        assert!(summary.contains("共同原因"));
+        assert!(summary.contains("实现后端、执行验证"));
+        assert!(!summary.contains("Task Manager"));
+        assert_eq!(summary.matches("连续两次检查").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn terminal_blocked_summary_rewrites_internal_tool_availability_reason() {
+        let (task_service, _) = test_services().await;
+        let mut task = create_task(&task_service, "执行验证", TaskStatus::Blocked).await;
+        task.task_tool_state.closure_reason =
+            Some("当前运行未暴露仓库读取工具与终端执行工具，无法继续。".to_string());
+
+        let summary = terminal_blocked_tasks_summary(&[task]);
+
+        assert!(summary.contains("本次运行未完成：1 个必需步骤未完成"));
+        assert!(summary.contains("不代表业务任务已完成或沙箱初始化失败"));
+        assert!(!summary.contains("未暴露仓库读取工具"));
+        assert!(!summary.contains("系统拦截"));
     }
 }

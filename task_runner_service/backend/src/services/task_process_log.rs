@@ -169,11 +169,55 @@ impl BuiltinToolProvider for TaskProcessLogBuiltinProvider {
             .record_task_process(self.task_id.as_str(), input.into_request())
             .await?
             .ok_or_else(|| format!("任务不存在: {}", self.task_id))?;
-        Ok(json!({
-            "task_id": task.id,
-            "run_id": self.run_id,
-            "process_log": task.process_log,
-            "updated_at": task.updated_at,
-        }))
+        Ok(task_process_log_ack(
+            task.id.as_str(),
+            self.run_id.as_str(),
+            task.process_log.as_deref(),
+            task.updated_at.as_str(),
+        ))
+    }
+}
+
+fn task_process_log_ack(
+    task_id: &str,
+    run_id: &str,
+    process_log: Option<&str>,
+    updated_at: &str,
+) -> Value {
+    json!({
+        "recorded": true,
+        "task_id": task_id,
+        "run_id": run_id,
+        "process_log_chars": process_log
+            .map(|value| value.chars().count())
+            .unwrap_or_default(),
+        "updated_at": updated_at,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_log_tool_returns_compact_ack_without_replaying_history() {
+        let history = "旧运行日志".repeat(8_000);
+        let response = task_process_log_ack(
+            "task-1",
+            "run-2",
+            Some(history.as_str()),
+            "2026-07-28T00:00:00Z",
+        );
+
+        assert_eq!(
+            response.get("recorded").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response.get("process_log_chars").and_then(Value::as_u64),
+            Some(history.chars().count() as u64)
+        );
+        assert!(response.get("process_log").is_none());
+        assert!(response.to_string().len() < 256);
     }
 }

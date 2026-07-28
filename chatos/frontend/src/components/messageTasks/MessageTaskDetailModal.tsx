@@ -161,11 +161,11 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
             ) : null}
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                {isBlocked ? '当前节点需要人工处理' : '当前节点执行失败'}
+                {isBlocked ? '当前节点未完成' : '当前节点执行失败'}
               </div>
               <p className="mt-0.5 text-xs leading-5 text-amber-800 dark:text-amber-200">
                 {isBlocked
-                  ? '补充处理意见后重新运行此节点；节点成功后，满足依赖条件的后续节点会自动继续。'
+                  ? '系统检测到仍有必需步骤没有完成，因此没有把本次运行算作成功。可以补充处理意见后重新运行；不需要补充时可直接重新处理。节点成功后，满足依赖条件的后续节点会自动继续。'
                   : '仅重新运行此节点；成功后，满足依赖条件的后续节点会继续调度。'}
               </p>
             </div>

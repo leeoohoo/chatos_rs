@@ -504,8 +504,23 @@ async fn prepare_iteration_request(
     }
     if !lifecycle_before.tools_enabled {
         iteration_request.tools.clear();
+    } else if !lifecycle_before.disabled_tool_names.is_empty() {
+        iteration_request.tools.retain(|tool| {
+            runtime_tool_definition_name(tool).is_none_or(|name| {
+                !lifecycle_before
+                    .disabled_tool_names
+                    .iter()
+                    .any(|disabled| disabled == name)
+            })
+        });
     }
     Ok((iteration_request, lifecycle_before))
+}
+
+fn runtime_tool_definition_name(tool: &Value) -> Option<&str> {
+    tool.get("name")
+        .and_then(Value::as_str)
+        .or_else(|| tool.get("function")?.get("name")?.as_str())
 }
 
 #[cfg(test)]
