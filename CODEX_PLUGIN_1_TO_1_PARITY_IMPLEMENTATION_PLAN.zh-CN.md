@@ -2,6 +2,7 @@
 
 > 状态：实施中
 > 创建日期：2026-07-21
+> 最新增量（Plugin 用户与运维文档）：2026-07-28 新增 `docs/plugins/plugin-operations-user-guide.zh-CN.md`，面向最终用户、管理员和本机运行时运维人员串联 Marketplace、安装、启用、Task/Run snapshot、OAuth/connected app、安装诊断、审计诊断、脱敏导出、服务端部署、Local Connector 边界、指标和常见故障定位；明确客户端不直连 MongoDB，MongoDB 仅属于后端服务持久化依赖。`plugin_management_service/README.md` 新增第三方发布手册和用户/运维手册入口，并补充安装诊断/脱敏导出说明。
 > 最新增量（安装/OAuth 诊断与脱敏导出）：2026-07-28 Plugin Management 前端新增普通用户和管理员均可使用的“安装诊断”入口，复用当前用户隔离的 `GET /api/plugins/installed` 与 `GET /api/plugins/{plugin_id}/oauth`，按 device_id 只读展示安装状态、Release、平台、依赖/权限/OAuth requirement、组件可用性、最近检查时间和选中 Plugin 的 OAuth provider/scope/连接状态。页面不新增跨用户后端查询或写接口；详情弹窗仅显示当前接口返回的诊断 JSON。新增默认脱敏 JSON 导出，剥离 owner_user_id、device_id、OAuth account_display 和错误原文，只保留状态、版本、组件、provider/scope、时间、has_error/has_account_display 等排障字段，不导出 token、屏幕/浏览器内容、用户文件内容或 Plugin UI 私有数据。验证通过 Plugin Management 前端 type-check、production build、Rustfmt 和 `git diff --check`；未启动服务、Mongo、浏览器、Office 或桌面控制，未占用端口，临时 `node_modules` symlink 与 `dist` 已清理。
 > 最新增量（Plugin audit 只读诊断）：2026-07-28 Plugin Management 前端新增 super admin “审计诊断”入口，接入既有 `GET /api/admin/plugin-audit`，可按 event、plugin_id、owner_user_id、device_id 查询 Marketplace、Catalog、Release、发布者审核、安装来源、OAuth 和偏好变更审计。表格展示事件、结果、Plugin/Release、用户、设备/组件和记录时间，详情弹窗只显示服务端已脱敏 JSON 投影；不新增写接口，不回显签名公钥、凭据、Hook stdout/stderr、工具 payload 或用户文件内容。
 > 最新增量（第三方发布文档与示例）：2026-07-28 新增 `docs/plugins/third-party-plugin-publishing.zh-CN.md`，固化第三方发布者从 trusted Admin Marketplace、publisher review、Release signing、signed Catalog sync 到 Local Connector immutable runtime snapshot 的发布路径；明确 publisher identity/key、Catalog/Release key usage、凭据、component-scoped permissions、Plugin UI resource origin 与真实环境验收边界。新增 CircleCI、Sentry、Build Web 三个示例 Manifest，分别覆盖 HTTP MCP adapter、Command、Agent、Plugin UI 和权限拆分，并由 `chatos_plugin_management_sdk` 集成测试直接 parse，防止示例随 schema 演进失效。该批不连接外部 SaaS、不启动服务、不占用端口。
@@ -3120,7 +3121,7 @@ POST /api/local/plugins/:plugin_id/oauth/disconnect
 - [x] 删除 ChatOS legacy plugin install/cache（旧 Mongo records 仅只读保留供一次性迁移，不进入生产 API/运行时，启动期也不再创建 collection 或索引）。
 - [x] 删除 Plugin Management Skill Package 旧写接口（保留 Skill/Skill Package list/detail 只读兼容和 Skill 诊断 check）。
 - [x] 删除 Task Runner 独立 Skill 选择新写入路径（仅保留历史反序列化/只读兼容和系统 required Skill；Plugin 内 `selected_skill_ids` 不受影响）。
-- [ ] 更新 README、部署、运维、用户和开发者文档（第三方发布/开发者手册已补；仍需部署与用户侧完整文档）。
+- [x] 更新 README、部署、运维、用户和开发者文档（已补第三方发布/开发者手册、用户/运维手册、Plugin Management README 链接、安装诊断和脱敏导出说明；真实部署环境 DNS/TLS/reverse-proxy 验收仍属于外部验收项）。
 
 退出标准：新增第三方插件不需要修改 ChatOS/Task Runner/Local Connector 主流程代码，只需发布合规 Plugin Release 和必要 Adapter。
 

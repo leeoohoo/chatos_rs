@@ -76,9 +76,11 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 
 公开可信的 Admin Marketplace 还支持发布者入驻审核。普通用户可提交 publisher ID、名称、HTTPS 网站和 1-32 个 active Ed25519 Release-only 签名 key；服务端强制 key 的 publisher ID 与申请身份一致，pending/approved/suspended 记录不能自行覆盖，rejected 可重新提交。`super_admin` 可审核通过、拒绝、暂停或恢复发布者；通过时会把审核过的 Release key 合并进 Marketplace trust root，并复用 Marketplace snapshot compare-and-replace 与 key progression 校验。管理员手工创建 Plugin Catalog Entry 和 Release 时必须匹配已审核通过的 publisher 身份与 Release key；外部 signed Catalog 同步和 bundled official Registry 不走人工审核入口。publisher 审计只记录 key ID 和决策状态，不记录公钥内容。
 
-第三方发布者接入、CircleCI/Sentry/Build Web 示例 Manifest、发布验收和运维边界见 [第三方 Plugin 发布与接入手册](../docs/plugins/third-party-plugin-publishing.zh-CN.md)。
+第三方发布者接入、CircleCI/Sentry/Build Web 示例 Manifest、发布验收和运维边界见 [第三方 Plugin 发布与接入手册](../docs/plugins/third-party-plugin-publishing.zh-CN.md)。用户安装、诊断、审计、部署和日常排障见 [Plugin 用户与运维手册](../docs/plugins/plugin-operations-user-guide.zh-CN.md)。
 
 `super_admin` 可通过审计诊断页面只读查看 Plugin Marketplace、Catalog、Release、发布者审核、安装来源、OAuth 和用户偏好等事件。查询支持按 event、plugin_id、owner_user_id 和 device_id 过滤；前端只展示服务端已脱敏的审计投影，不回显签名公钥、凭据、Hook stdout/stderr、工具 payload 或用户文件内容。
+
+普通用户和管理员均可通过安装诊断页面按 `device_id` 只读查看当前登录用户的 Plugin installation、component availability 和 OAuth connection 状态，并导出默认脱敏的诊断 JSON。该导出不包含 owner/device 原值、OAuth account display、错误原文、token、屏幕/浏览器内容或用户文件内容。
 
 系统 agent 的 MCP 配置只有三种状态：
 
