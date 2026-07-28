@@ -75,6 +75,8 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 
 公开可信的 Admin Marketplace 还支持发布者入驻审核。普通用户可提交 publisher ID、名称、HTTPS 网站和 1-32 个 active Ed25519 Release-only 签名 key；服务端强制 key 的 publisher ID 与申请身份一致，pending/approved/suspended 记录不能自行覆盖，rejected 可重新提交。`super_admin` 可审核通过、拒绝、暂停或恢复发布者；通过时会把审核过的 Release key 合并进 Marketplace trust root，并复用 Marketplace snapshot compare-and-replace 与 key progression 校验。管理员手工创建 Plugin Catalog Entry 和 Release 时必须匹配已审核通过的 publisher 身份与 Release key；外部 signed Catalog 同步和 bundled official Registry 不走人工审核入口。publisher 审计只记录 key ID 和决策状态，不记录公钥内容。
 
+第三方发布者接入、CircleCI/Sentry/Build Web 示例 Manifest、发布验收和运维边界见 [第三方 Plugin 发布与接入手册](../docs/plugins/third-party-plugin-publishing.zh-CN.md)。
+
 系统 agent 的 MCP 配置只有三种状态：
 
 - `disabled`：该 agent 不可见。

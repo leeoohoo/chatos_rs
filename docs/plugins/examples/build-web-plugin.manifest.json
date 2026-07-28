@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "name": "build-web",
+  "version": "1.0.0",
+  "description": "Coordinate reviewed web build, preview, and deployment workflows through a signed Plugin Runtime adapter.",
+  "author": {
+    "name": "Example Build Publisher",
+    "url": "https://plugins.example.com"
+  },
+  "homepage": "https://plugins.example.com/build-web",
+  "repository": "https://plugins.example.com/build-web/source",
+  "license": "LicenseRef-Pending-Redistribution-Review",
+  "keywords": ["web", "preview", "deploy"],
+  "mcpServers": {
+    "build-web-api": {
+      "type": "http",
+      "url": "https://build-web-mcp.plugins.example.com/mcp",
+      "oauthResource": "build-web"
+    }
+  },
+  "commands": [
+    {
+      "componentKey": "prepare-preview",
+      "source": "./commands/prepare-preview.md",
+      "description": "Prepare a web preview build and return bounded artifact metadata.",
+      "argumentHint": "project environment git-ref",
+      "requiresConfirmation": true,
+      "targetAgent": "task_runner_run_phase",
+      "allowedTools": ["plugin_build_web_project_read", "plugin_build_web_preview_prepare"]
+    },
+    {
+      "componentKey": "promote-release",
+      "source": "./commands/promote-release.md",
+      "description": "Prepare a production promotion plan from an approved preview.",
+      "argumentHint": "preview-id",
+      "requiresConfirmation": true,
+      "targetAgent": "task_runner_run_phase",
+      "allowedTools": ["plugin_build_web_preview_read", "plugin_build_web_deploy_prepare"]
+    }
+  ],
+  "ui": [
+    {
+      "componentKey": "preview-workbench",
+      "source": "./ui/preview-workbench.html",
+      "title": "Build Web Preview",
+      "surface": "workbench",
+      "assets": ["./ui/preview-workbench.js", "./ui/preview-workbench.css"],
+      "bridgeCapabilities": ["host.context.read", "artifact.list", "artifact.read", "artifact.download"],
+      "artifactMimeTypes": ["application/json", "text/markdown"]
+    }
+  ],
+  "interface": {
+    "displayName": "Build Web",
+    "shortDescription": "Prepare web previews and deployment plans.",
+    "longDescription": "Connect a reviewed Build Web adapter to inspect projects, prepare preview builds, and stage production promotion plans without granting unbounded shell or deploy access.",
+    "developerName": "Example Build Publisher",
+    "category": "Developer Tools",
+    "capabilities": ["preview.build", "deploy.plan", "artifact.inspect"],
+    "websiteURL": "https://plugins.example.com/build-web",
+    "privacyPolicyURL": "https://plugins.example.com/privacy",
+    "termsOfServiceURL": "https://plugins.example.com/terms",
+    "defaultPrompt": ["Never deploy directly; prepare a reviewed promotion plan and wait for approval."],
+    "brandColor": "#005FCC"
+  },
+  "dependencies": {
+    "minimumHostVersion": "2.0.9",
+    "supportedPlatforms": ["macos", "windows", "linux"]
+  },
+  "permissions": [
+    {
+      "permission": "build-web.project.read",
+      "required": true,
+      "reason": "Read selected project and environment metadata.",
+      "components": ["build-web-api", "prepare-preview"]
+    },
+    {
+      "permission": "build-web.preview.create",
+      "required": true,
+      "reason": "Prepare a preview build for an explicit git ref.",
+      "components": ["build-web-api", "prepare-preview", "preview-workbench"]
+    },
+    {
+      "permission": "build-web.deploy.prepare",
+      "required": false,
+      "reason": "Prepare a deploy plan that still requires explicit approval.",
+      "components": ["build-web-api", "promote-release"]
+    }
+  ]
+}

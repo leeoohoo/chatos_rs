@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "name": "circleci",
+  "version": "1.0.0",
+  "description": "Inspect CircleCI pipelines, explain failed jobs, and prepare guarded rerun or deploy recommendations.",
+  "author": {
+    "name": "Example Automation Publisher",
+    "url": "https://plugins.example.com"
+  },
+  "homepage": "https://plugins.example.com/circleci",
+  "repository": "https://plugins.example.com/circleci/source",
+  "license": "LicenseRef-Pending-Redistribution-Review",
+  "keywords": ["ci", "build", "deployment"],
+  "mcpServers": {
+    "circleci-api": {
+      "type": "http",
+      "url": "https://circleci-mcp.plugins.example.com/mcp",
+      "oauthResource": "circleci"
+    }
+  },
+  "commands": [
+    {
+      "componentKey": "diagnose-failed-pipeline",
+      "source": "./commands/diagnose-failed-pipeline.md",
+      "description": "Summarize a failed CircleCI pipeline and propose the next safe action.",
+      "argumentHint": "project-slug pipeline-number",
+      "requiresConfirmation": true,
+      "targetAgent": "task_runner_run_phase",
+      "allowedTools": ["plugin_circleci_pipeline_read", "plugin_circleci_job_log_read"]
+    }
+  ],
+  "interface": {
+    "displayName": "CircleCI",
+    "shortDescription": "Inspect and triage CircleCI pipelines.",
+    "longDescription": "Connect a reviewed CircleCI MCP adapter to inspect pipelines, read bounded job logs, and prepare guarded rerun or deploy recommendations.",
+    "developerName": "Example Automation Publisher",
+    "category": "Developer Tools",
+    "capabilities": ["ci.read", "ci.triage", "deploy.recommend"],
+    "websiteURL": "https://plugins.example.com/circleci",
+    "privacyPolicyURL": "https://plugins.example.com/privacy",
+    "termsOfServiceURL": "https://plugins.example.com/terms",
+    "defaultPrompt": ["Use CircleCI only for explicitly selected projects and pipelines."],
+    "brandColor": "#343434"
+  },
+  "dependencies": {
+    "minimumHostVersion": "2.0.9"
+  },
+  "permissions": [
+    {
+      "permission": "circleci.pipeline.read",
+      "required": true,
+      "reason": "Read selected pipeline and workflow metadata.",
+      "components": ["circleci-api", "diagnose-failed-pipeline"]
+    },
+    {
+      "permission": "circleci.job-log.read",
+      "required": true,
+      "reason": "Read bounded failed-job logs for diagnosis.",
+      "components": ["circleci-api", "diagnose-failed-pipeline"]
+    },
+    {
+      "permission": "circleci.pipeline.rerun",
+      "required": false,
+      "reason": "Prepare a rerun action that still requires separate user approval.",
+      "components": ["circleci-api"]
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 
 > 状态：实施中
 > 创建日期：2026-07-21
+> 最新增量（第三方发布文档与示例）：2026-07-28 新增 `docs/plugins/third-party-plugin-publishing.zh-CN.md`，固化第三方发布者从 trusted Admin Marketplace、publisher review、Release signing、signed Catalog sync 到 Local Connector immutable runtime snapshot 的发布路径；明确 publisher identity/key、Catalog/Release key usage、凭据、component-scoped permissions、Plugin UI resource origin 与真实环境验收边界。新增 CircleCI、Sentry、Build Web 三个示例 Manifest，分别覆盖 HTTP MCP adapter、Command、Agent、Plugin UI 和权限拆分，并由 `chatos_plugin_management_sdk` 集成测试直接 parse，防止示例随 schema 演进失效。该批不连接外部 SaaS、不启动服务、不占用端口。
 > 最新增量（Publisher onboarding/review）：2026-07-28 Plugin Management 新增 `plugin_publishers` 控制面、普通用户发布者申请页和 super admin 审核页。申请只允许 enabled/public/trusted `admin_registry` Marketplace，发布者需提交 publisher ID、名称、HTTPS 网站和 1-32 个 active Ed25519 release-only key，服务端强制 key publisher、usage、revocation 与申请身份一致；pending/approved/suspended 不可自行覆盖，rejected 可重新提交。管理员可 approve/reject/suspend/restore，拒绝和暂停必须有审核备注；approve 会把审核过的 Release key 通过 Marketplace snapshot CAS 合并进 trust root，并复用既有 key rotation/revocation progression 校验。手工 Admin Catalog Entry 和 Release 发布现在必须匹配 approved publisher identity 与 approved release key；外部 signed Catalog 同步和 bundled official Registry 不走人工审核入口。审计只记录 key IDs、决策和状态，不记录公钥内容。验证通过 Plugin Management backend 85 tests、lib Clippy `-D warnings`、前端 type-check/production build 和 Rustfmt；未启动服务、Mongo、浏览器或桌面应用，未占用端口。
 > 最新增量（trusted Admin Marketplace 生命周期）：2026-07-28 Plugin Management 新增 `PATCH /api/admin/plugin-marketplaces/:marketplace_id` 与管理页编辑入口，super admin 可更新名称、HTTPS Catalog URL、enabled/trust 状态和 trust root，保留 Marketplace identity、owner/visibility/source、last revision/sync metadata。更新使用完整旧 snapshot 做 compare-and-replace，Catalog 同步或其他管理员并发修改时返回冲突；可信网络 Marketplace 至少保留一个未撤销 Catalog key。签名 key rotation/revocation 与自动 Catalog progression 复用同一失败关闭合同：非 revoked key 不可删除，既有 key 的 publisher/algorithm/public key/usages/valid_from 不可替换，valid_until 只允许缩短，revocation 不可撤销或改写；标准流程为添加 successor、撤销旧 key、后续再移除已撤销 key。审计仅记录 added/revoked/removed key IDs、trust/enabled 和 URL 是否变化，不记录公钥内容。验证通过 Plugin Management backend 82 tests、lib Clippy `-D warnings`、前端 type-check/production build、Rustfmt 和 `git diff --check`；未启动服务、Mongo 或浏览器，未占用端口，一次性 Rust target 已清理并释放约 3.1 GiB。
 > 最新增量（删除 ChatOS legacy Plugin install/cache）：2026-07-28 已删除 ChatOS `/api/skills*` Git import/install/list/detail 路由、`chatos_skills*` Git clone/cache/manifest/discovery 服务、对应 feature flag，以及 Agent 管理页和 Agent Builder 对 legacy Plugin/standalone Skill catalog 的选择与读取。新建 Agent 拒绝非空 `plugin_sources` 和外部 `skill_ids`，更新未触碰历史字段时保持原值、显式清空可迁移；运行时只发布 Agent 自身 inline Skills，历史 Plugin/Command/外部 Skill 引用不再进入 prompt 或 MCP reader。`memory_skills`/`memory_skill_plugins` 不再由数据库启动流程创建或维护索引，旧 Mongo records 仅保留只读数据合同和查询供一次性迁移，不参与任何生产 API、Agent Builder 或运行时。Plugin Picker、Plugin Management immutable Release、Local Connector，以及 Browser/Computer Use/Documents/PDF 等现行插件能力不受影响。验证通过 MCP 149 tests、ChatOS backend 536 tests、ChatOS 前端 type-check/production build、定向 Vitest、MCP lib Clippy `-D warnings`、ChatOS lib Clippy `-D warnings`（仅命令行豁免两个未修改文件中的既有 lint）、Rustfmt 和 `git diff --check`；未启动服务、Mongo 或浏览器，未占用端口，一次性 Rust target 已清理并释放约 8.1 GiB。
@@ -3113,11 +3114,11 @@ POST /api/local/plugins/:plugin_id/oauth/disconnect
 
 - [x] trusted Admin marketplace（创建/list、HTTPS signed Catalog 手动/定时同步、trust root 编辑、禁用、并发保护、key rotation/revocation progression 与审计闭环）。
 - [x] publisher onboarding、key rotation、revocation 和 review workflow（普通用户申请、管理员审核/暂停/恢复、approved identity/key 发布约束、Marketplace trust root CAS 合并与 key progression 复用；真实 Mongo driver 隔离库执行仍属于外部验收项）。
-- [ ] CircleCI/Sentry/Build Web 等通过通用 Plugin Runtime 接入。
+- [ ] CircleCI/Sentry/Build Web 等通过通用 Plugin Runtime 接入（已完成可解析示例 Manifest 和发布文档；仍需真实 Adapter Release 与对应 SaaS/mock E2E）。
 - [x] 删除 ChatOS legacy plugin install/cache（旧 Mongo records 仅只读保留供一次性迁移，不进入生产 API/运行时，启动期也不再创建 collection 或索引）。
 - [x] 删除 Plugin Management Skill Package 旧写接口（保留 Skill/Skill Package list/detail 只读兼容和 Skill 诊断 check）。
 - [x] 删除 Task Runner 独立 Skill 选择新写入路径（仅保留历史反序列化/只读兼容和系统 required Skill；Plugin 内 `selected_skill_ids` 不受影响）。
-- [ ] 更新 README、部署、运维、用户和开发者文档。
+- [ ] 更新 README、部署、运维、用户和开发者文档（第三方发布/开发者手册已补；仍需部署与用户侧完整文档）。
 
 退出标准：新增第三方插件不需要修改 ChatOS/Task Runner/Local Connector 主流程代码，只需发布合规 Plugin Release 和必要 Adapter。
 
