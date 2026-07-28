@@ -3,6 +3,7 @@
 
 import {
   ApiOutlined,
+  DownloadOutlined,
   EyeOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -33,6 +34,49 @@ type JsonDetail =
   | { titleKey: 'pluginDiagnostics.installationDetails'; value: PluginInstallationRecord }
   | { titleKey: 'pluginDiagnostics.componentDetails'; value: PluginComponentStatusRecord }
   | { titleKey: 'pluginDiagnostics.oauthDetails'; value: PluginOAuthConnectionRecord };
+
+type RedactedDiagnosticsExport = {
+  schema_version: 1;
+  generated_at: string;
+  device_id_redacted: true;
+  installation_count: number;
+  oauth_connection_count: number;
+  selected_oauth_plugin_id?: string;
+  installations: Array<{
+    plugin_id: string;
+    release_id: string;
+    version: string;
+    platform: string;
+    install_status: PluginInstallStatus;
+    availability_status: PluginAvailabilityStatus;
+    dependency_status: PluginRequirementStatus;
+    permission_status: PluginRequirementStatus;
+    auth_status: PluginRequirementStatus;
+    active: boolean;
+    previous_release_id?: string | null;
+    installed_at: string;
+    last_checked_at: string;
+    has_last_error: boolean;
+    component_statuses: Array<{
+      component_key: string;
+      kind: string;
+      availability_status: PluginAvailabilityStatus;
+      last_checked_at: string;
+      has_last_error: boolean;
+    }>;
+  }>;
+  oauth_connections: Array<{
+    plugin_id: string;
+    release_id: string;
+    component_key: string;
+    provider: string;
+    scopes: string[];
+    connected: boolean;
+    expires_at?: string | null;
+    updated_at: string;
+    has_account_display: boolean;
+  }>;
+};
 
 function installStatusColor(value: PluginInstallStatus | string): string {
   if (value === 'installed') {
@@ -70,6 +114,67 @@ function requirementStatusColor(value: PluginRequirementStatus | string): string
   return value === 'pending' ? 'gold' : 'default';
 }
 
+function redactedDiagnosticsExport(
+  installations: PluginInstallationRecord[],
+  oauthConnections: PluginOAuthConnectionRecord[],
+  selectedOauthPluginId?: string,
+): RedactedDiagnosticsExport {
+  return {
+    schema_version: 1,
+    generated_at: new Date().toISOString(),
+    device_id_redacted: true,
+    installation_count: installations.length,
+    oauth_connection_count: oauthConnections.length,
+    selected_oauth_plugin_id: selectedOauthPluginId,
+    installations: installations.map((record) => ({
+      plugin_id: record.plugin_id,
+      release_id: record.release_id,
+      version: record.version,
+      platform: record.platform,
+      install_status: record.install_status,
+      availability_status: record.availability_status,
+      dependency_status: record.dependency_status,
+      permission_status: record.permission_status,
+      auth_status: record.auth_status,
+      active: record.active,
+      previous_release_id: record.previous_release_id,
+      installed_at: record.installed_at,
+      last_checked_at: record.last_checked_at,
+      has_last_error: Boolean(record.last_error),
+      component_statuses: record.component_statuses.map((component) => ({
+        component_key: component.component_key,
+        kind: component.kind,
+        availability_status: component.availability_status,
+        last_checked_at: component.last_checked_at,
+        has_last_error: Boolean(component.last_error),
+      })),
+    })),
+    oauth_connections: oauthConnections.map((record) => ({
+      plugin_id: record.plugin_id,
+      release_id: record.release_id,
+      component_key: record.component_key,
+      provider: record.provider,
+      scopes: record.scopes,
+      connected: record.connected,
+      expires_at: record.expires_at,
+      updated_at: record.updated_at,
+      has_account_display: Boolean(record.account_display),
+    })),
+  };
+}
+
+function downloadJson(filename: string, value: unknown): void {
+  const blob = new Blob([JSON.stringify(value, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export function PluginDiagnosticsPage() {
   const { t } = useI18n();
   const [form] = Form.useForm<DiagnosticsFilters>();
@@ -90,6 +195,8 @@ export function PluginDiagnosticsPage() {
       }),
     enabled: Boolean(deviceId && selectedInstallation?.plugin_id),
   });
+  const installedItems = installedQuery.data?.items || [];
+  const oauthItems = oauthQuery.data?.items || [];
 
   const installationColumns = useMemo<ColumnsType<PluginInstallationRecord>>(
     () => [
@@ -327,18 +434,36 @@ export function PluginDiagnosticsPage() {
           <Typography.Title level={3}>{t('pluginDiagnostics.title')}</Typography.Title>
           <Typography.Text type="secondary">{t('pluginDiagnostics.description')}</Typography.Text>
         </Space>
-        <Button
-          icon={<ReloadOutlined />}
-          disabled={!deviceId}
-          onClick={() => {
-            installedQuery.refetch();
-            if (selectedInstallation) {
-              oauthQuery.refetch();
+        <Space>
+          <Button
+            icon={<DownloadOutlined />}
+            disabled={!installedItems.length}
+            onClick={() =>
+              downloadJson(
+                `plugin-diagnostics-${new Date().toISOString().replace(/:/g, '-')}.json`,
+                redactedDiagnosticsExport(
+                  installedItems,
+                  oauthItems,
+                  selectedInstallation?.plugin_id,
+                ),
+              )
             }
-          }}
-        >
-          {t('pluginDiagnostics.refresh')}
-        </Button>
+          >
+            {t('pluginDiagnostics.exportRedacted')}
+          </Button>
+          <Button
+            icon={<ReloadOutlined />}
+            disabled={!deviceId}
+            onClick={() => {
+              installedQuery.refetch();
+              if (selectedInstallation) {
+                oauthQuery.refetch();
+              }
+            }}
+          >
+            {t('pluginDiagnostics.refresh')}
+          </Button>
+        </Space>
       </div>
       <Alert
         className="prompt-page-notice"
@@ -371,7 +496,7 @@ export function PluginDiagnosticsPage() {
         rowKey="id"
         className="diagnostics-table"
         columns={installationColumns}
-        dataSource={installedQuery.data?.items || []}
+        dataSource={installedItems}
         loading={installedQuery.isLoading || installedQuery.isFetching}
         scroll={{ x: 1430 }}
         expandable={{
@@ -406,7 +531,7 @@ export function PluginDiagnosticsPage() {
       <Table
         rowKey="id"
         columns={oauthColumns}
-        dataSource={oauthQuery.data?.items || []}
+        dataSource={oauthItems}
         loading={oauthQuery.isLoading || oauthQuery.isFetching}
         scroll={{ x: 1330 }}
         pagination={{

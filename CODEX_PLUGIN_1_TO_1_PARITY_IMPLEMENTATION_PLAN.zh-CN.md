@@ -2,6 +2,7 @@
 
 > 状态：实施中
 > 创建日期：2026-07-21
+> 最新增量（安装/OAuth 诊断与脱敏导出）：2026-07-28 Plugin Management 前端新增普通用户和管理员均可使用的“安装诊断”入口，复用当前用户隔离的 `GET /api/plugins/installed` 与 `GET /api/plugins/{plugin_id}/oauth`，按 device_id 只读展示安装状态、Release、平台、依赖/权限/OAuth requirement、组件可用性、最近检查时间和选中 Plugin 的 OAuth provider/scope/连接状态。页面不新增跨用户后端查询或写接口；详情弹窗仅显示当前接口返回的诊断 JSON。新增默认脱敏 JSON 导出，剥离 owner_user_id、device_id、OAuth account_display 和错误原文，只保留状态、版本、组件、provider/scope、时间、has_error/has_account_display 等排障字段，不导出 token、屏幕/浏览器内容、用户文件内容或 Plugin UI 私有数据。验证通过 Plugin Management 前端 type-check、production build、Rustfmt 和 `git diff --check`；未启动服务、Mongo、浏览器、Office 或桌面控制，未占用端口，临时 `node_modules` symlink 与 `dist` 已清理。
 > 最新增量（Plugin audit 只读诊断）：2026-07-28 Plugin Management 前端新增 super admin “审计诊断”入口，接入既有 `GET /api/admin/plugin-audit`，可按 event、plugin_id、owner_user_id、device_id 查询 Marketplace、Catalog、Release、发布者审核、安装来源、OAuth 和偏好变更审计。表格展示事件、结果、Plugin/Release、用户、设备/组件和记录时间，详情弹窗只显示服务端已脱敏 JSON 投影；不新增写接口，不回显签名公钥、凭据、Hook stdout/stderr、工具 payload 或用户文件内容。
 > 最新增量（第三方发布文档与示例）：2026-07-28 新增 `docs/plugins/third-party-plugin-publishing.zh-CN.md`，固化第三方发布者从 trusted Admin Marketplace、publisher review、Release signing、signed Catalog sync 到 Local Connector immutable runtime snapshot 的发布路径；明确 publisher identity/key、Catalog/Release key usage、凭据、component-scoped permissions、Plugin UI resource origin 与真实环境验收边界。新增 CircleCI、Sentry、Build Web 三个示例 Manifest，分别覆盖 HTTP MCP adapter、Command、Agent、Plugin UI 和权限拆分，并由 `chatos_plugin_management_sdk` 集成测试直接 parse，防止示例随 schema 演进失效。该批不连接外部 SaaS、不启动服务、不占用端口。
 > 最新增量（Publisher onboarding/review）：2026-07-28 Plugin Management 新增 `plugin_publishers` 控制面、普通用户发布者申请页和 super admin 审核页。申请只允许 enabled/public/trusted `admin_registry` Marketplace，发布者需提交 publisher ID、名称、HTTPS 网站和 1-32 个 active Ed25519 release-only key，服务端强制 key publisher、usage、revocation 与申请身份一致；pending/approved/suspended 不可自行覆盖，rejected 可重新提交。管理员可 approve/reject/suspend/restore，拒绝和暂停必须有审核备注；approve 会把审核过的 Release key 通过 Marketplace snapshot CAS 合并进 trust root，并复用既有 key rotation/revocation progression 校验。手工 Admin Catalog Entry 和 Release 发布现在必须匹配 approved publisher identity 与 approved release key；外部 signed Catalog 同步和 bundled official Registry 不走人工审核入口。审计只记录 key IDs、决策和状态，不记录公钥内容。验证通过 Plugin Management backend 85 tests、lib Clippy `-D warnings`、前端 type-check/production build 和 Rustfmt；未启动服务、Mongo、浏览器或桌面应用，未占用端口。
@@ -3182,7 +3183,7 @@ POST /api/local/plugins/:plugin_id/oauth/disconnect
 - Bundled plugins 可随客户端发布，也可由签名 registry 更新。
 - Plugin Runtime Host 有独立兼容版本，Manifest 声明 minimum host version。
 - 服务端保留 release revoke 能力。
-- 客户端提供 installation diagnostics export，默认脱敏。
+- 客户端和 Plugin Management 提供 installation diagnostics export，默认脱敏。
 - 指标至少包含安装成功率、验证失败、依赖失败、OAuth 失败、prepare/execute/cancel、回滚和 crash recovery。
 - 不上传用户文件内容、屏幕内容、Chrome 页面内容、OAuth token 或 Plugin UI 私有数据。
 
