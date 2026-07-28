@@ -396,6 +396,74 @@ function assertNoObsoleteCriticalAliases(resources, platform) {
   }
 }
 
+function migrationVersionsFromDirectory(migrationsDir) {
+  const versions = fs.readdirSync(migrationsDir)
+    .filter((entry) => entry.endsWith('.sql'))
+    .map((entry) => {
+      const match = entry.match(/^0*(\d+)_.*\.sql$/);
+      if (!match) {
+        throw new Error(`SQLite migration has an unsupported filename: ${entry}`);
+      }
+      return Number.parseInt(match[1], 10);
+    })
+    .sort((a, b) => a - b);
+  if (!versions.length) {
+    throw new Error('Installed package contains no SQLite migrations');
+  }
+  if (new Set(versions).size !== versions.length) {
+    throw new Error('Installed package contains duplicate SQLite migration versions');
+  }
+  return versions;
+}
+
+function currentProcessCanExecuteTarget(platform) {
+  return (
+    (platform.startsWith('macos-') && process.platform === 'darwin')
+    || (platform.startsWith('windows-') && process.platform === 'win32')
+    || (platform.startsWith('linux-') && process.platform === 'linux')
+  );
+}
+
+function verifyEmbeddedSqliteMigrations(args, executablePath, migrationsDir) {
+  const resourceVersions = migrationVersionsFromDirectory(migrationsDir);
+  if (!currentProcessCanExecuteTarget(args.platform)) {
+    return {
+      verified: false,
+      reason: 'target executable cannot be run on this host',
+      resource_versions: resourceVersions,
+    };
+  }
+  const result = spawnSync(executablePath, ['--local-runtime-migration-versions'], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`Local Connector Core migration inventory failed: ${result.stderr || result.stdout || result.status}`);
+  }
+  const embeddedVersions = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => Number.parseInt(line, 10));
+  if (
+    embeddedVersions.some((version) => !Number.isSafeInteger(version))
+    || JSON.stringify(embeddedVersions) !== JSON.stringify(resourceVersions)
+  ) {
+    throw new Error(
+      `Local Connector Core embedded SQLite migrations do not match packaged resources: embedded=${embeddedVersions.join(',')} resources=${resourceVersions.join(',')}`,
+    );
+  }
+  return {
+    verified: true,
+    resource_versions: resourceVersions,
+    embedded_versions: embeddedVersions,
+  };
+}
+
 async function verifyChromeExtension(args) {
   const packagedRoot = requireDirectory(args.resources, 'chrome-extension', 'Chrome extension');
   const sourceComparison = await compareExactTrees(args.chromeExtensionSource, packagedRoot, 'Chrome extension');
@@ -726,9 +794,6 @@ async function main(args) {
   requireDirectory(args.resources, 'chatos-frontend', 'Bundled ChatOS frontend');
   requireRegularFile(args.resources, 'chatos-frontend/index.html', 'Bundled ChatOS frontend entrypoint');
   const migrations = requireDirectory(args.resources, 'sqlite-migrations', 'SQLite migrations');
-  if (!fs.readdirSync(migrations).some((entry) => entry.endsWith('.sql'))) {
-    throw new Error('Installed package contains no SQLite migrations');
-  }
 
   const packageArchitecture = args.platform.endsWith('-arm64') ? 'arm64' : 'x64';
   const macos = args.platform.startsWith('macos-');
@@ -751,6 +816,7 @@ async function main(args) {
     executables.push(verified);
     executablePaths.push(path.join(args.resources, relativePath));
   }
+  const localRuntimeMigrations = verifyEmbeddedSqliteMigrations(args, executablePaths[0], migrations);
 
   const [chromeExtension, browserRuntime, documentRuntime, bundles, electronRuntime] = await Promise.all([
     verifyChromeExtension(args),
@@ -770,6 +836,7 @@ async function main(args) {
     chrome_extension: chromeExtension,
     browser_runtime: browserRuntime,
     document_runtime: documentRuntime,
+    local_runtime_migrations: localRuntimeMigrations,
     plugin_bundles: bundles,
     electron_runtime: electronRuntime,
     code_signing: codeSigning,

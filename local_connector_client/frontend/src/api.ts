@@ -163,12 +163,31 @@ export const api = {
     request<CommandHistoryResponse>('/api/local/commands', {
       method: 'DELETE',
     }),
-  runtimeSettings: () => request<LocalRuntimeSettings>('/api/local/runtime-settings'),
-  updateRuntimeSettings: (payload: UpdateLocalRuntimeSettingsPayload) =>
-    request<LocalRuntimeSettings>('/api/local/runtime-settings', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  runtimeSettings: async () => {
+    try {
+      return await request<LocalRuntimeSettings>('/api/local/runtime-settings');
+    } catch (error) {
+      const fallback = window.chatosLocalConnector?.runtimeSettings;
+      if (fallback && isCoreBridgeUnavailable(error)) {
+        return fallback();
+      }
+      throw error;
+    }
+  },
+  updateRuntimeSettings: async (payload: UpdateLocalRuntimeSettingsPayload) => {
+    try {
+      return await request<LocalRuntimeSettings>('/api/local/runtime-settings', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      const fallback = window.chatosLocalConnector?.updateRuntimeSettings;
+      if (fallback && isCoreBridgeUnavailable(error)) {
+        return fallback(payload);
+      }
+      throw error;
+    }
+  },
   chromeIntegration: () => request<ChromeIntegrationStatus>('/api/local/chrome-integration'),
   enableChromeIntegration: () => request<ChromeIntegrationStatus>(
     '/api/local/chrome-integration/enable',
@@ -353,3 +372,10 @@ export const api = {
       method: 'DELETE',
     }),
 };
+
+function isCoreBridgeUnavailable(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /ENOENT|ECONNREFUSED|ECONNRESET|socket|pipe|Local Connector Core/i.test(error.message);
+}

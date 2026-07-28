@@ -14,6 +14,14 @@ use super::LocalRuntimeDatabaseHealth;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+pub(crate) fn embedded_migration_versions() -> Vec<i64> {
+    MIGRATOR
+        .migrations
+        .iter()
+        .map(|migration| migration.version)
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LocalDatabase {
     pool: SqlitePool,
