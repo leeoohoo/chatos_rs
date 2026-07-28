@@ -76,11 +76,80 @@ if [[ -e "$DIST_DIR" ]]; then
   /usr/bin/find "$DIST_DIR" -depth -delete
 fi
 
+document_runtime_source_has_tools() {
+  local source_root="${1:?source root is required}"
+  [[ -d "$source_root" && ! -L "$source_root" ]] || return 1
+
+  local has_libreoffice=0
+  if [[ -x "$source_root/libreoffice-headless/libreoffice/LibreOffice.app/Contents/MacOS/soffice" \
+    || -x "$source_root/libreoffice-headless/libreoffice/LibreOfficeDev.app/Contents/MacOS/soffice" \
+    || -x "$source_root/libreoffice/LibreOffice.app/Contents/MacOS/soffice" \
+    || -x "$source_root/libreoffice/LibreOfficeDev.app/Contents/MacOS/soffice" ]]; then
+    has_libreoffice=1
+  fi
+
+  local has_poppler=0
+  if [[ -x "$source_root/poppler/poppler/bin/pdftoppm" \
+    || -x "$source_root/poppler/bin/pdftoppm" ]]; then
+    has_poppler=1
+  fi
+
+  [[ "$has_libreoffice" == "1" && "$has_poppler" == "1" ]]
+}
+
+copy_document_runtime_source() {
+  local source_root="${1:?source root is required}"
+  local destination_root="${2:?destination root is required}"
+  case "$destination_root" in
+    "$HOME/Library/Caches/chatos-local-connector/document-runtime-source/"*) ;;
+    *)
+      echo "Refusing to replace unexpected document runtime cache path: $destination_root" >&2
+      exit 1
+      ;;
+  esac
+
+  local temporary_root="$destination_root.partial.$$"
+  if [[ -e "$temporary_root" ]]; then
+    /usr/bin/find "$temporary_root" -depth -delete
+  fi
+  if [[ -e "$destination_root" ]]; then
+    /usr/bin/find "$destination_root" -depth -delete
+  fi
+
+  mkdir -p "$temporary_root"
+  if [[ -d "$source_root/libreoffice-headless" ]]; then
+    ditto "$source_root/libreoffice-headless" "$temporary_root/libreoffice-headless"
+  else
+    mkdir -p "$temporary_root/libreoffice"
+    ditto "$source_root/libreoffice" "$temporary_root/libreoffice"
+  fi
+  if [[ -d "$source_root/poppler/poppler" ]]; then
+    mkdir -p "$temporary_root/poppler"
+    ditto "$source_root/poppler" "$temporary_root/poppler"
+  else
+    ditto "$source_root/poppler" "$temporary_root/poppler"
+  fi
+
+  if ! document_runtime_source_has_tools "$temporary_root"; then
+    echo "Imported document runtime source is incomplete: $temporary_root" >&2
+    /usr/bin/find "$temporary_root" -depth -delete
+    exit 1
+  fi
+  mv "$temporary_root" "$destination_root"
+}
+
+CHATOS_DOCUMENT_RUNTIME_REPO_SOURCE="$CLIENT_DIR/runtime_assets/document-runtime-source/$TOOLS_PLATFORM"
+CHATOS_DOCUMENT_RUNTIME_CACHE_SOURCE="${CHATOS_DOCUMENT_RUNTIME_SOURCE_CACHE:-$HOME/Library/Caches/chatos-local-connector/document-runtime-source/$TOOLS_PLATFORM}"
 if [[ -z "${CHATOS_DOCUMENT_RUNTIME_SOURCE:-}" ]]; then
-  if [[ "${CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE:-0}" == "1" ]]; then
+  if document_runtime_source_has_tools "$CHATOS_DOCUMENT_RUNTIME_REPO_SOURCE"; then
+    export CHATOS_DOCUMENT_RUNTIME_SOURCE="$CHATOS_DOCUMENT_RUNTIME_REPO_SOURCE"
+    echo "[INFO] Using bundled ChatOS document runtime source: $CHATOS_DOCUMENT_RUNTIME_SOURCE"
+  elif document_runtime_source_has_tools "$CHATOS_DOCUMENT_RUNTIME_CACHE_SOURCE"; then
+    export CHATOS_DOCUMENT_RUNTIME_SOURCE="$CHATOS_DOCUMENT_RUNTIME_CACHE_SOURCE"
+    echo "[INFO] Using cached ChatOS document runtime source: $CHATOS_DOCUMENT_RUNTIME_SOURCE"
+  elif [[ "${CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE:-0}" == "1" ]]; then
     CODEX_DOCUMENT_RUNTIME_SOURCE="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/native"
-    if [[ ! -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/libreoffice-headless/libreoffice/LibreOfficeDev.app/Contents/MacOS/soffice" \
-      || ! -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/poppler/bin/pdftoppm" ]]; then
+    if ! document_runtime_source_has_tools "$CODEX_DOCUMENT_RUNTIME_SOURCE"; then
       cat >&2 <<EOF
 CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE=1 was set, but the Codex document runtime source is not available or incomplete:
 
@@ -97,13 +166,21 @@ No new DMG or app was produced. The stale output directory has already been remo
 EOF
       exit 1
     fi
-    export CHATOS_DOCUMENT_RUNTIME_SOURCE="$CODEX_DOCUMENT_RUNTIME_SOURCE"
-    echo "[WARN] Using Codex document runtime source for local testing only: $CHATOS_DOCUMENT_RUNTIME_SOURCE"
+    echo "[WARN] Importing Codex document runtime source into the ChatOS local cache for temporary local testing only."
+    echo "[WARN] Source: $CODEX_DOCUMENT_RUNTIME_SOURCE"
+    echo "[WARN] Cache:  $CHATOS_DOCUMENT_RUNTIME_CACHE_SOURCE"
+    copy_document_runtime_source "$CODEX_DOCUMENT_RUNTIME_SOURCE" "$CHATOS_DOCUMENT_RUNTIME_CACHE_SOURCE"
+    export CHATOS_DOCUMENT_RUNTIME_SOURCE="$CHATOS_DOCUMENT_RUNTIME_CACHE_SOURCE"
   else
     cat >&2 <<'EOF'
-CHATOS_DOCUMENT_RUNTIME_SOURCE is not set.
+ChatOS document runtime source was not found.
 
-Set it to your verified LibreOffice + Poppler runtime root before packaging, for example:
+The macOS package needs a ChatOS-owned LibreOffice + Poppler runtime source. The packaging script checks these locations automatically:
+
+  local_connector_client/runtime_assets/document-runtime-source/<platform>
+  ~/Library/Caches/chatos-local-connector/document-runtime-source/<platform>
+
+You can still override the source explicitly:
 
   CHATOS_DOCUMENT_RUNTIME_SOURCE=/path/to/document-runtime-source ./package-electron-macos-client.sh
 
@@ -112,11 +189,11 @@ Expected source layout:
   <root>/libreoffice-headless/libreoffice/LibreOffice*.app/Contents/MacOS/soffice
   <root>/poppler/bin/pdftoppm
 
-For a temporary local-only verification build on this Mac, you may explicitly opt in to the Codex-bundled runtime source:
+For a temporary local-only verification build on this Mac, you may explicitly import the Codex-bundled runtime source into the ChatOS cache:
 
   CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE=1 ./package-electron-macos-client.sh
 
-Do not use that option for official builds.
+Do not use the Codex import option for official builds.
 EOF
     cat >&2 <<EOF
 

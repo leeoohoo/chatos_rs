@@ -56,6 +56,14 @@ Run the reusable packaging script on macOS:
 ./local_connector_client/package-electron-macos-client.sh
 ```
 
+The macOS package includes a ChatOS-owned document runtime for Word/PDF tooling. The script looks for the runtime source in this order:
+
+1. `CHATOS_DOCUMENT_RUNTIME_SOURCE`, for CI or release builds that provide a verified runtime source explicitly.
+2. `local_connector_client/runtime_assets/document-runtime-source/<platform>`, for a repo- or artifact-provided ChatOS runtime source.
+3. `~/Library/Caches/chatos-local-connector/document-runtime-source/<platform>`, for the local ChatOS runtime cache.
+
+For temporary local verification only, `CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE=1` imports Codex's bundled LibreOffice/Poppler source into the ChatOS cache and then packages from that ChatOS-owned cache. Official builds should provide the ChatOS runtime source directly instead of using the Codex import option.
+
 The script validates the 28-entry Skill catalog, stages the 12 signed-control-plane Plugin Bundles with exact manifest/artifact hashes, checksums, and SPDX SBOMs, filters platform assets, verifies the staged Plugin index, detects Apple Silicon versus Intel, builds the desktop resources, and writes a DMG under:
 
 ```text

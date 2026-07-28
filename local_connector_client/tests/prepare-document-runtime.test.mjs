@@ -12,6 +12,10 @@ const macosScript = fs.readFileSync(
   path.join(clientDir, 'prepare-document-runtime-macos.sh'),
   'utf8',
 );
+const macosPackageScript = fs.readFileSync(
+  path.join(clientDir, 'package-electron-macos-client.sh'),
+  'utf8',
+);
 const windowsScript = fs.readFileSync(
   path.join(clientDir, 'prepare-document-runtime-windows.ps1'),
   'utf8',
@@ -33,4 +37,24 @@ test('Windows runtime manifest is written as UTF-8 without a BOM', () => {
   assert.match(windowsScript, /UTF8Encoding\(\$false\)/);
   assert.match(windowsScript, /\[System\.IO\.File\]::WriteAllText/);
   assert.doesNotMatch(windowsScript, /Set-Content[^\r\n]*runtime\.json/);
+});
+
+test('macOS package script prefers ChatOS-owned document runtime sources', () => {
+  assert.match(
+    macosPackageScript,
+    /runtime_assets\/document-runtime-source\/\$TOOLS_PLATFORM/,
+  );
+  assert.match(
+    macosPackageScript,
+    /Library\/Caches\/chatos-local-connector\/document-runtime-source\/\$TOOLS_PLATFORM/,
+  );
+  assert.match(macosPackageScript, /copy_document_runtime_source/);
+  assert.match(
+    macosPackageScript,
+    /Importing Codex document runtime source into the ChatOS local cache/,
+  );
+  assert.doesNotMatch(
+    macosPackageScript,
+    /export CHATOS_DOCUMENT_RUNTIME_SOURCE="\$CODEX_DOCUMENT_RUNTIME_SOURCE"/,
+  );
 });
