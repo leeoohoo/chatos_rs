@@ -15,6 +15,7 @@ import { BrowserSessionEventsCard } from './BrowserSessionEventsCard';
 import { PluginRunSnapshotCard } from './PluginRunSnapshotCard';
 import { PluginRuntimeEventsCard } from './PluginRuntimeEventsCard';
 import { PluginUiWorkbenchCard } from './PluginUiWorkbenchCard';
+import { TaskCapabilitySummaryCard } from './TaskCapabilitySummaryCard';
 import { extractReportContent, formatDateTime, isRecord, readString } from './utils';
 
 interface MessageTaskRunDetailModalProps {
@@ -114,6 +115,7 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       />
 
       <PluginRunSnapshotCard inputSnapshot={run.input_snapshot} />
+      <TaskCapabilitySummaryCard mcpConfig={task.mcp_config} />
       <BrowserSessionEventsCard events={events} />
       <PluginRuntimeEventsCard events={events} />
       {messageId && taskLookup ? (

@@ -364,6 +364,16 @@ impl LocalTaskRunnerServiceProvider {
             .iter()
             .filter_map(|item| item.get("id").cloned())
             .collect::<Vec<_>>();
+        let skill_options = self
+            .available_skills
+            .iter()
+            .filter_map(|item| catalog_option_schema(item, "id"))
+            .collect::<Vec<_>>();
+        let selected_skill_items = if skill_options.is_empty() {
+            json!({"type": "string", "enum": skill_ids})
+        } else {
+            json!({"type": "string", "oneOf": skill_options})
+        };
         json!({
             "title": {"type": "string", "minLength": 1, "description": "任务标题。"},
             "description": {"type": "string", "description": "任务背景和上下文。"},
@@ -391,7 +401,7 @@ impl LocalTaskRunnerServiceProvider {
                 "type": "array",
                 "items": {"type": "string", "enum": builtin_kinds},
                 "uniqueItems": true,
-                "description": "只能选择插件管理对本地 Task Runner Run Phase 开放的内置能力。需要写入能力时必须同时选择读取能力。"
+                "description": "只能选择插件管理对本地 Task Runner Run Phase 开放的内置能力。网页自动化/网页检索选择 BrowserTools；终端命令选择 TerminalController；需要写入能力时必须同时选择读取能力。不要把本机桌面 App 操作误归类为 BrowserTools。"
             },
             "external_mcp_config_ids": {
                 "type": "array",
@@ -400,8 +410,9 @@ impl LocalTaskRunnerServiceProvider {
             },
             "selected_skill_ids": {
                 "type": "array",
-                "items": {"type": "string", "enum": skill_ids},
-                "uniqueItems": true
+                "items": selected_skill_items,
+                "uniqueItems": true,
+                "description": "插件 / Skill 多选框字段。根据任务目标从 items.oneOf 中选择 0 个或多个可用插件 ID；每个选项都带有人类可读名称和用途说明。网页浏览优先 BrowserTools；本机桌面 App、屏幕、窗口、鼠标键盘使用 Computer Use；文档/PDF/表格/演示文稿按文件类型选择对应 Skill。不要选择与任务无关的插件。"
             }
         })
     }
@@ -1415,6 +1426,32 @@ fn normalize_ids(values: Vec<String>) -> Vec<String> {
         }
         out
     })
+}
+
+fn catalog_option_schema(item: &Value, id_key: &str) -> Option<Value> {
+    let id = item.get(id_key)?.as_str()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let display_name = item
+        .get("display_name")
+        .or_else(|| item.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(id);
+    let description = item
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some(json!({
+        "const": id,
+        "title": display_name,
+        "description": description
+            .map(|value| format!("{display_name} ({id}): {value}"))
+            .unwrap_or_else(|| format!("{display_name} ({id})")),
+    }))
 }
 
 fn normalized(value: Option<String>) -> Option<String> {

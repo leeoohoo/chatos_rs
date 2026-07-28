@@ -11,6 +11,7 @@ import type {
 } from '../../lib/api/client/types';
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, ModalShell, StatusBadge, valueOrDash } from './parts';
+import { TaskCapabilitySummaryCard } from './TaskCapabilitySummaryCard';
 import { formatDateTime, isRecord, readString, readStringArray } from './utils';
 
 interface MessageTaskDetailModalProps {
@@ -307,7 +308,10 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
         title="MCP / 工作区 / 服务器"
         summary={valueOrDash(isRecord(task.mcp_config) ? task.mcp_config.workspace_dir : null)}
       >
-        <CollapsibleText value={task.mcp_config || '-'} code />
+        <div className="space-y-3">
+          <TaskCapabilitySummaryCard mcpConfig={task.mcp_config} />
+          <CollapsibleText value={task.mcp_config || '-'} code />
+        </div>
       </CollapsibleSection>
 
       <CollapsibleSection
