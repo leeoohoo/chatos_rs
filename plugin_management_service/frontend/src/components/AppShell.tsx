@@ -3,7 +3,6 @@
 
 import {
   ApiOutlined,
-  AppstoreOutlined,
   BranchesOutlined,
   GlobalOutlined,
   LogoutOutlined,
@@ -11,7 +10,6 @@ import {
   RobotOutlined,
   SafetyCertificateOutlined,
   ShopOutlined,
-  ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
@@ -22,8 +20,6 @@ import type { CurrentUser } from '../types';
 
 export type AppSection =
   | 'mcps'
-  | 'skills'
-  | 'packages'
   | 'marketplaces'
   | 'plugins'
   | 'releases'
@@ -41,8 +37,6 @@ export function AppShell({ user, section, onSectionChange, children }: AppShellP
   const { locale, setLocale, t } = useI18n();
   const menuItems = [
     { key: 'mcps', icon: <ApiOutlined />, label: t('nav.mcps') },
-    { key: 'skills', icon: <ThunderboltOutlined />, label: t('nav.skills') },
-    { key: 'packages', icon: <AppstoreOutlined />, label: t('nav.packages') },
     { key: 'marketplaces', icon: <ShopOutlined />, label: t('nav.pluginMarketplaces') },
     ...(user.role === 'super_admin'
       ? [

@@ -203,23 +203,6 @@ export interface SkillRecord extends PluginComponentOwnership {
   updated_at: string;
 }
 
-export interface SkillPackageRecord {
-  id: string;
-  owner_user_id: string;
-  visibility: Visibility;
-  source_kind: string;
-  name: string;
-  description?: string | null;
-  repository?: string | null;
-  branch?: string | null;
-  cache_ref?: string | null;
-  local_connector?: LocalConnectorRef | null;
-  skill_ids: string[];
-  installed: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface SystemAgentRecord extends PluginComponentOwnership {
   id: string;
   agent_key: string;

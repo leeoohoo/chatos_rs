@@ -20,8 +20,6 @@ import type {
   OptimizeProviderSkillStreamEvent,
   ResourceCheckRecord,
   RuntimeCapabilitiesResponse,
-  SkillPackageRecord,
-  SkillRecord,
   SystemAgentRecord,
 } from '../types';
 import type {
@@ -128,42 +126,6 @@ export const api = {
         body: JSON.stringify({ instructions }),
       },
     ),
-  listSkills: (params?: Record<string, QueryValue>) =>
-    request<ListResponse<SkillRecord>>(withQuery('/api/skills', params || {})),
-  createSkill: (payload: unknown) =>
-    request<SkillRecord>('/api/skills', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateSkill: (id: string, payload: unknown) =>
-    request<SkillRecord>(`/api/skills/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-  deleteSkill: (id: string) =>
-    request<void>(`/api/skills/${id}`, {
-      method: 'DELETE',
-    }),
-  checkSkill: (id: string) =>
-    request<ResourceCheckRecord>(`/api/skills/${id}/check`, {
-      method: 'POST',
-    }),
-  listSkillPackages: (params?: Record<string, QueryValue>) =>
-    request<ListResponse<SkillPackageRecord>>(withQuery('/api/skill-packages', params || {})),
-  createSkillPackage: (payload: unknown) =>
-    request<SkillPackageRecord>('/api/skill-packages', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateSkillPackage: (id: string, payload: unknown) =>
-    request<SkillPackageRecord>(`/api/skill-packages/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-  deleteSkillPackage: (id: string) =>
-    request<void>(`/api/skill-packages/${id}`, {
-      method: 'DELETE',
-    }),
   listPluginMarketplaces: () =>
     request<ListResponse<PluginMarketplaceRecord>>('/api/plugin-marketplaces'),
   createPluginMarketplace: (payload: unknown) =>

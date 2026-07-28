@@ -359,22 +359,6 @@ impl AppStore {
         Ok(())
     }
 
-    pub async fn delete_skill(&self, id: &str) -> Result<(), String> {
-        self.skills
-            .delete_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        self.skill_preferences
-            .delete_many(doc! { "skill_id": id }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        self.skill_installations
-            .delete_many(doc! { "skill_id": id }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
     pub async fn list_skill_packages(
         &self,
         user: &CurrentUser,
@@ -403,22 +387,6 @@ impl AppStore {
             .find_one(doc! { "id": id }, None)
             .await
             .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_skill_package(&self, record: &SkillPackageRecord) -> Result<(), String> {
-        self.skill_packages
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn delete_skill_package(&self, id: &str) -> Result<(), String> {
-        self.skill_packages
-            .delete_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
     }
 
     pub async fn list_agents(&self) -> Result<Vec<SystemAgentRecord>, String> {

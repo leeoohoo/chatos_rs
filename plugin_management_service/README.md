@@ -53,8 +53,8 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 ## 主要 API
 
 - `/api/mcps`
-- `/api/skills`
-- `/api/skill-packages`
+- `/api/skills`（只读兼容；创建、修改和删除统一通过 Plugin Release）
+- `/api/skill-packages`（只读兼容；旧写接口已移除）
 - `/api/system-agents`
 - `/api/system-agents/:agent_key/mcp-bindings`
 - `/api/plugin-marketplaces`

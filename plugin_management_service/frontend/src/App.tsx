@@ -10,8 +10,6 @@ import { AppShell, type AppSection } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
 import { McpCatalogPage } from './pages/McpCatalogPage';
 import { RuntimePreviewPage } from './pages/RuntimePreviewPage';
-import { SkillCatalogPage } from './pages/SkillCatalogPage';
-import { SkillPackagesPage } from './pages/SkillPackagesPage';
 import { SystemAgentsPage } from './pages/SystemAgentsPage';
 import { PluginCatalogAdminPage } from './pages/PluginCatalogAdminPage';
 import { PluginMarketplacesPage } from './pages/PluginMarketplacesPage';
@@ -61,8 +59,6 @@ export function App() {
       }}
     >
       {section === 'mcps' ? <McpCatalogPage user={user} /> : null}
-      {section === 'skills' ? <SkillCatalogPage user={user} /> : null}
-      {section === 'packages' ? <SkillPackagesPage user={user} /> : null}
       {section === 'marketplaces' ? <PluginMarketplacesPage user={user} /> : null}
       {section === 'plugins' ? (
         <PluginCatalogAdminPage

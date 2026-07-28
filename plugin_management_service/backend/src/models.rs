@@ -141,19 +141,6 @@ pub struct McpPayload {
     pub metadata: Option<ResourceMetadata>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SkillPayload {
-    pub owner_user_id: Option<String>,
-    pub visibility: Option<String>,
-    pub source_kind: Option<String>,
-    pub name: Option<String>,
-    pub display_name: Option<String>,
-    pub description: Option<String>,
-    pub enabled: Option<bool>,
-    pub content: Option<SkillContent>,
-    pub metadata: Option<ResourceMetadata>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillPackageRecord {
     pub id: String,
@@ -171,21 +158,6 @@ pub struct SkillPackageRecord {
     pub installed: bool,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SkillPackagePayload {
-    pub owner_user_id: Option<String>,
-    pub visibility: Option<String>,
-    pub source_kind: Option<String>,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub repository: Option<String>,
-    pub branch: Option<String>,
-    pub cache_ref: Option<String>,
-    pub local_connector: Option<LocalConnectorRef>,
-    pub skill_ids: Option<Vec<String>>,
-    pub installed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
