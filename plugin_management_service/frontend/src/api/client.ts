@@ -23,6 +23,7 @@ import type {
   SystemAgentRecord,
 } from '../types';
 import type {
+  PluginAuditLogRecord,
   PluginCatalogRecord,
   PluginCatalogSyncResponse,
   PluginMarketplaceRecord,
@@ -189,6 +190,10 @@ export const api = {
     request<PluginReleaseRecord>(
       `/api/admin/plugin-releases/${encodeURIComponent(releaseId)}/revoke`,
       { method: 'POST' },
+    ),
+  listPluginAudit: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginAuditLogRecord>>(
+      withQuery('/api/admin/plugin-audit', params || {}),
     ),
   listSystemAgents: () => request<SystemAgentRecord[]>('/api/system-agents'),
   createSystemAgent: (payload: unknown) =>

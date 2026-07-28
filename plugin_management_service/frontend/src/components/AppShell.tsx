@@ -3,6 +3,7 @@
 
 import {
   ApiOutlined,
+  AuditOutlined,
   BranchesOutlined,
   GlobalOutlined,
   LogoutOutlined,
@@ -26,7 +27,8 @@ export type AppSection =
   | 'plugins'
   | 'releases'
   | 'agents'
-  | 'runtime';
+  | 'runtime'
+  | 'audit';
 
 interface AppShellProps {
   user: CurrentUser;
@@ -47,6 +49,7 @@ export function AppShell({ user, section, onSectionChange, children }: AppShellP
           { key: 'releases', icon: <RocketOutlined />, label: t('nav.pluginReleases') },
           { key: 'agents', icon: <RobotOutlined />, label: t('nav.agents') },
           { key: 'runtime', icon: <BranchesOutlined />, label: t('nav.runtime') },
+          { key: 'audit', icon: <AuditOutlined />, label: t('nav.pluginAudit') },
         ]
       : []),
   ];

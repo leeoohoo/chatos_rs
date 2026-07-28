@@ -12,6 +12,7 @@ import { McpCatalogPage } from './pages/McpCatalogPage';
 import { RuntimePreviewPage } from './pages/RuntimePreviewPage';
 import { SystemAgentsPage } from './pages/SystemAgentsPage';
 import { PluginCatalogAdminPage } from './pages/PluginCatalogAdminPage';
+import { PluginAuditPage } from './pages/PluginAuditPage';
 import { PluginMarketplacesPage } from './pages/PluginMarketplacesPage';
 import { PluginPublishersPage } from './pages/PluginPublishersPage';
 import { PluginReleasesPage } from './pages/PluginReleasesPage';
@@ -85,6 +86,7 @@ export function App() {
         <SystemAgentsPage user={user} onOpenPromptSettings={setPromptAgentKey} />
       ) : null}
       {section === 'runtime' ? <RuntimePreviewPage user={user} /> : null}
+      {section === 'audit' ? <PluginAuditPage user={user} /> : null}
     </AppShell>
   );
 }

@@ -55,6 +55,19 @@ export interface PluginCatalogSyncResponse {
   synced_at: string;
 }
 
+export interface PluginAuditLogRecord {
+  id: string;
+  event: string;
+  owner_user_id: string;
+  device_id?: string | null;
+  plugin_id: string;
+  release_id?: string | null;
+  component_key?: string | null;
+  outcome: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface PluginPublisherRecord {
   id: string;
   publisher_id: string;
