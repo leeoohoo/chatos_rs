@@ -137,6 +137,13 @@ use self::workspace_mcp::{
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
+const TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY: &str = "task_runner.runtime.max_iterations";
+const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
+const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
+    "task_runner.execution.environment_mode";
+const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str = "task_runner.ai.tool_result_max_chars";
+const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
+    "task_runner.ai.tool_results_total_max_chars";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunTriggerSource {

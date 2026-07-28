@@ -235,7 +235,7 @@ mod execution_policy_tests {
 
     #[tokio::test]
     async fn implementation_tasks_reserve_a_tool_free_finalization_round() {
-        assert_eq!(DEFAULT_TASK_RUN_MAX_ITERATIONS, 25);
+        assert_eq!(DEFAULT_TASK_RUN_MAX_ITERATIONS, 600);
         let hook = TaskFinalizationLifecycleHook::new(DEFAULT_TASK_RUN_MAX_ITERATIONS);
 
         let normal = hook

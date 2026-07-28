@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::{
-    AGENT_MAX_ITERATIONS_CONFIG_KEY, AGENT_MAX_ITERATIONS_ENV, DEFAULT_AGENT_MAX_ITERATIONS,
-    LEGACY_CHATOS_MAX_ITERATIONS_ENV, LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-};
+use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
 use chrono::Utc;
 use memory_engine_sdk::{
     memory_policy_config_key, memory_policy_env_key, ManagedMemoryPolicy, MemoryPolicyKind,
@@ -19,6 +16,22 @@ pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
     "chatos.ai.max_iterations",
     "task_runner.execution.max_iterations",
 ];
+pub const TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY: &str = "task_runner.runtime.max_iterations";
+pub const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
+pub const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
+    "task_runner.execution.environment_mode";
+pub const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str =
+    "task_runner.ai.tool_result_max_chars";
+pub const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
+    "task_runner.ai.tool_results_total_max_chars";
+
+pub fn default_task_runner_execution_environment_mode() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "cloud"
+    } else {
+        "local"
+    }
+}
 
 pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let now = Utc::now().to_rfc3339();
@@ -53,11 +66,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(5000),
             &[],
             "next_request",
-            &[
-                AGENT_MAX_ITERATIONS_ENV,
-                LEGACY_CHATOS_MAX_ITERATIONS_ENV,
-                LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-            ],
+            &[],
             100,
             &now,
         ),
@@ -147,24 +156,24 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
-            "task_runner.runtime.max_iterations",
+            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
             "任务执行最大迭代次数",
             "单次 Task Run 允许的模型与工具循环总次数；最后两轮会自动关闭工具并强制收尾",
             "Task Runner / Execution",
             "service",
             Some("task-runner"),
             "integer",
-            json!(25),
+            json!(DEFAULT_AGENT_MAX_ITERATIONS),
             Some(2),
-            Some(500),
+            Some(5000),
             &[],
             "next_run",
-            &["TASK_RUNNER_EXECUTION_MAX_ITERATIONS"],
+            &[],
             200,
             &now,
         ),
         definition(
-            "task_runner.execution.timeout_ms",
+            TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
             "任务执行超时",
             "单次 Task Run 执行超时毫秒数",
             "Task Runner / Execution",
@@ -176,12 +185,29 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(86_400_000),
             &[],
             "next_run",
-            &["TASK_RUNNER_EXECUTION_TIMEOUT_MS"],
+            &[],
             210,
             &now,
         ),
         definition(
-            "task_runner.ai.tool_result_max_chars",
+            TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
+            "任务执行环境模式",
+            "控制 Task Run 默认在本地执行还是云端沙箱执行",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "enum",
+            json!(default_task_runner_execution_environment_mode()),
+            None,
+            None,
+            &["local", "cloud"],
+            "next_run",
+            &[],
+            215,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
             "单工具结果字符上限",
             "单个工具结果进入模型上下文的最大字符数",
             "Task Runner / AI",
@@ -193,12 +219,12 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(10_000_000),
             &[],
             "next_run",
-            &["CHATOS_AI_TOOL_RESULT_MODEL_MAX_CHARS"],
+            &[],
             220,
             &now,
         ),
         definition(
-            "task_runner.ai.tool_results_total_max_chars",
+            TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
             "工具结果总字符上限",
             "一轮所有工具结果进入模型上下文的总字符预算",
             "Task Runner / AI",
@@ -210,7 +236,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(100_000_000),
             &[],
             "next_run",
-            &["CHATOS_AI_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS"],
+            &[],
             230,
             &now,
         ),
@@ -541,14 +567,54 @@ mod tests {
         assert_eq!(shared.scope, "shared");
         assert_eq!(shared.service_name, None);
         assert_eq!(shared.default_value, json!(DEFAULT_AGENT_MAX_ITERATIONS));
+        assert!(shared.env_aliases.is_empty());
 
         let task_runner = iteration_definitions
             .iter()
-            .find(|definition| definition.key == "task_runner.runtime.max_iterations")
+            .find(|definition| definition.key == TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
             .expect("task runner iteration definition");
         assert_eq!(task_runner.scope, "service");
         assert_eq!(task_runner.service_name.as_deref(), Some("task-runner"));
-        assert_eq!(task_runner.default_value, json!(25));
+        assert_eq!(
+            task_runner.default_value,
+            json!(DEFAULT_AGENT_MAX_ITERATIONS)
+        );
+        assert_eq!(task_runner.max, Some(5000));
+        assert!(task_runner.env_aliases.is_empty());
+    }
+
+    #[test]
+    fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
+        let definitions = builtin_definitions();
+        for key in [
+            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
+            TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
+            TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
+            TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
+            TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
+        ] {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.key == key)
+                .unwrap_or_else(|| panic!("missing definition for {key}"));
+            assert_eq!(definition.scope, "service");
+            assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
+            assert!(
+                definition.env_aliases.is_empty(),
+                "{key} must be managed from configuration-center values, not env aliases"
+            );
+        }
+
+        let environment_mode = definitions
+            .iter()
+            .find(|definition| definition.key == TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY)
+            .expect("task runner execution environment mode definition");
+        assert_eq!(environment_mode.value_type, "enum");
+        assert_eq!(
+            environment_mode.default_value,
+            json!(default_task_runner_execution_environment_mode())
+        );
+        assert_eq!(environment_mode.enum_options, vec!["local", "cloud"]);
     }
 
     #[test]

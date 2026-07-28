@@ -119,11 +119,7 @@ impl AppState {
     }
 
     pub(super) async fn migrate_agent_max_iterations_config(&self) -> Result<(), String> {
-        use chatos_agent::{
-            AGENT_MAX_ITERATIONS_CONFIG_KEY, AGENT_MAX_ITERATIONS_ENV,
-            DEFAULT_AGENT_MAX_ITERATIONS, LEGACY_CHATOS_MAX_ITERATIONS_ENV,
-            LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-        };
+        use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
 
         let mut values_by_release = BTreeMap::new();
         for mut release in self.store.list_all_releases().await? {
@@ -205,10 +201,125 @@ impl AppState {
 
         tracing::info!(
             key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
-            env = AGENT_MAX_ITERATIONS_ENV,
-            legacy_chatos_env = LEGACY_CHATOS_MAX_ITERATIONS_ENV,
-            legacy_task_runner_env = LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-            "Agent max-iterations configuration is consolidated"
+            "Agent max-iterations configuration is consolidated in configuration center"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_task_runner_runtime_config(&self) -> Result<(), String> {
+        use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
+
+        let definitions = self.store.list_definitions().await?;
+        let task_runner_defaults = task_runner_service_default_values(&definitions);
+        let mut values_by_release = BTreeMap::new();
+        for mut release in self.store.list_all_releases().await? {
+            let mut release_defaults = task_runner_defaults.clone();
+            let selected_max_iterations = release
+                .values
+                .get(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
+                .cloned()
+                .or_else(|| release.values.get(AGENT_MAX_ITERATIONS_CONFIG_KEY).cloned())
+                .unwrap_or_else(|| json!(DEFAULT_AGENT_MAX_ITERATIONS));
+            release_defaults.insert(
+                TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
+                selected_max_iterations,
+            );
+            let changed_keys =
+                ensure_task_runner_runtime_values(&mut release.values, &release_defaults);
+            let release_values = release_defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                release_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "task-runner" {
+                continue;
+            }
+            let mut snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| task_runner_defaults.clone());
+            if !snapshot
+                .values
+                .contains_key(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
+            {
+                if let Some(shared_max_iterations) = snapshot
+                    .values
+                    .get(AGENT_MAX_ITERATIONS_CONFIG_KEY)
+                    .cloned()
+                {
+                    snapshot_defaults.insert(
+                        TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
+                        shared_max_iterations,
+                    );
+                }
+            }
+            let changed =
+                !ensure_task_runner_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        for active in self.store.list_active_releases().await? {
+            let Some(release) = self.store.get_release(active.release_id.as_str()).await? else {
+                continue;
+            };
+            if let Err(err) = self
+                .publish_consul(
+                    active.environment.as_str(),
+                    active.revision,
+                    &definitions,
+                    &release.values,
+                )
+                .await
+            {
+                if self.config.consul_required {
+                    return Err(err);
+                }
+                tracing::warn!(
+                    environment = active.environment.as_str(),
+                    error = err.as_str(),
+                    "failed to republish Consul after adding Task Runner max-iterations configuration"
+                );
+            }
+        }
+
+        tracing::info!(
+            key = TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
+            fallback_key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
+            environment_mode_key = TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
+            "Task Runner runtime configuration is present in configuration center releases and snapshots"
         );
         Ok(())
     }

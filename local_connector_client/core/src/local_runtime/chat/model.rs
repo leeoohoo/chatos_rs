@@ -52,9 +52,10 @@ pub(super) async fn run_text_turn(
         .with_lifecycle_hook(Some(lifecycle_hook))
         .with_callbacks(callbacks)
         .with_record_options(RuntimeRecordOptions::persist_all());
+    let max_iterations = chatos_agent::load_agent_max_iterations("local-connector-service").await;
     AiRuntime::new(tool_executor)
         .with_record_writer(Some(record_writer))
-        .with_max_iterations(12)
+        .with_max_iterations(max_iterations)
         .run_turn(request, options)
         .await
 }

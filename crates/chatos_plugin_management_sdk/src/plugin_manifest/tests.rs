@@ -423,6 +423,8 @@ fn ui_contribution_rejects_remote_or_executable_assets_and_unknown_bridge_method
 
 #[test]
 fn agent_path_shorthand_uses_bounded_run_phase_defaults() {
+    assert_eq!(PLUGIN_AGENT_DEFAULT_MAX_ITERATIONS, 600);
+    assert_eq!(PLUGIN_AGENT_MAX_ITERATIONS, 5_000);
     let raw = CODEX_FIGMA_MANIFEST.replace(
         "\"interface\": {",
         "\"agents\": \"./agents/reviewer.md\", \"interface\": {",
@@ -441,7 +443,7 @@ fn agent_execution_metadata_rejects_unsafe_bounds() {
         r#"{"componentKey":"reviewer","source":"./agents/reviewer.md","baseAgent":"chatos_conversation_agent"}"#,
         r#"{"componentKey":"reviewer","source":"./agents/reviewer.md","allowedTools":["browser.tools/snapshot"]}"#,
         r#"{"componentKey":"reviewer","source":"./agents/reviewer.md","maxIterations":0}"#,
-        r#"{"componentKey":"reviewer","source":"./agents/reviewer.md","maxIterations":101}"#,
+        r#"{"componentKey":"reviewer","source":"./agents/reviewer.md","maxIterations":5001}"#,
     ] {
         let raw = CODEX_FIGMA_MANIFEST.replace(
             "\"interface\": {",

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 pub const PLUGIN_COMMAND_MAX_ALLOWED_TOOLS: usize = 128;
 pub const PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES: usize = 256;
-pub const PLUGIN_AGENT_DEFAULT_MAX_ITERATIONS: usize = 25;
-pub const PLUGIN_AGENT_MAX_ITERATIONS: usize = 100;
+pub const PLUGIN_AGENT_DEFAULT_MAX_ITERATIONS: usize = 600;
+pub const PLUGIN_AGENT_MAX_ITERATIONS: usize = 5_000;
 pub const PLUGIN_UI_MAX_ASSETS: usize = 256;
 pub const PLUGIN_UI_MAX_BRIDGE_CAPABILITIES: usize = 32;
 pub const PLUGIN_UI_MAX_ARTIFACT_MIME_TYPES: usize = 32;

@@ -297,10 +297,10 @@ impl AppState {
             validate_definition(definition, value, &mut errors);
         }
         let single = values
-            .get("task_runner.ai.tool_result_max_chars")
+            .get(TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY)
             .and_then(Value::as_i64);
         let total = values
-            .get("task_runner.ai.tool_results_total_max_chars")
+            .get(TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY)
             .and_then(Value::as_i64);
         if let (Some(single), Some(total)) = (single, total) {
             if total < single {

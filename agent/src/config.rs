@@ -2,26 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub const AGENT_MAX_ITERATIONS_CONFIG_KEY: &str = "agent.runtime.max_iterations";
-pub const AGENT_MAX_ITERATIONS_ENV: &str = "AGENT_MAX_ITERATIONS";
-pub const LEGACY_CHATOS_MAX_ITERATIONS_ENV: &str = "MAX_ITERATIONS";
-pub const LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV: &str = "TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS";
 pub const DEFAULT_AGENT_MAX_ITERATIONS: usize = 600;
-
-pub fn agent_max_iterations_from_env() -> usize {
-    [
-        AGENT_MAX_ITERATIONS_ENV,
-        LEGACY_CHATOS_MAX_ITERATIONS_ENV,
-        LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-    ]
-    .into_iter()
-    .find_map(|key| {
-        std::env::var(key)
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|value| *value > 0)
-    })
-    .unwrap_or(DEFAULT_AGENT_MAX_ITERATIONS)
-}
 
 #[cfg(feature = "managed-config")]
 pub fn resolve_agent_max_iterations(
@@ -43,7 +24,7 @@ pub async fn load_agent_max_iterations(service_name: &str) -> usize {
 
     static CLIENTS: OnceLock<Mutex<HashMap<String, Option<ConfigClient>>>> = OnceLock::new();
 
-    let fallback = agent_max_iterations_from_env();
+    let fallback = DEFAULT_AGENT_MAX_ITERATIONS;
     let service_name = service_name.trim();
     if service_name.is_empty() {
         return fallback;

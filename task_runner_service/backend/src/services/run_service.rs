@@ -61,7 +61,11 @@ impl RunService {
         let snapshot = load_managed_config_snapshot().await;
         Ok(snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.usize("task_runner.runtime.max_iterations"))
+            .and_then(|snapshot| {
+                snapshot
+                    .usize(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
+                    .or_else(|| snapshot.usize(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY))
+            })
             .unwrap_or(self.config.default_task_execution_max_iterations)
             .max(2))
     }
@@ -70,7 +74,7 @@ impl RunService {
         Ok(Duration::from_millis(
             load_managed_config_snapshot()
                 .await
-                .and_then(|snapshot| snapshot.u64("task_runner.execution.timeout_ms"))
+                .and_then(|snapshot| snapshot.u64(TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY))
                 .unwrap_or(self.config.execution_timeout.as_millis() as u64)
                 .max(1),
         ))
@@ -83,19 +87,30 @@ impl RunService {
         Ok(ToolResultModelBudgetLimits::new(
             snapshot
                 .as_ref()
-                .and_then(|snapshot| snapshot.usize("task_runner.ai.tool_result_max_chars"))
+                .and_then(|snapshot| snapshot.usize(TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY))
                 .unwrap_or(self.config.default_tool_result_model_max_chars),
             snapshot
                 .as_ref()
-                .and_then(|snapshot| snapshot.usize("task_runner.ai.tool_results_total_max_chars"))
+                .and_then(|snapshot| {
+                    snapshot.usize(TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY)
+                })
                 .unwrap_or(self.config.default_tool_results_model_total_max_chars),
         ))
     }
 
     pub(super) async fn effective_execution_environment_mode(&self) -> Result<String, String> {
-        Ok(normalize_execution_environment_mode(Some(
-            self.config.default_execution_environment_mode.as_str(),
-        )))
+        let snapshot = load_managed_config_snapshot().await;
+        Ok(normalize_execution_environment_mode(
+            snapshot
+                .as_ref()
+                .and_then(|snapshot| {
+                    snapshot.string(TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY)
+                })
+                .as_deref()
+                .or(Some(
+                    self.config.default_execution_environment_mode.as_str(),
+                )),
+        ))
     }
 
     pub(super) async fn effective_sandbox_enabled(&self) -> Result<bool, String> {

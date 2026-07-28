@@ -22,7 +22,7 @@ pub use self::report::TaskRunReport;
 pub use self::runtime_builder::TaskRuntimeBuilder;
 pub use self::spec::TaskRunSpec;
 
-pub const DEFAULT_TASK_RUN_MAX_ITERATIONS: usize = 25;
+pub const DEFAULT_TASK_RUN_MAX_ITERATIONS: usize = 600;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

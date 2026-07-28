@@ -7,8 +7,7 @@ use std::time::Duration;
 
 use chatos_ai_runtime::{
     DEFAULT_TASK_RUN_MAX_ITERATIONS, DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
-    DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS, TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
-    TOOL_RESULT_MODEL_MAX_CHARS_ENV,
+    DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
 };
 pub(super) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
@@ -42,10 +41,7 @@ impl AppConfig {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(30_000);
-        let execution_timeout_ms = std::env::var("TASK_RUNNER_EXECUTION_TIMEOUT_MS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS);
+        let execution_timeout_ms = DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS;
         let scheduler_poll_interval_ms = std::env::var("TASK_RUNNER_SCHEDULER_POLL_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -73,24 +69,11 @@ impl AppConfig {
                 )
             })
             .unwrap_or(false);
-        let default_task_execution_max_iterations = env_usize(
-            "TASK_RUNNER_EXECUTION_MAX_ITERATIONS",
-            DEFAULT_TASK_RUN_MAX_ITERATIONS,
-        );
-        let default_tool_result_model_max_chars = env_usize(
-            TOOL_RESULT_MODEL_MAX_CHARS_ENV,
-            DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
-        );
-        let default_tool_results_model_total_max_chars = env_usize(
-            TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
-            DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
-        );
+        let default_task_execution_max_iterations = DEFAULT_TASK_RUN_MAX_ITERATIONS;
+        let default_tool_result_model_max_chars = DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS;
+        let default_tool_results_model_total_max_chars = DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS;
         let default_execution_environment_mode =
-            normalized_env("TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE");
-        let default_execution_environment_mode =
-            crate::models::normalize_execution_environment_mode(
-                default_execution_environment_mode.as_deref(),
-            );
+            crate::models::default_execution_environment_mode();
         let default_sandbox_manager_base_url =
             normalized_env("TASK_RUNNER_SANDBOX_MANAGER_BASE_URL")
                 .unwrap_or_else(|| "http://127.0.0.1:8095".to_string());
@@ -290,14 +273,6 @@ fn default_worker_id() -> String {
         std::process::id(),
         uuid::Uuid::new_v4()
     )
-}
-
-pub(super) fn env_usize(key: &str, default_value: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_value)
 }
 
 pub(super) fn env_u64(key: &str, default_value: u64) -> u64 {

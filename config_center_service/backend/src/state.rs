@@ -13,7 +13,10 @@ use chatos_config_sdk::ConfigSnapshot;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::catalog::{
-    builtin_definitions, LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS, USER_PREFERENCE_CONFIG_KEYS,
+    builtin_definitions, LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS,
+    TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
+    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
+    TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY, USER_PREFERENCE_CONFIG_KEYS,
 };
 use crate::config::AppConfig;
 use crate::models::{
