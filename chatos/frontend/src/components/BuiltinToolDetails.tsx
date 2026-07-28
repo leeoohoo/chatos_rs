@@ -31,7 +31,9 @@ const CODE_MAINTAINER_TOOLS = new Set([
   'patch',
 ]);
 
-const isBrowserToolName = (name: string): boolean => name.startsWith('browser_');
+const isBrowserToolName = (name: string): boolean => (
+  name.startsWith('browser_') || name.startsWith('chrome_')
+);
 const isWebToolName = (name: string): boolean => name.startsWith('web_');
 const isCodeMaintainerToolName = (name: string): boolean => CODE_MAINTAINER_TOOLS.has(name);
 

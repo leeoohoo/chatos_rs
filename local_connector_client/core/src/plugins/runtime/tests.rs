@@ -1969,6 +1969,7 @@ async fn workspace_write_hook_requires_one_invocation_user_approval() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
+#[ignore = "requires `cargo build -p chatos_sandbox_mcp_server` before this test"]
 async fn signed_packaged_connector_hooks_run_end_to_end_without_a_listener() {
     let temp = TempDir::new().expect("temp directory");
     let package = TestSigner::new().package_with_packaged_hook_suite(temp.path(), "1.0.0");
@@ -4211,16 +4212,17 @@ async fn plugin_oauth_pkce_exchange_persists_tokens_locally_and_authorizes_mcp()
         .expect("complete OAuth authorization");
     assert_eq!(connection.provider, "demo");
     assert_eq!(connection.scopes, vec!["read"]);
-    let token_forms = captured_forms.lock().expect("read OAuth token forms");
-    assert_eq!(token_forms.len(), 1);
-    assert_eq!(
-        token_forms[0].get("code").map(String::as_str),
-        Some("authorization-code")
-    );
-    assert!(token_forms[0]
-        .get("code_verifier")
-        .is_some_and(|verifier| verifier.len() >= 43));
-    drop(token_forms);
+    {
+        let token_forms = captured_forms.lock().expect("read OAuth token forms");
+        assert_eq!(token_forms.len(), 1);
+        assert_eq!(
+            token_forms[0].get("code").map(String::as_str),
+            Some("authorization-code")
+        );
+        assert!(token_forms[0]
+            .get("code_verifier")
+            .is_some_and(|verifier| verifier.len() >= 43));
+    }
     let oauth_state = fs::read_to_string(temp.path().join("plugins/oauth-connections.json"))
         .expect("read OAuth metadata");
     assert!(!oauth_state.contains("oauth-access-token"));

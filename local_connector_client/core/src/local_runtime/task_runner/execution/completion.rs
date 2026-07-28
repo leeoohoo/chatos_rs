@@ -388,7 +388,7 @@ fn aggregate_local_project_execution_status<'a>(
     statuses: impl Iterator<Item = &'a str>,
 ) -> &'static str {
     let statuses = statuses.collect::<Vec<_>>();
-    if statuses.iter().any(|status| *status == "blocked") {
+    if statuses.contains(&"blocked") {
         "blocked"
     } else if statuses
         .iter()

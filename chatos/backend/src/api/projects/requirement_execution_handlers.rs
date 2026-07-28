@@ -2038,9 +2038,9 @@ async fn stop_requirement_execution_inner(
     let all_work_items = parse_work_items(project_plan_array(&plan, "work_items", "workItems"));
     let selected_work_items = all_work_items
         .iter()
-        .cloned()
         .filter(|item| requirement_scope.contains(item.requirement_id.as_str()))
         .filter(|item| item.status != "archived")
+        .cloned()
         .collect::<Vec<_>>();
     let expected_project_task_ids =
         if let Some((conversation_id, execution_group_id)) = precise_plan.as_ref() {

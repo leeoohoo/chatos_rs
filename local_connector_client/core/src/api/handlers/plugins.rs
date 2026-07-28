@@ -840,75 +840,6 @@ impl Drop for DownloadedPluginArtifact {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::plugins::{
-        LocalPluginRegistry, PluginTransactionJournal, PluginTransactionOperation,
-        PluginTransactionRecord,
-    };
-    use chatos_plugin_management_sdk::PluginInstallStatus;
-
-    #[test]
-    fn plugin_event_cursor_is_stable_and_tracks_journal_changes() {
-        let mut snapshot = LocalPluginStatusSnapshot {
-            registry: LocalPluginRegistry::default(),
-            transactions: PluginTransactionJournal::default(),
-            runtime: Default::default(),
-        };
-        let first = plugin_status_cursor(&snapshot).expect("first cursor");
-        assert_eq!(
-            first,
-            plugin_status_cursor(&snapshot).expect("stable cursor")
-        );
-        snapshot.transactions.history.push(PluginTransactionRecord {
-            transaction_id: "transaction".to_string(),
-            operation: PluginTransactionOperation::Install,
-            status: PluginInstallStatus::Rejected,
-            plugin_id: "plugin".to_string(),
-            release_id: Some("release".to_string()),
-            from_version: None,
-            target_version: Some("1.0.0".to_string()),
-            relative_staging_path: None,
-            relative_final_path: None,
-            relative_storage_path: None,
-            relative_trash_path: None,
-            downloaded_bytes: 128,
-            total_bytes: Some(256),
-            started_at: "2026-07-25T00:00:00Z".to_string(),
-            updated_at: "2026-07-25T00:00:01Z".to_string(),
-            completed_at: Some("2026-07-25T00:00:01Z".to_string()),
-            recovered_after_restart: false,
-            last_error: Some("rejected".to_string()),
-        });
-        let with_transaction = plugin_status_cursor(&snapshot).expect("changed cursor");
-        assert_ne!(first, with_transaction);
-        snapshot
-            .transactions
-            .history
-            .last_mut()
-            .expect("transaction")
-            .downloaded_bytes = 256;
-        assert_ne!(
-            with_transaction,
-            plugin_status_cursor(&snapshot).expect("progress cursor")
-        );
-        let progress_cursor = plugin_status_cursor(&snapshot).expect("progress cursor");
-        snapshot.runtime.revision = 1;
-        assert_ne!(
-            progress_cursor,
-            plugin_status_cursor(&snapshot).expect("runtime cursor")
-        );
-    }
-
-    #[test]
-    fn plugin_event_cursor_rejects_unbounded_input() {
-        assert!(validate_plugin_event_cursor("not-a-cursor").is_err());
-        assert!(validate_plugin_event_cursor("A".repeat(64).as_str()).is_err());
-        assert!(validate_plugin_event_cursor("a".repeat(64).as_str()).is_ok());
-    }
-}
-
 pub(crate) async fn local_rollback_plugin(
     State(runtime): State<LocalRuntime>,
     Path(plugin_id): Path<String>,
@@ -1228,4 +1159,73 @@ async fn active_plugin_installation(
         .await
         .map_err(|error| anyhow::anyhow!("join active Plugin validation task failed: {error}"))??
         .ok_or_else(|| LocalApiError::conflict("Plugin is not installed and active"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::{
+        LocalPluginRegistry, PluginTransactionJournal, PluginTransactionOperation,
+        PluginTransactionRecord,
+    };
+    use chatos_plugin_management_sdk::PluginInstallStatus;
+
+    #[test]
+    fn plugin_event_cursor_is_stable_and_tracks_journal_changes() {
+        let mut snapshot = LocalPluginStatusSnapshot {
+            registry: LocalPluginRegistry::default(),
+            transactions: PluginTransactionJournal::default(),
+            runtime: Default::default(),
+        };
+        let first = plugin_status_cursor(&snapshot).expect("first cursor");
+        assert_eq!(
+            first,
+            plugin_status_cursor(&snapshot).expect("stable cursor")
+        );
+        snapshot.transactions.history.push(PluginTransactionRecord {
+            transaction_id: "transaction".to_string(),
+            operation: PluginTransactionOperation::Install,
+            status: PluginInstallStatus::Rejected,
+            plugin_id: "plugin".to_string(),
+            release_id: Some("release".to_string()),
+            from_version: None,
+            target_version: Some("1.0.0".to_string()),
+            relative_staging_path: None,
+            relative_final_path: None,
+            relative_storage_path: None,
+            relative_trash_path: None,
+            downloaded_bytes: 128,
+            total_bytes: Some(256),
+            started_at: "2026-07-25T00:00:00Z".to_string(),
+            updated_at: "2026-07-25T00:00:01Z".to_string(),
+            completed_at: Some("2026-07-25T00:00:01Z".to_string()),
+            recovered_after_restart: false,
+            last_error: Some("rejected".to_string()),
+        });
+        let with_transaction = plugin_status_cursor(&snapshot).expect("changed cursor");
+        assert_ne!(first, with_transaction);
+        snapshot
+            .transactions
+            .history
+            .last_mut()
+            .expect("transaction")
+            .downloaded_bytes = 256;
+        assert_ne!(
+            with_transaction,
+            plugin_status_cursor(&snapshot).expect("progress cursor")
+        );
+        let progress_cursor = plugin_status_cursor(&snapshot).expect("progress cursor");
+        snapshot.runtime.revision = 1;
+        assert_ne!(
+            progress_cursor,
+            plugin_status_cursor(&snapshot).expect("runtime cursor")
+        );
+    }
+
+    #[test]
+    fn plugin_event_cursor_rejects_unbounded_input() {
+        assert!(validate_plugin_event_cursor("not-a-cursor").is_err());
+        assert!(validate_plugin_event_cursor("A".repeat(64).as_str()).is_err());
+        assert!(validate_plugin_event_cursor("a".repeat(64).as_str()).is_ok());
+    }
 }

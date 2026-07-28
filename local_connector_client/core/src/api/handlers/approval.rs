@@ -190,6 +190,17 @@ fn approval_settings_changed(
         || current.memory != next.memory
 }
 
+pub(crate) async fn local_deny_pending_approval(
+    Path(id): Path<String>,
+    Json(req): Json<ResolveApprovalRequest>,
+) -> Result<Json<Value>, LocalApiError> {
+    let ok = deny_pending_approval(id.as_str(), req.reason).await;
+    if !ok {
+        return Err(LocalApiError::bad_request("pending approval not found"));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,8 +253,10 @@ mod tests {
 
     #[test]
     fn approval_settings_validation_allows_repeating_current_elevated_mode_without_ack() {
-        let mut state = crate::approval::ApprovalState::default();
-        state.default_mode = ApprovalMode::FullControl;
+        let state = crate::approval::ApprovalState {
+            default_mode: ApprovalMode::FullControl,
+            ..Default::default()
+        };
         let req = UpdateApprovalSettingsRequest {
             default_mode: Some(ApprovalMode::FullControl),
             projects: None,
@@ -321,15 +334,4 @@ mod tests {
         };
         assert!(req.remember_allow.unwrap_or(false) && req.risk_acknowledged);
     }
-}
-
-pub(crate) async fn local_deny_pending_approval(
-    Path(id): Path<String>,
-    Json(req): Json<ResolveApprovalRequest>,
-) -> Result<Json<Value>, LocalApiError> {
-    let ok = deny_pending_approval(id.as_str(), req.reason).await;
-    if !ok {
-        return Err(LocalApiError::bad_request("pending approval not found"));
-    }
-    Ok(Json(json!({ "ok": true })))
 }

@@ -524,9 +524,14 @@ extends = ":read-only"
 "#,
         )
         .expect("parse managed profile");
-        let mut state = LocalSandboxState::default();
-        state.runtime_permission_profile_layers =
-            RuntimePermissionProfileLayers::for_tests(None, None, Some(managed));
+        let state = LocalSandboxState {
+            runtime_permission_profile_layers: RuntimePermissionProfileLayers::for_tests(
+                None,
+                None,
+                Some(managed),
+            ),
+            ..Default::default()
+        };
 
         let resolved = state
             .resolve_permission_profile(
@@ -557,9 +562,14 @@ default_permissions = ":read-only"
 "#,
         )
         .expect("parse managed profile");
-        let mut state = LocalSandboxState::default();
-        state.runtime_permission_profile_layers =
-            RuntimePermissionProfileLayers::for_tests(None, None, Some(managed));
+        let state = LocalSandboxState {
+            runtime_permission_profile_layers: RuntimePermissionProfileLayers::for_tests(
+                None,
+                None,
+                Some(managed),
+            ),
+            ..Default::default()
+        };
 
         let serialized = serde_json::to_value(&state).expect("serialize sandbox state");
 

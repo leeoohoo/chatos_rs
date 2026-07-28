@@ -278,13 +278,13 @@ pub(super) async fn finalize_task_session_entries(
         let closure_state = effective_task_closure_state(&task);
         let is_durable = effective_task_manager_scope(&task) == TaskManagerScope::DurableFollowup;
         let mut task_changed = false;
-        if closure_state == TaskClosureState::Satisfied {
-            if task.task_tool_state.closure_state != Some(TaskClosureState::Satisfied) {
-                let now = now_rfc3339();
-                apply_task_closure(&mut task, TaskClosureState::Satisfied, None, now.as_str())?;
-                summary.satisfied += 1;
-                task_changed = true;
-            }
+        if closure_state == TaskClosureState::Satisfied
+            && task.task_tool_state.closure_state != Some(TaskClosureState::Satisfied)
+        {
+            let now = now_rfc3339();
+            apply_task_closure(&mut task, TaskClosureState::Satisfied, None, now.as_str())?;
+            summary.satisfied += 1;
+            task_changed = true;
         }
 
         if is_durable {

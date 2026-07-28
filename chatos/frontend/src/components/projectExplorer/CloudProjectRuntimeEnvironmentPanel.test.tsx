@@ -35,8 +35,17 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
       },
       images: [{
         id: 'image-1',
-        environment_key: 'runtime',
-        display_name: 'Cloud runtime',
+        environment_key: 'workspace',
+        environment_type: 'workspace',
+        display_name: 'Project Workspace',
+        service_id: 'workspace',
+        service_role: 'workspace',
+        mcp_policy: {
+          managed_by: 'system',
+          attachment: 'workspace_gateway_target',
+          filesystem: true,
+          terminal: true,
+        },
         image_provider: 'cloud_sandbox_manager',
         image_ref: 'runtime:latest',
         status: 'ready',
@@ -153,17 +162,45 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         sandbox_provider: 'local_connector',
         file_provider: 'local_connector',
       },
-      images: [{
-        id: 'local-image-1',
-        environment_key: 'app',
-        environment_type: 'application',
-        display_name: 'Local application',
-        image_provider: 'local_connector',
-        dockerfile: 'FROM node:22\nCMD ["npm", "start"]',
-        status: 'planned',
-        ports: [3000],
-        env_vars: {},
-      }],
+      images: [
+        {
+          id: 'local-workspace',
+          environment_key: 'workspace',
+          environment_type: 'workspace',
+          display_name: 'Project Workspace',
+          service_id: 'workspace',
+          service_role: 'workspace',
+          mcp_policy: {
+            managed_by: 'system',
+            attachment: 'workspace_gateway_target',
+            filesystem: true,
+            terminal: true,
+          },
+          image_provider: 'local_connector',
+          status: 'local',
+          ports: [],
+          env_vars: {},
+        },
+        {
+          id: 'local-image-1',
+          environment_key: 'app',
+          environment_type: 'application',
+          display_name: 'Local application',
+          service_id: 'app',
+          service_role: 'application',
+          mcp_policy: {
+            managed_by: 'system',
+            attachment: 'none',
+            filesystem: false,
+            terminal: false,
+          },
+          image_provider: 'local_connector',
+          dockerfile: 'FROM node:22\nCMD ["npm", "start"]',
+          status: 'planned',
+          ports: [3000],
+          env_vars: {},
+        },
+      ],
     };
     const pendingResponse = {
       ...response,
@@ -208,7 +245,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     await waitFor(() => {
       expect(generateProjectRuntimeEnvironmentImage).toHaveBeenCalledWith(
         'local-project-1',
-        'local-image-1',
+        'local-workspace',
       );
     });
     expect(await screen.findByRole('button', { name: '本地环境已启动' })).toBeDisabled();
@@ -273,30 +310,65 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         file_provider: 'harness',
         analysis_summary: '运行环境分析和 Dockerfile 生成完成。',
       },
-      images: [{
-        id: 'image-plan-1',
-        environment_key: 'application_runtime',
-        environment_type: 'runtime',
-        display_name: 'Application runtime',
-        image_provider: 'cloud_sandbox_manager',
-        status: 'planned',
-        dockerfile: 'FROM node:24\nRUN corepack enable',
-        ports: [],
-        env_vars: {},
-      }],
+      images: [
+        {
+          id: 'image-plan-1',
+          environment_key: 'workspace',
+          environment_type: 'workspace',
+          display_name: 'Project Workspace',
+          service_id: 'workspace',
+          service_role: 'workspace',
+          mcp_policy: {
+            managed_by: 'system',
+            attachment: 'workspace_gateway_target',
+            filesystem: true,
+            terminal: true,
+          },
+          image_provider: 'cloud_sandbox_manager',
+          status: 'planned',
+          ports: [],
+          env_vars: {},
+        },
+        {
+          id: 'image-application-1',
+          environment_key: 'application_runtime',
+          environment_type: 'application',
+          display_name: 'Application runtime',
+          service_id: 'application_runtime',
+          service_role: 'application',
+          mcp_policy: {
+            managed_by: 'system',
+            attachment: 'none',
+            filesystem: false,
+            terminal: false,
+          },
+          image_provider: 'cloud_sandbox_manager',
+          status: 'planned',
+          dockerfile: 'FROM node:24\nRUN corepack enable',
+          ports: [],
+          env_vars: {},
+        },
+      ],
     };
     const readyResponse = {
       ...plannedResponse,
       environment: { ...plannedResponse.environment, status: 'ready' },
-      images: [{
-        ...plannedResponse.images[0],
-        image_ref: 'chatos-sandbox-agent:node-24-project-image',
-        status: 'ready',
-      }],
+      images: plannedResponse.images.map((image) => (
+        image.service_role === 'workspace'
+          ? {
+            ...image,
+            image_ref: 'chatos-sandbox-agent:node-24-project-image',
+            status: 'ready',
+          }
+          : image
+      )),
     };
     const generateProjectRuntimeEnvironmentImage = vi.fn(async () => readyResponse);
     const client = {
-      getProjectRuntimeEnvironment: vi.fn(async () => plannedResponse),
+      getProjectRuntimeEnvironment: vi.fn()
+        .mockResolvedValueOnce(plannedResponse)
+        .mockResolvedValue(readyResponse),
+      getProjectRuntimeEnvironmentProgress: vi.fn(async () => ({ status: 'succeeded' })),
       analyzeProjectRuntimeEnvironment: vi.fn(async () => plannedResponse),
       generateProjectRuntimeEnvironmentImage,
     } as unknown as ApiClient;
@@ -316,7 +388,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect(await screen.findByText('cloud_sandbox_manager')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看 Dockerfile' }));
     expect(screen.getByText('FROM node:24', { exact: false })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '准备全部镜像' }));
+    fireEvent.click(screen.getByRole('button', { name: '准备工作区镜像与依赖' }));
 
     await waitFor(() => {
       expect(generateProjectRuntimeEnvironmentImage).toHaveBeenCalledWith(
@@ -324,7 +396,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         'image-plan-1',
       );
     });
-    const preparedButton = await screen.findByRole('button', { name: '全部镜像已准备' });
+    const preparedButton = await screen.findByRole('button', { name: '工作区镜像与依赖已准备' });
     expect(preparedButton).toBeDisabled();
   });
 

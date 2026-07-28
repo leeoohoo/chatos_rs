@@ -397,9 +397,9 @@ fn sandbox_image_id_for_runtime(
         .collect::<Vec<_>>();
     if let Some(requested) = requested_service_id {
         if requested != "workspace" {
-            return Err(format!(
-                "execution_service_id is fixed to the project workspace: workspace"
-            ));
+            return Err(
+                "execution_service_id is fixed to the project workspace: workspace".to_string(),
+            );
         }
         return images
             .into_iter()
@@ -454,9 +454,9 @@ fn normalized_execution_service_id(task: &TaskRecord) -> Option<&str> {
 fn base_sandbox_image_id_for_task(task: &TaskRecord) -> Result<String, String> {
     if let Some(requested) = normalized_execution_service_id(task) {
         if requested != "workspace" {
-            return Err(format!(
-                "execution_service_id is fixed to the project workspace: workspace"
-            ));
+            return Err(
+                "execution_service_id is fixed to the project workspace: workspace".to_string(),
+            );
         }
     }
     Ok(crate::config::configured_sandbox_base_image_id())

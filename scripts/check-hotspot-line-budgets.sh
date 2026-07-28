@@ -56,7 +56,6 @@ BUDGETS=(
   "chatos/frontend/src/components/chatInterface/useChatStreamRealtimeBridge.ts:412"
   "chatos/frontend/src/components/terminal/useTerminalInstanceLifecycle.ts:420"
   "chatos/backend/src/services/git/mod.rs:40"
-  "chatos/backend/src/services/chatos_skills.rs:700"
   "chatos/backend/src/services/chatos_memory_engine/mod.rs:120"
   "chatos/backend/src/services/code_nav/languages/java/mod.rs:650"
   "chatos/backend/src/services/code_nav/languages/go/mod.rs:520"

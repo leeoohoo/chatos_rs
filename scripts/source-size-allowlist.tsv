@@ -1,3 +1,58 @@
 # path	max_lines	expires_on	reason
 # Only production source files above 800 lines belong here.
 # expires_on is inclusive; expired, stale, missing, and over-budget entries fail CI.
+local_connector_client/core/src/skills/native/artifacts/presentation.rs	12357	2026-08-31	Phase 1A: split presentation create, package, tables, charts, inspect, and edit modules
+local_connector_client/core/src/skills/native/artifacts/pdf_edit.rs	7932	2026-08-31	Phase 1B: split PDF pages, forms, annotations, attachments, metadata, and writeback
+local_connector_client/core/src/skills/native/computer_use.rs	6810	2026-09-15	Phase 1C: split protocol, approval, observation, actions, safety, and platform dispatch
+local_connector_client/core/src/skills/native/artifacts/docx_edit.rs	6541	2026-08-31	Phase 1B: split DOCX text, tables, images, revisions, and package writeback
+local_connector_client/core/src/skills/native/excel_live.rs	4937	2026-09-15	Phase 1C: split Excel identity, inspection, read, write, formatting, and platform bridge
+local_connector_client/core/src/skills/native/artifacts/docx_render.rs	4173	2026-08-31	Phase 1B: split document runtime discovery, render, output validation, and format adapters
+task_runner_service/backend/src/services/plugin_runtime_relay.rs	2968	2026-09-30	Phase 1D: split plugin prepare, hooks, command, agent, UI, native skill, and validation
+local_connector_client/core/src/skills/native/computer_use/windows.rs	2553	2026-09-15	Phase 1C: split Windows UIA, input, capture, window, process, and security modules
+chatos/backend/src/api/projects/requirement_execution_handlers.rs	2336	2026-09-30	Phase 1E: split requirement execute, confirm, mutate, rerun, stop, recovery, and query flows
+local_connector_client/core/src/plugins/runtime/host.rs	2298	2026-09-30	Phase 1D: split plugin session lifecycle, approval, hooks, UI, native skill, and telemetry
+local_connector_client/core/src/skills/native/artifacts/spreadsheet.rs	2293	2026-08-31	Phase 1B: split CSV, TSV, XLSX, range, formula policy, and render support
+local_connector_client/core/src/skills/native/artifacts.rs	2285	2026-08-31	Phase 1B: split artifact registration, common limits, path policy, and format routing
+local_connector_client/core/src/skills/native/artifacts/schemas.rs	2197	2026-08-31	Phase 1B: split artifact schemas by document format and capability
+chatos/backend/src/api/message_task_runner/plugin_ui.rs	2140	2026-09-30	Phase 1D: split workbench session, assets, artifact relay, and security headers
+local_connector_client/core/src/plugins/runtime/artifact_store.rs	2094	2026-09-30	Phase 1D: split artifact persistence, authorization, concurrency, grants, and audit
+chatos/frontend/src/components/projectExplorer/projectPlanPane/RequirementExecutionProcessModal.tsx	1967	2026-09-30	Phase 1E: split requirement execution modal controller, graph, feedback, actions, and view
+task_runner_service/backend/src/api/chatos_internal.rs	1901	2026-09-30	Phase 1E: split internal message task, retry, plugin projection, and response handlers
+local_connector_client/core/src/skills/native/chrome.rs	1836	2026-09-15	Phase 1C: split Chrome read, write, download, upload, approval, and session helpers
+local_connector_client/chrome_extension/background.js	1745	2026-09-15	Phase 1C: split extension session, tab, target, action, storage, and native bridge modules
+task_runner_service/backend/src/services/task_manager_bridge/task_ops.rs	1679	2026-09-30	Phase 2: split task lifecycle, checklist, follow-up, finalization, and validation operations
+local_connector_client/core/src/local_runtime/task_runner/service_provider.rs	1578	2026-09-30	Phase 2: split local task provider schema, dispatch, materialization, and response support
+task_runner_service/backend/src/services/plugin_management_policy.rs	1442	2026-09-30	Phase 1D: split plugin selection, capability, command, agent, hook, and UI policy
+local_connector_client/core/src/plugins/runtime/oauth_broker.rs	1358	2026-09-30	Phase 1D: split OAuth discovery, authorization, callback, token, validation, and persistence
+task_runner_service/backend/src/services/run_model_phase/callbacks/runtime_state.rs	1289	2026-09-30	Phase 2: split runtime event sanitation, progress guards, browser state, and task completion
+sandbox_manager_service/sandbox_mcp_server/src/plugin_stdio_wrapper/windows_workspace.rs	1287	2026-09-15	Phase 1C: split Windows workspace mirror, validation, commit, and cleanup responsibilities
+local_connector_client/core/src/api/handlers/plugins.rs	1231	2026-09-30	Phase 1D: split plugin catalog, install, lifecycle, OAuth, events, and artifact handlers
+crates/chatos_plugin_management_sdk/src/plugin_runtime/mod.rs	1164	2026-09-30	Phase 1D: split plugin runtime wire contracts by component and operation
+crates/chatos_project_execution/src/lib.rs	1148	2026-09-30	Phase 1E: split project execution graph, status, planning, identity, and feedback modules
+sandbox_manager_service/sandbox_mcp_server/src/plugin_stdio_wrapper/windows.rs	1132	2026-09-15	Phase 1C: split Windows process, AppContainer, pipe, environment, and cleanup support
+local_connector_client/core/src/plugins/runtime/mcp_adapter.rs	1098	2026-09-30	Phase 1D: split MCP configuration, credentials, preparation, execution, and validation
+sandbox_manager_service/sandbox_mcp_server/src/plugin_stdio_wrapper.rs	997	2026-09-15	Phase 1C: split platform-neutral plugin stdio policy, preparation, and dispatch
+local_connector_client/frontend/src/apiTypes.ts	996	2026-10-31	Phase 2: split Local Connector frontend API types by domain
+task_runner_service/frontend/src/pages/tasks/TaskEditorDrawer.tsx	995	2026-09-30	Phase 1E: split task editor controller, validation, model mapping, and form sections
+mcp/src/implementations/builtin/browser_tools/actions_har.rs	992	2026-10-31	Phase 2: split HAR validation, sanitization, export, and response mapping
+mcp/src/implementations/builtin/browser_tools/actions_websocket.rs	978	2026-10-31	Phase 2: split WebSocket observation, sanitation, storage, and response mapping
+local_connector_client/core/src/plugins/bundled.rs	966	2026-09-30	Phase 1D: split bundled plugin catalog, install, validation, and upgrade flow
+plugin_management_service/backend/src/api/plugin_catalog_sync.rs	939	2026-09-30	Phase 1D: split catalog fetch, signature validation, key rotation, and persistence
+project_management_service/backend/src/services/runtime_environment.rs	936	2026-09-30	Phase 1E: split runtime environment policy, precedence, normalization, and response mapping
+task_runner_service/backend/src/services/run_model_phase/completion.rs	921	2026-09-30	Phase 2: split completion decision, blocker summary, persistence, and callbacks
+mcp/src/implementations/builtin/browser_tools/actions_network.rs	910	2026-10-31	Phase 2: split network filters, sanitation, listing, detail, and response mapping
+crates/chatos_plugin_management_sdk/src/plugin_manifest/validator.rs	906	2026-09-30	Phase 1D: split manifest validation by paths, permissions, components, and transports
+local_connector_service/backend/src/api/mod.rs	892	2026-10-31	Phase 2: split Local Connector service API router, middleware, and shared responses
+local_connector_client/core/src/skills/native/computer_use/helper.rs	890	2026-09-15	Phase 1C: split helper protocol, parent validation, cancellation, and platform process support
+plugin_management_service/frontend/src/i18n/messages.ts	882	2026-10-31	Phase 2: split plugin management messages by feature namespace
+chatos/backend/src/api/sessions/history_process.rs	868	2026-10-31	Phase 2: split history compaction, task callbacks, repair, and display projection
+local_connector_client/verify-installed-package.mjs	857	2026-10-31	Phase 2: split installed package verification by platform and artifact type
+task_runner_service/backend/src/services/sandbox_runtime/routing.rs	851	2026-09-30	Phase 2: split sandbox topology, target resolution, environment mapping, and fallback policy
+chatos/backend/src/modules/conversation_runtime/chat_execution.rs	848	2026-09-30	Phase 1E: split chat execution lifecycle, continuation, recovery, and finalization
+local_connector_client/core/src/skills/native.rs	845	2026-09-15	Phase 1C: split native skill registration and capability routing by skill family
+chatos/frontend/src/components/browser/BrowserSessionPanel.tsx	843	2026-09-30	Phase 1E: split browser session controller, tabs, network, preview, and actions
+mcp/src/implementations/builtin/browser_tools/managed_screencast.rs	841	2026-10-31	Phase 2: split screencast session, frame validation, polling, and cleanup
+crates/chatos_ai_runtime/src/error_policy.rs	836	2026-10-31	Phase 2: split AI error classification, retry decisions, user messages, and tests
+local_connector_client/core/src/local_runtime/storage/task_board/lifecycle.rs	806	2026-10-31	Phase 2: split local task board turn lifecycle and state transition helpers
+project_management_service/backend/src/store/mongo.rs	803	2026-10-31	Phase 2: finish splitting Mongo store entrypoint and shared transaction helpers
+sandbox_manager_service/backend/src/service/images.rs	803	2026-10-31	Phase 2: split image request lifecycle, job execution, output, and persistence

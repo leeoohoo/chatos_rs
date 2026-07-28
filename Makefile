@@ -6,7 +6,7 @@ SHELL := /bin/bash
 .PHONY: help dev docker-up docker-fast docker-dev docker-rebuild docker-restart docker-restart-fast docker-restart-dev docker-build docker-clean-images docker-down docker-reset docker-logs docker-ps docker-config
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
 .PHONY: local-connector-client local-connector-client-status local-connector-client-stop
-.PHONY: build build-rust build-frontends test smoke smoke-repo code-size-report hotspot-line-warnings
+.PHONY: build build-rust build-frontends test smoke smoke-repo verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
 .PHONY: test-chat-app-server test-chat-app test-user-service
 .PHONY: type-check-user-service-frontend
 
@@ -33,6 +33,8 @@ help:
 	@echo "  make build                  # build Rust services and frontends"
 	@echo "  make test                   # run repo checks and focused tests"
 	@echo "  make smoke                  # run lightweight repo checks"
+	@echo "  make verify-fast            # run repository quality policies and Rust lint"
+	@echo "  make verify                 # run full Rust and frontend verification"
 
 dev: docker-dev
 
@@ -113,6 +115,7 @@ build-frontends:
 	@cd user_service/frontend && npm run build
 	@cd task_runner_service/frontend && npm run build
 	@cd memory_engine/frontend && npm run build
+	@cd local_connector_client/frontend && npm run build
 	@cd project_management_service/frontend && npm run build
 	@cd plugin_management_service/frontend && npm run build
 	@cd sandbox_manager_service/frontend && npm run build
@@ -121,6 +124,18 @@ build-frontends:
 test: smoke test-chat-app-server test-chat-app test-user-service
 
 smoke: smoke-repo
+
+verify-fast:
+	@bash scripts/verify-repository.sh fast
+
+verify:
+	@bash scripts/verify-repository.sh full
+
+test-rust-workspaces:
+	@bash scripts/verify-repository.sh rust-test
+
+check-frontends:
+	@bash scripts/verify-repository.sh frontends
 
 smoke-repo:
 	@bash scripts/check_api_surface.sh
