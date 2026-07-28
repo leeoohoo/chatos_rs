@@ -8,6 +8,7 @@ export type PluginMarketplaceSource =
   | 'local_directory';
 export type PluginVisibility = 'public' | 'private';
 export type PluginReleaseChannel = 'stable' | 'beta' | 'canary';
+export type PluginPublisherStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 export type PluginComponentKind =
   | 'skill_collection'
   | 'mcp_server'
@@ -52,6 +53,23 @@ export interface PluginCatalogSyncResponse {
   component_snapshot_count: number;
   signing_key_count: number;
   synced_at: string;
+}
+
+export interface PluginPublisherRecord {
+  id: string;
+  publisher_id: string;
+  marketplace_id: string;
+  owner_user_id: string;
+  name: string;
+  website?: string | null;
+  status: PluginPublisherStatus;
+  signing_keys: SigningKeyRef[];
+  submitted_at: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  review_note?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PluginPublisher {

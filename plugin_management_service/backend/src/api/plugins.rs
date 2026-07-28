@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use chatos_plugin_management_sdk::normalize_plugin_relative_path;
 
+use super::plugin_publishers::require_approved_publisher_identity;
 use super::*;
 
 pub(super) async fn list_plugin_catalog(
@@ -67,6 +68,12 @@ pub(super) async fn create_plugin_catalog_entry(
         .ok_or_else(|| ApiError::bad_request("Plugin marketplace not found"))?;
     if !marketplace.enabled {
         return Err(ApiError::conflict("Plugin marketplace is disabled"));
+    }
+    if require_approved_publisher_identity(&state, &marketplace, &payload.publisher)
+        .await?
+        .is_some()
+    {
+        payload.publisher.verified = true;
     }
     if state
         .store

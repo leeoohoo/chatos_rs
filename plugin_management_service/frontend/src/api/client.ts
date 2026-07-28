@@ -26,6 +26,7 @@ import type {
   PluginCatalogRecord,
   PluginCatalogSyncResponse,
   PluginMarketplaceRecord,
+  PluginPublisherRecord,
   PluginReleaseRecord,
 } from '../pluginTypes';
 
@@ -145,6 +146,25 @@ export const api = {
     request<PluginCatalogSyncResponse>(
       `/api/plugin-marketplaces/${encodeURIComponent(marketplaceId)}/sync`,
       { method: 'POST' },
+    ),
+  listPluginPublishers: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginPublisherRecord>>(withQuery('/api/plugin-publishers', params || {})),
+  submitPluginPublisher: (payload: unknown) =>
+    request<PluginPublisherRecord>('/api/plugin-publishers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listAdminPluginPublishers: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginPublisherRecord>>(
+      withQuery('/api/admin/plugin-publishers', params || {}),
+    ),
+  reviewAdminPluginPublisher: (publisherRecordId: string, payload: unknown) =>
+    request<PluginPublisherRecord>(
+      `/api/admin/plugin-publishers/${encodeURIComponent(publisherRecordId)}/review`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
     ),
   listAdminPlugins: (params?: Record<string, QueryValue>) =>
     request<ListResponse<PluginCatalogRecord>>(withQuery('/api/admin/plugins', params || {})),

@@ -10,6 +10,7 @@ import {
   RobotOutlined,
   SafetyCertificateOutlined,
   ShopOutlined,
+  SolutionOutlined,
 } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
@@ -21,6 +22,7 @@ import type { CurrentUser } from '../types';
 export type AppSection =
   | 'mcps'
   | 'marketplaces'
+  | 'publishers'
   | 'plugins'
   | 'releases'
   | 'agents'
@@ -38,6 +40,7 @@ export function AppShell({ user, section, onSectionChange, children }: AppShellP
   const menuItems = [
     { key: 'mcps', icon: <ApiOutlined />, label: t('nav.mcps') },
     { key: 'marketplaces', icon: <ShopOutlined />, label: t('nav.pluginMarketplaces') },
+    { key: 'publishers', icon: <SolutionOutlined />, label: t('nav.pluginPublishers') },
     ...(user.role === 'super_admin'
       ? [
           { key: 'plugins', icon: <SafetyCertificateOutlined />, label: t('nav.plugins') },

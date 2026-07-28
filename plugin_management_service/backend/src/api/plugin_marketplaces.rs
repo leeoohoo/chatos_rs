@@ -304,7 +304,7 @@ fn normalize_marketplace_trust(value: Option<&str>, source_kind: &str) -> Result
     Ok(trust)
 }
 
-fn validate_marketplace_signing_keys(
+pub(super) fn validate_marketplace_signing_keys(
     keys: &[SigningKeyRef],
     require_catalog_root: bool,
 ) -> Result<(), ApiError> {

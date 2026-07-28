@@ -38,6 +38,7 @@ mod plugin_install_sources;
 mod plugin_installations;
 mod plugin_marketplaces;
 mod plugin_oauth;
+mod plugin_publishers;
 mod plugin_releases;
 mod plugin_support;
 mod plugins;
@@ -90,6 +91,10 @@ use plugin_marketplaces::{
     list_plugin_marketplaces, update_admin_plugin_marketplace,
 };
 use plugin_oauth::{list_plugin_oauth_connections, sync_plugin_oauth_status_internal};
+use plugin_publishers::{
+    list_admin_plugin_publishers, list_plugin_publishers, review_admin_plugin_publisher,
+    submit_plugin_publisher,
+};
 use plugin_releases::{create_plugin_release, list_plugin_releases, revoke_plugin_release};
 use plugin_support::*;
 use plugins::{
@@ -282,6 +287,10 @@ pub fn build_router(state: AppState) -> Router {
             post(sync_plugin_marketplace),
         )
         .route(
+            "/api/plugin-publishers",
+            get(list_plugin_publishers).post(submit_plugin_publisher),
+        )
+        .route(
             "/api/admin/plugin-marketplaces",
             get(list_admin_plugin_marketplaces).post(create_admin_plugin_marketplace),
         )
@@ -292,6 +301,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/admin/plugin-marketplaces/{marketplace_id}/sync",
             post(sync_admin_plugin_marketplace),
+        )
+        .route(
+            "/api/admin/plugin-publishers",
+            get(list_admin_plugin_publishers),
+        )
+        .route(
+            "/api/admin/plugin-publishers/{publisher_record_id}/review",
+            patch(review_admin_plugin_publisher),
         )
         .route(
             "/api/admin/plugins",

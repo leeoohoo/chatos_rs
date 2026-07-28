@@ -120,6 +120,23 @@ impl AppStore {
         )
         .await?;
 
+        create_unique_index(&self.plugin_publishers, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_publishers,
+            doc! { "marketplace_id": 1, "publisher_id": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_publishers,
+            doc! { "owner_user_id": 1, "status": 1, "updated_at": -1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_publishers,
+            doc! { "marketplace_id": 1, "status": 1, "updated_at": -1 },
+        )
+        .await?;
+
         create_unique_index(&self.plugin_catalog_syncs, doc! { "marketplace_id": 1 }).await?;
 
         create_unique_index(&self.plugin_catalog_entries, doc! { "id": 1 }).await?;

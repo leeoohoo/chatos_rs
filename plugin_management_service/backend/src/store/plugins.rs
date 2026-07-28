@@ -78,6 +78,91 @@ impl AppStore {
         Ok(result.matched_count == 1)
     }
 
+    pub async fn list_plugin_publishers(
+        &self,
+        query: &PluginPublisherQuery,
+        owner_user_id: Option<&str>,
+    ) -> Result<ListResponse<PluginPublisherRecord>, String> {
+        let mut filter = doc! {};
+        if let Some(owner_user_id) = owner_user_id {
+            filter.insert("owner_user_id", owner_user_id);
+        }
+        if let Some(marketplace_id) = normalized(query.marketplace_id.as_deref()) {
+            filter.insert("marketplace_id", marketplace_id);
+        }
+        if let Some(status) = normalized(query.status.as_deref()) {
+            filter.insert("status", status);
+        }
+        let total = self
+            .plugin_publishers
+            .count_documents(filter.clone(), None)
+            .await
+            .map_err(|err| err.to_string())?;
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1, "created_at": -1 })
+            .limit(Some(query.limit.unwrap_or(100).clamp(1, 500)))
+            .skip(query.offset)
+            .build();
+        let items = self
+            .plugin_publishers
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(ListResponse { items, total })
+    }
+
+    pub async fn get_plugin_publisher(
+        &self,
+        id: &str,
+    ) -> Result<Option<PluginPublisherRecord>, String> {
+        self.plugin_publishers
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn find_plugin_publisher(
+        &self,
+        marketplace_id: &str,
+        publisher_id: &str,
+    ) -> Result<Option<PluginPublisherRecord>, String> {
+        self.plugin_publishers
+            .find_one(
+                doc! { "marketplace_id": marketplace_id, "publisher_id": publisher_id },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_plugin_publisher(
+        &self,
+        record: &PluginPublisherRecord,
+    ) -> Result<(), String> {
+        self.plugin_publishers
+            .replace_one(doc! { "id": &record.id }, record, upsert_options())
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn replace_plugin_publisher_if_matches(
+        &self,
+        expected: &PluginPublisherRecord,
+        record: &PluginPublisherRecord,
+    ) -> Result<bool, String> {
+        let filter = mongodb::bson::to_document(expected).map_err(|err| err.to_string())?;
+        let result = self
+            .plugin_publishers
+            .replace_one(filter, record, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.matched_count == 1)
+    }
+
     pub async fn get_plugin_catalog_sync(
         &self,
         marketplace_id: &str,

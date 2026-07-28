@@ -9,6 +9,7 @@ use chatos_plugin_management_sdk::{
 };
 use semver::Version;
 
+use super::plugin_publishers::require_approved_publisher_release_key;
 use super::*;
 
 pub(super) async fn list_plugin_releases(
@@ -58,6 +59,13 @@ pub(super) async fn create_plugin_release(
             "Plugin marketplace is not trusted for release publishing",
         ));
     }
+    require_approved_publisher_release_key(
+        &state,
+        &marketplace,
+        &plugin.publisher,
+        payload.signature.key_id.as_str(),
+    )
+    .await?;
 
     let manifest_json = serde_json::to_string(&payload.manifest)
         .map_err(|err| ApiError::bad_request(format!("serialize manifest failed: {err}")))?;
