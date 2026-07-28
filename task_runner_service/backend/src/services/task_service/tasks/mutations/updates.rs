@@ -123,7 +123,8 @@ impl TaskService {
         if let Some(schedule) = patch.schedule {
             task.schedule = sanitize_task_schedule_config(schedule, Some(&task.schedule))?;
         }
-        if let Some(mcp_config) = patch.mcp_config {
+        if let Some(mut mcp_config) = patch.mcp_config {
+            mcp_config = prepare_task_mcp_config_update(mcp_config, &task.mcp_config)?;
             task.mcp_config = sanitize_task_mcp_config(mcp_config);
             capability_boundary_changed = true;
         }
@@ -236,9 +237,6 @@ impl TaskService {
         }
         if let Some(kinds) = patch.enabled_builtin_kinds {
             task.mcp_config.enabled_builtin_kinds = normalize_builtin_kind_names(kinds);
-        }
-        if let Some(skill_ids) = patch.selected_skill_ids {
-            task.mcp_config.selected_skill_ids = skill_ids;
         }
         if let Some(workspace_dir) = patch.workspace_dir {
             task.mcp_config.workspace_dir = normalized_optional(Some(workspace_dir));

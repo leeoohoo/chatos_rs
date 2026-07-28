@@ -71,11 +71,6 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             empty_object_schema(),
         ),
         tool_definition(
-            "list_available_skills",
-            "List Local Connector Skills currently enabled by the user and available for Task Runner. Use returned id values as selected_skill_ids when creating tasks.",
-            empty_object_schema(),
-        ),
-        tool_definition(
             "list_available_plugins",
             "List Plugins enabled for the current user and available on an exact Local Connector device. Use returned id values as selected_plugins when creating execution tasks.",
             required_object_schema(

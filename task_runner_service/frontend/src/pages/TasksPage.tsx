@@ -546,7 +546,6 @@ export function TasksPage() {
         projectOptions={projectOptions}
         prerequisiteTaskOptions={prerequisiteTaskOptions}
         mcpCatalogEntries={taskCapabilityCatalogQuery.data?.selectable_builtin_mcps}
-        selectableSkills={taskCapabilityCatalogQuery.data?.selectable_skills}
         selectablePlugins={taskCapabilityCatalogQuery.data?.selectable_plugins}
         pluginConnectors={taskPluginConnectorsQuery.data}
         pluginConnectorsLoading={taskPluginConnectorsQuery.isLoading}

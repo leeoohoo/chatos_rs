@@ -751,7 +751,7 @@ fn task() -> TaskRecord {
 }
 
 #[test]
-fn ai_selectable_sets_exclude_required_and_unavailable_capabilities() {
+fn ai_selectable_sets_exclude_required_and_unavailable_mcp_capabilities() {
     let policy = policy();
     assert_eq!(
         policy.selectable_builtin_kind_names(),
@@ -761,7 +761,6 @@ fn ai_selectable_sets_exclude_required_and_unavailable_capabilities() {
         policy.selectable_external_mcp_ids(),
         vec!["external-1".to_string()]
     );
-    assert!(policy.selectable_skill_ids().is_empty());
 }
 
 #[test]

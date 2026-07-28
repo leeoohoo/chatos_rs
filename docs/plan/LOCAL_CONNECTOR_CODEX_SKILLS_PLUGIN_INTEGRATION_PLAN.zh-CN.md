@@ -1,9 +1,10 @@
-# Local Connector Codex Skills / Plugin 管理集成实施方案
+# Local Connector Codex Skills / Plugin 管理集成实施方案（历史方案）
 
-> 状态：实施中（控制面、单客户端租约、客户端设置、Task Runner 动态工具执行链、运行结束清理、开发者模式和前 12 个 adapter-ready Bundle 已完成）  
+> 状态：已被 Plugin 聚合方案取代；仅保留为历史设计参考
 > 创建日期：2026-07-13  
 > 适用范围：Plugin Management Service、Local Connector Client、Local Connector Service、Task Runner、ChatOS  
 > 说明：本方案取代 `docs/plans/TASK_RUNNER_SKILLS_MANAGEMENT_PLAN.zh-CN.md` 中“在 Task Runner 云端保存和执行 Skill 内容”的方向；旧文档保留作历史参考。
+> 退役说明（2026-07-28）：Task Runner 独立 Skill 选择的新写入路径已经删除。用户现在只通过 Plugin Picker 选择 Plugin；Plugin 内部仍可用 `selected_plugins[].selected_skill_ids` 固定其 Skill 组件。旧任务中的顶层 `TaskMcpConfig.selected_skill_ids` 仅用于反序列化、只读展示和系统 required Skill，不再允许用户创建或修改。下文关于 `selectable_skills`、`list_available_skills`、顶层 `selected_skill_ids` 和独立 Skills 页面进入 Task Runner 选择器的描述均为历史实现，不应恢复；当前权威方案见仓库根目录 `CODEX_PLUGIN_1_TO_1_PARITY_IMPLEMENTATION_PLAN.zh-CN.md`。
 
 ## 1. 结论先行
 
@@ -16,12 +17,14 @@
 3. 用户创建的所有 MCP 只允许 `local_connector_stdio` 或 `local_connector_http`，禁止回退到云端 stdio/http。
 4. Admin 创建的 MCP 必须是系统内部资源，必须关联仓库内组件或明确的内部服务标识；不允许把任意第三方 URL/command 当成 Admin 内部 MCP。
 5. Codex 当前 27 个 Skills 全部进入“内部 Skill 能力目录”，但分为：可直接依法迁移、需要本机依赖适配、需要外部 OAuth/MCP 适配、必须原生重写四类。未完成适配或许可确认的条目可以登记，但必须显示为 `unavailable`，不得被 Task Runner 选择。
-6. ChatOS 调用 Task Runner 创建任务时，通过动态工具 schema 和 `list_available_skills` 选择 `selected_skill_ids`；Task Runner 创建任务时校验选择，启动运行时固定 bundle 版本和哈希，并通过 Local Connector Relay 执行。
+6. （历史实现，已退役）ChatOS 曾通过 Task Runner 动态 schema 和 `list_available_skills` 选择顶层 `selected_skill_ids`；当前改为通过 Plugin Picker 选择 Plugin，并由不可变 Plugin snapshot 固定其中的 Skill 组件、bundle 版本和哈希。
 7. Local Connector 离线、bundle 缺失、哈希不匹配、权限不足或依赖不满足时统一 fail closed，绝不改走云端执行。
-8. Admin 内部 Skill 默认对所有用户展示，但默认不启用；用户必须在 Local Connector 设置的独立 Skills 页面主动启用后，才进入 Task Runner 的可选集合。
+8. Admin 内部 Skill 仍可作为 Plugin Release 的组件索引、运行时兼容数据和系统 required Skill 使用，但不再通过 Task Runner 独立选择器暴露给用户。
 9. 当前每个用户只允许一个 Local Connector Client 处于有效登录/在线状态，必须通过服务端原子租约实现互斥；多客户端和 master/managed client 暂不实现。
 
-### 1.1 当前实施快照（2026-07-13）
+### 1.1 历史实施快照（2026-07-13）
+
+以下内容记录当时的独立 Skill 方案，不代表 2026-07-28 之后的现行产品入口。
 
 已完成：
 
@@ -607,7 +610,9 @@ pub struct ActiveConnectorSessionLease {
 - Relay 除校验 owner/device 外，还必须校验 device 持有当前 active lease。
 - 不增加 master、managed client、跨设备命令或远程管理 API。
 
-## 11. Task Runner 改造
+## 11. Task Runner 改造（历史独立 Skill 方案，已退役）
+
+本章记录的顶层 `selected_skill_ids`、`selectable_skills` 和 `list_available_skills` 新写入链已于 2026-07-28 删除。现行实现使用 Task/Run `selected_plugins` 与 Plugin snapshot；只有 Plugin 内组件选择继续使用 `selected_plugins[].selected_skill_ids`。数据库中已有的顶层字段只做历史兼容，不得据此恢复独立选择 UI 或 MCP/REST 写入口。
 
 ### 11.1 任务模型
 

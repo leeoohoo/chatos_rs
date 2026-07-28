@@ -56,7 +56,9 @@ impl TaskService {
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let plugin_config = input.plugin_config;
-        let mut mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
+        let requested_mcp_config = input.mcp_config.unwrap_or_default();
+        ensure_legacy_skill_selection_not_written(&requested_mcp_config)?;
+        let mut mcp_config = sanitize_task_mcp_config(requested_mcp_config);
         let agent_key = crate::models::task_runner_agent_key_for(
             task_profile.as_str(),
             mcp_config.requires_execution,

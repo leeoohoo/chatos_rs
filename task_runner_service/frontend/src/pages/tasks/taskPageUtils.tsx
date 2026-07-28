@@ -46,7 +46,6 @@ export type TaskFormValues = {
   enabledBuiltinKinds: string[];
   defaultRemoteServerId?: string;
   externalMcpConfigIds?: string[];
-  selectedSkillIds?: string[];
   pluginDeviceId?: string;
   pluginWorkspaceId?: string;
   selectedPluginIds?: string[];
@@ -86,7 +85,6 @@ export function buildCreateTaskFormValues(
     enabledBuiltinKinds: [],
     defaultRemoteServerId: undefined,
     externalMcpConfigIds: [],
-    selectedSkillIds: [],
     pluginDeviceId: undefined,
     pluginWorkspaceId: undefined,
     selectedPluginIds: [],
@@ -118,7 +116,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
     defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
     externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
-    selectedSkillIds: task.mcp_config.selected_skill_ids || [],
     pluginDeviceId: task.plugin_config?.device_id || undefined,
     pluginWorkspaceId: task.plugin_config?.workspace_id || undefined,
     selectedPluginIds:
@@ -236,7 +233,7 @@ export function buildTaskPayload(
       enabled_builtin_kinds: enabledBuiltinKinds,
       default_remote_server_id: values.defaultRemoteServerId,
       external_mcp_config_ids: values.externalMcpConfigIds || [],
-      selected_skill_ids: values.selectedSkillIds || [],
+      selected_skill_ids: [],
     },
   };
 }

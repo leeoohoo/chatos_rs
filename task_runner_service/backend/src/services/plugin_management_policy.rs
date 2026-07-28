@@ -44,20 +44,6 @@ pub(crate) struct SelectableExternalMcpView {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct SelectableSkillView {
-    pub id: String,
-    pub name: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub bundle_id: Option<String>,
-    pub version: Option<String>,
-    pub bundle_hash: Option<String>,
-    pub entrypoint_kind: Option<String>,
-    pub device_id: Option<String>,
-    pub platform: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub(crate) struct SelectablePluginView {
     pub id: String,
     pub plugin_key: String,
@@ -193,41 +179,6 @@ impl TaskRunnerCapabilityPolicy {
 
     pub(crate) fn selectable_external_mcp_ids(&self) -> Vec<String> {
         self.selectable_external_mcps()
-            .into_iter()
-            .map(|item| item.resource.id.clone())
-            .collect()
-    }
-
-    pub(crate) fn selectable_skills(&self) -> Vec<&ResolvedSkill> {
-        Vec::new()
-    }
-
-    pub(crate) fn selectable_skill_views(&self) -> Vec<SelectableSkillView> {
-        self.selectable_skills()
-            .into_iter()
-            .map(|item| SelectableSkillView {
-                id: item.resource.id.clone(),
-                name: item.resource.name.clone(),
-                display_name: item.resource.display_name.clone(),
-                description: item.resource.description.clone(),
-                bundle_id: item.resource.content.bundle_id.clone(),
-                version: item.resource.content.bundle_version.clone(),
-                bundle_hash: item.resource.content.bundle_hash.clone(),
-                entrypoint_kind: item.resource.content.entrypoint_kind.clone(),
-                device_id: item
-                    .installation
-                    .as_ref()
-                    .map(|value| value.device_id.clone()),
-                platform: item
-                    .installation
-                    .as_ref()
-                    .map(|value| value.platform.clone()),
-            })
-            .collect()
-    }
-
-    pub(crate) fn selectable_skill_ids(&self) -> Vec<String> {
-        self.selectable_skills()
             .into_iter()
             .map(|item| item.resource.id.clone())
             .collect()
@@ -457,18 +408,6 @@ impl TaskRunnerCapabilityPolicy {
                 ));
             }
         }
-        let allowed_skills = self
-            .selectable_skill_ids()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        for skill_id in &config.selected_skill_ids {
-            if !allowed_skills.contains(skill_id) {
-                return Err(format!(
-                    "Skill is not selectable for {}: {skill_id}",
-                    self.capabilities.agent_key
-                ));
-            }
-        }
         Ok(())
     }
 
@@ -524,17 +463,7 @@ impl TaskRunnerCapabilityPolicy {
         effective_external.sort();
         effective_external.dedup();
         task.mcp_config.external_mcp_config_ids = effective_external;
-        let allowed_optional_skills = self
-            .selectable_skill_ids()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let mut effective_skills = task
-            .mcp_config
-            .selected_skill_ids
-            .iter()
-            .filter(|resource_id| allowed_optional_skills.contains(resource_id.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut effective_skills = Vec::new();
         effective_skills.extend(
             self.capabilities
                 .skills

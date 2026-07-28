@@ -36,19 +36,6 @@ export interface TaskMcpConfig {
   skill_policy_revision?: string | null;
 }
 
-export interface SelectableTaskSkill {
-  id: string;
-  name: string;
-  display_name: string;
-  description?: string | null;
-  bundle_id?: string | null;
-  version?: string | null;
-  bundle_hash?: string | null;
-  entrypoint_kind?: string | null;
-  device_id?: string | null;
-  platform?: string | null;
-}
-
 export interface SelectableTaskExternalMcp {
   id: string;
   name: string;
@@ -139,7 +126,6 @@ export interface TaskCapabilityCatalogResponse {
   policy_revision: string;
   selectable_builtin_mcps: McpCatalogEntry[];
   selectable_external_mcps: SelectableTaskExternalMcp[];
-  selectable_skills: SelectableTaskSkill[];
   selectable_plugins: SelectableTaskPlugin[];
 }
 

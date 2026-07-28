@@ -84,7 +84,6 @@ pub(super) async fn list_task_capability_catalog(
         "policy_revision": policy.policy_revision(),
         "selectable_builtin_mcps": selectable_builtin_mcps,
         "selectable_external_mcps": policy.selectable_external_mcp_views(),
-        "selectable_skills": policy.selectable_skill_views(),
         "selectable_plugins": policy.selectable_plugin_views(),
     })))
 }

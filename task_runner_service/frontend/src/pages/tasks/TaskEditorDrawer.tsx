@@ -24,7 +24,6 @@ import type {
   McpCatalogEntry,
   RemoteServerRecord,
   SelectableTaskPlugin,
-  SelectableTaskSkill,
   TaskPluginConnectorsResponse,
   TaskProjectRuntimeEnvironmentResponse,
   TaskRecord,
@@ -63,7 +62,6 @@ type TaskEditorDrawerProps = {
   mcpCatalogEntries?: McpCatalogEntry[];
   remoteServers?: RemoteServerRecord[];
   externalMcpConfigs?: ExternalMcpConfigRecord[];
-  selectableSkills?: SelectableTaskSkill[];
   selectablePlugins?: SelectableTaskPlugin[];
   pluginConnectors?: TaskPluginConnectorsResponse;
   pluginConnectorsLoading?: boolean;
@@ -91,7 +89,6 @@ export function TaskEditorDrawer({
   mcpCatalogEntries = [],
   remoteServers = [],
   externalMcpConfigs = [],
-  selectableSkills = [],
   selectablePlugins = [],
   pluginConnectors,
   pluginConnectorsLoading = false,
@@ -243,17 +240,6 @@ export function TaskEditorDrawer({
           value: config.id,
         })),
     [externalMcpConfigs],
-  );
-  const skillOptions = useMemo(
-    () =>
-      selectableSkills.map((skill) => ({
-        label: `${skill.display_name} (${skill.entrypoint_kind || 'local'})`,
-        value: skill.id,
-        description: skill.description,
-        platform: skill.platform,
-        version: skill.version,
-      })),
-    [selectableSkills],
   );
   const onlinePluginDevices = useMemo(
     () => (pluginConnectors?.devices || []).filter((device) => device.status === 'online'),
@@ -791,42 +777,6 @@ export function TaskEditorDrawer({
             message={t('tasks.form.browserPluginReady')}
             description={t('tasks.form.browserPluginHelp')}
           />
-        ) : null}
-
-        <Typography.Title level={5} style={{ marginTop: 8 }}>
-          {t('tasks.form.skills')}
-        </Typography.Title>
-
-        <Form.Item
-          name="selectedSkillIds"
-          label={t('tasks.form.skills')}
-          extra={
-            skillOptions.length
-              ? t('tasks.form.skillsHelp')
-              : t('tasks.form.skillsEmpty')
-          }
-        >
-          <Select
-            mode="multiple"
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            maxTagCount="responsive"
-            options={skillOptions}
-            placeholder={t('tasks.form.skillsPlaceholder')}
-          />
-        </Form.Item>
-
-        {selectableSkills.length ? (
-          <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 16 }}>
-            {selectableSkills.map((skill) => (
-              <Typography.Text key={skill.id} type="secondary">
-                {skill.display_name}: {skill.description || skill.name}
-                {skill.platform ? ` / ${skill.platform}` : ''}
-                {skill.version ? ` / v${skill.version}` : ''}
-              </Typography.Text>
-            ))}
-          </Space>
         ) : null}
 
         <Typography.Title level={5} style={{ marginTop: 8 }}>
