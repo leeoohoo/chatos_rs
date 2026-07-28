@@ -19,7 +19,7 @@ fn read_tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "read_file_raw",
-            "description": "Return file content from the Harness repo for this cloud project. encoding defaults to utf8; base64 is intended for binary preview consumers. with_line_numbers defaults to true for UTF-8 reads.",
+            "description": "Return file content from the Harness repo for this cloud project. encoding defaults to utf8; base64 is intended for binary preview consumers. with_line_numbers defaults to true for UTF-8 reads. If the requested file is missing, returns status=not_found with fallback_discovery candidate paths and directory entries; that fallback is not file content.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -33,7 +33,7 @@ fn read_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "read_file_range",
-            "description": "Return UTF-8 content from start_line to end_line (1-based, inclusive) from the Harness repo for this cloud project.",
+            "description": "Return UTF-8 content from start_line to end_line (1-based, inclusive) from the Harness repo for this cloud project. If the requested file is missing, returns status=not_found with fallback_discovery candidate paths and directory entries; that fallback is not file content.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
