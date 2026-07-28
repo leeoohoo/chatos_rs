@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { useI18n } from '../i18n/I18nProvider';
-import type ApiClient from '../lib/api/client';
-import { useApiClient } from '../lib/api/ApiClientContext';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AgentConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
@@ -32,7 +30,6 @@ type AgentManagerWindow = Window & {
 
 const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalStore }) => {
   const { t } = useI18n();
-  const apiClient = useApiClient();
   const internalStoreData = useChatStoreResolved();
   const storeData = externalStore ? externalStore() : internalStoreData;
   const {
@@ -52,8 +49,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   const [formData, setFormData] = useState<AgentFormData>(getDefaultAgentFormData());
   const [showAiCreate, setShowAiCreate] = useState(false);
   const [aiCreateForm, setAiCreateForm] = useState<AgentAiCreateFormData>(getDefaultAgentAiCreateFormData());
-  const [skillPlugins, setSkillPlugins] = useState<Awaited<ReturnType<ApiClient['listSkillPlugins']>>>([]);
-  const [skills, setSkills] = useState<Awaited<ReturnType<ApiClient['listSkills']>>>([]);
   useEffect(() => {
     const currentWindow = window as AgentManagerWindow;
     const last = currentWindow.__agentManagerInitAt__ || 0;
@@ -64,31 +59,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     currentWindow.__agentManagerInitAt__ = now;
     void loadAgents({ force: true });
     void loadAiModelConfigs({ force: true });
-    void Promise.all([
-      apiClient.listSkillPlugins(undefined, { limit: 1000, offset: 0 }).then(setSkillPlugins),
-      apiClient.listSkills(undefined, { limit: 1000, offset: 0 }).then(setSkills),
-    ]).catch((error) => {
-      console.error('Failed to load agent manager resources:', error);
-    });
-  }, [apiClient, loadAgents, loadAiModelConfigs]);
-
-  const pluginOptions = useMemo(
-    () => skillPlugins.map((plugin) => ({
-      value: plugin.source,
-      label: [plugin.name, plugin.source, plugin.category].filter(Boolean).join(' | '),
-    })),
-    [skillPlugins],
-  );
-
-  const skillOptions = useMemo(() => {
-    const selectedPluginSources = new Set(formData.pluginSources);
-    return skills
-      .filter((skill) => selectedPluginSources.size === 0 || selectedPluginSources.has(skill.plugin_source))
-      .map((skill) => ({
-        value: skill.id,
-        label: [skill.name, skill.plugin_source].filter(Boolean).join(' | '),
-      }));
-  }, [formData.pluginSources, skills]);
+  }, [loadAgents, loadAiModelConfigs]);
 
   const resetForm = () => {
     setIsFormDialogOpen(false);
@@ -121,9 +92,9 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       ai_model_config_id: '',
       enabled: formData.enabled,
       role_definition: formData.roleDefinition.trim(),
-      plugin_sources: formData.pluginSources,
-      skill_ids: formData.skillIds,
-      default_skill_ids: formData.skillIds,
+      plugin_sources: [],
+      skill_ids: [],
+      default_skill_ids: [],
       createdAt: new Date(),
       updatedAt: new Date(),
       skills: [],
@@ -241,8 +212,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         <AgentManagerForm
           editingAgentId={editingAgentId}
           formData={formData}
-          pluginOptions={pluginOptions}
-          skillOptions={skillOptions}
           showTitle={false}
           onSubmit={handleSubmit}
           onCancel={resetForm}

@@ -11,9 +11,6 @@ import type {
   MemoryAgentRuntimeContextResponse,
   MemoryAgentSessionsQueryOptions,
   MemoryAgentsQueryOptions,
-  MemorySkillsQueryOptions,
-  MemorySkillPluginResponse,
-  MemorySkillResponse,
   UpdateAgentPayload,
 } from './types';
 import type { ApiRequestFn } from './workspace';
@@ -108,46 +105,4 @@ export const aiCreateAgent = (
     method: 'POST',
     body: JSON.stringify(data),
   });
-};
-
-export const listSkillPlugins = (
-  request: ApiRequestFn,
-  userId?: string,
-  options?: { limit?: number; offset?: number },
-): Promise<MemorySkillPluginResponse[]> => {
-  const query = buildQuery({
-    user_id: userId,
-    limit: options?.limit,
-    offset: options?.offset,
-  });
-  return request<MemorySkillPluginResponse[]>(`/skills/plugins${query}`);
-};
-
-export const listSkills = (
-  request: ApiRequestFn,
-  userId?: string,
-  options?: MemorySkillsQueryOptions,
-): Promise<MemorySkillResponse[]> => {
-  const query = buildQuery({
-    user_id: userId,
-    plugin_source: options?.plugin_source,
-    query: options?.query,
-    limit: options?.limit,
-    offset: options?.offset,
-  });
-  return request<MemorySkillResponse[]>(`/skills${query}`);
-};
-
-export const getSkill = (
-  request: ApiRequestFn,
-  skillId: string,
-): Promise<MemorySkillResponse> => {
-  return request<MemorySkillResponse>(`/skills/${encodeURIComponent(skillId)}`);
-};
-
-export const getSkillPlugin = (
-  request: ApiRequestFn,
-  source: string,
-): Promise<MemorySkillPluginResponse> => {
-  return request<MemorySkillPluginResponse>(`/skills/plugins/detail?source=${encodeURIComponent(source)}`);
 };

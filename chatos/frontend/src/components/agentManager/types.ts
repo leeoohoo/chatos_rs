@@ -37,8 +37,6 @@ export interface AgentFormData {
   description: string;
   category: string;
   roleDefinition: string;
-  pluginSources: string[];
-  skillIds: string[];
   enabled: boolean;
 }
 

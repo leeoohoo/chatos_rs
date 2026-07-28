@@ -16,36 +16,6 @@ const truncateText = (value: string, maxLength: number = 260): string => {
   return `${trimmed.slice(0, maxLength - 1)}...`;
 };
 
-const SkillItemsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
-  const { t } = useI18n();
-  const skills = items
-    .map((item) => asRecord(item))
-    .filter((item): item is Record<string, unknown> => item !== null);
-
-  if (skills.length === 0) return null;
-
-  return (
-    <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Available skills', formatToolCardCount(t, 'skills', skills.length))}
-      <div className="tool-detail-list">
-        {skills.map((skill, index) => (
-          <div key={`agent-skill-${index}`} className="tool-detail-item">
-            <div className="tool-detail-item-title">
-              {asString(skill.name).trim() || asString(skill.id).trim() || `skill ${index + 1}`}
-            </div>
-            <div className="tool-detail-item-meta">
-              {[asString(skill.id).trim(), asString(skill.source).trim()].filter(Boolean).join(' · ')}
-            </div>
-            <div className="tool-detail-item-body">
-              {asString(skill.content_preview ?? skill.contentPreview).trim()}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 const EmbeddedSkillsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
   const { t } = useI18n();
   const skills = items
@@ -163,15 +133,6 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
     );
   }
 
-  if (displayName === 'list_available_skills') {
-    return (
-      <div className="tool-detail-stack">
-        <RowsCard title={translateToolTitle('Skill catalog', locale)} rows={[{ key: 'count', value: asNumber(record.count) }]} />
-        <SkillItemsCard items={asArray(record.items)} />
-      </div>
-    );
-  }
-
   if (displayName === 'create_memory_agent' || displayName === 'update_memory_agent') {
     return (
       <div className="tool-detail-stack">
@@ -194,7 +155,6 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
           title={translateToolTitle('Context preview', locale)}
           rows={[
             { key: 'role chars', value: asNumber(record.role_definition_chars ?? record.roleDefinitionChars) },
-            { key: 'plugin sources', value: asNumber(record.plugin_sources_count ?? record.pluginSourcesCount) },
             { key: 'skills', value: asNumber(record.skills_count ?? record.skillsCount) },
             { key: 'skill ids', value: asNumber(record.skill_ids_count ?? record.skillIdsCount) },
           ]}

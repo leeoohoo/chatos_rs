@@ -24,19 +24,7 @@ pub struct ChatosAgentSkillDto {
     pub content: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ChatosSkillDto {
-    pub id: String,
-    pub user_id: String,
-    pub plugin_source: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub content: String,
-    pub source_path: String,
-    pub version: Option<String>,
-    pub updated_at: String,
-}
-
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatosSkillPluginCommandDto {
     pub name: String,
@@ -46,29 +34,6 @@ pub struct ChatosSkillPluginCommandDto {
     #[serde(default)]
     pub argument_hint: Option<String>,
     pub content: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ChatosSkillPluginDto {
-    pub id: String,
-    pub user_id: String,
-    pub source: String,
-    pub name: String,
-    pub category: Option<String>,
-    pub description: Option<String>,
-    pub version: Option<String>,
-    pub repository: Option<String>,
-    pub branch: Option<String>,
-    pub cache_path: Option<String>,
-    #[serde(default)]
-    pub content: Option<String>,
-    #[serde(default)]
-    pub commands: Vec<ChatosSkillPluginCommandDto>,
-    pub command_count: i64,
-    pub installed: bool,
-    pub discoverable_skills: i64,
-    pub installed_skill_count: i64,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

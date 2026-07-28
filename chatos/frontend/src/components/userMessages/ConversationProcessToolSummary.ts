@@ -425,9 +425,6 @@ export const buildToolActionSummary = (
   if (displayName === 'recommend_agent_profile' && family === 'agent') {
     return action('task', '已生成智能体配置建议', '正在生成智能体配置建议', '生成智能体配置建议失败');
   }
-  if (displayName === 'list_available_skills' && family === 'agent') {
-    return action('read', '已读取可用技能列表', '正在读取可用技能列表', '读取可用技能列表失败');
-  }
   if (displayName === 'create_memory_agent' && family === 'agent') {
     const target = title ? quoted(title) : '';
     return action('modify', `已创建记忆智能体${target}`, `正在创建记忆智能体${target}`, `创建记忆智能体${target}失败`);

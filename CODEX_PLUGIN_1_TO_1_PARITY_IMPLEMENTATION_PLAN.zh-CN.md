@@ -2,6 +2,7 @@
 
 > 状态：实施中
 > 创建日期：2026-07-21
+> 最新增量（删除 ChatOS legacy Plugin install/cache）：2026-07-28 已删除 ChatOS `/api/skills*` Git import/install/list/detail 路由、`chatos_skills*` Git clone/cache/manifest/discovery 服务、对应 feature flag，以及 Agent 管理页和 Agent Builder 对 legacy Plugin/standalone Skill catalog 的选择与读取。新建 Agent 拒绝非空 `plugin_sources` 和外部 `skill_ids`，更新未触碰历史字段时保持原值、显式清空可迁移；运行时只发布 Agent 自身 inline Skills，历史 Plugin/Command/外部 Skill 引用不再进入 prompt 或 MCP reader。`memory_skills`/`memory_skill_plugins` 不再由数据库启动流程创建或维护索引，旧 Mongo records 仅保留只读数据合同和查询供一次性迁移，不参与任何生产 API、Agent Builder 或运行时。Plugin Picker、Plugin Management immutable Release、Local Connector，以及 Browser/Computer Use/Documents/PDF 等现行插件能力不受影响。验证通过 MCP 149 tests、ChatOS backend 536 tests、ChatOS 前端 type-check/production build、定向 Vitest、MCP lib Clippy `-D warnings`、ChatOS lib Clippy `-D warnings`（仅命令行豁免两个未修改文件中的既有 lint）、Rustfmt 和 `git diff --check`；未启动服务、Mongo 或浏览器，未占用端口，一次性 Rust target 已清理并释放约 8.1 GiB。
 > 最新增量（删除 Task Runner 独立 Skill 选择链）：2026-07-28 已删除 Task Runner 编辑器“本机 Skills”选择器、前端 `selectedSkillIds` 写入字段、Capability Catalog `selectable_skills`、Task Runner MCP `list_available_skills`、动态创建 schema 的顶层 `selected_skill_ids` 以及 REST/MCP 创建和更新入口中的独立 Skill 参数。Plugin Picker 成为用户选择能力的唯一新写入入口；`selected_plugins[].selected_skill_ids` 仍作为 Plugin 内组件选择保留。`TaskMcpConfig.selected_skill_ids` 仅用于历史任务反序列化、只读展示和系统 required Skill：新建任务携带非空旧字段会明确失败，更新其他配置会保留已有历史值但禁止修改，运行时不再接受 optional standalone Skill。验证通过 Task Runner 前端 type-check/production build、后端 298 tests、ChatOS provider Skill 系统上下文定向测试和 Task Runner lib Clippy `-D warnings`（只在命令行豁免未修改依赖中的既有 `manual_ignore_case_cmp` 与未修改 Task Runner 文件中的既有 `collapsible_if`）；未启动服务或占用端口，一次性 Rust target 已清理并释放约 6.9 GiB。
 > 最新增量（移除旧 Skill 独立管理与写入口）：2026-07-28 Plugin Management 已从左侧导航和可达页面中移除“技能管理”“技能包”两个旧入口，并删除对应 React 页面、前端 Skill/Skill Package CRUD/check API client、仅供旧页面使用的类型与翻译。仓库消费者审计确认没有其他客户端调用 Plugin Management 旧写 API，后端 `/api/skills` 与 `/api/skill-packages` 因此只保留 list/detail 查询兼容，Skill 额外保留不修改 executable content 的诊断 check；create/update/delete Router、handler、payload 和无调用方 store mutation 已删除。Skill 仍作为 immutable Plugin Release 的组件索引和运行时兼容数据存在，不影响 Plugin Marketplace/Release、内部 seed、Agent capability 或 Local Connector bundle 加载。Plugin Management 前端 TypeScript type-check 与 Vite production build、后端 lib Clippy `-D warnings` 及 79 个 lib tests 均通过；验证未启动服务、未占用端口，一次性 Cargo target、临时 `node_modules` 符号链接与 `dist` 已清理。
 > 最新增量（Presentations canonical bubble）：2026-07-28 新增 Presentations `1.32.0` 的 canonical `bubble`。图表级继续使用 1–50 个共享有限 numeric `x_values`，每个 series 的 `values` 作为同长度 Y values，并新增同长度、有限、严格正数且不超过 `1e12` 的必填 `bubble_sizes`；XML 固定使用 literal `xVal/yVal/bubbleSize` numLit caches，系列颜色使用 fill，拒绝 marker/smooth。每个 group 固定 exact `bubbleScale=100`、`showNegBubbles=0`、`sizeRepresents=area` 且无 `bubble3D`，主/次 Y 轴复用 scatter 的 visible bottom/left 与 hidden-top/right 双数值轴拓扑和完整 X/Y 轴格式合同。检查新增 raw bubble-group metadata 与 bubble-size preview；缺失/未知/非 canonical group metadata 只读降级，重复、错误 namespace 或超过 128 bytes 失败关闭；完整快照新增逐 series `bubble_sizes`，非 bubble 显式为 null，bubble 与 scatter/line 间安全替换继续只重写原 chart part。不可变 Release ID 为 `bundled-release-presentations-1-32-0`，发布时间 `2026-07-28T07:00:00Z`，artifact revision `presentations-1.32.0`，Catalog revision `2026-07-27.21`；Skill JSON/Instructions SHA-256 为 `657ca55e6c12150e5b95d8c435c689072aee1dc42c7ecc53afd81261c96d8a07`/`624eeed9c36ac72d740c2259d705105ae3ab1bcf45145e579a3f2991e33681f2`，Bundle hash 为 `393a2d4bab9b209a822e9eeef8ca1a56372747d2deb0e9f41b05318471dc296e`，Manifest/Artifact SHA-256 为 `85d204526b382e6a6d6a005b7713944de5d20d8f9f97ebb8d3a04c90db1777f4`/`03a4fdc98a9d7877214a3dd9f7e214e95b4943cdf3b9126298a11f38bc3c17ba`，macOS arm64/Windows x64 staged content SHA-256 均为 `036d37394759809862d339b40f586c140eecc1aed7ef401ca21ebe3e4da82192`，ready/all fingerprints 分别为 `51b5c8afc1534e3d77c92e1d4b2b1eb3ccfa364081d935a4f935abb9682b288f` 和 `412e255452cee4204512c3f595c60b052ad418050196afe248523f23c55de9fe`。
@@ -1176,7 +1177,7 @@ chatos/backend/src/modules/conversation_runtime/*
 
 新增 plugin picker、commands、artifact/workbench UI 和 run status 展示。
 
-旧 `chatos_skills*` 模块只保留迁移读取，禁止继续作为生产插件安装器。
+旧 `chatos_skills*` Git/install/cache 模块与 `/api/skills*` 路由已删除。仅 `memory_skills`/`memory_skill_plugins` 的只读数据合同和 repository 查询保留给一次性迁移工具；ChatOS 启动不再创建 collection 或维护其索引，生产 API、Agent Builder 和运行时均不读取这些 records。
 
 ## 15. API 草案
 
@@ -3111,7 +3112,7 @@ POST /api/local/plugins/:plugin_id/oauth/disconnect
 - [ ] trusted Admin marketplace。
 - [ ] publisher onboarding、key rotation、revocation 和 review workflow。
 - [ ] CircleCI/Sentry/Build Web 等通过通用 Plugin Runtime 接入。
-- [ ] 删除 ChatOS legacy plugin install/cache。
+- [x] 删除 ChatOS legacy plugin install/cache（旧 Mongo records 仅只读保留供一次性迁移，不进入生产 API/运行时，启动期也不再创建 collection 或索引）。
 - [x] 删除 Plugin Management Skill Package 旧写接口（保留 Skill/Skill Package list/detail 只读兼容和 Skill 诊断 check）。
 - [x] 删除 Task Runner 独立 Skill 选择新写入路径（仅保留历史反序列化/只读兼容和系统 required Skill；Plugin 内 `selected_skill_ids` 不受影响）。
 - [ ] 更新 README、部署、运维、用户和开发者文档。

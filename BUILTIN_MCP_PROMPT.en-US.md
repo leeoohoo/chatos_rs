@@ -357,17 +357,16 @@ Usage rules:
 ## [builtin_agent_builder]
 When these tools are available, use them to create or maintain Memory agents:
 `agent_builder_recommend_agent_profile`
-`agent_builder_list_available_skills`
 `agent_builder_create_memory_agent`
 `agent_builder_update_memory_agent`
 `agent_builder_preview_agent_context`
 
 Usage rules:
 1. If the user wants a new agent but its role, capability boundaries, or skill set are incomplete, call `recommend_agent_profile` first to produce a candidate configuration.
-2. Call `list_available_skills` before selecting skills. Reference only Skill IDs that are actually available to the current user; never invent skills.
-3. Before creation, use `preview_agent_context` to inspect the final merged role and Skills context and remove duplicate, conflicting, or vague instructions.
+2. Skills may only be created as inline skills owned by that Agent. Do not reference retired Skill-center IDs or write `plugin_sources`; users select Plugin capabilities per conversation or task through the Plugin Picker.
+3. Before creation, use `preview_agent_context` to inspect the final merged role and inline Skills context and remove duplicate, conflicting, or vague instructions.
 4. Call `create_memory_agent` only when the user explicitly asks to create an agent. Use `update_memory_agent` for an existing agent and provide the exact `agent_id`.
-5. `mcp_policy`, `project_policy`, enabled state, and plugin sources change the agent's permissions and behavior. Do not broaden them without explicit user authorization.
+5. `mcp_policy`, `project_policy`, and enabled state change the agent's permissions and behavior. Do not broaden them without explicit user authorization.
 6. After a create or update call, rely on the returned agent data. Do not claim settings took effect when the tool did not return them.
 
 ## [conditional_contact_memory_readers]

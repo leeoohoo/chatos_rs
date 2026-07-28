@@ -4,6 +4,7 @@
 > 创建日期：2026-07-13  
 > 适用范围：Plugin Management Service、Local Connector Client、Local Connector Service、Task Runner、ChatOS  
 > 说明：本方案取代 `docs/plans/TASK_RUNNER_SKILLS_MANAGEMENT_PLAN.zh-CN.md` 中“在 Task Runner 云端保存和执行 Skill 内容”的方向；旧文档保留作历史参考。
+> 退役说明（2026-07-28）：ChatOS legacy `/api/skills*`、`chatos_skills*` Git import/install/cache 服务和 Agent/Agent Builder 外部 Skill/Plugin 选择链已经删除。历史 `memory_skills`/`memory_skill_plugins` records 仅保留只读数据合同和查询供一次性迁移，数据库启动不再创建或维护旧 collection/index，生产 API 与运行时不再读取。下文将其描述为现役能力或后续事项的内容均为历史记录。
 > 退役说明（2026-07-28）：Task Runner 独立 Skill 选择的新写入路径已经删除。用户现在只通过 Plugin Picker 选择 Plugin；Plugin 内部仍可用 `selected_plugins[].selected_skill_ids` 固定其 Skill 组件。旧任务中的顶层 `TaskMcpConfig.selected_skill_ids` 仅用于反序列化、只读展示和系统 required Skill，不再允许用户创建或修改。下文关于 `selectable_skills`、`list_available_skills`、顶层 `selected_skill_ids` 和独立 Skills 页面进入 Task Runner 选择器的描述均为历史实现，不应恢复；当前权威方案见仓库根目录 `CODEX_PLUGIN_1_TO_1_PARITY_IMPLEMENTATION_PLAN.zh-CN.md`。
 
 ## 1. 结论先行
@@ -121,7 +122,7 @@
 | Task Runner Web UI | 创建/编辑任务已读取 `/api/tasks/capabilities/catalog`，可保存 `selected_skill_ids` 并在详情页展示 | 当前只展示真实 selectable Skills；未适配 Skill 不会出现在选择器中 |
 | Task Runner MCP tools | `create_task`、批量/规划入口支持 `selected_skill_ids`，动态 schema 和 `list_available_skills` 返回当前用户可选项 | 仍需继续补齐更多 ChatOS 场景回归测试和展示摘要 |
 | ChatOS | 通过 Task Runner MCP 动态工具 schema 能创建带 `selected_skill_ids` 的任务 | 独立 Skill 标签、预览和错误提示 UI 仍可继续优化 |
-| ChatOS legacy Skills | `chatos_skills*` 会在 ChatOS 服务器缓存 Git/plugin 内容并读取 `SKILL.md` | 与“Skill 不在云端执行/加载”冲突，后续必须迁移或退役 |
+| ChatOS legacy Skills | 已删除 `/api/skills*` 与 `chatos_skills*` Git/install/cache 生产链；旧 Mongo records 只读保留供一次性迁移 | 不得恢复为 Plugin、Skill、Command 或 Agent 的第二套生产权威 |
 | Task Runner legacy Skills | 数据库仍存在 `0022_skills.sql`、`0023_skill_packages.sql`，但业务代码已基本移除 | 属于孤立旧 schema，不应重新启用为云端 Skill 存储 |
 
 ## 4. 目标总体架构

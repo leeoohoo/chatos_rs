@@ -29,8 +29,8 @@ pub mod research_summary_view;
 pub(crate) mod tool_registry;
 
 pub use agent_builder::{
-    AgentBuilderAgentSnapshot, AgentBuilderOptions, AgentBuilderService, AgentBuilderSkill,
-    AgentBuilderStore, AgentBuilderStoreRef,
+    AgentBuilderOptions, AgentBuilderService, AgentBuilderSkill, AgentBuilderStore,
+    AgentBuilderStoreRef,
 };
 pub use ask_user::{
     normalize_kv_fields, AskUserDecision, AskUserOptions, AskUserPromptPayload,

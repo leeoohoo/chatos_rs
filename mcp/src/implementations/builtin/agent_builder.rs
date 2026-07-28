@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,24 +16,8 @@ pub struct AgentBuilderSkill {
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentBuilderAgentSnapshot {
-    #[serde(default)]
-    pub skills: Vec<AgentBuilderSkill>,
-    #[serde(default)]
-    pub skill_ids: Vec<String>,
-}
-
 #[async_trait]
 pub trait AgentBuilderStore: Send + Sync {
-    async fn list_agents(
-        &self,
-        user_id: &str,
-        enabled: Option<bool>,
-        limit: Option<i64>,
-        offset: i64,
-    ) -> Result<Vec<AgentBuilderAgentSnapshot>, String>;
-
     async fn create_agent(&self, request: Value) -> Result<Value, String>;
 
     async fn update_agent(&self, agent_id: &str, request: Value) -> Result<Option<Value>, String>;
@@ -84,7 +67,6 @@ impl AgentBuilderService {
         };
 
         service.register_recommend_agent_profile(opts.server_name.as_str());
-        service.register_list_available_skills(opts.store.clone());
         service.register_create_memory_agent(opts.store.clone());
         service.register_update_memory_agent(opts.store);
         service.register_preview_agent_context();
@@ -143,76 +125,6 @@ impl AgentBuilderService {
         );
     }
 
-    fn register_list_available_skills(&mut self, store: Option<AgentBuilderStoreRef>) {
-        self.register_tool(
-            "list_available_skills",
-            "List available skills from Memory agents for the current user.",
-            json!({
-                "type": "object",
-                "properties": { "user_id": { "type": "string" } },
-                "additionalProperties": false
-            }),
-            Arc::new(move |args, default_user_id| {
-                let store = store
-                    .as_ref()
-                    .ok_or_else(|| "agent builder store is not configured".to_string())?
-                    .inner();
-                let user_id = optional_string(&args, "user_id")
-                    .or_else(|| default_user_id.map(str::to_string));
-                let Some(scope_user_id) = user_id else {
-                    return Err("user_id is required".to_string());
-                };
-                let result = block_on_result(async move {
-                    let agents = store
-                        .list_agents(scope_user_id.as_str(), Some(true), Some(300), 0)
-                        .await?;
-                    let mut skill_map: HashMap<String, Value> = HashMap::new();
-                    for agent in agents {
-                        for skill in agent.skills {
-                            let skill_id = skill.id.trim().to_string();
-                            if skill_id.is_empty() {
-                                continue;
-                            }
-                            skill_map.entry(skill_id.clone()).or_insert_with(|| {
-                                json!({
-                                    "id": skill_id,
-                                    "name": skill.name,
-                                    "content_preview": truncate_text(skill.content.as_str(), 400),
-                                    "source": "memory_agent_embedded",
-                                })
-                            });
-                        }
-                        for skill_id in agent.skill_ids {
-                            let normalized = skill_id.trim().to_string();
-                            if normalized.is_empty() {
-                                continue;
-                            }
-                            skill_map.entry(normalized.clone()).or_insert_with(|| {
-                                json!({
-                                    "id": normalized,
-                                    "name": "",
-                                    "content_preview": "",
-                                    "source": "memory_agent_reference",
-                                })
-                            });
-                        }
-                    }
-                    let mut items = skill_map.into_values().collect::<Vec<_>>();
-                    items.sort_by(|left: &Value, right: &Value| {
-                        let left_id = left.get("id").and_then(Value::as_str).unwrap_or("");
-                        let right_id = right.get("id").and_then(Value::as_str).unwrap_or("");
-                        left_id.cmp(right_id)
-                    });
-                    Ok::<Value, String>(json!({
-                        "count": items.len(),
-                        "items": items,
-                    }))
-                })?;
-                Ok(text_result(result))
-            }),
-        );
-    }
-
     fn register_create_memory_agent(&mut self, store: Option<AgentBuilderStoreRef>) {
         self.register_tool(
             "create_memory_agent",
@@ -226,7 +138,6 @@ impl AgentBuilderService {
                     "category": { "type": "string" },
                     "user_id": { "type": "string" },
                     "enabled": { "type": "boolean" },
-                    "plugin_sources": { "type": "array", "items": { "type": "string" } },
                     "skill_ids": { "type": "array", "items": { "type": "string" } },
                     "default_skill_ids": { "type": "array", "items": { "type": "string" } },
                     "skills": {
@@ -276,7 +187,6 @@ impl AgentBuilderService {
                     "description": { "type": "string" },
                     "category": { "type": "string" },
                     "enabled": { "type": "boolean" },
-                    "plugin_sources": { "type": "array", "items": { "type": "string" } },
                     "skill_ids": { "type": "array", "items": { "type": "string" } },
                     "default_skill_ids": { "type": "array", "items": { "type": "string" } },
                     "skills": {
@@ -341,7 +251,6 @@ impl AgentBuilderService {
                             "additionalProperties": false
                         }
                     },
-                    "plugin_sources": { "type": "array", "items": { "type": "string" } },
                     "skill_ids": { "type": "array", "items": { "type": "string" } }
                 },
                 "required": ["role_definition"],
@@ -350,16 +259,10 @@ impl AgentBuilderService {
             Arc::new(move |args, _default_user_id| {
                 let role_definition = required_string(&args, "role_definition")?;
                 let skills = optional_skill_array(&args, "skills").unwrap_or_default();
-                let plugin_sources =
-                    optional_string_array(&args, "plugin_sources").unwrap_or_default();
                 let skill_ids = optional_string_array(&args, "skill_ids").unwrap_or_default();
                 let mut text = String::new();
                 text.push_str("角色定义:\n");
                 text.push_str(role_definition.as_str());
-                if !plugin_sources.is_empty() {
-                    text.push_str("\n\n插件范围: ");
-                    text.push_str(plugin_sources.join(", ").as_str());
-                }
                 if !skills.is_empty() {
                     text.push_str("\n\n技能上下文:\n");
                     for (index, skill) in skills.iter().enumerate() {
@@ -377,7 +280,6 @@ impl AgentBuilderService {
                 Ok(text_result(json!({
                     "preview": text,
                     "role_definition_chars": role_definition.chars().count(),
-                    "plugin_sources_count": plugin_sources.len(),
                     "skills_count": skills.len(),
                     "skill_ids_count": skill_ids.len(),
                 })))
@@ -440,7 +342,6 @@ fn build_create_payload(args: Value, default_user_id: Option<&str>) -> Result<Va
         "description": optional_string(&args, "description"),
         "category": optional_string(&args, "category"),
         "role_definition": required_string(&args, "role_definition")?,
-        "plugin_sources": optional_string_array(&args, "plugin_sources"),
         "skills": optional_skill_array(&args, "skills"),
         "skill_ids": optional_string_array(&args, "skill_ids"),
         "default_skill_ids": optional_string_array(&args, "default_skill_ids"),
@@ -458,7 +359,6 @@ fn build_update_payload(args: &Value) -> Value {
         "description": optional_string(args, "description"),
         "category": optional_string(args, "category"),
         "role_definition": optional_string(args, "role_definition"),
-        "plugin_sources": optional_string_array(args, "plugin_sources"),
         "skills": optional_skill_array(args, "skills"),
         "skill_ids": optional_string_array(args, "skill_ids"),
         "default_skill_ids": optional_string_array(args, "default_skill_ids"),
@@ -571,4 +471,41 @@ fn truncate_text(raw: &str, max_chars: usize) -> String {
     let mut out: String = raw.chars().take(max_chars).collect();
     out.push_str("...");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_catalog_retires_standalone_skill_and_plugin_selection() {
+        let service = AgentBuilderService::new(AgentBuilderOptions {
+            server_name: "agent-builder".to_string(),
+            user_id: Some("user-1".to_string()),
+            store: None,
+        })
+        .expect("schema-only Agent Builder service");
+        let tools = service.list_tools();
+        let names = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert!(!names.contains(&"list_available_skills"));
+        for tool_name in [
+            "create_memory_agent",
+            "update_memory_agent",
+            "preview_agent_context",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
+                .expect("Agent Builder tool");
+            let properties = tool
+                .pointer("/inputSchema/properties")
+                .and_then(Value::as_object)
+                .expect("tool properties");
+            assert!(!properties.contains_key("plugin_sources"));
+        }
+    }
 }
