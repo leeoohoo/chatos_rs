@@ -124,6 +124,15 @@ pub(in crate::api::projects) async fn sync_execution_message_task_tracking(
     if let Some(async_meta) = async_meta.as_object_mut() {
         apply_execution_links_to_task_tracking(async_meta, links);
     }
+    let execution_meta = metadata
+        .entry("project_requirement_execution".to_string())
+        .or_insert_with(|| json!({}));
+    if !execution_meta.is_object() {
+        *execution_meta = json!({});
+    }
+    if let Some(execution_meta) = execution_meta.as_object_mut() {
+        apply_execution_links_to_project_execution_metadata(execution_meta, links);
+    }
     conversation_messages::upsert_message_in_session(&session, &message)
         .await
         .map(|_| ())
@@ -306,6 +315,48 @@ fn apply_execution_links_to_task_tracking(
     write_string_set(async_meta, "cancelled_task_ids", &cancelled);
 }
 
+fn apply_execution_links_to_project_execution_metadata(
+    execution_meta: &mut serde_json::Map<String, Value>,
+    links: &[ExecutionLink],
+) {
+    let mut project_task_ids = BTreeSet::new();
+    let mut task_links = links
+        .iter()
+        .filter_map(|link| {
+            let work_item_id = link.work_item_id.trim();
+            let task_runner_task_id = link.task_runner_task_id.trim();
+            if work_item_id.is_empty() || task_runner_task_id.is_empty() {
+                return None;
+            }
+            project_task_ids.insert(work_item_id.to_string());
+            Some(json!({
+                "project_task_id": work_item_id,
+                "task_runner_task_id": task_runner_task_id,
+                "task_runner_run_id": link.task_runner_run_id,
+                "task_runner_status": link.task_runner_status,
+                "source_session_id": link.source_session_id,
+                "source_user_message_id": link.source_user_message_id,
+            }))
+        })
+        .collect::<Vec<_>>();
+    if project_task_ids.is_empty() {
+        return;
+    }
+    task_links.sort_by(|left, right| {
+        let left_key = (
+            value_string(left, "project_task_id").unwrap_or_default(),
+            value_string(left, "task_runner_task_id").unwrap_or_default(),
+        );
+        let right_key = (
+            value_string(right, "project_task_id").unwrap_or_default(),
+            value_string(right, "task_runner_task_id").unwrap_or_default(),
+        );
+        left_key.cmp(&right_key)
+    });
+    write_string_set(execution_meta, "project_task_ids", &project_task_ids);
+    execution_meta.insert("task_links".to_string(), Value::Array(task_links));
+}
+
 fn read_string_set(value: Option<&Value>) -> BTreeSet<String> {
     value
         .and_then(Value::as_array)
@@ -449,5 +500,27 @@ mod tests {
             Some("awaiting_confirmation")
         );
         assert!(read_string_set(metadata.get("running_task_ids")).is_empty());
+    }
+
+    #[test]
+    fn execution_link_tracking_updates_planner_scope_to_actual_graph() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("project_task_ids".to_string(), json!(["work-task-1"]));
+        apply_execution_links_to_project_execution_metadata(
+            &mut metadata,
+            &[link("task-1", "ready"), link("task-2", "ready")],
+        );
+
+        assert_eq!(
+            read_string_set(metadata.get("project_task_ids")),
+            BTreeSet::from(["work-task-1".to_string(), "work-task-2".to_string()])
+        );
+        assert_eq!(
+            metadata
+                .get("task_links")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
     }
 }

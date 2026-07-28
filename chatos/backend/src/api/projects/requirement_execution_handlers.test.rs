@@ -270,4 +270,30 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn existing_graph_scope_expands_when_actual_dag_contains_planner_scope() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let actual = BTreeSet::from([
+            "task-1".to_string(),
+            "task-2".to_string(),
+            "task-extra".to_string(),
+        ]);
+
+        assert_eq!(
+            expand_project_task_scope_to_actual_graph(&expected, &actual),
+            actual
+        );
+    }
+
+    #[test]
+    fn existing_graph_scope_does_not_hide_missing_planner_tasks() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let actual = BTreeSet::from(["task-1".to_string(), "task-extra".to_string()]);
+
+        assert_eq!(
+            expand_project_task_scope_to_actual_graph(&expected, &actual),
+            expected
+        );
+    }
 }

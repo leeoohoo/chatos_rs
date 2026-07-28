@@ -755,6 +755,7 @@ async fn execute_requirement_inner(
         access_token: access_token.clone(),
         execution_group_id: execution_group_id.clone(),
         executing_requirement_ids,
+        link_scope_work_items: all_work_items.clone(),
         project_id: project.id.clone(),
         project_service_base_url: cfg.project_service_base_url.clone(),
         project_sync_secret,
@@ -871,6 +872,10 @@ async fn confirm_requirement_execution_inner(
         .iter()
         .map(|link| link.work_item_id.clone())
         .collect::<BTreeSet<_>>();
+    let expected_project_task_ids = expand_project_task_scope_to_actual_graph(
+        &expected_project_task_ids,
+        &linked_project_task_ids,
+    );
     if let Err(mismatch) =
         validate_exact_project_task_scope(&expected_project_task_ids, &linked_project_task_ids)
     {
@@ -880,6 +885,12 @@ async fn confirm_requirement_execution_inner(
             mismatch.unexpected.join(",")
         )));
     }
+    sync_execution_message_task_tracking(
+        conversation_id.as_str(),
+        execution_group_id.as_str(),
+        current_links.as_slice(),
+    )
+    .await?;
 
     let contact_runtime = select_contact_runtime(
         &auth,
@@ -1128,11 +1139,23 @@ fn expected_execution_project_task_ids(
     Ok(expected)
 }
 
+fn expand_project_task_scope_to_actual_graph(
+    expected: &BTreeSet<String>,
+    actual: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    if !actual.is_empty() && expected.is_subset(actual) {
+        actual.clone()
+    } else {
+        expected.clone()
+    }
+}
+
 #[derive(Debug)]
 struct RequirementPlannerRecovery {
     access_token: String,
     execution_group_id: String,
     executing_requirement_ids: BTreeSet<String>,
+    link_scope_work_items: Vec<WorkItemPlanItem>,
     project_id: String,
     project_service_base_url: String,
     project_sync_secret: String,
@@ -1180,7 +1203,7 @@ async fn reconcile_requirement_planner_outcome(
         }
     }
     let link_scope_work_items = replacement_link_scope(
-        recovery.selected_work_items.as_slice(),
+        recovery.link_scope_work_items.as_slice(),
         recovery.replacement_work_items.as_slice(),
     );
     let links = load_execution_links_for_work_items(
@@ -1378,14 +1401,14 @@ async fn rerun_requirement_execution_inner(
             "只有已经停止的执行批次才能重新执行",
         ));
     }
-    let expected_project_task_ids = expected_execution_project_task_ids(
+    let mut expected_project_task_ids = expected_execution_project_task_ids(
         old_message.metadata.as_ref(),
         context.project.id.as_str(),
         requirement_id.as_str(),
     )?;
     let all_work_items =
         parse_work_items(project_plan_array(&context.plan, "work_items", "workItems"));
-    let selected_work_items = all_work_items
+    let mut selected_work_items = all_work_items
         .iter()
         .filter(|item| expected_project_task_ids.contains(item.id.as_str()))
         .cloned()
@@ -1486,6 +1509,33 @@ async fn rerun_requirement_execution_inner(
         .iter()
         .map(|(project_task_id, _)| project_task_id.clone())
         .collect::<BTreeSet<_>>();
+    let expanded_project_task_ids = expand_project_task_scope_to_actual_graph(
+        &expected_project_task_ids,
+        &mapped_project_task_ids,
+    );
+    if expanded_project_task_ids != expected_project_task_ids {
+        let expanded_work_items = all_work_items
+            .iter()
+            .filter(|item| expanded_project_task_ids.contains(item.id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if expanded_work_items.len() != expanded_project_task_ids.len() {
+            let _ = task_runner_api_client::retire_project_execution(
+                contact_runtime.task_runner_base_url.as_str(),
+                context.project.id.as_str(),
+                requirement_id.as_str(),
+                session.id.as_str(),
+                new_execution_group_id.as_str(),
+            )
+            .await;
+            return Err(HandlerError::bad_gateway(
+                "复制执行图无效",
+                "Task Runner 返回了当前项目计划中不存在或不可见的项目任务",
+            ));
+        }
+        expected_project_task_ids = expanded_project_task_ids;
+        selected_work_items = expanded_work_items;
+    }
     if mappings.len() != expected_project_task_ids.len()
         || validate_exact_project_task_scope(&expected_project_task_ids, &mapped_project_task_ids)
             .is_err()
@@ -1587,6 +1637,32 @@ async fn rerun_requirement_execution_inner(
             source_session_id: Some(session.id.clone()),
             source_user_message_id: Some(new_execution_group_id.clone()),
         });
+    }
+    if let Err(error) = sync_execution_message_task_tracking(
+        session.id.as_str(),
+        new_execution_group_id.as_str(),
+        new_links.as_slice(),
+    )
+    .await
+    {
+        let _ = retire_cloud_execution_batch(
+            contact_runtime.task_runner_base_url.as_str(),
+            context.cfg.project_service_base_url.as_str(),
+            context.access_token.as_str(),
+            context.project.id.as_str(),
+            requirement_id.as_str(),
+            session.id.as_str(),
+            new_execution_group_id.as_str(),
+            new_links.as_slice(),
+        )
+        .await;
+        let _ = set_task_runner_async_overall_status_for_session(
+            session.id.as_str(),
+            new_execution_group_id.as_str(),
+            "failed",
+        )
+        .await;
+        return Err(error);
     }
     let cleanup = match retire_cloud_execution_batch(
         contact_runtime.task_runner_base_url.as_str(),
