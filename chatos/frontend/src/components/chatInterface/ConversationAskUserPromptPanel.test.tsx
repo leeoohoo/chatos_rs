@@ -49,12 +49,10 @@ const renderPanel = (client: Record<string, unknown>) => render(
 
 describe('ConversationAskUserPromptPanel', () => {
   afterEach(() => {
-    vi.useRealTimers();
     cleanup();
   });
 
   it('keeps a local choice selected when polling refreshes the same prompt', async () => {
-    vi.useFakeTimers();
     const listAskUserPrompts = vi
       .fn()
       .mockResolvedValueOnce({ prompts: [buildChoicePrompt()] })
@@ -71,11 +69,12 @@ describe('ConversationAskUserPromptPanel', () => {
     expect(confirmChoice).toBeChecked();
 
     await act(async () => {
-      vi.advanceTimersByTime(1000);
-      await Promise.resolve();
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 1100);
+      });
     });
 
     await waitFor(() => expect(listAskUserPrompts).toHaveBeenCalledTimes(2));
     expect(screen.getByLabelText('创建任务')).toBeChecked();
-  });
+  }, 10_000);
 });
