@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { PlusOutlined, SyncOutlined } from '@ant-design/icons';
+import { EditOutlined, PlusOutlined, SyncOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -20,6 +20,7 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingMarketplace, setEditingMarketplace] = useState<PluginMarketplaceRecord | null>(null);
   const isAdmin = user.role === 'super_admin';
   const effectiveOwnerId = user.owner_user_id?.trim() || user.user_id;
   const marketplacesQuery = useQuery({
@@ -40,6 +41,26 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
     onSuccess: () => {
       message.success(t('pluginMarketplace.created'));
       setModalOpen(false);
+      setEditingMarketplace(null);
+      form.resetFields();
+      queryClient.invalidateQueries({ queryKey: ['plugin-marketplaces'] });
+    },
+    onError: (error) => message.error((error as Error).message),
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ marketplaceId, values }: { marketplaceId: string; values: Record<string, unknown> }) =>
+      api.updateAdminPluginMarketplace(marketplaceId, {
+        name: values.name,
+        catalog_url: optionalText(values.catalog_url),
+        enabled: values.enabled !== false,
+        trust_level: values.trust_level,
+        trusted_signing_keys: parseJsonArray(values.trusted_signing_keys_json),
+      }),
+    onSuccess: () => {
+      message.success(t('pluginMarketplace.updated'));
+      setModalOpen(false);
+      setEditingMarketplace(null);
+      form.resetFields();
       queryClient.invalidateQueries({ queryKey: ['plugin-marketplaces'] });
     },
     onError: (error) => message.error((error as Error).message),
@@ -122,7 +143,7 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
       {
         title: t('table.actions'),
         key: 'actions',
-        width: 110,
+        width: 190,
         fixed: 'right',
         render: (_, record) => {
           const writable =
@@ -135,15 +156,38 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
             Boolean(record.catalog_url) &&
             record.source_kind !== 'local_directory';
           return (
-            <Button
-              size="small"
-              icon={<SyncOutlined />}
-              disabled={!syncable}
-              loading={syncMutation.isPending && syncMutation.variables === record.id}
-              onClick={() => syncMutation.mutate(record.id)}
-            >
-              {t('pluginMarketplace.sync')}
-            </Button>
+            <Space size="small">
+              {isAdmin ? (
+                <Button
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    setEditingMarketplace(record);
+                    form.setFieldsValue({
+                      id: record.id,
+                      name: record.name,
+                      source_kind: record.source_kind,
+                      catalog_url: record.catalog_url || '',
+                      enabled: record.enabled,
+                      trust_level: record.trust_level,
+                      trusted_signing_keys_json: JSON.stringify(record.trusted_signing_keys || [], null, 2),
+                    });
+                    setModalOpen(true);
+                  }}
+                >
+                  {t('pluginMarketplace.edit')}
+                </Button>
+              ) : null}
+              <Button
+                size="small"
+                icon={<SyncOutlined />}
+                disabled={!syncable}
+                loading={syncMutation.isPending && syncMutation.variables === record.id}
+                onClick={() => syncMutation.mutate(record.id)}
+              >
+                {t('pluginMarketplace.sync')}
+              </Button>
+            </Space>
           );
         },
       },
@@ -162,6 +206,7 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => {
+            setEditingMarketplace(null);
             form.setFieldsValue({
               source_kind: 'admin_registry',
               trust_level: 'trusted',
@@ -186,27 +231,42 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
         pagination={false}
       />
       <Modal
-        title={t('pluginMarketplace.addTitle')}
+        title={t(editingMarketplace ? 'pluginMarketplace.editTitle' : 'pluginMarketplace.addTitle')}
         open={modalOpen}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => {
+          setModalOpen(false);
+          setEditingMarketplace(null);
+          form.resetFields();
+        }}
         onOk={() => form.submit()}
-        confirmLoading={createMutation.isPending}
+        confirmLoading={createMutation.isPending || updateMutation.isPending}
         width={760}
         destroyOnClose
       >
-        <Form form={form} layout="vertical" onFinish={(values) => createMutation.mutate(values)}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={(values) => {
+            if (editingMarketplace) {
+              updateMutation.mutate({ marketplaceId: editingMarketplace.id, values });
+            } else {
+              createMutation.mutate(values);
+            }
+          }}
+        >
           <div className="form-grid">
             <Form.Item name="name" label={t('table.name')} rules={[{ required: true }]}>
               <Input placeholder="team-plugins" />
             </Form.Item>
             {isAdmin ? (
               <Form.Item name="id" label={t('pluginMarketplace.id')}>
-                <Input placeholder={t('pluginMarketplace.idHint')} />
+                <Input disabled={Boolean(editingMarketplace)} placeholder={t('pluginMarketplace.idHint')} />
               </Form.Item>
             ) : null}
             {isAdmin ? (
               <Form.Item name="source_kind" label={t('pluginMarketplace.source')} rules={[{ required: true }]}>
                 <Select
+                  disabled={Boolean(editingMarketplace)}
                   options={['official_registry', 'admin_registry', 'local_directory'].map((value) => ({
                     value,
                     label: t(`pluginMarketplace.source.${value}`),

@@ -87,7 +87,7 @@ use plugin_install_sources::{
 use plugin_installations::{list_installed_plugins, sync_plugin_installation_internal};
 use plugin_marketplaces::{
     create_admin_plugin_marketplace, create_plugin_marketplace, list_admin_plugin_marketplaces,
-    list_plugin_marketplaces,
+    list_plugin_marketplaces, update_admin_plugin_marketplace,
 };
 use plugin_oauth::{list_plugin_oauth_connections, sync_plugin_oauth_status_internal};
 use plugin_releases::{create_plugin_release, list_plugin_releases, revoke_plugin_release};
@@ -284,6 +284,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/admin/plugin-marketplaces",
             get(list_admin_plugin_marketplaces).post(create_admin_plugin_marketplace),
+        )
+        .route(
+            "/api/admin/plugin-marketplaces/{marketplace_id}",
+            patch(update_admin_plugin_marketplace),
         )
         .route(
             "/api/admin/plugin-marketplaces/{marketplace_id}/sync",

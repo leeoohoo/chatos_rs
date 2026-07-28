@@ -64,6 +64,20 @@ impl AppStore {
         Ok(())
     }
 
+    pub async fn replace_plugin_marketplace_if_matches(
+        &self,
+        expected: &PluginMarketplaceRecord,
+        record: &PluginMarketplaceRecord,
+    ) -> Result<bool, String> {
+        let filter = mongodb::bson::to_document(expected).map_err(|err| err.to_string())?;
+        let result = self
+            .plugin_marketplaces
+            .replace_one(filter, record, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.matched_count == 1)
+    }
+
     pub async fn get_plugin_catalog_sync(
         &self,
         marketplace_id: &str,

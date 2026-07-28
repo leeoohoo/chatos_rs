@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -16,6 +16,7 @@ use reqwest::redirect::Policy;
 use reqwest::Url;
 use semver::Version;
 
+use super::plugin_marketplaces::validate_marketplace_signing_key_progression;
 use super::*;
 
 const SYSTEM_CATALOG_SYNC_ACTOR: &str = "system:plugin-catalog-sync";
@@ -479,7 +480,10 @@ fn validate_catalog_progression(
     previous: &PluginCatalogDocument,
     next: &PluginCatalogDocument,
 ) -> Result<(), ApiError> {
-    validate_signing_key_progression(previous, next)?;
+    validate_marketplace_signing_key_progression(
+        previous.signing_keys.as_slice(),
+        next.signing_keys.as_slice(),
+    )?;
     let next_plugins = next
         .plugins
         .iter()
@@ -545,74 +549,6 @@ fn validate_catalog_progression(
                 snapshot.plugin_id, snapshot.release_id, snapshot.component.component_key
             )));
         }
-    }
-    Ok(())
-}
-
-fn validate_signing_key_progression(
-    previous: &PluginCatalogDocument,
-    next: &PluginCatalogDocument,
-) -> Result<(), ApiError> {
-    let next_keys = next
-        .signing_keys
-        .iter()
-        .map(|key| (key.key_id.as_str(), key))
-        .collect::<HashMap<_, _>>();
-    for key in &previous.signing_keys {
-        let Some(updated) = next_keys.get(key.key_id.as_str()) else {
-            if key.revoked_at.is_some() {
-                continue;
-            }
-            return Err(ApiError::conflict(format!(
-                "Catalog update removes non-revoked signing key {}",
-                key.key_id
-            )));
-        };
-        if key.publisher_id != updated.publisher_id
-            || key.algorithm != updated.algorithm
-            || key.public_key_base64 != updated.public_key_base64
-            || key.usages.iter().collect::<BTreeSet<_>>()
-                != updated.usages.iter().collect::<BTreeSet<_>>()
-            || key.valid_from != updated.valid_from
-        {
-            return Err(ApiError::conflict(format!(
-                "Catalog update changes immutable signing key material {}",
-                key.key_id
-            )));
-        }
-        if key.revoked_at.is_some() && key.revoked_at != updated.revoked_at {
-            return Err(ApiError::conflict(format!(
-                "Catalog update removes or changes signing key revocation {}",
-                key.key_id
-            )));
-        }
-        validate_key_valid_until_progression(key, updated)?;
-    }
-    Ok(())
-}
-
-fn validate_key_valid_until_progression(
-    previous: &SigningKeyRef,
-    next: &SigningKeyRef,
-) -> Result<(), ApiError> {
-    let Some(previous_until) = previous.valid_until.as_deref() else {
-        return Ok(());
-    };
-    let Some(next_until) = next.valid_until.as_deref() else {
-        return Err(ApiError::conflict(format!(
-            "Catalog update extends signing key validity {}",
-            previous.key_id
-        )));
-    };
-    let previous_until = DateTime::parse_from_rfc3339(previous_until)
-        .map_err(|_| ApiError::conflict("previous signing key validity is invalid"))?;
-    let next_until = DateTime::parse_from_rfc3339(next_until)
-        .map_err(|_| ApiError::conflict("next signing key validity is invalid"))?;
-    if next_until > previous_until {
-        return Err(ApiError::conflict(format!(
-            "Catalog update extends signing key validity {}",
-            previous.key_id
-        )));
     }
     Ok(())
 }
@@ -948,11 +884,19 @@ mod tests {
         let key = signing_key("root-v1", None);
         let previous = catalog_with_keys("revision-1", vec![key.clone()]);
         let next = catalog_with_keys("revision-2", Vec::new());
-        assert!(validate_signing_key_progression(&previous, &next).is_err());
+        assert!(validate_marketplace_signing_key_progression(
+            previous.signing_keys.as_slice(),
+            next.signing_keys.as_slice(),
+        )
+        .is_err());
 
         let revoked = signing_key("root-v1", Some("2026-07-25T01:00:00Z"));
         let previous = catalog_with_keys("revision-1", vec![revoked]);
-        assert!(validate_signing_key_progression(&previous, &next).is_ok());
+        assert!(validate_marketplace_signing_key_progression(
+            previous.signing_keys.as_slice(),
+            next.signing_keys.as_slice(),
+        )
+        .is_ok());
     }
 
     fn signing_key(key_id: &str, revoked_at: Option<&str>) -> SigningKeyRef {

@@ -60,12 +60,15 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 - `/api/plugin-marketplaces`
 - `/api/plugin-marketplaces/:marketplace_id/sync`
 - `/api/admin/plugin-marketplaces`
+- `PATCH /api/admin/plugin-marketplaces/:marketplace_id`
 - `/api/admin/plugin-marketplaces/:marketplace_id/sync`
 - `/api/admin/plugins`
 - `/api/admin/plugins/:plugin_id/releases`
 - `/api/runtime/agent-capabilities`
 
 可信网络 Marketplace 的 Catalog 同步同时支持 owner/管理员手动触发和后台定时触发。Catalog 只允许无 credential/fragment 的 HTTPS URL，抓取时禁用 redirect 与系统代理、阻断非公网 DNS 地址，并在写入前验证 Catalog/Release Ed25519 签名、显式 key usage、密钥轮换/撤销、单调 revision/issued_at、Release 不可变性和 artifact URL。personal Marketplace 的 Catalog 和安装源在服务端强制绑定 owner；Local Connector 列表与 exact artifact 代理都会传递并重新校验同一个 effective owner ID，不能通过猜测 Plugin/Release ID 读取其他用户的 private 来源。
+
+`super_admin` 可通过 Marketplace 编辑入口更新名称、HTTPS Catalog URL、enabled/trust 状态和 trust root。签名 key 采用失败关闭的两阶段轮换：先加入 successor key，再把旧 key 标记 `revoked_at`；非 revoked key 不可直接删除，key ID 对应的 publisher、算法、公钥、usage 和 `valid_from` 不可替换，`valid_until` 只能缩短，已有 revocation 不可撤销或改写。下一次更新才可移除已 revoked 的旧 key；可信网络 Marketplace 始终至少保留一个未撤销的 Catalog key。更新使用旧 Marketplace snapshot 做并发比较，Catalog 同步或其他管理员已修改时返回冲突，要求刷新后重试；审计仅记录 key ID 的 added/revoked/removed 集合，不记录公钥内容。
 
 系统 agent 的 MCP 配置只有三种状态：
 

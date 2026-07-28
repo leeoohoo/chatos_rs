@@ -133,6 +133,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  updateAdminPluginMarketplace: (marketplaceId: string, payload: unknown) =>
+    request<PluginMarketplaceRecord>(
+      `/api/admin/plugin-marketplaces/${encodeURIComponent(marketplaceId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
+    ),
   syncPluginMarketplace: (marketplaceId: string) =>
     request<PluginCatalogSyncResponse>(
       `/api/plugin-marketplaces/${encodeURIComponent(marketplaceId)}/sync`,

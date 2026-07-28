@@ -22,6 +22,7 @@ pub const PLUGIN_VISIBILITY_PUBLIC: &str = "public";
 pub const PLUGIN_VISIBILITY_PRIVATE: &str = "private";
 
 pub const PLUGIN_AUDIT_PUBLISH_MARKETPLACE: &str = "marketplace.publish";
+pub const PLUGIN_AUDIT_UPDATE_MARKETPLACE: &str = "marketplace.update";
 pub const PLUGIN_AUDIT_SYNC_MARKETPLACE: &str = "marketplace.sync";
 pub const PLUGIN_AUDIT_RESOLVE_INSTALL_SOURCE: &str = "install_source.resolve";
 pub const PLUGIN_AUDIT_PUBLISH_CATALOG: &str = "catalog.publish";
@@ -77,6 +78,16 @@ pub struct PluginMarketplacePayload {
     pub enabled: Option<bool>,
     pub trust_level: Option<String>,
     pub trusted_signing_keys: Option<Vec<SigningKeyRef>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginMarketplaceUpdatePayload {
+    pub name: String,
+    pub catalog_url: Option<String>,
+    pub enabled: bool,
+    pub trust_level: String,
+    #[serde(default)]
+    pub trusted_signing_keys: Vec<SigningKeyRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
