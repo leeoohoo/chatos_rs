@@ -26,7 +26,9 @@ import type {
   PluginAuditLogRecord,
   PluginCatalogRecord,
   PluginCatalogSyncResponse,
+  PluginInstallationRecord,
   PluginMarketplaceRecord,
+  PluginOAuthConnectionRecord,
   PluginPublisherRecord,
   PluginReleaseRecord,
 } from '../pluginTypes';
@@ -194,6 +196,12 @@ export const api = {
   listPluginAudit: (params?: Record<string, QueryValue>) =>
     request<ListResponse<PluginAuditLogRecord>>(
       withQuery('/api/admin/plugin-audit', params || {}),
+    ),
+  listInstalledPlugins: (params: Record<string, QueryValue>) =>
+    request<ListResponse<PluginInstallationRecord>>(withQuery('/api/plugins/installed', params)),
+  listPluginOAuthConnections: (pluginId: string, params: Record<string, QueryValue>) =>
+    request<ListResponse<PluginOAuthConnectionRecord>>(
+      withQuery(`/api/plugins/${encodeURIComponent(pluginId)}/oauth`, params),
     ),
   listSystemAgents: () => request<SystemAgentRecord[]>('/api/system-agents'),
   createSystemAgent: (payload: unknown) =>

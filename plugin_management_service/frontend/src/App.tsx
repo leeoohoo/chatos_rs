@@ -13,6 +13,7 @@ import { RuntimePreviewPage } from './pages/RuntimePreviewPage';
 import { SystemAgentsPage } from './pages/SystemAgentsPage';
 import { PluginCatalogAdminPage } from './pages/PluginCatalogAdminPage';
 import { PluginAuditPage } from './pages/PluginAuditPage';
+import { PluginDiagnosticsPage } from './pages/PluginDiagnosticsPage';
 import { PluginMarketplacesPage } from './pages/PluginMarketplacesPage';
 import { PluginPublishersPage } from './pages/PluginPublishersPage';
 import { PluginReleasesPage } from './pages/PluginReleasesPage';
@@ -63,6 +64,7 @@ export function App() {
       {section === 'mcps' ? <McpCatalogPage user={user} /> : null}
       {section === 'marketplaces' ? <PluginMarketplacesPage user={user} /> : null}
       {section === 'publishers' ? <PluginPublishersPage user={user} /> : null}
+      {section === 'diagnostics' ? <PluginDiagnosticsPage /> : null}
       {section === 'plugins' ? (
         <PluginCatalogAdminPage
           user={user}

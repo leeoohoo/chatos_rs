@@ -7,6 +7,7 @@ import {
   BranchesOutlined,
   GlobalOutlined,
   LogoutOutlined,
+  MonitorOutlined,
   RocketOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
@@ -24,6 +25,7 @@ export type AppSection =
   | 'mcps'
   | 'marketplaces'
   | 'publishers'
+  | 'diagnostics'
   | 'plugins'
   | 'releases'
   | 'agents'
@@ -43,6 +45,7 @@ export function AppShell({ user, section, onSectionChange, children }: AppShellP
     { key: 'mcps', icon: <ApiOutlined />, label: t('nav.mcps') },
     { key: 'marketplaces', icon: <ShopOutlined />, label: t('nav.pluginMarketplaces') },
     { key: 'publishers', icon: <SolutionOutlined />, label: t('nav.pluginPublishers') },
+    { key: 'diagnostics', icon: <MonitorOutlined />, label: t('nav.pluginDiagnostics') },
     ...(user.role === 'super_admin'
       ? [
           { key: 'plugins', icon: <SafetyCertificateOutlined />, label: t('nav.plugins') },

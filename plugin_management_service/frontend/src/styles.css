@@ -231,6 +231,14 @@ body {
   margin-bottom: 16px;
 }
 
+.diagnostics-table {
+  margin-top: 16px;
+}
+
+.diagnostics-panel-toolbar {
+  margin-top: 24px;
+}
+
 .prompt-version-table,
 .prompt-editor-panel {
   overflow: hidden;
