@@ -71,17 +71,39 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+if [[ -e "$DIST_DIR" ]]; then
+  echo "[INFO] Removing stale macOS package output: $DIST_DIR"
+  /usr/bin/find "$DIST_DIR" -depth -delete
+fi
+
 if [[ -z "${CHATOS_DOCUMENT_RUNTIME_SOURCE:-}" ]]; then
-  CODEX_DOCUMENT_RUNTIME_SOURCE="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/native"
-  if [[ -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/libreoffice-headless/libreoffice/LibreOfficeDev.app/Contents/MacOS/soffice" \
-    && -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/poppler/bin/pdftoppm" ]]; then
+  if [[ "${CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE:-0}" == "1" ]]; then
+    CODEX_DOCUMENT_RUNTIME_SOURCE="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/native"
+    if [[ ! -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/libreoffice-headless/libreoffice/LibreOfficeDev.app/Contents/MacOS/soffice" \
+      || ! -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/poppler/bin/pdftoppm" ]]; then
+      cat >&2 <<EOF
+CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE=1 was set, but the Codex document runtime source is not available or incomplete:
+
+  $CODEX_DOCUMENT_RUNTIME_SOURCE
+
+Expected source layout:
+
+  <root>/libreoffice-headless/libreoffice/LibreOffice*.app/Contents/MacOS/soffice
+  <root>/poppler/bin/pdftoppm
+
+No new DMG or app was produced. The stale output directory has already been removed:
+
+  $DIST_DIR
+EOF
+      exit 1
+    fi
     export CHATOS_DOCUMENT_RUNTIME_SOURCE="$CODEX_DOCUMENT_RUNTIME_SOURCE"
-    echo "[INFO] Using Codex document runtime source: $CHATOS_DOCUMENT_RUNTIME_SOURCE"
+    echo "[WARN] Using Codex document runtime source for local testing only: $CHATOS_DOCUMENT_RUNTIME_SOURCE"
   else
     cat >&2 <<'EOF'
 CHATOS_DOCUMENT_RUNTIME_SOURCE is not set.
 
-Set it to a verified LibreOffice + Poppler runtime root before packaging, for example:
+Set it to your verified LibreOffice + Poppler runtime root before packaging, for example:
 
   CHATOS_DOCUMENT_RUNTIME_SOURCE=/path/to/document-runtime-source ./package-electron-macos-client.sh
 
@@ -90,15 +112,20 @@ Expected source layout:
   <root>/libreoffice-headless/libreoffice/LibreOffice*.app/Contents/MacOS/soffice
   <root>/poppler/bin/pdftoppm
 
-No new DMG or app will be produced until this dependency is provided.
+For a temporary local-only verification build on this Mac, you may explicitly opt in to the Codex-bundled runtime source:
+
+  CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE=1 ./package-electron-macos-client.sh
+
+Do not use that option for official builds.
+EOF
+    cat >&2 <<EOF
+
+No new DMG or app was produced. The stale output directory has already been removed:
+
+  $DIST_DIR
 EOF
     exit 1
   fi
-fi
-
-if [[ -e "$DIST_DIR" ]]; then
-  echo "[INFO] Removing stale macOS package output: $DIST_DIR"
-  /usr/bin/find "$DIST_DIR" -depth -delete
 fi
 
 node -e '
