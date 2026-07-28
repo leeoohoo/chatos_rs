@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Loader2, X } from 'lucide-react';
 
 import { useI18n } from '../../i18n/I18nProvider';
@@ -103,6 +103,7 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
   const [values, setValues] = useState<Record<string, string>>({});
   const [selection, setSelection] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const initializedPromptIdRef = useRef<string | null>(null);
 
   const localSession = isLocalRuntimeSessionId(sessionId);
 
@@ -166,11 +167,16 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
 
   useEffect(() => {
     if (!activePrompt) {
+      initializedPromptIdRef.current = null;
       setValues({});
       setSelection([]);
       setError(null);
       return;
     }
+    if (initializedPromptIdRef.current === activePrompt.id) {
+      return;
+    }
+    initializedPromptIdRef.current = activePrompt.id;
     const nextValues: Record<string, string> = {};
     activeFields.forEach((field, index) => {
       nextValues[fieldKey(field, index)] = fieldDefaultValue(field);

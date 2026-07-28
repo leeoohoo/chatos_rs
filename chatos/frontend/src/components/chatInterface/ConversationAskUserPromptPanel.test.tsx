@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+// @vitest-environment jsdom
+
+import '@testing-library/jest-dom/vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { I18nProvider } from '../../i18n/I18nProvider';
+import { ApiClientProvider } from '../../lib/api/ApiClientContext';
+import type { AskUserPromptRecord } from '../../lib/api/client/types';
+import ConversationAskUserPromptPanel from './ConversationAskUserPromptPanel';
+
+vi.mock('../../lib/realtime/useConversationAskUserPromptRealtime', () => ({
+  useConversationAskUserPromptRealtime: vi.fn(),
+}));
+
+const buildChoicePrompt = (): AskUserPromptRecord => ({
+  id: 'prompt-1',
+  conversation_id: 'lc_session_ask_user',
+  conversation_turn_id: 'turn-1',
+  kind: 'choice',
+  status: 'pending',
+  prompt: {
+    title: '确认创建本地任务',
+    message: 'Task Manager 准备创建 3 个本地任务，是否继续？',
+    allow_cancel: true,
+    payload: {
+      choice: {
+        multiple: false,
+        min_selections: 1,
+        max_selections: 1,
+        options: [
+          { value: 'confirm', label: '创建任务' },
+          { value: 'cancel', label: '取消' },
+        ],
+      },
+    },
+  },
+});
+
+const renderPanel = (client: Record<string, unknown>) => render(
+  <ApiClientProvider client={client as never}>
+    <I18nProvider>
+      <ConversationAskUserPromptPanel sessionId="lc_session_ask_user" />
+    </I18nProvider>
+  </ApiClientProvider>,
+);
+
+describe('ConversationAskUserPromptPanel', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    cleanup();
+  });
+
+  it('keeps a local choice selected when polling refreshes the same prompt', async () => {
+    vi.useFakeTimers();
+    const listAskUserPrompts = vi
+      .fn()
+      .mockResolvedValueOnce({ prompts: [buildChoicePrompt()] })
+      .mockResolvedValueOnce({ prompts: [buildChoicePrompt()] });
+
+    renderPanel({
+      listAskUserPrompts,
+      submitAskUserPrompt: vi.fn(),
+      cancelAskUserPrompt: vi.fn(),
+    });
+
+    const confirmChoice = await screen.findByLabelText('创建任务');
+    fireEvent.click(confirmChoice);
+    expect(confirmChoice).toBeChecked();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(listAskUserPrompts).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText('创建任务')).toBeChecked();
+  });
+});
