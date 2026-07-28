@@ -6,6 +6,7 @@ const {
   BrowserWindow,
   Menu,
   WebContentsView,
+  clipboard,
   ipcMain,
   session,
   shell,
@@ -671,7 +672,26 @@ app.whenReady().then(async () => {
     if (!isTrustedLocalEvent(event)) {
       return false;
     }
-    const error = await shell.openPath(coreRuntime.chromeExtensionPath());
+    const extensionDirectory = coreRuntime.prepareChromeExtensionInstallDirectory();
+    const error = await shell.openPath(extensionDirectory);
+    if (error) {
+      throw new Error(error);
+    }
+    return true;
+  });
+  ipcMain.handle('local-connector:chrome-extension-install-path-copy', (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      return false;
+    }
+    const extensionDirectory = coreRuntime.prepareChromeExtensionInstallDirectory();
+    clipboard.writeText(extensionDirectory);
+    return extensionDirectory;
+  });
+  ipcMain.handle('local-connector:chrome-extensions-page-open', async (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      return false;
+    }
+    const error = await shell.openExternal('chrome://extensions/');
     if (error) {
       throw new Error(error);
     }

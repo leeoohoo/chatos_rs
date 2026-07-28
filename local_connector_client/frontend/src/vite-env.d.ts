@@ -38,6 +38,8 @@ interface ChatosLocalConnectorBridge {
     developer_chatos_web_url: string;
   }>;
   showChromeExtensionDirectory?: () => Promise<boolean>;
+  copyChromeExtensionInstallPath?: () => Promise<string | false>;
+  openChromeExtensionsPage?: () => Promise<boolean>;
   getDesktopSystemPermissions?: () => Promise<Record<string, {
     status: string;
     status_label: string;

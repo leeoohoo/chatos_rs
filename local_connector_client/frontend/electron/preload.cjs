@@ -21,4 +21,10 @@ contextBridge.exposeInMainWorld('chatosLocalConnector', {
   showChromeExtensionDirectory: () => (
     ipcRenderer.invoke('local-connector:chrome-extension-directory-show')
   ),
+  copyChromeExtensionInstallPath: () => (
+    ipcRenderer.invoke('local-connector:chrome-extension-install-path-copy')
+  ),
+  openChromeExtensionsPage: () => (
+    ipcRenderer.invoke('local-connector:chrome-extensions-page-open')
+  ),
 });

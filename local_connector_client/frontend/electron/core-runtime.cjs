@@ -55,6 +55,40 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     return path.join(__dirname, '..', '..', 'chrome_extension');
   }
 
+  function chromeExtensionInstallPath() {
+    return path.join(app.getPath('home'), 'ChatOS Chrome Extension');
+  }
+
+  function prepareChromeExtensionInstallDirectory() {
+    const source = chromeExtensionPath();
+    if (!fs.existsSync(path.join(source, 'manifest.json'))) {
+      throw new Error(`Chrome extension source is missing manifest.json: ${source}`);
+    }
+
+    const destination = chromeExtensionInstallPath();
+    const homeDir = app.getPath('home');
+    const relativeDestination = path.relative(homeDir, destination);
+    if (
+      !relativeDestination
+      || relativeDestination.startsWith('..')
+      || path.isAbsolute(relativeDestination)
+    ) {
+      throw new Error(`Refusing to prepare Chrome extension outside the user home directory: ${destination}`);
+    }
+
+    const temporaryDestination = `${destination}.partial-${process.pid}`;
+    fs.rmSync(temporaryDestination, { recursive: true, force: true });
+    fs.rmSync(destination, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.cpSync(source, temporaryDestination, { recursive: true, dereference: true });
+    if (!fs.existsSync(path.join(temporaryDestination, 'manifest.json'))) {
+      fs.rmSync(temporaryDestination, { recursive: true, force: true });
+      throw new Error(`Prepared Chrome extension directory is missing manifest.json: ${temporaryDestination}`);
+    }
+    fs.renameSync(temporaryDestination, destination);
+    return destination;
+  }
+
   function bundledBrowserRuntime() {
     const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
     const agentBrowser = path.join(
@@ -350,8 +384,10 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   return {
     cleanupIpcEndpoint,
     chromeExtensionPath,
+    chromeExtensionInstallPath,
     getIpcEndpoint,
     isRunning,
+    prepareChromeExtensionInstallDirectory,
     resourcePath,
     startCore,
     stopCoreProcessTree,
