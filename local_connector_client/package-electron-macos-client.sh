@@ -9,6 +9,7 @@ ROOT_DIR="$(cd "$CLIENT_DIR/.." && pwd)"
 FRONTEND_DIR="$CLIENT_DIR/frontend"
 CHATOS_FRONTEND_DIR="$ROOT_DIR/chatos/frontend"
 STAGING_DIR="$CLIENT_DIR/.package/macos"
+DIST_DIR="$CLIENT_DIR/dist/electron-macos"
 BUILDER_CONFIG="$CLIENT_DIR/electron-builder-macos.yml"
 SKILL_CATALOG="$CLIENT_DIR/skill_bundles/catalog/internal-skill-catalog.json"
 PLUGIN_CATALOG="$CLIENT_DIR/plugin_bundles/catalog/bundled-plugin-catalog.json"
@@ -68,6 +69,36 @@ done
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This script must run on macOS." >&2
   exit 1
+fi
+
+if [[ -z "${CHATOS_DOCUMENT_RUNTIME_SOURCE:-}" ]]; then
+  CODEX_DOCUMENT_RUNTIME_SOURCE="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/native"
+  if [[ -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/libreoffice-headless/libreoffice/LibreOfficeDev.app/Contents/MacOS/soffice" \
+    && -x "$CODEX_DOCUMENT_RUNTIME_SOURCE/poppler/bin/pdftoppm" ]]; then
+    export CHATOS_DOCUMENT_RUNTIME_SOURCE="$CODEX_DOCUMENT_RUNTIME_SOURCE"
+    echo "[INFO] Using Codex document runtime source: $CHATOS_DOCUMENT_RUNTIME_SOURCE"
+  else
+    cat >&2 <<'EOF'
+CHATOS_DOCUMENT_RUNTIME_SOURCE is not set.
+
+Set it to a verified LibreOffice + Poppler runtime root before packaging, for example:
+
+  CHATOS_DOCUMENT_RUNTIME_SOURCE=/path/to/document-runtime-source ./package-electron-macos-client.sh
+
+Expected source layout:
+
+  <root>/libreoffice-headless/libreoffice/LibreOffice*.app/Contents/MacOS/soffice
+  <root>/poppler/bin/pdftoppm
+
+No new DMG or app will be produced until this dependency is provided.
+EOF
+    exit 1
+  fi
+fi
+
+if [[ -e "$DIST_DIR" ]]; then
+  echo "[INFO] Removing stale macOS package output: $DIST_DIR"
+  /usr/bin/find "$DIST_DIR" -depth -delete
 fi
 
 node -e '
