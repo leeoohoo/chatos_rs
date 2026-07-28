@@ -296,4 +296,63 @@ mod tests {
             expected
         );
     }
+
+    fn planner_message_created_at(
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> crate::models::message::Message {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.created_at = created_at.to_rfc3339();
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1",
+                "project_task_ids": ["task-1"]
+            },
+            "task_runner_async": {
+                "overall_status": "planning",
+                "confirmation_status": "planning"
+            }
+        }));
+        message
+    }
+
+    #[test]
+    fn planning_message_without_tasks_becomes_stale_after_timeout() {
+        let now = chrono::Utc::now();
+        let message = planner_message_created_at(
+            now - chrono::Duration::seconds(STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS + 1),
+        );
+
+        assert!(cloud_execution_planner_message_is_stale(
+            &message, false, now
+        ));
+    }
+
+    #[test]
+    fn planning_message_with_tasks_is_not_marked_stale() {
+        let now = chrono::Utc::now();
+        let message = planner_message_created_at(
+            now - chrono::Duration::seconds(STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS + 1),
+        );
+
+        assert!(!cloud_execution_planner_message_is_stale(
+            &message, true, now
+        ));
+    }
+
+    #[test]
+    fn recent_planning_message_is_not_marked_stale() {
+        let now = chrono::Utc::now();
+        let message = planner_message_created_at(
+            now - chrono::Duration::seconds(STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS - 1),
+        );
+
+        assert!(!cloud_execution_planner_message_is_stale(
+            &message, false, now
+        ));
+    }
 }

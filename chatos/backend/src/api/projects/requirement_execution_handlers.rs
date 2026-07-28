@@ -12,8 +12,8 @@ use chatos_project_execution::{
     format_planning_feedback_history, missing_project_task_ids, read_planning_feedback_history,
     select_pending_work_items, sort_work_items_for_planning, validate_exact_project_task_scope,
     ExecutionPlanIdentity, ExecutionPlane, NEXT_ACTION_PREVIEW_AND_CONFIRM,
-    STATUS_AWAITING_CONFIRMATION, STATUS_EXECUTION_STARTED, STATUS_PAUSED, STATUS_PLANNING_STARTED,
-    STATUS_STOPPED, STATUS_STOPPING,
+    STATUS_AWAITING_CONFIRMATION, STATUS_EXECUTION_STARTED, STATUS_PAUSED, STATUS_PLANNING,
+    STATUS_PLANNING_STARTED, STATUS_STOPPED, STATUS_STOPPING,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -23,7 +23,7 @@ use tracing::warn;
 use crate::api::chat_stream_common::ChatStreamRequest;
 use crate::core::auth::AuthUser;
 use crate::core::messages::{
-    set_task_runner_async_execution_paused_for_session,
+    ensure_message_metadata_object, set_task_runner_async_execution_paused_for_session,
     set_task_runner_async_overall_status_for_session, MessageOut,
 };
 use crate::core::validation::normalize_non_empty;
@@ -313,6 +313,8 @@ async fn get_requirement_execution_plan_inner(
                         == Some(identity.execution_group_id.as_str())
             })
             .collect::<Vec<_>>();
+        let message =
+            repair_stale_cloud_execution_planner_message(message, current_links.is_empty()).await?;
         return Ok(build_cloud_execution_plan_response(
             context.project.id.as_str(),
             requirement_id.as_str(),
@@ -342,6 +344,8 @@ async fn get_requirement_execution_plan_inner(
                 && link.source_user_message_id.as_deref() == Some(message.id.as_str())
         })
         .collect::<Vec<_>>();
+    let message =
+        repair_stale_cloud_execution_planner_message(message, current_links.is_empty()).await?;
     Ok(build_cloud_execution_plan_response(
         context.project.id.as_str(),
         requirement_id.as_str(),
@@ -498,6 +502,12 @@ fn build_cloud_execution_plan_response(
         .and_then(|value| value.get("execution_paused"))
         .and_then(Value::as_bool)
         .unwrap_or_else(|| status == STATUS_PAUSED);
+    let failure_kind = value_string(task_runner.unwrap_or(&Value::Null), "failure_kind")
+        .or_else(|| value_string(execution.unwrap_or(&Value::Null), "failure_kind"));
+    let failure_reason = value_string(task_runner.unwrap_or(&Value::Null), "failure_reason")
+        .or_else(|| value_string(execution.unwrap_or(&Value::Null), "failure_reason"));
+    let failed_at = value_string(task_runner.unwrap_or(&Value::Null), "failed_at")
+        .or_else(|| value_string(execution.unwrap_or(&Value::Null), "failed_at"));
     json!({
         "found": true,
         "execution_plane": ExecutionPlane::Cloud.as_str(),
@@ -519,9 +529,97 @@ fn build_cloud_execution_plan_response(
         "execution_paused": execution_paused,
         "task_count": links.len(),
         "has_started_runs": links.iter().any(|link| link.task_runner_run_id.is_some()),
+        "failure_kind": failure_kind,
+        "failure_reason": failure_reason,
+        "failed_at": failed_at,
         "created_at": message.created_at,
         "message": MessageOut::from(message),
     })
+}
+
+const STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS: i64 = 10 * 60;
+const STALE_PLANNER_FAILURE_KIND: &str = "stale_planning_agent";
+const STALE_PLANNER_FAILURE_REASON: &str = "规划 Agent 已中断：后端重启或运行进程丢失后，执行计划长时间没有创建任何 Task Runner 任务。请重新生成执行计划。";
+
+fn is_cloud_execution_planner_status_pending(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        STATUS_PLANNING | STATUS_PLANNING_STARTED | "pending" | "processing"
+    )
+}
+
+fn cloud_execution_planner_message_is_stale(
+    message: &crate::models::message::Message,
+    has_execution_links: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    if has_execution_links
+        || !is_cloud_execution_planner_status_pending(&execution_message_status(message))
+    {
+        return false;
+    }
+    let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(message.created_at.as_str()) else {
+        return false;
+    };
+    now.signed_duration_since(created_at.with_timezone(&chrono::Utc))
+        .num_seconds()
+        >= STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS
+}
+
+async fn repair_stale_cloud_execution_planner_message(
+    mut message: crate::models::message::Message,
+    no_execution_links: bool,
+) -> Result<crate::models::message::Message, HandlerError> {
+    if !cloud_execution_planner_message_is_stale(&message, !no_execution_links, chrono::Utc::now())
+    {
+        return Ok(message);
+    }
+    let failed_at = crate::core::time::now_rfc3339();
+    let metadata = ensure_message_metadata_object(&mut message);
+    let task_runner_async = metadata
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| json!({}));
+    if !task_runner_async.is_object() {
+        *task_runner_async = json!({});
+    }
+    if let Some(task_runner_async) = task_runner_async.as_object_mut() {
+        task_runner_async.insert("overall_status".to_string(), json!("failed"));
+        task_runner_async.insert("confirmation_status".to_string(), json!("failed"));
+        task_runner_async.insert(
+            "failure_kind".to_string(),
+            json!(STALE_PLANNER_FAILURE_KIND),
+        );
+        task_runner_async.insert(
+            "failure_reason".to_string(),
+            json!(STALE_PLANNER_FAILURE_REASON),
+        );
+        task_runner_async.insert("failed_at".to_string(), json!(failed_at.clone()));
+    }
+    let execution = metadata
+        .entry("project_requirement_execution".to_string())
+        .or_insert_with(|| json!({}));
+    if !execution.is_object() {
+        *execution = json!({});
+    }
+    if let Some(execution) = execution.as_object_mut() {
+        execution.insert("status".to_string(), json!("failed"));
+        execution.insert(
+            "failure_kind".to_string(),
+            json!(STALE_PLANNER_FAILURE_KIND),
+        );
+        execution.insert(
+            "failure_reason".to_string(),
+            json!(STALE_PLANNER_FAILURE_REASON),
+        );
+        execution.insert("failed_at".to_string(), json!(failed_at));
+    }
+    let session = chatos_sessions::get_session_by_id(message.session_id.as_str())
+        .await
+        .map_err(|error| HandlerError::internal("读取需求执行会话失败", error))?
+        .ok_or_else(|| HandlerError::not_found("需求执行会话不存在"))?;
+    conversation_messages::upsert_message_in_session(&session, &message)
+        .await
+        .map_err(|error| HandlerError::internal("收口超时执行规划状态失败", error))
 }
 
 async fn execute_requirement_inner(
