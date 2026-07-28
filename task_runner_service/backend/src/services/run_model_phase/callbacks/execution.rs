@@ -22,6 +22,24 @@ impl RunService {
             .runtime_config
             .max_iterations
             .unwrap_or(DEFAULT_TASK_RUN_MAX_ITERATIONS);
+        let runtime_settings = match self.effective_task_runner_runtime_settings().await {
+            Ok(settings) => settings,
+            Err(err) => {
+                return TaskRunReport::from_ai_report(
+                    task.id.clone(),
+                    run.id.clone(),
+                    Some(model_config.id.clone()),
+                    AiTurnReport::failed(format!(
+                        "failed to resolve Task Runner runtime settings: {err}"
+                    )),
+                );
+            }
+        };
+        let review_policy = TaskExecutionReviewPolicy::new(
+            runtime_settings.review_read_only_iterations,
+            runtime_settings.review_missing_read_failures,
+            runtime_settings.review_repeat_interval_iterations,
+        );
         let runtime_execution = self.build_runtime_execution_state(
             task.id.as_str(),
             run,
@@ -29,6 +47,7 @@ impl RunService {
             &prepared_execution.run_spec,
             prepared_execution.tool_result_model_budget_limits,
             max_iterations,
+            review_policy,
             prepared_execution.effective_workspace_dir.as_str(),
         );
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(

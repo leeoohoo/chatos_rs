@@ -137,7 +137,6 @@ use self::workspace_mcp::{
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
-const TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY: &str = "task_runner.runtime.max_iterations";
 const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
 const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
     "task_runner.execution.environment_mode";
@@ -219,7 +218,7 @@ pub fn health() -> HealthResponse {
 pub fn system_config(
     config: &AppConfig,
     execution_timeout_ms: u64,
-    task_execution_max_iterations: usize,
+    task_runner_runtime_settings: chatos_agent::TaskRunnerRuntimeSettings,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     execution_environment_mode: String,
     sandbox_enabled: bool,
@@ -243,7 +242,13 @@ pub fn system_config(
         scheduler_poll_interval_ms: config.scheduler_poll_interval.as_millis() as u64,
         auto_memory_summary: config.auto_memory_summary,
         default_task_execution_max_iterations: config.default_task_execution_max_iterations,
-        task_execution_max_iterations,
+        task_execution_max_iterations: task_runner_runtime_settings.max_iterations,
+        task_runner_review_read_only_iterations: task_runner_runtime_settings
+            .review_read_only_iterations,
+        task_runner_review_missing_read_failures: task_runner_runtime_settings
+            .review_missing_read_failures,
+        task_runner_review_repeat_interval_iterations: task_runner_runtime_settings
+            .review_repeat_interval_iterations,
         default_tool_result_model_max_chars: config.default_tool_result_model_max_chars,
         tool_result_model_max_chars: tool_result_model_budget_limits.per_result_max_chars,
         default_tool_results_model_total_max_chars: config

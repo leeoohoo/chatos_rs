@@ -3,6 +3,14 @@
 
 use std::collections::BTreeMap;
 
+use crate::models::{
+    normalize_optional_text, CurrentUser, HealthResponse, WORKSPACE_STATUS_DISABLED,
+};
+use crate::relay::{
+    plugin_artifact_relay_request, PluginArtifactRelayAction, RelayError, RelayRequest,
+    RelayResponse,
+};
+use crate::state::AppState;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::{
@@ -22,21 +30,13 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::models::{
-    normalize_optional_text, CurrentUser, HealthResponse, WORKSPACE_STATUS_DISABLED,
-};
-use crate::relay::{
-    plugin_artifact_relay_request, PluginArtifactRelayAction, RelayError, RelayRequest,
-    RelayResponse,
-};
-use crate::state::AppState;
-
 mod auth_middleware;
 mod devices;
 mod internal_auth;
 mod managed_memory_policy;
 mod managed_requirements;
 mod managed_requirements_admin;
+mod managed_runtime_config;
 mod memory_engine_proxy;
 mod plugin_artifact_relay;
 mod plugin_management_capabilities;

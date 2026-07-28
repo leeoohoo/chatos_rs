@@ -71,7 +71,10 @@ pub use stateless_history::{
     splice_current_input_items, StatelessHistoryMessage,
 };
 pub use task::{
-    TaskBuiltinMcpPromptMode, TaskBuiltinMcpPromptSnapshot, TaskMcpInitMode,
+    tool_result_is_meaningful_engineering_action, tool_result_is_missing_targeted_read,
+    tool_result_is_placeholder_progress_write, TaskBuiltinMcpPromptMode,
+    TaskBuiltinMcpPromptSnapshot, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
+    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger, TaskMcpInitMode,
     TaskMemoryRuntimeConfig, TaskRunExecution, TaskRunReport, TaskRunSpec, TaskRuntime,
     TaskRuntimeBuilder, TaskRuntimeConfig, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };

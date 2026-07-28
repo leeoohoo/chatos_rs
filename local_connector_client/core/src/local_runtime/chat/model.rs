@@ -27,6 +27,29 @@ pub(super) async fn run_text_turn(
     lifecycle_hook: Arc<dyn RuntimeLifecycleHook>,
     callbacks: RuntimeCallbacks,
 ) -> Result<AiRuntimeResult, String> {
+    let input = build_local_memory_context_input_items(summary, recalls, messages, task_board);
+    let request = model_config.to_model_request(serde_json::Value::Array(input), Vec::new());
+    let options = AiRuntimeOptions::new(Some(session_id.to_string()), Some(turn_id.to_string()))
+        .with_caller_model(Some(model_config.model.clone()))
+        .with_caller_model_runtime(Some(model_config.to_tool_caller_model_runtime()))
+        .with_abort_token(Some(abort_token))
+        .with_lifecycle_hook(Some(lifecycle_hook))
+        .with_callbacks(callbacks)
+        .with_record_options(RuntimeRecordOptions::persist_all());
+    let max_iterations = chatos_agent::load_agent_max_iterations("local-connector-service").await;
+    AiRuntime::new(tool_executor)
+        .with_record_writer(Some(record_writer))
+        .with_max_iterations(max_iterations)
+        .run_turn(request, options)
+        .await
+}
+
+pub(in crate::local_runtime) fn build_local_memory_context_input_items(
+    summary: Option<LocalMemorySummaryRecord>,
+    recalls: Vec<LocalSubjectMemoryRecord>,
+    messages: Vec<LocalMessageRecord>,
+    task_board: String,
+) -> Vec<serde_json::Value> {
     let mut history = Vec::with_capacity(
         messages.len()
             + usize::from(summary.is_some())
@@ -43,21 +66,7 @@ pub(super) async fn run_text_turn(
         history.push(summary_history_message(summary));
     }
     history.extend(messages.into_iter().map(history_message));
-    let input = build_stateless_history_items(&[], &[], None, &history, &[], false, false);
-    let request = model_config.to_model_request(serde_json::Value::Array(input), Vec::new());
-    let options = AiRuntimeOptions::new(Some(session_id.to_string()), Some(turn_id.to_string()))
-        .with_caller_model(Some(model_config.model.clone()))
-        .with_caller_model_runtime(Some(model_config.to_tool_caller_model_runtime()))
-        .with_abort_token(Some(abort_token))
-        .with_lifecycle_hook(Some(lifecycle_hook))
-        .with_callbacks(callbacks)
-        .with_record_options(RuntimeRecordOptions::persist_all());
-    let max_iterations = chatos_agent::load_agent_max_iterations("local-connector-service").await;
-    AiRuntime::new(tool_executor)
-        .with_record_writer(Some(record_writer))
-        .with_max_iterations(max_iterations)
-        .run_turn(request, options)
-        .await
+    build_stateless_history_items(&[], &[], None, &history, &[], false, false)
 }
 
 fn task_board_history_message(task_board: String) -> StatelessHistoryMessage {

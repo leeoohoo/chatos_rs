@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
+use chatos_agent::{
+    AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS,
+    DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
+    DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS, DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
+};
+pub use chatos_agent::{
+    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+};
 use chrono::Utc;
 use memory_engine_sdk::{
     memory_policy_config_key, memory_policy_env_key, ManagedMemoryPolicy, MemoryPolicyKind,
@@ -16,7 +25,6 @@ pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
     "chatos.ai.max_iterations",
     "task_runner.execution.max_iterations",
 ];
-pub const TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY: &str = "task_runner.runtime.max_iterations";
 pub const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
 pub const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
     "task_runner.execution.environment_mode";
@@ -170,6 +178,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             200,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+            "复盘触发：只读迭代次数",
+            "Task Run 连续多少轮没有真实工程改动时触发一次自动复盘；不会禁用工具",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS),
+            Some(1),
+            Some(5000),
+            &[],
+            "next_run",
+            &[],
+            202,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+            "复盘触发：缺失文件读取次数",
+            "Task Run 连续读取不存在文件达到该次数时触发自动复盘；不会禁用读取工具",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES),
+            Some(1),
+            Some(5000),
+            &[],
+            "next_run",
+            &[],
+            204,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+            "复盘触发：重复间隔",
+            "同一 Task Run 自动复盘之间至少间隔多少轮模型/工具循环",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL),
+            Some(1),
+            Some(5000),
+            &[],
+            "next_run",
+            &[],
+            206,
             &now,
         ),
         definition(
@@ -548,100 +607,7 @@ fn memory_policy_definition(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_exposes_shared_and_task_runner_iteration_limits() {
-        let definitions = builtin_definitions();
-        let iteration_definitions = definitions
-            .iter()
-            .filter(|definition| definition.key.contains("max_iterations"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(iteration_definitions.len(), 2);
-        let shared = iteration_definitions
-            .iter()
-            .find(|definition| definition.key == AGENT_MAX_ITERATIONS_CONFIG_KEY)
-            .expect("shared agent iteration definition");
-        assert_eq!(shared.scope, "shared");
-        assert_eq!(shared.service_name, None);
-        assert_eq!(shared.default_value, json!(DEFAULT_AGENT_MAX_ITERATIONS));
-        assert!(shared.env_aliases.is_empty());
-
-        let task_runner = iteration_definitions
-            .iter()
-            .find(|definition| definition.key == TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
-            .expect("task runner iteration definition");
-        assert_eq!(task_runner.scope, "service");
-        assert_eq!(task_runner.service_name.as_deref(), Some("task-runner"));
-        assert_eq!(
-            task_runner.default_value,
-            json!(DEFAULT_AGENT_MAX_ITERATIONS)
-        );
-        assert_eq!(task_runner.max, Some(5000));
-        assert!(task_runner.env_aliases.is_empty());
-    }
-
-    #[test]
-    fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
-        let definitions = builtin_definitions();
-        for key in [
-            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
-            TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
-            TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
-            TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
-            TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
-        ] {
-            let definition = definitions
-                .iter()
-                .find(|definition| definition.key == key)
-                .unwrap_or_else(|| panic!("missing definition for {key}"));
-            assert_eq!(definition.scope, "service");
-            assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
-            assert!(
-                definition.env_aliases.is_empty(),
-                "{key} must be managed from configuration-center values, not env aliases"
-            );
-        }
-
-        let environment_mode = definitions
-            .iter()
-            .find(|definition| definition.key == TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY)
-            .expect("task runner execution environment mode definition");
-        assert_eq!(environment_mode.value_type, "enum");
-        assert_eq!(
-            environment_mode.default_value,
-            json!(default_task_runner_execution_environment_mode())
-        );
-        assert_eq!(environment_mode.enum_options, vec!["local", "cloud"]);
-    }
-
-    #[test]
-    fn catalog_exposes_shared_memory_policies_for_server_and_client() {
-        let definitions = builtin_definitions();
-        let memory_definitions = definitions
-            .iter()
-            .filter(|definition| definition.key.starts_with("memory_engine.policy."))
-            .collect::<Vec<_>>();
-
-        assert!(!memory_definitions.is_empty());
-        assert!(memory_definitions
-            .iter()
-            .all(|definition| definition.scope == "shared"));
-        assert!(memory_definitions
-            .iter()
-            .all(|definition| !definition.key.ends_with("model_profile_id")));
-        assert!(memory_definitions.iter().any(|definition| {
-            definition.key == "memory_engine.policy.rollup.keep_level0_count"
-                && definition.default_value == json!(5)
-        }));
-        assert!(memory_definitions.iter().any(|definition| {
-            definition.key == "memory_engine.policy.thread_repair.token_limit"
-                && definition.default_value == json!(200000)
-        }));
-    }
-}
+mod tests;
 
 #[allow(clippy::too_many_arguments)]
 fn definition(

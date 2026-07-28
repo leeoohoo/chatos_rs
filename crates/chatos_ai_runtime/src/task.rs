@@ -11,6 +11,7 @@ use crate::turn::ContextualTurnRunner;
 mod config;
 mod execution;
 mod memory;
+mod progress_review;
 mod report;
 mod runtime_builder;
 mod spec;
@@ -18,6 +19,11 @@ mod spec;
 pub use self::config::{TaskMcpInitMode, TaskRuntimeConfig};
 pub use self::execution::TaskRunExecution;
 pub use self::memory::TaskMemoryRuntimeConfig;
+pub use self::progress_review::{
+    tool_result_is_meaningful_engineering_action, tool_result_is_missing_targeted_read,
+    tool_result_is_placeholder_progress_write, TaskExecutionProgressState,
+    TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+};
 pub use self::report::TaskRunReport;
 pub use self::runtime_builder::TaskRuntimeBuilder;
 pub use self::spec::TaskRunSpec;

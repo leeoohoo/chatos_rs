@@ -13,6 +13,7 @@ pub(in crate::local_runtime) use events::LocalChatEventStream;
 pub(crate) use execution::{
     execute_chat_turn, LocalChatExecutionError, LocalChatExecutionErrorKind,
 };
+pub(in crate::local_runtime) use model::build_local_memory_context_input_items;
 pub(crate) use request::LocalChatSendRequest;
 pub(crate) use tools::{prepare_local_chat_tools, LocalChatRecordWriter};
 

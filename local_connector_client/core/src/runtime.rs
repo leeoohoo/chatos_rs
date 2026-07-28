@@ -13,8 +13,9 @@ use crate::config::ClientConfig;
 use crate::connector::connect_loop;
 use crate::local_runtime::{
     check_agent_prompt_updates, run_local_task_worker_loop, spawn_agent_prompt_update_checker,
-    sync_local_plugin_control_plane, sync_managed_memory_policy, LocalAskUserPromptRegistry,
-    LocalDatabase, LocalEnvironmentJobRegistry, LocalMemoryJobRegistry, LocalTurnControlRegistry,
+    sync_local_plugin_control_plane, sync_managed_memory_policy, sync_managed_runtime_config,
+    LocalAskUserPromptRegistry, LocalDatabase, LocalEnvironmentJobRegistry, LocalMemoryJobRegistry,
+    LocalTurnControlRegistry,
 };
 use crate::model_configs::reconcile_local_model_configs;
 use crate::plugins::{
@@ -243,6 +244,18 @@ impl LocalRuntime {
             ),
             Err(err) => {
                 tracing_stdout(format!("keep cached managed Memory Policy: {err}").as_str())
+            }
+        }
+        match sync_managed_runtime_config(self).await {
+            Ok(bundle) => tracing_stdout(
+                format!(
+                    "synced managed runtime config revision {} ({})",
+                    bundle.revision, bundle.checksum
+                )
+                .as_str(),
+            ),
+            Err(err) => {
+                tracing_stdout(format!("keep cached managed runtime config: {err}").as_str())
             }
         }
         if let Err(err) = check_agent_prompt_updates(self).await {

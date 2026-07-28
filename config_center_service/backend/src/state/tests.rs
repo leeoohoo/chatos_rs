@@ -4,6 +4,7 @@
 use super::support::*;
 
 use super::*;
+use crate::catalog::TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY;
 
 #[test]
 fn legacy_agent_iteration_values_collapse_to_one_key() {

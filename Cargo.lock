@@ -643,6 +643,7 @@ dependencies = [
  "chatos_config_sdk",
  "chatos_mcp_runtime",
  "chatos_plugin_management_sdk",
+ "serde",
  "serde_json",
  "tokio",
 ]

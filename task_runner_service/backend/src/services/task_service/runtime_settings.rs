@@ -21,11 +21,21 @@ impl TaskService {
             .as_ref()
             .and_then(|snapshot| {
                 snapshot
-                    .usize(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
+                    .usize(chatos_agent::TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
                     .or_else(|| snapshot.usize(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY))
             })
             .unwrap_or(self.config.default_task_execution_max_iterations)
             .max(2))
+    }
+
+    pub async fn effective_task_runner_runtime_settings(
+        &self,
+    ) -> Result<chatos_agent::TaskRunnerRuntimeSettings, String> {
+        let snapshot = load_managed_config_snapshot().await;
+        Ok(chatos_agent::resolve_task_runner_runtime_settings(
+            snapshot.as_ref(),
+            self.config.default_task_execution_max_iterations,
+        ))
     }
 
     pub async fn effective_execution_timeout_ms(&self) -> Result<u64, String> {

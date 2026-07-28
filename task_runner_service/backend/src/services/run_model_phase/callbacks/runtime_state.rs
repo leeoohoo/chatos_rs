@@ -3,168 +3,25 @@
 
 use super::*;
 use async_trait::async_trait;
-use chatos_ai_runtime::{RuntimeBeforeModelRequest, RuntimeIterationContext, RuntimeLifecycleHook};
-use std::sync::atomic::AtomicUsize;
+use chatos_ai_runtime::{
+    MemoryContextComposer, RuntimeBeforeModelRequest, RuntimeIterationContext,
+    RuntimeLifecycleHook, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
+    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+};
+use std::time::Duration;
 
-const READ_ONLY_PROGRESS_BUDGET: usize = 8;
-const PROGRESS_GUIDANCE_REPEAT_INTERVAL: usize = 8;
-const MISSING_TARGETED_READ_FAILURE_BUDGET: usize = 2;
-const MISSING_READ_GUIDANCE_REPEAT_INTERVAL: usize = 4;
-const REPEATED_DISCOVERY_TOOL_NAMES: &[&str] = &[
-    "project_runtime_environment_get_project_runtime_environment_info",
-    "task_manager_add_task",
-    "task_manager_list_tasks",
-    "task_run_process_record_process",
-    "code_maintainer_read_list_dir",
-    "code_maintainer_read_search_text",
-    "code_maintainer_read_search_files",
-    "harness_code_list_branches",
-    "terminal_controller_execute_command",
-    "terminal_controller_get_recent_logs",
-    "terminal_controller_process",
-    "terminal_controller_process_kill",
-    "terminal_controller_process_list",
-    "terminal_controller_process_log",
-    "terminal_controller_process_poll",
-    "terminal_controller_process_wait",
-    "terminal_controller_process_write",
-];
-const ASK_USER_TOOL_NAMES: &[&str] = &[
-    "ask_user_prompt_mixed_form",
-    "ask_user_prompt_key_values",
-    "ask_user_prompt_choices",
-];
-const TARGETED_READ_TOOL_NAMES: &[&str] = &[
-    "code_maintainer_read_read_file_raw",
-    "code_maintainer_read_read_file_range",
-    "code_maintainer_read_read_file",
-];
-
-#[derive(Default)]
-struct TaskExecutionProgressState {
-    current_iteration: AtomicUsize,
-    last_meaningful_action_iteration: AtomicUsize,
-    last_guidance_iteration: AtomicUsize,
-    missing_targeted_read_failures_after_guard: AtomicUsize,
-    last_missing_read_guidance_iteration: AtomicUsize,
-}
-
-impl TaskExecutionProgressState {
-    fn begin_iteration(&self, iteration: usize) {
-        self.current_iteration.store(iteration, Ordering::Relaxed);
-    }
-
-    fn observe_tool_result(&self, payload: &Value) {
-        if tool_result_is_meaningful_engineering_action(payload) {
-            self.last_meaningful_action_iteration.store(
-                self.current_iteration.load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            );
-            self.missing_targeted_read_failures_after_guard
-                .store(0, Ordering::Relaxed);
-            return;
-        }
-
-        if self.inspection_tools_are_restricted() && tool_result_is_missing_targeted_read(payload) {
-            self.missing_targeted_read_failures_after_guard
-                .fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    fn should_inject_guidance(&self, iteration: usize) -> bool {
-        let last_action = self
-            .last_meaningful_action_iteration
-            .load(Ordering::Relaxed);
-        if iteration.saturating_sub(last_action) < READ_ONLY_PROGRESS_BUDGET {
-            return false;
-        }
-        let last_guidance = self.last_guidance_iteration.load(Ordering::Relaxed);
-        if last_guidance > 0
-            && iteration.saturating_sub(last_guidance) < PROGRESS_GUIDANCE_REPEAT_INTERVAL
-        {
-            return false;
-        }
-        self.last_guidance_iteration
-            .compare_exchange(
-                last_guidance,
-                iteration,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-            .is_ok()
-    }
-
-    fn inspection_tools_are_restricted(&self) -> bool {
-        let last_guidance = self.last_guidance_iteration.load(Ordering::Relaxed);
-        let last_action = self
-            .last_meaningful_action_iteration
-            .load(Ordering::Relaxed);
-        last_guidance > 0 && last_guidance > last_action
-    }
-
-    fn should_inject_missing_read_guidance(&self, iteration: usize) -> bool {
-        if !self.targeted_reads_restricted_by_missing_files() {
-            return false;
-        }
-        let last_guidance = self
-            .last_missing_read_guidance_iteration
-            .load(Ordering::Relaxed);
-        if last_guidance > 0
-            && iteration.saturating_sub(last_guidance) < MISSING_READ_GUIDANCE_REPEAT_INTERVAL
-        {
-            return false;
-        }
-        self.last_missing_read_guidance_iteration
-            .compare_exchange(
-                last_guidance,
-                iteration,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-            .is_ok()
-    }
-
-    fn targeted_reads_restricted_by_missing_files(&self) -> bool {
-        self.inspection_tools_are_restricted()
-            && self
-                .missing_targeted_read_failures_after_guard
-                .load(Ordering::Relaxed)
-                >= MISSING_TARGETED_READ_FAILURE_BUDGET
-    }
-
-    fn missing_targeted_read_failure_count(&self) -> usize {
-        self.missing_targeted_read_failures_after_guard
-            .load(Ordering::Relaxed)
-    }
-
-    fn restricted_tool_names(&self, iteration: usize) -> Vec<&'static str> {
-        let mut restricted = if self.last_guidance_iteration.load(Ordering::Relaxed) > 0 {
-            ASK_USER_TOOL_NAMES.to_vec()
-        } else {
-            Vec::new()
-        };
-        if !self.inspection_tools_are_restricted() {
-            return restricted;
-        }
-        let last_action = self
-            .last_meaningful_action_iteration
-            .load(Ordering::Relaxed);
-        let restrict_targeted_reads = iteration.saturating_sub(last_action)
-            >= READ_ONLY_PROGRESS_BUDGET * 2
-            || self.targeted_reads_restricted_by_missing_files();
-        restricted.extend(REPEATED_DISCOVERY_TOOL_NAMES.iter().copied());
-        if restrict_targeted_reads {
-            restricted.extend(TARGETED_READ_TOOL_NAMES.iter().copied());
-        }
-        restricted
-    }
-}
+const TASK_RUNNER_REVIEW_TRIGGER_REASON: &str = "task_runner_execution_review_checkpoint";
 
 struct TaskRunnerLifecycleHook {
     finalization: TaskFinalizationLifecycleHook,
     progress: Arc<TaskExecutionProgressState>,
     store: crate::store::AppStore,
     run_id: String,
+    memory_composer: Option<MemoryContextComposer>,
+    memory_scope: Option<MemoryScope>,
+    tool_result_model_budget_limits: ToolResultModelBudgetLimits,
+    active_summary_poll_interval: Duration,
+    active_summary_poll_timeout: Duration,
 }
 
 impl TaskRunnerLifecycleHook {
@@ -173,13 +30,104 @@ impl TaskRunnerLifecycleHook {
         progress: Arc<TaskExecutionProgressState>,
         store: crate::store::AppStore,
         run_id: String,
+        memory_composer: Option<MemoryContextComposer>,
+        memory_scope: Option<MemoryScope>,
+        tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     ) -> Self {
         Self {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
             progress,
             store,
             run_id,
+            memory_composer,
+            memory_scope,
+            tool_result_model_budget_limits,
+            active_summary_poll_interval: Duration::from_secs(10),
+            active_summary_poll_timeout: Duration::from_secs(120),
         }
+    }
+
+    async fn checkpoint_input_items(
+        &self,
+        checkpoint: TaskExecutionReviewCheckpoint,
+    ) -> Vec<Value> {
+        let mut payload = json!({
+            "iteration": checkpoint.iteration,
+            "trigger": checkpoint.trigger.as_str(),
+            "read_only_iterations": checkpoint.read_only_iterations,
+            "missing_read_failures": checkpoint.missing_read_failures,
+            "policy": {
+                "read_only_iterations": checkpoint.policy.read_only_iterations,
+                "missing_read_failures": checkpoint.policy.missing_read_failures,
+                "repeat_interval_iterations": checkpoint.policy.repeat_interval_iterations,
+            }
+        });
+        let summary_error = if let (Some(composer), Some(scope)) =
+            (self.memory_composer.as_ref(), self.memory_scope.as_ref())
+        {
+            self.store.append_run_event_sync(TaskRunEventRecord::new(
+                self.run_id.clone(),
+                "execution_review_summary_started",
+                Some("检测到疑似偏航，正在先复盘历史动作并刷新上下文".to_string()),
+                Some(payload.clone()),
+            ));
+            match self.run_active_summary_and_refresh(composer, scope).await {
+                Ok(items) => {
+                    payload["refreshed_memory_item_count"] = json!(items.len());
+                    self.store.append_run_event_sync(TaskRunEventRecord::new(
+                        self.run_id.clone(),
+                        "execution_review_summary_completed",
+                        Some("自动复盘完成，已把刷新后的上下文交给下一次模型请求".to_string()),
+                        Some(payload.clone()),
+                    ));
+                    let mut input_items = vec![checkpoint_guidance_message(checkpoint, true, None)];
+                    input_items.extend(items);
+                    return input_items;
+                }
+                Err(err) => err,
+            }
+        } else {
+            "Memory Engine 未配置，无法刷新复盘摘要".to_string()
+        };
+
+        payload["summary_error"] = json!(summary_error);
+        self.store.append_run_event_sync(TaskRunEventRecord::new(
+            self.run_id.clone(),
+            "execution_review_summary_failed",
+            Some("自动复盘刷新失败，已注入偏航校准提示并继续执行".to_string()),
+            Some(payload),
+        ));
+        vec![checkpoint_guidance_message(
+            checkpoint,
+            false,
+            Some(summary_error.as_str()),
+        )]
+    }
+
+    async fn run_active_summary_and_refresh(
+        &self,
+        composer: &MemoryContextComposer,
+        scope: &MemoryScope,
+    ) -> Result<Vec<Value>, String> {
+        let initial = composer
+            .run_active_summary(scope, Some(TASK_RUNNER_REVIEW_TRIGGER_REASON))
+            .await?;
+        let status = composer
+            .wait_for_active_summary_completion(
+                scope,
+                initial,
+                self.active_summary_poll_interval,
+                self.active_summary_poll_timeout,
+            )
+            .await?;
+        if status.failed {
+            return Err(status
+                .error_message
+                .unwrap_or_else(|| "active summary failed".to_string()));
+        }
+        composer
+            .compose_input_items_with_budget(scope, Some(self.tool_result_model_budget_limits))
+            .await
     }
 }
 
@@ -196,59 +144,71 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
             return Ok(before);
         }
 
-        let inject_progress_guidance = self.progress.should_inject_guidance(iteration);
-        let inject_missing_read_guidance =
-            self.progress.should_inject_missing_read_guidance(iteration);
-        let disabled_tool_names = self.progress.restricted_tool_names(iteration);
-        if !disabled_tool_names.is_empty() {
-            before = before.with_disabled_tool_names(disabled_tool_names.iter().copied());
-        }
-        if !inject_progress_guidance && !inject_missing_read_guidance {
+        let Some(checkpoint) = self.progress.should_trigger_review(iteration) else {
             return Ok(before);
-        }
-
-        let targeted_reads_restricted = disabled_tool_names
-            .iter()
-            .any(|name| TARGETED_READ_TOOL_NAMES.contains(name));
-        let missing_read_count = self.progress.missing_targeted_read_failure_count();
-        let restriction_detail = if inject_missing_read_guidance {
-            "Targeted read-file tools are now temporarily unavailable because this run repeatedly tried to read a file that the workspace reported as missing. Treat the missing file as evidence, not as a permission problem. Do not read the same missing path again, do not ask the user for clarification about that path, and do not create placeholder/unlock files. Use the available write/edit/apply-patch tools on files that already exist or create the actual required project file if that is the intended implementation. If the task cannot proceed without an external artifact, mark the Task Manager item as terminally blocked with the exact missing artifact and evidence."
-        } else if targeted_reads_restricted {
-            "All read-only, terminal, and AskUser tools are now temporarily unavailable because the first guard did not produce a real project-file write."
-        } else {
-            "Directory listing, search, environment, terminal, and AskUser tools are now temporarily unavailable. Targeted read-file tools remain available only for exact files already identified; do not repeat a file read whose content is already in the conversation."
         };
-        let message = format!(
-            "[Task Runner execution progress guard]\nThis run has spent {READ_ONLY_PROGRESS_BUDGET} or more model/tool iterations without a meaningful engineering action. Re-reading the same files through code tools or terminal commands, repeatedly fetching runtime environment information, updating Task Manager, or recording process notes does not count as implementation progress. Stop repeating inspection. {restriction_detail} This is an intentional progress guard, not a missing permission or missing user input. Do not mark tasks blocked merely because discovery tools were rate-limited, and do not ask the user to rerun the task or provide files that were already inspected. If one exact source file is still needed and a targeted read-file tool remains available, read it once; otherwise use the available write/edit/apply-patch tools now. Writes under `.chatos`, build outputs, caches, or dependency directories do not count. After a successful write to a real project file, terminal and read tools will become available again for targeted tests and diff inspection. If the task is analysis-only and the evidence is already sufficient, stop calling tools and provide the final conclusion."
-        );
-        before.input_items.push(json!({
-            "role": "system",
-            "content": message,
-        }));
-        let event_type = if inject_missing_read_guidance {
-            "execution_missing_read_guard"
-        } else {
-            "execution_progress_guard"
-        };
-        let event_summary = if inject_missing_read_guidance {
-            "检测到重复读取不存在文件，已禁用精确读取并要求模型改为实现或终态阻塞"
-        } else {
-            "检测到重复只读循环，已要求模型立即进入实现、验证或收口"
-        };
+        let items = self.checkpoint_input_items(checkpoint).await;
+        before.input_items.extend(items);
         self.store.append_run_event_sync(TaskRunEventRecord::new(
             self.run_id.clone(),
-            event_type,
-            Some(event_summary.to_string()),
+            "execution_review_checkpoint",
+            Some("检测到疑似偏航，已触发历史动作复盘并继续执行".to_string()),
             Some(json!({
                 "iteration": iteration,
-                "read_only_budget": READ_ONLY_PROGRESS_BUDGET,
-                "missing_targeted_read_failure_budget": MISSING_TARGETED_READ_FAILURE_BUDGET,
-                "missing_targeted_read_failure_count": missing_read_count,
-                "disabled_tool_names": disabled_tool_names,
+                "trigger": checkpoint.trigger.as_str(),
+                "read_only_iterations": checkpoint.read_only_iterations,
+                "missing_read_failures": checkpoint.missing_read_failures,
+                "policy": {
+                    "read_only_iterations": checkpoint.policy.read_only_iterations,
+                    "missing_read_failures": checkpoint.policy.missing_read_failures,
+                    "repeat_interval_iterations": checkpoint.policy.repeat_interval_iterations,
+                },
+                "disabled_tool_names": [],
             })),
         ));
         Ok(before)
     }
+}
+
+fn checkpoint_guidance_message(
+    checkpoint: TaskExecutionReviewCheckpoint,
+    memory_refreshed: bool,
+    summary_error: Option<&str>,
+) -> Value {
+    let trigger = match checkpoint.trigger {
+        TaskExecutionReviewTrigger::ReadOnlyLoop => "连续多轮只读/观察，没有真实工程改动",
+        TaskExecutionReviewTrigger::MissingTargetedReads => {
+            "连续读取不存在的精确文件路径，疑似路径假设错误或相对路径理解错误"
+        }
+        TaskExecutionReviewTrigger::PlaceholderProgressWrite => {
+            "写入了 progress/unlock/placeholder 这类不能解决任务本身的占位文件"
+        }
+    };
+    let memory_state = if memory_refreshed {
+        "已先触发历史动作复盘，并已把复盘后的 Memory 上下文刷新进本次请求。"
+    } else {
+        "尝试触发历史动作复盘但未能刷新 Memory；仍需立刻基于已有上下文自我校准。"
+    };
+    let error_detail = summary_error
+        .map(|error| format!("\n- 复盘刷新错误：{error}"))
+        .unwrap_or_default();
+    json!({
+        "role": "system",
+        "content": format!(
+            "[Task Runner 自动复盘 checkpoint]\n\
+             检测原因：{trigger}。\n\
+             {memory_state}{error_detail}\n\
+             \n\
+             现在先在心里复盘：用户目标是什么、当前已经做了哪些真实动作、哪些动作偏离航线、真实路径/工具结果已经证明了什么。\n\
+             然后继续执行，不要因为这次 checkpoint 自行退出、不要把它当成权限限制、不要要求用户替你改代码。\n\
+             工具没有被禁用；如果文件不存在，把它当作路径证据，不要重复读同一个不存在路径。所有 Harness/代码工具路径都按仓库根目录相对路径理解，没有隐式 cwd。\n\
+             不要创建 TASK_RUNNER_PROGRESS_NOTE、unlock、placeholder、probe 之类的假进展文件；只有修改真实项目文件、运行必要验证、或给出有证据的终态结论才算进展。\n\
+             当前计数：read_only_iterations={}, missing_read_failures={}。"
+            ,
+            checkpoint.read_only_iterations,
+            checkpoint.missing_read_failures
+        ),
+    })
 }
 
 impl RunService {
@@ -260,6 +220,7 @@ impl RunService {
         run_spec: &TaskRunSpec,
         tool_result_model_budget_limits: ToolResultModelBudgetLimits,
         max_iterations: usize,
+        review_policy: TaskExecutionReviewPolicy,
         effective_workspace_dir: &str,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
@@ -270,7 +231,7 @@ impl RunService {
         let pending_stream_event =
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
         let abort_token = tokio_util::sync::CancellationToken::new();
-        let progress = Arc::new(TaskExecutionProgressState::default());
+        let progress = Arc::new(TaskExecutionProgressState::new(review_policy));
         let callbacks = self.build_runtime_callbacks(
             task_id.to_string(),
             run.id.clone(),
@@ -297,6 +258,13 @@ impl RunService {
                 progress,
                 self.store.clone(),
                 run.id.clone(),
+                self.config
+                    .memory_client()
+                    .ok()
+                    .flatten()
+                    .map(MemoryContextComposer::from_client),
+                run_spec.memory_scope.clone(),
+                tool_result_model_budget_limits,
             ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))
@@ -536,228 +504,6 @@ impl RunService {
     }
 }
 
-fn tool_result_is_meaningful_engineering_action(payload: &Value) -> bool {
-    if payload.get("success").and_then(Value::as_bool) != Some(true)
-        || payload.get("is_error").and_then(Value::as_bool) == Some(true)
-    {
-        return false;
-    }
-    let Some(name) = payload.get("name").and_then(Value::as_str) else {
-        return false;
-    };
-    if name.contains("code_maintainer_write_")
-        && [
-            "write_file",
-            "edit_file",
-            "append_file",
-            "delete_path",
-            "apply_patch",
-            "patch",
-        ]
-        .iter()
-        .any(|tool| name.ends_with(tool))
-    {
-        return write_result_has_meaningful_project_path(payload);
-    }
-    if name.ends_with("process_write") {
-        return true;
-    }
-    if !name.ends_with("terminal_controller_execute_command") {
-        return false;
-    }
-    terminal_result_has_meaningful_command(payload)
-}
-
-fn tool_result_is_missing_targeted_read(payload: &Value) -> bool {
-    if payload.get("success").and_then(Value::as_bool) == Some(true)
-        && payload.get("is_error").and_then(Value::as_bool) != Some(true)
-    {
-        return false;
-    }
-    let Some(name) = payload.get("name").and_then(Value::as_str) else {
-        return false;
-    };
-    if !TARGETED_READ_TOOL_NAMES.contains(&name) {
-        return false;
-    }
-    let mut text = String::new();
-    collect_tool_result_error_text(payload, &mut text);
-    let normalized = text.to_ascii_lowercase();
-    [
-        "no such file",
-        "not found",
-        "cannot find",
-        "can't find",
-        "could not find",
-        "does not exist",
-        "enoent",
-        "os error 2",
-        "不存在",
-        "找不到",
-        "未找到",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
-}
-
-fn collect_tool_result_error_text(value: &Value, output: &mut String) {
-    match value {
-        Value::String(text) => {
-            output.push(' ');
-            output.push_str(text);
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_tool_result_error_text(item, output);
-            }
-        }
-        Value::Object(map) => {
-            for (key, value) in map {
-                if matches!(
-                    key.as_str(),
-                    "content"
-                        | "result"
-                        | "error"
-                        | "message"
-                        | "detail"
-                        | "details"
-                        | "path"
-                        | "file"
-                        | "filename"
-                ) {
-                    collect_tool_result_error_text(value, output);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn write_result_has_meaningful_project_path(payload: &Value) -> bool {
-    let parsed_content = payload
-        .get("content")
-        .and_then(Value::as_str)
-        .and_then(|content| serde_json::from_str::<Value>(content).ok());
-    payload
-        .get("result")
-        .into_iter()
-        .chain(parsed_content.as_ref())
-        .any(value_contains_meaningful_project_path)
-}
-
-fn value_contains_meaningful_project_path(value: &Value) -> bool {
-    match value {
-        Value::Object(map) => map.iter().any(|(key, value)| {
-            if key == "path" {
-                return value
-                    .as_str()
-                    .is_some_and(project_path_is_meaningful_progress);
-            }
-            value_contains_meaningful_project_path(value)
-        }),
-        Value::Array(items) => items.iter().any(value_contains_meaningful_project_path),
-        _ => false,
-    }
-}
-
-fn project_path_is_meaningful_progress(path: &str) -> bool {
-    let normalized = path.trim().replace('\\', "/");
-    if normalized.is_empty() {
-        return false;
-    }
-    let components = normalized
-        .trim_start_matches("./")
-        .split('/')
-        .filter(|component| !component.is_empty());
-    !components
-        .into_iter()
-        .any(project_path_component_is_non_engineering_progress)
-}
-
-fn project_path_component_is_non_engineering_progress(component: &str) -> bool {
-    let normalized = component.trim().to_ascii_lowercase();
-    if matches!(
-        normalized.as_str(),
-        ".chatos" | ".git" | ".cache" | "node_modules" | "target" | "target-shared"
-    ) {
-        return true;
-    }
-    [
-        "progress-guard",
-        "inspection-unlock",
-        "read-unlock",
-        "unblock",
-        "unlock",
-        "restore",
-        "enable-tools",
-        "enable_tools",
-        "resume-tools",
-        "resume_tools",
-        "placeholder",
-        "sentinel",
-        "probe",
-        "task-runner-notes",
-        "task_runner_notes",
-        "execution-notes",
-        "execution_notes",
-        "执行记录",
-    ]
-    .iter()
-    .any(|marker| normalized.contains(marker))
-        || [
-            ["task_runner", "temp"],
-            ["task-runner", "temp"],
-            ["task_runner", "notes"],
-            ["task-runner", "notes"],
-            ["temp", "restore"],
-        ]
-        .iter()
-        .any(|markers| markers.iter().all(|marker| normalized.contains(marker)))
-}
-
-fn terminal_result_has_meaningful_command(payload: &Value) -> bool {
-    let content = payload
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let parsed = serde_json::from_str::<Value>(content).ok();
-    let command = parsed
-        .as_ref()
-        .and_then(|value| value.get("common"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            payload
-                .get("result")
-                .and_then(|value| value.get("common"))
-                .and_then(Value::as_str)
-        })
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    [
-        "cargo test",
-        "cargo check",
-        "cargo clippy",
-        "pytest",
-        "python -m unittest",
-        "npm test",
-        "npm run test",
-        "npm run build",
-        "pnpm test",
-        "pnpm build",
-        "yarn test",
-        "yarn build",
-        "go test",
-        "mvn test",
-        "gradle test",
-        "dotnet test",
-        "git apply",
-        "apply_patch",
-        "sed -i",
-    ]
-    .iter()
-    .any(|needle| command.contains(needle))
-}
-
 const EVENT_SECRET_VALUE_MASK: &str = "******";
 
 fn sanitize_runtime_event_payload(mut payload: Value) -> Value {
@@ -936,218 +682,6 @@ fn tool_result_marks_root_task_done(payload: &Value, task_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn progress_guard_fires_after_repeated_read_only_iterations() {
-        let progress = TaskExecutionProgressState::default();
-
-        assert!(!progress.should_inject_guidance(READ_ONLY_PROGRESS_BUDGET - 1));
-        assert!(progress.should_inject_guidance(READ_ONLY_PROGRESS_BUDGET));
-        assert!(!progress.should_inject_guidance(READ_ONLY_PROGRESS_BUDGET + 1));
-        assert!(progress
-            .should_inject_guidance(READ_ONLY_PROGRESS_BUDGET + PROGRESS_GUIDANCE_REPEAT_INTERVAL));
-    }
-
-    #[test]
-    fn successful_code_write_resets_read_only_budget() {
-        let progress = TaskExecutionProgressState::default();
-        assert!(progress.should_inject_guidance(READ_ONLY_PROGRESS_BUDGET));
-        assert!(progress.inspection_tools_are_restricted());
-        progress.begin_iteration(9);
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_write_apply_patch",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "changed_files": [{ "path": "src/lib.rs" }],
-            },
-        }));
-
-        assert!(!progress.inspection_tools_are_restricted());
-        let restored_after_write = progress.restricted_tool_names(10);
-        assert!(restored_after_write.contains(&"ask_user_prompt_key_values"));
-        assert!(!restored_after_write.contains(&"terminal_controller_execute_command"));
-        assert!(!restored_after_write.contains(&"code_maintainer_read_read_file_raw"));
-        assert!(!progress.should_inject_guidance(16));
-        assert!(progress.should_inject_guidance(17));
-    }
-
-    #[test]
-    fn runtime_and_task_manager_tools_do_not_count_as_engineering_progress() {
-        for name in [
-            "project_runtime_environment_get_project_runtime_environment_info",
-            "task_manager_update_task",
-            "task_run_process_record_process",
-            "code_maintainer_read_read_file_raw",
-        ] {
-            assert!(!tool_result_is_meaningful_engineering_action(&json!({
-                "name": name,
-                "success": true,
-                "is_error": false,
-            })));
-        }
-    }
-
-    #[test]
-    fn progress_guard_restricts_terminal_inspection_until_a_write_occurs() {
-        let progress = TaskExecutionProgressState::default();
-        assert!(progress.should_inject_guidance(READ_ONLY_PROGRESS_BUDGET));
-        let first_stage = progress.restricted_tool_names(READ_ONLY_PROGRESS_BUDGET);
-        assert!(first_stage.contains(&"terminal_controller_execute_command"));
-        assert!(first_stage.contains(&"terminal_controller_get_recent_logs"));
-        assert!(first_stage.contains(&"terminal_controller_process_log"));
-        assert!(first_stage.contains(&"ask_user_prompt_mixed_form"));
-        assert!(!first_stage.contains(&"code_maintainer_read_read_file_raw"));
-
-        let second_stage = progress.restricted_tool_names(READ_ONLY_PROGRESS_BUDGET * 2);
-        assert!(second_stage.contains(&"code_maintainer_read_read_file_raw"));
-    }
-
-    #[test]
-    fn missing_targeted_reads_after_progress_guard_restrict_targeted_reads_early() {
-        let progress = TaskExecutionProgressState::default();
-        assert!(progress.should_inject_guidance(READ_ONLY_PROGRESS_BUDGET));
-
-        progress.begin_iteration(READ_ONLY_PROGRESS_BUDGET + 1);
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_read_read_file_raw",
-            "success": false,
-            "is_error": true,
-            "content": "No such file or directory: pnpm-lock.yaml",
-        }));
-        assert!(!progress
-            .restricted_tool_names(READ_ONLY_PROGRESS_BUDGET + 2)
-            .contains(&"code_maintainer_read_read_file_raw"));
-
-        progress.begin_iteration(READ_ONLY_PROGRESS_BUDGET + 2);
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_read_read_file_raw",
-            "success": false,
-            "is_error": true,
-            "result": {
-                "message": "pnpm-lock.yaml not found",
-            },
-        }));
-        let restricted = progress.restricted_tool_names(READ_ONLY_PROGRESS_BUDGET + 3);
-
-        assert!(restricted.contains(&"code_maintainer_read_read_file_raw"));
-        assert!(progress.should_inject_missing_read_guidance(READ_ONLY_PROGRESS_BUDGET + 3));
-        assert!(!progress.should_inject_missing_read_guidance(READ_ONLY_PROGRESS_BUDGET + 4));
-    }
-
-    #[test]
-    fn source_file_write_clears_missing_targeted_read_guard() {
-        let progress = TaskExecutionProgressState::default();
-        assert!(progress.should_inject_guidance(READ_ONLY_PROGRESS_BUDGET));
-        for iteration in [READ_ONLY_PROGRESS_BUDGET + 1, READ_ONLY_PROGRESS_BUDGET + 2] {
-            progress.begin_iteration(iteration);
-            progress.observe_tool_result(&json!({
-                "name": "code_maintainer_read_read_file",
-                "success": false,
-                "is_error": true,
-                "content": "ENOENT: package-lock.json does not exist",
-            }));
-        }
-        assert!(progress.targeted_reads_restricted_by_missing_files());
-
-        progress.begin_iteration(READ_ONLY_PROGRESS_BUDGET + 3);
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_write_apply_patch",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "changed_files": [{ "path": "services/orders/src/lib.rs" }],
-            },
-        }));
-
-        assert!(!progress.targeted_reads_restricted_by_missing_files());
-        assert!(!progress
-            .restricted_tool_names(READ_ONLY_PROGRESS_BUDGET + 4)
-            .contains(&"code_maintainer_read_read_file"));
-    }
-
-    #[test]
-    fn missing_targeted_read_detection_requires_failed_read_tool() {
-        assert!(tool_result_is_missing_targeted_read(&json!({
-            "name": "code_maintainer_read_read_file_range",
-            "success": false,
-            "is_error": true,
-            "content": "file not found: src/main.rs",
-        })));
-        assert!(!tool_result_is_missing_targeted_read(&json!({
-            "name": "code_maintainer_read_read_file_range",
-            "success": true,
-            "is_error": false,
-            "content": "comment says not found",
-        })));
-        assert!(!tool_result_is_missing_targeted_read(&json!({
-            "name": "code_maintainer_read_search_files",
-            "success": false,
-            "is_error": true,
-            "content": "not found",
-        })));
-    }
-
-    #[test]
-    fn temporary_unlock_file_does_not_count_as_engineering_progress() {
-        for path in [
-            ".chatos/tmp/inspection-unlock.txt",
-            "mdm-service/.progress-guard-placeholder",
-            "UNBLOCK.md",
-            "src/probe_progress_guard.py",
-            "TASK_RUNNER_TEMP_RESTORE.txt",
-            "task-runner-temp-unlock.txt",
-            "ENABLE_TOOLS_AFTER_WRITE.md",
-            "docs/oms-order-entry-task-runner-notes.md",
-            "docs/task_runner_execution_notes.md",
-        ] {
-            let payload = json!({
-                "name": "code_maintainer_write_write_file",
-                "success": true,
-                "is_error": false,
-                "result": {
-                    "result": { "path": path },
-                },
-            });
-
-            assert!(
-                !tool_result_is_meaningful_engineering_action(&payload),
-                "{path} must not count as implementation progress",
-            );
-        }
-    }
-
-    #[test]
-    fn source_file_write_counts_as_engineering_progress() {
-        let payload = json!({
-            "name": "code_maintainer_write_apply_patch",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "harness": {
-                    "commit": {
-                        "changed_files": [{ "path": "mdm-service/src/mdm_service/server.py" }],
-                    },
-                },
-            })).expect("content"),
-        });
-
-        assert!(tool_result_is_meaningful_engineering_action(&payload));
-    }
-
-    #[test]
-    fn targeted_test_command_counts_as_engineering_progress() {
-        let payload = json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "common": "python -m unittest discover -s tests -v",
-            })).expect("content"),
-        });
-
-        assert!(tool_result_is_meaningful_engineering_action(&payload));
-    }
 
     #[test]
     fn browser_session_event_is_extracted_from_nested_tool_result() {
