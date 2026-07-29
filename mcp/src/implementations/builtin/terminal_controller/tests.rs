@@ -217,7 +217,7 @@ fn terminal_controller_registers_process_tools() {
         process_actions
             .iter()
             .any(|value| value.as_str() == Some("log")),
-        "process(action) should include log for Hermes compatibility"
+        "process(action) should include log alias"
     );
     let has_timeout_alias = process_schema
         .get("properties")
@@ -292,5 +292,41 @@ fn execute_command_treats_null_permission_overlays_as_absent() {
     );
 
     assert!(result.is_ok(), "unexpected execute error: {result:?}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn tool_descriptions_expose_project_workspace_semantics_only() {
+    let root = temp_root();
+    std::fs::create_dir_all(&root).expect("create temp root");
+    let service = test_service(root.clone());
+    let tools = service.list_tools();
+    let text = serde_json::to_string(&tools).expect("serialize tools");
+    let lower = text.to_ascii_lowercase();
+
+    assert!(text.contains("current project workspace"));
+    assert!(text.contains("workspace root"));
+    for forbidden in [
+        "LOCAL ONLY",
+        "local project terminal",
+        "Local shell command",
+        "Local directory path",
+        "Hermes-compatible",
+        "Harness repo",
+        "internal Harness",
+        "default branch",
+        "creates a Harness commit",
+        "sandbox",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "tool metadata should not expose implementation detail: {forbidden}"
+        );
+    }
+    assert!(
+        !lower.contains("local terminal"),
+        "tool metadata should describe project workspace processes, not local terminal internals"
+    );
+
     let _ = std::fs::remove_dir_all(root);
 }
