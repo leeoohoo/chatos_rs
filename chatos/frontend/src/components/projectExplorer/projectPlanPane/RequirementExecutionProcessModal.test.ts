@@ -7,6 +7,7 @@ import { ApiRequestError } from '../../../lib/api/client/shared';
 import type { ProjectExecutionConfirmationState } from '../../messageTasks/projectExecutionConfirmation';
 import {
   buildRequirementExecutionProcess,
+  isRequirementExecutionCancellationSettling,
   isPendingRequirementExecutionPlanError,
   REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
   resolveRequirementExecutionRecoveryActions,
@@ -129,6 +130,19 @@ describe('requirement execution process phase', () => {
   });
 
   it('enables feedback and rerun only after a batch is fully stopped', () => {
+    expect(isRequirementExecutionCancellationSettling({
+      hasActiveRuns: true,
+      phase: 'stopped',
+    })).toBe(true);
+    expect(isRequirementExecutionCancellationSettling({
+      hasActiveRuns: false,
+      phase: 'stopped',
+    })).toBe(false);
+    expect(isRequirementExecutionCancellationSettling({
+      hasActiveRuns: true,
+      phase: 'running',
+    })).toBe(false);
+
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: false,

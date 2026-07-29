@@ -734,6 +734,14 @@ export const resolveRequirementExecutionRecoveryActions = ({
   canRerun: phase === 'stopped' && !hasActiveRuns,
 });
 
+export const isRequirementExecutionCancellationSettling = ({
+  hasActiveRuns,
+  phase,
+}: {
+  hasActiveRuns: boolean;
+  phase: RequirementExecutionProcessPhase;
+}): boolean => phase === 'stopped' && hasActiveRuns;
+
 export const RequirementExecutionProcessModal: React.FC<{
   process: RequirementExecutionProcess;
   onClose: () => void;
@@ -901,13 +909,24 @@ export const RequirementExecutionProcessModal: React.FC<{
     hasActiveRuns,
     phase,
   });
+  const cancellationSettling = isRequirementExecutionCancellationSettling({
+    hasActiveRuns,
+    phase,
+  });
   const canRegenerate = recoveryActions.canRegenerate && !planDiscarded;
   const canRevise = recoveryActions.canRevise;
   const canRerun = recoveryActions.canRerun && allTasks.length > 0 && !planDiscarded;
   const terminal = ['completed', 'failed', 'stopped'].includes(phase) && !hasActiveRuns;
   const isLocalExecution = (liveProcess.executionPlane || '').toLowerCase() === 'local_connector'
     || liveProcess.conversationId.startsWith('lc_');
-  const phaseText = phase === 'paused'
+  const phaseText = cancellationSettling
+    ? {
+      title: '正在取消当前执行',
+      detail: runningTaskCount > 0
+        ? `取消请求已提交，正在等待 ${runningTaskCount} 个运行中任务结束并回写状态。`
+        : `取消请求已提交，正在等待 ${queuedTaskCount > 0 ? `${queuedTaskCount} 个排队任务` : '任务'}回写取消状态。`,
+    }
+    : phase === 'paused'
     ? {
       title: '已暂停后续任务调度',
       detail: runningTaskCount > 0
@@ -926,12 +945,16 @@ export const RequirementExecutionProcessModal: React.FC<{
     entries.push({
       id: 'context',
       title: '读取需求、项目任务和技术文档',
-      detail: phase === 'stopped'
+      detail: cancellationSettling
+        ? '已发起取消，正在等待任务状态回写，不再继续读取或生成执行上下文'
+        : phase === 'stopped'
         ? '当前批次已取消，不再继续读取或生成执行上下文'
         : allTasks.length > 0
           ? '上下文读取完成，开始创建执行任务'
           : '正在整理执行范围与约束',
-      state: phase === 'stopped'
+      state: cancellationSettling
+        ? 'active'
+        : phase === 'stopped'
         ? 'stopped'
         : allTasks.length > 0
           ? 'done'
@@ -965,12 +988,16 @@ export const RequirementExecutionProcessModal: React.FC<{
       });
     entries.push({
       id: 'dag',
-      title: phase === 'stopped'
+      title: cancellationSettling
+        ? '正在取消当前执行流程'
+        : phase === 'stopped'
         ? '当前执行流程已取消'
         : graphReady || actuallyStarted || phase === 'completed'
           ? `完整流程图已生成（${allTasks.length} 个任务）`
           : '校验任务覆盖范围和依赖关系',
-      detail: phase === 'stopped'
+      detail: cancellationSettling
+        ? '保留现有流程图用于查看；正在等待运行中和排队任务进入终态'
+        : phase === 'stopped'
         ? '保留现有流程图用于查看，不再继续生成或调度任务'
         : graphReady
           ? '流程图已冻结等待确认，尚未启动任何 run'
@@ -979,7 +1006,9 @@ export const RequirementExecutionProcessModal: React.FC<{
             : actuallyStarted
               ? '流程图已冻结，Task Runner 正在按照依赖关系执行'
               : '仍在等待 Agent 补全任务节点和依赖',
-      state: phase === 'stopped'
+      state: cancellationSettling
+        ? 'active'
+        : phase === 'stopped'
         ? 'stopped'
         : graphReady || actuallyStarted || phase === 'completed'
           ? 'done'
@@ -994,7 +1023,13 @@ export const RequirementExecutionProcessModal: React.FC<{
       });
     }
     if (actuallyStarted) {
-      const runnerEntry = runnerProcessEntryForPhase(phase);
+      const runnerEntry = cancellationSettling
+        ? {
+          title: 'Task Runner 正在取消',
+          detail: '后续调度已停止，正在等待运行中/排队任务收敛到终态',
+          state: 'active' as const,
+        }
+        : runnerProcessEntryForPhase(phase);
       entries.push({
         id: 'runner',
         ...runnerEntry,
@@ -1004,6 +1039,7 @@ export const RequirementExecutionProcessModal: React.FC<{
   }, [
     actuallyStarted,
     allTasks,
+    cancellationSettling,
     graphReady,
     isLocalExecution,
     liveProcess.executionGroupId,
@@ -1449,7 +1485,9 @@ export const RequirementExecutionProcessModal: React.FC<{
             <aside className="flex min-h-0 flex-col border-b border-border bg-muted/10 lg:border-b-0 lg:border-r">
               <div className="border-b border-border px-4 py-3">
                 <div className="flex items-start gap-2">
-                  {phase === 'failed' ? (
+                  {cancellationSettling ? (
+                    <LoaderCircle className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-500" />
+                  ) : phase === 'failed' ? (
                     <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
                   ) : phase === 'completed' ? (
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -1525,7 +1563,9 @@ export const RequirementExecutionProcessModal: React.FC<{
                   value={feedback}
                   disabled={!canRevise || revising}
                   onChange={(event) => setFeedback(event.target.value)}
-                  placeholder={!canRevise
+                  placeholder={cancellationSettling
+                    ? '正在取消当前批次，任务状态收敛后即可调整'
+                    : !canRevise
                     ? '当前批次仍有活动任务，请先取消本次执行后再调整'
                     : phase === 'completed'
                       ? '输入新的调整意见，将基于已完成结果重新生成执行流程……'
@@ -1601,7 +1641,13 @@ export const RequirementExecutionProcessModal: React.FC<{
 
               <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/10 px-4 py-3">
                 <div className="text-xs text-muted-foreground">
-                  {graphReady
+                  {cancellationSettling
+                    ? (runningTaskCount > 0
+                      ? `正在取消本次执行，等待 ${runningTaskCount} 个运行中任务结束并回写状态。`
+                      : queuedTaskCount > 0
+                        ? `正在取消本次执行，等待 ${queuedTaskCount} 个排队任务回写取消状态。`
+                        : '正在取消本次执行，等待任务回写取消状态。')
+                    : graphReady
                     ? '流程图已就绪，当前没有任何任务 run。'
                     : phase === 'paused'
                       ? (runningTaskCount > 0
@@ -1616,7 +1662,7 @@ export const RequirementExecutionProcessModal: React.FC<{
                       : '完整 DAG 生成前，执行按钮保持禁用。'}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {retryableFailedTasks.length > 0 ? (
+                  {!cancellationSettling && retryableFailedTasks.length > 0 ? (
                     <button
                       type="button"
                       aria-label={`重试失败任务，共 ${retryableFailedTasks.length} 个`}
