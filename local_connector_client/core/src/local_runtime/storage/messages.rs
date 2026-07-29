@@ -158,6 +158,15 @@ impl LocalDatabase {
             *task_runner = Value::Object(Map::new());
         }
         if let Some(task_runner) = task_runner.as_object_mut() {
+            let current_overall_status = task_runner
+                .get("overall_status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if task_runner_status_is_stop_locked(current_overall_status)
+                && !task_runner_status_is_stop_locked(overall_status)
+            {
+                return Ok(());
+            }
             task_runner.insert(
                 "overall_status".to_string(),
                 Value::String(overall_status.to_string()),
@@ -397,4 +406,11 @@ impl LocalDatabase {
             .context("commit local runtime process message")?;
         Ok(message)
     }
+}
+
+fn task_runner_status_is_stop_locked(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "stopping" | "stopped" | "cancelled" | "canceled"
+    )
 }

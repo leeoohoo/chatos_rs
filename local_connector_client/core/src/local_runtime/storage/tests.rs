@@ -279,6 +279,77 @@ async fn failed_planner_turn_can_publish_failure_status_and_receipt() {
 }
 
 #[tokio::test]
+async fn stopped_turn_task_runner_status_is_not_overwritten_by_late_failure() {
+    let root = std::env::temp_dir().join(format!("chatos-local-stopped-plan-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-stopped-plan".to_string(),
+            owner_user_id: "user-stopped-plan".to_string(),
+            device_id: "device-stopped-plan".to_string(),
+            workspace_id: "workspace-stopped-plan".to_string(),
+            project_name: "Stopped plan project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("create stopped plan project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-stopped-plan".to_string(),
+            owner_user_id: "user-stopped-plan".to_string(),
+            title: "Stopped plan session".to_string(),
+            selected_model_id: Some("model-1".to_string()),
+            selected_agent_id: None,
+        })
+        .await
+        .expect("create stopped plan session");
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id,
+            owner_user_id: "user-stopped-plan".to_string(),
+            turn_id: "stopped-plan-turn".to_string(),
+            idempotency_key: "stopped-plan-turn".to_string(),
+            content: "Generate plan".to_string(),
+            metadata_json: Some(
+                json!({
+                    "task_runner_async": {
+                        "mode": "project_requirement_execution",
+                        "overall_status": "stopped",
+                        "confirmation_status": "stopped"
+                    }
+                })
+                .to_string(),
+            ),
+        })
+        .await
+        .expect("create stopped planner turn");
+
+    database
+        .set_turn_task_runner_status("user-stopped-plan", "stopped-plan-turn", "failed", "failed")
+        .await
+        .expect("ignore late failed planner metadata");
+
+    let messages = database
+        .list_turn_messages("user-stopped-plan", "stopped-plan-turn")
+        .await
+        .expect("load stopped planner messages");
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0]
+        .metadata_json
+        .as_deref()
+        .is_some_and(|metadata| metadata.contains("\"overall_status\":\"stopped\"")));
+    assert!(!messages[0]
+        .metadata_json
+        .as_deref()
+        .is_some_and(|metadata| metadata.contains("\"overall_status\":\"failed\"")));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup stopped planner database");
+}
+
+#[tokio::test]
 async fn appends_and_incrementally_lists_ordered_runtime_events() {
     let root = std::env::temp_dir().join(format!("chatos-local-events-{}", Uuid::new_v4()));
     let database = LocalDatabase::open(root.join("runtime.sqlite3"))

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_project_execution::STATUS_AWAITING_CONFIRMATION;
+use chatos_project_execution::{STATUS_AWAITING_CONFIRMATION, STATUS_STOPPED, STATUS_STOPPING};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -186,6 +186,7 @@ fn apply_execution_links_to_task_tracking(
     async_meta: &mut serde_json::Map<String, Value>,
     links: &[ExecutionLink],
 ) {
+    let stop_locked_status = stop_locked_task_runner_async_status(async_meta);
     let mut created = read_string_set(async_meta.get("created_task_ids"));
     let mut running = read_string_set(async_meta.get("running_task_ids"));
     let mut terminal = read_string_set(async_meta.get("terminal_task_ids"));
@@ -280,32 +281,48 @@ fn apply_execution_links_to_task_tracking(
         "execution_kind".to_string(),
         Value::String("project_requirement_execution".to_string()),
     );
-    async_meta.insert(
-        "overall_status".to_string(),
-        Value::String(
-            if all_terminal {
-                "completed"
-            } else if execution_paused {
-                "paused"
-            } else if awaiting_confirmation {
-                STATUS_AWAITING_CONFIRMATION
-            } else {
-                "processing"
-            }
-            .to_string(),
-        ),
-    );
-    async_meta.insert(
-        "confirmation_status".to_string(),
-        Value::String(
-            if awaiting_confirmation {
-                STATUS_AWAITING_CONFIRMATION
-            } else {
-                "confirmed"
-            }
-            .to_string(),
-        ),
-    );
+    if let Some(stop_locked_status) = stop_locked_status {
+        let locked_status = if stop_locked_status == STATUS_STOPPING && all_terminal {
+            STATUS_STOPPED
+        } else {
+            stop_locked_status.as_str()
+        };
+        async_meta.insert(
+            "overall_status".to_string(),
+            Value::String(locked_status.to_string()),
+        );
+        async_meta.insert(
+            "confirmation_status".to_string(),
+            Value::String(locked_status.to_string()),
+        );
+    } else {
+        async_meta.insert(
+            "overall_status".to_string(),
+            Value::String(
+                if all_terminal {
+                    "completed"
+                } else if execution_paused {
+                    "paused"
+                } else if awaiting_confirmation {
+                    STATUS_AWAITING_CONFIRMATION
+                } else {
+                    "processing"
+                }
+                .to_string(),
+            ),
+        );
+        async_meta.insert(
+            "confirmation_status".to_string(),
+            Value::String(
+                if awaiting_confirmation {
+                    STATUS_AWAITING_CONFIRMATION
+                } else {
+                    "confirmed"
+                }
+                .to_string(),
+            ),
+        );
+    }
     write_string_set(async_meta, "created_task_ids", &created);
     write_string_set(async_meta, "running_task_ids", &running);
     write_string_set(async_meta, "terminal_task_ids", &terminal);
@@ -313,6 +330,26 @@ fn apply_execution_links_to_task_tracking(
     write_string_set(async_meta, "failed_task_ids", &failed);
     write_string_set(async_meta, "blocked_task_ids", &blocked);
     write_string_set(async_meta, "cancelled_task_ids", &cancelled);
+}
+
+fn stop_locked_task_runner_async_status(
+    async_meta: &serde_json::Map<String, Value>,
+) -> Option<String> {
+    ["overall_status", "confirmation_status"]
+        .iter()
+        .filter_map(|key| async_meta.get(*key))
+        .filter_map(Value::as_str)
+        .find_map(|status| {
+            let normalized = status.trim().to_ascii_lowercase();
+            if matches!(
+                normalized.as_str(),
+                STATUS_STOPPING | STATUS_STOPPED | "cancelled" | "canceled"
+            ) {
+                Some(normalized)
+            } else {
+                None
+            }
+        })
 }
 
 fn apply_execution_links_to_project_execution_metadata(
@@ -500,6 +537,62 @@ mod tests {
             Some("awaiting_confirmation")
         );
         assert!(read_string_set(metadata.get("running_task_ids")).is_empty());
+    }
+
+    #[test]
+    fn stopped_requirement_execution_tracking_is_not_overwritten_by_late_failure() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "overall_status".to_string(),
+            Value::String("stopped".to_string()),
+        );
+        metadata.insert(
+            "confirmation_status".to_string(),
+            Value::String("stopped".to_string()),
+        );
+
+        apply_execution_links_to_task_tracking(
+            &mut metadata,
+            &[link("task-1", "failed"), link("task-2", "cancelled")],
+        );
+
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert_eq!(
+            metadata.get("confirmation_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert!(read_string_set(metadata.get("failed_task_ids")).contains("task-1"));
+        assert!(read_string_set(metadata.get("cancelled_task_ids")).contains("task-2"));
+    }
+
+    #[test]
+    fn stopping_requirement_execution_becomes_stopped_after_all_tracked_tasks_are_terminal() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "overall_status".to_string(),
+            Value::String("stopping".to_string()),
+        );
+        metadata.insert(
+            "confirmation_status".to_string(),
+            Value::String("stopping".to_string()),
+        );
+
+        apply_execution_links_to_task_tracking(
+            &mut metadata,
+            &[link("task-1", "failed"), link("task-2", "cancelled")],
+        );
+
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert_eq!(
+            metadata.get("confirmation_status").and_then(Value::as_str),
+            Some("stopped")
+        );
     }
 
     #[test]
