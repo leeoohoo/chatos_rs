@@ -1300,6 +1300,104 @@ fn validate_rerun_cloned_project_task_scope(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn ensure_old_cloud_execution_links_inactive_before_rerun(
+    task_runner_base_url: &str,
+    task_runner_agent_token: &str,
+    user_access_token: &str,
+    project_service_base_url: &str,
+    project_sync_secret: &str,
+    conversation_id: &str,
+    execution_group_id: &str,
+    requirement_title: &str,
+    links: &mut [ExecutionLink],
+) -> Result<(), HandlerError> {
+    for link in links.iter_mut() {
+        let task = task_runner_api_client::get_task_runner_task(
+            task_runner_base_url,
+            task_runner_agent_token,
+            link.task_runner_task_id.as_str(),
+        )
+        .await
+        .map_err(|err| HandlerError::bad_gateway("校验旧执行批次 Task Runner 状态失败", err))?;
+        link.task_runner_status = Some(task.status.clone());
+        sync_execution_link_status(
+            project_service_base_url,
+            project_sync_secret,
+            link,
+            task.status.as_str(),
+            task_runner_callback_event_for_status(task.status.as_str()),
+        )
+        .await?;
+    }
+
+    let active_links = links
+        .iter()
+        .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_links.is_empty() {
+        return Ok(());
+    }
+
+    mark_execution_messages_for_stop(active_links.as_slice(), STATUS_STOPPING).await;
+    let _ = set_task_runner_async_overall_status_for_session(
+        conversation_id,
+        execution_group_id,
+        STATUS_STOPPING,
+    )
+    .await;
+
+    let mut cancel_errors = Vec::new();
+    for link in &active_links {
+        let cancel_result = task_runner_api_client::cancel_task_runner_task(
+            task_runner_base_url,
+            task_runner_agent_token,
+            Some(user_access_token),
+            link.task_runner_task_id.as_str(),
+            &task_runner_api_client::CancelTaskRunnerTaskRequest {
+                reason: format!("重新执行前继续取消旧需求执行：{requirement_title}"),
+                replacement_task_ids: Vec::new(),
+            },
+        )
+        .await;
+        match cancel_result {
+            Ok(value) => {
+                let status = value_string(&value, "status")
+                    .or_else(|| {
+                        value
+                            .get("task")
+                            .and_then(|task| value_string(task, "status"))
+                    })
+                    .unwrap_or_else(|| "cancelled".to_string());
+                if let Err(error) = sync_execution_link_status(
+                    project_service_base_url,
+                    project_sync_secret,
+                    link,
+                    status.as_str(),
+                    task_runner_callback_event_for_status(status.as_str())
+                        .or(Some("task.cancelled")),
+                )
+                .await
+                {
+                    cancel_errors.push(format!("{}: {}", link.task_runner_task_id, error.error));
+                }
+            }
+            Err(error) => cancel_errors.push(format!("{}: {}", link.task_runner_task_id, error)),
+        }
+    }
+    if !cancel_errors.is_empty() {
+        return Err(HandlerError::bad_gateway(
+            "旧执行批次仍有运行中任务，且重新发送取消请求失败",
+            cancel_errors.join("；"),
+        ));
+    }
+    Err(HandlerError::conflict(format!(
+        "旧执行批次仍有 {} 个 Task Runner 任务正在取消，已重新发送取消请求，请等待取消完成后再重新执行。",
+        active_links.len()
+    )))
+}
+
 #[derive(Debug)]
 struct RequirementPlannerRecovery {
     access_token: String,
@@ -1576,6 +1674,30 @@ async fn rerun_requirement_execution_inner(
         context.access_token.as_str(),
     )
     .await?;
+    let mut old_links = load_execution_links_for_work_items(
+        context.cfg.project_service_base_url.as_str(),
+        context.access_token.as_str(),
+        selected_work_items.as_slice(),
+    )
+    .await?
+    .into_iter()
+    .filter(|link| {
+        link.source_session_id.as_deref() == Some(identity.conversation_id.as_str())
+            && link.source_user_message_id.as_deref() == Some(identity.execution_group_id.as_str())
+    })
+    .collect::<Vec<_>>();
+    ensure_old_cloud_execution_links_inactive_before_rerun(
+        contact_runtime.task_runner_base_url.as_str(),
+        contact_runtime.task_runner_agent_token.as_str(),
+        context.access_token.as_str(),
+        context.cfg.project_service_base_url.as_str(),
+        context.project_sync_secret.as_str(),
+        identity.conversation_id.as_str(),
+        identity.execution_group_id.as_str(),
+        root_requirement.title.as_str(),
+        old_links.as_mut_slice(),
+    )
+    .await?;
     let session = chatos_sessions::get_session_by_id(identity.conversation_id.as_str())
         .await
         .map_err(|error| HandlerError::internal("读取需求执行会话失败", error))?
@@ -1663,6 +1785,7 @@ async fn rerun_requirement_execution_inner(
         &expected_project_task_ids,
         &mapped_project_task_ids,
     );
+    let mut reload_old_links_for_expanded_scope = false;
     if expanded_project_task_ids != expected_project_task_ids {
         let expanded_work_items = all_work_items
             .iter()
@@ -1685,6 +1808,7 @@ async fn rerun_requirement_execution_inner(
         }
         expected_project_task_ids = expanded_project_task_ids;
         selected_work_items = expanded_work_items;
+        reload_old_links_for_expanded_scope = true;
     }
     if let Err(detail) = validate_rerun_cloned_project_task_scope(
         &expected_project_task_ids,
@@ -1701,33 +1825,35 @@ async fn rerun_requirement_execution_inner(
         .await;
         return Err(HandlerError::bad_gateway("复制执行图不完整", detail));
     }
-    let old_links = match load_execution_links_for_work_items(
-        context.cfg.project_service_base_url.as_str(),
-        context.access_token.as_str(),
-        selected_work_items.as_slice(),
-    )
-    .await
-    {
-        Ok(links) => links
-            .into_iter()
-            .filter(|link| {
-                link.source_session_id.as_deref() == Some(identity.conversation_id.as_str())
-                    && link.source_user_message_id.as_deref()
-                        == Some(identity.execution_group_id.as_str())
-            })
-            .collect::<Vec<_>>(),
-        Err(error) => {
-            let _ = task_runner_api_client::retire_project_execution(
-                contact_runtime.task_runner_base_url.as_str(),
-                context.project.id.as_str(),
-                requirement_id.as_str(),
-                session.id.as_str(),
-                new_execution_group_id.as_str(),
-            )
-            .await;
-            return Err(error);
-        }
-    };
+    if reload_old_links_for_expanded_scope {
+        old_links = match load_execution_links_for_work_items(
+            context.cfg.project_service_base_url.as_str(),
+            context.access_token.as_str(),
+            selected_work_items.as_slice(),
+        )
+        .await
+        {
+            Ok(links) => links
+                .into_iter()
+                .filter(|link| {
+                    link.source_session_id.as_deref() == Some(identity.conversation_id.as_str())
+                        && link.source_user_message_id.as_deref()
+                            == Some(identity.execution_group_id.as_str())
+                })
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                let _ = task_runner_api_client::retire_project_execution(
+                    contact_runtime.task_runner_base_url.as_str(),
+                    context.project.id.as_str(),
+                    requirement_id.as_str(),
+                    session.id.as_str(),
+                    new_execution_group_id.as_str(),
+                )
+                .await;
+                return Err(error);
+            }
+        };
+    }
     let mut new_links = Vec::new();
     for (project_task_id, task_runner_task_id) in parsed_mappings {
         let sync_result = project_management_api_client::sync_work_item_task_runner_status(

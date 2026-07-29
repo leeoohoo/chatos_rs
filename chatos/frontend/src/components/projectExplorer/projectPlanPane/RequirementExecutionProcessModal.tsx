@@ -100,6 +100,15 @@ export const isPendingRequirementExecutionPlanError = (error: unknown): boolean 
     || message.includes('local execution plan source message was not found');
 };
 
+export const isRequirementExecutionRerunCancellationSettlingError = (error: unknown): boolean => {
+  if (!(error instanceof ApiRequestError) || error.status !== 409) {
+    return false;
+  }
+  return error.message.includes('旧执行批次仍有')
+    || error.message.includes('旧批次仍有')
+    || error.message.includes('正在取消');
+};
+
 export const shouldReplaceRequirementExecutionBatch = ({
   phase,
   planDiscarded,
@@ -323,7 +332,9 @@ export const resolveRequirementExecutionProcessPhase = ({
   const overallStatus = confirmationState.overallStatus || normalizedServerStatus;
   if (
     planStopped
-    || ['stopped', 'cancelled', 'canceled'].includes(normalizedServerStatus || overallStatus)
+    || ['stopping', 'stopped', 'cancelled', 'canceled'].includes(
+      normalizedServerStatus || overallStatus,
+    )
   ) {
     return 'stopped';
   }
@@ -1418,6 +1429,13 @@ export const RequirementExecutionProcessModal: React.FC<{
       await syncSessionMessagesInBackground(next.conversationId);
       await reloadGraph();
     } catch (err) {
+      if (isRequirementExecutionRerunCancellationSettlingError(err)) {
+        setRerunConfirmOpen(false);
+        setPlanStopped(true);
+        setActionMessage('旧批次仍有任务正在取消，已重新发送取消请求；请等待状态收敛后再重新执行。');
+        await refreshAll(false);
+        return;
+      }
       setActionError(err instanceof Error ? err.message : '重新执行失败');
     } finally {
       setRerunning(false);
