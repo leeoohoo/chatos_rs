@@ -335,7 +335,7 @@ fn apply_execution_links_to_task_tracking(
 fn stop_locked_task_runner_async_status(
     async_meta: &serde_json::Map<String, Value>,
 ) -> Option<String> {
-    ["overall_status", "confirmation_status"]
+    let locked_status = ["overall_status", "confirmation_status"]
         .iter()
         .filter_map(|key| async_meta.get(*key))
         .filter_map(Value::as_str)
@@ -349,7 +349,21 @@ fn stop_locked_task_runner_async_status(
             } else {
                 None
             }
-        })
+        });
+    locked_status.or_else(|| {
+        task_runner_async_has_stop_marker(async_meta).then(|| STATUS_STOPPED.to_string())
+    })
+}
+
+fn task_runner_async_has_stop_marker(async_meta: &serde_json::Map<String, Value>) -> bool {
+    async_meta
+        .get("stopped_at")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+        || async_meta
+            .get("stopped_task_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|values| !values.is_empty())
 }
 
 fn apply_execution_links_to_project_execution_metadata(
@@ -566,6 +580,38 @@ mod tests {
         );
         assert!(read_string_set(metadata.get("failed_task_ids")).contains("task-1"));
         assert!(read_string_set(metadata.get("cancelled_task_ids")).contains("task-2"));
+    }
+
+    #[test]
+    fn stopped_marker_recovers_requirement_execution_tracking_after_status_overwrite() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "overall_status".to_string(),
+            Value::String("failed".to_string()),
+        );
+        metadata.insert(
+            "confirmation_status".to_string(),
+            Value::String("failed".to_string()),
+        );
+        metadata.insert(
+            "stopped_at".to_string(),
+            Value::String("2026-07-29T09:00:00Z".to_string()),
+        );
+        metadata.insert("stopped_task_ids".to_string(), json!(["task-1"]));
+
+        apply_execution_links_to_task_tracking(
+            &mut metadata,
+            &[link("task-1", "failed"), link("task-2", "cancelled")],
+        );
+
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert_eq!(
+            metadata.get("confirmation_status").and_then(Value::as_str),
+            Some("stopped")
+        );
     }
 
     #[test]

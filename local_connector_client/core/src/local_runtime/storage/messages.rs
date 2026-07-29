@@ -175,6 +175,9 @@ impl LocalDatabase {
                 "confirmation_status".to_string(),
                 Value::String(confirmation_status.to_string()),
             );
+            if task_runner_status_is_stop_locked(overall_status) {
+                task_runner.insert("stopped_at".to_string(), Value::String(local_now_rfc3339()));
+            }
         }
         sqlx::query(
             r#"

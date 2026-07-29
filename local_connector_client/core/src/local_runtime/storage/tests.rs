@@ -350,6 +350,74 @@ async fn stopped_turn_task_runner_status_is_not_overwritten_by_late_failure() {
 }
 
 #[tokio::test]
+async fn stopped_turn_task_runner_status_writes_stop_marker() {
+    let root = std::env::temp_dir().join(format!("chatos-local-stop-marker-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-stop-marker".to_string(),
+            owner_user_id: "user-stop-marker".to_string(),
+            device_id: "device-stop-marker".to_string(),
+            workspace_id: "workspace-stop-marker".to_string(),
+            project_name: "Stop marker project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("create stop marker project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-stop-marker".to_string(),
+            owner_user_id: "user-stop-marker".to_string(),
+            title: "Stop marker session".to_string(),
+            selected_model_id: Some("model-1".to_string()),
+            selected_agent_id: None,
+        })
+        .await
+        .expect("create stop marker session");
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id,
+            owner_user_id: "user-stop-marker".to_string(),
+            turn_id: "stop-marker-turn".to_string(),
+            idempotency_key: "stop-marker-turn".to_string(),
+            content: "Generate plan".to_string(),
+            metadata_json: Some(
+                json!({
+                    "task_runner_async": {
+                        "mode": "project_requirement_execution",
+                        "overall_status": "processing",
+                        "confirmation_status": "confirmed"
+                    }
+                })
+                .to_string(),
+            ),
+        })
+        .await
+        .expect("create stop marker turn");
+
+    database
+        .set_turn_task_runner_status("user-stop-marker", "stop-marker-turn", "stopped", "stopped")
+        .await
+        .expect("mark stopped planner metadata");
+
+    let messages = database
+        .list_turn_messages("user-stop-marker", "stop-marker-turn")
+        .await
+        .expect("load stop marker messages");
+    let metadata = messages[0]
+        .metadata_json
+        .as_deref()
+        .expect("metadata should be present");
+    assert!(metadata.contains("\"overall_status\":\"stopped\""));
+    assert!(metadata.contains("\"stopped_at\""));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup stop marker database");
+}
+
+#[tokio::test]
 async fn appends_and_incrementally_lists_ordered_runtime_events() {
     let root = std::env::temp_dir().join(format!("chatos-local-events-{}", Uuid::new_v4()));
     let database = LocalDatabase::open(root.join("runtime.sqlite3"))

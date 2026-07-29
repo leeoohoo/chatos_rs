@@ -104,6 +104,30 @@ mod tests {
     }
 
     #[test]
+    fn stopped_execution_message_marker_recovers_status_after_late_failure_overwrite() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.id = "group-stopped".to_string();
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "failed",
+                "confirmation_status": "failed",
+                "stopped_at": "2026-07-29T09:00:00Z",
+                "stopped_task_ids": ["task-1"]
+            }
+        }));
+
+        assert_eq!(execution_message_status(&message), "stopped");
+    }
+
+    #[test]
     fn planner_prompt_requires_task_creation_for_planning_work_items() {
         let requirement = RequirementPlanItem {
             id: "requirement-1".to_string(),

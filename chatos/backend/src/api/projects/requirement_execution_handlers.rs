@@ -472,10 +472,39 @@ fn execution_message_status(message: &crate::models::message::Message) -> String
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.get("task_runner_async"));
-    value_string(task_runner.unwrap_or(&Value::Null), "overall_status")
+    let status = value_string(task_runner.unwrap_or(&Value::Null), "overall_status")
         .or_else(|| value_string(task_runner.unwrap_or(&Value::Null), "confirmation_status"))
         .unwrap_or_else(|| STATUS_PLANNING_STARTED.to_string())
-        .to_ascii_lowercase()
+        .trim()
+        .to_ascii_lowercase();
+    if !execution_status_is_stop_locked(status.as_str())
+        && task_runner_metadata_has_stop_marker(task_runner)
+    {
+        STATUS_STOPPED.to_string()
+    } else {
+        status
+    }
+}
+
+fn execution_status_is_stop_locked(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        STATUS_STOPPING | STATUS_STOPPED | "cancelled" | "canceled"
+    )
+}
+
+fn task_runner_metadata_has_stop_marker(task_runner: Option<&Value>) -> bool {
+    let Some(task_runner) = task_runner else {
+        return false;
+    };
+    task_runner
+        .get("stopped_at")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+        || task_runner
+            .get("stopped_task_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|values| !values.is_empty())
 }
 
 fn build_cloud_execution_plan_response(
