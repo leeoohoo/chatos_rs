@@ -321,6 +321,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rerun_clone_validation_allows_multiple_dag_nodes_per_project_task() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let mapped = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+
+        assert!(validate_rerun_cloned_project_task_scope(&expected, &mapped, 4).is_ok());
+    }
+
+    #[test]
+    fn rerun_clone_validation_rejects_project_task_scope_mismatch() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let mapped = BTreeSet::from([
+            "task-1".to_string(),
+            "task-2".to_string(),
+            "task-extra".to_string(),
+        ]);
+
+        let error = validate_rerun_cloned_project_task_scope(&expected, &mapped, 4)
+            .expect_err("unexpected project task should fail");
+
+        assert!(error.contains("project task scope mismatch"));
+        assert!(error.contains("unexpected=[task-extra]"));
+        assert!(error.contains("cloned_dag_nodes=4"));
+    }
+
     fn planner_message_created_at(
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> crate::models::message::Message {

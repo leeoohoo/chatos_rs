@@ -1277,6 +1277,29 @@ fn expand_project_task_scope_to_actual_graph(
     }
 }
 
+fn validate_rerun_cloned_project_task_scope(
+    expected_project_task_ids: &BTreeSet<String>,
+    mapped_project_task_ids: &BTreeSet<String>,
+    cloned_dag_node_count: usize,
+) -> Result<(), String> {
+    if cloned_dag_node_count == 0 {
+        return Err(format!(
+            "expected {} project tasks, cloned 0 DAG nodes",
+            expected_project_task_ids.len()
+        ));
+    }
+    validate_exact_project_task_scope(expected_project_task_ids, mapped_project_task_ids).map_err(
+        |mismatch| {
+            format!(
+                "project task scope mismatch: {mismatch}; expected_project_tasks={}, cloned_project_tasks={}, cloned_dag_nodes={}",
+                expected_project_task_ids.len(),
+                mapped_project_task_ids.len(),
+                cloned_dag_node_count,
+            )
+        },
+    )
+}
+
 #[derive(Debug)]
 struct RequirementPlannerRecovery {
     access_token: String,
@@ -1663,10 +1686,11 @@ async fn rerun_requirement_execution_inner(
         expected_project_task_ids = expanded_project_task_ids;
         selected_work_items = expanded_work_items;
     }
-    if mappings.len() != expected_project_task_ids.len()
-        || validate_exact_project_task_scope(&expected_project_task_ids, &mapped_project_task_ids)
-            .is_err()
-    {
+    if let Err(detail) = validate_rerun_cloned_project_task_scope(
+        &expected_project_task_ids,
+        &mapped_project_task_ids,
+        mappings.len(),
+    ) {
         let _ = task_runner_api_client::retire_project_execution(
             contact_runtime.task_runner_base_url.as_str(),
             context.project.id.as_str(),
@@ -1675,14 +1699,7 @@ async fn rerun_requirement_execution_inner(
             new_execution_group_id.as_str(),
         )
         .await;
-        return Err(HandlerError::bad_gateway(
-            "复制执行图不完整",
-            format!(
-                "expected {} tasks, cloned {}",
-                expected_project_task_ids.len(),
-                mappings.len()
-            ),
-        ));
+        return Err(HandlerError::bad_gateway("复制执行图不完整", detail));
     }
     let old_links = match load_execution_links_for_work_items(
         context.cfg.project_service_base_url.as_str(),
