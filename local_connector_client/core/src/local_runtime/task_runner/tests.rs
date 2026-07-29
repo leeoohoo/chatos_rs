@@ -315,6 +315,115 @@ async fn contact_task_runner_provider_queues_only_after_the_source_turn_complete
 }
 
 #[tokio::test]
+async fn contact_task_creation_uses_distinct_local_plan_and_run_capability_boundaries() {
+    let root =
+        std::env::temp_dir().join(format!("chatos-local-task-capability-{}", Uuid::new_v4()));
+    fs::create_dir_all(root.as_path()).expect("create workspace");
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open database");
+    seed_chat_capabilities(&database, "user-task")
+        .await
+        .expect("seed capabilities");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-task".to_string(),
+            owner_user_id: "user-task".to_string(),
+            device_id: "device-task".to_string(),
+            workspace_id: "workspace-task".to_string(),
+            project_name: "Task project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("upsert project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-task".to_string(),
+            owner_user_id: "user-task".to_string(),
+            title: "Contact chat".to_string(),
+            selected_model_id: Some("model-task".to_string()),
+            selected_agent_id: Some("contact-1".to_string()),
+        })
+        .await
+        .expect("create session");
+    let source_turn_id = "lc_turn_capability_source".to_string();
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id.clone(),
+            owner_user_id: "user-task".to_string(),
+            turn_id: source_turn_id.clone(),
+            idempotency_key: "capability-source".to_string(),
+            content: "创建一个本地任务".to_string(),
+            metadata_json: None,
+        })
+        .await
+        .expect("begin source turn");
+    let state = local_state(root.as_path(), "http://127.0.0.1:9".to_string());
+    let provider = LocalTaskRunnerServiceProvider::new(
+        database.clone(),
+        "user-task",
+        "project-task",
+        session.id.clone(),
+        source_turn_id.clone(),
+        Some("model-task".to_string()),
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
+        BTreeSet::new(),
+        &state,
+    )
+    .await
+    .expect("build local Task Runner provider");
+
+    let planning_terminal = provider
+        .call_tool(
+            "create_task",
+            json!({
+                "title": "规划任务不允许终端",
+                "objective": "规划阶段不能拿执行期终端能力",
+                "is_planning_task": true,
+                "enabled_builtin_kinds": ["TerminalController"]
+            }),
+            ToolCallContext::new(Some(session.id.clone()), Some(source_turn_id.clone()), None),
+            None,
+        )
+        .await
+        .expect_err("local planning tasks must not inherit local execution tools");
+    assert!(planning_terminal.contains("does not allow local Task Runner capability"));
+    assert!(database
+        .list_local_conversation_tasks("user-task", session.id.as_str(), 20)
+        .await
+        .expect("list tasks after rejected planning capability")
+        .is_empty());
+
+    let created = provider
+        .call_tool(
+            "create_task",
+            json!({
+                "title": "执行任务允许终端",
+                "objective": "执行阶段可以使用本地终端能力",
+                "is_planning_task": false,
+                "enabled_builtin_kinds": ["TerminalController"]
+            }),
+            ToolCallContext::new(Some(session.id.clone()), Some(source_turn_id.clone()), None),
+            None,
+        )
+        .await
+        .expect("local execution tasks may use local execution tools");
+    assert_eq!(
+        created
+            .pointer("/structuredContent/is_planning_task")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        created.pointer("/structuredContent/mcp_config/enabled_builtin_kinds"),
+        Some(&json!(["TerminalController"]))
+    );
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup local task capability database");
+}
+
+#[tokio::test]
 async fn requirement_planner_provider_materializes_only_local_linked_tasks() {
     let root =
         std::env::temp_dir().join(format!("chatos-local-requirement-plan-{}", Uuid::new_v4()));

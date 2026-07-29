@@ -100,11 +100,7 @@ pub(super) async fn execute_local_task_run(
         .map(|task| task.is_planning_task)
         .or_else(|| work_item.as_ref().map(|task| task.is_planning_task))
         .unwrap_or(false);
-    let agent_key = if is_planning_task {
-        SystemAgentKey::TaskRunnerLocalPlanPhase
-    } else {
-        SystemAgentKey::TaskRunnerLocalRunPhase
-    };
+    let agent_key = local_task_runner_agent_key(is_planning_task);
     let mut task_settings = settings.clone();
     task_settings.selected_model_id = Some(run.model_config_id.clone());
     task_settings.plan_mode_enabled = is_planning_task;
@@ -777,6 +773,14 @@ fn conversation_task_mcp_ids(
     Ok(ids)
 }
 
+fn local_task_runner_agent_key(is_planning_task: bool) -> SystemAgentKey {
+    if is_planning_task {
+        SystemAgentKey::TaskRunnerLocalPlanPhase
+    } else {
+        SystemAgentKey::TaskRunnerLocalRunPhase
+    }
+}
+
 fn task_run_idempotency_key(run_id: &str, attempt: i64) -> String {
     format!("{run_id}:attempt:{}", attempt.max(1))
 }
@@ -789,7 +793,7 @@ mod execution_policy_tests {
     };
     use serde_json::Value;
 
-    use super::task_run_idempotency_key;
+    use super::{local_task_runner_agent_key, task_run_idempotency_key};
 
     #[tokio::test]
     async fn implementation_tasks_reserve_a_tool_free_finalization_round() {
@@ -819,6 +823,18 @@ mod execution_policy_tests {
         assert_ne!(
             task_run_idempotency_key("run-1", 1),
             task_run_idempotency_key("run-1", 2),
+        );
+    }
+
+    #[test]
+    fn local_task_runner_execution_never_uses_cloud_agent_keys() {
+        assert_eq!(
+            local_task_runner_agent_key(true).as_str(),
+            "task_runner_local_plan_phase"
+        );
+        assert_eq!(
+            local_task_runner_agent_key(false).as_str(),
+            "task_runner_local_run_phase"
         );
     }
 
