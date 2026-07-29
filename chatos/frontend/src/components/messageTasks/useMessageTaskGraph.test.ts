@@ -9,7 +9,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ApiClientProvider } from '../../lib/api/ApiClientContext';
 import type ApiClient from '../../lib/api/client';
-import type { MessageTaskRunnerGraphResponse, MessageTaskRunnerTask } from '../../lib/api/client/types';
+import type {
+  MessageTaskRunnerGraphResponse,
+  MessageTaskRunnerRunDetailResponse,
+  MessageTaskRunnerTask,
+} from '../../lib/api/client/types';
 import { buildTaskSourceLookup, useMessageTaskGraph } from './useMessageTaskGraph';
 
 const emptyGraph = (): MessageTaskRunnerGraphResponse => ({
@@ -33,6 +37,45 @@ const graphWithTask = (taskId: string): MessageTaskRunnerGraphResponse => ({
   source_session_id: 'session-1',
   source_turn_id: `turn-${taskId}`,
   source_user_message_id: `message-${taskId}`,
+});
+
+const graphWithTaskRecord = (task: MessageTaskRunnerTask): MessageTaskRunnerGraphResponse => ({
+  root_task_ids: [task.id],
+  nodes: [{
+    task,
+    depth: 0,
+    is_root: true,
+    is_current_message: true,
+  }],
+  edges: [],
+  source_session_id: task.source_session_id || 'session-1',
+  source_turn_id: task.source_turn_id || `turn-${task.id}`,
+  source_user_message_id: task.source_user_message_id || `message-${task.id}`,
+});
+
+const runDetailForTask = (
+  task: MessageTaskRunnerTask,
+  runId = task.last_run_id || 'run-1',
+  message = 'run event',
+): MessageTaskRunnerRunDetailResponse => ({
+  task,
+  run: {
+    id: runId,
+    task_id: task.id,
+    status: 'running',
+  },
+  model_config: null,
+  events: [{
+    id: `${runId}-event-1`,
+    run_id: runId,
+    event_type: 'model_request',
+    message,
+    created_at: '2026-01-01T00:00:00Z',
+  }],
+  events_total: 1,
+  events_limit: 1,
+  events_offset: 0,
+  events_has_more: false,
 });
 
 const createApiWrapper = (request: ReturnType<typeof vi.fn>) => {
@@ -400,5 +443,117 @@ describe('useMessageTaskGraph', () => {
     expect(retried).toBe(false);
     expect(result.current.retryError).toBe('模型配置不可用');
     expect(result.current.retryingTaskId).toBeNull();
+  });
+
+  it('does not let a late run-detail response cover an execution-process modal', async () => {
+    const task: MessageTaskRunnerTask = {
+      id: 'task-1',
+      title: '实现任务',
+      status: 'running',
+      last_run_id: 'run-1',
+      source_session_id: 'session-1',
+      source_turn_id: 'turn-1',
+      source_user_message_id: 'message-1',
+    };
+    const lateRunDetail = createDeferred<MessageTaskRunnerRunDetailResponse>();
+    const request = vi.fn((path: string) => {
+      if (path.includes('/task-runner/graph/runs/run-1')) {
+        if (path.includes('event_limit=40')) {
+          return lateRunDetail.promise;
+        }
+        return Promise.resolve(runDetailForTask(task, 'run-1', 'process detail loaded'));
+      }
+      return Promise.resolve(graphWithTaskRecord(task));
+    });
+    const lookup = {
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sourceUserMessageId: 'message-1',
+    };
+    const { result } = renderHook(() => useMessageTaskGraph({
+      open: true,
+      messageId: 'message-1',
+      lookup,
+    }), { wrapper: createApiWrapper(request) });
+
+    await waitFor(() => expect(result.current.allTasks[0]?.id).toBe(task.id));
+
+    act(() => {
+      void result.current.openRun(task);
+    });
+    await waitFor(() => expect(result.current.loadingRunId).toBe('run-1'));
+
+    act(() => {
+      void result.current.openProcessLog(task);
+    });
+    await waitFor(() => expect(result.current.processRunDetail?.events[0]?.message).toBe('process detail loaded'));
+    expect(result.current.runDetail).toBeNull();
+    expect(result.current.loadingRunId).toBeNull();
+
+    await act(async () => {
+      lateRunDetail.resolve(runDetailForTask(task, 'run-1', 'late run detail'));
+      await lateRunDetail.promise;
+    });
+
+    expect(result.current.processRunDetail?.events[0]?.message).toBe('process detail loaded');
+    expect(result.current.runDetail).toBeNull();
+    expect(result.current.loadingRunId).toBeNull();
+  });
+
+  it('does not let a late execution-process response cover a run-detail modal', async () => {
+    const task: MessageTaskRunnerTask = {
+      id: 'task-1',
+      title: '实现任务',
+      status: 'running',
+      last_run_id: 'run-1',
+      source_session_id: 'session-1',
+      source_turn_id: 'turn-1',
+      source_user_message_id: 'message-1',
+    };
+    const lateProcessDetail = createDeferred<MessageTaskRunnerRunDetailResponse>();
+    const request = vi.fn((path: string) => {
+      if (path.includes('/task-runner/graph/runs/run-1')) {
+        if (path.includes('event_limit=200')) {
+          return lateProcessDetail.promise;
+        }
+        return Promise.resolve(runDetailForTask(task, 'run-1', 'run detail loaded'));
+      }
+      return Promise.resolve(graphWithTaskRecord(task));
+    });
+    const lookup = {
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sourceUserMessageId: 'message-1',
+    };
+    const { result } = renderHook(() => useMessageTaskGraph({
+      open: true,
+      messageId: 'message-1',
+      lookup,
+    }), { wrapper: createApiWrapper(request) });
+
+    await waitFor(() => expect(result.current.allTasks[0]?.id).toBe(task.id));
+
+    act(() => {
+      void result.current.openProcessLog(task);
+    });
+    await waitFor(() => expect(result.current.loadingProcessTaskId).toBe(task.id));
+
+    act(() => {
+      void result.current.openRun(task);
+    });
+    await waitFor(() => expect(result.current.runDetail?.events[0]?.message).toBe('run detail loaded'));
+    expect(result.current.processTask).toBeNull();
+    expect(result.current.processRunDetail).toBeNull();
+    expect(result.current.loadingProcessTaskId).toBeNull();
+
+    await act(async () => {
+      lateProcessDetail.resolve(runDetailForTask(task, 'run-1', 'late process detail'));
+      await lateProcessDetail.promise;
+    });
+
+    expect(result.current.runDetail?.events[0]?.message).toBe('run detail loaded');
+    expect(result.current.processTask).toBeNull();
+    expect(result.current.processRunDetail).toBeNull();
+    expect(result.current.loadingProcessTaskId).toBeNull();
   });
 });
