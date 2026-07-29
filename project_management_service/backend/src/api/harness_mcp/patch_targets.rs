@@ -106,7 +106,7 @@ pub(super) fn patch_error_with_recovery(error: &str) -> String {
                     "read_file_raw",
                     "read_file_range"
                 ],
-                "guidance": "Patch context is stale. Re-read target files from Harness and regenerate the patch with exact current lines."
+                "guidance": "Patch context is stale. Re-read target files from the current project workspace and regenerate the patch with exact current lines."
             }
         });
         serde_json::to_string(&hint).unwrap_or_else(|_| error.to_string())

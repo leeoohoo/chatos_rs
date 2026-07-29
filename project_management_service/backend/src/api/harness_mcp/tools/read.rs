@@ -5,8 +5,8 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 
 use super::super::client::{
-    fetch_harness_content, list_harness_branches, list_harness_paths, read_harness_file,
-    read_harness_file_for_preview, HarnessDirContent, HarnessFile,
+    fetch_harness_content, list_harness_paths, read_harness_file, read_harness_file_for_preview,
+    HarnessDirContent, HarnessFile,
 };
 use super::super::path_policy::{
     optional_repo_path, path_matches_scope, path_name, required_file_path,
@@ -51,14 +51,8 @@ pub(in super::super) async fn tool_read_file_raw(
                 "path": file.path,
                 "size_bytes": file.size,
                 "sha256": file.sha256,
-                "harness_blob_sha": file.harness_blob_sha,
                 "content_encoding": "base64",
-                "content": base64::engine::general_purpose::STANDARD.encode(file.bytes),
-                "harness": {
-                    "project_id": ctx.project_id,
-                    "repo_path": ctx.repo_path,
-                    "blob_sha": file.harness_blob_sha
-                }
+                "content": base64::engine::general_purpose::STANDARD.encode(file.bytes)
             }),
             "Binary file content returned as base64 in _structured_result.",
         ));
@@ -79,13 +73,7 @@ pub(in super::super) async fn tool_read_file_raw(
         }
         Err(err) => return Err(err),
     };
-    let mut payload = file_payload(&file, with_line_numbers);
-    payload["harness"] = json!({
-        "project_id": ctx.project_id,
-        "repo_path": ctx.repo_path,
-        "blob_sha": file.harness_blob_sha
-    });
-    Ok(tool_text_result(payload))
+    Ok(tool_text_result(file_payload(&file, with_line_numbers)))
 }
 
 pub(in super::super) async fn tool_read_file_range(
@@ -144,7 +132,6 @@ pub(in super::super) async fn tool_read_file_range(
         "path": file.path,
         "size_bytes": file.size,
         "sha256": file.sha256,
-        "harness_blob_sha": file.harness_blob_sha,
         "start_line": start,
         "end_line": end,
         "total_lines": total_lines,
@@ -173,7 +160,7 @@ pub(in super::super) async fn tool_list_dir(
         return Err("Target is not a directory.".to_string());
     }
     let dir: HarnessDirContent = serde_json::from_value(content.content)
-        .map_err(|err| format!("parse Harness directory content failed: {err}"))?;
+        .map_err(|err| format!("parse project directory content failed: {err}"))?;
     let entries = dir
         .entries
         .into_iter()
@@ -189,26 +176,6 @@ pub(in super::super) async fn tool_list_dir(
         })
         .collect::<Vec<_>>();
     Ok(tool_text_result(json!({ "entries": entries })))
-}
-
-pub(in super::super) async fn tool_list_branches(
-    ctx: &HarnessMcpContext,
-    _args: &Value,
-) -> Result<Value, String> {
-    let branches = list_harness_branches(ctx).await?;
-    let current = branches
-        .iter()
-        .find(|branch| branch.is_default)
-        .or_else(|| branches.first())
-        .map(|branch| branch.name.clone());
-    Ok(tool_text_result(json!({
-        "current": current,
-        "branches": branches.into_iter().map(|branch| json!({
-            "name": branch.name,
-            "sha": branch.sha,
-            "is_default": branch.is_default,
-        })).collect::<Vec<_>>()
-    })))
 }
 
 pub(in super::super) async fn tool_search_text(
@@ -292,7 +259,7 @@ async fn missing_file_discovery_result(
                 "content": Value::Null,
                 "error": error,
                 "message": "The requested file was not found. The automatic fallback path search also failed, so this result is not file content.",
-                "ai_instruction": "Do not treat this as file content. Do not retry the same missing path. Use list_dir on the repo root or a known directory before choosing another exact read path.",
+                "ai_instruction": "Do not treat this as file content. Do not retry the same missing path. Use list_dir on the workspace root or a known directory before choosing another exact read path.",
                 "fallback_discovery": {
                     "performed": true,
                     "path_search_failed": true,
@@ -316,11 +283,11 @@ async fn missing_file_discovery_result(
         "suggested_next_steps": [
             "Use one path from fallback_discovery.candidate_paths if it matches the intended file.",
             "If there are no candidates, inspect fallback_discovery.directory_listing or call list_dir on the relevant directory.",
-            "For monorepos or nested projects, do not assume README/package/lock files live at the repo root."
+            "For monorepos or nested projects, do not assume README/package/lock files live at the workspace root."
         ],
         "fallback_discovery": {
             "performed": true,
-            "strategy": "repo path search by requested name plus directory listing",
+            "strategy": "project path search by requested name plus directory listing",
             "candidate_paths": path_candidates,
             "directory_listing": directory_listing
         }
@@ -360,7 +327,7 @@ async fn directory_listing_payload(ctx: &HarnessMcpContext, path: &str) -> Resul
         return Err("Target is not a directory.".to_string());
     }
     let dir: HarnessDirContent = serde_json::from_value(content.content)
-        .map_err(|err| format!("parse Harness directory content failed: {err}"))?;
+        .map_err(|err| format!("parse project directory content failed: {err}"))?;
     let entries = dir
         .entries
         .into_iter()
@@ -453,7 +420,6 @@ fn file_payload(file: &HarnessFile, with_line_numbers: bool) -> Value {
         "path": file.path,
         "size_bytes": file.size,
         "sha256": file.sha256,
-        "harness_blob_sha": file.harness_blob_sha,
         "line_count": lines.len(),
         "ends_with_newline": file.content.ends_with('\n'),
         "content": file.content
@@ -488,6 +454,25 @@ fn truncate_search_text(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_payload_does_not_expose_storage_backend_details() {
+        let payload = file_payload(
+            &HarnessFile {
+                path: "src/main.rs".to_string(),
+                size: 11,
+                sha256: "content-sha".to_string(),
+                harness_blob_sha: "backend-blob-token".to_string(),
+                content: "hello world".to_string(),
+            },
+            true,
+        );
+        let text = serde_json::to_string(&payload).expect("serialize payload");
+
+        assert!(text.contains("src/main.rs"));
+        assert!(!text.contains("harness"));
+        assert!(!text.contains("backend-blob-token"));
+    }
 
     #[test]
     fn missing_file_candidates_find_nested_files_without_claiming_content() {

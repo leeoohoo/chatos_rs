@@ -19,7 +19,7 @@ fn read_tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "read_file_raw",
-            "description": "Return file content from the Harness repo for this cloud project. encoding defaults to utf8; base64 is intended for binary preview consumers. with_line_numbers defaults to true for UTF-8 reads. If the requested file is missing, returns status=not_found with fallback_discovery candidate paths and directory entries; that fallback is not file content.",
+            "description": "Return file content from the current project workspace. encoding defaults to utf8; base64 is intended for binary preview consumers. with_line_numbers defaults to true for UTF-8 reads. If the requested file is missing, returns status=not_found with fallback_discovery candidate paths and directory entries; that fallback is not file content.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -33,7 +33,7 @@ fn read_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "read_file_range",
-            "description": "Return UTF-8 content from start_line to end_line (1-based, inclusive) from the Harness repo for this cloud project. If the requested file is missing, returns status=not_found with fallback_discovery candidate paths and directory entries; that fallback is not file content.",
+            "description": "Return UTF-8 content from start_line to end_line (1-based, inclusive) from the current project workspace. If the requested file is missing, returns status=not_found with fallback_discovery candidate paths and directory entries; that fallback is not file content.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -48,7 +48,7 @@ fn read_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "list_dir",
-            "description": "List directory entries from the Harness repo for this cloud project.",
+            "description": "List directory entries from the current project workspace.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -59,17 +59,8 @@ fn read_tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "list_branches",
-            "description": "List branches from the internal Harness repo for this cloud project.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-            }
-        }),
-        json!({
             "name": "search_text",
-            "description": "Search text recursively under a directory in the Harness repo for this cloud project.",
+            "description": "Search text recursively under a directory in the current project workspace.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -88,7 +79,7 @@ fn write_tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "write_file",
-            "description": "Write file content to the Harness repo for this cloud project. The write creates a Harness commit on the default branch.",
+            "description": "Write file content to the current project workspace. Use this for new files or full-file replacement when the target path is known.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -101,7 +92,7 @@ fn write_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "edit_file",
-            "description": "Safely edit file content in the Harness repo by replacing old_text with new_text. Use before_context / after_context or start_line/end_line when old_text appears multiple times.",
+            "description": "Safely edit a file in the current project workspace by replacing old_text with new_text. Use before_context / after_context or start_line/end_line when old_text appears multiple times.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -120,7 +111,7 @@ fn write_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "append_file",
-            "description": "Append content to a file in the Harness repo for this cloud project. The write creates a Harness commit on the default branch.",
+            "description": "Append content to a file in the current project workspace.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -133,7 +124,7 @@ fn write_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "delete_path",
-            "description": "Delete a file or a directory recursively from the Harness repo for this cloud project. Directory deletion creates one Harness commit with DELETE actions for tracked files under the directory.",
+            "description": "Delete a file or directory recursively from the current project workspace.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -145,7 +136,7 @@ fn write_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "apply_patch",
-            "description": "Apply a patch to one or more files in the Harness repo for this cloud project. Supported formats match the builtin CodeMaintainer apply_patch tool. The write creates one Harness commit on the repository default branch.",
+            "description": "Apply a patch to one or more files in the current project workspace. Supported formats match the builtin CodeMaintainer apply_patch tool.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -156,4 +147,29 @@ fn write_tool_definitions() -> Vec<Value> {
             }
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_descriptions_expose_project_workspace_semantics_only() {
+        let tools = tool_definitions(&HostCapabilityPolicy::from_builtin_kind_names([
+            "CodeMaintainerRead",
+            "CodeMaintainerWrite",
+        ]));
+        let text = serde_json::to_string(&tools).expect("serialize tool definitions");
+        let names = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert!(text.contains("current project workspace"));
+        assert!(!names.contains(&"list_branches"));
+        assert!(!text.contains("Harness repo"));
+        assert!(!text.contains("internal Harness"));
+        assert!(!text.contains("default branch"));
+        assert!(!text.contains("creates a Harness commit"));
+    }
 }

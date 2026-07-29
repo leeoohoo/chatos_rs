@@ -12,7 +12,7 @@ pub(super) fn optional_repo_path(value: Option<&str>, allow_root: bool) -> Resul
     let raw = value.unwrap_or(".");
     let trimmed = raw.trim();
     if trimmed.starts_with('/') || trimmed.starts_with('\\') {
-        return Err("path must be relative to the Harness repo root".to_string());
+        return Err("path must be relative to the current project workspace root".to_string());
     }
     if trimmed.contains('\0') {
         return Err("path contains a null byte".to_string());

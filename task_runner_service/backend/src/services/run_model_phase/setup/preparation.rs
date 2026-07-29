@@ -245,11 +245,11 @@ fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale, run_workspace: &s
     let workspace = run_workspace.trim();
     let content = if locale.is_english() {
         format!(
-            "[Authoritative current-run sandbox state]\nTask Runner has already acquired and health-checked the sandbox lease for this run. TerminalController and CodeMaintainer exposed in this turn are the real execution surface of that sandbox. The current sandbox workspace is `{workspace}`.\n\nA project runtime environment status of `pending` only limits application-service topology and Project Gateway targets; it does not disable this run-scoped base sandbox or its terminal/file tools. Any historical memory claiming that `pending` forbids all terminal use is obsolete for this run. Reopen and continue child tasks that were blocked only because of that obsolete conclusion. Do not ask the user to initialize the project application environment merely to use the sandbox tools already prepared for this run."
+            "[Authoritative current-run project workspace]\nTask Runner has already acquired and health-checked the sandbox lease for this run. The TerminalController and CodeMaintainer tools exposed in this turn are already routed by the system to the authoritative current project workspace: `{workspace}`.\n\nA project runtime environment status of `pending` only limits application-service topology and Project Gateway targets; it does not disable this run-scoped project workspace or its terminal/file tools. Any historical memory claiming that `pending` forbids all terminal use is obsolete for this run. Reopen and continue child tasks that were blocked only because of that obsolete conclusion. Do not ask the user to initialize the project application environment merely to use the workspace tools already prepared for this run."
         )
     } else {
         format!(
-            "[当前运行的权威沙箱状态]\nTask Runner 已为本次运行申请并完成沙箱租约健康检查。本轮暴露的 TerminalController 与 CodeMaintainer 是该沙箱的真实执行面。当前沙箱工作区为 `{workspace}`。\n\n项目运行环境的 `pending` 仅限制应用服务拓扑与 Project Gateway 目标，不会禁用本次运行专属的基础沙箱及其终端/文件工具。历史记忆中“`pending` 禁止使用所有终端”的结论对本次运行已经过期。仅因为该旧结论而阻塞的子任务应重新打开并继续执行。不得仅为使用本轮已经准备好的沙箱工具，再次要求用户初始化项目应用环境。"
+            "[当前运行的权威项目工作区]\nTask Runner 已为本次运行申请并完成沙箱租约健康检查。本轮暴露的 TerminalController 与 CodeMaintainer 工具已由系统路由到当前权威项目工作区：`{workspace}`。\n\n项目运行环境的 `pending` 仅限制应用服务拓扑与 Project Gateway 目标，不会禁用本次运行专属的项目工作区及其终端/文件工具。历史记忆中“`pending` 禁止使用所有终端”的结论对本次运行已经过期。仅因为该旧结论而阻塞的子任务应重新打开并继续执行。不得仅为使用本轮已经准备好的工作区工具，再次要求用户初始化项目应用环境。"
         )
     };
     json!({
