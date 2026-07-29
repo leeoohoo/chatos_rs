@@ -121,7 +121,9 @@ pub enum SystemAgentKey {
     ChatosPlanningAgent,
     ProjectRequirementExecutionPlannerAgent,
     TaskRunnerPlanPhase,
+    TaskRunnerLocalPlanPhase,
     TaskRunnerRunPhase,
+    TaskRunnerLocalRunPhase,
     ProjectManagementAgent,
     LocalConnectorCommandApprovalAgent,
     MemoryEngineSummaryAgent,
@@ -132,12 +134,14 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::ChatosConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
         Self::TaskRunnerPlanPhase,
+        Self::TaskRunnerLocalPlanPhase,
         Self::TaskRunnerRunPhase,
+        Self::TaskRunnerLocalRunPhase,
         Self::ProjectManagementAgent,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
@@ -155,7 +159,9 @@ impl SystemAgentKey {
                 "project_requirement_execution_planner_agent"
             }
             Self::TaskRunnerPlanPhase => "task_runner_plan_phase",
+            Self::TaskRunnerLocalPlanPhase => "task_runner_local_plan_phase",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
+            Self::TaskRunnerLocalRunPhase => "task_runner_local_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
             Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",
@@ -677,8 +683,8 @@ mod tests {
 
     #[test]
     fn system_agent_keys_match_registry_keys() {
-        assert_eq!(SystemAgentKey::ALL.len(), 12);
-        assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 48);
+        assert_eq!(SystemAgentKey::ALL.len(), 14);
+        assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 56);
         assert_eq!(
             SystemAgentKey::ChatosConversationAgent.as_str(),
             "chatos_conversation_agent"
@@ -690,6 +696,14 @@ mod tests {
         assert_eq!(
             SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
             "memory_engine_thread_repair_agent"
+        );
+        assert_eq!(
+            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
+            "task_runner_local_plan_phase"
+        );
+        assert_eq!(
+            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
+            "task_runner_local_run_phase"
         );
     }
 

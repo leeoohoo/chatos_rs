@@ -317,6 +317,9 @@ fn tool_descriptions_expose_project_workspace_semantics_only() {
         "default branch",
         "creates a Harness commit",
         "sandbox",
+        "RemoteConnectionController",
+        "builtin_remote_connection_controller",
+        "remote SSH",
     ] {
         assert!(
             !text.contains(forbidden),

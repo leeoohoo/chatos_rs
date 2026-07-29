@@ -223,7 +223,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "execute_command",
-            "Run a shell command in the current project workspace with path switching. Relative paths are resolved from the workspace root. Use background=true for long-running commands and track them with process_poll/process_wait. For commands on remote SSH hosts, use builtin_remote_connection_controller.run_command instead.",
+            "Run a shell command in the current project workspace with path switching. Relative paths are resolved from the workspace root. Use background=true for long-running commands and track them with process_poll/process_wait.",
             execute_command_schema(),
             async_text_tool_handler(move |args| {
                 let path = args

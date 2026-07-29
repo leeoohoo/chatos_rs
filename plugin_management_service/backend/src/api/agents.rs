@@ -146,6 +146,12 @@ pub(super) async fn update_agent_mcp_bindings(
                 "system agent bindings only accept system-private MCPs",
             ));
         }
+        if !agent_can_bind_mcp(&agent, &mcp) {
+            return Err(ApiError::bad_request(format!(
+                "MCP {} is not supported by system agent {}",
+                mcp.id, agent.agent_key
+            )));
+        }
         selected.push((mcp_id, selection.mode));
     }
 
@@ -410,6 +416,7 @@ pub(super) async fn build_agent_mcp_bindings_response(
     }
     let items = mcps
         .into_iter()
+        .filter(|mcp| agent_can_bind_mcp(&agent, mcp))
         .map(|mcp| AgentMcpBindingView {
             mode: modes
                 .get(mcp.id.as_str())
@@ -424,4 +431,175 @@ pub(super) async fn build_agent_mcp_bindings_response(
 
 fn agent_supports_mcp(agent: &SystemAgentRecord) -> bool {
     agent.service_name != "memory-engine"
+}
+
+fn agent_can_bind_mcp(agent: &SystemAgentRecord, mcp: &McpRecord) -> bool {
+    let Some(host) = agent_mcp_host(agent) else {
+        return true;
+    };
+    chatos_mcp::system_mcp_descriptor_for_record(mcp)
+        .map(|descriptor| {
+            descriptor.supports_host(host)
+                && descriptor.embedded_kind.map_or(true, |kind| {
+                    task_runner_agent_allows_builtin(agent.agent_key.as_str(), kind)
+                })
+        })
+        .unwrap_or(true)
+}
+
+fn task_runner_agent_allows_builtin(
+    agent_key: &str,
+    kind: chatos_mcp_runtime::BuiltinMcpKind,
+) -> bool {
+    if matches!(
+        agent_key,
+        "task_runner_plan_phase" | "task_runner_local_plan_phase"
+    ) {
+        return !matches!(
+            kind,
+            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
+                | chatos_mcp_runtime::BuiltinMcpKind::TerminalController
+                | chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController
+        );
+    }
+    if matches!(
+        agent_key,
+        "task_runner_run_phase" | "task_runner_local_run_phase"
+    ) {
+        return !matches!(
+            kind,
+            chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController
+        );
+    }
+    true
+}
+
+fn agent_mcp_host(agent: &SystemAgentRecord) -> Option<chatos_mcp::SystemMcpHost> {
+    match agent.agent_key.as_str() {
+        "task_runner_plan_phase" | "task_runner_run_phase" => {
+            Some(chatos_mcp::SystemMcpHost::TaskRunner)
+        }
+        "task_runner_local_plan_phase" | "task_runner_local_run_phase" => {
+            Some(chatos_mcp::SystemMcpHost::LocalConnector)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agent(agent_key: &str) -> SystemAgentRecord {
+        SystemAgentRecord {
+            id: format!("system_agent_{agent_key}"),
+            agent_key: agent_key.to_string(),
+            display_name: agent_key.to_string(),
+            service_name: "task-runner".to_string(),
+            scope: "system_internal".to_string(),
+            description: None,
+            enabled: true,
+            managed_by: "system".to_string(),
+            include_user_resources: true,
+            plugin_component: PluginComponentOwnership::default(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    fn builtin_mcp(kind: chatos_mcp_runtime::BuiltinMcpKind) -> McpRecord {
+        McpRecord {
+            id: kind.config_id().unwrap_or(kind.kind_name()).to_string(),
+            owner_user_id: "system".to_string(),
+            owner_kind: "system".to_string(),
+            visibility: VISIBILITY_SYSTEM_PRIVATE.to_string(),
+            source_kind: "system_seed".to_string(),
+            name: kind.server_name().to_string(),
+            display_name: kind.kind_name().to_string(),
+            description: None,
+            enabled: true,
+            runtime: McpRuntime {
+                kind: chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND.to_string(),
+                system_key: Some(kind.kind_name().to_string()),
+                server_name: Some(kind.server_name().to_string()),
+                ..McpRuntime::default()
+            },
+            security: ResourceSecurity::default(),
+            metadata: ResourceMetadata::default(),
+            plugin_component: PluginComponentOwnership::default(),
+            created_by: "system".to_string(),
+            updated_by: "system".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    fn system_mcp(key: chatos_plugin_management_sdk::SystemMcpKey) -> McpRecord {
+        let descriptor = chatos_mcp::system_mcp_descriptor(key);
+        McpRecord {
+            id: descriptor.resource_id.to_string(),
+            owner_user_id: "system".to_string(),
+            owner_kind: "system".to_string(),
+            visibility: VISIBILITY_SYSTEM_PRIVATE.to_string(),
+            source_kind: "system_seed".to_string(),
+            name: descriptor.server_name.to_string(),
+            display_name: descriptor.display_name.to_string(),
+            description: Some(descriptor.description.to_string()),
+            enabled: true,
+            runtime: McpRuntime {
+                kind: chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND.to_string(),
+                system_key: Some(key.as_str().to_string()),
+                server_name: Some(descriptor.server_name.to_string()),
+                ..McpRuntime::default()
+            },
+            security: ResourceSecurity::default(),
+            metadata: ResourceMetadata::default(),
+            plugin_component: PluginComponentOwnership::default(),
+            created_by: "system".to_string(),
+            updated_by: "system".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    #[test]
+    fn task_runner_mcp_binding_options_follow_runtime_plane_and_phase() {
+        let cloud_plan = agent("task_runner_plan_phase");
+        let local_plan = agent("task_runner_local_plan_phase");
+        let cloud_run = agent("task_runner_run_phase");
+        let local_run = agent("task_runner_local_run_phase");
+
+        assert!(agent_can_bind_mcp(
+            &cloud_plan,
+            &builtin_mcp(chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead)
+        ));
+        assert!(!agent_can_bind_mcp(
+            &cloud_plan,
+            &builtin_mcp(chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite)
+        ));
+        assert!(!agent_can_bind_mcp(
+            &local_plan,
+            &builtin_mcp(chatos_mcp_runtime::BuiltinMcpKind::TerminalController)
+        ));
+        assert!(agent_can_bind_mcp(
+            &local_run,
+            &builtin_mcp(chatos_mcp_runtime::BuiltinMcpKind::TerminalController)
+        ));
+        assert!(!agent_can_bind_mcp(
+            &cloud_run,
+            &builtin_mcp(chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController)
+        ));
+        assert!(!agent_can_bind_mcp(
+            &local_run,
+            &builtin_mcp(chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController)
+        ));
+        assert!(!agent_can_bind_mcp(
+            &local_run,
+            &builtin_mcp(chatos_mcp_runtime::BuiltinMcpKind::WebTools)
+        ));
+        assert!(!agent_can_bind_mcp(
+            &local_run,
+            &system_mcp(chatos_plugin_management_sdk::SystemMcpKey::ProjectRuntimeEnvironment)
+        ));
+    }
 }

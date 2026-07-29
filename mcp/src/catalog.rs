@@ -79,6 +79,7 @@ const PROJECT_AND_SANDBOX_HOSTS: &[SystemMcpHost] = &[
     SystemMcpHost::ProjectManagementService,
     SystemMcpHost::SandboxManagerService,
 ];
+const NO_RUNTIME_HOSTS: &[SystemMcpHost] = &[];
 
 macro_rules! embedded_descriptor {
     ($key:ident, $resource_id:expr, $server_name:expr, $display_name:expr, $description:expr, $allow_writes:expr, $owner:expr, $hosts:expr, $kind:ident) => {
@@ -196,7 +197,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         "Remote connection inspection and command tools.",
         true,
         "shared",
-        CHATOS_TASK_HOSTS,
+        NO_RUNTIME_HOSTS,
         RemoteConnectionController
     ),
     embedded_descriptor!(

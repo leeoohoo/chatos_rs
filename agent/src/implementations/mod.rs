@@ -16,5 +16,6 @@ pub use memory_engine::{
 };
 pub use project_environment::{ProjectEnvironmentAgent, PROJECT_ENVIRONMENT_AGENT};
 pub use task_runner::{
-    TaskRunnerAgent, TaskRunnerRunSpecInput, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
+    TaskRunnerAgent, TaskRunnerRunSpecInput, TASK_RUNNER_AGENT, TASK_RUNNER_LOCAL_AGENT,
+    TASK_RUNNER_LOCAL_PLAN_AGENT, TASK_RUNNER_PLAN_AGENT,
 };

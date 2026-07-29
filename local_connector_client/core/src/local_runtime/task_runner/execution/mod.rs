@@ -24,7 +24,7 @@ use crate::local_runtime::chat::{
 use crate::local_runtime::model::build_local_model_config;
 use crate::local_runtime::storage::{
     AppendLocalRuntimeEventInput, BeginLocalBackgroundTurnInput, BeginLocalTurnInput,
-    BeginLocalTurnResult, LocalDatabase,
+    BeginLocalTurnResult, LocalDatabase, LocalMemoryContext,
 };
 use crate::local_runtime::task_runner::LocalTaskRunRecord;
 use crate::local_runtime::{
@@ -101,9 +101,9 @@ pub(super) async fn execute_local_task_run(
         .or_else(|| work_item.as_ref().map(|task| task.is_planning_task))
         .unwrap_or(false);
     let agent_key = if is_planning_task {
-        SystemAgentKey::TaskRunnerPlanPhase
+        SystemAgentKey::TaskRunnerLocalPlanPhase
     } else {
-        SystemAgentKey::TaskRunnerRunPhase
+        SystemAgentKey::TaskRunnerLocalRunPhase
     };
     let mut task_settings = settings.clone();
     task_settings.selected_model_id = Some(run.model_config_id.clone());
@@ -210,6 +210,7 @@ pub(super) async fn execute_local_task_run(
         run.owner_user_id.clone(),
         run.session_id.clone(),
         run.turn_id.clone(),
+        run.task_id.clone(),
         settings.memory_recall_limit,
     ));
     let mut callbacks = events.callbacks();
@@ -267,6 +268,7 @@ struct LocalTaskRunnerLifecycleHook {
     owner_user_id: String,
     session_id: String,
     turn_id: String,
+    active_parent_task_id: String,
     memory_recall_limit: i64,
 }
 
@@ -279,6 +281,7 @@ impl LocalTaskRunnerLifecycleHook {
         owner_user_id: String,
         session_id: String,
         turn_id: String,
+        active_parent_task_id: String,
         memory_recall_limit: i64,
     ) -> Self {
         Self {
@@ -289,6 +292,7 @@ impl LocalTaskRunnerLifecycleHook {
             owner_user_id,
             session_id,
             turn_id,
+            active_parent_task_id,
             memory_recall_limit,
         }
     }
@@ -303,9 +307,14 @@ impl LocalTaskRunnerLifecycleHook {
             )
             .await
             .map_err(|error| error.to_string())?;
+        let context = sanitize_task_runner_memory_context(context);
         let task_board = self
             .database
-            .local_task_board_prompt(self.owner_user_id.as_str(), self.session_id.as_str())
+            .local_task_runner_context_prompt(
+                self.owner_user_id.as_str(),
+                self.session_id.as_str(),
+                self.active_parent_task_id.as_str(),
+            )
             .await
             .map_err(|error| error.to_string())?;
         Ok(build_local_memory_context_input_items(
@@ -330,9 +339,14 @@ impl LocalTaskRunnerLifecycleHook {
             )
             .await
             .map_err(|error| error.to_string())?;
+        let context = sanitize_task_runner_memory_context(context);
         let task_board = self
             .database
-            .local_task_board_prompt(self.owner_user_id.as_str(), self.session_id.as_str())
+            .local_task_runner_context_prompt(
+                self.owner_user_id.as_str(),
+                self.session_id.as_str(),
+                self.active_parent_task_id.as_str(),
+            )
             .await
             .map_err(|error| error.to_string())?;
         Ok(build_local_memory_context_input_items(
@@ -435,6 +449,158 @@ impl LocalTaskRunnerLifecycleHook {
                 payload,
             })
             .await;
+    }
+}
+
+fn sanitize_task_runner_memory_context(mut context: LocalMemoryContext) -> LocalMemoryContext {
+    if let Some(summary) = &mut context.summary {
+        summary.summary_text = redact_task_runner_task_ids(summary.summary_text.as_str());
+    }
+    for recall in &mut context.recalls {
+        recall.recall_text = redact_task_runner_task_ids(recall.recall_text.as_str());
+    }
+    for message in &mut context.messages {
+        message.content = redact_task_runner_task_ids(message.content.as_str());
+        message.reasoning = message
+            .reasoning
+            .as_deref()
+            .map(redact_task_runner_task_ids);
+        message.tool_calls_json = message
+            .tool_calls_json
+            .as_deref()
+            .map(redact_task_runner_task_ids);
+        message.metadata_json = message
+            .metadata_json
+            .as_deref()
+            .map(redact_task_runner_task_ids);
+    }
+    context
+}
+
+fn redact_task_runner_task_ids(value: &str) -> String {
+    redact_ids_with_prefix(
+        &redact_ids_with_prefix(
+            value,
+            "lc_async_task_",
+            "[conversation_parent_task_id_hidden]",
+        ),
+        "lc_task_",
+        "[previous_run_checklist_task_id_hidden]",
+    )
+}
+
+fn redact_ids_with_prefix(value: &str, prefix: &str, redaction: &str) -> String {
+    let Some(mut search_from) = value.find(prefix) else {
+        return value.to_string();
+    };
+    let mut redacted = String::with_capacity(value.len());
+    let mut copied_until = 0_usize;
+    loop {
+        redacted.push_str(&value[copied_until..search_from]);
+        redacted.push_str(redaction);
+        let mut end = search_from + prefix.len();
+        for (offset, character) in value[end..].char_indices() {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                end = search_from + prefix.len() + offset + character.len_utf8();
+            } else {
+                break;
+            }
+        }
+        copied_until = end;
+        let Some(next_relative) = value[copied_until..].find(prefix) else {
+            redacted.push_str(&value[copied_until..]);
+            return redacted;
+        };
+        search_from = copied_until + next_relative;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::local_runtime::storage::{
+        LocalMemoryContext, LocalMemorySummaryRecord, LocalMessageRecord, LocalSubjectMemoryRecord,
+    };
+
+    use super::sanitize_task_runner_memory_context;
+
+    #[test]
+    fn task_runner_memory_context_redacts_parent_and_previous_run_task_ids() {
+        let context = LocalMemoryContext {
+            summary: Some(LocalMemorySummaryRecord {
+                id: "summary-1".to_string(),
+                session_id: "session-1".to_string(),
+                summary_text:
+                    "Failed complete_task task_id=lc_async_task_ba4453d1-c956-4e4f-8196-63eb75facd15 and update_task task_id=lc_task_b4d31671-ca78-4980-901b-e1d8383a0beb"
+                        .to_string(),
+                summary_model: "test".to_string(),
+                trigger_type: "test".to_string(),
+                source_start_message_id: None,
+                source_end_message_id: None,
+                source_message_count: 1,
+                source_estimated_tokens: 1,
+                level: 0,
+                status: "ready".to_string(),
+                error_message: None,
+                created_at: "2026-07-29T00:00:00Z".to_string(),
+                updated_at: "2026-07-29T00:00:00Z".to_string(),
+            }),
+            recalls: vec![LocalSubjectMemoryRecord {
+                id: "recall-1".to_string(),
+                subject_type: "session".to_string(),
+                subject_id: "session-1".to_string(),
+                project_id: "project-1".to_string(),
+                recall_key: "key".to_string(),
+                recall_text: "reuse lc_async_task_deadbeef or lc_task_old-run incorrectly"
+                    .to_string(),
+                source_session_id: "session-1".to_string(),
+                source_summary_id: "summary-1".to_string(),
+                level: 0,
+                confidence: None,
+                last_seen_at: None,
+                created_at: "2026-07-29T00:00:00Z".to_string(),
+                updated_at: "2026-07-29T00:00:00Z".to_string(),
+            }],
+            messages: vec![LocalMessageRecord {
+                id: "message-1".to_string(),
+                session_id: "session-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                sequence_no: 1,
+                role: "tool".to_string(),
+                content: "{\"task_id\":\"lc_async_task_fd4d4131-2cd4-4293-9762-c4800a3f422\",\"old\":\"lc_task_fd4d4131-2cd4-4293-9762-c4800a3f422\"}"
+                    .to_string(),
+                reasoning: Some("lc_async_task_reasoning lc_task_reasoning".to_string()),
+                tool_calls_json: Some(
+                    "[{\"arguments\":{\"task_id\":\"lc_async_task_tool_call\",\"old\":\"lc_task_tool_call\"}}]".to_string(),
+                ),
+                tool_call_id: Some("call-1".to_string()),
+                metadata_json: Some(
+                    "{\"task_id\":\"lc_async_task_metadata\",\"old\":\"lc_task_metadata\"}"
+                        .to_string(),
+                ),
+                created_at: "2026-07-29T00:00:00Z".to_string(),
+            }],
+        };
+
+        let sanitized = sanitize_task_runner_memory_context(context);
+        let serialized = serde_json::to_string(&sanitized.summary).expect("serialize summary")
+            + sanitized.recalls[0].recall_text.as_str()
+            + sanitized.messages[0].content.as_str()
+            + sanitized.messages[0]
+                .reasoning
+                .as_deref()
+                .unwrap_or_default()
+            + sanitized.messages[0]
+                .tool_calls_json
+                .as_deref()
+                .unwrap_or_default()
+            + sanitized.messages[0]
+                .metadata_json
+                .as_deref()
+                .unwrap_or_default();
+        assert!(!serialized.contains("lc_async_task_"));
+        assert!(!serialized.contains("lc_task_"));
+        assert!(serialized.contains("[conversation_parent_task_id_hidden]"));
+        assert!(serialized.contains("[previous_run_checklist_task_id_hidden]"));
     }
 }
 

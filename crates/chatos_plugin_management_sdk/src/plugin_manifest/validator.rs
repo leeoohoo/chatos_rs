@@ -202,14 +202,16 @@ pub fn validate_plugin_manifest(
         if let Some(target_agent) = command.target_agent.as_deref() {
             if ![
                 SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
                 SystemAgentKey::TaskRunnerRunPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
             ]
             .contains(&target_agent)
             {
                 issue(
                     &mut issues,
                     format!("commands[{index}].target_agent").as_str(),
-                    "target agent must be task_runner_plan_phase or task_runner_run_phase",
+                    "target agent must be task_runner_plan_phase, task_runner_local_plan_phase, task_runner_run_phase, or task_runner_local_run_phase",
                 );
             }
         }
@@ -269,14 +271,16 @@ pub fn validate_plugin_manifest(
         }
         if ![
             SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
         ]
         .contains(&agent.base_agent.as_str())
         {
             issue(
                 &mut issues,
                 format!("agents[{index}].base_agent").as_str(),
-                "base agent must be task_runner_plan_phase or task_runner_run_phase",
+                "base agent must be task_runner_plan_phase, task_runner_local_plan_phase, task_runner_run_phase, or task_runner_local_run_phase",
             );
         }
         validate_allowed_tools(

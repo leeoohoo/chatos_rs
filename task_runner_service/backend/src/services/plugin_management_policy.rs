@@ -98,7 +98,9 @@ impl TaskRunnerCapabilityPolicy {
                 capabilities.agent_key
             ));
         }
-        let planning_agent = capabilities.agent_key == SystemAgentKey::TaskRunnerPlanPhase.as_str();
+        let planning_agent = is_task_runner_planning_agent(capabilities.agent_key.as_str());
+        let cloud_execution_agent =
+            capabilities.agent_key == SystemAgentKey::TaskRunnerRunPhase.as_str();
         capabilities
             .ensure_required_available()
             .map_err(|err| err.to_string())?;
@@ -106,13 +108,19 @@ impl TaskRunnerCapabilityPolicy {
             .ensure_required_skills_supported([])
             .map_err(|err| err.to_string())?;
         for plugin in capabilities.required_plugins() {
-            validate_supported_plugin(plugin, planning_agent)?;
+            validate_supported_plugin(plugin, capabilities.agent_key.as_str())?;
         }
         for item in capabilities.required_mcps() {
             if let Some(kind) = plugin_builtin_kind(item) {
                 if planning_agent && !planning_builtin_kind_allowed(kind) {
                     return Err(format!(
                         "mutating builtin MCP cannot be required for task_runner_plan_phase: {}",
+                        kind.kind_name()
+                    ));
+                }
+                if cloud_execution_agent && !cloud_execution_builtin_kind_allowed(kind) {
+                    return Err(format!(
+                        "builtin MCP cannot be required for cloud task_runner_run_phase: {}",
                         kind.kind_name()
                     ));
                 }
@@ -140,6 +148,9 @@ impl TaskRunnerCapabilityPolicy {
             .selectable_mcps()
             .filter_map(plugin_builtin_kind)
             .filter(|kind| !self.is_planning_agent() || planning_builtin_kind_allowed(*kind))
+            .filter(|kind| {
+                !self.is_cloud_execution_agent() || cloud_execution_builtin_kind_allowed(*kind)
+            })
             .collect::<Vec<_>>();
         dedupe_builtin_kinds(&mut out);
         out
@@ -187,7 +198,9 @@ impl TaskRunnerCapabilityPolicy {
     pub(crate) fn selectable_plugins(&self) -> Vec<&ResolvedPlugin> {
         self.capabilities
             .selectable_plugins()
-            .filter(|plugin| validate_supported_plugin(plugin, self.is_planning_agent()).is_ok())
+            .filter(|plugin| {
+                validate_supported_plugin(plugin, self.capabilities.agent_key.as_str()).is_ok()
+            })
             .collect()
     }
 
@@ -226,12 +239,12 @@ impl TaskRunnerCapabilityPolicy {
                                     .is_some_and(|target_agent| {
                                         target_agent == self.capabilities.agent_key
                                     })
-                                    || (self.capabilities.agent_key
-                                        == SystemAgentKey::TaskRunnerRunPhase.as_str()
-                                        && !component
-                                            .component
-                                            .metadata
-                                            .contains_key("target_agent")))
+                                    || (is_task_runner_execution_agent(
+                                        self.capabilities.agent_key.as_str(),
+                                    ) && !component
+                                        .component
+                                        .metadata
+                                        .contains_key("target_agent")))
                         })
                         .map(|component| SelectablePluginCommandView {
                             command_id: component.component.component_key.clone(),
@@ -701,7 +714,11 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     fn is_planning_agent(&self) -> bool {
-        self.capabilities.agent_key == SystemAgentKey::TaskRunnerPlanPhase.as_str()
+        is_task_runner_planning_agent(self.capabilities.agent_key.as_str())
+    }
+
+    fn is_cloud_execution_agent(&self) -> bool {
+        self.capabilities.agent_key == SystemAgentKey::TaskRunnerRunPhase.as_str()
     }
 }
 
@@ -892,6 +909,20 @@ fn planning_builtin_kind_allowed(kind: BuiltinMcpKind) -> bool {
     )
 }
 
+fn cloud_execution_builtin_kind_allowed(kind: BuiltinMcpKind) -> bool {
+    !matches!(kind, BuiltinMcpKind::RemoteConnectionController)
+}
+
+fn is_task_runner_planning_agent(agent_key: &str) -> bool {
+    agent_key == SystemAgentKey::TaskRunnerPlanPhase.as_str()
+        || agent_key == SystemAgentKey::TaskRunnerLocalPlanPhase.as_str()
+}
+
+fn is_task_runner_execution_agent(agent_key: &str) -> bool {
+    agent_key == SystemAgentKey::TaskRunnerRunPhase.as_str()
+        || agent_key == SystemAgentKey::TaskRunnerLocalRunPhase.as_str()
+}
+
 fn validate_configured_builtin_dependencies(
     capabilities: &ResolvedAgentCapabilities,
 ) -> Result<(), String> {
@@ -952,12 +983,7 @@ fn validate_cloud_external_mcp_runtime(item: &ResolvedMcp) -> Result<(), String>
     Ok(())
 }
 
-fn validate_supported_plugin(plugin: &ResolvedPlugin, planning_agent: bool) -> Result<(), String> {
-    let expected_agent = if planning_agent {
-        SystemAgentKey::TaskRunnerPlanPhase.as_str()
-    } else {
-        SystemAgentKey::TaskRunnerRunPhase.as_str()
-    };
+fn validate_supported_plugin(plugin: &ResolvedPlugin, expected_agent: &str) -> Result<(), String> {
     let mut supported = 0usize;
     for component in plugin
         .components
@@ -987,10 +1013,7 @@ fn validate_plugin_component_selection(
     selected: &SelectedPluginRef,
     expected_agent: &str,
 ) -> Result<(), String> {
-    validate_supported_plugin(
-        plugin,
-        expected_agent == SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-    )?;
+    validate_supported_plugin(plugin, expected_agent)?;
     let release = plugin
         .release
         .as_ref()
@@ -1020,7 +1043,7 @@ fn validate_plugin_component_selection(
         .filter(|component| {
             component.available
                 && component.component.kind == PluginComponentKind::SkillCollection
-                && expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
+                && is_task_runner_execution_agent(expected_agent)
         })
         .map(|component| plugin_skill_id(&component.component))
         .collect::<HashSet<_>>();
@@ -1131,27 +1154,21 @@ fn plugin_snapshot(
     {
         let include = match component.component.kind {
             PluginComponentKind::SkillCollection => {
-                expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
+                is_task_runner_execution_agent(expected_agent)
                     && (selected_skill_ids.is_empty()
                         || selected_skill_ids
                             .contains(plugin_skill_id(&component.component).as_str())
                         || component.component.required)
             }
-            PluginComponentKind::McpServer => {
-                expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
-            }
+            PluginComponentKind::McpServer => is_task_runner_execution_agent(expected_agent),
             PluginComponentKind::Command => {
                 selected_command_ids.contains(component.component.component_key.as_str())
             }
             PluginComponentKind::Agent => {
                 selected_agent_ids.contains(component.component.component_key.as_str())
             }
-            PluginComponentKind::HookSet => {
-                expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
-            }
-            PluginComponentKind::UiContribution => {
-                expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
-            }
+            PluginComponentKind::HookSet => is_task_runner_execution_agent(expected_agent),
+            PluginComponentKind::UiContribution => is_task_runner_execution_agent(expected_agent),
             _ => component.component.required,
         };
         if !include {
@@ -1290,7 +1307,7 @@ fn plugin_component_supported_for_agent(
 ) -> bool {
     match component.kind {
         PluginComponentKind::SkillCollection | PluginComponentKind::McpServer => {
-            expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
+            is_task_runner_execution_agent(expected_agent)
         }
         PluginComponentKind::Command => {
             component
@@ -1298,18 +1315,14 @@ fn plugin_component_supported_for_agent(
                 .get("target_agent")
                 .and_then(Value::as_str)
                 .is_some_and(|target_agent| target_agent == expected_agent)
-                || (expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
+                || (is_task_runner_execution_agent(expected_agent)
                     && !component.metadata.contains_key("target_agent"))
         }
         PluginComponentKind::Agent => {
             component.metadata.get("base_agent").and_then(Value::as_str) == Some(expected_agent)
         }
-        PluginComponentKind::HookSet => {
-            expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
-        }
-        PluginComponentKind::UiContribution => {
-            expected_agent == SystemAgentKey::TaskRunnerRunPhase.as_str()
-        }
+        PluginComponentKind::HookSet => is_task_runner_execution_agent(expected_agent),
+        PluginComponentKind::UiContribution => is_task_runner_execution_agent(expected_agent),
         _ => false,
     }
 }

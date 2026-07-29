@@ -12,8 +12,12 @@ use crate::{agent_descriptor, AgentDescriptor, AgentIdentity};
 
 pub const TASK_RUNNER_PLAN_AGENT: TaskRunnerAgent =
     TaskRunnerAgent::new(SystemAgentKey::TaskRunnerPlanPhase);
+pub const TASK_RUNNER_LOCAL_PLAN_AGENT: TaskRunnerAgent =
+    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerLocalPlanPhase);
 pub const TASK_RUNNER_AGENT: TaskRunnerAgent =
     TaskRunnerAgent::new(SystemAgentKey::TaskRunnerRunPhase);
+pub const TASK_RUNNER_LOCAL_AGENT: TaskRunnerAgent =
+    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerLocalRunPhase);
 
 #[derive(Debug, Clone, Copy)]
 pub struct TaskRunnerAgent {
@@ -195,8 +199,16 @@ mod tests {
             SystemAgentKey::TaskRunnerPlanPhase
         );
         assert_eq!(
+            TASK_RUNNER_LOCAL_PLAN_AGENT.descriptor().key,
+            SystemAgentKey::TaskRunnerLocalPlanPhase
+        );
+        assert_eq!(
             TASK_RUNNER_AGENT.descriptor().key,
             SystemAgentKey::TaskRunnerRunPhase
+        );
+        assert_eq!(
+            TASK_RUNNER_LOCAL_AGENT.descriptor().key,
+            SystemAgentKey::TaskRunnerLocalRunPhase
         );
     }
 }

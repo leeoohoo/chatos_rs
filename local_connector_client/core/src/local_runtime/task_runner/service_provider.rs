@@ -58,12 +58,12 @@ impl LocalTaskRunnerServiceProvider {
         let capabilities = database
             .get_capability_snapshot(
                 owner_user_id.as_str(),
-                SystemAgentKey::TaskRunnerRunPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
             )
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| {
-                "Plugin capability snapshot is missing for task_runner_run_phase".to_string()
+                "Plugin capability snapshot is missing for task_runner_local_run_phase".to_string()
             })?;
         capabilities
             .ensure_required_runtime_supported([], [])
@@ -71,12 +71,12 @@ impl LocalTaskRunnerServiceProvider {
         let planning_capabilities = database
             .get_capability_snapshot(
                 owner_user_id.as_str(),
-                SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
             )
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| {
-                "Plugin capability snapshot is missing for task_runner_plan_phase".to_string()
+                "Plugin capability snapshot is missing for task_runner_local_plan_phase".to_string()
             })?;
         planning_capabilities
             .ensure_required_runtime_supported([], [])
@@ -401,7 +401,7 @@ impl LocalTaskRunnerServiceProvider {
                 "type": "array",
                 "items": {"type": "string", "enum": builtin_kinds},
                 "uniqueItems": true,
-                "description": "只能选择插件管理对本地 Task Runner Run Phase 开放的内置能力。网页自动化/网页检索选择 BrowserTools；终端命令选择 TerminalController；需要写入能力时必须同时选择读取能力。不要把本机桌面 App 操作误归类为 BrowserTools。"
+                "description": "只能选择插件管理对本地 Task Runner 规划/执行智能体开放的内置能力。is_planning_task=true 时使用 task_runner_local_plan_phase 的 MCP 配置；is_planning_task=false 时使用 task_runner_local_run_phase 的 MCP 配置。网页自动化/网页检索选择 BrowserTools；终端命令选择 TerminalController；需要写入能力时必须同时选择读取能力。不要把本机桌面 App 操作误归类为 BrowserTools。"
             },
             "external_mcp_config_ids": {
                 "type": "array",

@@ -61,10 +61,14 @@ export function RunDetailSummary({
   const agentKey = typeof inputSnapshot?.agent_key === 'string' ? inputSnapshot.agent_key : null;
   const agentLabel =
     agentKey === 'task_runner_plan_phase'
-      ? t('runs.detail.planningAgent')
-      : agentKey === 'task_runner_run_phase'
-        ? t('runs.detail.executionAgent')
-        : '-';
+      ? t('runs.detail.cloudPlanningAgent')
+      : agentKey === 'task_runner_local_plan_phase'
+        ? t('runs.detail.localPlanningAgent')
+        : agentKey === 'task_runner_run_phase'
+          ? t('runs.detail.cloudExecutionAgent')
+          : agentKey === 'task_runner_local_run_phase'
+            ? t('runs.detail.localExecutionAgent')
+            : '-';
 
   return (
     <>

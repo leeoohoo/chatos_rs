@@ -304,21 +304,29 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         20,
     )
     .await?;
-    for (index, kind) in task_runner_plan_phase_builtin_kinds()
-        .into_iter()
-        .enumerate()
-    {
-        let required = matches!(kind, BuiltinMcpKind::TaskManager | BuiltinMcpKind::AskUser);
-        let resource_id = builtin_resource_id(kind);
-        seed_agent_mcp_binding(
-            store,
-            admin_user_id,
+    for (agent_key, kinds) in [
+        (
             "task_runner_plan_phase",
-            resource_id.as_str(),
-            required,
-            10 + index as i64 * 10,
-        )
-        .await?;
+            task_runner_cloud_plan_phase_builtin_kinds(),
+        ),
+        (
+            "task_runner_local_plan_phase",
+            task_runner_local_plan_phase_builtin_kinds(),
+        ),
+    ] {
+        for (index, kind) in kinds.into_iter().enumerate() {
+            let required = matches!(kind, BuiltinMcpKind::TaskManager | BuiltinMcpKind::AskUser);
+            let resource_id = builtin_resource_id(kind);
+            seed_agent_mcp_binding(
+                store,
+                admin_user_id,
+                agent_key,
+                resource_id.as_str(),
+                required,
+                10 + index as i64 * 10,
+            )
+            .await?;
+        }
     }
     for (agent_key, kind, required, priority) in [
         (
@@ -328,6 +336,18 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
             10,
         ),
         ("task_runner_run_phase", BuiltinMcpKind::AskUser, true, 20),
+        (
+            "task_runner_local_run_phase",
+            BuiltinMcpKind::TaskManager,
+            true,
+            10,
+        ),
+        (
+            "task_runner_local_run_phase",
+            BuiltinMcpKind::AskUser,
+            true,
+            20,
+        ),
     ] {
         let resource_id = builtin_resource_id(kind);
         seed_agent_mcp_binding(
@@ -340,12 +360,42 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         )
         .await?;
     }
-    for (kind, priority) in task_runner_run_phase_optional_builtin_kinds() {
+    remove_seed_binding_for_all_system_scopes(
+        store,
+        "task_runner_run_phase",
+        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
+    )
+    .await?;
+    remove_seed_binding_for_all_system_scopes(
+        store,
+        "task_runner_local_run_phase",
+        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
+    )
+    .await?;
+    remove_seed_binding_for_all_system_scopes(
+        store,
+        "task_runner_local_plan_phase",
+        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
+    )
+    .await?;
+    for (kind, priority) in task_runner_cloud_run_phase_optional_builtin_kinds() {
         let resource_id = builtin_resource_id(kind);
         seed_agent_mcp_binding(
             store,
             admin_user_id,
             "task_runner_run_phase",
+            resource_id.as_str(),
+            false,
+            priority,
+        )
+        .await?;
+    }
+    for (kind, priority) in task_runner_local_run_phase_optional_builtin_kinds() {
+        let resource_id = builtin_resource_id(kind);
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            "task_runner_local_run_phase",
             resource_id.as_str(),
             false,
             priority,
@@ -369,7 +419,12 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         .await?;
     }
     let catalog = internal_skill_catalog()?;
-    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
+    for agent_key in [
+        "task_runner_plan_phase",
+        "task_runner_local_plan_phase",
+        "task_runner_run_phase",
+        "task_runner_local_run_phase",
+    ] {
         for (index, item) in catalog.skills.iter().enumerate() {
             seed_agent_resource_binding(
                 store,
@@ -448,6 +503,18 @@ async fn remove_seed_binding(
         BINDING_SCOPE_SYSTEM_REQUIRED
     );
     store.delete_binding(id.as_str()).await
+}
+
+async fn remove_seed_binding_for_all_system_scopes(
+    store: &AppStore,
+    agent_key: &str,
+    resource_id: &str,
+) -> Result<(), String> {
+    for scope in [BINDING_SCOPE_SYSTEM_REQUIRED, BINDING_SCOPE_GLOBAL_DEFAULT] {
+        let id = format!("{agent_key}__{scope}__{resource_id}");
+        store.delete_binding(id.as_str()).await?;
+    }
+    Ok(())
 }
 
 async fn seed_agent_mcp_binding(
@@ -595,7 +662,7 @@ async fn seed_agent_resource_binding_with_conditions(
     store.replace_binding(&desired).await
 }
 
-fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {
+fn task_runner_cloud_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {
     use BuiltinMcpKind::*;
     vec![
         (CodeMaintainerRead, 100),
@@ -603,13 +670,23 @@ fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> 
         (TerminalController, 120),
         (ProjectManagement, 130),
         (Notepad, 140),
-        (RemoteConnectionController, 150),
         (WebTools, 160),
         (BrowserTools, 170),
     ]
 }
 
-fn task_runner_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
+fn task_runner_local_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {
+    use BuiltinMcpKind::*;
+    vec![
+        (CodeMaintainerRead, 100),
+        (CodeMaintainerWrite, 110),
+        (TerminalController, 120),
+        (ProjectManagement, 130),
+        (BrowserTools, 170),
+    ]
+}
+
+fn task_runner_cloud_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
     use BuiltinMcpKind::*;
     vec![
         CodeMaintainerRead,
@@ -622,6 +699,17 @@ fn task_runner_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
         MemorySkillReader,
         MemoryCommandReader,
         MemoryPluginReader,
+    ]
+}
+
+fn task_runner_local_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
+    use BuiltinMcpKind::*;
+    vec![
+        CodeMaintainerRead,
+        TaskManager,
+        ProjectManagement,
+        AskUser,
+        BrowserTools,
     ]
 }
 

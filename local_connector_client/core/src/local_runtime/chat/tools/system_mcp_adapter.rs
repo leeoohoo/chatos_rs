@@ -101,7 +101,9 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
                 let provider = if matches!(
                     self.context.agent_key,
                     chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
+                        | chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalPlanPhase
                         | chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+                        | chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalRunPhase
                 ) {
                     LocalTaskManagerProvider::for_task_run(
                         self.context.database.clone(),

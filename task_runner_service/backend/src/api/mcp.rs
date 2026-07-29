@@ -54,9 +54,10 @@ pub(super) async fn list_task_capability_catalog(
         .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?;
     let task_profile = crate::models::normalize_task_profile(query.task_profile.as_deref())
         .map_err(ApiError::bad_request)?;
-    let agent_key = crate::models::task_runner_agent_key_for(
+    let agent_key = crate::models::task_runner_agent_key_for_runtime(
         task_profile.as_str(),
         query.requires_execution.unwrap_or(true),
+        query.runtime_provider.as_deref(),
     );
     let policy = state
         .task_service
@@ -176,6 +177,7 @@ where
 pub(super) struct TaskCapabilityCatalogQuery {
     task_profile: Option<String>,
     requires_execution: Option<bool>,
+    runtime_provider: Option<String>,
     device_id: Option<String>,
 }
 

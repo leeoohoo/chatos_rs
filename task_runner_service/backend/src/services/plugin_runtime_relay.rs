@@ -1998,7 +1998,9 @@ fn agent_base_agent<'a>(value: Option<&'a Value>, context: &str) -> Result<&'a s
     }
     if ![
         SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
         SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
     ]
     .contains(&base_agent)
     {
@@ -2043,7 +2045,9 @@ fn command_target_agent<'a>(
     }
     if ![
         SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
         SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
     ]
     .contains(&target_agent)
     {

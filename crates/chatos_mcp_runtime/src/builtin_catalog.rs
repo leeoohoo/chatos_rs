@@ -359,7 +359,6 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
         BuiltinMcpKind::Notepad,
         BuiltinMcpKind::AgentBuilder,
         BuiltinMcpKind::AskUser,
-        BuiltinMcpKind::RemoteConnectionController,
         BuiltinMcpKind::WebTools,
         BuiltinMcpKind::BrowserTools,
     ]

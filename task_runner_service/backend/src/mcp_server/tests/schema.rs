@@ -36,7 +36,7 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(kind_enum
         .iter()
         .any(|value| value.as_str() == Some("WebTools")));
-    assert!(kind_enum
+    assert!(!kind_enum
         .iter()
         .any(|value| value.as_str() == Some("RemoteConnectionController")));
 }
