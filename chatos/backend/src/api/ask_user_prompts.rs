@@ -20,9 +20,10 @@ use crate::services::ask_user_prompt_manager::{
     AskUserPromptRecord, AskUserPromptResponseSubmission, AskUserPromptStatus,
 };
 use crate::services::task_runner_api_client::{
-    cancel_task_runner_prompt, submit_task_runner_prompt, CancelTaskRunnerPromptRequest,
-    SubmitTaskRunnerPromptRequest,
+    cancel_task_runner_prompt, get_task_runner_prompt, submit_task_runner_prompt,
+    CancelTaskRunnerPromptRequest, SubmitTaskRunnerPromptRequest,
 };
+use tracing::warn;
 
 pub fn router() -> Router {
     Router::new()
@@ -77,21 +78,129 @@ async fn list_ask_user_prompts(
     let include_pending = query.include_pending.unwrap_or(true);
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     match list_ask_user_prompt_history_records(conversation_id, limit, include_pending).await {
-        Ok(prompts) => (
-            StatusCode::OK,
-            Json(json!({
-                "success": true,
-                "conversation_id": conversation_id,
-                "conversationId": conversation_id,
-                "count": prompts.len(),
-                "prompts": prompts,
-            })),
-        ),
+        Ok(prompts) => {
+            let prompts = if include_pending {
+                sync_task_runner_pending_prompt_records(prompts).await
+            } else {
+                prompts
+            };
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "conversation_id": conversation_id,
+                    "conversationId": conversation_id,
+                    "count": prompts.len(),
+                    "prompts": prompts,
+                })),
+            )
+        }
         Err(err) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": err })),
         ),
     }
+}
+
+async fn sync_task_runner_pending_prompt_records(
+    prompts: Vec<AskUserPromptRecord>,
+) -> Vec<AskUserPromptRecord> {
+    let Some(access_token) = access_token_scope::get_current_access_token() else {
+        return prompts;
+    };
+    let mut synced = Vec::with_capacity(prompts.len());
+    for prompt in prompts {
+        if !should_sync_task_runner_pending_prompt(&prompt) {
+            synced.push(prompt);
+            continue;
+        }
+        match sync_task_runner_pending_prompt_record(prompt.clone(), access_token.as_str()).await {
+            Ok(next) => synced.push(next),
+            Err(err) => {
+                warn!(
+                    prompt_id = prompt.id.as_str(),
+                    external_prompt_id = prompt.external_prompt_id.as_deref().unwrap_or_default(),
+                    "failed to sync task runner ask user prompt status: {}",
+                    err
+                );
+                synced.push(prompt);
+            }
+        }
+    }
+    synced
+}
+
+fn should_sync_task_runner_pending_prompt(record: &AskUserPromptRecord) -> bool {
+    record.source == "task_runner"
+        && record.status == AskUserPromptStatus::Pending
+        && record
+            .external_prompt_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+}
+
+async fn sync_task_runner_pending_prompt_record(
+    record: AskUserPromptRecord,
+    access_token: &str,
+) -> Result<AskUserPromptRecord, String> {
+    let external_prompt_id = record
+        .external_prompt_id
+        .as_deref()
+        .unwrap_or(record.id.as_str())
+        .trim()
+        .to_string();
+    if external_prompt_id.is_empty() {
+        return Ok(record);
+    }
+    let remote_prompt = get_task_runner_prompt(
+        Config::get().task_runner_base_url.as_str(),
+        access_token,
+        external_prompt_id.as_str(),
+    )
+    .await?;
+    let Some(next_status) = task_runner_prompt_status_from_value(&remote_prompt) else {
+        return Ok(record);
+    };
+    if next_status == AskUserPromptStatus::Pending {
+        return Ok(record);
+    }
+    let submission = task_runner_prompt_response_from_value(&remote_prompt, next_status)
+        .unwrap_or_else(|| AskUserPromptResponseSubmission {
+            status: next_status.as_str().to_string(),
+            values: None,
+            selection: None,
+            reason: Some("Task Runner 状态同步".to_string()),
+        });
+    let payload = payload_from_record(&record);
+    let redacted_response = redact_response_for_store(&submission, &payload);
+    update_ask_user_prompt_response(record.id.as_str(), next_status, Some(redacted_response)).await
+}
+
+fn task_runner_prompt_status_from_value(value: &Value) -> Option<AskUserPromptStatus> {
+    value
+        .get("status")
+        .and_then(Value::as_str)
+        .and_then(AskUserPromptStatus::from_str)
+}
+
+fn task_runner_prompt_response_from_value(
+    value: &Value,
+    fallback_status: AskUserPromptStatus,
+) -> Option<AskUserPromptResponseSubmission> {
+    let response = value.get("response")?;
+    if response.is_null() {
+        return None;
+    }
+    let mut submission =
+        serde_json::from_value::<AskUserPromptResponseSubmission>(response.clone()).ok()?;
+    if AskUserPromptStatus::from_str(submission.status.as_str()).is_none()
+        || AskUserPromptStatus::from_str(submission.status.as_str())
+            == Some(AskUserPromptStatus::Pending)
+    {
+        submission.status = fallback_status.as_str().to_string();
+    }
+    Some(submission)
 }
 
 async fn submit_ask_user_prompt(
@@ -229,10 +338,20 @@ async fn submit_task_runner_ask_user_prompt(
                 ),
             }
         }
-        Err(err) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "success": false, "error": err })),
-        ),
+        Err(err) => {
+            if is_task_runner_prompt_cancelled_error(err.as_str()) {
+                return mark_task_runner_ask_user_prompt_canceled(
+                    record,
+                    Some("Task Runner 已取消该交互请求".to_string()),
+                    err,
+                )
+                .await;
+            }
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "success": false, "error": err })),
+            )
+        }
     }
 }
 
@@ -330,11 +449,76 @@ async fn cancel_task_runner_ask_user_prompt(
                 ),
             }
         }
+        Err(err) => {
+            if is_task_runner_prompt_cancelled_error(err.as_str()) {
+                return mark_task_runner_ask_user_prompt_canceled(
+                    record,
+                    reason.or_else(|| Some("Task Runner 已取消该交互请求".to_string())),
+                    err,
+                )
+                .await;
+            }
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "success": false, "error": err })),
+            )
+        }
+    }
+}
+
+async fn mark_task_runner_ask_user_prompt_canceled(
+    record: AskUserPromptRecord,
+    reason: Option<String>,
+    remote_error: String,
+) -> (StatusCode, Json<Value>) {
+    let payload = payload_from_record(&record);
+    let submission = AskUserPromptResponseSubmission {
+        status: AskUserPromptStatus::Canceled.as_str().to_string(),
+        values: None,
+        selection: None,
+        reason,
+    };
+    let redacted_response = redact_response_for_store(&submission, &payload);
+    match update_ask_user_prompt_response(
+        record.id.as_str(),
+        AskUserPromptStatus::Canceled,
+        Some(redacted_response),
+    )
+    .await
+    {
+        Ok(saved) => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "success": false,
+                "code": "ask_user_prompt_stale",
+                "error": "该交互请求已经被 Task Runner 取消，已同步为失效状态；请等待新的交互请求或重新发起任务。",
+                "prompt": saved,
+                "remote_error": remote_error,
+            })),
+        ),
         Err(err) => (
             StatusCode::BAD_GATEWAY,
-            Json(json!({ "success": false, "error": err })),
+            Json(json!({
+                "success": false,
+                "code": "ask_user_prompt_stale_sync_failed",
+                "error": err,
+                "remote_error": remote_error,
+            })),
         ),
     }
+}
+
+fn is_task_runner_prompt_cancelled_error(error: &str) -> bool {
+    let normalized = error.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    let mentions_non_pending_prompt = normalized.contains("提示当前状态不允许提交")
+        || normalized.contains("提示当前状态不允许取消")
+        || normalized.contains("prompt is already resolved")
+        || normalized.contains("current status");
+    let mentions_cancelled = normalized.contains("cancelled") || normalized.contains("canceled");
+    mentions_non_pending_prompt && mentions_cancelled
 }
 
 async fn load_authorized_prompt(
@@ -439,4 +623,60 @@ fn not_found(message: impl Into<String>) -> (StatusCode, Json<Value>) {
         StatusCode::NOT_FOUND,
         Json(json!({ "success": false, "error": message.into() })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_task_runner_cancelled_prompt_errors() {
+        assert!(is_task_runner_prompt_cancelled_error(
+            "Task Runner request failed: 400 Bad Request {\"error\":\"提示当前状态不允许提交: cancelled\"}",
+        ));
+        assert!(is_task_runner_prompt_cancelled_error(
+            "Task Runner request failed: 400 Bad Request {\"error\":\"提示当前状态不允许取消: canceled\"}",
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_unrelated_task_runner_errors_as_cancelled_prompts() {
+        assert!(!is_task_runner_prompt_cancelled_error(
+            "Task Runner request failed: 500 Internal Server Error",
+        ));
+        assert!(!is_task_runner_prompt_cancelled_error(
+            "Task Runner request failed: 400 Bad Request {\"error\":\"提示当前状态不允许提交: submitted\"}",
+        ));
+    }
+
+    #[test]
+    fn maps_task_runner_prompt_status_from_remote_value() {
+        assert_eq!(
+            task_runner_prompt_status_from_value(&json!({ "status": "cancelled" })),
+            Some(AskUserPromptStatus::Canceled),
+        );
+        assert_eq!(
+            task_runner_prompt_status_from_value(&json!({ "status": "submitted" })),
+            Some(AskUserPromptStatus::Ok),
+        );
+        assert_eq!(
+            task_runner_prompt_status_from_value(&json!({ "status": "pending" })),
+            Some(AskUserPromptStatus::Pending),
+        );
+    }
+
+    #[test]
+    fn normalizes_empty_remote_prompt_response_status_to_fallback() {
+        let response = task_runner_prompt_response_from_value(
+            &json!({
+                "status": "cancelled",
+                "response": { "status": "pending", "reason": "run cancelled" }
+            }),
+            AskUserPromptStatus::Canceled,
+        )
+        .expect("response");
+
+        assert_eq!(response.status, "canceled");
+        assert_eq!(response.reason.as_deref(), Some("run cancelled"));
+    }
 }

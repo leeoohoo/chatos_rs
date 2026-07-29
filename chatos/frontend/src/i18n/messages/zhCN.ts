@@ -615,6 +615,7 @@ export const zhCN: MessageDictionary = {
   'askUserPrompt.submit': '确认提交',
   'askUserPrompt.submitFailed': '交互确认提交失败',
   'askUserPrompt.cancelFailed': '交互确认取消失败',
+  'askUserPrompt.stale': '该交互请求已失效，已刷新当前待处理列表。',
   'askUserPrompt.loading': '交互确认加载中...',
   'askUserPrompt.loadFailed': '交互确认加载失败',
   'askUserPrompt.pendingCount': '待处理 {count}',

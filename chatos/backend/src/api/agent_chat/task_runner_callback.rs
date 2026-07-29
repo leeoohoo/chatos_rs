@@ -527,14 +527,16 @@ fn ask_user_prompt_status_from_task_runner_event(
     event: &str,
     prompt: &TaskRunnerCallbackPrompt,
 ) -> AskUserPromptStatus {
-    if event == "ask_user_prompt.required" {
-        return AskUserPromptStatus::Pending;
-    }
-    prompt
+    let payload_status = prompt
         .status
         .as_deref()
-        .and_then(AskUserPromptStatus::from_str)
-        .unwrap_or(AskUserPromptStatus::Ok)
+        .and_then(AskUserPromptStatus::from_str);
+    if event == "ask_user_prompt.required" {
+        return payload_status
+            .filter(|status| *status != AskUserPromptStatus::Pending)
+            .unwrap_or(AskUserPromptStatus::Pending);
+    }
+    payload_status.unwrap_or(AskUserPromptStatus::Ok)
 }
 
 fn default_true() -> bool {
@@ -566,5 +568,47 @@ mod tests {
 
         assert!(is_project_requirement_execution_message(&execution_message));
         assert!(!is_project_requirement_execution_message(&ordinary_message));
+    }
+
+    #[test]
+    fn task_runner_ask_user_required_event_honors_terminal_payload_status() {
+        let prompt = TaskRunnerCallbackPrompt {
+            prompt_id: "prompt-1".to_string(),
+            kind: "form".to_string(),
+            title: String::new(),
+            message: String::new(),
+            allow_cancel: true,
+            timeout_ms: 0,
+            payload: Value::Null,
+            response: None,
+            status: Some("cancelled".to_string()),
+            expires_at: None,
+        };
+
+        assert_eq!(
+            ask_user_prompt_status_from_task_runner_event("ask_user_prompt.required", &prompt),
+            AskUserPromptStatus::Canceled,
+        );
+    }
+
+    #[test]
+    fn task_runner_ask_user_required_event_defaults_to_pending() {
+        let prompt = TaskRunnerCallbackPrompt {
+            prompt_id: "prompt-1".to_string(),
+            kind: "form".to_string(),
+            title: String::new(),
+            message: String::new(),
+            allow_cancel: true,
+            timeout_ms: 0,
+            payload: Value::Null,
+            response: None,
+            status: None,
+            expires_at: None,
+        };
+
+        assert_eq!(
+            ask_user_prompt_status_from_task_runner_event("ask_user_prompt.required", &prompt),
+            AskUserPromptStatus::Pending,
+        );
     }
 }

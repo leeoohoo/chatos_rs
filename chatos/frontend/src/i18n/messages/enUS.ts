@@ -622,6 +622,7 @@ export const enUS: MessageDictionary = {
   'askUserPrompt.submit': 'Submit',
   'askUserPrompt.submitFailed': 'Failed to submit prompt response',
   'askUserPrompt.cancelFailed': 'Failed to cancel prompt response',
+  'askUserPrompt.stale': 'This prompt is no longer active. The pending list has been refreshed.',
   'askUserPrompt.loading': 'Loading prompt...',
   'askUserPrompt.loadFailed': 'Failed to load prompt',
   'askUserPrompt.pendingCount': 'Pending {count}',

@@ -93,10 +93,27 @@ pub async fn upsert_external_ask_user_prompt_record(
     let mongo_record = record.clone();
 
     let saved = with_db(move |db| {
-        let record = mongo_record.clone();
+        let mut record = mongo_record.clone();
         Box::pin(async move {
+            let collection = db.collection::<Document>("ask_user_prompt_requests");
+            if let Some(existing_doc) = collection
+                .find_one(doc! { "id": record.id.clone() }, None)
+                .await
+                .map_err(|err| err.to_string())?
+            {
+                if let Some(existing) = ask_user_prompt_record_from_doc(&existing_doc) {
+                    if should_preserve_external_prompt_status(existing.status, record.status) {
+                        return Ok(existing);
+                    }
+                    record.created_at = existing.created_at.clone();
+                    if record.expires_at.is_none() {
+                        record.expires_at = existing.expires_at.clone();
+                    }
+                }
+            }
+
             let update_options = UpdateOptions::builder().upsert(true).build();
-            db.collection::<Document>("ask_user_prompt_requests")
+            collection
                 .update_one(
                     doc! { "id": record.id.clone() },
                     doc! { "$set": ask_user_prompt_record_to_doc(&record) },
@@ -115,6 +132,13 @@ pub async fn upsert_external_ask_user_prompt_record(
         publish_ask_user_prompt_resolved(&saved).await;
     }
     Ok(saved)
+}
+
+fn should_preserve_external_prompt_status(
+    existing: AskUserPromptStatus,
+    incoming: AskUserPromptStatus,
+) -> bool {
+    existing != AskUserPromptStatus::Pending && existing != incoming
 }
 
 pub async fn update_ask_user_prompt_response(
@@ -262,4 +286,45 @@ async fn publish_ask_user_prompt_resolved(record: &AskUserPromptRecord) {
             payload: None,
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_prompt_upsert_does_not_regress_resolved_status_to_pending() {
+        assert!(should_preserve_external_prompt_status(
+            AskUserPromptStatus::Canceled,
+            AskUserPromptStatus::Pending,
+        ));
+        assert!(should_preserve_external_prompt_status(
+            AskUserPromptStatus::Ok,
+            AskUserPromptStatus::Pending,
+        ));
+        assert!(should_preserve_external_prompt_status(
+            AskUserPromptStatus::Timeout,
+            AskUserPromptStatus::Pending,
+        ));
+        assert!(should_preserve_external_prompt_status(
+            AskUserPromptStatus::Canceled,
+            AskUserPromptStatus::Ok,
+        ));
+    }
+
+    #[test]
+    fn external_prompt_upsert_allows_pending_to_resolve() {
+        assert!(!should_preserve_external_prompt_status(
+            AskUserPromptStatus::Pending,
+            AskUserPromptStatus::Canceled,
+        ));
+        assert!(!should_preserve_external_prompt_status(
+            AskUserPromptStatus::Pending,
+            AskUserPromptStatus::Pending,
+        ));
+        assert!(!should_preserve_external_prompt_status(
+            AskUserPromptStatus::Canceled,
+            AskUserPromptStatus::Canceled,
+        ));
+    }
 }

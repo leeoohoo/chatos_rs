@@ -149,6 +149,25 @@ pub async fn submit_task_runner_prompt(
     .await
 }
 
+pub async fn get_task_runner_prompt(
+    base_url: &str,
+    access_token: &str,
+    prompt_id: &str,
+) -> Result<Value, String> {
+    let base_url = resolve_task_runner_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/prompts/{}",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(prompt_id.trim())
+    );
+    send_json(
+        task_runner_http_client()
+            .get(endpoint)
+            .bearer_auth(access_token.trim()),
+    )
+    .await
+}
+
 pub async fn cancel_task_runner_prompt(
     base_url: &str,
     access_token: &str,

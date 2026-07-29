@@ -6,6 +6,7 @@ import { Check, Loader2, X } from 'lucide-react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
+import { ApiRequestError, isJsonRecord } from '../../lib/api/client/shared';
 import type {
   AskUserPromptChoicePayload,
   AskUserPromptFieldPayload,
@@ -91,6 +92,31 @@ const promptAllowCancel = (prompt: AskUserPromptRecord): boolean => (
   asRecordPrompt(prompt).allow_cancel !== false
 );
 
+const normalizePromptStatus = (status: unknown): string => (
+  String(status || '').trim().toLowerCase()
+);
+
+const isStaleAskUserPromptError = (error: unknown): boolean => {
+  const code = error instanceof ApiRequestError
+    ? error.code || (isJsonRecord(error.payload) && typeof error.payload.code === 'string'
+      ? error.payload.code
+      : undefined)
+    : undefined;
+  if (code === 'ask_user_prompt_stale') {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error || '');
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const mentionsResolvedPrompt = normalized.includes('ask user prompt is already resolved')
+    || normalized.includes('提示当前状态不允许提交')
+    || normalized.includes('提示当前状态不允许取消');
+  const mentionsCancelled = normalized.includes('cancelled') || normalized.includes('canceled');
+  return mentionsResolvedPrompt && mentionsCancelled;
+};
+
 const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelProps> = ({
   sessionId,
   projectId,
@@ -150,8 +176,13 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
     sessionId,
     projectId,
     enabled: Boolean(sessionId) && !localSession,
-    onEvent: async () => {
-      await loadPrompts();
+    onEvent: async (event) => {
+      const promptId = String(event.prompt_id || '').trim();
+      const status = normalizePromptStatus(event.status);
+      if (promptId && status && status !== 'pending') {
+        setPrompts((prev) => prev.filter((prompt) => prompt.id !== promptId));
+      }
+      await loadPrompts(true);
     },
   });
 
@@ -245,6 +276,12 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
       }
       await loadPrompts();
     } catch (submitError) {
+      if (isStaleAskUserPromptError(submitError)) {
+        setPrompts((prev) => prev.filter((prompt) => prompt.id !== activePrompt.id));
+        setError(t('askUserPrompt.stale'));
+        await loadPrompts(true);
+        return;
+      }
       setError(submitError instanceof Error ? submitError.message : t('askUserPrompt.submitFailed'));
     } finally {
       setSubmitting(false);
@@ -279,6 +316,12 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
       }
       await loadPrompts();
     } catch (cancelError) {
+      if (isStaleAskUserPromptError(cancelError)) {
+        setPrompts((prev) => prev.filter((prompt) => prompt.id !== activePrompt.id));
+        setError(t('askUserPrompt.stale'));
+        await loadPrompts(true);
+        return;
+      }
       setError(cancelError instanceof Error ? cancelError.message : t('askUserPrompt.cancelFailed'));
     } finally {
       setSubmitting(false);

@@ -77,4 +77,29 @@ describe('ConversationAskUserPromptPanel', () => {
     await waitFor(() => expect(listAskUserPrompts).toHaveBeenCalledTimes(2));
     expect(screen.getByLabelText('创建任务')).toBeChecked();
   }, 10_000);
+
+  it('refreshes stale cancelled task runner prompts without showing the raw backend error', async () => {
+    const listAskUserPrompts = vi
+      .fn()
+      .mockResolvedValueOnce({ prompts: [buildChoicePrompt()] })
+      .mockResolvedValue({ prompts: [] });
+    const submitAskUserPrompt = vi
+      .fn()
+      .mockRejectedValue(new Error(
+        'Task Runner request failed: 400 Bad Request {"error":"提示当前状态不允许提交: cancelled"}',
+      ));
+
+    renderPanel({
+      listAskUserPrompts,
+      submitAskUserPrompt,
+      cancelAskUserPrompt: vi.fn(),
+    });
+
+    fireEvent.click(await screen.findByLabelText('创建任务'));
+    fireEvent.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(listAskUserPrompts).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Task Runner request failed/)).not.toBeInTheDocument();
+    expect(screen.queryByText('确认创建本地任务')).not.toBeInTheDocument();
+  });
 });
