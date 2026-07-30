@@ -3,28 +3,27 @@
 
 mod mapper;
 mod normalizer;
+#[cfg(test)]
 mod review_hub;
 mod store;
 mod types;
 
 #[cfg(test)]
-pub use review_hub::submit_task_review_decision;
-pub use review_hub::{create_task_review, wait_for_task_review_decision};
+pub use review_hub::{
+    create_task_review, submit_task_review_decision, wait_for_task_review_decision,
+};
 pub use store::{
-    complete_task_by_id, create_tasks_for_turn, delete_task_by_id, list_tasks_for_context,
-    update_task_by_id,
+    complete_task_by_id, delete_task_by_id, list_tasks_for_context, update_task_by_id,
 };
-pub use types::{
-    TaskCreateReviewPayload, TaskDraft, TaskOutcomeItem, TaskRecord, TaskReviewAction,
-    TaskUpdatePatch, REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
-};
+pub use types::{TaskDraft, TaskOutcomeItem, TaskRecord, TaskUpdatePatch, TASK_NOT_FOUND_ERR};
 
 #[cfg(test)]
 mod tests {
     use super::normalizer::normalize_task_draft;
+    use super::types::{normalize_task_update_patch, TaskReviewAction};
     use super::{
         create_task_review, submit_task_review_decision, wait_for_task_review_decision, TaskDraft,
-        TaskReviewAction, TaskUpdatePatch,
+        TaskUpdatePatch,
     };
 
     #[test]
@@ -65,7 +64,8 @@ mod tests {
             ..Default::default()
         };
 
-        let normalized = patch.normalized().expect("patch normalize should succeed");
+        let normalized =
+            normalize_task_update_patch(patch).expect("patch normalize should succeed");
         assert_eq!(normalized.title.as_deref(), Some("Refine workbar"));
         assert_eq!(normalized.details.as_deref(), Some("trim me"));
         assert_eq!(normalized.priority.as_deref(), Some("medium"));

@@ -492,10 +492,10 @@ mod tests {
             unavailable_builtin_tools: &[],
             builtin_mcp_prompt_debug: Some(&BuiltinMcpPromptBuildResult {
                 prompt: Some("builtin mcp prompt".to_string()),
-                selected_section_ids: vec!["global".to_string(), "builtin_task_manager".to_string()],
+                selected_section_ids: vec!["global".to_string(), "builtin_ask_user".to_string()],
                 omitted_section_ids: vec!["builtin_browser_tools".to_string()],
-                requested_builtin_server_names: vec!["task_manager".to_string(), "browser_tools".to_string()],
-                active_builtin_server_names: vec!["task_manager".to_string()],
+                requested_builtin_server_names: vec!["ask_user".to_string(), "browser_tools".to_string()],
+                active_builtin_server_names: vec!["ask_user".to_string()],
                 omitted_builtin_server_names: vec!["browser_tools".to_string()],
                 runtime_limitations: Some("当前运行时限制：\n- 当前不要依赖以下内置 MCP 工具：`browser_tools_browser_inspect`。".to_string()),
             }),
@@ -517,10 +517,10 @@ mod tests {
         assert!(builtin.all_section_ids.iter().any(|item| item == "global"));
         assert_eq!(
             builtin.selected_section_ids,
-            vec!["global", "builtin_task_manager"]
+            vec!["global", "builtin_ask_user"]
         );
         assert_eq!(builtin.omitted_section_ids, vec!["builtin_browser_tools"]);
-        assert_eq!(builtin.active_builtin_server_names, vec!["task_manager"]);
+        assert_eq!(builtin.active_builtin_server_names, vec!["ask_user"]);
         assert_eq!(builtin.omitted_builtin_server_names, vec!["browser_tools"]);
     }
 

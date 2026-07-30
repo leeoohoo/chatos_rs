@@ -11,6 +11,7 @@ const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const CORE_RESTART_BASE_DELAY_MS = 250;
 const CORE_RESTART_MAX_DELAY_MS = 5_000;
 const CORE_RESTART_STABLE_WINDOW_MS = 10_000;
+const UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER = 'computer-use-unsigned-local-dev.json';
 
 function coreRestartDelayMs(attempt) {
   const normalizedAttempt = Number.isInteger(attempt) && attempt > 0 ? attempt : 0;
@@ -114,6 +115,23 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     };
   }
 
+  function unsignedComputerUseLocalDevAllowed() {
+    const envValue = String(process.env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV || '').trim();
+    if (['1', 'true', 'TRUE', 'yes', 'YES'].includes(envValue)) {
+      return true;
+    }
+    const markerPath = resourcePath(UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER);
+    if (!fs.existsSync(markerPath)) {
+      return false;
+    }
+    try {
+      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+      return marker && marker.allowUnsignedComputerUseLocalDev === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
   function coreExecutablePath() {
     const existing = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
     const candidates = [bundledBrowserRuntime().toolsDir];
@@ -178,7 +196,9 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     };
     if (process.platform === 'darwin') {
       env.CHATOS_COMPUTER_USE_HELPER_PATH = resourcePath(computerUseHelperName);
-      if (app.isPackaged) {
+      if (unsignedComputerUseLocalDevAllowed()) {
+        env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV = '1';
+      } else if (app.isPackaged) {
         env.CHATOS_COMPUTER_USE_HELPER_REQUIRE_SIGNED = '1';
       }
     }

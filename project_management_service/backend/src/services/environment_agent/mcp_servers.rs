@@ -208,8 +208,8 @@ pub(super) async fn get_sandbox_image_catalog(
 pub(super) async fn prepare_sandbox_dependency_images(
     state: &AppState,
     provider: RuntimeEnvironmentProvider,
-    _project_id: &str,
-    _run_id: &str,
+    project_id: &str,
+    run_id: &str,
     image_refs: Vec<String>,
 ) -> Result<Value, String> {
     if image_refs.is_empty() {
@@ -251,7 +251,11 @@ pub(super) async fn prepare_sandbox_dependency_images(
         ))
         .header("x-sandbox-caller", client_id)
         .header("x-sandbox-internal-token", internal_token)
-        .json(&json!({ "image_refs": image_refs }));
+        .json(&json!({
+            "image_refs": image_refs,
+            "project_id": project_id,
+            "run_id": run_id,
+        }));
     let response = request
         .send()
         .await

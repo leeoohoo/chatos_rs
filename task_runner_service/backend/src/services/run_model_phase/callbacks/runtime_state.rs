@@ -233,11 +233,8 @@ impl RunService {
         let abort_token = tokio_util::sync::CancellationToken::new();
         let progress = Arc::new(TaskExecutionProgressState::new(review_policy));
         let callbacks = self.build_runtime_callbacks(
-            task_id.to_string(),
             run.id.clone(),
             Arc::clone(&pending_stream_event),
-            Arc::clone(&task_completed_abort),
-            abort_token.clone(),
             path_redactor.clone(),
             Arc::clone(&progress),
         );
@@ -288,11 +285,8 @@ impl RunService {
 
     fn build_runtime_callbacks(
         &self,
-        task_id: String,
         run_id: String,
         pending_stream_event: PendingRunStreamState,
-        task_completed_abort: Arc<AtomicBool>,
-        abort_token: tokio_util::sync::CancellationToken,
         path_redactor: crate::services::path_redaction::WorkspacePathRedactor,
         progress: Arc<TaskExecutionProgressState>,
     ) -> RuntimeCallbacks {
@@ -371,17 +365,10 @@ impl RunService {
             on_tools_stream: Some(Arc::new({
                 let store = store_for_callbacks.clone();
                 let run_id = run_id.clone();
-                let task_id = task_id.clone();
-                let task_completed_abort = Arc::clone(&task_completed_abort);
-                let abort_token = abort_token.clone();
                 let path_redactor = path_redactor.clone();
                 let progress = Arc::clone(&progress);
                 move |payload| {
                     progress.observe_tool_result(&payload);
-                    if tool_result_marks_root_task_done(&payload, task_id.as_str()) {
-                        task_completed_abort.store(true, Ordering::Relaxed);
-                        abort_token.cancel();
-                    }
                     let mut payload = sanitize_runtime_event_payload(payload);
                     path_redactor.redact_value(&mut payload);
                     let browser_session = browser_session_event_payload(&payload);
@@ -650,35 +637,6 @@ fn redact_all_values(value: &mut Value) {
     }
 }
 
-fn tool_result_marks_root_task_done(payload: &Value, task_id: &str) -> bool {
-    if payload.get("success").and_then(Value::as_bool) != Some(true)
-        || payload.get("is_error").and_then(Value::as_bool) == Some(true)
-    {
-        return false;
-    }
-    let Some(name) = payload.get("name").and_then(Value::as_str) else {
-        return false;
-    };
-    if !name.ends_with("complete_task") && !name.ends_with("update_task") {
-        return false;
-    }
-    let Some(content) = payload.get("content").and_then(Value::as_str) else {
-        return false;
-    };
-    let Ok(value) = serde_json::from_str::<Value>(content) else {
-        return false;
-    };
-    let Some(task) = value.get("task") else {
-        return false;
-    };
-    if task.get("id").and_then(Value::as_str) != Some(task_id) {
-        return false;
-    }
-    task.get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| matches!(status, "done" | "succeeded"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,51 +659,6 @@ mod tests {
         let session = browser_session_event_payload(&payload).expect("browser session");
         assert_eq!(session["id"], "h_session_123");
         assert_eq!(session["status"], "active");
-    }
-
-    #[test]
-    fn tool_result_marks_root_task_done_for_complete_result() {
-        let payload = json!({
-            "name": "task_manager_complete_task",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "completed": true,
-                "task": { "id": "task-1", "status": "done" },
-            })).expect("content"),
-        });
-
-        assert!(tool_result_marks_root_task_done(&payload, "task-1"));
-    }
-
-    #[test]
-    fn tool_result_ignores_non_root_task_completion() {
-        let payload = json!({
-            "name": "task_manager_complete_task",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "completed": true,
-                "task": { "id": "child-1", "status": "done" },
-            })).expect("content"),
-        });
-
-        assert!(!tool_result_marks_root_task_done(&payload, "task-1"));
-    }
-
-    #[test]
-    fn tool_result_marks_root_task_done_for_update_result() {
-        let payload = json!({
-            "name": "task_manager_update_task",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "updated": true,
-                "task": { "id": "task-1", "status": "done" },
-            })).expect("content"),
-        });
-
-        assert!(tool_result_marks_root_task_done(&payload, "task-1"));
     }
 
     #[test]

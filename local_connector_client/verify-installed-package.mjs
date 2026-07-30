@@ -417,11 +417,8 @@ function migrationVersionsFromDirectory(migrationsDir) {
 }
 
 function currentProcessCanExecuteTarget(platform) {
-  return (
-    (platform.startsWith('macos-') && process.platform === 'darwin')
-    || (platform.startsWith('windows-') && process.platform === 'win32')
-    || (platform.startsWith('linux-') && process.platform === 'linux')
-  );
+  const currentPlatform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform];
+  return platform === `${currentPlatform}-${process.arch}`;
 }
 
 function verifyEmbeddedSqliteMigrations(args, executablePath, migrationsDir) {

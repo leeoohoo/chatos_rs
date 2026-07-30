@@ -315,4 +315,86 @@ describe('BrowserSessionPanel diagnostics', () => {
     ))).toBe(true);
     expect(sendCommand.mock.calls.some(([, payload]) => 'expression' in payload)).toBe(false);
   });
+
+  it('routes preview mouse, wheel, keyboard, and paste input to isolated browser actions', async () => {
+    render(
+      <I18nProvider>
+        <BrowserSessionPanel />
+      </I18nProvider>,
+    );
+    openBrowserSessionPanel({
+      id: 'h_session_123',
+      workspaceId: 'workspace-1',
+      mode: 'managed',
+      status: 'active',
+    });
+
+    const preview = await screen.findByRole('application', {
+      name: 'Interactive isolated browser preview',
+    });
+    const image = await screen.findByAltText('Example page');
+    image.getBoundingClientRect = vi.fn(() => ({
+      x: 10,
+      y: 20,
+      left: 10,
+      top: 20,
+      right: 650,
+      bottom: 380,
+      width: 640,
+      height: 360,
+      toJSON: () => ({}),
+    } as DOMRect));
+
+    fireEvent.mouseMove(preview, { clientX: 330, clientY: 200 });
+    fireEvent.click(preview, { clientX: 330, clientY: 200, detail: 1 });
+    fireEvent.wheel(preview, { clientX: 330, clientY: 200, deltaX: 0, deltaY: 240 });
+    fireEvent.keyDown(preview, { key: 'a' });
+    fireEvent.paste(preview, {
+      clipboardData: {
+        getData: (type: string) => (type === 'text' ? ' pasted text' : ''),
+      },
+    });
+
+    await waitFor(() => {
+      expect(sendCommand).toHaveBeenCalledWith(
+        'h_session_123',
+        expect.objectContaining({
+          workspace_id: 'workspace-1',
+          action: 'click_point',
+          x: 640,
+          y: 360,
+          button: 'left',
+          click_count: 1,
+        }),
+      );
+      expect(sendCommand).toHaveBeenCalledWith(
+        'h_session_123',
+        expect.objectContaining({
+          workspace_id: 'workspace-1',
+          action: 'scroll_delta',
+          x: 640,
+          y: 360,
+          delta_x: 0,
+          delta_y: 240,
+        }),
+      );
+      expect(sendCommand).toHaveBeenCalledWith(
+        'h_session_123',
+        expect.objectContaining({
+          workspace_id: 'workspace-1',
+          action: 'type_text',
+          text: 'a',
+        }),
+      );
+      expect(sendCommand).toHaveBeenCalledWith(
+        'h_session_123',
+        expect.objectContaining({
+          workspace_id: 'workspace-1',
+          action: 'type_text',
+          text: ' pasted text',
+        }),
+      );
+    });
+    expect(screen.getByText('Click, type, and scroll here without moving the system mouse')).toBeInTheDocument();
+  });
 });

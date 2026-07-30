@@ -377,9 +377,16 @@ impl SandboxManager {
         input: PrepareSandboxDependencyImagesRequest,
     ) -> Result<PrepareSandboxDependencyImagesResponse, ApiError> {
         auth.require_scope(SCOPE_IMAGES_WRITE)?;
-        images::prepare_dependency_images(&self.config, self.config.backend, &input.image_refs)
-            .await
-            .map_err(ApiError::bad_request)
+        images::prepare_dependency_images(
+            self.image_jobs.clone(),
+            &self.config,
+            self.config.backend,
+            &input.image_refs,
+            input.project_id.as_deref(),
+            input.run_id.as_deref(),
+        )
+        .await
+        .map_err(ApiError::bad_request)
     }
 
     pub async fn pool_status(

@@ -6,10 +6,6 @@ use tracing::warn;
 
 use crate::models::{now_rfc3339, RunListFilters, TaskRunEventRecord, TaskRunStatus, TaskStatus};
 
-use super::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries,
-    migrate_legacy_task_manager_entries,
-};
 use super::RunService;
 
 impl RunService {
@@ -32,7 +28,6 @@ impl RunService {
         self.repair_stale_cancel_requested_runs().await?;
 
         if active_runs.is_empty() {
-            migrate_legacy_task_manager_entries(&self.store).await?;
             self.store.refresh_runtime_guards().await?;
             return Ok(0);
         }
@@ -127,29 +122,10 @@ impl RunService {
                 }
             }
 
-            match finalize_task_session_entries(
-                &self.store,
-                run.task_id.as_str(),
-                run.id.as_str(),
-                run.status,
-            )
-            .await
-            {
-                Ok(summary) => {
-                    append_task_session_finalized_event(&self.store, &run, &summary).await
-                }
-                Err(err) => warn!(
-                    run_id = run.id.as_str(),
-                    error = err.as_str(),
-                    "failed to finalize Task Manager session during run recovery"
-                ),
-            }
-
             self.store.clear_cancel_requested(&run.id);
             recovered_count += 1;
         }
 
-        migrate_legacy_task_manager_entries(&self.store).await?;
         self.store.refresh_runtime_guards().await?;
         Ok(recovered_count)
     }

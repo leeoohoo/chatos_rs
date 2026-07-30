@@ -10,6 +10,7 @@ mod hook_set;
 mod normalized;
 mod parser;
 mod paths;
+mod validation_support;
 mod validator;
 
 pub(crate) use components::component_key_from_path;

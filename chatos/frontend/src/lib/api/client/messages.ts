@@ -37,6 +37,7 @@ export interface MessageTaskRunnerLookupOptions {
   sourceUserMessageId?: string | null;
   eventLimit?: number | null;
   eventOffset?: number | null;
+  includeEvents?: boolean | null;
   limit?: number | null;
   offset?: number | null;
   path?: string | null;
@@ -50,6 +51,7 @@ const messageTaskRunnerLookupQuery = (
   source_user_message_id: options?.sourceUserMessageId || undefined,
   event_limit: typeof options?.eventLimit === 'number' ? options.eventLimit : undefined,
   event_offset: typeof options?.eventOffset === 'number' ? options.eventOffset : undefined,
+  include_events: typeof options?.includeEvents === 'boolean' ? options.includeEvents : undefined,
   limit: typeof options?.limit === 'number' ? options.limit : undefined,
   offset: typeof options?.offset === 'number' ? options.offset : undefined,
   path: options?.path || undefined,

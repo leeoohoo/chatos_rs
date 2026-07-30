@@ -26,8 +26,7 @@ pub use chatos_mcp::{
     RemoteConnectionControllerContext, RemoteConnectionControllerOptions,
     RemoteConnectionControllerService, RemoteConnectionControllerStore,
     RemoteConnectionControllerStoreRef, SharedBuiltinProvider, SharedBuiltinToolService, TaskDraft,
-    TaskManagerOptions, TaskManagerService, TaskManagerStore, TaskManagerStoreRef, TaskOutcomeItem,
-    TaskStreamChunkCallback, TaskUpdatePatch, TerminalControllerContext, TerminalControllerOptions,
+    TaskOutcomeItem, TaskUpdatePatch, TerminalControllerContext, TerminalControllerOptions,
     TerminalControllerService, TerminalControllerStore, TerminalControllerStoreRef,
     WebToolsOptions, WebToolsService,
 };

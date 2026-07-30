@@ -6,10 +6,7 @@ use std::collections::{HashSet, VecDeque};
 use serde_json::json;
 
 use super::*;
-use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, apply_task_closure, finalize_task_session_entries,
-    task_has_manager_lifecycle,
-};
+use crate::services::task_manager_lifecycle::{apply_task_closure, task_has_manager_lifecycle};
 
 const MAX_CASCADE_CANCEL_TASKS: usize = 500;
 
@@ -34,6 +31,9 @@ impl TaskService {
         }
         if task.status == TaskStatus::Cancelled {
             let reason = task.task_tool_state.cancel_reason.clone().unwrap_or(reason);
+            let active_run_ids = self
+                .cancel_active_runs_for_task(task.id.as_str(), &reason)
+                .await?;
             let cascade = self
                 .cascade_cancel_dependent_tasks(task.id.as_str(), &reason, current_user)
                 .await?;
@@ -46,7 +46,7 @@ impl TaskService {
                 task_id: task.id.clone(),
                 status: task.status,
                 reason,
-                active_run_ids: Vec::new(),
+                active_run_ids,
                 cascade_cancelled_task_ids: cascade
                     .iter()
                     .map(|item| item.task.id.clone())
@@ -237,14 +237,6 @@ impl TaskService {
                         Some(json!({ "reason": reason })),
                     ))
                     .await?;
-                let summary = finalize_task_session_entries(
-                    &self.store,
-                    run.task_id.as_str(),
-                    run.id.as_str(),
-                    run.status,
-                )
-                .await?;
-                append_task_session_finalized_event(&self.store, &run, &summary).await;
             }
             if run.status == TaskRunStatus::Queued {
                 run.status = TaskRunStatus::Cancelled;
@@ -501,6 +493,68 @@ mod tests {
             .expect("get succeeded child")
             .expect("succeeded child");
         assert_eq!(succeeded_after.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn cancel_already_cancelled_task_reasserts_active_run_cancellation() {
+        let service = test_service().await;
+        let mut task =
+            create_task_with_status(&service, "already cancelled", TaskStatus::Ready, Vec::new())
+                .await;
+        let now = now_rfc3339();
+        let mut run = TaskRunRecord::queued(
+            "run-active".to_string(),
+            task.id.clone(),
+            "model-1".to_string(),
+            task.memory_thread_id.clone(),
+            serde_json::json!({}),
+            Vec::new(),
+            now.clone(),
+        );
+        run.status = TaskRunStatus::Running;
+        run.started_at = Some(now.clone());
+        run.claim_until = Some("2999-01-01T00:00:00Z".to_string());
+        service.store.save_run(run).await.expect("save active run");
+        task.status = TaskStatus::Cancelled;
+        task.last_run_id = Some("run-active".to_string());
+        task.task_tool_state.cancel_reason = Some("old cancel reason".to_string());
+        service
+            .store
+            .save_task(task.clone())
+            .await
+            .expect("save cancelled task");
+
+        let response = service
+            .cancel_task(
+                task.id.as_str(),
+                CancelTaskRequest {
+                    reason: "user pressed cancel again".to_string(),
+                    replacement_task_ids: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .expect("re-cancel task")
+            .expect("task exists");
+
+        assert_eq!(response.status, TaskStatus::Cancelled);
+        assert_eq!(response.active_run_ids, vec!["run-active".to_string()]);
+        assert_eq!(response.reason, "old cancel reason");
+        let run_after = service
+            .store
+            .get_run("run-active")
+            .await
+            .expect("load run")
+            .expect("run exists");
+        assert!(run_after.cancel_requested);
+        let events = service
+            .store
+            .list_run_events("run-active")
+            .await
+            .expect("list events");
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "cancel_requested"));
     }
 
     #[tokio::test]

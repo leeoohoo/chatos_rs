@@ -307,7 +307,8 @@ export function useMessageTaskGraph({
           runId,
           {
             ...detailSource.lookup,
-            eventLimit: 200,
+            includeEvents: false,
+            eventLimit: 1,
             eventOffset: 0,
           },
         );

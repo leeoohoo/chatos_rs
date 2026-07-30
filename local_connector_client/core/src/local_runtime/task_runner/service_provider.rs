@@ -12,6 +12,7 @@ use chatos_plugin_management_sdk::SystemAgentKey;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::local_runtime::capabilities::remove_retired_task_manager_mcp;
 use crate::local_runtime::project_management::UpdateLocalWorkItemInput;
 use crate::local_runtime::storage::LocalDatabase;
 use crate::local_runtime::task_board::LocalTaskBoardTaskRecord;
@@ -55,7 +56,7 @@ impl LocalTaskRunnerServiceProvider {
         state: &LocalState,
     ) -> Result<Self, String> {
         let owner_user_id = owner_user_id.into();
-        let capabilities = database
+        let mut capabilities = database
             .get_capability_snapshot(
                 owner_user_id.as_str(),
                 SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
@@ -65,10 +66,11 @@ impl LocalTaskRunnerServiceProvider {
             .ok_or_else(|| {
                 "Plugin capability snapshot is missing for task_runner_local_run_phase".to_string()
             })?;
+        remove_retired_task_manager_mcp(&mut capabilities);
         capabilities
             .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
-        let planning_capabilities = database
+        let mut planning_capabilities = database
             .get_capability_snapshot(
                 owner_user_id.as_str(),
                 SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
@@ -78,6 +80,7 @@ impl LocalTaskRunnerServiceProvider {
             .ok_or_else(|| {
                 "Plugin capability snapshot is missing for task_runner_local_plan_phase".to_string()
             })?;
+        remove_retired_task_manager_mcp(&mut planning_capabilities);
         planning_capabilities
             .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
@@ -1547,32 +1550,4 @@ fn tool_result(payload: Value) -> Value {
 }
 
 #[cfg(test)]
-mod dependency_reduction_tests {
-    use serde_json::json;
-
-    use super::{
-        decode, reduce_local_project_execution_dependencies, CreateProjectExecutionTasksArgs,
-    };
-
-    #[test]
-    fn local_materializer_preserves_removed_hard_edges_as_context() {
-        let mut args: CreateProjectExecutionTasksArgs = decode(json!({
-            "project_id": "project-1",
-            "requirement_id": "requirement-1",
-            "tasks": [
-                { "client_ref": "a", "project_task_id": "p-a", "title": "A", "objective": "A", "is_planning_task": false },
-                { "client_ref": "b", "project_task_id": "p-b", "title": "B", "objective": "B", "is_planning_task": false, "prerequisite_refs": ["a"] },
-                { "client_ref": "c", "project_task_id": "p-c", "title": "C", "objective": "C", "is_planning_task": false, "prerequisite_refs": ["a", "b"] }
-            ]
-        }))
-        .expect("local project graph args");
-
-        let diagnostics = reduce_local_project_execution_dependencies(args.tasks.as_mut_slice())
-            .expect("valid local graph");
-
-        assert_eq!(diagnostics.submitted_edge_count, 3);
-        assert_eq!(diagnostics.persisted_edge_count, 2);
-        assert_eq!(args.tasks[2].prerequisite_refs, vec!["b"]);
-        assert_eq!(args.tasks[2].context_refs, vec!["a"]);
-    }
-}
+mod dependency_reduction_tests;

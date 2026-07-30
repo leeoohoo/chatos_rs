@@ -418,6 +418,112 @@ async fn stopped_turn_task_runner_status_writes_stop_marker() {
 }
 
 #[tokio::test]
+async fn terminal_task_runner_status_moves_task_ids_out_of_running_sets() {
+    let root = std::env::temp_dir().join(format!("chatos-local-terminal-task-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-terminal-task".to_string(),
+            owner_user_id: "user-terminal-task".to_string(),
+            device_id: "device-terminal-task".to_string(),
+            workspace_id: "workspace-terminal-task".to_string(),
+            project_name: "Terminal task project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("create terminal task project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-terminal-task".to_string(),
+            owner_user_id: "user-terminal-task".to_string(),
+            title: "Terminal task session".to_string(),
+            selected_model_id: Some("model-1".to_string()),
+            selected_agent_id: None,
+        })
+        .await
+        .expect("create terminal task session");
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id,
+            owner_user_id: "user-terminal-task".to_string(),
+            turn_id: "terminal-task-turn".to_string(),
+            idempotency_key: "terminal-task-turn".to_string(),
+            content: "Run a local task".to_string(),
+            metadata_json: Some(
+                json!({
+                    "task_runner_async": {
+                        "mode": "contact_async",
+                        "overall_status": "processing",
+                        "confirmation_status": "confirmed",
+                        "created_task_ids": ["lc_async_task_1"],
+                        "running_task_ids": ["lc_async_task_1"],
+                        "queued_task_ids": ["lc_async_task_1"],
+                        "pending_task_ids": ["lc_async_task_1"]
+                    }
+                })
+                .to_string(),
+            ),
+        })
+        .await
+        .expect("create terminal task turn");
+
+    database
+        .set_turn_task_runner_terminal_task_status(
+            "user-terminal-task",
+            "terminal-task-turn",
+            "lc_async_task_1",
+            "completed",
+            "completed",
+        )
+        .await
+        .expect("mark task terminal");
+
+    let messages = database
+        .list_turn_messages("user-terminal-task", "terminal-task-turn")
+        .await
+        .expect("load terminal task messages");
+    let metadata = messages[0]
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .expect("metadata should be valid json");
+    let task_runner = metadata
+        .get("task_runner_async")
+        .and_then(serde_json::Value::as_object)
+        .expect("task runner metadata");
+    assert_eq!(
+        task_runner
+            .get("overall_status")
+            .and_then(serde_json::Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        task_runner
+            .get("running_task_ids")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert!(task_runner
+        .get("terminal_task_ids")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str() == Some("lc_async_task_1"))));
+    assert!(task_runner
+        .get("succeeded_task_ids")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str() == Some("lc_async_task_1"))));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup terminal task database");
+}
+
+#[tokio::test]
 async fn appends_and_incrementally_lists_ordered_runtime_events() {
     let root = std::env::temp_dir().join(format!("chatos-local-events-{}", Uuid::new_v4()));
     let database = LocalDatabase::open(root.join("runtime.sqlite3"))

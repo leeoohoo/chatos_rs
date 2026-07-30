@@ -27,14 +27,6 @@ pub fn close_active_turn(session_id: &str, turn_id: &str) {
     runtime_guidance_manager().close_turn(session_id, turn_id);
 }
 
-pub fn enqueue_runtime_guidance(
-    session_id: &str,
-    turn_id: &str,
-    content: &str,
-) -> Result<RuntimeGuidanceItem, EnqueueGuidanceError> {
-    enqueue_runtime_guidance_with_attachments(session_id, turn_id, content, Vec::new())
-}
-
 pub fn enqueue_runtime_guidance_with_attachments(
     session_id: &str,
     turn_id: &str,

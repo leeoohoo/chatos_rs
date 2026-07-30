@@ -4,7 +4,8 @@
 use anyhow::{Context, Result};
 
 use crate::local_runtime::task_board::{
-    format_local_task_board_prompt, LocalTaskBoardTaskRecord, LocalTaskBoardTaskRow,
+    format_local_task_board_prompt, format_local_task_runner_context_prompt,
+    LocalTaskBoardTaskRecord, LocalTaskBoardTaskRow,
 };
 
 use super::super::LocalDatabase;
@@ -117,6 +118,21 @@ impl LocalDatabase {
             .list_local_task_board_tasks(owner_user_id, session_id, None, true, 200)
             .await?;
         Ok(format_local_task_board_prompt(tasks.as_slice()))
+    }
+
+    pub(crate) async fn local_task_runner_context_prompt(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        active_parent_task_id: &str,
+    ) -> Result<String> {
+        let tasks = self
+            .list_local_task_board_tasks(owner_user_id, session_id, None, true, 200)
+            .await?;
+        Ok(format_local_task_runner_context_prompt(
+            tasks.as_slice(),
+            active_parent_task_id,
+        ))
     }
 }
 

@@ -17,12 +17,10 @@ use crate::{
     NotepadBuiltinService, NotepadOptions, NotepadStore, NotepadStoreRef,
     RemoteConnectionControllerContext, RemoteConnectionControllerOptions,
     RemoteConnectionControllerService, RemoteConnectionControllerStore,
-    RemoteConnectionControllerStoreRef, TaskDraft, TaskManagerOptions, TaskManagerService,
-    TaskManagerStore, TaskManagerStoreRef, TaskStreamChunkCallback, TaskUpdatePatch,
-    TerminalControllerContext, TerminalControllerOptions, TerminalControllerService,
-    TerminalControllerStore, TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
-    DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS, DEFAULT_MAX_READ_FILE_BYTES,
-    MAX_COMMAND_TIMEOUT_SECONDS, REVIEW_TIMEOUT_MS_DEFAULT,
+    RemoteConnectionControllerStoreRef, TerminalControllerContext, TerminalControllerOptions,
+    TerminalControllerService, TerminalControllerStore, TerminalControllerStoreRef,
+    ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS,
+    DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
 };
 
 #[derive(Debug, Default)]
@@ -65,16 +63,7 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             })
             .map(|service| service.list_tools())
         }
-        BuiltinMcpKind::TaskManager => TaskManagerService::new(TaskManagerOptions {
-            server_name,
-            review_timeout_ms: REVIEW_TIMEOUT_MS_DEFAULT,
-            auto_create_task: false,
-            expose_context_ids: false,
-            default_current_turn_only: false,
-            lifecycle_tools_enabled: false,
-            store: TaskManagerStoreRef::new(store),
-        })
-        .map(|service| service.list_tools()),
+        BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
         BuiltinMcpKind::ProjectManagement => {
             Ok(crate::project_management_contract::schemas::task_runner_builtin_tool_definitions())
         }
@@ -211,73 +200,6 @@ impl TerminalControllerStore for SchemaOnlyStore {
         _terminal_id: String,
     ) -> Result<Value, String> {
         Err(schema_only_error())
-    }
-}
-
-#[async_trait]
-impl TaskManagerStore for SchemaOnlyStore {
-    async fn create_tasks_for_turn(
-        &self,
-        _conversation_id: &str,
-        _conversation_turn_id: &str,
-        _draft_tasks: Vec<TaskDraft>,
-    ) -> Result<Vec<Value>, String> {
-        Err(schema_only_error())
-    }
-
-    async fn review_and_create_tasks(
-        &self,
-        _conversation_id: &str,
-        _conversation_turn_id: &str,
-        _draft_tasks: Vec<TaskDraft>,
-        _timeout_ms: u64,
-        _on_stream_chunk: Option<TaskStreamChunkCallback>,
-    ) -> Result<Value, String> {
-        Err(schema_only_error())
-    }
-
-    async fn list_tasks_for_context(
-        &self,
-        _conversation_id: &str,
-        _conversation_turn_id: Option<&str>,
-        _include_done: bool,
-        _limit: usize,
-    ) -> Result<Vec<Value>, String> {
-        Err(schema_only_error())
-    }
-
-    async fn update_task_by_id(
-        &self,
-        _conversation_id: &str,
-        _task_id: &str,
-        _patch: TaskUpdatePatch,
-    ) -> Result<Value, String> {
-        Err(schema_only_error())
-    }
-
-    async fn complete_task_by_id(
-        &self,
-        _conversation_id: &str,
-        _task_id: &str,
-        _patch: Option<TaskUpdatePatch>,
-    ) -> Result<Value, String> {
-        Err(schema_only_error())
-    }
-
-    async fn delete_task_by_id(
-        &self,
-        _conversation_id: &str,
-        _task_id: &str,
-    ) -> Result<bool, String> {
-        Err(schema_only_error())
-    }
-
-    async fn task_board_updated_event(
-        &self,
-        _conversation_id: &str,
-        _conversation_turn_id: &str,
-    ) -> Option<Value> {
-        None
     }
 }
 
@@ -435,7 +357,6 @@ mod tests {
             CodeMaintainerRead,
             CodeMaintainerWrite,
             TerminalController,
-            TaskManager,
             ProjectManagement,
             Notepad,
             AgentBuilder,

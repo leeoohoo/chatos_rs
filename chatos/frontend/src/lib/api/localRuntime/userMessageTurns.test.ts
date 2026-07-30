@@ -121,4 +121,48 @@ describe('buildLocalUserMessageTurns', () => {
       running_task_ids: [],
     });
   });
+
+  it('does not revive a completed user turn from local Task Manager checklist rows', () => {
+    const response = buildLocalUserMessageTurns(
+      [
+        {
+          id: 'message-user',
+          turn_id: 'turn-parent',
+          sequence_no: 1,
+          role: 'user',
+          content: 'Run browser smoke test',
+          metadata: {
+            task_runner_async: {
+              overall_status: 'completed',
+              created_task_ids: ['parent-task'],
+            },
+          },
+          created_at: '2026-07-15T01:00:00Z',
+        },
+      ],
+      [
+        {
+          id: 'parent-task',
+          title: 'Parent task',
+          status: 'done',
+          task_kind: 'task_runner',
+          source_turn_id: 'turn-parent',
+          source_user_message_id: 'message-user',
+        },
+        {
+          id: 'checklist-task',
+          title: 'Stale checklist task',
+          status: 'doing',
+          task_kind: 'task_manager',
+          source_turn_id: 'turn-parent',
+          source_user_message_id: 'message-user',
+        },
+      ],
+    );
+
+    expect(response.items[0].user_message.metadata?.task_runner_async).toMatchObject({
+      overall_status: 'completed',
+      running_task_ids: [],
+    });
+  });
 });

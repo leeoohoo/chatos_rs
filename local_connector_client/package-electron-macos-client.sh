@@ -71,6 +71,38 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+if [[ "${CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV:-0}" == "1" && "${CHATOS_MAC_SIGN:-0}" == "1" ]]; then
+  echo "CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV=1 is only for unsigned local development packages; do not combine it with CHATOS_MAC_SIGN=1." >&2
+  exit 1
+fi
+
+verify_local_dev_codesign_identifier() {
+  local executable_path="${1:?executable path is required}"
+  local expected_identifier="${2:?expected identifier is required}"
+  local details
+  details="$(/usr/bin/codesign -d --verbose=4 "$executable_path" 2>&1)"
+  if [[ "$details" != *"Identifier=$expected_identifier"* ]]; then
+    echo "Local development code signature identifier mismatch for $executable_path" >&2
+    echo "Expected: $expected_identifier" >&2
+    echo "$details" >&2
+    exit 1
+  fi
+}
+
+verify_local_dev_app_codesign_identifier() {
+  local app_path="${1:?app path is required}"
+  local expected_identifier="${2:?expected identifier is required}"
+  local details
+  /usr/bin/codesign --verify --deep --strict "$app_path"
+  details="$(/usr/bin/codesign -d --verbose=4 "$app_path" 2>&1)"
+  if [[ "$details" != *"Identifier=$expected_identifier"* ]]; then
+    echo "Local development app code signature identifier mismatch for $app_path" >&2
+    echo "Expected: $expected_identifier" >&2
+    echo "$details" >&2
+    exit 1
+  fi
+}
+
 if [[ -e "$DIST_DIR" ]]; then
   echo "[INFO] Removing stale macOS package output: $DIST_DIR"
   /usr/bin/find "$DIST_DIR" -depth -delete
@@ -329,6 +361,20 @@ node "$PLUGIN_BUNDLE_TOOL" \
   --platform "$TOOLS_PLATFORM"
 cp -R "$CHATOS_FRONTEND_DIR/dist/." "$STAGING_DIR/chatos-frontend/"
 cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
+if [[ "${CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV:-0}" == "1" ]]; then
+  cat > "$STAGING_DIR/computer-use-unsigned-local-dev.json" <<'JSON'
+{
+  "allowUnsignedComputerUseLocalDev": true,
+  "warning": "Local development only. Do not ship this marker in signed or production packages."
+}
+JSON
+else
+  cat > "$STAGING_DIR/computer-use-unsigned-local-dev.json" <<'JSON'
+{
+  "allowUnsignedComputerUseLocalDev": false
+}
+JSON
+fi
 chmod +x \
   "$STAGING_DIR/local_connector_client_core" \
   "$STAGING_DIR/chatos_chrome_native_host" \
@@ -424,6 +470,17 @@ if [[ ! -d "$RESOURCES_PATH" || -L "$RESOURCES_PATH" ]]; then
   echo "Packaged macOS app Resources were not created: $RESOURCES_PATH" >&2
   exit 1
 fi
+if [[ "${CHATOS_MAC_SIGN:-0}" != "1" && "${CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV:-0}" == "1" ]]; then
+  verify_local_dev_app_codesign_identifier \
+    "$APP_PATH" \
+    "com.chatos.local-connector"
+  verify_local_dev_codesign_identifier \
+    "$RESOURCES_PATH/local_connector_client_core" \
+    "com.chatos.local-connector.core"
+  verify_local_dev_codesign_identifier \
+    "$RESOURCES_PATH/chatos_computer_use_helper" \
+    "com.chatos.local-connector.computer-use-helper"
+fi
 
 VERIFY_ARGS=(
   --platform
@@ -453,4 +510,9 @@ echo "[OK] SHA-256: $(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
 
 if [[ "${CHATOS_MAC_SIGN:-0}" != "1" ]]; then
   echo "[INFO] Package is unsigned. Set CHATOS_MAC_SIGN=1 after installing a valid Developer ID Application certificate."
+  if [[ "${CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV:-0}" == "1" ]]; then
+    echo "[WARN] Unsigned local-development Computer Use is enabled for this package."
+    echo "[INFO] If macOS still shows stale Accessibility or Screen Recording state from an older local build, run:"
+    echo "       $CLIENT_DIR/reset-macos-local-dev-permissions.sh"
+  fi
 fi

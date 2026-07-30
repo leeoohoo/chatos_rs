@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(test)]
 use super::types::TaskDraft;
 
+#[cfg(test)]
 pub(super) fn normalize_task_drafts(drafts: Vec<TaskDraft>) -> Result<Vec<TaskDraft>, String> {
     let mut out = Vec::new();
     for draft in drafts {
@@ -11,6 +13,7 @@ pub(super) fn normalize_task_drafts(drafts: Vec<TaskDraft>) -> Result<Vec<TaskDr
     Ok(out)
 }
 
+#[cfg(test)]
 pub(super) fn normalize_task_draft(mut draft: TaskDraft) -> Result<TaskDraft, String> {
     draft.title = draft.title.trim().to_string();
     if draft.title.is_empty() {

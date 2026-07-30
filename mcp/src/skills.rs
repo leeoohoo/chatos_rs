@@ -17,6 +17,9 @@ pub struct SystemMcpProviderSkill {
 }
 
 pub fn system_mcp_provider_skills(key: SystemMcpKey) -> Vec<SystemMcpProviderSkill> {
+    if key == SystemMcpKey::TaskManager {
+        return Vec::new();
+    }
     let descriptor = system_mcp_descriptor(key);
     if let Some(kind) = descriptor.embedded_kind {
         return builtin_provider_skills(kind, descriptor.display_name);
@@ -82,6 +85,12 @@ fn service_provider_skill(key: SystemMcpKey) -> Option<SystemMcpProviderSkill> {
             "Local Command Approval MCP 使用指南",
             "指导 AI 根据当前项目证据完成本地命令审批，不执行命令或修改文件。",
             include_str!("../provider_skills/local-command-approval.md"),
+        ),
+        SystemMcpKey::TaskProcessLog => (
+            "task_process_log_usage",
+            "Task Process Log MCP 使用指南",
+            "指导 Task Runner Agent 记录简短、可展示的当前任务执行过程。",
+            include_str!("../provider_skills/task-process-log.md"),
         ),
         SystemMcpKey::TaskRunnerService => (
             "task_runner_usage",

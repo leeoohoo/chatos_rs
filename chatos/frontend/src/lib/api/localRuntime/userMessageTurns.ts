@@ -13,7 +13,7 @@ export const buildLocalUserMessageTurns = (
   tasks: MessageTaskRunnerTask[],
   options: { limit?: number; before?: string | null } = {},
 ): UserMessageTurnsResponse => {
-  const tasksByTurn = groupTasksByTurn(tasks);
+  const tasksByTurn = groupTasksByTurn(tasks.filter(isUserMessageTaskRunnerTask));
   const messagesByTurn = new Map<string, SessionMessageResponse[]>();
   messages.forEach((message) => {
     const turnId = String(message.turn_id || '').trim();
@@ -38,6 +38,10 @@ export const buildLocalUserMessageTurns = (
       : null,
   };
 };
+
+const isUserMessageTaskRunnerTask = (task: MessageTaskRunnerTask): boolean => (
+  String(task.task_kind || 'task_runner').trim().toLowerCase() === 'task_runner'
+);
 
 const turnResponse = (
   turnId: string,

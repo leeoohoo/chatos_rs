@@ -75,7 +75,7 @@ fn shared_runtime_public_facade_builds_core_values() {
     );
     let prompt_executor = SharedMcpExecutorBuilder::new()
         .with_builtin_kinds(
-            vec![SharedBuiltinMcpKind::TaskManager],
+            vec![SharedBuiltinMcpKind::AskUser],
             &BuiltinMcpServerOptions::new("/tmp/chatos-shared-runtime-test"),
         )
         .build();
@@ -123,27 +123,28 @@ fn shared_runtime_public_facade_builds_chatos_builtin_executor() {
         .with_user_id("user-1")
         .with_project_id("project-1");
     let executor =
-        build_mcp_tool_execute_from_builtin_kinds(vec![SharedBuiltinMcpKind::TaskManager], options)
-            .expect("build task manager executor");
+        build_mcp_tool_execute_from_builtin_kinds(vec![SharedBuiltinMcpKind::AskUser], options)
+            .expect("build ask user executor");
     assert!(executor.get_available_tools().is_empty());
 
     let runtime_kinds = default_runtime_builtin_kinds();
-    assert!(runtime_kinds.contains(&SharedBuiltinMcpKind::TaskManager));
+    assert!(!runtime_kinds.contains(&SharedBuiltinMcpKind::TaskManager));
 
     let servers = chatos_mcp_runtime::builtin_servers_from_kinds(
-        vec![SharedBuiltinMcpKind::TaskManager],
+        vec![SharedBuiltinMcpKind::AskUser],
         &BuiltinMcpServerOptions::new("/tmp/chatos-shared-runtime-test"),
     );
     let prompt =
         compose_shared_builtin_mcp_system_prompt(servers.as_slice(), BuiltinMcpPromptLocale::ZhCn)
             .expect("builtin prompt");
-    assert!(prompt.contains("`task_manager_add_task`"));
+    assert!(prompt.contains("`ask_user_prompt_choices`"));
+    assert!(!prompt.contains("task_manager"));
 
     let debug =
         inspect_shared_builtin_mcp_system_prompt(servers.as_slice(), BuiltinMcpPromptLocale::ZhCn);
     assert!(debug
         .selected_section_ids
-        .contains(&"builtin_task_manager".to_string()));
+        .contains(&"builtin_ask_user".to_string()));
 }
 
 #[test]
@@ -151,22 +152,21 @@ fn shared_runtime_public_facade_builds_initialized_shared_mcp_executor() {
     let options = BuiltinMcpServerOptions::new("/tmp/chatos-shared-runtime-test")
         .with_user_id("user-1")
         .with_project_id("project-1");
-    let executor = build_initialized_shared_builtin_mcp_executor(
-        vec![SharedBuiltinMcpKind::TaskManager],
-        options,
-    )
-    .expect("build initialized shared executor");
+    let executor =
+        build_initialized_shared_builtin_mcp_executor(vec![SharedBuiltinMcpKind::AskUser], options)
+            .expect("build initialized shared executor");
     assert!(!executor.available_tools().is_empty());
     let effective_prompt =
         compose_effective_shared_builtin_mcp_system_prompt(&executor, BuiltinMcpPromptLocale::ZhCn)
             .expect("effective builtin prompt");
-    assert!(effective_prompt.contains("`task_manager_add_task`"));
+    assert!(effective_prompt.contains("`ask_user_prompt_choices`"));
+    assert!(!effective_prompt.contains("task_manager"));
 
     let effective_debug =
         inspect_effective_shared_builtin_mcp_system_prompt(&executor, BuiltinMcpPromptLocale::ZhCn);
     assert!(effective_debug
         .active_builtin_server_names
-        .contains(&"task_manager".to_string()));
+        .contains(&"ask_user".to_string()));
 
     let _runtime = build_ai_runtime_from_shared_mcp_executor(executor);
 }

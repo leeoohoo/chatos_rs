@@ -9,6 +9,7 @@ files:
 asar: true
 asarUnpack:
   - electron/core-runtime.cjs
+afterPack: electron/sign-macos-local-dev.cjs
 extraResources:
   - from: ../.package/macos/local_connector_client_core
     to: local_connector_client_core
@@ -30,6 +31,8 @@ extraResources:
     to: chrome-extension
   - from: ../.package/macos/sqlite-migrations
     to: sqlite-migrations
+  - from: ../.package/macos/computer-use-unsigned-local-dev.json
+    to: computer-use-unsigned-local-dev.json
 mac:
   category: public.app-category.developer-tools
   icon: ../.package/macos/ChatOS.icns

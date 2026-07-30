@@ -16,6 +16,17 @@ pub(in crate::api::projects) fn task_runner_status_is_success(status: Option<&st
     chatos_project_execution::execution_task_status_is_success(status.unwrap_or_default())
 }
 
+pub(in crate::api::projects) fn task_runner_status_is_cancelled(status: Option<&str>) -> bool {
+    matches!(
+        status
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "cancelled" | "canceled"
+    )
+}
+
 pub(in crate::api::projects) fn task_runner_callback_event_for_status(
     status: &str,
 ) -> Option<&'static str> {

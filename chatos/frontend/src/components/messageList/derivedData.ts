@@ -32,6 +32,8 @@ type ParsedMessageForList = {
   historyFinalForUserMessageId: string;
   historyFinalForTurnId: string;
   isTaskRunnerCallbackAssistant: boolean;
+  taskRunnerCallbackSourceUserMessageId: string;
+  taskRunnerCallbackSourceTurnId: string;
 };
 
 const getTimeValue = (value: unknown): number => {
@@ -92,6 +94,11 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
   const isTaskRunnerCallbackAssistant = Boolean(
     message.role === 'assistant' && isTaskRunnerCallbackMessage(message),
   );
+  const taskRunnerAsync = (
+    metadataRecord?.task_runner_async
+    && typeof metadataRecord.task_runner_async === 'object'
+    && !Array.isArray(metadataRecord.task_runner_async)
+  ) ? metadataRecord.task_runner_async as Record<string, unknown> : null;
   const isAssistantToolCallCarrier = Boolean(
     message.role === 'assistant'
     && assistantToolCalls.length > 0
@@ -115,7 +122,84 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
     historyFinalForUserMessageId,
     historyFinalForTurnId,
     isTaskRunnerCallbackAssistant,
+    taskRunnerCallbackSourceUserMessageId: normalizeMetaId(
+      taskRunnerAsync?.source_user_message_id,
+    ),
+    taskRunnerCallbackSourceTurnId: normalizeTurnId(
+      taskRunnerAsync?.source_turn_id,
+    ),
   };
+};
+
+const parsedBelongsToTaskRunnerSource = (
+  parsed: ParsedMessageForList,
+  sourceUserMessageId: string,
+  sourceTurnId: string,
+): boolean => {
+  if (sourceUserMessageId) {
+    if (parsed.id === sourceUserMessageId) {
+      return true;
+    }
+    if (parsed.historyFinalForUserMessageId === sourceUserMessageId) {
+      return true;
+    }
+    if (parsed.historyProcessUserMessageId === sourceUserMessageId) {
+      return true;
+    }
+  }
+  if (!sourceTurnId) {
+    return false;
+  }
+  return (
+    parsed.conversationTurnId === sourceTurnId
+    || parsed.historyFinalForTurnId === sourceTurnId
+    || parsed.historyProcessTurnId === sourceTurnId
+  );
+};
+
+const anchorTaskRunnerCallbacksToSourceTurns = (
+  visible: ParsedMessageForList[],
+): ParsedMessageForList[] => {
+  if (visible.length <= 1) {
+    return visible;
+  }
+
+  const anchoredCallbacks = visible.filter((parsed) => (
+    parsed.isTaskRunnerCallbackAssistant
+    && (parsed.taskRunnerCallbackSourceUserMessageId || parsed.taskRunnerCallbackSourceTurnId)
+  ));
+  if (anchoredCallbacks.length === 0) {
+    return visible;
+  }
+
+  const output = visible.filter((parsed) => !anchoredCallbacks.includes(parsed));
+  anchoredCallbacks.forEach((callback) => {
+    let insertAfter = -1;
+    output.forEach((candidate, index) => {
+      if (
+        parsedBelongsToTaskRunnerSource(
+          candidate,
+          callback.taskRunnerCallbackSourceUserMessageId,
+          callback.taskRunnerCallbackSourceTurnId,
+        )
+      ) {
+        insertAfter = index;
+      }
+    });
+
+    if (insertAfter < 0) {
+      const originalIndex = visible.findIndex((candidate) => candidate.id === callback.id);
+      const fallbackIndex = output.findIndex((candidate) => (
+        visible.findIndex((item) => item.id === candidate.id) > originalIndex
+      ));
+      output.splice(fallbackIndex < 0 ? output.length : fallbackIndex, 0, callback);
+      return;
+    }
+
+    output.splice(insertAfter + 1, 0, callback);
+  });
+
+  return output;
 };
 
 export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[]) => {
@@ -195,13 +279,15 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
       }
     });
 
-    return visibleCandidates.filter((parsed) => {
+    const deduped = visibleCandidates.filter((parsed) => {
       const dedupKey = readNonProcessAssistantDedupKey(parsed);
       if (!dedupKey) {
         return true;
       }
       return bestFinalAssistantByKey.get(dedupKey)?.id === parsed.id;
-    }).map((parsed) => parsed.message);
+    });
+    return anchorTaskRunnerCallbacksToSourceTurns(deduped)
+      .map((parsed) => parsed.message);
   })();
 
   return {

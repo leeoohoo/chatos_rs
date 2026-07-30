@@ -315,6 +315,8 @@ export interface AgentBindingRecord {
 export interface AgentMcpBindingView {
   mcp: McpRecord;
   mode: McpBindingMode;
+  bindable: boolean;
+  unavailable_reason?: string | null;
 }
 
 export interface AgentMcpBindingsResponse {

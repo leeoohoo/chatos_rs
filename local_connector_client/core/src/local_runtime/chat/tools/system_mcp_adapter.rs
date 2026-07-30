@@ -13,11 +13,11 @@ use chatos_plugin_management_sdk::SystemMcpKey;
 
 use crate::local_runtime::ask_user::LocalAskUserProvider;
 use crate::local_runtime::project_management::LocalProjectManagementProvider;
-use crate::local_runtime::task_board::LocalTaskManagerProvider;
 use crate::local_runtime::task_runner::LocalTaskRunnerServiceProvider;
 
 use super::builtins::LocalChatBuiltinProvider;
 use super::context::LocalChatToolContext;
+use super::task_process_log::LocalTaskProcessLogProvider;
 
 pub(super) struct LocalConnectorSystemMcpAdapter {
     context: LocalChatToolContext,
@@ -45,6 +45,11 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
         key: SystemMcpKey,
         _context: &SystemMcpResolveContext,
     ) -> Result<ResolvedSystemMcpBackend, String> {
+        if key == SystemMcpKey::TaskManager {
+            return Ok(ResolvedSystemMcpBackend::Unavailable(
+                "Task Manager builtin MCP has been removed".to_string(),
+            ));
+        }
         let descriptor = system_mcp_descriptor(key);
         if !descriptor.supports_host(self.host()) {
             return Ok(ResolvedSystemMcpBackend::Unavailable(format!(
@@ -85,6 +90,33 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
                 provider: Some(provider),
             });
         }
+        if key == SystemMcpKey::TaskProcessLog {
+            let provider: Arc<dyn BuiltinToolProvider> =
+                Arc::new(LocalTaskProcessLogProvider::new(
+                    self.context.database.clone(),
+                    owner_user_id(&self.context),
+                    self.context.session_id.clone(),
+                    project_id(&self.context),
+                    run_id(&self.context),
+                ));
+            return Ok(ResolvedSystemMcpBackend::Embedded {
+                server: McpBuiltinServer {
+                    name: descriptor.server_name.to_string(),
+                    kind: descriptor.key.as_str().to_string(),
+                    workspace_dir: self.context.project_root.display().to_string(),
+                    user_id: Some(owner_user_id(&self.context)),
+                    project_id: Some(project_id(&self.context)),
+                    remote_connection_id: None,
+                    contact_agent_id: None,
+                    auto_create_task: false,
+                    allow_writes: descriptor.allow_writes,
+                    max_file_bytes: 0,
+                    max_write_bytes: 0,
+                    search_limit: 0,
+                },
+                provider: Some(provider),
+            });
+        }
         let Some(kind) = descriptor.embedded_kind else {
             return Ok(ResolvedSystemMcpBackend::Unavailable(format!(
                 "Local Connector has no embedded provider for system MCP {}",
@@ -97,31 +129,6 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
                 owner_user_id(&self.context),
                 project_id(&self.context),
             )),
-            SystemMcpKey::TaskManager => {
-                let provider = if matches!(
-                    self.context.agent_key,
-                    chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
-                        | chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalPlanPhase
-                        | chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
-                        | chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalRunPhase
-                ) {
-                    LocalTaskManagerProvider::for_task_run(
-                        self.context.database.clone(),
-                        owner_user_id(&self.context),
-                        self.context.auto_create_task,
-                        self.context.ask_user_prompts.clone(),
-                        self.context.request.request_id.clone(),
-                    )
-                } else {
-                    LocalTaskManagerProvider::new(
-                        self.context.database.clone(),
-                        owner_user_id(&self.context),
-                        self.context.auto_create_task,
-                        self.context.ask_user_prompts.clone(),
-                    )
-                };
-                Arc::new(provider)
-            }
             SystemMcpKey::AskUser => Arc::new(LocalAskUserProvider::new(
                 self.context.database.clone(),
                 owner_user_id(&self.context),
@@ -156,4 +163,13 @@ fn project_id(context: &LocalChatToolContext) -> String {
         .get("x-task-runner-task-id")
         .cloned()
         .unwrap_or_else(|| context.request.workspace_id.clone())
+}
+
+fn run_id(context: &LocalChatToolContext) -> String {
+    context
+        .request
+        .headers
+        .get("x-task-runner-run-id")
+        .cloned()
+        .unwrap_or_else(|| context.request.request_id.clone())
 }

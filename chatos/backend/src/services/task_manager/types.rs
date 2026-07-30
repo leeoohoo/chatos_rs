@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::normalizer::{normalize_priority, normalize_status, normalize_tags, trimmed_non_empty};
 
+#[cfg(test)]
 pub const REVIEW_TIMEOUT_MS_DEFAULT: u64 = 86_400_000;
+#[cfg(test)]
 pub const REVIEW_TIMEOUT_ERR: &str = "review_timeout";
 #[cfg(test)]
 pub const REVIEW_NOT_FOUND_ERR: &str = "review_not_found";
@@ -50,37 +52,7 @@ pub struct TaskDraft {
     pub blocker_kind: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TaskUpdatePatch {
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub details: Option<String>,
-    #[serde(default)]
-    pub priority: Option<String>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub tags: Option<Vec<String>>,
-    #[serde(default)]
-    pub due_at: Option<Option<String>>,
-    #[serde(default)]
-    pub outcome_summary: Option<String>,
-    #[serde(default)]
-    pub outcome_items: Option<Vec<TaskOutcomeItem>>,
-    #[serde(default)]
-    pub resume_hint: Option<String>,
-    #[serde(default)]
-    pub blocker_reason: Option<String>,
-    #[serde(default)]
-    pub blocker_needs: Option<Vec<String>>,
-    #[serde(default)]
-    pub blocker_kind: Option<String>,
-    #[serde(default)]
-    pub completed_at: Option<Option<String>>,
-    #[serde(default)]
-    pub last_outcome_at: Option<Option<String>>,
-}
+pub type TaskUpdatePatch = chatos_mcp_runtime::TaskUpdatePatch<TaskOutcomeItem>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRecord {
@@ -106,6 +78,7 @@ pub struct TaskRecord {
     pub updated_at: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskCreateReviewPayload {
     pub review_id: String,
@@ -116,6 +89,7 @@ pub struct TaskCreateReviewPayload {
     pub timeout_ms: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskReviewAction {
@@ -123,6 +97,7 @@ pub enum TaskReviewAction {
     Cancel,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct TaskReviewDecision {
     pub action: TaskReviewAction,
@@ -130,99 +105,99 @@ pub struct TaskReviewDecision {
     pub reason: Option<String>,
 }
 
-impl TaskUpdatePatch {
-    pub(super) fn is_empty(&self) -> bool {
-        self.title.is_none()
-            && self.details.is_none()
-            && self.priority.is_none()
-            && self.status.is_none()
-            && self.tags.is_none()
-            && self.due_at.is_none()
-            && self.outcome_summary.is_none()
-            && self.outcome_items.is_none()
-            && self.resume_hint.is_none()
-            && self.blocker_reason.is_none()
-            && self.blocker_needs.is_none()
-            && self.blocker_kind.is_none()
-            && self.completed_at.is_none()
-            && self.last_outcome_at.is_none()
+pub(super) fn task_update_patch_is_empty(patch: &TaskUpdatePatch) -> bool {
+    patch.title.is_none()
+        && patch.details.is_none()
+        && patch.priority.is_none()
+        && patch.status.is_none()
+        && patch.tags.is_none()
+        && patch.due_at.is_none()
+        && patch.outcome_summary.is_none()
+        && patch.outcome_items.is_none()
+        && patch.resume_hint.is_none()
+        && patch.blocker_reason.is_none()
+        && patch.blocker_needs.is_none()
+        && patch.blocker_kind.is_none()
+        && patch.completed_at.is_none()
+        && patch.last_outcome_at.is_none()
+}
+
+pub(super) fn normalize_task_update_patch(
+    mut patch: TaskUpdatePatch,
+) -> Result<TaskUpdatePatch, String> {
+    if let Some(title) = patch.title.take() {
+        let title = title.trim().to_string();
+        if title.is_empty() {
+            return Err("task title is required".to_string());
+        }
+        patch.title = Some(title);
     }
 
-    pub(super) fn normalized(mut self) -> Result<Self, String> {
-        if let Some(title) = self.title.take() {
-            let title = title.trim().to_string();
-            if title.is_empty() {
-                return Err("task title is required".to_string());
-            }
-            self.title = Some(title);
-        }
-
-        if let Some(details) = self.details.take() {
-            self.details = Some(details.trim().to_string());
-        }
-
-        if let Some(priority) = self.priority.take() {
-            self.priority = Some(normalize_priority(priority.as_str()));
-        }
-
-        if let Some(status) = self.status.take() {
-            self.status = Some(normalize_status(status.as_str()));
-        }
-
-        if let Some(tags) = self.tags.take() {
-            self.tags = Some(normalize_tags(tags));
-        }
-
-        if let Some(due_at) = self.due_at.take() {
-            let normalized = due_at
-                .as_deref()
-                .and_then(trimmed_non_empty)
-                .map(|value| value.to_string());
-            self.due_at = Some(normalized);
-        }
-
-        if let Some(outcome_summary) = self.outcome_summary.take() {
-            self.outcome_summary = Some(outcome_summary.trim().to_string());
-        }
-
-        if let Some(outcome_items) = self.outcome_items.take() {
-            self.outcome_items = Some(normalize_outcome_items(outcome_items));
-        }
-
-        if let Some(resume_hint) = self.resume_hint.take() {
-            self.resume_hint = Some(resume_hint.trim().to_string());
-        }
-
-        if let Some(blocker_reason) = self.blocker_reason.take() {
-            self.blocker_reason = Some(blocker_reason.trim().to_string());
-        }
-
-        if let Some(blocker_needs) = self.blocker_needs.take() {
-            self.blocker_needs = Some(normalize_string_list(blocker_needs));
-        }
-
-        if let Some(blocker_kind) = self.blocker_kind.take() {
-            self.blocker_kind = Some(normalize_blocker_kind(blocker_kind.as_str()));
-        }
-
-        if let Some(completed_at) = self.completed_at.take() {
-            let normalized = completed_at
-                .as_deref()
-                .and_then(trimmed_non_empty)
-                .map(|value| value.to_string());
-            self.completed_at = Some(normalized);
-        }
-
-        if let Some(last_outcome_at) = self.last_outcome_at.take() {
-            let normalized = last_outcome_at
-                .as_deref()
-                .and_then(trimmed_non_empty)
-                .map(|value| value.to_string());
-            self.last_outcome_at = Some(normalized);
-        }
-
-        Ok(self)
+    if let Some(details) = patch.details.take() {
+        patch.details = Some(details.trim().to_string());
     }
+
+    if let Some(priority) = patch.priority.take() {
+        patch.priority = Some(normalize_priority(priority.as_str()));
+    }
+
+    if let Some(status) = patch.status.take() {
+        patch.status = Some(normalize_status(status.as_str()));
+    }
+
+    if let Some(tags) = patch.tags.take() {
+        patch.tags = Some(normalize_tags(tags));
+    }
+
+    if let Some(due_at) = patch.due_at.take() {
+        let normalized = due_at
+            .as_deref()
+            .and_then(trimmed_non_empty)
+            .map(|value| value.to_string());
+        patch.due_at = Some(normalized);
+    }
+
+    if let Some(outcome_summary) = patch.outcome_summary.take() {
+        patch.outcome_summary = Some(outcome_summary.trim().to_string());
+    }
+
+    if let Some(outcome_items) = patch.outcome_items.take() {
+        patch.outcome_items = Some(normalize_outcome_items(outcome_items));
+    }
+
+    if let Some(resume_hint) = patch.resume_hint.take() {
+        patch.resume_hint = Some(resume_hint.trim().to_string());
+    }
+
+    if let Some(blocker_reason) = patch.blocker_reason.take() {
+        patch.blocker_reason = Some(blocker_reason.trim().to_string());
+    }
+
+    if let Some(blocker_needs) = patch.blocker_needs.take() {
+        patch.blocker_needs = Some(normalize_string_list(blocker_needs));
+    }
+
+    if let Some(blocker_kind) = patch.blocker_kind.take() {
+        patch.blocker_kind = Some(normalize_blocker_kind(blocker_kind.as_str()));
+    }
+
+    if let Some(completed_at) = patch.completed_at.take() {
+        let normalized = completed_at
+            .as_deref()
+            .and_then(trimmed_non_empty)
+            .map(|value| value.to_string());
+        patch.completed_at = Some(normalized);
+    }
+
+    if let Some(last_outcome_at) = patch.last_outcome_at.take() {
+        let normalized = last_outcome_at
+            .as_deref()
+            .and_then(trimmed_non_empty)
+            .map(|value| value.to_string());
+        patch.last_outcome_at = Some(normalized);
+    }
+
+    Ok(patch)
 }
 
 fn default_priority() -> String {

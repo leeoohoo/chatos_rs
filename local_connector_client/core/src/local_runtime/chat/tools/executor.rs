@@ -82,6 +82,9 @@ async fn build_mcp_executor(context: LocalChatToolContext) -> Result<McpExecutor
     let system_adapter = LocalConnectorSystemMcpAdapter::new(context.clone());
     let mut builder = McpExecutor::builder();
     for kind in context.builtin_kinds.iter().copied() {
+        if kind == chatos_mcp_runtime::BuiltinMcpKind::TaskManager {
+            continue;
+        }
         let descriptor = system_mcp_descriptor_by_embedded_kind(kind)
             .ok_or_else(|| format!("missing system MCP descriptor for {}", kind.kind_name()))?;
         match system_adapter

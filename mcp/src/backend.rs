@@ -4,6 +4,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SystemMcpBackend {
     Embedded,
+    RunScopedBuiltin,
     ServiceHttp,
     ServiceDynamic,
     HostAdapter,

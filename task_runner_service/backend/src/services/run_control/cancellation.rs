@@ -3,9 +3,6 @@
 
 use super::*;
 use crate::auth::CurrentUser;
-use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries,
-};
 
 impl RunService {
     pub async fn cancel_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
@@ -86,14 +83,6 @@ impl RunService {
                 task_record.updated_at = now_rfc3339();
                 self.store.save_task(task_record).await?;
             }
-            let summary = finalize_task_session_entries(
-                &self.store,
-                run.task_id.as_str(),
-                run.id.as_str(),
-                run.status,
-            )
-            .await?;
-            append_task_session_finalized_event(&self.store, &run, &summary).await;
             self.try_send_terminal_callback(run.task_id.as_str(), &run)
                 .await;
         }

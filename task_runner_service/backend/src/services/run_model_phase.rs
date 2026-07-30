@@ -51,8 +51,8 @@ use super::workspace_mcp::{
     task_uses_harness_code,
 };
 use super::{
-    build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
-    DisabledBuiltinProvider, RunService, TaskService,
+    build_builtin_registry, summarized_report_content, DisabledBuiltinProvider, RunService,
+    TaskService,
 };
 
 mod callbacks;

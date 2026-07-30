@@ -97,6 +97,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
     error,
     detailTask,
     processTask,
+    processRunDetail,
     runDetail,
     changesTask,
     outputChanges,
@@ -446,7 +447,11 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
         onRetry={retryTask}
         onClose={closeDetail}
       />
-      <MessageTaskProcessLogModal task={processTask} onClose={closeProcessLog} />
+      <MessageTaskProcessLogModal
+        task={processTask}
+        runDetail={processRunDetail}
+        onClose={closeProcessLog}
+      />
       <MessageTaskRunDetailModal
         detail={runDetail}
         messageId={message.id}

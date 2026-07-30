@@ -273,12 +273,20 @@ pub struct PublishAgentPromptRequest {
 pub struct AgentMcpBindingView {
     pub mcp: McpRecord,
     pub mode: String,
+    #[serde(default = "default_true")]
+    pub bindable: bool,
+    #[serde(default)]
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMcpBindingsResponse {
     pub agent: SystemAgentRecord,
     pub items: Vec<AgentMcpBindingView>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

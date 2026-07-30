@@ -13,6 +13,7 @@ use lopdf::content::Content;
 use lopdf::{dictionary, Document, Object, Stream};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use super::*;

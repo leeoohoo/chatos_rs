@@ -15,6 +15,7 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::store::is_retired_task_manager_mcp;
 use crate::tool_catalog::live_mcp_descriptor;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -179,6 +180,9 @@ pub(super) async fn get_mcp(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("MCP not found"))?;
+    if is_retired_task_manager_mcp(&record) {
+        return Err(ApiError::not_found("MCP not found"));
+    }
     ensure_can_read_resource(
         &user,
         record.owner_user_id.as_str(),
@@ -198,6 +202,9 @@ pub(super) async fn get_mcp_descriptor(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("MCP not found"))?;
+    if is_retired_task_manager_mcp(&record) {
+        return Err(ApiError::not_found("MCP not found"));
+    }
     ensure_can_read_resource(
         &user,
         record.owner_user_id.as_str(),

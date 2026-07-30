@@ -150,32 +150,6 @@ impl LocalDatabase {
         let run = self.get_local_task_run(owner_user_id, run_id).await?;
         if let Some(run) = run.as_ref().filter(|run| run.status == "canceled") {
             reset_local_task_subject(self, run, owner_user_id, now.as_str()).await?;
-            let summary = self
-                .finalize_local_task_manager_session(
-                    owner_user_id,
-                    run.session_id.as_str(),
-                    run.id.as_str(),
-                    "canceled",
-                )
-                .await?;
-            if summary.total_changed() > 0 || summary.blocked_terminal > 0 {
-                self.append_local_task_run_event(
-                    owner_user_id,
-                    run.id.as_str(),
-                    "task_session_finalized",
-                    serde_json::json!({
-                        "task_session_id": run.id,
-                        "terminal_status": "canceled",
-                        "satisfied": summary.satisfied,
-                        "waived": summary.waived,
-                        "blocked_terminal": summary.blocked_terminal,
-                        "cancelled": summary.cancelled,
-                        "orphaned": summary.orphaned,
-                        "durable_detached": summary.durable_detached,
-                    }),
-                )
-                .await?;
-            }
         }
         Ok(run)
     }
@@ -253,18 +227,9 @@ impl LocalDatabase {
             .get_local_task_run(owner_user_id, run_id)
             .await?
             .context("retried local task run was not found")?;
-        let preparation = async {
-            self.adopt_local_task_manager_session_for_retry(
-                owner_user_id,
-                run.session_id.as_str(),
-                run.id.as_str(),
-            )
-            .await?;
-            reset_local_task_subject(self, &run, owner_user_id, now.as_str()).await
-        }
-        .await;
+        let preparation = reset_local_task_subject(self, &run, owner_user_id, now.as_str()).await;
         if let Err(error) = preparation {
-            let failure = format!("prepare local Task Manager retry session failed: {error}");
+            let failure = format!("prepare local task retry failed: {error}");
             sqlx::query(
                 "UPDATE local_task_runs SET status = 'failed', error = ?, finished_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ? AND status = 'queued'",
             )
@@ -275,7 +240,7 @@ impl LocalDatabase {
             .bind(owner_user_id)
             .execute(self.pool())
             .await
-            .context("fail local retry after Task Manager preparation error")?;
+            .context("fail local retry after preparation error")?;
             return Err(anyhow::anyhow!(failure));
         }
         let released = sqlx::query(
@@ -287,7 +252,7 @@ impl LocalDatabase {
         .bind(owner_user_id)
         .execute(self.pool())
         .await
-        .context("release local retry after Task Manager adoption")?;
+        .context("release local retry after preparation")?;
         if released.rows_affected() != 1 {
             return Err(anyhow::anyhow!(
                 "retried local task run left the queued state before dispatch release"

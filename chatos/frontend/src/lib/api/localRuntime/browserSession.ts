@@ -5,7 +5,7 @@ import { requestLocalRuntime } from './bridge';
 
 export interface BrowserSessionCommandPayload {
   workspace_id: string;
-  action: 'stream_frame' | 'stream_stop' | 'tabs' | 'tab_new' | 'tab_switch' | 'tab_close' | 'snapshot' | 'refresh' | 'navigate' | 'back' | 'scroll' | 'press' | 'click' | 'type' | 'upload' | 'download' | 'console' | 'network' | 'network_request' | 'har_start' | 'har_stop' | 'websocket_start' | 'websocket_frames' | 'websocket_stop' | 'close';
+  action: 'stream_frame' | 'stream_stop' | 'tabs' | 'tab_new' | 'tab_switch' | 'tab_close' | 'snapshot' | 'refresh' | 'navigate' | 'back' | 'scroll' | 'press' | 'click' | 'type' | 'click_point' | 'scroll_delta' | 'type_text' | 'upload' | 'download' | 'console' | 'network' | 'network_request' | 'har_start' | 'har_stop' | 'websocket_start' | 'websocket_frames' | 'websocket_stop' | 'close';
   after_frame_sequence?: number;
   url?: string;
   tab_id?: string;
@@ -13,6 +13,12 @@ export interface BrowserSessionCommandPayload {
   key?: string;
   ref?: string;
   text?: string;
+  x?: number;
+  y?: number;
+  button?: 'left' | 'middle' | 'right';
+  click_count?: number;
+  delta_x?: number;
+  delta_y?: number;
   path?: string;
   paths?: string[];
   clear?: boolean;

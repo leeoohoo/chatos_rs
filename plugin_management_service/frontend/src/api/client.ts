@@ -41,6 +41,12 @@ import {
   withQuery,
   type QueryValue,
 } from '@chatos/frontend-runtime';
+import {
+  filterRetiredAgentMcpBindings,
+  filterRetiredMcpList,
+  filterRetiredRuntimeCapabilities,
+  isRetiredTaskManagerMcpId,
+} from '../retiredMcps';
 
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL);
@@ -80,7 +86,9 @@ export const api = {
     }),
   currentUser: () => request<CurrentUser>('/api/auth/me'),
   listMcps: (params?: Record<string, QueryValue>) =>
-    request<ListResponse<McpRecord>>(withQuery('/api/mcps', params || {})),
+    request<ListResponse<McpRecord>>(withQuery('/api/mcps', params || {})).then(
+      filterRetiredMcpList,
+    ),
   createMcp: (payload: unknown) =>
     request<McpRecord>('/api/mcps', {
       method: 'POST',
@@ -215,15 +223,19 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   getAgentMcpBindings: (agentKey: string) =>
-    request<AgentMcpBindingsResponse>(`/api/system-agents/${agentKey}/mcp-bindings`),
+    request<AgentMcpBindingsResponse>(`/api/system-agents/${agentKey}/mcp-bindings`).then(
+      filterRetiredAgentMcpBindings,
+    ),
   updateAgentMcpBindings: (
     agentKey: string,
     bindings: Array<{ mcp_id: string; mode: string }>,
   ) =>
     request<AgentMcpBindingsResponse>(`/api/system-agents/${agentKey}/mcp-bindings`, {
       method: 'PUT',
-      body: JSON.stringify({ bindings }),
-    }),
+      body: JSON.stringify({
+        bindings: bindings.filter((binding) => !isRetiredTaskManagerMcpId(binding.mcp_id)),
+      }),
+    }).then(filterRetiredAgentMcpBindings),
   listAgentProviderPrompts: (agentKey: string) =>
     request<AgentProviderPromptRecord[]>(
       `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts`,
@@ -265,7 +277,9 @@ export const api = {
   agentPromptCompleteness: () =>
     request<AgentPromptCompleteness[]>('/api/system-agents/prompt-completeness'),
   resolveAgentCapabilities: (params: Record<string, QueryValue>) =>
-    request<RuntimeCapabilitiesResponse>(withQuery('/api/runtime/agent-capabilities', params)),
+    request<RuntimeCapabilitiesResponse>(withQuery('/api/runtime/agent-capabilities', params)).then(
+      filterRetiredRuntimeCapabilities,
+    ),
 };
 
 async function requestSse(

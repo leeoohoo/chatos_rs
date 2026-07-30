@@ -15,7 +15,7 @@ use serde::Serialize;
 use tokio::process::Command;
 
 use crate::skills::internal_skill_catalog;
-use crate::{select_local_shell, LocalState};
+use crate::{select_local_shell, tracing_stdout, LocalState};
 
 const PERMISSION_WORKSPACE_FILES: &str = "workspace_files";
 const PERMISSION_TERMINAL_EXECUTION: &str = "terminal_execution";
@@ -69,6 +69,12 @@ pub(crate) async fn system_permissions_response(state: &LocalState) -> SystemPer
 }
 
 pub(crate) async fn open_system_permission_settings(permission_id: &str) -> Result<bool> {
+    if matches!(
+        permission_id,
+        PERMISSION_ACCESSIBILITY_CONTROL | PERMISSION_SCREEN_RECORDING
+    ) {
+        request_computer_use_permission_prompt(permission_id)?;
+    }
     let target = settings_target_for_permission(permission_id)
         .ok_or_else(|| anyhow!("system settings are not available for {permission_id}"))?;
     match target.kind {
@@ -80,6 +86,21 @@ pub(crate) async fn open_system_permission_settings(permission_id: &str) -> Resu
         }
     }
     Ok(true)
+}
+
+fn request_computer_use_permission_prompt(permission_id: &str) -> Result<()> {
+    match crate::skills::native::request_computer_use_permission(permission_id) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            tracing_stdout(
+                format!(
+                    "Computer Use permission prompt request failed for {permission_id}: {error}"
+                )
+                .as_str(),
+            );
+            Ok(())
+        }
+    }
 }
 
 fn workspace_files_permission(state: &LocalState) -> SystemPermissionItem {
@@ -235,21 +256,38 @@ fn network_access_permission() -> SystemPermissionItem {
 }
 
 fn accessibility_control_permission() -> SystemPermissionItem {
-    let (status, status_label, note) = match std::env::consts::OS {
-        "macos" => (
-            "unknown",
-            "等待系统检测",
-            "macOS 的窗口/控件树观察和受限输入需要“辅助功能”权限；每个输入动作还会强制进入独立人工审批。",
-        ),
+    let (status, status_label, note, last_error) = match std::env::consts::OS {
+        "macos" => match crate::skills::native::dependency_error("internal_skill_computer_use") {
+            None => (
+                "ready",
+                "已授权",
+                "macOS 已允许 Computer Use helper 观察窗口/控件树；每个输入动作仍会强制进入独立人工审批。",
+                None,
+            ),
+            Some(error) if error.contains("Screen Recording permission") => (
+                "ready",
+                "已授权",
+                "macOS 已允许 Computer Use helper 观察窗口/控件树；屏幕录制权限会在单独条目中显示。",
+                None,
+            ),
+            Some(error) => (
+                "needs_attention",
+                "需要授权",
+                "macOS 的窗口/控件树观察和受限输入需要给实际运行 Computer Use 的 helper/core 授权“辅助功能”；每个输入动作还会强制进入独立人工审批。",
+                Some(error),
+            ),
+        },
         "windows" => (
             "not_applicable",
             "无需单独授权",
             "Windows 当前支持窗口/显示器观察与审批式非文本输入，通常不需要单独隐私权限，但仍受当前用户桌面、前台策略、受保护内容、UAC 和应用完整性级别限制；UI Automation 控件树与安全文本输入尚未开放。",
+            None,
         ),
         _ => (
             "not_applicable",
             "当前平台未启用",
             "当前版本尚未提供该平台的桌面控制 Adapter。",
+            None,
         ),
     };
     SystemPermissionItem {
@@ -266,7 +304,7 @@ fn accessibility_control_permission() -> SystemPermissionItem {
         builtin_kinds: Vec::new(),
         skill_ids: skill_ids_requiring(&["system.accessibility", "desktop.control"]),
         note: note.to_string(),
-        last_error: None,
+        last_error,
     }
 }
 

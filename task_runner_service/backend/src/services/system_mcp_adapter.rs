@@ -33,6 +33,11 @@ impl SystemMcpHostAdapter for TaskRunnerSystemMcpAdapter<'_> {
         key: SystemMcpKey,
         context: &SystemMcpResolveContext,
     ) -> Result<ResolvedSystemMcpBackend, String> {
+        if key == SystemMcpKey::TaskManager {
+            return Ok(ResolvedSystemMcpBackend::Unavailable(
+                "Task Manager builtin MCP has been removed".to_string(),
+            ));
+        }
         let descriptor = system_mcp_descriptor(key);
         if !descriptor.supports_host(self.host()) {
             return Ok(ResolvedSystemMcpBackend::Unavailable(format!(

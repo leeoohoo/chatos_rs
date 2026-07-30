@@ -36,7 +36,7 @@ pub fn spawn_task_worker(config: AppConfig, run_service: RunService) -> JoinHand
                         warn!(
                             worker_id = config.worker_id.as_str(),
                             recovered_count = count,
-                            "task runner worker marked expired run claims as failed"
+                            "task runner worker reconciled expired run claims"
                         );
                     }
                     Ok(_) => {}

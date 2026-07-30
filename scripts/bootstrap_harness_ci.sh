@@ -58,6 +58,7 @@ ci_paths=(
   "scripts/harness_ci_build_images.sh"
   "scripts/local-dev-stack.sh"
   "scripts/check_openapi_method_contract_gate.sh"
+  "scripts/openapi_contract_common.sh"
 )
 
 tmp_dir="$(mktemp -d)"

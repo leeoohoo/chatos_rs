@@ -109,7 +109,9 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
     setMessage(null);
     setError(null);
     try {
-      await window.chatosLocalConnector?.requestDesktopSystemPermission?.(permission.id);
+      if (permission.id !== 'accessibility_control' && permission.id !== 'screen_recording') {
+        await window.chatosLocalConnector?.requestDesktopSystemPermission?.(permission.id);
+      }
       await api.requestSystemPermission(permission.id);
       setPermissions(await loadSystemPermissions());
       setMessage('已打开系统设置。完成授权后请刷新状态。');

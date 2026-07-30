@@ -181,6 +181,32 @@ export function ModelConfigPanel() {
     }
   };
 
+  const deleteProviderGroup = async (group: LocalModelProviderGroup) => {
+    const confirmed = window.confirm(
+      `确定删除供应商“${group.name}”吗？会同时删除该供应商下的 ${group.items.length} 个模型配置。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      for (const item of group.items) {
+        await api.deleteModelConfig(item.id);
+      }
+      if (draft.id && group.items.some((item) => item.id === draft.id)) {
+        resetDraft();
+      }
+      setMessage(`供应商已删除: ${group.name}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除供应商配置失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const editModel = (item: LocalModelConfig) => {
     clearCatalog();
     setDraft({
@@ -306,6 +332,13 @@ export function ModelConfigPanel() {
                     onClick={() => void syncProviderGroup(group)}
                   >
                     <CheckCircle2 size={16} />
+                  </button>
+                  <button
+                    className="iconButton danger"
+                    title="删除供应商"
+                    onClick={() => void deleteProviderGroup(group)}
+                  >
+                    <Trash2 size={16} />
                   </button>
                 </div>
               </div>

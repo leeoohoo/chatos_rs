@@ -33,9 +33,11 @@ pub(super) async fn run_local_sandbox_image_job(
     };
     let context = local_sandbox_image_build_context();
     let dockerfile = local_sandbox_image_dockerfile(context.as_path());
+    let previous_image_id = docker_image_id(job.image_ref.as_str()).await;
     let mut command = docker_command();
     command
         .arg("build")
+        .arg("--force-rm")
         .arg("-t")
         .arg(job.image_ref.as_str())
         .arg("-f")
@@ -57,7 +59,7 @@ pub(super) async fn run_local_sandbox_image_job(
         &jobs,
         job_id.as_str(),
         format!(
-            "[local connector] docker build -t {} -f {} {}\n",
+            "[local connector] docker build --force-rm -t {} -f {} {}\n",
             job.image_ref,
             dockerfile.display(),
             context.display()
@@ -121,6 +123,13 @@ pub(super) async fn run_local_sandbox_image_job(
     };
     finish_local_sandbox_image_job(&jobs, job_id.as_str(), status, error).await;
     if status == "succeeded" {
+        cleanup_replaced_local_sandbox_image(
+            &jobs,
+            job_id.as_str(),
+            job.image_ref.as_str(),
+            previous_image_id,
+        )
+        .await;
         let mut state_guard = state.write().await;
         upsert_local_sandbox_image_record(&mut state_guard, &job);
         state_guard.sandbox.selected_image_ref = Some(job.image_ref);
@@ -128,6 +137,91 @@ pub(super) async fn run_local_sandbox_image_job(
             tracing_stdout(format!("save selected local sandbox image failed: {err}").as_str());
         }
     }
+}
+
+async fn cleanup_replaced_local_sandbox_image(
+    jobs: &Arc<RwLock<Vec<LocalSandboxImageJob>>>,
+    job_id: &str,
+    image_ref: &str,
+    previous_image_id: Option<String>,
+) {
+    let Some(previous_image_id) = previous_image_id else {
+        return;
+    };
+    let Some(current_image_id) = docker_image_id(image_ref).await else {
+        append_local_sandbox_job_output(
+            jobs,
+            job_id,
+            format!(
+                "[local connector] skip old image cleanup: cannot inspect rebuilt image {image_ref}\n"
+            )
+            .as_str(),
+        )
+        .await;
+        return;
+    };
+    if image_ids_equal(previous_image_id.as_str(), current_image_id.as_str()) {
+        return;
+    }
+    let output = docker_command()
+        .args(["image", "rm", previous_image_id.as_str()])
+        .output()
+        .await;
+    match output {
+        Ok(output) if output.status.success() => {
+            append_local_sandbox_job_output(
+                jobs,
+                job_id,
+                format!("[local connector] removed replaced dangling image {previous_image_id}\n")
+                    .as_str(),
+            )
+            .await;
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(output.stderr.as_slice());
+            append_local_sandbox_job_output(
+                jobs,
+                job_id,
+                format!(
+                    "[local connector] old image cleanup skipped for {previous_image_id}: {}\n",
+                    stderr.trim()
+                )
+                .as_str(),
+            )
+            .await;
+        }
+        Err(err) => {
+            append_local_sandbox_job_output(
+                jobs,
+                job_id,
+                format!(
+                    "[local connector] old image cleanup failed for {previous_image_id}: {err}\n"
+                )
+                .as_str(),
+            )
+            .await;
+        }
+    }
+}
+
+async fn docker_image_id(image_ref: &str) -> Option<String> {
+    let output = docker_command()
+        .args(["image", "inspect", "--format", "{{.Id}}", image_ref])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(output.stdout.as_slice())
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn image_ids_equal(left: &str, right: &str) -> bool {
+    left.trim().trim_start_matches("sha256:") == right.trim().trim_start_matches("sha256:")
 }
 
 async fn read_local_sandbox_job_stream<R>(

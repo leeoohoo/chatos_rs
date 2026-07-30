@@ -145,7 +145,7 @@ for file in "${CHANGED_FILES[@]}"; do
       touches_baseline_scripts="true"
       touches_docs_only="false"
       ;;
-    scripts/check_openapi_contract_*|scripts/check_openapi_method_contract_gate.sh|scripts/assemble_openapi_contracts.py|scripts/update_openapi_contract_assembly.sh|scripts/check_openapi_contract_assembly.sh|scripts/check_openapi_fragment_owner_policy.sh|scripts/check_openapi_ownership_map_consistency.sh|scripts/check_openapi_owner_report_schema.sh|scripts/check_openapi_governance_bundle_integrity.sh|scripts/report_openapi_fragment_owners.sh|scripts/generate_openapi_contract_change_summary.sh|scripts/generate_openapi_ownership_drift_trend.sh|scripts/generate_openapi_governance_bundle.sh|scripts/precommit_openapi_contracts.sh|scripts/check_openapi_contract_fast_diff.sh)
+    scripts/check_openapi_contract_*|scripts/check_openapi_method_contract_gate.sh|scripts/openapi_contract_common.sh|scripts/assemble_openapi_contracts.py|scripts/update_openapi_contract_assembly.sh|scripts/check_openapi_contract_assembly.sh|scripts/check_openapi_fragment_owner_policy.sh|scripts/check_openapi_ownership_map_consistency.sh|scripts/check_openapi_owner_report_schema.sh|scripts/check_openapi_governance_bundle_integrity.sh|scripts/report_openapi_fragment_owners.sh|scripts/generate_openapi_contract_change_summary.sh|scripts/generate_openapi_ownership_drift_trend.sh|scripts/generate_openapi_governance_bundle.sh|scripts/precommit_openapi_contracts.sh|scripts/check_openapi_contract_fast_diff.sh)
       touches_openapi_files="true"
       touches_gate_scripts="true"
       touches_owner_governance="true"

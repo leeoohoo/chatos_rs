@@ -12,7 +12,10 @@ use crate::skills::{prepare_local_skill, PreparedLocalSkill};
 use crate::LocalState;
 
 use super::prompt::compose_capability_prompt;
-use super::selection::{effective_skills, filter_builtin_kinds, filter_manifests, parse_ids};
+use super::selection::{
+    effective_skills, filter_builtin_kinds, filter_manifests, parse_ids,
+    remove_retired_task_manager_mcp,
+};
 
 pub(crate) struct ResolvedLocalChatCapabilities {
     pub(crate) builtin_kinds: Vec<BuiltinMcpKind>,
@@ -39,7 +42,8 @@ impl<'a> LocalCapabilityResolver<'a> {
         &self,
         agent_key: SystemAgentKey,
     ) -> Result<ResolvedAgentCapabilities, String> {
-        self.database
+        let mut capabilities = self
+            .database
             .get_capability_snapshot(self.owner_user_id, agent_key.as_str())
             .await
             .map_err(|error| error.to_string())?
@@ -48,7 +52,9 @@ impl<'a> LocalCapabilityResolver<'a> {
                     "Plugin capability snapshot is missing for {}; connect once to sync it",
                     agent_key.as_str()
                 )
-            })
+            })?;
+        remove_retired_task_manager_mcp(&mut capabilities);
+        Ok(capabilities)
     }
 }
 

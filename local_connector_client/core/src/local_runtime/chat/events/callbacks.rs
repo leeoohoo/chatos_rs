@@ -33,11 +33,15 @@ pub(in crate::local_runtime) fn runtime_callbacks(
         on_tools_stream: Some(Arc::new({
             let sender = sender.clone();
             move |payload| {
+                let browser_session = browser_session_event_payload(&payload);
                 sender.publish(
                     "chat.tools.stream",
                     Some("tool"),
                     compact_tool_result(payload),
-                )
+                );
+                if let Some(browser_session) = browser_session {
+                    sender.publish("browser_session", Some("browser"), browser_session);
+                }
             }
         })),
         on_tools_end: Some(Arc::new({
@@ -99,4 +103,45 @@ fn compact_tool_result(payload: Value) -> Value {
         "is_error": payload.get("is_error"),
         "is_stream": payload.get("is_stream"),
     })
+}
+
+fn browser_session_event_payload(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(map) => {
+            if let Some(session) = map.get("browser_session").filter(|value| value.is_object()) {
+                return Some(session.clone());
+            }
+            map.values().find_map(browser_session_event_payload)
+        }
+        Value::Array(items) => items.iter().find_map(browser_session_event_payload),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::browser_session_event_payload;
+
+    #[test]
+    fn extracts_nested_browser_session_payload() {
+        let payload = json!({
+            "name": "browser_navigate",
+            "result": {
+                "_structured_result": {
+                    "browser_session": {
+                        "id": "h_session",
+                        "mode": "managed",
+                        "workspace_id": "workspace-1"
+                    }
+                }
+            }
+        });
+
+        let session = browser_session_event_payload(&payload).expect("browser session");
+        assert_eq!(session["id"], "h_session");
+        assert_eq!(session["mode"], "managed");
+        assert_eq!(session["workspace_id"], "workspace-1");
+    }
 }

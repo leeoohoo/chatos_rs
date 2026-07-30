@@ -58,6 +58,7 @@ pub(super) fn build_local_compose_plan(
         let application_dependencies = application_dependency_kinds(image, &dependency_kinds);
         append_application_service(
             &mut compose_yaml,
+            project_name.as_str(),
             service_id.as_str(),
             image,
             &application_dependencies,
@@ -82,7 +83,12 @@ pub(super) fn build_local_compose_plan(
     let env_file = environment_dotenv(&env_vars)?;
     let mut image_refs = application_plans
         .iter()
-        .map(|(service_id, image)| (image.id.clone(), format!("{project_name}-{service_id}")))
+        .map(|(service_id, image)| {
+            (
+                image.id.clone(),
+                application_image_ref(project_name.as_str(), service_id.as_str()),
+            )
+        })
         .collect::<Vec<_>>();
     for image in images.iter().filter(|image| !image_is_application(image)) {
         if let Some(kind) = dependency_kind_from_identity(image_identity(image).as_str()) {
@@ -118,11 +124,19 @@ fn image_is_application(image: &LocalRuntimeEnvironmentImageRecord) -> bool {
 
 fn append_application_service(
     output: &mut String,
+    project_name: &str,
     service_id: &str,
     image: &LocalRuntimeEnvironmentImageRecord,
     dependency_kinds: &BTreeSet<String>,
 ) {
     output.push_str(format!("  {service_id}:\n").as_str());
+    output.push_str(
+        format!(
+            "    image: {}\n",
+            yaml_string(application_image_ref(project_name, service_id).as_str())
+        )
+        .as_str(),
+    );
     output.push_str("    build:\n      context: ../..\n");
     output.push_str(
         format!("      dockerfile: .chatos/runtime-environment/services/{service_id}/Dockerfile\n")
@@ -149,6 +163,10 @@ fn append_application_service(
         }
     }
     output.push_str("    networks:\n      - chatos-runtime\n    restart: unless-stopped\n");
+}
+
+fn application_image_ref(project_name: &str, service_id: &str) -> String {
+    format!("{project_name}-{service_id}:latest")
 }
 
 fn application_ports(image: &LocalRuntimeEnvironmentImageRecord) -> BTreeSet<u16> {
@@ -486,6 +504,8 @@ mod tests {
         let plan = build_local_compose_plan(&project, &environment, images.as_slice())
             .expect("build local Compose plan");
         let compose = plan.request["compose_yaml"].as_str().expect("compose YAML");
+        assert!(compose.contains("image: \"chatos-project1234-backend:latest\""));
+        assert!(compose.contains("image: \"chatos-project1234-frontend:latest\""));
         assert!(compose.contains("services/backend/Dockerfile"));
         assert!(compose.contains("services/frontend/Dockerfile"));
         assert!(compose.contains("127.0.0.1:3000:3000"));
@@ -493,6 +513,14 @@ mod tests {
         assert!(compose.contains("redis:"));
         assert!(compose.matches("depends_on:").count() >= 2);
         assert_eq!(plan.request["env_file"], "NODE_ENV=\"production\"\n");
+        assert!(plan.image_refs.contains(&(
+            "image-backend".to_string(),
+            "chatos-project1234-backend:latest".to_string()
+        )));
+        assert!(plan.image_refs.contains(&(
+            "image-frontend".to_string(),
+            "chatos-project1234-frontend:latest".to_string()
+        )));
         assert_eq!(plan.image_refs.len(), 2);
     }
 }

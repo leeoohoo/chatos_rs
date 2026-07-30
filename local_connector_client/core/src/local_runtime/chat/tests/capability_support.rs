@@ -41,18 +41,16 @@ pub(in crate::local_runtime) async fn seed_chat_capabilities(
             BuiltinMcpKind::CodeMaintainerWrite,
             BuiltinMcpKind::TerminalController,
             BuiltinMcpKind::BrowserTools,
-            BuiltinMcpKind::TaskManager,
             BuiltinMcpKind::ProjectManagement,
             BuiltinMcpKind::AskUser,
         ]
         .into_iter()
-        .map(|kind| {
-            resolved_builtin(
-                agent_key,
-                kind,
-                matches!(kind, BuiltinMcpKind::TaskManager | BuiltinMcpKind::AskUser),
-            )
-        })
+        .map(|kind| resolved_builtin(agent_key, kind, matches!(kind, BuiltinMcpKind::AskUser)))
+        .chain(std::iter::once(resolved_system_mcp(
+            agent_key,
+            chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,
+            true,
+        )))
         .collect();
         database
             .save_capability_snapshot(&capabilities(owner_user_id, agent_key, execution_mcps))
@@ -64,19 +62,17 @@ pub(in crate::local_runtime) async fn seed_chat_capabilities(
     ] {
         let planning_mcps = [
             BuiltinMcpKind::CodeMaintainerRead,
-            BuiltinMcpKind::TaskManager,
             BuiltinMcpKind::ProjectManagement,
             BuiltinMcpKind::BrowserTools,
             BuiltinMcpKind::AskUser,
         ]
         .into_iter()
-        .map(|kind| {
-            resolved_builtin(
-                agent_key,
-                kind,
-                matches!(kind, BuiltinMcpKind::TaskManager | BuiltinMcpKind::AskUser),
-            )
-        })
+        .map(|kind| resolved_builtin(agent_key, kind, matches!(kind, BuiltinMcpKind::AskUser)))
+        .chain(std::iter::once(resolved_system_mcp(
+            agent_key,
+            chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,
+            true,
+        )))
         .collect();
         database
             .save_capability_snapshot(&capabilities(owner_user_id, agent_key, planning_mcps))
@@ -207,9 +203,19 @@ fn resolved_builtin(
 }
 
 fn resolved_task_runner(agent_key: SystemAgentKey) -> ResolvedMcp {
-    let descriptor = chatos_mcp::system_mcp_descriptor(
+    resolved_system_mcp(
+        agent_key,
         chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
-    );
+        true,
+    )
+}
+
+fn resolved_system_mcp(
+    agent_key: SystemAgentKey,
+    key: chatos_plugin_management_sdk::SystemMcpKey,
+    required: bool,
+) -> ResolvedMcp {
+    let descriptor = chatos_mcp::system_mcp_descriptor(key);
     ResolvedMcp {
         resource: McpRecord {
             id: descriptor.resource_id.to_string(),
@@ -243,7 +249,7 @@ fn resolved_task_runner(agent_key: SystemAgentKey) -> ResolvedMcp {
             resource_kind: "mcp".to_string(),
             resource_id: descriptor.resource_id.to_string(),
             enabled: true,
-            required: true,
+            required,
             priority: 0,
             conditions: BindingConditions::default(),
             component_allowlist: Vec::new(),
@@ -368,6 +374,9 @@ async fn conversation_and_planning_agents_do_not_inherit_task_runner_file_permis
         assert!(task_runner
             .builtin_kinds
             .contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(task_runner
+            .host_system_mcps
+            .contains(&chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog));
     }
 
     database.close().await;

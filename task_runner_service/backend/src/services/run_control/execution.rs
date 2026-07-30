@@ -2,9 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries,
-};
 use crate::services::TaskRunnerCapabilityPolicy;
 
 impl RunService {
@@ -222,21 +219,6 @@ impl RunService {
             .await
         {
             warn!("failed to append failed event for run {}: {}", run.id, err);
-        }
-        match finalize_task_session_entries(
-            &self.store,
-            run.task_id.as_str(),
-            run.id.as_str(),
-            run.status,
-        )
-        .await
-        {
-            Ok(summary) => append_task_session_finalized_event(&self.store, run, &summary).await,
-            Err(err) => warn!(
-                run_id = run.id.as_str(),
-                error = err.as_str(),
-                "failed to finalize Task Manager session for a claimed run whose root task disappeared"
-            ),
         }
     }
 }

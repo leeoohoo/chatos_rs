@@ -11,7 +11,6 @@ use crate::services::shared_builtin_browser_tools::ChatosBrowserVisionAdapter;
 use crate::services::shared_builtin_code_maintainer::ChatosCodeMaintainerHooks;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
 use crate::services::shared_builtin_notepad::ChatosNotepadStore;
-use crate::services::shared_builtin_task_manager::ChatosTaskManagerStore;
 use chatos_mcp::{
     AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, AskUserOptions, AskUserService,
     AskUserStoreRef, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapterRef,
@@ -20,8 +19,7 @@ use chatos_mcp::{
     MemoryPluginReaderService, MemoryReaderStoreRef, MemorySkillReaderOptions,
     MemorySkillReaderService, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
     RemoteConnectionControllerOptions, RemoteConnectionControllerService,
-    RemoteConnectionControllerStoreRef, TaskManagerOptions, TaskManagerService,
-    TaskManagerStoreRef, TerminalControllerOptions, TerminalControllerService,
+    RemoteConnectionControllerStoreRef, TerminalControllerOptions, TerminalControllerService,
     TerminalControllerStoreRef, WebToolsOptions, WebToolsService,
 };
 use std::sync::Arc;
@@ -93,18 +91,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             })?;
             Ok(BuiltinToolService::TerminalController(service))
         }
-        BuiltinMcpKind::TaskManager => {
-            let service = TaskManagerService::new(TaskManagerOptions {
-                server_name: server.name.clone(),
-                review_timeout_ms: crate::services::task_manager::REVIEW_TIMEOUT_MS_DEFAULT,
-                auto_create_task: server.auto_create_task,
-                expose_context_ids: true,
-                default_current_turn_only: false,
-                lifecycle_tools_enabled: false,
-                store: TaskManagerStoreRef::new(Arc::new(ChatosTaskManagerStore)),
-            })?;
-            Ok(BuiltinToolService::TaskManager(service))
-        }
+        BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
         BuiltinMcpKind::ProjectManagement => Err(
             "ProjectManagement builtin provider is only available in task_runner_service"
                 .to_string(),

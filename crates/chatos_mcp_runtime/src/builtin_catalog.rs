@@ -26,10 +26,6 @@ pub const TERMINAL_CONTROLLER_MCP_ID: &str = "builtin_terminal_controller";
 pub const TERMINAL_CONTROLLER_SERVER_NAME: &str = "terminal_controller";
 pub const TERMINAL_CONTROLLER_COMMAND: &str = "builtin:terminal_controller";
 
-pub const TASK_MANAGER_MCP_ID: &str = "builtin_task_manager";
-pub const TASK_MANAGER_SERVER_NAME: &str = "task_manager";
-pub const TASK_MANAGER_COMMAND: &str = "builtin:task_manager";
-
 pub const PROJECT_MANAGEMENT_MCP_ID: &str = "builtin_project_management";
 pub const PROJECT_MANAGEMENT_SERVER_NAME: &str = "project_management_service";
 pub const PROJECT_MANAGEMENT_COMMAND: &str = "builtin:project_management";
@@ -140,6 +136,8 @@ pub enum BuiltinMcpKind {
     CodeMaintainerRead,
     CodeMaintainerWrite,
     TerminalController,
+    /// Legacy compatibility only. The Task Manager builtin MCP is no longer exposed
+    /// through catalogs, config parsing, prompts, or task runner execution.
     TaskManager,
     ProjectManagement,
     Notepad,
@@ -178,7 +176,7 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerRead => CODE_MAINTAINER_READ_SERVER_NAME,
             Self::CodeMaintainerWrite => CODE_MAINTAINER_WRITE_SERVER_NAME,
             Self::TerminalController => TERMINAL_CONTROLLER_SERVER_NAME,
-            Self::TaskManager => TASK_MANAGER_SERVER_NAME,
+            Self::TaskManager => "task_manager",
             Self::ProjectManagement => PROJECT_MANAGEMENT_SERVER_NAME,
             Self::Notepad => NOTEPAD_SERVER_NAME,
             Self::AgentBuilder => AGENT_BUILDER_SERVER_NAME,
@@ -197,7 +195,7 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerRead => Some(CODE_MAINTAINER_READ_MCP_ID),
             Self::CodeMaintainerWrite => Some(CODE_MAINTAINER_WRITE_MCP_ID),
             Self::TerminalController => Some(TERMINAL_CONTROLLER_MCP_ID),
-            Self::TaskManager => Some(TASK_MANAGER_MCP_ID),
+            Self::TaskManager => None,
             Self::ProjectManagement => Some(PROJECT_MANAGEMENT_MCP_ID),
             Self::Notepad => Some(NOTEPAD_MCP_ID),
             Self::AgentBuilder => Some(AGENT_BUILDER_MCP_ID),
@@ -214,7 +212,7 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerRead => Some(CODE_MAINTAINER_READ_COMMAND),
             Self::CodeMaintainerWrite => Some(CODE_MAINTAINER_WRITE_COMMAND),
             Self::TerminalController => Some(TERMINAL_CONTROLLER_COMMAND),
-            Self::TaskManager => Some(TASK_MANAGER_COMMAND),
+            Self::TaskManager => None,
             Self::ProjectManagement => Some(PROJECT_MANAGEMENT_COMMAND),
             Self::Notepad => Some(NOTEPAD_COMMAND),
             Self::AgentBuilder => Some(AGENT_BUILDER_COMMAND),
@@ -274,7 +272,6 @@ pub fn builtin_kind_by_kind_name(value: &str) -> Option<BuiltinMcpKind> {
         "CodeMaintainerRead" => Some(BuiltinMcpKind::CodeMaintainerRead),
         "CodeMaintainerWrite" => Some(BuiltinMcpKind::CodeMaintainerWrite),
         "TerminalController" => Some(BuiltinMcpKind::TerminalController),
-        "TaskManager" => Some(BuiltinMcpKind::TaskManager),
         "ProjectManagement" => Some(BuiltinMcpKind::ProjectManagement),
         "Notepad" => Some(BuiltinMcpKind::Notepad),
         "AgentBuilder" => Some(BuiltinMcpKind::AgentBuilder),
@@ -294,7 +291,6 @@ pub fn builtin_kind_by_server_name(value: &str) -> Option<BuiltinMcpKind> {
         CODE_MAINTAINER_READ_SERVER_NAME => Some(BuiltinMcpKind::CodeMaintainerRead),
         CODE_MAINTAINER_WRITE_SERVER_NAME => Some(BuiltinMcpKind::CodeMaintainerWrite),
         TERMINAL_CONTROLLER_SERVER_NAME => Some(BuiltinMcpKind::TerminalController),
-        TASK_MANAGER_SERVER_NAME => Some(BuiltinMcpKind::TaskManager),
         PROJECT_MANAGEMENT_SERVER_NAME => Some(BuiltinMcpKind::ProjectManagement),
         NOTEPAD_SERVER_NAME => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_SERVER_NAME => Some(BuiltinMcpKind::AgentBuilder),
@@ -318,7 +314,6 @@ pub fn builtin_kind_by_config_id(value: &str) -> Option<BuiltinMcpKind> {
             Some(BuiltinMcpKind::CodeMaintainerWrite)
         }
         TERMINAL_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::TerminalController),
-        TASK_MANAGER_MCP_ID => Some(BuiltinMcpKind::TaskManager),
         PROJECT_MANAGEMENT_MCP_ID => Some(BuiltinMcpKind::ProjectManagement),
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
@@ -337,7 +332,6 @@ pub fn builtin_kind_by_command(value: &str) -> Option<BuiltinMcpKind> {
             Some(BuiltinMcpKind::CodeMaintainerWrite)
         }
         TERMINAL_CONTROLLER_COMMAND => Some(BuiltinMcpKind::TerminalController),
-        TASK_MANAGER_COMMAND => Some(BuiltinMcpKind::TaskManager),
         PROJECT_MANAGEMENT_COMMAND => Some(BuiltinMcpKind::ProjectManagement),
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
@@ -354,7 +348,6 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
         BuiltinMcpKind::CodeMaintainerRead,
         BuiltinMcpKind::CodeMaintainerWrite,
         BuiltinMcpKind::TerminalController,
-        BuiltinMcpKind::TaskManager,
         BuiltinMcpKind::ProjectManagement,
         BuiltinMcpKind::Notepad,
         BuiltinMcpKind::AgentBuilder,
@@ -421,23 +414,14 @@ mod tests {
         BuiltinMcpServerOptions, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_WRITE_BYTES,
         DEFAULT_SEARCH_LIMIT, LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID,
         MEMORY_SKILL_READER_SERVER_NAME, PROJECT_MANAGEMENT_COMMAND, PROJECT_MANAGEMENT_MCP_ID,
-        PROJECT_MANAGEMENT_SERVER_NAME, TASK_MANAGER_COMMAND, TASK_MANAGER_MCP_ID,
+        PROJECT_MANAGEMENT_SERVER_NAME,
     };
 
     #[test]
     fn resolves_kind_from_all_public_identifiers() {
-        assert_eq!(
-            builtin_kind_by_any("TaskManager"),
-            Some(BuiltinMcpKind::TaskManager)
-        );
-        assert_eq!(
-            builtin_kind_by_any(TASK_MANAGER_MCP_ID),
-            Some(BuiltinMcpKind::TaskManager)
-        );
-        assert_eq!(
-            builtin_kind_by_any(TASK_MANAGER_COMMAND),
-            Some(BuiltinMcpKind::TaskManager)
-        );
+        assert_eq!(builtin_kind_by_any("TaskManager"), None);
+        assert_eq!(builtin_kind_by_any("builtin_task_manager"), None);
+        assert_eq!(builtin_kind_by_any("builtin:task_manager"), None);
         assert_eq!(
             builtin_kind_by_any(MEMORY_SKILL_READER_SERVER_NAME),
             Some(BuiltinMcpKind::MemorySkillReader)
@@ -466,9 +450,9 @@ mod tests {
 
     #[test]
     fn builds_default_builtin_server_config() {
-        let server = BuiltinMcpKind::TaskManager.default_server("/tmp/work");
-        assert_eq!(server.name, "task_manager");
-        assert_eq!(server.kind, "TaskManager");
+        let server = BuiltinMcpKind::TerminalController.default_server("/tmp/work");
+        assert_eq!(server.name, "terminal_controller");
+        assert_eq!(server.kind, "TerminalController");
         assert_eq!(server.workspace_dir, "/tmp/work");
         assert!(server.allow_writes);
         assert_eq!(server.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
@@ -486,7 +470,7 @@ mod tests {
             .with_limits(1024, 2048, 12);
         let servers = builtin_servers_from_kinds(
             [
-                BuiltinMcpKind::TaskManager,
+                BuiltinMcpKind::TerminalController,
                 BuiltinMcpKind::CodeMaintainerRead,
             ],
             &options,
@@ -507,7 +491,7 @@ mod tests {
         assert!(configurable.contains(&BuiltinMcpKind::ProjectManagement));
 
         let runtime = default_runtime_builtin_kinds();
-        assert!(runtime.contains(&BuiltinMcpKind::TaskManager));
+        assert!(!runtime.contains(&BuiltinMcpKind::TaskManager));
         assert!(runtime.contains(&BuiltinMcpKind::BrowserTools));
         assert!(!runtime.contains(&BuiltinMcpKind::AgentBuilder));
         assert!(!runtime.contains(&BuiltinMcpKind::ProjectManagement));

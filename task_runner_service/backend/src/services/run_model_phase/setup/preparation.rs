@@ -99,7 +99,12 @@ pub(super) async fn prepare_model_execution(
         &agent_prompt,
         sandbox_context.as_ref(),
     );
-    let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
+    let task_process_logging_enabled = match capability_policy {
+        Some(policy) => {
+            task_process_logging_enabled(&task.mcp_config) && policy.task_process_log_mcp_enabled()
+        }
+        None => task_process_logging_enabled(&task.mcp_config),
+    };
     let tool_result_model_budget_limits = service
         .effective_tool_result_model_budget_limits()
         .await
@@ -148,13 +153,16 @@ pub(super) async fn prepare_model_execution(
         } else {
             "zh-CN"
         };
-        policy.compose_provider_skills_prompt(
-            loaded_external_mcp
-                .summaries
-                .iter()
-                .map(|summary| summary.id.as_str()),
-            locale,
-        )
+        let mut effective_mcp_identifiers = loaded_external_mcp
+            .summaries
+            .iter()
+            .map(|summary| summary.id.as_str())
+            .collect::<Vec<_>>();
+        if task_process_logging_enabled {
+            effective_mcp_identifiers
+                .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID);
+        }
+        policy.compose_provider_skills_prompt(effective_mcp_identifiers, locale)
     });
     prefixed_input_items.extend(mcp_provider_skills_prefixed_input_items(
         provider_skills_prompt,

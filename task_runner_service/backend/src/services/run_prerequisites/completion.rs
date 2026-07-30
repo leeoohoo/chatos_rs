@@ -2,9 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries,
-};
 
 impl RunService {
     pub(in crate::services) async fn finish_blocked_by_prerequisite(
@@ -67,21 +64,6 @@ impl RunService {
         if !task_already_cancelled {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
         }
-        match finalize_task_session_entries(
-            &self.store,
-            task.id.as_str(),
-            run.id.as_str(),
-            run.status,
-        )
-        .await
-        {
-            Ok(summary) => append_task_session_finalized_event(&self.store, run, &summary).await,
-            Err(err) => warn!(
-                run_id = run.id.as_str(),
-                error = err.as_str(),
-                "failed to finalize Task Manager session for blocked prerequisite run"
-            ),
-        }
         self.cleanup_task_terminals(task, run, workspace_dir).await;
     }
 
@@ -134,21 +116,6 @@ impl RunService {
         }
         if !task_already_cancelled {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
-        }
-        match finalize_task_session_entries(
-            &self.store,
-            task.id.as_str(),
-            run.id.as_str(),
-            run.status,
-        )
-        .await
-        {
-            Ok(summary) => append_task_session_finalized_event(&self.store, run, &summary).await,
-            Err(err) => warn!(
-                run_id = run.id.as_str(),
-                error = err.as_str(),
-                "failed to finalize Task Manager session for pre-execution failure"
-            ),
         }
         self.cleanup_task_terminals(task, run, workspace_dir).await;
     }

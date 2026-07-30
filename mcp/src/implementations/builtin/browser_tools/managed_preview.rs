@@ -136,6 +136,132 @@ impl BrowserToolsService {
         ))
     }
 
+    pub async fn dispatch_attached_managed_session_click(
+        &self,
+        conversation_id: &str,
+        x: f64,
+        y: f64,
+        button: &str,
+        click_count: u8,
+    ) -> Result<Value, String> {
+        let (endpoint, page_url) = self
+            .attached_managed_session_cdp_context(conversation_id)
+            .await?;
+        let buttons = match button {
+            "left" => 1,
+            "right" => 2,
+            "middle" => 4,
+            _ => return Err("managed browser click button is invalid".to_string()),
+        };
+        execute_page_cdp_sequence(
+            endpoint.as_str(),
+            page_url.as_str(),
+            vec![
+                (
+                    "Input.dispatchMouseEvent",
+                    json!({
+                        "type": "mouseMoved",
+                        "x": x,
+                        "y": y,
+                        "button": "none",
+                        "buttons": 0,
+                    }),
+                ),
+                (
+                    "Input.dispatchMouseEvent",
+                    json!({
+                        "type": "mousePressed",
+                        "x": x,
+                        "y": y,
+                        "button": button,
+                        "buttons": buttons,
+                        "clickCount": click_count,
+                    }),
+                ),
+                (
+                    "Input.dispatchMouseEvent",
+                    json!({
+                        "type": "mouseReleased",
+                        "x": x,
+                        "y": y,
+                        "button": button,
+                        "buttons": 0,
+                        "clickCount": click_count,
+                    }),
+                ),
+            ],
+        )
+        .await
+    }
+
+    pub async fn dispatch_attached_managed_session_scroll_delta(
+        &self,
+        conversation_id: &str,
+        x: f64,
+        y: f64,
+        delta_x: f64,
+        delta_y: f64,
+    ) -> Result<Value, String> {
+        let (endpoint, page_url) = self
+            .attached_managed_session_cdp_context(conversation_id)
+            .await?;
+        execute_page_cdp_sequence(
+            endpoint.as_str(),
+            page_url.as_str(),
+            vec![(
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type": "mouseWheel",
+                    "x": x,
+                    "y": y,
+                    "deltaX": delta_x,
+                    "deltaY": delta_y,
+                    "button": "none",
+                    "buttons": 0,
+                }),
+            )],
+        )
+        .await
+    }
+
+    pub async fn insert_text_into_attached_managed_session(
+        &self,
+        conversation_id: &str,
+        text: &str,
+    ) -> Result<Value, String> {
+        let (endpoint, page_url) = self
+            .attached_managed_session_cdp_context(conversation_id)
+            .await?;
+        execute_page_cdp_sequence(
+            endpoint.as_str(),
+            page_url.as_str(),
+            vec![("Input.insertText", json!({ "text": text }))],
+        )
+        .await
+    }
+
+    async fn attached_managed_session_cdp_context(
+        &self,
+        conversation_id: &str,
+    ) -> Result<(Url, String), String> {
+        let conversation_key = normalize_browser_session_conversation_id(conversation_id)?;
+        let session = self
+            .bound
+            .sessions
+            .lock()
+            .get(conversation_key.as_str())
+            .cloned()
+            .ok_or_else(|| "managed browser session is not attached".to_string())?;
+        if session.cdp_url.is_some() {
+            return Err(
+                "CDP browser sessions cannot be controlled by the managed session UI".to_string(),
+            );
+        }
+        let (_, page_url) = self.managed_session_page_metrics(&session).await?;
+        let endpoint = self.managed_session_cdp_endpoint(&session).await?;
+        Ok((endpoint, page_url))
+    }
+
     async fn managed_session_page_metrics(
         &self,
         session: &BrowserRuntimeSession,
@@ -192,6 +318,81 @@ impl BrowserToolsService {
             .ok_or_else(|| "managed browser CDP endpoint is malformed".to_string())?;
         validate_loopback_cdp_endpoint(value)
     }
+}
+
+fn managed_cdp_websocket_config(
+    write_buffer_size: usize,
+    max_write_buffer_size: usize,
+) -> WebSocketConfig {
+    WebSocketConfig::default()
+        .read_buffer_size(32 * 1024)
+        .write_buffer_size(write_buffer_size)
+        .max_write_buffer_size(max_write_buffer_size)
+        .max_message_size(Some(CDP_MAX_MESSAGE_BYTES))
+        .max_frame_size(Some(CDP_MAX_MESSAGE_BYTES))
+}
+
+async fn attach_active_page_target<S>(
+    stream: &mut WebSocketStream<S>,
+    page_url: &str,
+) -> Result<String, String>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    send_cdp_command(stream, 1, "Target.getTargets", json!({}), None).await?;
+    let targets = read_cdp_result(stream, 1).await?;
+    let target_id = active_page_target_id(&targets, page_url)?;
+    send_cdp_command(
+        stream,
+        2,
+        "Target.attachToTarget",
+        json!({"targetId": target_id, "flatten": true}),
+        None,
+    )
+    .await?;
+    let attached = read_cdp_result(stream, 2).await?;
+    attached
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= 256)
+        .map(str::to_string)
+        .ok_or_else(|| "managed browser CDP attachment is malformed".to_string())
+}
+
+async fn execute_page_cdp_sequence(
+    endpoint: &str,
+    page_url: &str,
+    commands: Vec<(&'static str, Value)>,
+) -> Result<Value, String> {
+    let config = managed_cdp_websocket_config(16 * 1024, 128 * 1024);
+    let (mut stream, _) = tokio::time::timeout(
+        CDP_CONNECT_TIMEOUT,
+        connect_async_with_config(endpoint, Some(config), true),
+    )
+    .await
+    .map_err(|_| "managed browser CDP connection timed out".to_string())?
+    .map_err(|_| "managed browser CDP connection failed".to_string())?;
+
+    tokio::time::timeout(CDP_RESPONSE_TIMEOUT, async {
+        let session_id = attach_active_page_target(&mut stream, page_url).await?;
+
+        let mut last = json!({});
+        for (index, (method, params)) in commands.into_iter().enumerate() {
+            let command_id = 3_u64.saturating_add(index as u64);
+            send_cdp_command(
+                &mut stream,
+                command_id,
+                method,
+                params,
+                Some(session_id.as_str()),
+            )
+            .await?;
+            last = read_cdp_result(&mut stream, command_id).await?;
+        }
+        Ok::<_, String>(last)
+    })
+    .await
+    .map_err(|_| "managed browser input command timed out".to_string())?
 }
 
 fn current_timestamp_ms() -> u64 {
@@ -276,12 +477,7 @@ async fn capture_bounded_pdf_preview(
     metrics: PageMetrics,
     page_url: &str,
 ) -> Result<Vec<u8>, String> {
-    let config = WebSocketConfig::default()
-        .read_buffer_size(32 * 1024)
-        .write_buffer_size(8 * 1024)
-        .max_write_buffer_size(64 * 1024)
-        .max_message_size(Some(CDP_MAX_MESSAGE_BYTES))
-        .max_frame_size(Some(CDP_MAX_MESSAGE_BYTES));
+    let config = managed_cdp_websocket_config(8 * 1024, 64 * 1024);
     let (mut stream, _) = tokio::time::timeout(
         CDP_CONNECT_TIMEOUT,
         connect_async_with_config(endpoint, Some(config), true),
@@ -291,24 +487,7 @@ async fn capture_bounded_pdf_preview(
     .map_err(|_| "managed browser CDP connection failed".to_string())?;
 
     tokio::time::timeout(CDP_RESPONSE_TIMEOUT, async {
-        send_cdp_command(&mut stream, 1, "Target.getTargets", json!({}), None).await?;
-        let targets = read_cdp_result(&mut stream, 1).await?;
-        let target_id = active_page_target_id(&targets, page_url)?;
-
-        send_cdp_command(
-            &mut stream,
-            2,
-            "Target.attachToTarget",
-            json!({"targetId": target_id, "flatten": true}),
-            None,
-        )
-        .await?;
-        let attached = read_cdp_result(&mut stream, 2).await?;
-        let session_id = attached
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty() && value.len() <= 256)
-            .ok_or_else(|| "managed browser CDP attachment is malformed".to_string())?;
+        let session_id = attach_active_page_target(&mut stream, page_url).await?;
 
         let first_page = metrics.first_page();
         let last_page = metrics.last_page();
@@ -337,7 +516,7 @@ async fn capture_bounded_pdf_preview(
                 "generateTaggedPDF": false,
                 "generateDocumentOutline": false,
             }),
-            Some(session_id),
+            Some(session_id.as_str()),
         )
         .await?;
         let printed = read_cdp_result(&mut stream, 3).await?;

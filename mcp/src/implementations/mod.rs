@@ -12,7 +12,6 @@ static SYSTEM_MCP_DEFINITIONS: [CatalogSystemMcpDefinition; 19] = [
     CatalogSystemMcpDefinition::new(SystemMcpKey::CodeMaintainerRead),
     CatalogSystemMcpDefinition::new(SystemMcpKey::CodeMaintainerWrite),
     CatalogSystemMcpDefinition::new(SystemMcpKey::TerminalController),
-    CatalogSystemMcpDefinition::new(SystemMcpKey::TaskManager),
     CatalogSystemMcpDefinition::new(SystemMcpKey::ProjectManagement),
     CatalogSystemMcpDefinition::new(SystemMcpKey::Notepad),
     CatalogSystemMcpDefinition::new(SystemMcpKey::AgentBuilder),
@@ -27,6 +26,7 @@ static SYSTEM_MCP_DEFINITIONS: [CatalogSystemMcpDefinition; 19] = [
     CatalogSystemMcpDefinition::new(SystemMcpKey::ProjectEnvironment),
     CatalogSystemMcpDefinition::new(SystemMcpKey::ProjectRuntimeEnvironment),
     CatalogSystemMcpDefinition::new(SystemMcpKey::LocalCommandApproval),
+    CatalogSystemMcpDefinition::new(SystemMcpKey::TaskProcessLog),
     CatalogSystemMcpDefinition::new(SystemMcpKey::TaskRunnerService),
 ];
 

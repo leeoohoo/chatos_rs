@@ -18,6 +18,12 @@ export async function loadSystemPermissions(): Promise<SystemPermissionsResponse
   return {
     ...response,
     items: response.items.map((item) => {
+      // Computer Use runs in the bundled core/helper process, while Electron's
+      // permission APIs report the shell app process. macOS TCC grants those
+      // independently, so the core response is the source of truth here.
+      if (item.id === 'accessibility_control' || item.id === 'screen_recording') {
+        return item;
+      }
       const desktop = desktopStatuses[item.id];
       return desktop ? {
         ...item,

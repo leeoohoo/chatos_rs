@@ -36,8 +36,8 @@ pub fn format_task_board_prompt(tasks: &[TaskRecord], locale: InternalContextLoc
     let mut lines = if locale.is_english() {
         vec![
             "[Task Board]".to_string(),
-            "The current task board is maintained by the system. You do not need to call `task_manager_list_tasks` just to figure out what to do next.".to_string(),
-            "You mainly need to do two things: create tasks when the work should be broken down, and immediately call `task_manager_complete_task` or `task_manager_update_task` after finishing a task to update its state.".to_string(),
+            "The current task board is maintained by the system and shown here as read-only context; no task-board MCP tools are available in this turn.".to_string(),
+            "Use the task board to understand current work, then complete the requested work directly with the tools that are actually exposed.".to_string(),
             "You will only see the next current task after task state changes are written back and the context refreshes.".to_string(),
             "If you just finished a task, continue based on the latest unfinished task shown below. Completed tasks stay on the board and remain visible as `done`.".to_string(),
             "".to_string(),
@@ -50,8 +50,8 @@ pub fn format_task_board_prompt(tasks: &[TaskRecord], locale: InternalContextLoc
     } else {
         vec![
             "[Task Board]".to_string(),
-            "当前任务看板由系统维护，你不需要主动调用 `task_manager_list_tasks` 来判断现在该做什么。".to_string(),
-            "你主要负责两件事：需要拆解时创建任务；完成某项任务后立刻调用 `task_manager_complete_task` 或 `task_manager_update_task` 更新状态。".to_string(),
+            "当前任务看板由系统维护，这里只作为只读上下文展示；本轮不会暴露任务看板 MCP 工具。".to_string(),
+            "使用任务看板理解当前工作，然后用本轮真实暴露的工具直接完成请求。".to_string(),
             "只有在任务状态被更新后，你才会在下一次上下文刷新里看到新的当前任务。".to_string(),
             "如果刚完成一项任务，继续依据下面看板里的最新未完成任务推进；已完成任务会保留在看板中，并显示为 `done`。".to_string(),
             "".to_string(),
@@ -445,7 +445,7 @@ mod tests {
         );
 
         assert!(prompt.contains("当前任务看板由系统维护"));
-        assert!(prompt.contains("`task_manager_complete_task`"));
+        assert!(!prompt.contains("task_manager_complete_task"));
         assert!(prompt.contains("当前执行任务："));
         assert!(prompt.contains("未完成任务："));
         assert!(prompt.contains("当前阻塞任务与阻塞信息："));

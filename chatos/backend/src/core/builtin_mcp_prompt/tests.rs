@@ -77,17 +77,14 @@ fn agent_builder_has_runtime_guidance() {
 #[test]
 fn includes_global_and_selected_sections_only() {
     let prompt = compose_builtin_mcp_system_prompt(
-        &[
-            build_builtin_server(BuiltinMcpKind::TaskManager),
-            build_builtin_server(BuiltinMcpKind::AskUser),
-        ],
+        &[build_builtin_server(BuiltinMcpKind::AskUser)],
         InternalContextLocale::ZhCn,
     )
     .expect("prompt");
 
     assert!(prompt.contains("你是 Chat OS 中一个“内置 MCP 优先”的助手。"));
-    assert!(prompt.contains("`task_manager_add_task`"));
     assert!(prompt.contains("`ask_user_prompt_choices`"));
+    assert!(!prompt.contains("task_manager"));
     assert!(!prompt.contains("`code_maintainer_read_read_file`"));
 }
 
@@ -196,7 +193,7 @@ fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
 #[test]
 fn english_prompt_uses_english_global_section() {
     let prompt = compose_builtin_mcp_system_prompt(
-        &[build_builtin_server(BuiltinMcpKind::TaskManager)],
+        &[build_builtin_server(BuiltinMcpKind::AskUser)],
         InternalContextLocale::EnUs,
     )
     .expect("prompt");
@@ -204,5 +201,6 @@ fn english_prompt_uses_english_global_section() {
     assert!(
         prompt.contains("You are a Chat OS assistant that should prefer builtin MCP tools first.")
     );
-    assert!(prompt.contains("`task_manager_add_task`"));
+    assert!(prompt.contains("`ask_user_prompt_choices`"));
+    assert!(!prompt.contains("task_manager"));
 }

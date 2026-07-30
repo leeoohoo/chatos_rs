@@ -223,7 +223,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "execute_command",
-            "Run a shell command in the current project workspace with path switching. Relative paths are resolved from the workspace root. Use background=true for long-running commands and track them with process_poll/process_wait.",
+            "Run a shell command in the current project workspace (`/workspace`) with path switching. Use `path` as a directory inside the workspace root; relative paths are resolved from `/workspace`. Use background=true for long-running commands and track them with process_poll/process_wait.",
             execute_command_schema(),
             async_text_tool_handler(move |args| {
                 let path = args

@@ -4,13 +4,7 @@
 mod models;
 mod normalize;
 mod prompt;
-mod provider;
-mod store;
-
-#[cfg(test)]
-mod provider_tests;
 
 pub(crate) use models::*;
 pub(crate) use normalize::*;
-pub(crate) use prompt::format_local_task_board_prompt;
-pub(crate) use provider::LocalTaskManagerProvider;
+pub(crate) use prompt::{format_local_task_board_prompt, format_local_task_runner_context_prompt};

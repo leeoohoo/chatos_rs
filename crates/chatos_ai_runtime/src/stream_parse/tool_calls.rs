@@ -264,6 +264,37 @@ mod tests {
     }
 
     #[test]
+    fn chat_tool_call_argument_deltas_preserve_split_url_port_digits() {
+        let mut state = StreamState::default();
+        for arguments in [
+            "{\"target_url\":\"http://8.155.171.124:13",
+            "000/\",\"strict_port\":\"13",
+            "000\",\"note\":\"copy exact literals\"}",
+        ] {
+            merge_chat_tool_call_delta(
+                &mut state,
+                0,
+                &json!({
+                    "index": 0,
+                    "id": "call_1",
+                    "function": {
+                        "name": "task_runner_service_create_task",
+                        "arguments": arguments
+                    }
+                }),
+            );
+        }
+
+        let tool_calls = collect_stream_tool_calls(&state.tool_calls_map).expect("tool calls");
+        let arguments = tool_calls[0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments");
+        assert!(arguments.contains("http://8.155.171.124:13000/"));
+        assert!(arguments.contains("\"strict_port\":\"13000\""));
+        assert!(serde_json::from_str::<serde_json::Value>(arguments).is_ok());
+    }
+
+    #[test]
     fn chat_tool_call_name_deltas_preserve_repeated_boundary_characters() {
         let mut state = StreamState::default();
         merge_chat_tool_call_delta(

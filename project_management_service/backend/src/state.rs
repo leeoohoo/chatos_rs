@@ -15,6 +15,7 @@ pub struct AppState {
     pub store: AppStore,
     pub plugin_management_client: PluginManagementClient,
     pub runtime_environment_analysis_jobs: Arc<Mutex<HashSet<String>>>,
+    pub runtime_environment_image_jobs: Arc<Mutex<HashSet<String>>>,
 }
 
 impl AppState {
@@ -29,6 +30,7 @@ impl AppState {
             store,
             plugin_management_client,
             runtime_environment_analysis_jobs: Arc::new(Mutex::new(HashSet::new())),
+            runtime_environment_image_jobs: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 }

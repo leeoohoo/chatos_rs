@@ -29,6 +29,8 @@ Modes:
   quality       Run repository code-quality policies.
   rust-lint     Run Rust formatting and Clippy for all workspaces.
   rust-test     Run tests for the root, Memory Engine, and User Service workspaces.
+  native-platform
+                  Check, lint, build, and test native desktop platform contracts.
   frontend DIR  Type-check, test when available, build, and lint when available.
   frontends     Verify all production frontends (dependencies must already be installed).
   fast          Run quality and Rust lint checks.
@@ -105,6 +107,76 @@ run_rust_tests() {
   )
 }
 
+run_native_platform() {
+  local platform
+  local executable_suffix
+  case "$(uname -s)" in
+    Darwin)
+      platform="macos"
+      executable_suffix=""
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      platform="windows"
+      executable_suffix=".exe"
+      ;;
+    *)
+      echo "Native platform verification supports only macOS and Windows" >&2
+      return 2
+      ;;
+  esac
+
+  cd "$ROOT_DIR"
+  "${CARGO[@]}" check \
+    -p local_connector_client_core \
+    -p chatos_sandbox_mcp_server \
+    --all-targets
+  "${CARGO[@]}" clippy \
+    -p local_connector_client_core \
+    -p chatos_sandbox_mcp_server \
+    --all-targets \
+    -- \
+    -D warnings
+  "${CARGO[@]}" build \
+    -p local_connector_client_core \
+    -p chatos_sandbox_mcp_server \
+    --bins
+  "${CARGO[@]}" test \
+    -p local_connector_client_core \
+    --lib \
+    skills::native::computer_use:: \
+    -- \
+    --nocapture
+  "${CARGO[@]}" test \
+    -p local_connector_client_core \
+    --lib \
+    chrome_integration::tests:: \
+    -- \
+    --nocapture
+  if [[ "$platform" == "macos" ]]; then
+    "${CARGO[@]}" test \
+      -p local_connector_client_core \
+      --lib \
+      embedded_excel_jxa_bridges_compile_without_launching_excel \
+      -- \
+      --nocapture
+  fi
+  "${CARGO[@]}" test \
+    -p chatos_sandbox_mcp_server \
+    plugin_stdio_wrapper::tests:: \
+    -- \
+    --nocapture
+
+  local core_binary="$ROOT_DIR/target-shared/debug/local_connector_client_core${executable_suffix}"
+  if [[ ! -f "$core_binary" ]]; then
+    echo "Native Local Connector Core binary is missing: $core_binary" >&2
+    return 1
+  fi
+  CHATOS_TEST_LOCAL_CONNECTOR_BINARY="$core_binary" node --test \
+    "$ROOT_DIR"/local_connector_client/tests/*.test.mjs \
+    "$ROOT_DIR"/local_connector_client/verify-installed-package.test.mjs
+  npm --prefix "$ROOT_DIR/local_connector_client/frontend" run test:electron
+}
+
 run_frontend() {
   local directory="$1"
   validate_frontend_directory "$directory"
@@ -148,6 +220,9 @@ case "$mode" in
     ;;
   rust-test)
     run_rust_tests
+    ;;
+  native-platform)
+    run_native_platform
     ;;
   frontend)
     [[ "$#" -eq 2 ]] || {

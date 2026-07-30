@@ -4,6 +4,7 @@
 import { useEffect, useState, type FC } from 'react';
 import { CircleAlert, LoaderCircle, RotateCcw } from 'lucide-react';
 import type {
+  MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerModelConfigSummary,
   MessageTaskRunnerRunSummary,
   MessageTaskRunnerTask,
@@ -11,7 +12,6 @@ import type {
 } from '../../lib/api/client/types';
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, ModalShell, StatusBadge, valueOrDash } from './parts';
-import { TaskCapabilitySummaryCard } from './TaskCapabilitySummaryCard';
 import { formatDateTime, isRecord, readString, readStringArray } from './utils';
 
 interface MessageTaskDetailModalProps {
@@ -29,6 +29,7 @@ interface MessageTaskDetailModalProps {
 
 interface MessageTaskProcessLogModalProps {
   task: MessageTaskRunnerTask | null;
+  runDetail?: MessageTaskRunnerRunDetailResponse | null;
   onClose: () => void;
 }
 
@@ -308,10 +309,7 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
         title="MCP / 工作区 / 服务器"
         summary={valueOrDash(isRecord(task.mcp_config) ? task.mcp_config.workspace_dir : null)}
       >
-        <div className="space-y-3">
-          <TaskCapabilitySummaryCard mcpConfig={task.mcp_config} />
-          <CollapsibleText value={task.mcp_config || '-'} code />
-        </div>
+        <CollapsibleText value={task.mcp_config || '-'} code />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -342,23 +340,66 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
 
 export const MessageTaskProcessLogModal: FC<MessageTaskProcessLogModalProps> = ({
   task,
+  runDetail = null,
   onClose,
 }) => {
-  if (!task) {
+  if (!task && !runDetail) {
     return null;
   }
+  const effectiveTask = runDetail?.task || task;
+  const processTasks = Array.isArray(runDetail?.process_tasks)
+    ? runDetail.process_tasks
+    : [];
+  const processLog = readString(effectiveTask?.process_log) || readString(task?.process_log);
+  const hasProcessContent = Boolean(processLog) || processTasks.length > 0;
 
   return (
     <ModalShell
       title="执行过程"
-      subtitle={task.title || task.id}
+      subtitle={effectiveTask?.title || effectiveTask?.id || runDetail?.run?.id}
       onClose={onClose}
       widthClassName="max-w-4xl"
     >
-      <CollapsibleText
-        value={task.process_log || '暂无执行过程'}
-        maxHeightClassName="max-h-[68vh]"
-      />
+      {hasProcessContent ? (
+        <div className="space-y-3">
+          {processLog ? (
+            <CollapsibleText
+              value={processLog}
+              maxHeightClassName="max-h-[68vh]"
+            />
+          ) : null}
+          {processTasks.length > 0 ? (
+            <div className="space-y-2">
+              {processTasks.map((item) => {
+                const itemProcess = readString(item.process_log)
+                  || readString(item.task_tool_state?.resume_hint)
+                  || readString(item.result_summary);
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-md border border-border bg-muted/30 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">
+                        {item.title || item.id}
+                      </span>
+                      {item.status ? <StatusBadge status={item.status} /> : null}
+                    </div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+                      {itemProcess || '暂无过程说明'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <CollapsibleText
+          value="暂无执行过程"
+          maxHeightClassName="max-h-[68vh]"
+        />
+      )}
     </ModalShell>
   );
 };

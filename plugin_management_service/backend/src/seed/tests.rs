@@ -47,7 +47,7 @@ fn task_runner_cloud_plan_phase_excludes_mutating_engineering_tools() {
     let kinds = task_runner_cloud_plan_phase_builtin_kinds();
 
     assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(kinds.contains(&BuiltinMcpKind::TaskManager));
+    assert!(!kinds.contains(&BuiltinMcpKind::TaskManager));
     assert!(kinds.contains(&BuiltinMcpKind::ProjectManagement));
     assert!(kinds.contains(&BuiltinMcpKind::AskUser));
     assert!(!kinds.contains(&BuiltinMcpKind::CodeMaintainerWrite));
@@ -65,7 +65,7 @@ fn task_runner_local_plan_phase_has_separate_planning_defaults() {
     assert!(!local.contains(&BuiltinMcpKind::WebTools));
     assert!(!local.contains(&BuiltinMcpKind::Notepad));
     assert!(local.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(local.contains(&BuiltinMcpKind::TaskManager));
+    assert!(!local.contains(&BuiltinMcpKind::TaskManager));
     assert!(local.contains(&BuiltinMcpKind::ProjectManagement));
     assert!(local.contains(&BuiltinMcpKind::AskUser));
     assert!(local.contains(&BuiltinMcpKind::BrowserTools));
@@ -210,4 +210,33 @@ fn chatos_conversation_requires_task_runner_service_on_both_execution_planes() {
         chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
     )
     .supports_host(chatos_mcp::SystemMcpHost::LocalConnector));
+}
+
+#[test]
+fn task_process_log_is_a_seeded_task_runner_system_mcp() {
+    let descriptor = chatos_mcp::system_mcp_descriptor(
+        chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,
+    );
+
+    assert_eq!(descriptor.resource_id, TASK_PROCESS_LOG_MCP_RESOURCE_ID);
+    assert_eq!(descriptor.server_name, "task_run_process");
+    assert!(descriptor.supports_host(chatos_mcp::SystemMcpHost::TaskRunner));
+    assert!(descriptor.supports_host(chatos_mcp::SystemMcpHost::LocalConnector));
+
+    let record = system_mcp_record(descriptor, "admin", "now").expect("system MCP record");
+    assert_eq!(record.runtime.kind, RUNTIME_KIND_SYSTEM);
+    assert_eq!(
+        record.runtime.system_key.as_deref(),
+        Some(chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog.as_str())
+    );
+    let tools = record
+        .metadata
+        .extra
+        .get("tool_catalog")
+        .and_then(Value::as_array)
+        .expect("tool catalog");
+    assert_eq!(
+        tools[0].get("name").and_then(Value::as_str),
+        Some("record_process")
+    );
 }

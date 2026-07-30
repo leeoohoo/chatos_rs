@@ -41,8 +41,7 @@ pub(super) use self::completion::complete_requirement_if_done;
 use self::completion::finish_task_run;
 pub(crate) use self::completion::user_visible_task_run_failure_receipt;
 pub(super) use self::completion::{
-    finalize_task_manager_session, persist_task_run_receipt, set_requirement_status,
-    set_work_item_status,
+    persist_task_run_receipt, set_requirement_status, set_work_item_status,
 };
 
 pub(super) async fn execute_local_task_run(
@@ -512,93 +511,7 @@ fn redact_ids_with_prefix(value: &str, prefix: &str, redaction: &str) -> String 
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::local_runtime::storage::{
-        LocalMemoryContext, LocalMemorySummaryRecord, LocalMessageRecord, LocalSubjectMemoryRecord,
-    };
-
-    use super::sanitize_task_runner_memory_context;
-
-    #[test]
-    fn task_runner_memory_context_redacts_parent_and_previous_run_task_ids() {
-        let context = LocalMemoryContext {
-            summary: Some(LocalMemorySummaryRecord {
-                id: "summary-1".to_string(),
-                session_id: "session-1".to_string(),
-                summary_text:
-                    "Failed complete_task task_id=lc_async_task_ba4453d1-c956-4e4f-8196-63eb75facd15 and update_task task_id=lc_task_b4d31671-ca78-4980-901b-e1d8383a0beb"
-                        .to_string(),
-                summary_model: "test".to_string(),
-                trigger_type: "test".to_string(),
-                source_start_message_id: None,
-                source_end_message_id: None,
-                source_message_count: 1,
-                source_estimated_tokens: 1,
-                level: 0,
-                status: "ready".to_string(),
-                error_message: None,
-                created_at: "2026-07-29T00:00:00Z".to_string(),
-                updated_at: "2026-07-29T00:00:00Z".to_string(),
-            }),
-            recalls: vec![LocalSubjectMemoryRecord {
-                id: "recall-1".to_string(),
-                subject_type: "session".to_string(),
-                subject_id: "session-1".to_string(),
-                project_id: "project-1".to_string(),
-                recall_key: "key".to_string(),
-                recall_text: "reuse lc_async_task_deadbeef or lc_task_old-run incorrectly"
-                    .to_string(),
-                source_session_id: "session-1".to_string(),
-                source_summary_id: "summary-1".to_string(),
-                level: 0,
-                confidence: None,
-                last_seen_at: None,
-                created_at: "2026-07-29T00:00:00Z".to_string(),
-                updated_at: "2026-07-29T00:00:00Z".to_string(),
-            }],
-            messages: vec![LocalMessageRecord {
-                id: "message-1".to_string(),
-                session_id: "session-1".to_string(),
-                turn_id: Some("turn-1".to_string()),
-                sequence_no: 1,
-                role: "tool".to_string(),
-                content: "{\"task_id\":\"lc_async_task_fd4d4131-2cd4-4293-9762-c4800a3f422\",\"old\":\"lc_task_fd4d4131-2cd4-4293-9762-c4800a3f422\"}"
-                    .to_string(),
-                reasoning: Some("lc_async_task_reasoning lc_task_reasoning".to_string()),
-                tool_calls_json: Some(
-                    "[{\"arguments\":{\"task_id\":\"lc_async_task_tool_call\",\"old\":\"lc_task_tool_call\"}}]".to_string(),
-                ),
-                tool_call_id: Some("call-1".to_string()),
-                metadata_json: Some(
-                    "{\"task_id\":\"lc_async_task_metadata\",\"old\":\"lc_task_metadata\"}"
-                        .to_string(),
-                ),
-                created_at: "2026-07-29T00:00:00Z".to_string(),
-            }],
-        };
-
-        let sanitized = sanitize_task_runner_memory_context(context);
-        let serialized = serde_json::to_string(&sanitized.summary).expect("serialize summary")
-            + sanitized.recalls[0].recall_text.as_str()
-            + sanitized.messages[0].content.as_str()
-            + sanitized.messages[0]
-                .reasoning
-                .as_deref()
-                .unwrap_or_default()
-            + sanitized.messages[0]
-                .tool_calls_json
-                .as_deref()
-                .unwrap_or_default()
-            + sanitized.messages[0]
-                .metadata_json
-                .as_deref()
-                .unwrap_or_default();
-        assert!(!serialized.contains("lc_async_task_"));
-        assert!(!serialized.contains("lc_task_"));
-        assert!(serialized.contains("[conversation_parent_task_id_hidden]"));
-        assert!(serialized.contains("[previous_run_checklist_task_id_hidden]"));
-    }
-}
+mod tests;
 
 #[async_trait]
 impl RuntimeLifecycleHook for LocalTaskRunnerLifecycleHook {
@@ -759,6 +672,13 @@ fn conversation_task_mcp_ids(
 ) -> Result<Vec<String>, String> {
     let mut ids = Vec::new();
     for value in builtin_kinds {
+        if value.eq_ignore_ascii_case("TaskManager")
+            || value.eq_ignore_ascii_case("task_manager")
+            || value.eq_ignore_ascii_case("builtin_task_manager")
+            || value.eq_ignore_ascii_case("builtin:task_manager")
+        {
+            continue;
+        }
         let kind = chatos_mcp_runtime::builtin_kind_by_any(value.as_str())
             .ok_or_else(|| format!("Unknown local Task Runner builtin capability: {value}"))?;
         let descriptor = chatos_mcp::system_mcp_descriptor_by_embedded_kind(kind)
@@ -786,65 +706,4 @@ fn task_run_idempotency_key(run_id: &str, attempt: i64) -> String {
 }
 
 #[cfg(test)]
-mod execution_policy_tests {
-    use chatos_ai_runtime::{
-        RuntimeIterationContext, RuntimeLifecycleHook, TaskFinalizationLifecycleHook,
-        DEFAULT_TASK_RUN_MAX_ITERATIONS,
-    };
-    use serde_json::Value;
-
-    use super::{local_task_runner_agent_key, task_run_idempotency_key};
-
-    #[tokio::test]
-    async fn implementation_tasks_reserve_a_tool_free_finalization_round() {
-        assert_eq!(DEFAULT_TASK_RUN_MAX_ITERATIONS, 600);
-        let hook = TaskFinalizationLifecycleHook::new(DEFAULT_TASK_RUN_MAX_ITERATIONS);
-
-        let normal = hook
-            .before_model_request(iteration_context(hook.finalization_iteration() - 1))
-            .await
-            .expect("normal task iteration");
-        assert!(normal.tools_enabled);
-        assert!(normal.input_items.is_empty());
-
-        let finalization = hook
-            .before_model_request(iteration_context(hook.finalization_iteration()))
-            .await
-            .expect("task finalization iteration");
-        assert!(!finalization.tools_enabled);
-        assert_eq!(finalization.input_items.len(), 1);
-        assert!(finalization.input_items[0]
-            .to_string()
-            .contains("不要再调用任何工具"));
-    }
-
-    #[test]
-    fn retry_attempts_use_distinct_turn_idempotency_keys() {
-        assert_ne!(
-            task_run_idempotency_key("run-1", 1),
-            task_run_idempotency_key("run-1", 2),
-        );
-    }
-
-    #[test]
-    fn local_task_runner_execution_never_uses_cloud_agent_keys() {
-        assert_eq!(
-            local_task_runner_agent_key(true).as_str(),
-            "task_runner_local_plan_phase"
-        );
-        assert_eq!(
-            local_task_runner_agent_key(false).as_str(),
-            "task_runner_local_run_phase"
-        );
-    }
-
-    fn iteration_context(iteration: usize) -> RuntimeIterationContext {
-        RuntimeIterationContext {
-            conversation_id: Some("session-1".to_string()),
-            conversation_turn_id: Some("turn-1".to_string()),
-            iteration,
-            reason: "tool_results".to_string(),
-            input: Value::Array(Vec::new()),
-        }
-    }
-}
+mod execution_policy_tests;

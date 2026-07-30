@@ -648,6 +648,8 @@ export const zhCN: MessageDictionary = {
   'browserSession.livePreview': '实时预览',
   'browserSession.loadingPreview': '正在渲染实时预览...',
   'browserSession.previewFailed': '当前实时预览无法渲染',
+  'browserSession.interactivePreview': '可交互的隔离浏览器预览',
+  'browserSession.previewControlHint': '在这里点击、输入、滚动，不会移动系统鼠标',
   'browserSession.manualControl': '手动控制',
   'browserSession.clickRef': '点击元素',
   'browserSession.typePlaceholder': '输入要填入元素的文本',

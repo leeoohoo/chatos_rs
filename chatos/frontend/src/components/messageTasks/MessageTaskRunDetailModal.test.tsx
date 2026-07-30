@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MessageTaskRunnerRunDetailResponse } from '../../lib/api/client/types';
 import { MessageTaskRunDetailModal } from './MessageTaskRunDetailModal';
+import { MessageTaskProcessLogModal } from './MessageTaskDetailModal';
 
 const detail: MessageTaskRunnerRunDetailResponse = {
   task: {
@@ -39,10 +40,25 @@ const detail: MessageTaskRunnerRunDetailResponse = {
   events_has_more: true,
 };
 
+const processDetail: MessageTaskRunnerRunDetailResponse = {
+  ...detail,
+  task: {
+    id: 'task-1',
+    title: '整理需求',
+    process_log: '',
+  },
+  process_tasks: [{
+    id: 'checklist-1',
+    title: '确认页面初始状态',
+    status: 'doing',
+    process_log: '使用浏览器工具检查当前页，不展示底层工具事件。',
+  }],
+};
+
 describe('MessageTaskRunDetailModal', () => {
   afterEach(cleanup);
 
-  it('uses the process timeline and keeps raw events collapsed by default', () => {
+  it('labels run events as diagnostics and keeps raw events collapsed by default', () => {
     const onLoadMoreEvents = vi.fn();
     render(
       <MessageTaskRunDetailModal
@@ -52,12 +68,66 @@ describe('MessageTaskRunDetailModal', () => {
       />,
     );
 
-    expect(screen.getByText('执行过程')).toBeInTheDocument();
+    expect(screen.getByText('运行事件时间线（诊断）')).toBeInTheDocument();
     expect(screen.getByText('正在 src 中搜索「completed」')).toBeInTheDocument();
     expect(screen.getByText('原始运行事件（诊断）')).toBeInTheDocument();
     expect(screen.queryByText('开始调用工具')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '加载更多过程（剩余 59）' }));
+    fireEvent.click(screen.getByRole('button', { name: '加载更多诊断事件（剩余 59）' }));
     expect(onLoadMoreEvents).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MessageTaskProcessLogModal', () => {
+  afterEach(cleanup);
+
+  it('renders only AI-authored process task notes, not raw run events', () => {
+    render(
+      <MessageTaskProcessLogModal
+        task={{ id: 'task-1', title: '整理需求', process_log: '' }}
+        runDetail={processDetail}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('执行过程')).toBeInTheDocument();
+    expect(screen.getByText('确认页面初始状态')).toBeInTheDocument();
+    expect(screen.getByText('使用浏览器工具检查当前页，不展示底层工具事件。')).toBeInTheDocument();
+    expect(screen.queryByText('正在 src 中搜索「completed」')).not.toBeInTheDocument();
+    expect(screen.queryByText('暂无执行过程')).not.toBeInTheDocument();
+  });
+
+  it('renders task process_log together with AI-authored process task notes', () => {
+    render(
+      <MessageTaskProcessLogModal
+        task={{ id: 'task-1', title: '整理需求', process_log: '' }}
+        runDetail={{
+          ...processDetail,
+          task: {
+            id: 'task-1',
+            title: '整理需求',
+            process_log: '父任务写入的过程说明。',
+          },
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('父任务写入的过程说明。')).toBeInTheDocument();
+    expect(screen.getByText('确认页面初始状态')).toBeInTheDocument();
+    expect(screen.getByText('使用浏览器工具检查当前页，不展示底层工具事件。')).toBeInTheDocument();
+  });
+
+  it('shows empty state when neither task process_log nor AI-authored process tasks exist', () => {
+    render(
+      <MessageTaskProcessLogModal
+        task={{ id: 'task-1', title: '整理需求', process_log: '' }}
+        runDetail={detail}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('暂无执行过程')).toBeInTheDocument();
+    expect(screen.queryByText('正在 src 中搜索「completed」')).not.toBeInTheDocument();
   });
 });

@@ -87,7 +87,7 @@ fn shared_builtin_servers(
     builtin_servers
         .iter()
         .cloned()
-        .map(crate::services::shared_mcp_runtime::shared_builtin_server)
+        .filter_map(crate::services::shared_mcp_runtime::shared_builtin_server)
         .collect()
 }
 

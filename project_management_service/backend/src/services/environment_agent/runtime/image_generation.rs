@@ -42,7 +42,6 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
     {
         return Err("只有程序生成的工作区计划才能生成执行镜像".to_string());
     }
-    let run_id = format!("project_image_build_{}", uuid::Uuid::new_v4());
     let workspace_indexes = images
         .iter()
         .enumerate()
@@ -55,16 +54,6 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
     if workspace_indexes.len() != 1 {
         return Err("项目必须且只能包含一个工作区执行镜像计划".to_string());
     }
-    let features = crate::services::runtime_environment::workspace_runtime_features(
-        images.as_slice(),
-        &environment.detected_stack,
-    );
-    for index in &workspace_indexes {
-        images[*index].features = serde_json::json!(features.clone());
-        images[*index].status = "building".to_string();
-        images[*index].error = None;
-        images[*index].updated_at = now_rfc3339();
-    }
     let dependency_indexes = images
         .iter()
         .enumerate()
@@ -72,11 +61,91 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
             (image.service_role == RuntimeServiceRole::Dependency).then_some(index)
         })
         .collect::<Vec<_>>();
-    let dependency_image_refs = dependency_indexes
+    let required_indexes = workspace_indexes
+        .iter()
+        .chain(dependency_indexes.iter())
+        .copied()
+        .collect::<Vec<_>>();
+    if required_indexes
+        .iter()
+        .all(|index| runtime_image_is_ready(&images[*index]))
+    {
+        environment.status =
+            if crate::services::runtime_environment::required_environment_variables_are_complete(
+                &environment.environment_variables,
+            ) {
+                ProjectRuntimeEnvironmentStatus::Ready
+            } else {
+                ProjectRuntimeEnvironmentStatus::PendingConfiguration
+            };
+        environment.last_error = None;
+        environment.analysis_summary = Some(
+            crate::services::runtime_environment::program_generated_runtime_analysis_summary(
+                &environment,
+                images.as_slice(),
+            ),
+        );
+        environment.updated_at = now_rfc3339();
+        let environment = state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await?;
+        let images = state
+            .store
+            .replace_project_runtime_environment_images(project.id.as_str(), images.as_slice())
+            .await?;
+        return Ok(ProjectRuntimeEnvironmentResponse {
+            environment,
+            images,
+        });
+    }
+    if active_project_image_build(&environment, images.as_slice())
+        && state
+            .runtime_environment_image_jobs
+            .lock()
+            .await
+            .contains(project.id.as_str())
+    {
+        return Ok(ProjectRuntimeEnvironmentResponse {
+            environment,
+            images,
+        });
+    }
+    {
+        let mut active = state.runtime_environment_image_jobs.lock().await;
+        if !active.insert(project.id.clone()) {
+            return Ok(ProjectRuntimeEnvironmentResponse {
+                environment,
+                images,
+            });
+        }
+    }
+    let run_id = format!("project_image_build_{}", uuid::Uuid::new_v4());
+    let features = crate::services::runtime_environment::workspace_runtime_features(
+        images.as_slice(),
+        &environment.detected_stack,
+    );
+    let workspace_build_indexes = workspace_indexes
+        .iter()
+        .copied()
+        .filter(|index| !runtime_image_is_ready(&images[*index]))
+        .collect::<Vec<_>>();
+    for index in &workspace_build_indexes {
+        images[*index].features = serde_json::json!(features.clone());
+        images[*index].status = "building".to_string();
+        images[*index].error = None;
+        images[*index].updated_at = now_rfc3339();
+    }
+    let dependency_prepare_indexes = dependency_indexes
+        .iter()
+        .copied()
+        .filter(|index| !runtime_image_is_ready(&images[*index]))
+        .collect::<Vec<_>>();
+    let dependency_image_refs = dependency_prepare_indexes
         .iter()
         .filter_map(|index| images[*index].image_ref.clone())
         .collect::<Vec<_>>();
-    for index in &dependency_indexes {
+    for index in &dependency_prepare_indexes {
         images[*index].status = "preparing".to_string();
         images[*index].error = None;
         images[*index].updated_at = now_rfc3339();
@@ -85,23 +154,93 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
     environment.last_agent_run_id = Some(run_id.clone());
     environment.last_error = None;
     environment.updated_at = now_rfc3339();
-    state
+    if let Err(error) = state
         .store
         .upsert_project_runtime_environment(&environment)
-        .await?;
-    state
+        .await
+    {
+        state
+            .runtime_environment_image_jobs
+            .lock()
+            .await
+            .remove(project.id.as_str());
+        return Err(error);
+    }
+    if let Err(error) = state
         .store
         .replace_project_runtime_environment_images(project.id.as_str(), images.as_slice())
-        .await?;
+        .await
+    {
+        state
+            .runtime_environment_image_jobs
+            .lock()
+            .await
+            .remove(project.id.as_str());
+        return Err(error);
+    }
 
+    let response = ProjectRuntimeEnvironmentResponse {
+        environment: environment.clone(),
+        images: images.clone(),
+    };
+    let worker_state = state.clone();
+    let worker_project = project.clone();
+    let worker_project_id = project.id.clone();
+    let worker_access_token = user_access_token.map(ToOwned::to_owned);
+    let worker_run_id = run_id.clone();
+    let worker_provider = environment.sandbox_provider;
+    tokio::spawn(async move {
+        if let Err(error) = finish_project_runtime_environment_image_build(
+            worker_state.clone(),
+            worker_project,
+            worker_access_token,
+            worker_run_id.clone(),
+            worker_provider,
+            images,
+            workspace_build_indexes,
+            dependency_prepare_indexes,
+            dependency_image_refs,
+        )
+        .await
+        {
+            persist_background_image_build_failure(
+                &worker_state,
+                worker_project_id.as_str(),
+                worker_run_id.as_str(),
+                error.as_str(),
+            )
+            .await;
+        }
+        worker_state
+            .runtime_environment_image_jobs
+            .lock()
+            .await
+            .remove(worker_project_id.as_str());
+    });
+
+    Ok(response)
+}
+
+async fn finish_project_runtime_environment_image_build(
+    state: AppState,
+    project: ProjectRecord,
+    user_access_token: Option<String>,
+    run_id: String,
+    provider: RuntimeEnvironmentProvider,
+    mut images: Vec<ProjectRuntimeEnvironmentImageRecord>,
+    workspace_indexes: Vec<usize>,
+    dependency_indexes: Vec<usize>,
+    dependency_image_refs: Vec<String>,
+) -> Result<(), String> {
+    let user_access_token = user_access_token.as_deref();
     let catalog = if workspace_indexes
         .iter()
         .any(|index| images[*index].image_id.is_some())
     {
         get_sandbox_image_catalog(
-            state,
-            project,
-            environment.sandbox_provider,
+            &state,
+            &project,
+            provider,
             user_access_token,
             run_id.as_str(),
         )
@@ -119,9 +258,9 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         for (position, (index, image)) in workspace_plans.into_iter().enumerate() {
             let workspace_run_id = format!("{run_id}_workspace_{position}");
             let result = prepare_application_image(
-                state,
-                project,
-                environment.sandbox_provider,
+                &state,
+                &project,
+                provider,
                 user_access_token,
                 workspace_run_id.as_str(),
                 &image,
@@ -133,8 +272,8 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         results
     };
     let dependency_future = prepare_sandbox_dependency_images(
-        state,
-        environment.sandbox_provider,
+        &state,
+        provider,
         project.id.as_str(),
         run_id.as_str(),
         dependency_image_refs,
@@ -145,13 +284,12 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
     for (index, result) in workspace_results {
         match result {
             Ok(result) => {
-                if let Err(error) = apply_prepared_application_result(
-                    &mut images[index],
-                    environment.sandbox_provider,
-                    &result,
-                ) {
+                if let Err(error) =
+                    apply_prepared_application_result(&mut images[index], provider, &result)
+                {
                     images[index].status = "failed".to_string();
                     images[index].error = Some(error.clone());
+                    images[index].updated_at = now_rfc3339();
                     errors.push(error);
                 }
             }
@@ -164,12 +302,13 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         }
     }
     match dependency_result {
-        Ok(_) => {
-            for index in &dependency_indexes {
-                images[*index].status = "ready".to_string();
-                images[*index].error = None;
-                images[*index].updated_at = now_rfc3339();
-            }
+        Ok(result) => {
+            apply_prepared_dependency_results(
+                &mut images,
+                dependency_indexes.as_slice(),
+                &result,
+                &mut errors,
+            );
         }
         Err(error) => {
             for index in &dependency_indexes {
@@ -180,6 +319,19 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
             errors.push(error);
         }
     }
+    let Some(mut environment) = state
+        .store
+        .get_project_runtime_environment(project.id.as_str())
+        .await?
+    else {
+        return Err("项目运行环境不存在，无法保存镜像生成结果".to_string());
+    };
+    if environment.last_agent_run_id.as_deref() != Some(run_id.as_str())
+        || environment.status != ProjectRuntimeEnvironmentStatus::PendingImageBuild
+    {
+        return Ok(());
+    }
+    crate::services::runtime_environment::refresh_environment_variable_values(&mut environment);
     environment.status = if errors.is_empty()
         && images
             .iter()
@@ -206,21 +358,69 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         ),
     );
     environment.updated_at = now_rfc3339();
-    let environment = state
+    state
         .store
         .upsert_project_runtime_environment(&environment)
         .await?;
-    let images = state
+    state
         .store
         .replace_project_runtime_environment_images(project.id.as_str(), &images)
         .await?;
-    if let Some(error) = environment.last_error.clone() {
-        return Err(error);
+    Ok(())
+}
+
+fn active_project_image_build(
+    environment: &ProjectRuntimeEnvironmentRecord,
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+) -> bool {
+    environment.status == ProjectRuntimeEnvironmentStatus::PendingImageBuild
+        && environment
+            .last_agent_run_id
+            .as_deref()
+            .is_some_and(|run_id| run_id.starts_with("project_image_build_"))
+        && images.iter().any(|image| {
+            matches!(
+                image.status.trim().to_ascii_lowercase().as_str(),
+                "building" | "preparing" | "running"
+            )
+        })
+}
+
+async fn persist_background_image_build_failure(
+    state: &AppState,
+    project_id: &str,
+    run_id: &str,
+    error: &str,
+) {
+    let Ok(Some(mut environment)) = state
+        .store
+        .get_project_runtime_environment(project_id)
+        .await
+    else {
+        tracing::error!(project_id, run_id, error, "load failed project image build");
+        return;
+    };
+    if environment.last_agent_run_id.as_deref() != Some(run_id)
+        || environment.status != ProjectRuntimeEnvironmentStatus::PendingImageBuild
+    {
+        return;
     }
-    Ok(ProjectRuntimeEnvironmentResponse {
-        environment,
-        images,
-    })
+    environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
+    environment.analysis_summary = Some("沙箱镜像后台准备失败。".to_string());
+    environment.last_error = Some(error.to_string());
+    environment.updated_at = now_rfc3339();
+    if let Err(persist_error) = state
+        .store
+        .upsert_project_runtime_environment(&environment)
+        .await
+    {
+        tracing::error!(
+            project_id,
+            run_id,
+            error = persist_error.as_str(),
+            "persist failed project image build"
+        );
+    }
 }
 
 async fn prepare_application_image(
@@ -326,6 +526,79 @@ fn apply_prepared_application_result(
     Ok(())
 }
 
+fn apply_prepared_dependency_results(
+    images: &mut [ProjectRuntimeEnvironmentImageRecord],
+    dependency_indexes: &[usize],
+    result: &Value,
+    errors: &mut Vec<String>,
+) {
+    let prepared = result
+        .get("images")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|record| {
+            let image_ref = record
+                .get("image_ref")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            Some((image_ref.to_string(), record))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for index in dependency_indexes {
+        let image = &mut images[*index];
+        let image_ref = image
+            .image_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let Some(image_ref) = image_ref else {
+            let error = format!("依赖镜像 {} 缺少 image_ref", image.display_name);
+            image.status = "failed".to_string();
+            image.error = Some(error.clone());
+            image.updated_at = now_rfc3339();
+            errors.push(error);
+            continue;
+        };
+        let Some(record) = prepared.get(image_ref.as_str()) else {
+            let error = format!("依赖镜像 {image_ref} 没有返回准备结果");
+            image.status = "failed".to_string();
+            image.error = Some(error.clone());
+            image.updated_at = now_rfc3339();
+            errors.push(error);
+            continue;
+        };
+        let status = record
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if matches!(
+            status.as_str(),
+            "ready" | "mock" | "deferred_to_local_compose"
+        ) {
+            image.status = "ready".to_string();
+            image.error = None;
+            image.updated_at = now_rfc3339();
+            continue;
+        }
+        let error = record
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("依赖镜像 {image_ref} 准备失败: {status}"));
+        image.status = "failed".to_string();
+        image.error = Some(error.clone());
+        image.updated_at = now_rfc3339();
+        errors.push(error);
+    }
+}
+
 fn runtime_image_is_ready(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
     image.image_provider != RuntimeEnvironmentProvider::None
         && image
@@ -340,290 +613,4 @@ fn runtime_image_is_ready(image: &ProjectRuntimeEnvironmentImageRecord) -> bool 
 }
 
 #[cfg(test)]
-fn program_managed_sandbox_features(
-    image: &ProjectRuntimeEnvironmentImageRecord,
-    detected_stack: &Value,
-    include_project_stack_evidence: bool,
-) -> Vec<String> {
-    const ORDERED_RUNTIMES: [&str; 10] = [
-        "java", "node", "python", "rust", "go", "dotnet", "php", "ruby", "gcc", "clang",
-    ];
-    let mut selected = std::collections::BTreeMap::new();
-    for raw in image
-        .features
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-    {
-        if let Some((runtime, feature)) = canonical_sandbox_runtime(raw) {
-            let entry = selected.entry(runtime).or_insert_with(|| feature.clone());
-            if !entry.contains('@') && feature.contains('@') {
-                *entry = feature;
-            }
-        }
-    }
-
-    let project_stack_evidence = if include_project_stack_evidence {
-        serde_json::to_string(detected_stack).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let evidence = format!(
-        "{} {}",
-        image.dockerfile.as_deref().unwrap_or_default(),
-        project_stack_evidence,
-    )
-    .to_ascii_lowercase();
-    for (runtime, markers) in [
-        (
-            "java",
-            &[
-                "from maven",
-                "temurin",
-                "openjdk",
-                "pom.xml",
-                "spring",
-                "gradle",
-                "\"java\"",
-            ][..],
-        ),
-        (
-            "node",
-            &[
-                "from node",
-                "from oven/bun",
-                "package.json",
-                "nodejs",
-                "typescript",
-                "\"node\"",
-            ][..],
-        ),
-        (
-            "python",
-            &[
-                "from python",
-                "requirements.txt",
-                "pyproject.toml",
-                "python3",
-                "\"python\"",
-            ][..],
-        ),
-        (
-            "rust",
-            &["from rust", "cargo.toml", "cargo build", "\"rust\""][..],
-        ),
-        ("go", &["from golang", "go.mod", "go build", "\"go\""][..]),
-        (
-            "dotnet",
-            &[
-                "from mcr.microsoft.com/dotnet",
-                ".csproj",
-                "dotnet ",
-                "\"dotnet\"",
-            ][..],
-        ),
-        ("php", &["from php", "composer.json", "\"php\""][..]),
-        (
-            "ruby",
-            &["from ruby", "gemfile", "bundle install", "\"ruby\""][..],
-        ),
-        ("gcc", &["from gcc", "g++", "cmakelists.txt"][..]),
-        ("clang", &["from clang", "from llvm", "clang++"][..]),
-    ] {
-        if markers.iter().any(|marker| evidence.contains(marker)) {
-            selected
-                .entry(runtime)
-                .or_insert_with(|| runtime.to_string());
-        }
-    }
-
-    ORDERED_RUNTIMES
-        .into_iter()
-        .filter_map(|runtime| selected.get(runtime).cloned())
-        .collect()
-}
-
-#[cfg(test)]
-fn canonical_sandbox_runtime(value: &str) -> Option<(&'static str, String)> {
-    let value = value.trim().to_ascii_lowercase();
-    if value.is_empty() {
-        return None;
-    }
-    if let Some((name, version)) = value.split_once('@').or_else(|| value.split_once(':')) {
-        let runtime = sandbox_runtime_for_name(name.trim())?;
-        let version = version.trim().trim_start_matches('v');
-        return Some((
-            runtime,
-            if version.is_empty() {
-                runtime.to_string()
-            } else {
-                format!("{runtime}@{version}")
-            },
-        ));
-    }
-    if let Some(runtime) = sandbox_runtime_for_name(value.as_str()) {
-        return Some((runtime, runtime.to_string()));
-    }
-    for name in [
-        "javascript",
-        "typescript",
-        "openjdk",
-        "nodejs",
-        "python",
-        "dotnet",
-        "golang",
-        "clang",
-        "java",
-        "rust",
-        "ruby",
-        "node",
-        "gcc",
-        "jdk",
-        "php",
-        "go",
-    ] {
-        let Some(version) = value.strip_prefix(name) else {
-            continue;
-        };
-        let version = version
-            .trim_matches(['-', '_', '@', ':'])
-            .trim_start_matches('v');
-        if version.is_empty()
-            || !(version.chars().any(|character| character.is_ascii_digit())
-                || matches!(version, "stable" | "beta" | "nightly"))
-        {
-            continue;
-        }
-        let runtime = sandbox_runtime_for_name(name)?;
-        return Some((runtime, format!("{runtime}@{version}")));
-    }
-    None
-}
-
-#[cfg(test)]
-fn sandbox_runtime_for_name(value: &str) -> Option<&'static str> {
-    match value {
-        "java" | "jdk" | "openjdk" | "maven" | "mvn" | "gradle" | "spring" | "springboot"
-        | "spring-boot" => Some("java"),
-        "node" | "nodejs" | "js" | "javascript" | "typescript" | "npm" | "pnpm" | "yarn"
-        | "bun" => Some("node"),
-        "python" | "python3" | "py" | "pip" | "pip3" | "poetry" | "uv" => Some("python"),
-        "rust" | "cargo" => Some("rust"),
-        "go" | "golang" | "gomod" => Some("go"),
-        "dotnet" | "csharp" | "cs" | "fsharp" | "msbuild" => Some("dotnet"),
-        "php" | "composer" => Some("php"),
-        "ruby" | "rails" | "gem" | "bundler" => Some("ruby"),
-        "gcc" | "c" | "cpp" | "c++" | "cplusplus" | "g++" => Some("gcc"),
-        "clang" | "llvm" => Some("clang"),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{program_managed_sandbox_features, *};
-
-    fn application(features: Value, dockerfile: &str) -> ProjectRuntimeEnvironmentImageRecord {
-        ProjectRuntimeEnvironmentImageRecord {
-            id: "image-1".to_string(),
-            project_id: "project-1".to_string(),
-            environment_key: "api".to_string(),
-            environment_type: "application".to_string(),
-            display_name: "API".to_string(),
-            service_id: "api".to_string(),
-            service_role: RuntimeServiceRole::Application,
-            source_root: ".".to_string(),
-            component_kind: "application".to_string(),
-            startup_command: None,
-            test_command: None,
-            depends_on: Vec::new(),
-            auto_start: false,
-            mcp_policy: ProgramManagedMcpPolicy::default(),
-            image_id: None,
-            image_ref: None,
-            image_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
-            features,
-            ports: empty_array(),
-            env_vars: empty_object(),
-            dockerfile: Some(dockerfile.to_string()),
-            custom_build_script: None,
-            status: "planned".to_string(),
-            error: None,
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-        }
-    }
-
-    #[test]
-    fn build_tools_are_mapped_to_supported_program_managed_runtimes() {
-        let image = application(
-            serde_json::json!(["maven", "spring-boot", "unknown-build-tool"]),
-            "FROM maven:3-eclipse-temurin-21 AS build\nFROM eclipse-temurin:21-jre\n",
-        );
-        assert_eq!(
-            program_managed_sandbox_features(&image, &serde_json::json!({}), false),
-            vec!["java"]
-        );
-    }
-
-    #[test]
-    fn project_stack_evidence_is_not_shared_across_independent_applications() {
-        let image = application(
-            serde_json::json!(["base"]),
-            "FROM nginx:1.27-alpine\nCOPY . /usr/share/nginx/html\n",
-        );
-        assert_eq!(
-            program_managed_sandbox_features(
-                &image,
-                &serde_json::json!({"languages": ["Python"]}),
-                false,
-            ),
-            Vec::<String>::new()
-        );
-    }
-
-    #[test]
-    fn single_application_can_use_project_stack_evidence() {
-        let image = application(
-            serde_json::json!(["base"]),
-            "FROM nginx:1.27-alpine\nCOPY . /usr/share/nginx/html\n",
-        );
-        assert_eq!(
-            program_managed_sandbox_features(
-                &image,
-                &serde_json::json!({"languages": ["Python"]}),
-                true,
-            ),
-            vec!["python"]
-        );
-    }
-
-    #[test]
-    fn dockerfile_and_stack_evidence_fill_missing_runtime_features() {
-        let image = application(
-            serde_json::json!(["base"]),
-            "FROM node:24-bookworm AS build\n",
-        );
-        assert_eq!(
-            program_managed_sandbox_features(
-                &image,
-                &serde_json::json!({"languages": ["Python"]}),
-                true,
-            ),
-            vec!["node", "python"]
-        );
-    }
-
-    #[test]
-    fn explicit_runtime_versions_are_preserved_for_program_initialization() {
-        let image = application(
-            serde_json::json!(["java8", "node@22"]),
-            "FROM eclipse-temurin:8-jre\n",
-        );
-        assert_eq!(
-            program_managed_sandbox_features(&image, &serde_json::json!({}), false),
-            vec!["java@8", "node@22"]
-        );
-    }
-}
+mod tests;

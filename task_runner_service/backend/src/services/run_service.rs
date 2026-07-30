@@ -3,12 +3,10 @@
 
 use super::*;
 
-use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries,
-};
-
 const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(120);
 const WORKER_CLAIM_EXPIRED_ERROR: &str = "worker claim expired";
+const CANCEL_REQUESTED_CLAIM_EXPIRED_REASON: &str =
+    "run cancellation requested before worker claim expired";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RejectedRunClaimHeartbeatAction {
@@ -237,9 +235,17 @@ impl RunService {
             .await?;
         for run in &failed_runs {
             self.store.signal_local_run_abort(run.id.as_str());
+            let cancelled_after_request = run.status == TaskRunStatus::Cancelled;
             if let Err(err) = self
                 .ask_user_prompt_service
-                .cancel_pending_prompts_for_run(run.id.as_str(), WORKER_CLAIM_EXPIRED_ERROR)
+                .cancel_pending_prompts_for_run(
+                    run.id.as_str(),
+                    if cancelled_after_request {
+                        CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
+                    } else {
+                        WORKER_CLAIM_EXPIRED_ERROR
+                    },
+                )
                 .await
             {
                 tracing::warn!(
@@ -250,7 +256,11 @@ impl RunService {
             }
             if let Some(mut task) = self.store.get_task(run.task_id.as_str()).await? {
                 if task.last_run_id.as_deref() == Some(run.id.as_str()) {
-                    task.status = TaskStatus::Failed;
+                    task.status = if cancelled_after_request {
+                        TaskStatus::Cancelled
+                    } else {
+                        TaskStatus::Failed
+                    };
                     task.result_summary = run.result_summary.clone();
                     task.updated_at = now.clone();
                     self.store.save_task(task).await?;
@@ -259,31 +269,23 @@ impl RunService {
             self.store
                 .append_run_event(TaskRunEventRecord::new(
                     run.id.clone(),
-                    "run.claim.expired".to_string(),
+                    if cancelled_after_request {
+                        "run.cancel_requested.claim_expired"
+                    } else {
+                        "run.claim.expired"
+                    }
+                    .to_string(),
                     run.result_summary.clone(),
                     Some(serde_json::json!({
-                        "reason": "worker_claim_expired",
+                        "reason": if cancelled_after_request {
+                            CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
+                        } else {
+                            "worker_claim_expired"
+                        },
                         "previous_worker_id": run.worker_id,
                     })),
                 ))
                 .await?;
-            match finalize_task_session_entries(
-                &self.store,
-                run.task_id.as_str(),
-                run.id.as_str(),
-                run.status,
-            )
-            .await
-            {
-                Ok(summary) => {
-                    append_task_session_finalized_event(&self.store, run, &summary).await
-                }
-                Err(err) => tracing::warn!(
-                    run_id = run.id.as_str(),
-                    error = err.as_str(),
-                    "failed to finalize Task Manager session after worker claim expiry"
-                ),
-            }
             if let Err(err) = self.release_sandboxes_for_terminal_run(run).await {
                 tracing::warn!(
                     run_id = run.id.as_str(),

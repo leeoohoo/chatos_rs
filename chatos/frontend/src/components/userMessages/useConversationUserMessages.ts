@@ -68,7 +68,7 @@ const activeStatus = (value: unknown): boolean => {
 
 const terminalStatus = (value: unknown): boolean => {
   const status = readString(value).toLowerCase();
-  return ['completed', 'succeeded', 'failed', 'blocked', 'cancelled', 'canceled'].includes(status);
+  return ['completed', 'succeeded', 'success', 'done', 'failed', 'blocked', 'cancelled', 'canceled'].includes(status);
 };
 
 const EMPTY_TASK_STATE: UserMessageTaskState = {

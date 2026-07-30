@@ -161,6 +161,34 @@ pub fn local_command_approval_tool_definitions() -> Vec<Value> {
     vec![local_command_approval_decision_tool_definition()]
 }
 
+pub fn task_process_log_tool_definitions() -> Vec<Value> {
+    vec![json!({
+        "name": "record_process",
+        "description": "Record short visible execution breadcrumbs for the current Task Runner task only. Use append for selected approach, root-cause findings, reuse decisions, verification results, blockers, and next steps. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["append", "replace", "clear"],
+                    "default": "append",
+                    "description": "append adds one timestamped entry; replace rewrites the full process log; clear removes the process log."
+                },
+                "heading": {
+                    "type": ["string", "null"],
+                    "description": "Short visible heading for append entries, or null when not needed."
+                },
+                "content": {
+                    "type": ["string", "null"],
+                    "description": "Visible process content. Required for append/replace; pass null for clear."
+                }
+            },
+            "required": ["operation", "heading", "content"],
+            "additionalProperties": false
+        }
+    })]
+}
+
 pub fn local_command_approval_decision_tool_definition() -> Value {
     json!({
         "name": "approval_decision",
@@ -257,6 +285,12 @@ mod tests {
         assert_eq!(
             local_command_approval_decision_tool_definition()["name"].as_str(),
             Some("approval_decision")
+        );
+        let process_log_tools = task_process_log_tool_definitions();
+        assert_eq!(process_log_tools.len(), 1);
+        assert_eq!(
+            process_log_tools[0].get("name").and_then(Value::as_str),
+            Some("record_process")
         );
     }
 }

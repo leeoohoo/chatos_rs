@@ -45,7 +45,6 @@ pub(crate) mod shared_builtin_browser_tools;
 pub(crate) mod shared_builtin_code_maintainer;
 pub(crate) mod shared_builtin_memory_readers;
 pub(crate) mod shared_builtin_notepad;
-pub(crate) mod shared_builtin_task_manager;
 pub(crate) mod shared_mcp_runtime;
 pub mod system_context_ai;
 pub mod task_board_prompt;

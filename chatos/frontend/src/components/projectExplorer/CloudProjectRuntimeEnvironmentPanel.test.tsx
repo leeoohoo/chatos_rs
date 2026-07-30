@@ -153,6 +153,69 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     });
   });
 
+  it('renders detected stack and dependency service config as readable summaries instead of raw JSON', async () => {
+    const response = {
+      environment: {
+        project_id: 'project-readable-runtime',
+        status: 'ready',
+        sandbox_enabled: true,
+        sandbox_provider: 'cloud_sandbox_manager',
+        file_provider: 'harness',
+        detected_stack: {
+          reference_files: [
+            'mdm-service/src/mdm_service/server.py',
+            'mdm-service/sql/postgresql.sql',
+          ],
+          reference_count: 10,
+          summary: 'Repository contains one independently runnable Python HTTP service under mdm-service. mdm-service uses Python >=3.11 and optional PostgreSQL. Root HTML/CSS/JS pages are a static prototype artifact.',
+        },
+        required_services: [{
+          config: {
+            environment_key: 'postgresql',
+            type: 'postgres',
+            version: '16',
+            required: true,
+            ports: [{ container_port: 5432, protocol: 'tcp' }],
+            database: 'mdm_service',
+            username: 'mdm_service',
+          },
+        }],
+      },
+      images: [],
+    };
+    const client = {
+      getProjectRuntimeEnvironment: vi.fn(async () => response),
+      analyzeProjectRuntimeEnvironment: vi.fn(async () => response),
+    } as unknown as ApiClient;
+
+    const { container } = render(
+      <ApiClientProvider client={client}>
+        <I18nProvider>
+          <CloudProjectRuntimeEnvironmentPanel
+            projectId="project-readable-runtime"
+            projectName="Readable runtime"
+            projectSourceType="cloud"
+          />
+        </I18nProvider>
+      </ApiClientProvider>,
+    );
+
+    expect(await screen.findByText('技术摘要')).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.getByText('Repository contains one independently runnable Python HTTP service under mdm-service.')).toBeInTheDocument();
+    expect(screen.getByText('mdm-service uses Python >=3.11 and optional PostgreSQL.')).toBeInTheDocument();
+    expect(screen.getByText('Root HTML/CSS/JS pages are a static prototype artifact.')).toBeInTheDocument();
+    expect(screen.getByText('证据文件 (2)')).toBeInTheDocument();
+    expect(screen.getByText('mdm-service/src/mdm_service/server.py')).toBeInTheDocument();
+    expect(screen.getByText('10')).toBeInTheDocument();
+    expect(screen.getAllByText('postgresql').length).toBeGreaterThan(0);
+    expect(screen.getByText('16')).toBeInTheDocument();
+    expect(screen.getByText('5432/tcp')).toBeInTheDocument();
+    expect(screen.getAllByText('mdm_service').length).toBeGreaterThan(0);
+    expect(container.textContent).not.toContain('"reference_files"');
+    expect(container.textContent).not.toContain('"container_port"');
+  });
+
   it('uses the local project boundary when rendering a local sandbox runtime', async () => {
     const response = {
       environment: {
@@ -326,6 +389,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
           },
           image_provider: 'cloud_sandbox_manager',
           status: 'planned',
+          dockerfile: 'FROM node:24\nRUN corepack enable',
           ports: [],
           env_vars: {},
         },
@@ -344,7 +408,6 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
           },
           image_provider: 'cloud_sandbox_manager',
           status: 'planned',
-          dockerfile: 'FROM node:24\nRUN corepack enable',
           ports: [],
           env_vars: {},
         },
@@ -363,7 +426,15 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
           : image
       )),
     };
-    const generateProjectRuntimeEnvironmentImage = vi.fn(async () => readyResponse);
+    const submittedResponse = {
+      ...plannedResponse,
+      images: plannedResponse.images.map((image) => (
+        image.service_role === 'workspace'
+          ? { ...image, status: 'building' }
+          : image
+      )),
+    };
+    const generateProjectRuntimeEnvironmentImage = vi.fn(async () => submittedResponse);
     const client = {
       getProjectRuntimeEnvironment: vi.fn()
         .mockResolvedValueOnce(plannedResponse)
@@ -388,7 +459,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     expect(await screen.findByText('cloud_sandbox_manager')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看 Dockerfile' }));
     expect(screen.getByText('FROM node:24', { exact: false })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '准备工作区镜像与依赖' }));
+    fireEvent.click(screen.getByRole('button', { name: '准备工作区镜像与依赖镜像' }));
 
     await waitFor(() => {
       expect(generateProjectRuntimeEnvironmentImage).toHaveBeenCalledWith(
@@ -396,7 +467,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
         'image-plan-1',
       );
     });
-    const preparedButton = await screen.findByRole('button', { name: '工作区镜像与依赖已准备' });
+    const preparedButton = await screen.findByRole('button', { name: '工作区镜像与依赖镜像已准备' });
     expect(preparedButton).toBeDisabled();
   });
 

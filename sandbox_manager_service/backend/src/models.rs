@@ -592,6 +592,10 @@ pub struct InitializeSandboxImageRequest {
 pub struct PrepareSandboxDependencyImagesRequest {
     #[serde(default)]
     pub image_refs: Vec<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -599,6 +603,10 @@ pub struct PreparedSandboxDependencyImageRecord {
     pub image_ref: String,
     pub reused: bool,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

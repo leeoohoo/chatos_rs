@@ -43,7 +43,7 @@ fn plan_task_builtin_selection_uses_fixed_allowlist() {
     let selected = runtime_selected_builtin_kinds(&task);
 
     assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+    assert!(!selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
     assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
     assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
@@ -65,14 +65,14 @@ fn default_task_builtin_selection_keeps_requested_kinds() {
 }
 
 #[test]
-fn contact_async_task_adds_required_task_manager_and_ask_user_at_runtime() {
+fn contact_async_task_adds_required_ask_user_at_runtime() {
     let mut task = sample_task(TASK_PROFILE_DEFAULT, Vec::new());
     task.schedule.mode = crate::models::TaskScheduleMode::ContactAsync;
 
     let selected = runtime_selected_builtin_kinds(&task);
 
     assert!(task.mcp_config.enabled_builtin_kinds.is_empty());
-    assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+    assert!(!selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::AskUser));
 }
 
@@ -122,7 +122,7 @@ fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
-    assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+    assert!(!selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
 }
 
@@ -130,11 +130,7 @@ fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
 fn authoritative_plan_with_harness_read_does_not_require_sandbox() {
     let mut task = sample_task(
         TASK_PROFILE_CHATOS_PLAN,
-        vec![
-            "CodeMaintainerRead".to_string(),
-            "TaskManager".to_string(),
-            "AskUser".to_string(),
-        ],
+        vec!["CodeMaintainerRead".to_string(), "AskUser".to_string()],
     );
     task.mcp_config.requires_execution = false;
     task.mcp_config
@@ -167,7 +163,6 @@ fn normalized_config_preserves_explicit_selection_for_policy_validation() {
     let config = TaskMcpConfig {
         enabled_builtin_kinds: vec![
             "ProjectManagement".to_string(),
-            "TaskManager".to_string(),
             "AskUser".to_string(),
             "CodeMaintainerWrite".to_string(),
         ],
@@ -180,7 +175,6 @@ fn normalized_config_preserves_explicit_selection_for_policy_validation() {
         sanitized.enabled_builtin_kinds,
         vec![
             "ProjectManagement".to_string(),
-            "TaskManager".to_string(),
             "AskUser".to_string(),
             "CodeMaintainerWrite".to_string(),
         ]

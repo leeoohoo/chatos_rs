@@ -655,6 +655,8 @@ export const enUS: MessageDictionary = {
   'browserSession.livePreview': 'Live preview',
   'browserSession.loadingPreview': 'Rendering live preview...',
   'browserSession.previewFailed': 'The current live preview could not be rendered',
+  'browserSession.interactivePreview': 'Interactive isolated browser preview',
+  'browserSession.previewControlHint': 'Click, type, and scroll here without moving the system mouse',
   'browserSession.manualControl': 'Manual control',
   'browserSession.clickRef': 'Click element',
   'browserSession.typePlaceholder': 'Text to type into the element',

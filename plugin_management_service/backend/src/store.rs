@@ -3,12 +3,13 @@
 
 use chrono::Utc;
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Regex};
+use mongodb::bson::{doc, Document, Regex};
 use mongodb::options::{FindOneOptions, FindOptions, ReplaceOptions};
 use mongodb::{Collection, Database};
 
 use crate::models::*;
 
+mod agents;
 mod indexes;
 mod plugins;
 
@@ -69,7 +70,8 @@ impl AppStore {
         user: &CurrentUser,
         query: &ListResourcesQuery,
     ) -> Result<ListResponse<McpRecord>, String> {
-        let filter = self.resource_filter(user, query, Some("runtime.kind"))?;
+        let filter =
+            exclude_retired_system_mcps(self.resource_filter(user, query, Some("runtime.kind"))?);
         let total = self
             .mcps
             .count_documents(filter.clone(), None)
@@ -148,12 +150,75 @@ impl AppStore {
             .sort(doc! { "display_name": 1, "name": 1 })
             .build();
         self.mcps
-            .find(doc! { "visibility": VISIBILITY_SYSTEM_PRIVATE }, options)
+            .find(
+                exclude_retired_system_mcps(doc! { "visibility": VISIBILITY_SYSTEM_PRIVATE }),
+                options,
+            )
             .await
             .map_err(|err| err.to_string())?
             .try_collect()
             .await
             .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_all_mcps_for_admin_catalog(&self) -> Result<Vec<McpRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "visibility": 1, "display_name": 1, "name": 1 })
+            .build();
+        self.mcps
+            .find(exclude_retired_system_mcps(doc! {}), options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn delete_retired_task_manager_mcp(&self) -> Result<(), String> {
+        let filter = retired_task_manager_system_mcp_filter();
+        let records: Vec<McpRecord> = self
+            .mcps
+            .find(filter.clone(), None)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut resource_ids = RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect::<Vec<_>>();
+        for record in records {
+            if !resource_ids.contains(&record.id) {
+                resource_ids.push(record.id);
+            }
+        }
+
+        self.bindings
+            .delete_many(
+                doc! {
+                    "resource_kind": RESOURCE_KIND_MCP,
+                    "resource_id": { "$in": resource_ids.clone() },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.checks
+            .delete_many(
+                doc! {
+                    "resource_kind": RESOURCE_KIND_MCP,
+                    "resource_id": { "$in": resource_ids },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.mcps
+            .delete_many(filter, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     pub async fn list_enabled_user_mcps(
@@ -391,284 +456,6 @@ impl AppStore {
             .map_err(|err| err.to_string())
     }
 
-    pub async fn list_agents(&self) -> Result<Vec<SystemAgentRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "service_name": 1, "agent_key": 1 })
-            .build();
-        self.agents
-            .find(None, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn get_agent(&self, agent_key: &str) -> Result<Option<SystemAgentRecord>, String> {
-        self.agents
-            .find_one(doc! { "agent_key": agent_key }, None)
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_agent(&self, record: &SystemAgentRecord) -> Result<(), String> {
-        self.agents
-            .replace_one(
-                doc! { "agent_key": &record.agent_key },
-                record,
-                upsert_options(),
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn delete_agent(&self, agent_key: &str) -> Result<(), String> {
-        self.agents
-            .delete_one(doc! { "agent_key": agent_key }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn list_agent_prompts(
-        &self,
-        agent_key: &str,
-    ) -> Result<Vec<AgentProviderPromptRecord>, String> {
-        let options = FindOptions::builder().sort(doc! { "vendor": 1 }).build();
-        self.agent_prompts
-            .find(doc! { "agent_key": agent_key }, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn get_agent_prompt(
-        &self,
-        agent_key: &str,
-        vendor: chatos_plugin_management_sdk::AgentPromptVendor,
-    ) -> Result<Option<AgentProviderPromptRecord>, String> {
-        let vendor = mongodb::bson::to_bson(&vendor).map_err(|err| err.to_string())?;
-        self.agent_prompts
-            .find_one(doc! { "agent_key": agent_key, "vendor": vendor }, None)
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn list_published_agent_prompts(
-        &self,
-    ) -> Result<Vec<AgentProviderPromptRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "agent_key": 1, "vendor": 1 })
-            .build();
-        self.agent_prompts
-            .find(
-                doc! {
-                    "enabled": true,
-                    "published_revision": { "$gt": 0 },
-                    "published_content": { "$type": "string", "$ne": "" },
-                },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_agent_prompt(
-        &self,
-        record: &AgentProviderPromptRecord,
-    ) -> Result<(), String> {
-        self.agent_prompts
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn get_agent_prompt_bundle_version(
-        &self,
-    ) -> Result<Option<AgentPromptBundleVersionRecord>, String> {
-        self.agent_prompt_versions
-            .find_one(doc! { "id": "system_agent_prompts" }, None)
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_agent_prompt_bundle_version(
-        &self,
-        record: &AgentPromptBundleVersionRecord,
-    ) -> Result<(), String> {
-        self.agent_prompt_versions
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn increment_agent_prompt_bundle_version(
-        &self,
-    ) -> Result<AgentPromptBundleVersionRecord, String> {
-        use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument};
-
-        let now = now_rfc3339();
-        let options = FindOneAndUpdateOptions::builder()
-            .upsert(true)
-            .return_document(ReturnDocument::After)
-            .build();
-        self.agent_prompt_versions
-            .find_one_and_update(
-                doc! { "id": "system_agent_prompts" },
-                doc! {
-                    "$inc": { "version": 1_i64 },
-                    "$set": { "updated_at": &now },
-                    "$setOnInsert": { "id": "system_agent_prompts", "required": false },
-                },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .ok_or_else(|| "agent prompt bundle version was not persisted".to_string())
-    }
-
-    pub async fn list_agent_prompt_versions(
-        &self,
-        agent_key: &str,
-    ) -> Result<Vec<AgentPromptVersionRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "bundle_version": -1 })
-            .projection(doc! { "prompts.content": 0 })
-            .build();
-        self.agent_prompt_releases
-            .find(doc! { "agent_key": agent_key }, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn get_agent_prompt_version(
-        &self,
-        agent_key: &str,
-        bundle_version: i64,
-    ) -> Result<Option<AgentPromptVersionRecord>, String> {
-        self.agent_prompt_releases
-            .find_one(
-                doc! { "agent_key": agent_key, "bundle_version": bundle_version },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_agent_prompt_version(
-        &self,
-        record: &AgentPromptVersionRecord,
-    ) -> Result<(), String> {
-        self.agent_prompt_releases
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn list_bindings(
-        &self,
-        agent_key: &str,
-        query: &ListBindingsQuery,
-    ) -> Result<Vec<AgentBindingRecord>, String> {
-        let mut filter = doc! { "agent_key": agent_key };
-        if let Some(scope) = normalized(query.scope.as_deref()) {
-            filter.insert("binding_scope", scope);
-        }
-        if let Some(owner_user_id) = normalized(query.owner_user_id.as_deref()) {
-            filter.insert("owner_user_id", owner_user_id);
-        }
-        let options = FindOptions::builder()
-            .sort(doc! { "priority": 1, "created_at": 1 })
-            .build();
-        self.bindings
-            .find(filter, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn list_bindings_for_runtime(
-        &self,
-        agent_key: &str,
-        owner_user_id: &str,
-    ) -> Result<Vec<AgentBindingRecord>, String> {
-        let filter = doc! {
-            "agent_key": agent_key,
-            "enabled": true,
-            "$or": [
-                { "binding_scope": BINDING_SCOPE_SYSTEM_REQUIRED },
-                { "binding_scope": BINDING_SCOPE_GLOBAL_DEFAULT },
-                { "binding_scope": BINDING_SCOPE_USER_OVERRIDE, "owner_user_id": owner_user_id },
-            ],
-        };
-        let options = FindOptions::builder()
-            .sort(doc! { "priority": 1, "created_at": 1 })
-            .build();
-        self.bindings
-            .find(filter, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_binding(&self, record: &AgentBindingRecord) -> Result<(), String> {
-        self.bindings
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn get_binding(&self, id: &str) -> Result<Option<AgentBindingRecord>, String> {
-        self.bindings
-            .find_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn delete_binding(&self, id: &str) -> Result<(), String> {
-        self.bindings
-            .delete_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn delete_mcp_bindings_for_agent(&self, agent_key: &str) -> Result<(), String> {
-        self.bindings
-            .delete_many(
-                doc! { "agent_key": agent_key, "resource_kind": RESOURCE_KIND_MCP },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn delete_bindings_for_agent(&self, agent_key: &str) -> Result<(), String> {
-        self.bindings
-            .delete_many(doc! { "agent_key": agent_key }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
     pub async fn get_check(
         &self,
         resource_kind: &str,
@@ -767,4 +554,129 @@ fn list_options(limit: Option<i64>, offset: Option<u64>) -> FindOptions {
 
 fn upsert_options() -> ReplaceOptions {
     ReplaceOptions::builder().upsert(true).build()
+}
+
+const RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS: &[&str] = &["builtin_task_manager", "task_manager"];
+const RETIRED_TASK_MANAGER_MCP_SERVER_NAME: &str = "task_manager";
+const RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY: &str = "task_manager";
+const RETIRED_TASK_MANAGER_MCP_KIND_NAME: &str = "TaskManager";
+
+pub(crate) fn is_retired_task_manager_mcp(record: &McpRecord) -> bool {
+    let is_system_scope = record.visibility == VISIBILITY_SYSTEM_PRIVATE
+        || record.source_kind == SOURCE_KIND_SYSTEM_SEED
+        || matches!(
+            record.runtime.kind.as_str(),
+            RUNTIME_KIND_SYSTEM | RUNTIME_KIND_BUILTIN
+        );
+    if !is_system_scope {
+        return false;
+    }
+    RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS
+        .iter()
+        .any(|value| record.id.eq_ignore_ascii_case(value))
+        || record
+            .name
+            .eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME)
+        || record
+            .runtime
+            .server_name
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME))
+        || record
+            .runtime
+            .system_key
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY))
+        || record.runtime.builtin_kind.as_deref().is_some_and(|value| {
+            value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_KIND_NAME)
+                || value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME)
+        })
+}
+
+fn exclude_retired_system_mcps(filter: Document) -> Document {
+    doc! {
+        "$and": [
+            filter,
+            { "$nor": [retired_task_manager_system_mcp_filter()] },
+        ]
+    }
+}
+
+fn retired_task_manager_system_mcp_filter() -> Document {
+    doc! {
+        "$and": [
+            {
+                "$or": [
+                    { "visibility": VISIBILITY_SYSTEM_PRIVATE },
+                    { "source_kind": SOURCE_KIND_SYSTEM_SEED },
+                    { "runtime.kind": { "$in": [RUNTIME_KIND_SYSTEM, RUNTIME_KIND_BUILTIN] } },
+                ],
+            },
+            {
+                "$or": [
+                    { "id": { "$in": RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS } },
+                    { "name": RETIRED_TASK_MANAGER_MCP_SERVER_NAME },
+                    { "runtime.server_name": RETIRED_TASK_MANAGER_MCP_SERVER_NAME },
+                    { "runtime.system_key": RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY },
+                    { "runtime.builtin_kind": { "$in": [RETIRED_TASK_MANAGER_MCP_KIND_NAME, RETIRED_TASK_MANAGER_MCP_SERVER_NAME] } },
+                ],
+            },
+        ],
+    }
+}
+
+#[cfg(test)]
+mod retired_mcp_tests {
+    use super::*;
+
+    fn mcp_record(
+        visibility: &str,
+        source_kind: &str,
+        runtime_kind: &str,
+        name: &str,
+    ) -> McpRecord {
+        McpRecord {
+            id: name.to_string(),
+            owner_user_id: "admin".to_string(),
+            owner_kind: OWNER_KIND_SYSTEM.to_string(),
+            visibility: visibility.to_string(),
+            source_kind: source_kind.to_string(),
+            name: name.to_string(),
+            display_name: name.to_string(),
+            description: None,
+            enabled: true,
+            runtime: McpRuntime {
+                kind: runtime_kind.to_string(),
+                system_key: Some(name.to_string()),
+                server_name: Some(name.to_string()),
+                ..McpRuntime::default()
+            },
+            security: ResourceSecurity::default(),
+            metadata: ResourceMetadata::default(),
+            plugin_component: PluginComponentOwnership::default(),
+            created_by: "admin".to_string(),
+            updated_by: "admin".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    #[test]
+    fn retired_task_manager_detection_only_matches_system_records() {
+        let system = mcp_record(
+            VISIBILITY_SYSTEM_PRIVATE,
+            SOURCE_KIND_SYSTEM_SEED,
+            RUNTIME_KIND_SYSTEM,
+            "task_manager",
+        );
+        assert!(is_retired_task_manager_mcp(&system));
+
+        let user_created_same_name = mcp_record(
+            VISIBILITY_PRIVATE,
+            SOURCE_KIND_USER_CREATED,
+            RUNTIME_KIND_HTTP,
+            "task_manager",
+        );
+        assert!(!is_retired_task_manager_mcp(&user_created_same_name));
+    }
 }

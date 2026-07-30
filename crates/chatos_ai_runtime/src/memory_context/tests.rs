@@ -327,7 +327,7 @@ fn compose_response_to_input_items_prioritizes_latest_tool_output_with_total_bud
             "tool_calls": [{
                 "id": call_id,
                 "type": "function",
-                "function": {"name": "task_manager_list_tasks", "arguments": "{}"}
+                "function": {"name": "project_management_list_project_tasks", "arguments": "{}"}
             }]
         })),
         summary_status: "pending".to_string(),
@@ -348,7 +348,7 @@ fn compose_response_to_input_items_prioritizes_latest_tool_output_with_total_bud
             structured_payload: None,
             metadata: Some(json!({
                 "tool_call_id": call_id,
-                "name": "task_manager_list_tasks"
+                "name": "project_management_list_project_tasks"
             })),
             summary_status: "pending".to_string(),
             summary_id: None,

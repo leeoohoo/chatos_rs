@@ -15,7 +15,6 @@ import { BrowserSessionEventsCard } from './BrowserSessionEventsCard';
 import { PluginRunSnapshotCard } from './PluginRunSnapshotCard';
 import { PluginRuntimeEventsCard } from './PluginRuntimeEventsCard';
 import { PluginUiWorkbenchCard } from './PluginUiWorkbenchCard';
-import { TaskCapabilitySummaryCard } from './TaskCapabilitySummaryCard';
 import { extractReportContent, formatDateTime, isRecord, readString } from './utils';
 
 interface MessageTaskRunDetailModalProps {
@@ -115,7 +114,6 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       />
 
       <PluginRunSnapshotCard inputSnapshot={run.input_snapshot} />
-      <TaskCapabilitySummaryCard mcpConfig={task.mcp_config} />
       <BrowserSessionEventsCard events={events} />
       <PluginRuntimeEventsCard events={events} />
       {messageId && taskLookup ? (
@@ -154,8 +152,8 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       ) : null}
 
       <CollapsibleSection
-        title="执行过程"
-        summary={events.length ? `已加载 ${events.length}/${eventsTotal} 条运行记录 · 展示为 ${processTimelineItems.length} 个过程步骤` : '暂无过程'}
+        title="运行事件时间线（诊断）"
+        summary={events.length ? `已加载 ${events.length}/${eventsTotal} 条运行记录 · 聚合为 ${processTimelineItems.length} 个诊断步骤` : '暂无事件'}
         defaultOpen={events.length > 0}
       >
         <RunProcessTimeline items={processTimelineItems} />
@@ -166,7 +164,7 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
             disabled={loadingMoreEvents}
             onClick={onLoadMoreEvents}
           >
-            {loadingMoreEvents ? '加载中' : `加载更多过程（剩余 ${Math.max(eventsTotal - events.length, 0)}）`}
+            {loadingMoreEvents ? '加载中' : `加载更多诊断事件（剩余 ${Math.max(eventsTotal - events.length, 0)}）`}
           </button>
         ) : null}
       </CollapsibleSection>

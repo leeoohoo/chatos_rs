@@ -167,6 +167,55 @@ impl MongoStore {
             .map_err(|err| err.to_string())?;
         let mut failed_runs = Vec::new();
         for mut run in candidates {
+            let was_cancel_requested = run.cancel_requested;
+            let (
+                terminal_status,
+                terminal_status_text,
+                result_summary,
+                error_message,
+                callback_event,
+            ) = if was_cancel_requested {
+                (
+                    TaskRunStatus::Cancelled,
+                    "cancelled",
+                    "任务取消请求已生效；运行节点心跳过期后按取消收尾",
+                    None,
+                    "task.cancelled",
+                )
+            } else {
+                (
+                    TaskRunStatus::Failed,
+                    "failed",
+                    "任务运行节点心跳过期，已标记为失败",
+                    Some("worker claim expired"),
+                    "task.failed",
+                )
+            };
+            let mut set_doc = doc! {
+                "status": terminal_status_text,
+                "finished_at": failed_at,
+                "updated_at": failed_at,
+                "result_summary": result_summary,
+                "cancel_requested": false,
+                "chatos_callback_delivery": bson::to_bson(&ChatosCallbackDeliveryState {
+                    event: callback_event.to_string(),
+                    status: ChatosCallbackDeliveryStatus::Pending,
+                    attempt_count: 0,
+                    next_attempt_at: Some(failed_at.to_string()),
+                    last_error: None,
+                    updated_at: failed_at.to_string(),
+                }).map_err(|err| err.to_string())?,
+            };
+            if let Some(error_message) = error_message {
+                set_doc.insert("error_message", error_message);
+            }
+            let mut unset_doc = doc! {
+                "claim_token": "",
+                "claim_until": "",
+            };
+            if was_cancel_requested {
+                unset_doc.insert("error_message", "");
+            }
             let result = self
                 .runs
                 .update_one(
@@ -176,26 +225,8 @@ impl MongoStore {
                         "claim_until": { "$lte": expired_before },
                     },
                     doc! {
-                        "$set": {
-                            "status": "failed",
-                            "finished_at": failed_at,
-                            "updated_at": failed_at,
-                            "result_summary": "任务运行节点心跳过期，已标记为失败",
-                            "error_message": "worker claim expired",
-                            "cancel_requested": false,
-                            "chatos_callback_delivery": bson::to_bson(&ChatosCallbackDeliveryState {
-                                event: "task.failed".to_string(),
-                                status: ChatosCallbackDeliveryStatus::Pending,
-                                attempt_count: 0,
-                                next_attempt_at: Some(failed_at.to_string()),
-                                last_error: None,
-                                updated_at: failed_at.to_string(),
-                            }).map_err(|err| err.to_string())?,
-                        },
-                        "$unset": {
-                            "claim_token": "",
-                            "claim_until": "",
-                        }
+                        "$set": set_doc,
+                        "$unset": unset_doc,
                     },
                     None,
                 )
@@ -204,11 +235,11 @@ impl MongoStore {
             if result.modified_count == 0 {
                 continue;
             }
-            run.status = TaskRunStatus::Failed;
+            run.status = terminal_status;
             run.finished_at = Some(failed_at.to_string());
             run.updated_at = failed_at.to_string();
-            run.result_summary = Some("任务运行节点心跳过期，已标记为失败".to_string());
-            run.error_message = Some("worker claim expired".to_string());
+            run.result_summary = Some(result_summary.to_string());
+            run.error_message = error_message.map(ToOwned::to_owned);
             run.cancel_requested = false;
             run.claim_token = None;
             run.claim_until = None;

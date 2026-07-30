@@ -87,14 +87,10 @@ fn task_runner_run_phase_requirements_are_caller_required() {
     let resolution = resolve_task_mcp(&task, &[]);
 
     assert!(resolution.requested_builtin_kinds.is_empty());
-    assert!(resolution
+    assert!(!resolution
         .required_builtin_kinds
-        .contains(&RequiredBuiltinCapability {
-            kind: BuiltinMcpKind::TaskManager,
-            source: McpCapabilityRequirementSource::CallerContract(
-                AgentMcpCaller::TaskRunnerRunPhase,
-            ),
-        }));
+        .iter()
+        .any(|required| required.kind == BuiltinMcpKind::TaskManager));
     assert!(resolution
         .required_builtin_kinds
         .contains(&RequiredBuiltinCapability {
@@ -103,7 +99,7 @@ fn task_runner_run_phase_requirements_are_caller_required() {
                 AgentMcpCaller::TaskRunnerRunPhase,
             ),
         }));
-    assert!(resolution
+    assert!(!resolution
         .server_local_builtin_kinds
         .contains(&BuiltinMcpKind::TaskManager));
     assert!(resolution
@@ -128,14 +124,10 @@ fn fixed_task_tools_are_not_reported_as_requested_capabilities() {
         resolution.requested_builtin_kinds,
         vec![BuiltinMcpKind::CodeMaintainerRead]
     );
-    assert!(resolution
+    assert!(!resolution
         .required_builtin_kinds
-        .contains(&RequiredBuiltinCapability {
-            kind: BuiltinMcpKind::TaskManager,
-            source: McpCapabilityRequirementSource::CallerContract(
-                AgentMcpCaller::TaskRunnerRunPhase,
-            ),
-        }));
+        .iter()
+        .any(|required| required.kind == BuiltinMcpKind::TaskManager));
     assert!(resolution
         .required_builtin_kinds
         .contains(&RequiredBuiltinCapability {
@@ -147,7 +139,7 @@ fn fixed_task_tools_are_not_reported_as_requested_capabilities() {
 }
 
 #[test]
-fn chatos_async_source_wins_over_run_phase_for_fixed_task_tools() {
+fn chatos_async_source_does_not_require_task_manager() {
     let mut task = sample_task(TaskMcpConfig {
         enabled_builtin_kinds: Vec::new(),
         ..TaskMcpConfig::default()
@@ -156,22 +148,10 @@ fn chatos_async_source_wins_over_run_phase_for_fixed_task_tools() {
 
     let resolution = resolve_task_mcp(&task, &[]);
 
-    assert!(resolution
-        .required_builtin_kinds
-        .contains(&RequiredBuiltinCapability {
-            kind: BuiltinMcpKind::TaskManager,
-            source: McpCapabilityRequirementSource::CallerContract(
-                AgentMcpCaller::ChatosAsyncPlanner,
-            ),
-        }));
     assert!(!resolution
         .required_builtin_kinds
-        .contains(&RequiredBuiltinCapability {
-            kind: BuiltinMcpKind::TaskManager,
-            source: McpCapabilityRequirementSource::CallerContract(
-                AgentMcpCaller::TaskRunnerRunPhase,
-            ),
-        }));
+        .iter()
+        .any(|required| required.kind == BuiltinMcpKind::TaskManager));
 }
 
 #[test]

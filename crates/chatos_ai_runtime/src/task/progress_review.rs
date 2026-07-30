@@ -555,7 +555,7 @@ mod tests {
     fn observation_and_task_bookkeeping_are_not_engineering_progress() {
         for name in [
             "project_runtime_environment_get_project_runtime_environment_info",
-            "task_manager_update_task",
+            "project_management_update_project_task",
             "task_run_process_record_process",
             "code_maintainer_read_read_file_raw",
         ] {

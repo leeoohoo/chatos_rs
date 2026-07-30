@@ -52,6 +52,53 @@ test('desktop ticket authentication rejects a failed Core response', async () =>
   await assert.rejects(() => authenticate('ticket-2'), /ticket expired/);
 });
 
+test('desktop ticket authentication retries while the Core IPC socket is starting', async () => {
+  let attempts = 0;
+  const authenticate = createDesktopTicketAuthenticator({
+    sendIpcHttpRequest: async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        const error = new Error('connect ENOENT /tmp/chatos/core.sock');
+        error.code = 'ENOENT';
+        throw error;
+      }
+      return {
+        status: 200,
+        ok: true,
+        body: JSON.stringify({ configured: true }),
+      };
+    },
+    localApiHeaders: () => ({}),
+    getCloudBaseUrl: () => 'http://127.0.0.1:39230',
+    retryAttempts: 5,
+    retryDelayMs: 1,
+  });
+
+  const status = await authenticate('ticket-startup-race');
+
+  assert.equal(status.configured, true);
+  assert.equal(attempts, 3);
+});
+
+test('desktop ticket authentication does not retry non-transient IPC failures', async () => {
+  let attempts = 0;
+  const authenticate = createDesktopTicketAuthenticator({
+    sendIpcHttpRequest: async () => {
+      attempts += 1;
+      const error = new Error('permission denied');
+      error.code = 'EACCES';
+      throw error;
+    },
+    localApiHeaders: () => ({}),
+    getCloudBaseUrl: () => 'http://127.0.0.1:39230',
+    retryAttempts: 5,
+    retryDelayMs: 1,
+  });
+
+  await assert.rejects(() => authenticate('ticket-3'), /permission denied/);
+  assert.equal(attempts, 1);
+});
+
 test('desktop ticket authentication rejects an empty ticket before contacting Core', async () => {
   let called = false;
   const authenticate = createDesktopTicketAuthenticator({

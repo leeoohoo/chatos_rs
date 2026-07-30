@@ -17,7 +17,6 @@ use crate::memory_readers::{
 };
 use crate::notepad::NotepadBuiltinService;
 use crate::remote_connection_controller::RemoteConnectionControllerService;
-use crate::task_manager::TaskManagerService;
 use crate::terminal_controller::TerminalControllerService;
 use crate::web_tools::{WebToolsOptions, WebToolsService};
 
@@ -31,7 +30,6 @@ pub enum SharedBuiltinToolService {
     MemorySkillReader(MemorySkillReaderService),
     Notepad(NotepadBuiltinService),
     RemoteConnectionController(RemoteConnectionControllerService),
-    TaskManager(TaskManagerService),
     TerminalController(TerminalControllerService),
     AskUser(AskUserService),
     WebTools(WebToolsService),
@@ -48,7 +46,6 @@ impl SharedBuiltinToolService {
             Self::MemorySkillReader(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
             Self::RemoteConnectionController(service) => service.list_tools(),
-            Self::TaskManager(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
             Self::AskUser(service) => service.list_tools(),
             Self::WebTools(service) => service.list_tools(),
@@ -83,13 +80,6 @@ impl SharedBuiltinToolService {
             Self::MemorySkillReader(service) => service.call_tool(name, args),
             Self::Notepad(service) => service.call_tool(name, args),
             Self::RemoteConnectionController(service) => service.call_tool(name, args),
-            Self::TaskManager(service) => service.call_tool(
-                name,
-                args,
-                context.conversation_id.as_deref(),
-                context.conversation_turn_id.as_deref(),
-                on_stream_chunk,
-            ),
             Self::TerminalController(service) => {
                 service.call_tool(name, args, context.conversation_id.as_deref())
             }
@@ -114,7 +104,6 @@ impl SharedBuiltinToolService {
             Self::MemorySkillReader(_) => Vec::new(),
             Self::Notepad(_) => Vec::new(),
             Self::RemoteConnectionController(service) => service.unavailable_tools(),
-            Self::TaskManager(_) => Vec::new(),
             Self::TerminalController(_) => Vec::new(),
             Self::AskUser(_) => Vec::new(),
             Self::WebTools(service) => service.unavailable_tools(),

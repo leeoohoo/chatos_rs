@@ -9,6 +9,7 @@ mod implementations;
 mod provider;
 mod skills;
 mod system_tool_catalog;
+mod task_types;
 mod tool_catalog;
 
 pub use contracts::project_management as project_management_contract;
@@ -34,8 +35,6 @@ pub use implementations::builtin::{
     PatchTarget, RemoteConnectionControllerContext, RemoteConnectionControllerOptions,
     RemoteConnectionControllerService, RemoteConnectionControllerStore,
     RemoteConnectionControllerStoreRef, SharedBuiltinProvider, SharedBuiltinToolService,
-    TaskClosureDecision, TaskDraft, TaskManagerOptions, TaskManagerService, TaskManagerStore,
-    TaskManagerStoreRef, TaskOutcomeItem, TaskStreamChunkCallback, TaskUpdatePatch,
     TerminalCommandPermissions, TerminalControllerContext, TerminalControllerOptions,
     TerminalControllerService, TerminalControllerStore, TerminalControllerStoreRef,
     TerminalProcessPollDetails, TerminalProcessSnapshot, TerminalProcessWaitResponse,
@@ -44,18 +43,21 @@ pub use implementations::builtin::{
     CHATOS_BUNDLED_TOOLS_PATH_ENV, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS,
     DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS, PROCESS_LIST_MAX_LIMIT,
     PROCESS_POLL_MAX_LIMIT, PROCESS_WAIT_MAX_TIMEOUT_MS, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT,
-    RECENT_LOGS_MAX_TERMINAL_LIMIT, REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
+    RECENT_LOGS_MAX_TERMINAL_LIMIT,
 };
 pub use implementations::builtin::{
     agent_builder, ask_user, browser_command_support, browser_runtime, browser_tools,
     bundled_tools, code_maintainer, memory_readers, notepad, remote_connection_controller,
     research_findings, research_output, research_payloads, research_summary, research_summary_view,
-    task_manager, terminal_controller, terminal_controller_response, web_tools,
+    terminal_controller, terminal_controller_response, web_tools,
 };
 pub(crate) use implementations::builtin::{
     browser_page_insights, browser_page_state_view, tool_registry,
 };
 pub use implementations::sandbox_images;
+pub use task_types::{
+    TaskClosureDecision, TaskDraft, TaskOutcomeItem, TaskUpdatePatch, TASK_NOT_FOUND_ERR,
+};
 
 pub use backend::{SystemMcpBackend, SystemMcpHost};
 pub use catalog::{
@@ -70,5 +72,7 @@ pub use definition::{CatalogSystemMcpDefinition, SystemMcpDefinition};
 pub use implementations::{system_mcp_definition, system_mcp_definitions};
 pub use provider::{ResolvedSystemMcpBackend, SystemMcpHostAdapter, SystemMcpResolveContext};
 pub use skills::{system_mcp_provider_skills, SystemMcpProviderSkill};
-pub use system_tool_catalog::local_command_approval_decision_tool_definition;
+pub use system_tool_catalog::{
+    local_command_approval_decision_tool_definition, task_process_log_tool_definitions,
+};
 pub use tool_catalog::{system_mcp_static_tools, system_mcp_tool_catalog, SystemMcpToolCatalog};

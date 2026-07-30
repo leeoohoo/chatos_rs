@@ -54,11 +54,12 @@ export const getLocalTaskBoardTask = (
 
 export const getLocalTaskRunnerRunDetail = (
   runId: string,
-  options: { eventLimit?: number | null; eventOffset?: number | null } = {},
+  options: { eventLimit?: number | null; eventOffset?: number | null; includeEvents?: boolean | null } = {},
 ): Promise<MessageTaskRunnerRunDetailResponse> => {
   const query = new URLSearchParams();
   if (typeof options.eventLimit === 'number') query.set('event_limit', String(options.eventLimit));
   if (typeof options.eventOffset === 'number') query.set('event_offset', String(options.eventOffset));
+  if (typeof options.includeEvents === 'boolean') query.set('include_events', String(options.includeEvents));
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
   return requestLocalRuntime<MessageTaskRunnerRunDetailResponse>(
     `/api/local/runtime/task-runs/${encodeURIComponent(runId)}/detail${suffix}`,

@@ -1,16 +1,29 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { EditOutlined, SettingOutlined } from '@ant-design/icons';
+import { EditOutlined, InfoCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Input, Modal, Segmented, Space, Table, Typography, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Input,
+  Modal,
+  Segmented,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '../api/client';
-import { EnabledTag } from '../components/Tags';
+import { EnabledTag, RuntimeKindTag, VisibilityTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
 import { agentDisplayName, mcpDisplayName } from '../i18n/labels';
+import { agentPromptVendorLabel } from './agentPrompts/support';
 import type {
   AgentPromptCompleteness,
   AgentMcpBindingView,
@@ -65,11 +78,17 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
   }, [bindingsQuery.data]);
 
   const saveMutation = useMutation({
-    mutationFn: () =>
-      api.updateAgentMcpBindings(
+    mutationFn: () => {
+      const bindableById = new Map(
+        (bindingsQuery.data?.items || []).map((item) => [item.mcp.id, item.bindable]),
+      );
+      return api.updateAgentMcpBindings(
         selectedAgentKey || '',
-        Object.entries(modes).map(([mcp_id, mode]) => ({ mcp_id, mode })),
-      ),
+        Object.entries(modes)
+          .filter(([mcp_id, mode]) => mode !== 'disabled' && bindableById.get(mcp_id))
+          .map(([mcp_id, mode]) => ({ mcp_id, mode })),
+      );
+    },
     onSuccess: (data) => {
       message.success(t('agent.mcpConfigSaved'));
       queryClient.setQueryData(['agent-mcp-bindings', selectedAgentKey], data);
@@ -103,10 +122,19 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         width: 130,
         render: (_, record) => {
           const item = completeness.get(record.agent_key) as AgentPromptCompleteness | undefined;
+          const published = item?.published_vendors.map(agentPromptVendorLabel).join(' / ') || '-';
+          const missing = item?.missing_vendors.map(agentPromptVendorLabel).join(' / ') || '-';
           return (
-            <Typography.Text type={item?.ready ? 'success' : 'warning'}>
-              {t('agent.promptCount', { count: item?.published_vendors.length || 0 })}
-            </Typography.Text>
+            <Tooltip
+              title={t('agent.promptStatusTooltip', {
+                published,
+                missing,
+              })}
+            >
+              <Typography.Text type={item?.ready ? 'success' : 'warning'}>
+                {t('agent.promptCount', { count: item?.published_vendors.length || 0 })}
+              </Typography.Text>
+            </Tooltip>
           );
         },
       },
@@ -124,6 +152,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
                   onClick={() => {
                     setSelectedAgentKey(record.agent_key);
                     setSearch('');
+                    setModes({});
                     setModalOpen(true);
                   }}
                 >
@@ -151,11 +180,40 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       return items;
     }
     return items.filter((item) =>
-      [item.mcp.name, item.mcp.display_name, item.mcp.runtime.builtin_kind]
+      [
+        item.mcp.id,
+        item.mcp.name,
+        item.mcp.display_name,
+        item.mcp.description,
+        item.mcp.visibility,
+        item.mcp.source_kind,
+        item.mcp.owner_kind,
+        item.mcp.owner_user_id,
+        item.mcp.runtime.kind,
+        item.mcp.runtime.builtin_kind,
+        item.mcp.runtime.system_key,
+        item.mcp.runtime.server_name,
+        item.mcp.plugin_id,
+        item.mcp.component_key,
+        item.unavailable_reason,
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(keyword)),
     );
   }, [bindingsQuery.data, search]);
+
+  const mcpStats = useMemo(() => {
+    const items = bindingsQuery.data?.items || [];
+    const bindableById = new Map(items.map((item) => [item.mcp.id, item.bindable]));
+    return {
+      total: items.length,
+      shown: mcpItems.length,
+      bound: Object.entries(modes).filter(
+        ([mcpId, mode]) => mode !== 'disabled' && bindableById.get(mcpId),
+      ).length,
+      unavailable: items.filter((item) => !item.bindable).length,
+    };
+  }, [bindingsQuery.data, mcpItems.length, modes]);
 
   const mcpColumns = useMemo<ColumnsType<AgentMcpBindingView>>(
     () => [
@@ -164,39 +222,83 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         dataIndex: ['mcp', 'display_name'],
         render: (_, item) => (
           <Space direction="vertical" size={0}>
-            <Typography.Text strong>{mcpDisplayName(item.mcp, t)}</Typography.Text>
-            <Typography.Text type="secondary">{item.mcp.name}</Typography.Text>
+            <Space size={6} wrap>
+              <Typography.Text strong disabled={!item.bindable}>
+                {mcpDisplayName(item.mcp, t)}
+              </Typography.Text>
+              {!item.bindable ? (
+                <Tooltip title={agentMcpUnavailableReasonLabel(item.unavailable_reason, t)}>
+                  <Tag icon={<InfoCircleOutlined />} color="default">
+                    {t('agent.mcpNotBindable')}
+                  </Tag>
+                </Tooltip>
+              ) : null}
+            </Space>
+            <Typography.Text type="secondary">
+              {item.mcp.name} · {item.mcp.id}
+            </Typography.Text>
+          </Space>
+        ),
+      },
+      {
+        title: t('table.source'),
+        key: 'source',
+        width: 290,
+        render: (_, item) => (
+          <Space direction="vertical" size={2}>
+            <Space size={4} wrap>
+              <VisibilityTag value={item.mcp.visibility} />
+              <RuntimeKindTag value={item.mcp.runtime.kind} />
+            </Space>
+            <Typography.Text type="secondary">
+              {sourceKindLabel(item.mcp.source_kind, t)}
+              {item.mcp.plugin_id ? ` · ${item.mcp.plugin_id}` : ''}
+            </Typography.Text>
           </Space>
         ),
       },
       {
         title: t('table.status'),
         dataIndex: ['mcp', 'enabled'],
-        width: 100,
-        render: (enabled) => <EnabledTag enabled={enabled} />,
+        width: 145,
+        render: (enabled, item) => (
+          <Space direction="vertical" size={2}>
+            <EnabledTag enabled={enabled} />
+            <Tag color={item.bindable ? 'green' : 'default'}>
+              {item.bindable ? t('agent.mcpBindable') : t('agent.mcpNotBindable')}
+            </Tag>
+          </Space>
+        ),
       },
       {
         title: t('agent.mcpMode'),
         key: 'mode',
         width: 310,
         render: (_, item) => (
-          <Segmented
-            className="mcp-mode-control"
-            block
-            disabled={!item.mcp.enabled}
-            value={modes[item.mcp.id] || 'disabled'}
-            options={[
-              { value: 'disabled', label: t('mcpMode.disabled') },
-              { value: 'optional', label: t('mcpMode.optional') },
-              { value: 'required', label: t('mcpMode.required') },
-            ]}
-            onChange={(value) =>
-              setModes((current) => ({
-                ...current,
-                [item.mcp.id]: value as McpBindingMode,
-              }))
-            }
-          />
+          <Space direction="vertical" size={4} className="full-width">
+            <Segmented
+              className="mcp-mode-control"
+              block
+              disabled={!item.bindable}
+              value={modes[item.mcp.id] || 'disabled'}
+              options={[
+                { value: 'disabled', label: t('mcpMode.disabled') },
+                { value: 'optional', label: t('mcpMode.optional') },
+                { value: 'required', label: t('mcpMode.required') },
+              ]}
+              onChange={(value) =>
+                setModes((current) => ({
+                  ...current,
+                  [item.mcp.id]: value as McpBindingMode,
+                }))
+              }
+            />
+            {!item.bindable ? (
+              <Typography.Text type="secondary">
+                {agentMcpUnavailableReasonLabel(item.unavailable_reason, t)}
+              </Typography.Text>
+            ) : null}
+          </Space>
         ),
       },
     ],
@@ -232,12 +334,21 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
             : t('agent.configureMcp')
         }
         open={modalOpen}
-        width={820}
+        width={1180}
         onCancel={() => setModalOpen(false)}
         onOk={() => saveMutation.mutate()}
         confirmLoading={saveMutation.isPending}
         destroyOnClose
       >
+        <Alert
+          className="mcp-binding-notice"
+          type="info"
+          showIcon
+          message={t('agent.mcpCatalogNotice')}
+        />
+        <Typography.Text type="secondary">
+          {t('agent.mcpCatalogStats', mcpStats)}
+        </Typography.Text>
         <Input.Search
           className="mcp-binding-search"
           allowClear
@@ -253,9 +364,26 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
           loading={bindingsQuery.isLoading}
           pagination={false}
           tableLayout="fixed"
-          scroll={{ y: 330 }}
+          scroll={{ y: 520 }}
         />
       </Modal>
     </div>
   );
+}
+
+function sourceKindLabel(value: string, t: (key: string) => string): string {
+  const key = `sourceKind.${value}`;
+  const translated = t(key);
+  return translated === key ? value : translated;
+}
+
+function agentMcpUnavailableReasonLabel(
+  reason: string | null | undefined,
+  t: (key: string) => string,
+): string {
+  if (!reason) {
+    return '';
+  }
+  const translated = t(reason);
+  return translated === reason ? reason : translated;
 }

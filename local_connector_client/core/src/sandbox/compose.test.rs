@@ -258,4 +258,43 @@ mod tests {
             2
         );
     }
+
+    #[test]
+    fn compose_cleanup_targets_only_built_application_images() {
+        let normalized = json!({
+            "services": {
+                "api": {
+                    "image": "chatos-project-api:latest",
+                    "build": {
+                        "context": "/tmp/project",
+                        "dockerfile": ".chatos/runtime-environment/services/api/Dockerfile"
+                    }
+                },
+                "postgresql": {
+                    "image": "postgres:16-alpine"
+                },
+                "worker": {
+                    "image": "chatos-project-worker:latest",
+                    "build": {
+                        "context": "/tmp/project",
+                        "dockerfile": ".chatos/runtime-environment/services/worker/Dockerfile"
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            managed_application_image_refs(&normalized),
+            vec![
+                "chatos-project-api:latest".to_string(),
+                "chatos-project-worker:latest".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn image_id_comparison_ignores_sha256_prefix() {
+        assert!(image_ids_equal("sha256:abc123", "abc123"));
+        assert!(!image_ids_equal("sha256:abc123", "sha256:def456"));
+    }
 }

@@ -90,7 +90,7 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
           <thead className="bg-muted/40 text-muted-foreground">
             <tr>
               <th className="px-3 py-2 font-medium">{t('cloudRuntime.environment')}</th>
-              <th className="px-3 py-2 font-medium">{t('cloudRuntime.image')}</th>
+              <th className="px-3 py-2 font-medium">{t('cloudRuntime.imageReference')}</th>
               <th className="px-3 py-2 font-medium">{t('cloudRuntime.provider')}</th>
               <th className="px-3 py-2 font-medium">{t('cloudRuntime.mcpPolicy')}</th>
               <th className="px-3 py-2 font-medium">{t('cloudRuntime.status')}</th>
@@ -102,13 +102,13 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {images.length === 0 ? (
+            {requiredImages.length === 0 ? (
               <tr>
                 <td className="px-3 py-6 text-center text-muted-foreground" colSpan={10}>
                   {t('cloudRuntime.noImages')}
                 </td>
               </tr>
-            ) : images.map((image, index) => {
+            ) : requiredImages.map((image, index) => {
               const record = asRecord(image);
               const id = readString(record, ['id'], `image-${index}`);
               const status = readString(record, ['status'], '-');
@@ -118,6 +118,7 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
               const isMcpTarget = isMcpTargetRecord(record);
               const isBuilding = isPreparingAll;
               const expanded = expandedImageId === id;
+              const imageReference = readString(record, ['image_ref', 'imageRef', 'image_id', 'imageId']);
               return (
                 <React.Fragment key={id}>
                   <tr>
@@ -125,7 +126,9 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
                       <div>{readString(record, ['display_name', 'displayName', 'environment_key', 'environmentKey'], '-')}</div>
                       <div className="mt-1 font-mono text-[10px] text-muted-foreground">{serviceId} · {serviceRole}</div>
                     </td>
-                    <td className="px-3 py-2 font-mono">{readString(record, ['image_ref', 'imageRef', 'image_id', 'imageId'], '-')}</td>
+                    <td className="px-3 py-2 font-mono">
+                      {imageReference || '-'}
+                    </td>
                     <td className="px-3 py-2 font-mono">{readString(record, ['image_provider', 'imageProvider'], '-')}</td>
                     <td className="px-3 py-2">
                       <span className={isMcpTarget ? 'text-emerald-700' : 'text-muted-foreground'}>
@@ -160,12 +163,6 @@ export const CloudRuntimeImagePlans: React.FC<CloudRuntimeImagePlansProps> = ({
                             ? t('cloudRuntime.generatingImage')
                             : t('cloudRuntime.includedInBatchPreparation')}
                         </span>
-                      ) : isCloudProject && serviceRole === 'application' ? (
-                        <span className="text-muted-foreground">
-                          {t('cloudRuntime.peerApplication')}
-                        </span>
-                      ) : serviceRole === 'artifact' ? (
-                        <span className="text-muted-foreground">{t('cloudRuntime.artifactComponent')}</span>
                       ) : !isCloudProject && dockerfile ? (
                         <span className="text-muted-foreground">{t('cloudRuntime.localDockerfilePlan')}</span>
                       ) : (

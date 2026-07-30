@@ -261,72 +261,11 @@ impl RunService {
 
     async fn prepare_retry_task_session(
         &self,
-        task_id: &str,
-        previous_run_id: &str,
+        _task_id: &str,
+        _previous_run_id: &str,
         requested_dispatch_paused: bool,
         run: &mut TaskRunRecord,
     ) -> Result<(), String> {
-        match crate::services::task_manager_lifecycle::load_task_session_snapshot(
-            &self.store,
-            task_id,
-            previous_run_id,
-        )
-        .await
-        {
-            Ok(previous_session) if !previous_session.entries.is_empty() => {
-                if let Err(err) = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "task_session_retry_isolated",
-                        Some(format!(
-                            "重试运行已隔离上一次运行的 {} 个 Task Manager 清单，将按当前上下文重新规划",
-                            previous_session.entries.len()
-                        )),
-                        Some(json!({
-                            "previous_run_id": previous_run_id,
-                            "isolated_task_ids": previous_session.entries.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
-                        })),
-                    ))
-                    .await
-                {
-                    warn!(
-                        run_id = run.id.as_str(),
-                        previous_run_id,
-                        error = err.as_str(),
-                        "failed to append Task Manager retry isolation event"
-                    );
-                }
-            }
-            Ok(_) => {}
-            Err(err) => {
-                warn!(
-                    run_id = run.id.as_str(),
-                    previous_run_id,
-                    error = err.as_str(),
-                    "failed to inspect previous Task Manager session; retry will continue with a clean session"
-                );
-                if let Err(event_err) = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "task_session_retry_isolation_warning",
-                        Some(format!(
-                            "读取上一次 Task Manager 会话失败，已继续使用干净会话：{err}"
-                        )),
-                        Some(json!({ "previous_run_id": previous_run_id })),
-                    ))
-                    .await
-                {
-                    warn!(
-                        run_id = run.id.as_str(),
-                        previous_run_id,
-                        error = event_err.as_str(),
-                        "failed to append Task Manager retry isolation warning"
-                    );
-                }
-            }
-        }
         run.dispatch_paused = requested_dispatch_paused;
         run.updated_at = now_rfc3339();
         self.store.save_run(run.clone()).await?;
