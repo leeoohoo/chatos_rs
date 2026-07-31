@@ -902,7 +902,7 @@ cancel outcome
 - 实现 invocation audit、超时和结果限制。
 - 先接 InternalServiceProvider 和 EmbeddedProvider。
 
-当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id，并允许 AskUser 这类长等待工具使用独立的逐工具超时，不放宽普通工具超时。当前已注册的 Internal Service Adapter 是 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log 与 Task Runner AskUser Callback；Embedded Provider 已先接入无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 需要权威云端 Store，BrowserTools 需要受控 Browser Runtime，因此不在 MCP Management 主进程中临时创建本地替代实现。
+当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id，并允许 AskUser 这类长等待工具使用独立的逐工具超时，不放宽普通工具超时。当前已注册的 Internal Service Adapter 是 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、Task Runner AskUser Callback 与 ChatOS AskUser Callback；Embedded Provider 已先接入无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 需要权威云端 Store，BrowserTools 需要受控 Browser Runtime，因此不在 MCP Management 主进程中临时创建本地替代实现。
 
 ### Phase 3：Workspace Router
 
@@ -928,7 +928,7 @@ Cloud Sandbox Runtime Session 只接收 `sandbox_id`、`lease_id`、`is_environm
 - Sandbox Images 接入。
 - ChatOS/Task Runner 删除这些 Agent 工具对应的直接客户端和 URL 拼接。
 
-当前 Project Management MCP、Project Runtime Environment MCP、Task Runner Service MCP、Task Process Log MCP 和 Task Runner AskUser MCP 已使用 `mcp-management-service` 专用内部身份真实调用，不转发用户 Token。AskUser 不再使用泛化的运行时猜测：创建 Runtime Session 时会按 Agent 宿主固定 `provider_ref`，Task Runner 四个 phase Agent 固定到 `task-runner`，ChatOS Agent 固定到 `chatos`；尚未注册宿主的 Agent fail closed，Session 内不得切换宿主。Task Runner 只开放 `/internal/mcp-management/mcp/{system_key}` 这个工具入口给该身份，不会把普通 Task Runner REST 纳入网关。Task Process Log 与 AskUser 的 owner、Agent、MCP Session、Session 到期时间、Project、run 和 task 全部取自 Runtime Session Snapshot；Task Runner 会再次验证 run 属于 task且仍在运行、task 属于 owner 与 Project、run 是 task 当前 run、Agent phase 与 task 类型一致，并拒绝模型参数覆盖这些字段。AskUser 的实际提示等待时间不得越过不可变 Session 的剩余生命周期，并预留继续执行所需的安全窗口。Task Runner Service 根据绑定的 System Agent 身份收窄工具 Profile。Task Runner 调用方已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。ChatOS AskUser Provider、Memory、Sandbox Images 以及旧直连清理尚未开始。
+当前 Project Management MCP、Project Runtime Environment MCP、Task Runner Service MCP、Task Process Log MCP、Task Runner AskUser MCP 和 ChatOS AskUser MCP 已使用 `mcp-management-service` 专用内部身份真实调用，不转发用户 Token。AskUser 不再使用泛化的运行时猜测：创建 Runtime Session 时会按 Agent 宿主固定 `provider_ref`，Task Runner 四个 phase Agent 固定到 `task-runner`，ChatOS Agent 固定到 `chatos`；尚未注册宿主的 Agent fail closed，Session 内不得切换宿主。Task Runner 和 ChatOS 都只开放 `/internal/mcp-management/mcp/{system_key}` 这个工具入口给该身份，不会把普通 REST 纳入网关。Task Process Log 与 Task Runner AskUser 的 owner、Agent、MCP Session、Session 到期时间、Project、run 和 task 全部取自 Runtime Session Snapshot；Task Runner 会再次验证 run 属于 task且仍在运行、task 属于 owner 与 Project、run 是 task 当前 run、Agent phase 与 task 类型一致。ChatOS AskUser 会再次验证 conversation 属于 owner、Project 和 active 状态，绑定的 source user message 位于该 conversation 且属于同一 turn。两端都拒绝模型参数覆盖这些字段，AskUser 的实际提示等待时间不得越过不可变 Session 的剩余生命周期，并预留继续执行所需的安全窗口。Task Runner Service 根据绑定的 System Agent 身份收窄工具 Profile。Task Runner 与 ChatOS 调用方均已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Memory、Sandbox Images 以及旧直连清理尚未开始。
 
 ### Phase 5：External 与 Plugin Runtime
 
@@ -949,7 +949,7 @@ Cloud Sandbox Runtime Session 只接收 `sandbox_id`、`lease_id`、`is_environm
 
 每个调用方只配置一个 MCP Management endpoint。
 
-Task Runner 当前迁移开关：
+Task Runner 当前迁移开关 `TASK_RUNNER_MCP_MANAGEMENT_MODE`，ChatOS 当前迁移开关 `CHATOS_MCP_MANAGEMENT_MODE`：
 
 - `off`：仅使用旧 MCP builder。
 - `shadow`：解析并记录 MCP Management Runtime Session，但工具调用仍走旧链路；2.0.10 部署默认值。
@@ -1002,7 +1002,7 @@ MCP Management Phase 0/1
 - mcp/ 增加路由分类所需的稳定 metadata，但不加入环境判断。
 - chatos_plugin_management_sdk 如需补 Runtime Session DTO，只做兼容扩展。
 - Plugin Management 增加 MCP Management caller scope。
-- Task Runner 已增加 MCP Management client，并以 `shadow`/`gateway` 开关逐步替换本地 builder。
+- Task Runner 与 ChatOS 已增加 MCP Management client，并分别以 `shadow`/`gateway` 开关逐步替换旧工具 builder。
 - Local Connector Service 增加 MCP Management caller token。
 - Project Context owner 增加内部 execution-context endpoint。
 

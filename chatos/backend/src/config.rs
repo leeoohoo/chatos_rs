@@ -39,6 +39,7 @@ pub struct Config {
     pub task_runner_base_url: String,
     pub task_runner_internal_api_secret: Option<String>,
     pub task_runner_request_timeout_ms: i64,
+    pub mcp_management_internal_api_secret: Option<String>,
     pub local_connector_service_base_url: String,
     pub local_connector_internal_api_secret: Option<String>,
     pub local_connector_service_request_timeout_ms: i64,
@@ -172,6 +173,8 @@ impl Config {
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(30_000)
                 .max(300);
+        let mcp_management_internal_api_secret =
+            read_optional_env("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET");
         let local_connector_service_base_url =
             read_optional_env("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")
                 .or_else(|| read_optional_env("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
@@ -250,6 +253,11 @@ impl Config {
             task_runner_internal_api_secret.as_deref(),
             &["change_me_chatos_task_runner_internal_secret"],
         )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
+            mcp_management_internal_api_secret.as_deref(),
+            &["change_me_mcp_management_chatos_secret"],
+        )?;
         validate_config(
             normalized_env,
             port,
@@ -290,6 +298,7 @@ impl Config {
             task_runner_base_url,
             task_runner_internal_api_secret,
             task_runner_request_timeout_ms,
+            mcp_management_internal_api_secret,
             local_connector_service_base_url,
             local_connector_internal_api_secret,
             local_connector_service_request_timeout_ms,

@@ -69,6 +69,8 @@ pub(super) fn build_project_management_mcp_runtime(
             PROJECT_MANAGEMENT_MCP_ENDPOINT_PATH
         ),
         headers: Some(headers),
+        timeout_ms: None,
+        tool_timeout_ms: std::collections::HashMap::new(),
         allowed_tool_names: Some(
             if read_only {
                 PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS
@@ -79,6 +81,8 @@ pub(super) fn build_project_management_mcp_runtime(
             .map(|name| (*name).to_string())
             .collect(),
         ),
+        preserve_tool_names: false,
+        fail_on_unavailable: false,
         header_provider: None,
     })
 }

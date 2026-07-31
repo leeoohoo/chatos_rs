@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[path = "runtime_context/mcp_management_gateway.rs"]
+mod mcp_management_gateway;
 #[path = "runtime_context/policy.rs"]
 mod policy;
 #[path = "runtime_context/project_mcp.rs"]
@@ -23,6 +25,9 @@ use chatos_plugin_management_sdk::{PluginAgentSelection, PluginCommandInvocation
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
+use self::mcp_management_gateway::{
+    resolve_mcp_management_gateway, McpManagementGatewayRequest, McpManagementGatewayResolution,
+};
 use self::policy::{merge_optional_system_prompts, resolve_chatos_mcp_policy};
 use self::project_mcp::build_project_management_mcp_runtime;
 use self::support::{is_concrete_project_id, normalize_optional_text};
@@ -307,7 +312,41 @@ pub async fn resolve_runtime_context(
         }
     }
 
-    if runtime_error.is_none() {
+    let mcp_management_gateway = if runtime_error.is_none() {
+        match resolve_mcp_management_gateway(McpManagementGatewayRequest {
+            owner_user_id: effective_user_id.as_deref(),
+            agent_profile,
+            project_id: task_runner_project_id,
+            source_session_id: Some(session_id),
+            turn_id: req.conversation_turn_id.as_deref(),
+            source_user_message_id: req.source_user_message_id.as_deref(),
+            default_model_config_id: req.model_config_id.as_deref(),
+            expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
+        })
+        .await
+        {
+            Ok(resolution) => resolution,
+            Err(err) => {
+                runtime_error = Some(format!("MCP Management 运行会话不可用：{err}"));
+                McpManagementGatewayResolution::Legacy
+            }
+        }
+    } else {
+        McpManagementGatewayResolution::Legacy
+    };
+
+    let using_mcp_management_gateway = matches!(
+        &mcp_management_gateway,
+        McpManagementGatewayResolution::Gateway(_)
+    );
+    if let McpManagementGatewayResolution::Gateway(server) = mcp_management_gateway {
+        http_servers.push(*server);
+        if let Some(policy) = capability_policy.as_ref() {
+            effective_mcp_resource_ids = policy.effective_mcp_ids(std::iter::empty());
+        }
+    }
+
+    if runtime_error.is_none() && !using_mcp_management_gateway {
         match build_contact_task_runner_runtime(ContactTaskRunnerRuntimeRequest {
             effective_user_id: effective_user_id.as_deref(),
             contact_id: runtime_metadata.contact_id.as_deref(),
@@ -345,7 +384,7 @@ pub async fn resolve_runtime_context(
         }
     }
 
-    if runtime_error.is_none() && has_concrete_project_scope {
+    if runtime_error.is_none() && !using_mcp_management_gateway && has_concrete_project_scope {
         match Config::try_get()
             .map_err(|err| err.to_string())
             .and_then(|cfg| {
@@ -382,10 +421,14 @@ pub async fn resolve_runtime_context(
             merge_optional_system_prompts(contact_system_prompt, provider_skills_prompt);
     }
 
-    let enabled_mcp_ids_for_snapshot = http_servers
-        .iter()
-        .map(|server| server.name.clone())
-        .collect::<Vec<_>>();
+    let enabled_mcp_ids_for_snapshot = if using_mcp_management_gateway {
+        effective_mcp_resource_ids.clone()
+    } else {
+        http_servers
+            .iter()
+            .map(|server| server.name.clone())
+            .collect::<Vec<_>>()
+    };
     let builtin_mcp_system_prompt =
         compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
     let use_tools =

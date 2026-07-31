@@ -235,7 +235,11 @@ pub(super) async fn build_contact_task_runner_runtime(
             .to_string(),
             url: format!("{}/mcp", config.base_url.trim().trim_end_matches('/')),
             headers: Some(headers),
+            timeout_ms: None,
+            tool_timeout_ms: std::collections::HashMap::new(),
             allowed_tool_names: None,
+            preserve_tool_names: false,
+            fail_on_unavailable: false,
             header_provider: Some(header_provider),
         },
     })

@@ -19,7 +19,11 @@ pub struct McpHttpServer {
     pub name: String,
     pub url: String,
     pub headers: Option<std::collections::HashMap<String, String>>,
+    pub timeout_ms: Option<u64>,
+    pub tool_timeout_ms: std::collections::HashMap<String, u64>,
     pub allowed_tool_names: Option<Vec<String>>,
+    pub preserve_tool_names: bool,
+    pub fail_on_unavailable: bool,
     pub header_provider: Option<std::sync::Arc<dyn chatos_mcp_runtime::McpHttpHeaderProvider>>,
 }
 
@@ -123,7 +127,11 @@ fn build_servers_from_configs(
                 name: server_name,
                 url: cfg.command,
                 headers: None,
+                timeout_ms: None,
+                tool_timeout_ms: std::collections::HashMap::new(),
                 allowed_tool_names: None,
+                preserve_tool_names: false,
+                fail_on_unavailable: false,
                 header_provider: None,
             });
         } else if cfg.r#type == "stdio" {

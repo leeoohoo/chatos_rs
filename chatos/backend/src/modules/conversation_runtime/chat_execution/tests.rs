@@ -123,7 +123,33 @@ fn per_request_mcp_auth_disables_codex_gateway_passthrough() {
             "x-project-service-internal-scope".to_string(),
             "project.mcp".to_string(),
         )])),
+        timeout_ms: None,
+        tool_timeout_ms: HashMap::new(),
         allowed_tool_names: None,
+        preserve_tool_names: false,
+        fail_on_unavailable: false,
+        header_provider: None,
+    });
+
+    assert!(!effective_codex_gateway_mcp_passthrough(&model, &context));
+}
+
+#[test]
+fn mcp_management_gateway_is_always_executed_by_chatos_runtime() {
+    let model = model_runtime(true);
+    let mut context = runtime_context(false);
+    context.mcp_server_bundle.0.push(McpHttpServer {
+        name: "mcp_management".to_string(),
+        url: "http://127.0.0.1:39280/mcp".to_string(),
+        headers: Some(HashMap::from([(
+            "authorization".to_string(),
+            "Bearer runtime-token".to_string(),
+        )])),
+        timeout_ms: Some(180_000),
+        tool_timeout_ms: HashMap::new(),
+        allowed_tool_names: None,
+        preserve_tool_names: true,
+        fail_on_unavailable: true,
         header_provider: None,
     });
 

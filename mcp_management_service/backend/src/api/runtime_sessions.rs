@@ -301,6 +301,11 @@ fn validate_task_runner_provider_context(
             && route.provider_kind == McpProviderKind::InternalService
             && route.provider_ref.as_deref() == Some("task-runner")
     });
+    let has_chatos_ask_user_route = routes.iter().any(|route| {
+        route.resource_id == chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser).resource_id
+            && route.provider_kind == McpProviderKind::InternalService
+            && route.provider_ref.as_deref() == Some("chatos")
+    });
     if has_route(SystemMcpKey::TaskRunnerService) {
         if !matches!(
             agent_key,
@@ -375,6 +380,32 @@ fn validate_task_runner_provider_context(
             if value.map(str::trim).is_none_or(|value| value.is_empty()) {
                 return Err(ApiError::conflict(format!(
                     "Task Runner Ask User MCP requires {field}"
+                )));
+            }
+        }
+    }
+    if has_chatos_ask_user_route {
+        if !matches!(
+            agent_key,
+            SystemAgentKey::ChatosConversationAgent
+                | SystemAgentKey::ChatosPlanningAgent
+                | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+        ) {
+            return Err(ApiError::conflict(
+                "ChatOS Ask User MCP is only valid for ChatOS conversation Agents",
+            ));
+        }
+        for (field, value) in [
+            ("turn_id", request.turn_id.as_deref()),
+            ("source_session_id", request.source_session_id.as_deref()),
+            (
+                "source_user_message_id",
+                request.source_user_message_id.as_deref(),
+            ),
+        ] {
+            if value.map(str::trim).is_none_or(|value| value.is_empty()) {
+                return Err(ApiError::conflict(format!(
+                    "ChatOS Ask User MCP requires {field}"
                 )));
             }
         }
@@ -680,6 +711,32 @@ mod tests {
             SystemAgentKey::ChatosConversationAgent,
         );
         assert_eq!(routes[0].provider_ref.as_deref(), Some("chatos"));
+        assert!(state.providers.supports(&routes[0]));
+
+        let mut chatos_request = request();
+        chatos_request.agent_key = SystemAgentKey::ChatosConversationAgent.as_str().to_string();
+        chatos_request.run_id = None;
+        chatos_request.task_id = None;
+        chatos_request.turn_id = Some("turn-1".to_string());
+        chatos_request.source_session_id = Some("conversation-1".to_string());
+        chatos_request.source_user_message_id = Some("message-1".to_string());
+        validate_task_runner_provider_context(
+            SystemAgentKey::ChatosConversationAgent,
+            &chatos_request,
+            &[],
+            routes.as_slice(),
+        )
+        .expect("bound ChatOS Ask User route should be accepted");
+
+        chatos_request.turn_id = None;
+        let error = validate_task_runner_provider_context(
+            SystemAgentKey::ChatosConversationAgent,
+            &chatos_request,
+            &[],
+            routes.as_slice(),
+        )
+        .expect_err("ChatOS turn binding is required");
+        assert!(format!("{error:?}").contains("turn_id"));
     }
 
     #[test]

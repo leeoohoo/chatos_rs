@@ -3,7 +3,7 @@
 
 use crate::config::AppConfig;
 use crate::project_context::ProjectContextClient;
-use crate::providers::{ProviderDispatcher, TaskRunnerProviderConfig};
+use crate::providers::{ChatosProviderConfig, ProviderDispatcher, TaskRunnerProviderConfig};
 use crate::routing::RoutingEngine;
 use crate::runtime::{RuntimeGrantService, RuntimeSessionStore};
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
@@ -41,6 +41,11 @@ impl AppState {
                 internal_secret: config.task_runner_internal_api_secret.clone(),
                 request_timeout: config.task_runner_request_timeout,
                 ask_user_request_timeout: config.task_runner_ask_user_request_timeout,
+            },
+            ChatosProviderConfig {
+                base_url: config.chatos_service_base_url.clone(),
+                internal_secret: config.chatos_internal_api_secret.clone(),
+                ask_user_request_timeout: config.chatos_ask_user_request_timeout,
             },
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),

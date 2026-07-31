@@ -9,6 +9,7 @@ pub fn public_routes() -> Router {
     Router::new()
         .merge(platform_admin::public_routes())
         .merge(conversation_runtime::public_routes())
+        .merge(crate::api::mcp_management::router())
 }
 
 pub fn protected_routes() -> Router {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod chatos;
 mod cloud_sandbox;
 mod embedded;
 mod local_connector;
@@ -14,6 +15,7 @@ use serde_json::Value;
 
 use crate::runtime::RuntimeSessionSnapshot;
 
+use chatos::ChatosProvider;
 use cloud_sandbox::CloudSandboxProvider;
 use embedded::EmbeddedProvider;
 use local_connector::LocalConnectorProvider;
@@ -28,11 +30,18 @@ pub struct TaskRunnerProviderConfig {
     pub ask_user_request_timeout: Duration,
 }
 
+pub struct ChatosProviderConfig {
+    pub base_url: String,
+    pub internal_secret: Option<String>,
+    pub ask_user_request_timeout: Duration,
+}
+
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
+    chatos: ChatosProvider,
     cloud_sandbox: CloudSandboxProvider,
     embedded: EmbeddedProvider,
 }
@@ -42,6 +51,7 @@ impl ProviderDispatcher {
         project_service_base_url: impl Into<String>,
         project_service_internal_secret: Option<String>,
         task_runner: TaskRunnerProviderConfig,
+        chatos: ChatosProviderConfig,
         local_connector_service_base_url: impl Into<String>,
         local_connector_internal_secret: Option<String>,
         sandbox_manager_service_base_url: impl Into<String>,
@@ -71,6 +81,12 @@ impl ProviderDispatcher {
                 task_runner.internal_secret,
                 response_limit_bytes,
             )?,
+            chatos: ChatosProvider::new(
+                chatos.base_url,
+                chatos.ask_user_request_timeout,
+                chatos.internal_secret,
+                response_limit_bytes,
+            )?,
             cloud_sandbox: CloudSandboxProvider::new(
                 sandbox_manager_service_base_url,
                 sandbox_manager_request_timeout,
@@ -84,7 +100,9 @@ impl ProviderDispatcher {
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
             McpProviderKind::InternalService | McpProviderKind::Harness => {
-                self.project_service.supports(route) || self.task_runner.supports(route)
+                self.project_service.supports(route)
+                    || self.task_runner.supports(route)
+                    || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
@@ -129,6 +147,17 @@ impl ProviderDispatcher {
             }
             McpProviderKind::InternalService if self.task_runner.supports(route) => {
                 self.task_runner
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::InternalService if self.chatos.supports(route) => {
+                self.chatos
                     .call_tool(
                         snapshot,
                         route,

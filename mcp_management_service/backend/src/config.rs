@@ -28,6 +28,9 @@ pub struct AppConfig {
     pub task_runner_internal_api_secret: Option<String>,
     pub task_runner_request_timeout: Duration,
     pub task_runner_ask_user_request_timeout: Duration,
+    pub chatos_service_base_url: String,
+    pub chatos_internal_api_secret: Option<String>,
+    pub chatos_ask_user_request_timeout: Duration,
     pub local_connector_service_base_url: String,
     pub local_connector_internal_api_secret: Option<String>,
     pub sandbox_manager_service_base_url: String,
@@ -80,6 +83,7 @@ impl AppConfig {
             env_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET");
         let task_runner_internal_api_secret =
             env_text("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET");
+        let chatos_internal_api_secret = env_text("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET");
         let local_connector_internal_api_secret =
             env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET");
         let sandbox_manager_internal_api_secret =
@@ -98,6 +102,11 @@ impl AppConfig {
             "MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
             task_runner_internal_api_secret.as_deref(),
             &["change_me_mcp_management_task_runner_secret"],
+        )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
+            chatos_internal_api_secret.as_deref(),
+            &["change_me_mcp_management_chatos_secret"],
         )?;
         validate_production_secret(
             "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
@@ -142,6 +151,15 @@ impl AppConfig {
                     7 * 24 * 60 * 60 * 1_000,
                 ),
         );
+        let chatos_ask_user_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000)
+                .clamp(
+                    chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+                    7 * 24 * 60 * 60 * 1_000,
+                ),
+        );
         let provider_response_limit_bytes =
             env_text("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")
                 .and_then(|value| value.parse::<usize>().ok())
@@ -178,6 +196,13 @@ impl AppConfig {
             task_runner_internal_api_secret,
             task_runner_request_timeout,
             task_runner_ask_user_request_timeout,
+            chatos_service_base_url: normalize_base_url(
+                env_text("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL")
+                    .or_else(|| env_text("CHATOS_BACKEND_BASE_URL"))
+                    .unwrap_or_else(|| "http://127.0.0.1:3997".to_string()),
+            ),
+            chatos_internal_api_secret,
+            chatos_ask_user_request_timeout,
             local_connector_service_base_url: normalize_base_url(
                 env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL")
                     .or_else(|| env_text("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
@@ -222,6 +247,11 @@ impl AppConfig {
             self.task_runner_service_base_url.as_str(),
         )
         .await;
+        self.chatos_service_base_url = chatos_service_runtime::resolve_service_base_url(
+            "chatos-backend",
+            self.chatos_service_base_url.as_str(),
+        )
+        .await;
         self.local_connector_service_base_url = chatos_service_runtime::resolve_service_base_url(
             "local-connector-service",
             self.local_connector_service_base_url.as_str(),
@@ -241,7 +271,10 @@ impl AppConfig {
             port: 39280,
             internal_api_secret: "a-long-test-secret".to_string(),
             require_signed_internal_requests: true,
-            allowed_internal_callers: BTreeSet::from(["task-runner".to_string()]),
+            allowed_internal_callers: BTreeSet::from([
+                "chatos".to_string(),
+                "task-runner".to_string(),
+            ]),
             plugin_management_service_base_url: "http://127.0.0.1:39260".to_string(),
             plugin_management_internal_api_secret: Some(
                 "a-long-plugin-management-secret".to_string(),
@@ -252,6 +285,9 @@ impl AppConfig {
             task_runner_internal_api_secret: Some("a-long-task-runner-secret".to_string()),
             task_runner_request_timeout: Duration::from_secs(180),
             task_runner_ask_user_request_timeout: Duration::from_secs(86_700),
+            chatos_service_base_url: "http://127.0.0.1:3997".to_string(),
+            chatos_internal_api_secret: Some("a-long-chatos-secret".to_string()),
+            chatos_ask_user_request_timeout: Duration::from_secs(86_700),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),

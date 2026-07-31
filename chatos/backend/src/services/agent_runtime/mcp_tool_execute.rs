@@ -106,7 +106,11 @@ mod tests {
                 name: "alpha_http".to_string(),
                 url: "http://127.0.0.1:9000/mcp".to_string(),
                 headers: None,
+                timeout_ms: None,
+                tool_timeout_ms: std::collections::HashMap::new(),
                 allowed_tool_names: None,
+                preserve_tool_names: false,
+                fail_on_unavailable: false,
                 header_provider: None,
             }],
             vec![McpStdioServer {

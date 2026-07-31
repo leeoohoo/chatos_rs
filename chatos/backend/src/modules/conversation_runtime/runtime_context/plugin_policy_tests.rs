@@ -41,6 +41,7 @@ fn test_config() -> Config {
         task_runner_base_url: "http://127.0.0.1:4000".to_string(),
         task_runner_internal_api_secret: Some("task-runner-internal-secret".to_string()),
         task_runner_request_timeout_ms: 10_000,
+        mcp_management_internal_api_secret: Some("mcp-management-chatos-secret".to_string()),
         local_connector_service_base_url: "http://127.0.0.1:4001".to_string(),
         local_connector_internal_api_secret: Some("test-chatos-local-connector-secret".to_string()),
         local_connector_service_request_timeout_ms: 10_000,

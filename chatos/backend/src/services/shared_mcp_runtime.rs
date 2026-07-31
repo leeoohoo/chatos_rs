@@ -46,12 +46,12 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
         name: server.name,
         url: server.url,
         headers: server.headers,
-        timeout_ms: None,
-        tool_timeout_ms: std::collections::HashMap::new(),
+        timeout_ms: server.timeout_ms,
+        tool_timeout_ms: server.tool_timeout_ms,
         tool_name_aliases: Vec::new(),
         allowed_tool_names: server.allowed_tool_names,
-        preserve_tool_names: false,
-        fail_on_unavailable: false,
+        preserve_tool_names: server.preserve_tool_names,
+        fail_on_unavailable: server.fail_on_unavailable,
         header_provider: server.header_provider,
     }
 }
@@ -229,16 +229,24 @@ mod tests {
                 "X-Chatos-Project-Id".to_string(),
                 "project-1".to_string(),
             )])),
+            timeout_ms: Some(30_000),
+            tool_timeout_ms: HashMap::from([("wait".to_string(), 60_000)]),
             allowed_tool_names: Some(vec![
                 "list_project_tasks".to_string(),
                 "get_project_dependency_graph".to_string(),
             ]),
+            preserve_tool_names: true,
+            fail_on_unavailable: true,
             header_provider: None,
         };
 
         let shared = shared_http_server(server);
 
         assert_eq!(shared.name, "project_management_service");
+        assert_eq!(shared.timeout_ms, Some(30_000));
+        assert_eq!(shared.tool_timeout_ms.get("wait"), Some(&60_000));
+        assert!(shared.preserve_tool_names);
+        assert!(shared.fail_on_unavailable);
         assert_eq!(
             shared
                 .headers

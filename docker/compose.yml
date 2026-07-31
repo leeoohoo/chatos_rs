@@ -408,6 +408,9 @@ services:
       MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
       MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS:-180000}
       MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
+      MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL: http://chatos-backend:3997
+      MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET:-change_me_mcp_management_chatos_secret}
+      MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
       MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
       MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}
       MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL: http://sandbox-manager-backend:8095
@@ -611,6 +614,12 @@ services:
       CHATOS_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
+      MCP_MANAGEMENT_SERVICE_BASE_URL: http://mcp-management-service-backend:39280
+      MCP_MANAGEMENT_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_mcp_management_internal_secret}
+      MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET:-change_me_mcp_management_chatos_secret}
+      CHATOS_MCP_MANAGEMENT_MODE: ${CHATOS_MCP_MANAGEMENT_MODE:-shadow}
+      CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}
+      CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
       CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
@@ -649,6 +658,8 @@ services:
       local-connector-service-backend:
         condition: service_healthy
       plugin-management-backend:
+        condition: service_healthy
+      mcp-management-service-backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3997/health"]
