@@ -7,7 +7,11 @@ use axum::extract::Path;
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
-use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef, SystemMcpKey};
+use chatos_mcp::{
+    AskUserOptions, AskUserService, AskUserStoreRef, MemoryCommandReaderOptions,
+    MemoryCommandReaderService, MemoryPluginReaderOptions, MemoryPluginReaderService,
+    MemoryReaderStoreRef, MemorySkillReaderOptions, MemorySkillReaderService, SystemMcpKey,
+};
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
     MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS, MCP_ERROR_METHOD_NOT_FOUND, METHOD_TOOLS_CALL,
@@ -19,8 +23,9 @@ use crate::config::Config;
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
-use crate::services::chatos_sessions;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
+use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
+use crate::services::{chatos_agents, chatos_sessions};
 
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 const CHATOS_TOKEN_AUDIENCE: &str = "chatos";
@@ -44,6 +49,7 @@ struct McpManagementBinding {
     turn_id: Option<String>,
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
+    contact_agent_id: Option<String>,
 }
 
 async fn mcp_management_entrypoint(
@@ -72,6 +78,11 @@ async fn mcp_management_entrypoint(
     }
     let response = match system_key {
         SystemMcpKey::AskUser => dispatch_bound_ask_user(request, &binding).await,
+        SystemMcpKey::MemorySkillReader
+        | SystemMcpKey::MemoryCommandReader
+        | SystemMcpKey::MemoryPluginReader => {
+            dispatch_bound_memory_reader(system_key, request, &binding).await
+        }
         _ => jsonrpc_error(
             id,
             MCP_ERROR_INVALID_PARAMS,
@@ -79,6 +90,126 @@ async fn mcp_management_entrypoint(
         ),
     };
     Json(response)
+}
+
+async fn dispatch_bound_memory_reader(
+    system_key: SystemMcpKey,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    if !is_chatos_agent(binding.agent_key) {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "configured Agent is not allowed to use ChatOS Memory Reader MCP",
+        );
+    }
+    let conversation_id = match binding.source_session_id.as_deref() {
+        Some(value) => value,
+        None => {
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INVALID_PARAMS,
+                "ChatOS Memory Reader requires bound source_session_id",
+            )
+        }
+    };
+    let contact_agent_id = match binding.contact_agent_id.as_deref() {
+        Some(value) => value,
+        None => {
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INVALID_PARAMS,
+                "ChatOS Memory Reader requires bound contact_agent_id",
+            )
+        }
+    };
+    let session = match chatos_sessions::get_session_by_id(conversation_id).await {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            return jsonrpc_error(id, MCP_ERROR_INTERNAL, "bound ChatOS session was not found")
+        }
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    if !session_matches_binding(&session, binding) {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "bound ChatOS session does not match MCP Management owner or project scope",
+        );
+    }
+    let runtime_context = match chatos_agents::get_agent_runtime_context(contact_agent_id).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_AUTH_REQUIRED,
+                "bound ChatOS contact agent runtime was not found",
+            )
+        }
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    if runtime_context.agent_id.trim() != contact_agent_id
+        || runtime_context.user_id.trim() != binding.owner_user_id
+    {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "bound ChatOS contact agent does not belong to the runtime session owner",
+        );
+    }
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "Memory Reader tool name is required",
+        );
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let descriptor = chatos_mcp::system_mcp_descriptor(system_key);
+    let store = MemoryReaderStoreRef::new(Arc::new(ChatosMemoryReaderStore));
+    let result = match system_key {
+        SystemMcpKey::MemorySkillReader => {
+            MemorySkillReaderService::new(MemorySkillReaderOptions {
+                server_name: descriptor.server_name.to_string(),
+                agent_id: contact_agent_id.to_string(),
+                store,
+            })
+            .and_then(|service| service.call_tool(name, arguments))
+        }
+        SystemMcpKey::MemoryCommandReader => {
+            MemoryCommandReaderService::new(MemoryCommandReaderOptions {
+                server_name: descriptor.server_name.to_string(),
+                agent_id: contact_agent_id.to_string(),
+                store,
+            })
+            .and_then(|service| service.call_tool(name, arguments))
+        }
+        SystemMcpKey::MemoryPluginReader => {
+            MemoryPluginReaderService::new(MemoryPluginReaderOptions {
+                server_name: descriptor.server_name.to_string(),
+                agent_id: contact_agent_id.to_string(),
+                store,
+            })
+            .and_then(|service| service.call_tool(name, arguments))
+        }
+        _ => Err("ChatOS internal MCP Provider does not own this Memory Reader".to_string()),
+    };
+    match result {
+        Ok(result) => jsonrpc_ok(id, result),
+        Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    }
 }
 
 async fn dispatch_bound_ask_user(
@@ -245,6 +376,7 @@ fn mcp_management_binding_from_headers(
         turn_id: header_text(headers, "x-mcp-management-turn-id"),
         source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
         source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
+        contact_agent_id: header_text(headers, "x-mcp-management-contact-agent-id"),
     })
 }
 
@@ -325,6 +457,7 @@ mod tests {
             ("x-mcp-management-turn-id", "turn-1"),
             ("x-mcp-management-source-session-id", "conversation-1"),
             ("x-mcp-management-source-user-message-id", "message-1"),
+            ("x-mcp-management-contact-agent-id", "contact-agent-1"),
         ] {
             headers.insert(
                 axum::http::HeaderName::from_static(key),
@@ -337,6 +470,7 @@ mod tests {
         assert_eq!(binding.turn_id.as_deref(), Some("turn-1"));
         assert_eq!(binding.source_session_id.as_deref(), Some("conversation-1"));
         assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
+        assert_eq!(binding.contact_agent_id.as_deref(), Some("contact-agent-1"));
     }
 
     #[test]
@@ -418,6 +552,7 @@ mod tests {
             turn_id: Some("turn-1".to_string()),
             source_session_id: Some("conversation-1".to_string()),
             source_user_message_id: Some("message-1".to_string()),
+            contact_agent_id: Some("contact-agent-1".to_string()),
         }
     }
 }

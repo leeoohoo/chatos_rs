@@ -18,13 +18,15 @@ use super::{ProviderCallError, ProviderCallOutcome};
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "chatos";
 const CHATOS_MCP_SCOPE: &str = "mcp.tools.call";
-const CHATOS_ASK_USER_PROVIDER_REF: &str = "chatos";
+const CHATOS_PROVIDER_REF: &str = "chatos";
+const CHATOS_MEMORY_PROVIDER_REF_PREFIX: &str = "chatos:memory:";
 
 #[derive(Clone)]
 pub(super) struct ChatosProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: Duration,
     ask_user_request_timeout: Duration,
     response_limit_bytes: usize,
 }
@@ -32,6 +34,7 @@ pub(super) struct ChatosProvider {
 impl ChatosProvider {
     pub(super) fn new(
         base_url: impl Into<String>,
+        request_timeout: Duration,
         ask_user_request_timeout: Duration,
         internal_secret: Option<String>,
         response_limit_bytes: usize,
@@ -43,7 +46,7 @@ impl ChatosProvider {
             return Err("ChatOS Provider base URL must use http or https".to_string());
         }
         let http = reqwest::Client::builder()
-            .timeout(ask_user_request_timeout)
+            .connect_timeout(Duration::from_secs(10))
             .redirect(Policy::none())
             .build()
             .map_err(|err| format!("build ChatOS Provider client failed: {err}"))?;
@@ -53,17 +56,30 @@ impl ChatosProvider {
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
+            request_timeout,
             ask_user_request_timeout,
             response_limit_bytes,
         })
     }
 
     pub(super) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        self.internal_secret.is_some()
-            && route.provider_kind == McpProviderKind::InternalService
-            && route.provider_ref.as_deref() == Some(CHATOS_ASK_USER_PROVIDER_REF)
-            && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-                .is_some_and(|descriptor| descriptor.key == SystemMcpKey::AskUser)
+        if self.internal_secret.is_none() || route.provider_kind != McpProviderKind::InternalService
+        {
+            return false;
+        }
+        system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_some_and(|descriptor| {
+            match descriptor.key {
+                SystemMcpKey::AskUser => route.provider_ref.as_deref() == Some(CHATOS_PROVIDER_REF),
+                SystemMcpKey::MemorySkillReader
+                | SystemMcpKey::MemoryCommandReader
+                | SystemMcpKey::MemoryPluginReader => route
+                    .provider_ref
+                    .as_deref()
+                    .and_then(|value| value.strip_prefix(CHATOS_MEMORY_PROVIDER_REF_PREFIX))
+                    .is_some_and(|value| !value.trim().is_empty()),
+                _ => false,
+            }
+        })
     }
 
     pub(super) async fn call_tool(
@@ -80,12 +96,36 @@ impl ChatosProvider {
             )
         })?;
         let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-            .filter(|descriptor| descriptor.key == SystemMcpKey::AskUser && self.supports(route))
+            .filter(|_| self.supports(route))
             .ok_or_else(|| {
                 ProviderCallError::provider_unavailable(
                     "ChatOS route is not a supported System MCP",
                 )
             })?;
+        if is_memory_reader(descriptor.key) {
+            let contact_agent_id = snapshot
+                .contact_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ProviderCallError::provider_unavailable(
+                        "ChatOS Memory Reader has no bound contact agent",
+                    )
+                })?;
+            let expected_provider_ref = memory_provider_ref(contact_agent_id);
+            if snapshot
+                .source_session_id
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(|value| value.is_empty())
+                || route.provider_ref.as_deref() != Some(expected_provider_ref.as_str())
+            {
+                return Err(ProviderCallError::provider_unavailable(
+                    "ChatOS Memory Reader route does not match the immutable runtime binding",
+                ));
+            }
+        }
         let token = chatos_service_runtime::issue_internal_service_token(
             secret,
             CALLER_SERVICE,
@@ -99,6 +139,11 @@ impl ChatosProvider {
             self.base_url,
             urlencoding::encode(descriptor.key.as_str())
         );
+        let timeout = if descriptor.key == SystemMcpKey::AskUser {
+            self.ask_user_request_timeout
+        } else {
+            self.request_timeout
+        };
         let mut request = self
             .http
             .post(endpoint)
@@ -115,7 +160,7 @@ impl ChatosProvider {
                 snapshot.expires_at_unix.to_string(),
             )
             .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .timeout(self.ask_user_request_timeout);
+            .timeout(timeout);
         for (header, value) in [
             ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
             ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
@@ -131,6 +176,10 @@ impl ChatosProvider {
             (
                 "x-mcp-management-default-model-config-id",
                 snapshot.default_model_config_id.as_deref(),
+            ),
+            (
+                "x-mcp-management-contact-agent-id",
+                snapshot.contact_agent_id.as_deref(),
             ),
         ] {
             if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
@@ -182,6 +231,22 @@ impl ChatosProvider {
     }
 }
 
+pub(crate) fn memory_provider_ref(contact_agent_id: &str) -> String {
+    format!(
+        "{CHATOS_MEMORY_PROVIDER_REF_PREFIX}{}",
+        contact_agent_id.trim()
+    )
+}
+
+fn is_memory_reader(key: SystemMcpKey) -> bool {
+    matches!(
+        key,
+        SystemMcpKey::MemorySkillReader
+            | SystemMcpKey::MemoryCommandReader
+            | SystemMcpKey::MemoryPluginReader
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -231,6 +296,7 @@ mod tests {
         });
         let provider = ChatosProvider::new(
             format!("http://{address}"),
+            Duration::from_secs(5),
             Duration::from_secs(60),
             Some("chatos-provider-secret".to_string()),
             1024 * 1024,
@@ -239,7 +305,7 @@ mod tests {
         let outcome = provider
             .call_tool(
                 &snapshot(),
-                &route(),
+                &route(SystemMcpKey::AskUser, CHATOS_PROVIDER_REF.to_string()),
                 "prompt_choices",
                 json!({
                     "title": "Continue?",
@@ -291,33 +357,67 @@ mod tests {
         assert!(body["params"]["arguments"]
             .get("conversation_turn_id")
             .is_none());
+
+        let outcome = provider
+            .call_tool(
+                &snapshot(),
+                &route(
+                    SystemMcpKey::MemorySkillReader,
+                    memory_provider_ref("contact-agent-1"),
+                ),
+                "get_skill_detail",
+                json!({"skill_ref": "SK1"}),
+                "invocation-2",
+            )
+            .await
+            .expect("memory provider call");
+        assert_eq!(outcome.result["content"][0]["text"], "ok");
+        let (system_key, headers, body) = captured
+            .0
+            .lock()
+            .expect("captured memory request")
+            .clone()
+            .expect("memory request was captured");
+        assert_eq!(system_key, SystemMcpKey::MemorySkillReader.as_str());
+        assert_eq!(
+            headers["x-mcp-management-contact-agent-id"],
+            "contact-agent-1"
+        );
+        assert_eq!(body["params"]["name"], "get_skill_detail");
+        assert!(body["params"]["arguments"].get("agent_id").is_none());
     }
 
     #[test]
-    fn provider_only_supports_chatos_owned_ask_user_route() {
+    fn provider_only_supports_chatos_owned_routes() {
         let provider = ChatosProvider::new(
             "http://127.0.0.1:3997",
+            Duration::from_secs(5),
             Duration::from_secs(60),
             Some("secret".to_string()),
             1024,
         )
         .expect("provider");
-        assert!(provider.supports(&route()));
-        let mut wrong_owner = route();
+        let ask_user = route(SystemMcpKey::AskUser, CHATOS_PROVIDER_REF.to_string());
+        assert!(provider.supports(&ask_user));
+        assert!(provider.supports(&route(
+            SystemMcpKey::MemoryPluginReader,
+            memory_provider_ref("contact-agent-1"),
+        )));
+        let mut wrong_owner = ask_user.clone();
         wrong_owner.provider_ref = Some("task-runner".to_string());
         assert!(!provider.supports(&wrong_owner));
-        let mut wrong_kind = route();
+        let mut wrong_kind = ask_user;
         wrong_kind.provider_kind = McpProviderKind::Harness;
         assert!(!provider.supports(&wrong_kind));
     }
 
-    fn route() -> ResolvedMcpRoute {
-        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser);
+    fn route(key: SystemMcpKey, provider_ref: String) -> ResolvedMcpRoute {
+        let descriptor = chatos_mcp::system_mcp_descriptor(key);
         ResolvedMcpRoute {
             resource_id: descriptor.resource_id.to_string(),
             server_name: descriptor.server_name.to_string(),
             provider_kind: McpProviderKind::InternalService,
-            provider_ref: Some(CHATOS_ASK_USER_PROVIDER_REF.to_string()),
+            provider_ref: Some(provider_ref),
             tool_namespace: descriptor.server_name.to_string(),
             allow_writes: descriptor.allow_writes,
             retry_class: McpRetryClass::NoRetry,
@@ -338,6 +438,7 @@ mod tests {
             task_id: None,
             source_session_id: Some("conversation-1".to_string()),
             source_user_message_id: Some("message-1".to_string()),
+            contact_agent_id: Some("contact-agent-1".to_string()),
             default_model_config_id: Some("model-1".to_string()),
             expected_project_task_ids: Vec::new(),
             sandbox_target: None,

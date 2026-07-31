@@ -51,6 +51,7 @@ pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) source_session_id: Option<&'a str>,
     pub(super) turn_id: Option<&'a str>,
     pub(super) source_user_message_id: Option<&'a str>,
+    pub(super) contact_agent_id: Option<&'a str>,
     pub(super) default_model_config_id: Option<&'a str>,
     pub(super) expected_project_task_ids: &'a [String],
 }
@@ -89,6 +90,7 @@ pub(super) async fn resolve_mcp_management_gateway(
             .map(ToOwned::to_owned),
         source_session_id: Some(source_session_id.to_string()),
         source_user_message_id: Some(source_user_message_id.to_string()),
+        contact_agent_id: normalized(request.contact_agent_id),
         default_model_config_id: normalized(request.default_model_config_id),
         expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
         requested_device_id: None,

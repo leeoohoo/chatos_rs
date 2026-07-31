@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use crate::runtime::RuntimeSessionSnapshot;
 
+pub(crate) use chatos::memory_provider_ref as chatos_memory_provider_ref;
 use chatos::ChatosProvider;
 use cloud_sandbox::CloudSandboxProvider;
 use cloud_stdio::CloudStdioProvider;
@@ -43,6 +44,7 @@ pub struct TaskRunnerProviderConfig {
 pub struct ChatosProviderConfig {
     pub base_url: String,
     pub internal_secret: Option<String>,
+    pub request_timeout: Duration,
     pub ask_user_request_timeout: Duration,
 }
 
@@ -104,6 +106,7 @@ impl ProviderDispatcher {
             )?,
             chatos: ChatosProvider::new(
                 chatos.base_url,
+                chatos.request_timeout,
                 chatos.ask_user_request_timeout,
                 chatos.internal_secret,
                 runtime.response_limit_bytes,

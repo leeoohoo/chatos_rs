@@ -250,6 +250,8 @@ pub struct CreateRuntimeSessionRequest {
     pub task_profile: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
     #[serde(default)]
     pub expected_project_task_ids: Vec<String>,

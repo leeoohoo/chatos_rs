@@ -94,6 +94,7 @@ pub struct RuntimeSessionSnapshot {
     pub task_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
     pub expected_project_task_ids: Vec<String>,
     pub sandbox_target: Option<SandboxExecutionTarget>,

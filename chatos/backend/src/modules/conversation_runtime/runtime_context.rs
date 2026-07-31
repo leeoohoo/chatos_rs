@@ -320,6 +320,7 @@ pub async fn resolve_runtime_context(
             source_session_id: Some(session_id),
             turn_id: req.conversation_turn_id.as_deref(),
             source_user_message_id: req.source_user_message_id.as_deref(),
+            contact_agent_id: contact_agent_id.as_deref(),
             default_model_config_id: req.model_config_id.as_deref(),
             expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
         })

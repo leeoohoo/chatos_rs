@@ -33,6 +33,7 @@ pub(super) async fn resolve_runtime_session(
     validate_session_request(&request)?;
     let sandbox_target = normalize_sandbox_target(request.sandbox_target.clone())?;
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
+    let contact_agent_id = normalized(request.contact_agent_id.clone());
     let project_context = state
         .project_context_client
         .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
@@ -81,6 +82,12 @@ pub(super) async fn resolve_runtime_session(
                 resources: materialized.resources,
             });
     bind_agent_callback_routes(route_response.routes.as_mut_slice(), agent_key);
+    bind_chatos_memory_routes(
+        route_response.routes.as_mut_slice(),
+        agent_key,
+        contact_agent_id.as_deref(),
+        request.source_session_id.as_deref(),
+    );
     bind_cloud_sandbox_routes(
         route_response.routes.as_mut_slice(),
         sandbox_target.as_ref(),
@@ -190,6 +197,7 @@ pub(super) async fn resolve_runtime_session(
         task_id: normalized(request.task_id.clone()),
         source_session_id: normalized(request.source_session_id.clone()),
         source_user_message_id: normalized(request.source_user_message_id.clone()),
+        contact_agent_id: contact_agent_id.clone(),
         default_model_config_id: normalized(request.default_model_config_id.clone()),
         expected_project_task_ids: expected_project_task_ids.clone(),
         policy_revision: capabilities.policy_revision.clone(),
@@ -215,6 +223,7 @@ pub(super) async fn resolve_runtime_session(
         task_id: normalized(request.task_id),
         source_session_id: normalized(request.source_session_id),
         source_user_message_id: normalized(request.source_user_message_id),
+        contact_agent_id,
         default_model_config_id: normalized(request.default_model_config_id),
         expected_project_task_ids,
         sandbox_target,
@@ -522,6 +531,61 @@ fn bind_agent_callback_routes(routes: &mut [ResolvedMcpRoute], agent_key: System
     }
 }
 
+fn bind_chatos_memory_routes(
+    routes: &mut [ResolvedMcpRoute],
+    agent_key: SystemAgentKey,
+    contact_agent_id: Option<&str>,
+    source_session_id: Option<&str>,
+) {
+    let is_chatos_agent = matches!(
+        agent_key,
+        SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosPlanningAgent
+            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+    );
+    let contact_agent_id = contact_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let has_source_session = source_session_id
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    for route in routes.iter_mut().filter(|route| {
+        chatos_mcp::system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_some_and(
+            |descriptor| {
+                matches!(
+                    descriptor.key,
+                    SystemMcpKey::MemorySkillReader
+                        | SystemMcpKey::MemoryCommandReader
+                        | SystemMcpKey::MemoryPluginReader
+                )
+            },
+        )
+    }) {
+        route.cancel_supported = false;
+        let bound_contact_agent_id = if is_chatos_agent
+            && has_source_session
+            && route.provider_kind == McpProviderKind::InternalService
+        {
+            contact_agent_id
+        } else {
+            None
+        };
+        if let Some(contact_agent_id) = bound_contact_agent_id {
+            route.provider_ref = Some(crate::providers::chatos_memory_provider_ref(
+                contact_agent_id,
+            ));
+            route.reason = "Memory Reader is pinned to the bound ChatOS contact agent".to_string();
+        } else {
+            route.provider_kind = McpProviderKind::Unavailable;
+            route.provider_ref = None;
+            route.allow_writes = false;
+            route.reason =
+                "Memory Reader requires a ChatOS runtime session with a bound contact agent"
+                    .to_string();
+        }
+    }
+}
+
 fn normalize_sandbox_target(
     target: Option<SandboxExecutionTarget>,
 ) -> Result<Option<SandboxExecutionTarget>, ApiError> {
@@ -731,6 +795,7 @@ mod tests {
             task_profile: Some("implementation".to_string()),
             source_session_id: None,
             source_user_message_id: None,
+            contact_agent_id: None,
             default_model_config_id: None,
             expected_project_task_ids: Vec::new(),
             requested_device_id: Some("device-1".to_string()),
@@ -881,6 +946,44 @@ mod tests {
         )
         .expect_err("ChatOS turn binding is required");
         assert!(format!("{error:?}").contains("turn_id"));
+    }
+
+    #[test]
+    fn memory_reader_routes_are_pinned_to_the_runtime_contact_agent() {
+        let mut routes = vec![
+            system_route(SystemMcpKey::MemorySkillReader),
+            system_route(SystemMcpKey::MemoryCommandReader),
+            system_route(SystemMcpKey::MemoryPluginReader),
+        ];
+
+        bind_chatos_memory_routes(
+            routes.as_mut_slice(),
+            SystemAgentKey::ChatosConversationAgent,
+            Some(" contact-agent-1 "),
+            Some("conversation-1"),
+        );
+
+        assert!(routes.iter().all(|route| {
+            route.provider_kind == McpProviderKind::InternalService
+                && route.provider_ref.as_deref() == Some("chatos:memory:contact-agent-1")
+                && !route.cancel_supported
+        }));
+    }
+
+    #[test]
+    fn memory_reader_routes_are_unavailable_without_a_bound_contact_agent() {
+        let mut routes = vec![system_route(SystemMcpKey::MemorySkillReader)];
+
+        bind_chatos_memory_routes(
+            routes.as_mut_slice(),
+            SystemAgentKey::ChatosConversationAgent,
+            None,
+            Some("conversation-1"),
+        );
+
+        assert_eq!(routes[0].provider_kind, McpProviderKind::Unavailable);
+        assert_eq!(routes[0].provider_ref, None);
+        assert!(!routes[0].allow_writes);
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub struct RuntimeGrantClaims {
     pub task_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    #[serde(default)]
+    pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
     pub expected_project_task_ids: Vec<String>,
     pub policy_revision: String,
@@ -150,6 +152,7 @@ mod tests {
             task_id: Some("task-1".to_string()),
             source_session_id: None,
             source_user_message_id: None,
+            contact_agent_id: None,
             default_model_config_id: None,
             expected_project_task_ids: Vec::new(),
             policy_revision: "policy-1".to_string(),

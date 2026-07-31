@@ -401,6 +401,7 @@ mod tests {
             task_id: Some("task-1".to_string()),
             source_session_id: Some("source-session-1".to_string()),
             source_user_message_id: Some("message-1".to_string()),
+            contact_agent_id: None,
             default_model_config_id: Some("model-1".to_string()),
             expected_project_task_ids: vec!["project-task-1".to_string()],
             sandbox_target: None,

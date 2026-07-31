@@ -47,6 +47,7 @@ impl AppState {
             ChatosProviderConfig {
                 base_url: config.chatos_service_base_url.clone(),
                 internal_secret: config.chatos_internal_api_secret.clone(),
+                request_timeout: config.downstream_request_timeout,
                 ask_user_request_timeout: config.chatos_ask_user_request_timeout,
             },
             config.local_connector_service_base_url.clone(),

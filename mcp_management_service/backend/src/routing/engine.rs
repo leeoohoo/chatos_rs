@@ -121,8 +121,8 @@ impl RoutingEngine {
             | SystemMcpKey::MemoryPluginReader => available_route(
                 resource,
                 McpProviderKind::InternalService,
-                Some("memory-engine".to_string()),
-                "memory readers are served by the cloud memory provider",
+                Some("chatos".to_string()),
+                "memory readers are owned by the ChatOS contact-agent runtime",
                 allow_writes,
             ),
             SystemMcpKey::BrowserTools
@@ -712,6 +712,25 @@ mod tests {
             result.routes[0].provider_ref.as_deref(),
             Some("project_management_service")
         );
+    }
+
+    #[test]
+    fn memory_reader_routes_to_the_chatos_owner_before_runtime_binding() {
+        let result = resolve_one(
+            context(WorkspaceProviderKind::Harness),
+            system_resource(
+                "system_builtin_memory_skill_reader",
+                "memory_skill_reader",
+                "memory_skill_reader",
+                true,
+                false,
+            ),
+        );
+        assert_eq!(
+            result.routes[0].provider_kind,
+            McpProviderKind::InternalService
+        );
+        assert_eq!(result.routes[0].provider_ref.as_deref(), Some("chatos"));
     }
 
     #[test]

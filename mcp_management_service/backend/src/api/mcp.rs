@@ -220,6 +220,7 @@ fn grant_matches_snapshot(
         && claims.task_id == snapshot.task_id
         && claims.source_session_id == snapshot.source_session_id
         && claims.source_user_message_id == snapshot.source_user_message_id
+        && claims.contact_agent_id == snapshot.contact_agent_id
         && claims.default_model_config_id == snapshot.default_model_config_id
         && claims.expected_project_task_ids == snapshot.expected_project_task_ids
         && claims.policy_revision == snapshot.policy_revision
@@ -250,6 +251,7 @@ mod tests {
             task_id: Some("task-1".to_string()),
             source_session_id: None,
             source_user_message_id: None,
+            contact_agent_id: None,
             default_model_config_id: None,
             expected_project_task_ids: Vec::new(),
             sandbox_target: None,
@@ -398,6 +400,7 @@ mod tests {
             task_id: snapshot.task_id.clone(),
             source_session_id: snapshot.source_session_id.clone(),
             source_user_message_id: snapshot.source_user_message_id.clone(),
+            contact_agent_id: snapshot.contact_agent_id.clone(),
             default_model_config_id: snapshot.default_model_config_id.clone(),
             expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
             policy_revision: snapshot.policy_revision.clone(),
@@ -411,6 +414,10 @@ mod tests {
         let mut wrong_task = claims.clone();
         wrong_task.task_id = Some("another-task".to_string());
         assert!(!grant_matches_snapshot(&wrong_task, &snapshot));
+
+        let mut wrong_contact_agent = claims.clone();
+        wrong_contact_agent.contact_agent_id = Some("another-contact-agent".to_string());
+        assert!(!grant_matches_snapshot(&wrong_contact_agent, &snapshot));
 
         let mut extra_resource = claims;
         extra_resource
