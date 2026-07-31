@@ -14,7 +14,7 @@ impl ResolvedAgentCapabilities {
     pub fn selectable_mcps(&self) -> impl Iterator<Item = &ResolvedMcp> {
         self.mcps
             .iter()
-            .filter(|item| !item.binding.required && item.available)
+            .filter(|item| !item.binding.required && item.binding.enabled && item.resource.enabled)
     }
 
     pub fn selectable_skills(&self) -> impl Iterator<Item = &ResolvedSkill> {
@@ -150,8 +150,9 @@ impl ResolvedAgentCapabilities {
             .map(|item| item.resource.id.as_str())
             .collect::<HashSet<_>>();
         let mut effective = self
-            .required_mcps()
-            .filter(|item| item.available)
+            .mcps
+            .iter()
+            .filter(|item| item.binding.enabled && item.resource.enabled)
             .map(|item| item.resource.id.clone())
             .collect::<Vec<_>>();
         for resource_id in selected_optional_ids {
@@ -284,26 +285,30 @@ mod tests {
     }
 
     #[test]
-    fn only_available_optional_resources_are_selectable() {
+    fn configured_optional_mcp_resources_are_selectable_even_before_runtime_probe() {
         let capabilities = capabilities();
         let ids = capabilities
             .selectable_mcps()
             .map(|item| item.resource.id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["optional"]);
+        assert_eq!(ids, vec!["optional", "unavailable"]);
         assert!(capabilities
             .validate_optional_selection(["required"])
             .is_err());
         assert!(capabilities
             .validate_optional_selection(["unavailable"])
-            .is_err());
+            .is_ok());
     }
 
     #[test]
-    fn effective_set_injects_required_and_intersects_optional_selection() {
+    fn effective_set_contains_every_configured_enabled_mcp() {
         assert_eq!(
             capabilities().effective_mcp_ids(["optional", "unavailable"]),
-            vec!["required".to_string(), "optional".to_string()]
+            vec![
+                "required".to_string(),
+                "optional".to_string(),
+                "unavailable".to_string()
+            ]
         );
     }
 

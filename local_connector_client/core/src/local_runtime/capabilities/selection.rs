@@ -150,7 +150,7 @@ fn resolved_mcp<'a>(
 }
 
 fn mcp_is_available(item: &ResolvedMcp) -> bool {
-    item.available && item.binding.enabled && item.resource.enabled
+    item.binding.enabled && item.resource.enabled
 }
 
 fn skill_is_available(item: &ResolvedSkill) -> bool {

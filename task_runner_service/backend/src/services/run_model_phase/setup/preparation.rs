@@ -128,7 +128,7 @@ pub(super) async fn prepare_model_execution(
         sandbox_context.as_ref(),
         authoritative_policy,
     )
-    .await;
+    .await?;
     let prepared_plugin_runtime = service
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
@@ -516,7 +516,8 @@ mod tests {
 
         let (builtin_servers, builtin_registry) =
             build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
-                .await;
+                .await
+                .expect("build MCP builder parts");
         let server = builtin_servers
             .iter()
             .find(|server| server.name == chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME)
@@ -562,7 +563,8 @@ mod tests {
 
         let (builtin_servers, builtin_registry) =
             build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
-                .await;
+                .await
+                .expect("build MCP builder parts");
         assert!(builtin_servers
             .iter()
             .all(|server| server.name != chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME));

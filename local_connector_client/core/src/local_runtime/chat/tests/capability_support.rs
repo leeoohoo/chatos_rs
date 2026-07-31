@@ -265,7 +265,7 @@ fn resolved_system_mcp(
 }
 
 #[tokio::test]
-async fn conversation_and_planning_agents_do_not_inherit_task_runner_file_permissions() {
+async fn conversation_and_planning_agents_use_only_their_configured_mcps() {
     use std::collections::BTreeMap;
 
     use serde_json::Value;
@@ -330,7 +330,19 @@ async fn conversation_and_planning_agents_do_not_inherit_task_runner_file_permis
         )
         .await
         .expect("resolve primary Agent capability");
-        assert!(resolved.builtin_kinds.is_empty());
+        assert_eq!(
+            resolved.builtin_kinds,
+            vec![BuiltinMcpKind::ProjectManagement]
+        );
+        assert!(!resolved
+            .builtin_kinds
+            .contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(!resolved
+            .builtin_kinds
+            .contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(!resolved
+            .builtin_kinds
+            .contains(&BuiltinMcpKind::TerminalController));
         assert_eq!(
             resolved.host_system_mcps,
             vec![chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService]

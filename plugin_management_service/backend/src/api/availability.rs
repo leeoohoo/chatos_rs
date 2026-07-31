@@ -81,43 +81,7 @@ pub(super) async fn availability_for_mcp(
             Some("resource is disabled".to_string()),
         ));
     }
-    let local = matches!(
-        record.runtime.kind.as_str(),
-        RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
-            | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-            | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY
-    );
-    if local {
-        let check = state
-            .store
-            .get_check(RESOURCE_KIND_MCP, record.id.as_str())
-            .await
-            .map_err(ApiError::internal)?;
-        return Ok(match check {
-            Some(check)
-                if check.status == "available"
-                    && check.manifest_hash.is_some()
-                    && !check.tool_snapshot.is_empty()
-                    && local_connector_check_is_fresh(
-                        check.last_checked_at.as_str(),
-                        state.config.local_connector_check_ttl,
-                    ) =>
-            {
-                (true, check.status, check.last_error)
-            }
-            Some(check) if check.status == "available" => (
-                false,
-                "offline".to_string(),
-                Some("Local Connector availability check is stale or incomplete".to_string()),
-            ),
-            Some(check) => (false, check.status, check.last_error),
-            None => (
-                false,
-                "unknown".to_string(),
-                Some("Local Connector status has not been checked".to_string()),
-            ),
-        });
-    }
+    let _ = state;
     Ok((true, "available".to_string(), None))
 }
 

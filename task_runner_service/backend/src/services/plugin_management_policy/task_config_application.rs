@@ -34,13 +34,11 @@ impl TaskRunnerCapabilityPolicy {
             .collect::<Vec<_>>();
         effective_builtin.extend(
             self.capabilities
-                .required_mcps()
-                .filter(|item| item.available)
+                .mcps
+                .iter()
+                .filter(|item| item.binding.enabled && item.resource.enabled)
                 .filter_map(plugin_builtin_kind),
         );
-        if self.is_planning_agent() {
-            effective_builtin.extend(self.selectable_builtin_kinds());
-        }
         dedupe_builtin_kinds(&mut effective_builtin);
         task.mcp_config.enabled_builtin_kinds = effective_builtin
             .into_iter()
@@ -60,9 +58,11 @@ impl TaskRunnerCapabilityPolicy {
             .collect::<Vec<_>>();
         effective_external.extend(
             self.capabilities
-                .required_mcps()
+                .mcps
+                .iter()
                 .filter(|item| {
-                    item.available
+                    item.binding.enabled
+                        && item.resource.enabled
                         && plugin_builtin_kind(item).is_none()
                         && !plugin_task_process_log_mcp(item)
                 })
@@ -185,11 +185,11 @@ impl TaskRunnerCapabilityPolicy {
             }
         }
         for dependency in dependencies {
-            let available = self
-                .capabilities
-                .mcps
-                .iter()
-                .any(|item| item.available && plugin_builtin_kind(item) == Some(dependency));
+            let available = self.capabilities.mcps.iter().any(|item| {
+                item.binding.enabled
+                    && item.resource.enabled
+                    && plugin_builtin_kind(item) == Some(dependency)
+            });
             if !available {
                 return Err(format!(
                     "Plugin builtin dependency is unavailable for {}: {}",

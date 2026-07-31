@@ -338,7 +338,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "51b5c8afc1534e3d77c92e1d4b2b1eb3ccfa364081d935a4f935abb9682b288f"
+            "de4a64740feba37f0bbe3f3650645b761db2f360a53e9f515d35e159b8a59020"
         );
     }
 
@@ -354,7 +354,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "412e255452cee4204512c3f595c60b052ad418050196afe248523f23c55de9fe"
+            "dd4d469a8b35df189ca297053c04bdbba8afb1e047b37312d25b380154d53850"
         );
     }
 }

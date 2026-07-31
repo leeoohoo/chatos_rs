@@ -348,9 +348,6 @@ fn chatos_plan_profile_requirements() -> Vec<McpCapabilityRequirement> {
         AskUser,
         WebTools,
         BrowserTools,
-        MemorySkillReader,
-        MemoryCommandReader,
-        MemoryPluginReader,
     ]
     .into_iter()
     .map(|kind| {

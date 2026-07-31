@@ -12,10 +12,13 @@ pub(super) async fn build_mcp_builder_parts(
     task_service: TaskService,
     sandbox_context: Option<&crate::services::sandbox_runtime::SandboxRuntimeContext>,
     authoritative_policy: bool,
-) -> (
-    Vec<chatos_mcp_runtime::McpBuiltinServer>,
-    chatos_mcp_runtime::BuiltinToolRegistry,
-) {
+) -> Result<
+    (
+        Vec<chatos_mcp_runtime::McpBuiltinServer>,
+        chatos_mcp_runtime::BuiltinToolRegistry,
+    ),
+    String,
+> {
     let mut server_options = BuiltinMcpServerOptions::new(effective_workspace_dir.to_string())
         .with_user_id(task.subject_id.clone())
         .with_project_id(task.id.clone())
@@ -78,8 +81,14 @@ pub(super) async fn build_mcp_builder_parts(
         ));
     }
 
-    persist_builtin_init_errors(service, run, builtin_init_errors).await;
-    (builtin_servers, builtin_registry)
+    if !builtin_init_errors.is_empty() {
+        persist_builtin_init_errors(service, run, builtin_init_errors.clone()).await;
+        return Err(format!(
+            "builtin MCP provider initialization failed: {}",
+            builtin_init_errors.join("; ")
+        ));
+    }
+    Ok((builtin_servers, builtin_registry))
 }
 
 fn apply_project_management_builtin_context(

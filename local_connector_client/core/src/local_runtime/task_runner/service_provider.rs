@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
-use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpHost};
+use chatos_mcp::system_mcp_descriptor_for_record;
 use chatos_mcp_runtime::{
     builtin_kind_by_any, BuiltinToolProvider, ToolCallContext, ToolStreamChunkCallback,
 };
@@ -94,14 +94,12 @@ impl LocalTaskRunnerServiceProvider {
         let selectable_builtin_kinds = capabilities
             .selectable_mcps()
             .filter_map(|item| system_mcp_descriptor_for_record(&item.resource))
-            .filter(|descriptor| descriptor.supports_host(SystemMcpHost::LocalConnector))
             .filter_map(|descriptor| descriptor.embedded_kind)
             .map(|kind| kind.kind_name().to_string())
             .collect::<Vec<_>>();
         let planning_builtin_kinds = planning_capabilities
             .selectable_mcps()
             .filter_map(|item| system_mcp_descriptor_for_record(&item.resource))
-            .filter(|descriptor| descriptor.supports_host(SystemMcpHost::LocalConnector))
             .filter_map(|descriptor| descriptor.embedded_kind)
             .map(|kind| kind.kind_name().to_string())
             .collect::<Vec<_>>();

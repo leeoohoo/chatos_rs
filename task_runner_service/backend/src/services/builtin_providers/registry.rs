@@ -17,8 +17,7 @@ pub(in crate::services) fn build_builtin_registry(
             task_service.clone(),
             ask_user_prompt_service.clone(),
         ) {
-            Ok(Some(provider)) => registry.register(provider),
-            Ok(None) => {}
+            Ok(provider) => registry.register(provider),
             Err(err) => errors.push(format!("{} 初始化失败: {err}", server.name)),
         }
     }

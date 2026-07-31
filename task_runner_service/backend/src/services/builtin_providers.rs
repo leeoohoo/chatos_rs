@@ -8,11 +8,11 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use chatos_mcp::{
-    build_shared_builtin_tool_service, AskUserOptions, AskUserService, AskUserStoreRef,
-    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
-    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef,
-    SharedBuiltinToolService, TerminalControllerOptions, TerminalControllerService,
-    TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+    build_shared_builtin_tool_service, AgentBuilderOptions, AgentBuilderService, AskUserOptions,
+    AskUserService, AskUserStoreRef, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
+    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
+    RemoteConnectionControllerStoreRef, SharedBuiltinToolService, TerminalControllerOptions,
+    TerminalControllerService, TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };
 use chatos_mcp_runtime::{
     builtin_kind_by_any, BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer,
@@ -134,7 +134,6 @@ mod tests {
 
         let provider =
             build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
-                .expect("build provider")
                 .expect("terminal provider");
         let tools = provider.list_tools();
         let execute = tools
@@ -181,7 +180,6 @@ mod tests {
 
         let provider =
             build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
-                .expect("build provider")
                 .expect("project management provider");
         let tools = provider.list_tools();
 

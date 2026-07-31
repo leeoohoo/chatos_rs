@@ -43,7 +43,7 @@ impl McpCatalogService {
                     self.task_service.clone(),
                     self.ask_user_prompt_service.clone(),
                 ) {
-                    Ok(Some(provider)) => {
+                    Ok(provider) => {
                         let available_tool_names = provider
                             .list_tools()
                             .into_iter()
@@ -84,25 +84,6 @@ impl McpCatalogService {
                             },
                         }
                     }
-                    Ok(None) => McpCatalogEntry {
-                        kind: kind.kind_name().to_string(),
-                        server_name: kind.server_name().to_string(),
-                        config_id: kind.config_id().map(ToOwned::to_owned),
-                        command: kind.command().map(ToOwned::to_owned),
-                        description,
-                        use_cases,
-                        capabilities,
-                        implemented: false,
-                        runtime_default: runtime_defaults
-                            .iter()
-                            .any(|value| value == kind.kind_name()),
-                        default_allow_writes: kind.default_allow_writes(),
-                        available_tool_names: Vec::new(),
-                        unavailable_tools: Vec::new(),
-                        message: Some(
-                            "当前共享运行时尚未独立接线这个 builtin provider".to_string(),
-                        ),
-                    },
                     Err(err) => McpCatalogEntry {
                         kind: kind.kind_name().to_string(),
                         server_name: kind.server_name().to_string(),
@@ -111,7 +92,7 @@ impl McpCatalogService {
                         description,
                         use_cases,
                         capabilities,
-                        implemented: true,
+                        implemented: !err.contains("not implemented"),
                         runtime_default: runtime_defaults
                             .iter()
                             .any(|value| value == kind.kind_name()),

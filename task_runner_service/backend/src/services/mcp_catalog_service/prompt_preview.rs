@@ -92,11 +92,17 @@ impl McpCatalogService {
         }
         let builtin_servers =
             builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
-        let (builtin_registry, _) = build_builtin_registry(
+        let (builtin_registry, builtin_init_errors) = build_builtin_registry(
             &builtin_servers,
             self.task_service.clone(),
             self.ask_user_prompt_service.clone(),
         );
+        if !builtin_init_errors.is_empty() {
+            return Err(format!(
+                "builtin MCP provider initialization failed: {}",
+                builtin_init_errors.join("; ")
+            ));
+        }
         let executor = McpExecutorBuilder::new()
             .with_builtin_servers(builtin_servers)
             .with_builtin_registry(builtin_registry)

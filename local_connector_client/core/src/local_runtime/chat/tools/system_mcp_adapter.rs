@@ -5,10 +5,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_mcp::{
-    system_mcp_descriptor, ResolvedSystemMcpBackend, SystemMcpHost, SystemMcpHostAdapter,
-    SystemMcpResolveContext,
+    build_shared_builtin_provider, system_mcp_descriptor, ResolvedSystemMcpBackend, SystemMcpHost,
+    SystemMcpHostAdapter, SystemMcpResolveContext,
 };
-use chatos_mcp_runtime::{BuiltinMcpServerOptions, BuiltinToolProvider, McpBuiltinServer};
+use chatos_mcp_runtime::{
+    BuiltinMcpKind, BuiltinMcpServerOptions, BuiltinToolProvider, McpBuiltinServer,
+};
 use chatos_plugin_management_sdk::SystemMcpKey;
 
 use crate::local_runtime::ask_user::LocalAskUserProvider;
@@ -51,12 +53,6 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
             ));
         }
         let descriptor = system_mcp_descriptor(key);
-        if !descriptor.supports_host(self.host()) {
-            return Ok(ResolvedSystemMcpBackend::Unavailable(format!(
-                "system MCP {} is not supported by Local Connector",
-                descriptor.server_name
-            )));
-        }
         if key == SystemMcpKey::TaskRunnerService {
             let provider: Arc<dyn BuiltinToolProvider> = Arc::new(
                 LocalTaskRunnerServiceProvider::new(
@@ -134,6 +130,25 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
                 owner_user_id(&self.context),
                 self.context.ask_user_prompts.clone(),
             )),
+            _ if shared_local_builtin_kind(kind) => {
+                let provider =
+                    build_shared_builtin_provider(&kind.server_with_options(&self.options))?
+                        .ok_or_else(|| {
+                            format!(
+                                "Local Connector builtin provider is not implemented for {}",
+                                kind.kind_name()
+                            )
+                        })?;
+                Arc::new(provider)
+            }
+            _ if local_connector_compatible_builtin_kind(kind) => {
+                Arc::new(LocalChatBuiltinProvider::new(
+                    kind,
+                    self.context.request.clone(),
+                    self.context.state.clone(),
+                    self.context.history_recorder.clone(),
+                ))
+            }
             _ => Arc::new(LocalChatBuiltinProvider::new(
                 kind,
                 self.context.request.clone(),
@@ -146,6 +161,20 @@ impl SystemMcpHostAdapter for LocalConnectorSystemMcpAdapter {
             provider: Some(provider),
         })
     }
+}
+
+fn shared_local_builtin_kind(kind: BuiltinMcpKind) -> bool {
+    matches!(kind, BuiltinMcpKind::WebTools)
+}
+
+fn local_connector_compatible_builtin_kind(kind: BuiltinMcpKind) -> bool {
+    matches!(
+        kind,
+        BuiltinMcpKind::CodeMaintainerRead
+            | BuiltinMcpKind::CodeMaintainerWrite
+            | BuiltinMcpKind::TerminalController
+            | BuiltinMcpKind::BrowserTools
+    )
 }
 
 fn owner_user_id(context: &LocalChatToolContext) -> String {

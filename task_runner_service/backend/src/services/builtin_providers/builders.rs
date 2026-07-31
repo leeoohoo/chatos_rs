@@ -8,17 +8,12 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
     server: &McpBuiltinServer,
     task_service: TaskService,
     ask_user_prompt_service: AskUserPromptService,
-) -> Result<Option<TaskRunnerBuiltinProvider>, String> {
+) -> Result<TaskRunnerBuiltinProvider, String> {
     let Some(kind) = builtin_kind_by_any(server.kind.as_str()) else {
-        return Ok(None);
+        return Err(format!("unknown builtin MCP kind: {}", server.kind));
     };
     if kind == chatos_mcp_runtime::BuiltinMcpKind::TaskManager {
-        return Ok(None);
-    }
-    let descriptor = chatos_mcp::system_mcp_descriptor_by_embedded_kind(kind)
-        .ok_or_else(|| format!("missing system MCP descriptor for {}", kind.kind_name()))?;
-    if !descriptor.supports_host(chatos_mcp::SystemMcpHost::TaskRunner) {
-        return Ok(None);
+        return Err("TaskManager builtin MCP has been removed".to_string());
     }
     let provider = match kind {
         chatos_mcp_runtime::BuiltinMcpKind::Notepad => {
@@ -36,9 +31,12 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
         chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
             build_project_management_provider(server, task_service)?
         }
+        chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder => {
+            build_agent_builder_provider(server, task_service)?
+        }
         _ => return build_shared_provider(server),
     };
-    Ok(Some(provider))
+    Ok(provider)
 }
 
 fn build_notepad_provider(
@@ -142,13 +140,33 @@ fn build_project_management_provider(
     ))
 }
 
-fn build_shared_provider(
+fn build_agent_builder_provider(
     server: &McpBuiltinServer,
-) -> Result<Option<TaskRunnerBuiltinProvider>, String> {
-    Ok(build_shared_builtin_tool_service(server)?.map(|service| {
-        TaskRunnerBuiltinProvider::new(
-            server.name.clone(),
-            TaskRunnerBuiltinToolService::Shared(service),
+    task_service: TaskService,
+) -> Result<TaskRunnerBuiltinProvider, String> {
+    let service = AgentBuilderService::new(AgentBuilderOptions {
+        server_name: server.name.clone(),
+        user_id: server
+            .user_id
+            .clone()
+            .or_else(|| Some(task_service.config.default_subject_id.clone())),
+        store: None,
+    })?;
+    Ok(TaskRunnerBuiltinProvider::new(
+        server.name.clone(),
+        TaskRunnerBuiltinToolService::Shared(SharedBuiltinToolService::AgentBuilder(service)),
+    ))
+}
+
+fn build_shared_provider(server: &McpBuiltinServer) -> Result<TaskRunnerBuiltinProvider, String> {
+    let service = build_shared_builtin_tool_service(server)?.ok_or_else(|| {
+        format!(
+            "Task Runner builtin provider is not implemented for {}",
+            server.kind
         )
-    }))
+    })?;
+    Ok(TaskRunnerBuiltinProvider::new(
+        server.name.clone(),
+        TaskRunnerBuiltinToolService::Shared(service),
+    ))
 }

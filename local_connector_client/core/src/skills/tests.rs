@@ -675,7 +675,7 @@ fn chrome_release_keeps_existing_session_control_on_the_approval_path() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_chrome")
         .expect("Chrome catalog item");
-    assert_eq!(catalog_item.version, "1.4.0");
+    assert_eq!(catalog_item.version, "1.5.0");
     assert_eq!(
         catalog_item.permissions,
         [
@@ -688,7 +688,7 @@ fn chrome_release_keeps_existing_session_control_on_the_approval_path() {
     let instructions =
         internal_skill_instructions("internal_skill_chrome").expect("Chrome instructions");
     assert!(instructions.contains("existing Google Chrome state"));
-    assert!(instructions.contains("macOS and Windows Local Connector"));
+    assert!(instructions.contains("macOS, Linux, and Windows Local Connector"));
     assert!(instructions.contains("HKCU\\Software\\Google\\Chrome"));
     assert!(instructions.contains("user gesture"));
     assert!(instructions.contains("does not read form values"));
@@ -942,7 +942,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "51b5c8afc1534e3d77c92e1d4b2b1eb3ccfa364081d935a4f935abb9682b288f"
+        "de4a64740feba37f0bbe3f3650645b761db2f360a53e9f515d35e159b8a59020"
     );
 }
 
@@ -957,7 +957,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "412e255452cee4204512c3f595c60b052ad418050196afe248523f23c55de9fe"
+        "dd4d469a8b35df189ca297053c04bdbba8afb1e047b37312d25b380154d53850"
     );
 }
 

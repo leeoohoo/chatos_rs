@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpHost};
+use chatos_mcp::system_mcp_descriptor_for_record;
 use chatos_mcp_runtime::{BuiltinMcpKind, PROJECT_MANAGEMENT_MCP_ID};
 use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, SystemAgentKey, SystemMcpKey};
 
@@ -72,7 +72,6 @@ pub(crate) async fn resolve_local_chat_capabilities(
     let resolver = LocalCapabilityResolver::new(database, owner_user_id);
     let capabilities = resolver.resolve_agent(agent_key).await?;
     validate_primary(&capabilities)?;
-    validate_required_system_mcps_for_local_connector(&capabilities)?;
 
     let mut selected_mcp_ids = if include_all_configured {
         capabilities
@@ -102,7 +101,6 @@ pub(crate) async fn resolve_local_chat_capabilities(
         .iter()
         .filter(|item| effective_mcp_ids.contains(&item.resource.id))
         .filter_map(|item| system_mcp_descriptor_for_record(&item.resource))
-        .filter(|descriptor| descriptor.supports_host(SystemMcpHost::LocalConnector))
         .collect::<Vec<_>>();
     let builtin_candidates = effective_system_descriptors
         .iter()
@@ -215,7 +213,7 @@ fn selected_optional_mcp_ids(
                     selected_id, capabilities.agent_key
                 )
             })?;
-        if !item.binding.enabled || !item.resource.enabled || !item.available {
+        if !item.binding.enabled || !item.resource.enabled {
             return Err(format!(
                 "Plugin policy MCP is unavailable for {}: {}",
                 capabilities.agent_key, selected_id
@@ -282,31 +280,11 @@ fn validate_primary(capabilities: &ResolvedAgentCapabilities) -> Result<(), Stri
         .map_err(|error| error.to_string())
 }
 
-fn validate_required_system_mcps_for_local_connector(
-    capabilities: &ResolvedAgentCapabilities,
-) -> Result<(), String> {
-    for item in capabilities.required_mcps() {
-        let Some(descriptor) = system_mcp_descriptor_for_record(&item.resource) else {
-            continue;
-        };
-        if !descriptor.supports_host(SystemMcpHost::LocalConnector) {
-            return Err(format!(
-                "Plugin policy requires system MCP {} but it has no local runtime provider",
-                item.resource.id
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{validate_builtin_dependencies, validate_required_system_mcps_for_local_connector};
+    use super::validate_builtin_dependencies;
     use chatos_mcp_runtime::BuiltinMcpKind;
-    use chatos_plugin_management_sdk::{
-        AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
-        ResolvedMcp, ResourceMetadata, ResourceSecurity, SystemAgentKey,
-    };
+    use chatos_plugin_management_sdk::SystemAgentKey;
 
     #[test]
     fn write_capability_cannot_materialize_an_unconfigured_read_dependency() {
@@ -325,70 +303,5 @@ mod tests {
             ],
         )
         .expect("explicit read and write configuration is valid");
-    }
-
-    #[test]
-    fn cloud_only_required_system_mcp_cannot_be_silently_dropped_locally() {
-        let resource_id = chatos_plugin_management_sdk::PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID;
-        let capabilities = ResolvedAgentCapabilities {
-            agent_key: SystemAgentKey::ChatosConversationAgent.as_str().to_string(),
-            owner_user_id: "user-1".to_string(),
-            policy_revision: "revision".to_string(),
-            generated_at: "now".to_string(),
-            agent_enabled: true,
-            mcps: vec![ResolvedMcp {
-                resource: McpRecord {
-                    id: resource_id.to_string(),
-                    owner_user_id: "system".to_string(),
-                    owner_kind: "system".to_string(),
-                    visibility: "system_private".to_string(),
-                    source_kind: "system_seed".to_string(),
-                    name: "project_runtime_environment".to_string(),
-                    display_name: "Project Runtime Environment".to_string(),
-                    description: None,
-                    enabled: true,
-                    runtime: McpRuntime {
-                        kind: "system".to_string(),
-                        system_key: Some("project_runtime_environment".to_string()),
-                        server_name: Some("project_runtime_environment".to_string()),
-                        ..McpRuntime::default()
-                    },
-                    security: ResourceSecurity::default(),
-                    metadata: ResourceMetadata::default(),
-                    plugin_component: Default::default(),
-                    created_by: "system".to_string(),
-                    updated_by: "system".to_string(),
-                    created_at: "now".to_string(),
-                    updated_at: "now".to_string(),
-                },
-                binding: AgentBindingRecord {
-                    id: "binding".to_string(),
-                    agent_key: SystemAgentKey::ChatosConversationAgent.as_str().to_string(),
-                    binding_scope: "system_required".to_string(),
-                    owner_user_id: None,
-                    resource_kind: "mcp".to_string(),
-                    resource_id: resource_id.to_string(),
-                    enabled: true,
-                    required: true,
-                    priority: 10,
-                    conditions: BindingConditions::default(),
-                    component_allowlist: Vec::new(),
-                    created_by: "system".to_string(),
-                    updated_by: "system".to_string(),
-                    created_at: "now".to_string(),
-                    updated_at: "now".to_string(),
-                },
-                available: true,
-                status: "available".to_string(),
-                reason: None,
-            }],
-            skills: Vec::new(),
-            plugins: Vec::new(),
-            local_connector_requirements: Vec::new(),
-        };
-
-        let error = validate_required_system_mcps_for_local_connector(&capabilities)
-            .expect_err("cloud-only MCP must fail closed in local runtime");
-        assert!(error.contains("no local runtime provider"));
     }
 }
