@@ -36,6 +36,11 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "local_connector_client_agent",
     "memory_engine_context_agent",
 ];
+const CHATOS_NOTEPAD_AGENT_KEYS: &[&str] = &[
+    "chatos_conversation_agent",
+    "chatos_planning_agent",
+    "project_requirement_execution_planner_agent",
+];
 
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
     remove_retired_system_agents(store).await?;
@@ -309,6 +314,17 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         20,
     )
     .await?;
+    for agent_key in CHATOS_NOTEPAD_AGENT_KEYS {
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            agent_key,
+            builtin_resource_id(BuiltinMcpKind::Notepad).as_str(),
+            false,
+            30,
+        )
+        .await?;
+    }
     for (agent_key, kinds) in [
         (
             "task_runner_plan_phase",
@@ -703,6 +719,7 @@ fn task_runner_local_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, 
         (CodeMaintainerWrite, 110),
         (TerminalController, 120),
         (ProjectManagement, 130),
+        (Notepad, 140),
         (BrowserTools, 170),
     ]
 }
@@ -724,7 +741,13 @@ fn task_runner_cloud_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
 
 fn task_runner_local_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
     use BuiltinMcpKind::*;
-    vec![CodeMaintainerRead, ProjectManagement, AskUser, BrowserTools]
+    vec![
+        CodeMaintainerRead,
+        ProjectManagement,
+        Notepad,
+        AskUser,
+        BrowserTools,
+    ]
 }
 
 #[cfg(test)]

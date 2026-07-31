@@ -145,17 +145,20 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         TASK_AND_LOCAL_HOSTS,
         ProjectManagement
     ),
-    embedded_descriptor!(
-        Notepad,
-        "builtin_notepad",
-        "notepad",
-        "Notepad (Builtin)",
-        "Persistent agent notepad tools.",
-        true,
-        "shared",
-        CHATOS_TASK_HOSTS,
-        Notepad
-    ),
+    SystemMcpDescriptor {
+        key: SystemMcpKey::Notepad,
+        resource_id: "builtin_notepad",
+        server_name: "notepad",
+        display_name: "Notepad (Builtin)",
+        description: "Persistent agent notepad tools backed by the cloud ChatOS user store.",
+        allow_writes: true,
+        tags: &["system", "builtin"],
+        category: Some("builtin"),
+        owner_service: "chatos",
+        backend: SystemMcpBackend::ServiceHttp,
+        supported_hosts: CHATOS_TASK_HOSTS,
+        embedded_kind: Some(BuiltinMcpKind::Notepad),
+    },
     embedded_descriptor!(
         AgentBuilder,
         "builtin_agent_builder",
@@ -457,6 +460,17 @@ mod tests {
         assert_eq!(descriptor.backend, SystemMcpBackend::RunScopedBuiltin);
         assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
         assert!(descriptor.supports_host(SystemMcpHost::LocalConnector));
+    }
+
+    #[test]
+    fn notepad_is_owned_by_the_chatos_cloud_service() {
+        let descriptor = system_mcp_descriptor(SystemMcpKey::Notepad);
+
+        assert_eq!(descriptor.owner_service, "chatos");
+        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
+        assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::Notepad));
+        assert!(descriptor.supports_host(SystemMcpHost::Chatos));
+        assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
     }
 
     #[test]

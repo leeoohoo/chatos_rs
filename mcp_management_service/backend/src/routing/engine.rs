@@ -125,6 +125,13 @@ impl RoutingEngine {
                 "memory readers are owned by the ChatOS contact-agent runtime",
                 allow_writes,
             ),
+            SystemMcpKey::Notepad => available_route(
+                resource,
+                McpProviderKind::InternalService,
+                Some("chatos".to_string()),
+                "Notepad is owned by the cloud ChatOS user store",
+                allow_writes,
+            ),
             SystemMcpKey::BrowserTools
                 if context.workspace_provider == WorkspaceProviderKind::LocalConnector =>
             {
@@ -135,15 +142,13 @@ impl RoutingEngine {
                     "local project browser tools are routed through Local Connector",
                 )
             }
-            SystemMcpKey::BrowserTools | SystemMcpKey::WebTools | SystemMcpKey::Notepad => {
-                available_route(
-                    resource,
-                    McpProviderKind::Embedded,
-                    Some("mcp-management-service".to_string()),
-                    "capability uses the cloud embedded provider",
-                    allow_writes,
-                )
-            }
+            SystemMcpKey::BrowserTools | SystemMcpKey::WebTools => available_route(
+                resource,
+                McpProviderKind::Embedded,
+                Some("mcp-management-service".to_string()),
+                "capability uses the cloud embedded provider",
+                allow_writes,
+            ),
             SystemMcpKey::RemoteConnectionController => unavailable_route(
                 resource,
                 "remote connection controller has no registered management provider",
@@ -731,6 +736,25 @@ mod tests {
             McpProviderKind::InternalService
         );
         assert_eq!(result.routes[0].provider_ref.as_deref(), Some("chatos"));
+    }
+
+    #[test]
+    fn notepad_routes_to_the_chatos_cloud_store_on_every_workspace_plane() {
+        for workspace_provider in [
+            WorkspaceProviderKind::Harness,
+            WorkspaceProviderKind::CloudSandbox,
+            WorkspaceProviderKind::LocalConnector,
+        ] {
+            let result = resolve_one(
+                context(workspace_provider),
+                system_resource("builtin_notepad", "notepad", "notepad", true, true),
+            );
+            assert_eq!(
+                result.routes[0].provider_kind,
+                McpProviderKind::InternalService
+            );
+            assert_eq!(result.routes[0].provider_ref.as_deref(), Some("chatos"));
+        }
     }
 
     #[test]

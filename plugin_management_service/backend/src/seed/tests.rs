@@ -35,7 +35,7 @@ fn task_runner_local_run_phase_has_separate_execution_defaults() {
 
     assert!(cloud.contains(&BuiltinMcpKind::Notepad));
     assert!(cloud.contains(&BuiltinMcpKind::WebTools));
-    assert!(!local.contains(&BuiltinMcpKind::Notepad));
+    assert!(local.contains(&BuiltinMcpKind::Notepad));
     assert!(!local.contains(&BuiltinMcpKind::WebTools));
     assert!(local.contains(&BuiltinMcpKind::TerminalController));
     assert!(local.contains(&BuiltinMcpKind::BrowserTools));
@@ -63,7 +63,7 @@ fn task_runner_local_plan_phase_has_separate_planning_defaults() {
     assert!(cloud.contains(&BuiltinMcpKind::WebTools));
     assert!(cloud.contains(&BuiltinMcpKind::Notepad));
     assert!(!local.contains(&BuiltinMcpKind::WebTools));
-    assert!(!local.contains(&BuiltinMcpKind::Notepad));
+    assert!(local.contains(&BuiltinMcpKind::Notepad));
     assert!(local.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(!local.contains(&BuiltinMcpKind::TaskManager));
     assert!(local.contains(&BuiltinMcpKind::ProjectManagement));
@@ -145,6 +145,18 @@ fn legacy_chatos_plan_key_is_replaced_by_the_explicit_planning_role() {
     assert!(system_agent_specs()
         .iter()
         .any(|(agent_key, _, _, _, _)| *agent_key == "chatos_planning_agent"));
+}
+
+#[test]
+fn all_chatos_runtime_agents_receive_the_cloud_notepad_binding() {
+    assert_eq!(
+        CHATOS_NOTEPAD_AGENT_KEYS,
+        [
+            "chatos_conversation_agent",
+            "chatos_planning_agent",
+            "project_requirement_execution_planner_agent",
+        ]
+    );
 }
 
 #[test]

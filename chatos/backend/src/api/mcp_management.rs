@@ -10,7 +10,8 @@ use axum::{Json, Router};
 use chatos_mcp::{
     AskUserOptions, AskUserService, AskUserStoreRef, MemoryCommandReaderOptions,
     MemoryCommandReaderService, MemoryPluginReaderOptions, MemoryPluginReaderService,
-    MemoryReaderStoreRef, MemorySkillReaderOptions, MemorySkillReaderService, SystemMcpKey,
+    MemoryReaderStoreRef, MemorySkillReaderOptions, MemorySkillReaderService,
+    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, SystemMcpKey,
 };
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
@@ -25,6 +26,7 @@ use crate::models::session::Session;
 use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
+use crate::services::shared_builtin_notepad::ChatosNotepadStore;
 use crate::services::{chatos_agents, chatos_sessions};
 
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
@@ -78,6 +80,7 @@ async fn mcp_management_entrypoint(
     }
     let response = match system_key {
         SystemMcpKey::AskUser => dispatch_bound_ask_user(request, &binding).await,
+        SystemMcpKey::Notepad => dispatch_bound_notepad(request, &binding).await,
         SystemMcpKey::MemorySkillReader
         | SystemMcpKey::MemoryCommandReader
         | SystemMcpKey::MemoryPluginReader => {
@@ -90,6 +93,58 @@ async fn mcp_management_entrypoint(
         ),
     };
     Json(response)
+}
+
+async fn dispatch_bound_notepad(
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    if !is_notepad_agent(binding.agent_key) {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "configured Agent is not allowed to use ChatOS Notepad MCP",
+        );
+    }
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "Notepad tool name is required",
+        );
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Err(message) = reject_notepad_identity_overrides(&arguments) {
+        return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message);
+    }
+    let store = match ChatosNotepadStore::new(binding.owner_user_id.as_str()) {
+        Ok(store) => store,
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    let service = match NotepadBuiltinService::new(NotepadOptions {
+        server_name: chatos_mcp::system_mcp_descriptor(SystemMcpKey::Notepad)
+            .server_name
+            .to_string(),
+        store: NotepadStoreRef::new(Arc::new(store)),
+    }) {
+        Ok(service) => service,
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    match service.call_tool(name, arguments) {
+        Ok(result) => jsonrpc_ok(id, result),
+        Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    }
 }
 
 async fn dispatch_bound_memory_reader(
@@ -414,6 +469,35 @@ fn is_chatos_agent(agent_key: SystemAgentKey) -> bool {
     )
 }
 
+fn is_notepad_agent(agent_key: SystemAgentKey) -> bool {
+    matches!(
+        agent_key,
+        SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosPlanningAgent
+            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            | SystemAgentKey::TaskRunnerPlanPhase
+            | SystemAgentKey::TaskRunnerLocalPlanPhase
+            | SystemAgentKey::TaskRunnerRunPhase
+            | SystemAgentKey::TaskRunnerLocalRunPhase
+    )
+}
+
+fn reject_notepad_identity_overrides(arguments: &Value) -> Result<(), String> {
+    let Some(arguments) = arguments.as_object() else {
+        return Ok(());
+    };
+    if ["owner_user_id", "user_id"]
+        .into_iter()
+        .any(|key| arguments.contains_key(key))
+    {
+        return Err(
+            "Notepad owner identity is bound by MCP Management and cannot be supplied by tool arguments"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn bound_ask_user_prompt_timeout_ms(binding: &McpManagementBinding) -> Result<u64, String> {
     let now_unix = chrono::Utc::now().timestamp();
     let remaining_seconds = binding.session_expires_at_unix.saturating_sub(now_unix);
@@ -540,6 +624,37 @@ mod tests {
             updated_at: "now".to_string(),
         };
         assert!(session_matches_binding(&session, &binding));
+    }
+
+    #[test]
+    fn notepad_access_is_limited_to_chatos_and_task_runner_agents() {
+        for agent_key in [
+            SystemAgentKey::ChatosConversationAgent,
+            SystemAgentKey::ChatosPlanningAgent,
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
+            SystemAgentKey::TaskRunnerPlanPhase,
+            SystemAgentKey::TaskRunnerLocalPlanPhase,
+            SystemAgentKey::TaskRunnerRunPhase,
+            SystemAgentKey::TaskRunnerLocalRunPhase,
+        ] {
+            assert!(is_notepad_agent(agent_key));
+        }
+        assert!(!is_notepad_agent(SystemAgentKey::ProjectManagementAgent));
+        assert!(!is_notepad_agent(SystemAgentKey::MemoryEngineSummaryAgent));
+    }
+
+    #[test]
+    fn notepad_tool_arguments_cannot_override_the_bound_owner() {
+        assert!(reject_notepad_identity_overrides(&json!({"title": "safe"})).is_ok());
+        assert!(reject_notepad_identity_overrides(&json!({
+            "owner_user_id": "attacker",
+            "title": "unsafe"
+        }))
+        .is_err());
+        assert!(reject_notepad_identity_overrides(&json!({
+            "user_id": "attacker"
+        }))
+        .is_err());
     }
 
     fn binding() -> McpManagementBinding {

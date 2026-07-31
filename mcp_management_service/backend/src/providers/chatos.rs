@@ -69,7 +69,9 @@ impl ChatosProvider {
         }
         system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_some_and(|descriptor| {
             match descriptor.key {
-                SystemMcpKey::AskUser => route.provider_ref.as_deref() == Some(CHATOS_PROVIDER_REF),
+                SystemMcpKey::AskUser | SystemMcpKey::Notepad => {
+                    route.provider_ref.as_deref() == Some(CHATOS_PROVIDER_REF)
+                }
                 SystemMcpKey::MemorySkillReader
                 | SystemMcpKey::MemoryCommandReader
                 | SystemMcpKey::MemoryPluginReader => route
@@ -361,6 +363,29 @@ mod tests {
         let outcome = provider
             .call_tool(
                 &snapshot(),
+                &route(SystemMcpKey::Notepad, CHATOS_PROVIDER_REF.to_string()),
+                "create_note",
+                json!({"title": "Gateway note", "content": "bound to owner"}),
+                "invocation-notepad",
+            )
+            .await
+            .expect("notepad provider call");
+        assert_eq!(outcome.result["content"][0]["text"], "ok");
+        let (system_key, headers, body) = captured
+            .0
+            .lock()
+            .expect("captured notepad request")
+            .clone()
+            .expect("notepad request was captured");
+        assert_eq!(system_key, SystemMcpKey::Notepad.as_str());
+        assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
+        assert_eq!(body["params"]["name"], "create_note");
+        assert!(body["params"]["arguments"].get("user_id").is_none());
+        assert!(body["params"]["arguments"].get("owner_user_id").is_none());
+
+        let outcome = provider
+            .call_tool(
+                &snapshot(),
                 &route(
                     SystemMcpKey::MemorySkillReader,
                     memory_provider_ref("contact-agent-1"),
@@ -399,6 +424,10 @@ mod tests {
         .expect("provider");
         let ask_user = route(SystemMcpKey::AskUser, CHATOS_PROVIDER_REF.to_string());
         assert!(provider.supports(&ask_user));
+        assert!(provider.supports(&route(
+            SystemMcpKey::Notepad,
+            CHATOS_PROVIDER_REF.to_string(),
+        )));
         assert!(provider.supports(&route(
             SystemMcpKey::MemoryPluginReader,
             memory_provider_ref("contact-agent-1"),
