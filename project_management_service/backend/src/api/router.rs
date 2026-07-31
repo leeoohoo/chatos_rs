@@ -23,6 +23,7 @@ use super::execution_context::resolve_project_execution_context;
 use super::harness_git_access::sync_get_project_harness_git_access;
 use super::harness_mcp::harness_project_mcp_entrypoint;
 use super::plan::get_project_plan;
+use super::project_environment_agent_mcp::project_environment_agent_mcp_entrypoint;
 use super::projects::{
     create_cloud_project, create_project, delete_project, get_project, get_project_profile,
     list_projects, update_project, upsert_project_profile,
@@ -224,6 +225,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/projects/{project_id}/runtime-environment/mcp",
             post(project_runtime_environment_mcp_entrypoint),
+        )
+        .route(
+            "/api/internal/projects/{project_id}/environment-agent/mcp",
+            post(project_environment_agent_mcp_entrypoint),
         )
         .route(
             "/api/chatos-sync/projects/{project_id}/harness/git-access",

@@ -23,6 +23,7 @@ const TOKEN_AUDIENCE: &str = "project-service";
 const PROJECT_MCP_SCOPE: &str = "project.mcp";
 const PROJECT_READ_SCOPE: &str = "project.read";
 const PROJECT_HARNESS_SCOPE: &str = "project.harness";
+const PROJECT_ENVIRONMENT_SCOPE: &str = "project.environment";
 const PROJECT_MANAGEMENT_OWNER_SERVICE: &str = "project_management_service";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +108,9 @@ impl ProjectServiceProvider {
             {
                 matches!(
                     descriptor.key,
-                    SystemMcpKey::ProjectManagement | SystemMcpKey::ProjectRuntimeEnvironment
+                    SystemMcpKey::ProjectManagement
+                        | SystemMcpKey::ProjectEnvironment
+                        | SystemMcpKey::ProjectRuntimeEnvironment
                 )
             }
             _ => false,
@@ -298,6 +301,13 @@ impl ProjectServiceProvider {
             (McpProviderKind::InternalService, SystemMcpKey::ProjectManagement) => {
                 Ok((format!("{}/mcp", self.base_url), PROJECT_MCP_SCOPE))
             }
+            (McpProviderKind::InternalService, SystemMcpKey::ProjectEnvironment) => Ok((
+                format!(
+                    "{}/api/internal/projects/{project_id}/environment-agent/mcp",
+                    self.base_url
+                ),
+                PROJECT_ENVIRONMENT_SCOPE,
+            )),
             (McpProviderKind::InternalService, SystemMcpKey::ProjectRuntimeEnvironment) => Ok((
                 format!(
                     "{}/api/chatos-sync/projects/{project_id}/runtime-environment/mcp",
@@ -437,6 +447,21 @@ mod tests {
             provider_kind: McpProviderKind::InternalService,
             provider_ref: Some(PROJECT_MANAGEMENT_OWNER_SERVICE.to_string()),
             tool_namespace: "project_management_service".to_string(),
+            allow_writes: true,
+            retry_class: McpRetryClass::NoRetry,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        }
+    }
+
+    fn project_environment_route() -> ResolvedMcpRoute {
+        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::ProjectEnvironment);
+        ResolvedMcpRoute {
+            resource_id: descriptor.resource_id.to_string(),
+            server_name: descriptor.server_name.to_string(),
+            provider_kind: McpProviderKind::InternalService,
+            provider_ref: Some(PROJECT_MANAGEMENT_OWNER_SERVICE.to_string()),
+            tool_namespace: descriptor.server_name.to_string(),
             allow_writes: true,
             retry_class: McpRetryClass::NoRetry,
             cancel_supported: true,
@@ -587,5 +612,21 @@ mod tests {
         let (url, scope) = provider.endpoint(&snapshot(), &route).unwrap();
         assert_eq!(scope, PROJECT_HARNESS_SCOPE);
         assert!(url.ends_with("/api/chatos-sync/projects/project-1/harness/mcp"));
+    }
+
+    #[test]
+    fn project_environment_route_uses_the_run_bound_internal_endpoint() {
+        let provider = ProjectServiceProvider::new(
+            "http://127.0.0.1:39210",
+            Duration::from_secs(5),
+            Some("a-long-project-service-secret".to_string()),
+            1024 * 1024,
+        )
+        .unwrap();
+        let route = project_environment_route();
+        assert!(provider.supports(&route));
+        let (url, scope) = provider.endpoint(&snapshot(), &route).unwrap();
+        assert_eq!(scope, PROJECT_ENVIRONMENT_SCOPE);
+        assert!(url.ends_with("/api/internal/projects/project-1/environment-agent/mcp"));
     }
 }

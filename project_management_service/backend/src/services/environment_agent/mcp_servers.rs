@@ -52,12 +52,12 @@ pub(super) async fn build_project_environment_mcp_executor(
     if capability_allows_mcp(capability_policy, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID) {
         builder = builder
             .with_builtin_server(project_environment_builtin_server())
-            .with_builtin_provider(ProjectEnvironmentToolProvider {
-                state: state.clone(),
-                project: project.clone(),
-                run_id: run_id.to_string(),
-                selected_dependencies: selected_dependencies.to_vec(),
-            });
+            .with_builtin_provider(ProjectEnvironmentToolProvider::new(
+                state.clone(),
+                project.clone(),
+                run_id,
+                selected_dependencies.to_vec(),
+            ));
     }
 
     if capability_allows_mcp(capability_policy, SANDBOX_IMAGES_MCP_RESOURCE_ID) {

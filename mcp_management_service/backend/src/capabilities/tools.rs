@@ -8,7 +8,7 @@ use chatos_mcp::{
     system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
 };
 use chatos_mcp_management_sdk::{ResolvedMcpRoute, RuntimeToolDescriptor};
-use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
+use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp, SystemAgentKey};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -79,7 +79,12 @@ pub fn materialize_runtime_tools_with_plugin_components(
                         resolved.resource.id
                     )
                 })?;
-            if !resource_allows_tool(resolved, route, original_name) {
+            if !resource_allows_tool(
+                capabilities.agent_key.as_str(),
+                resolved,
+                route,
+                original_name,
+            ) {
                 continue;
             }
             let exposed_name = route.exposed_tool_name(original_name);
@@ -230,6 +235,7 @@ fn plugin_binding_allows_tool(binding: &PluginMcpRuntimeBinding, tool_name: &str
 }
 
 fn resource_allows_tool(
+    agent_key: &str,
     resolved: &ResolvedMcp,
     route: &ResolvedMcpRoute,
     original_tool_name: &str,
@@ -250,6 +256,23 @@ fn resource_allows_tool(
     allowed_by_allowlist
         && !blocked_by_blocklist
         && route_allows_system_tool(route, original_tool_name)
+        && agent_allows_system_tool(agent_key, route, original_tool_name)
+}
+
+fn agent_allows_system_tool(
+    agent_key: &str,
+    route: &ResolvedMcpRoute,
+    original_tool_name: &str,
+) -> bool {
+    let Some(descriptor) = system_mcp_descriptor_by_resource_id(route.resource_id.as_str()) else {
+        return true;
+    };
+    if agent_key != SystemAgentKey::ProjectManagementAgent.as_str()
+        || descriptor.key != SystemMcpKey::SandboxImages
+    {
+        return true;
+    }
+    matches!(original_tool_name, "get_image_catalog" | "search_images")
 }
 
 pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &str) -> bool {
@@ -725,3 +748,6 @@ mod tests {
         assert!(!route_allows_system_tool(&route, "create_requirement"));
     }
 }
+
+#[cfg(test)]
+mod agent_policy_tests;

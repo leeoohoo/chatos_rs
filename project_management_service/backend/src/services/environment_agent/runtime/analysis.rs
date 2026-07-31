@@ -60,23 +60,6 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         return response_for_project(state, environment).await;
     };
 
-    let capability_policy =
-        match resolve_project_agent_capabilities(state, owner_user_id, user_access_token).await {
-            Ok(policy) => policy,
-            Err(err) => {
-                environment.status = ProjectRuntimeEnvironmentStatus::Failed;
-                environment.analysis_summary =
-                    Some("项目管理 Agent 所需 MCP 能力不可用。".to_string());
-                environment.last_error = Some(err);
-                environment.updated_at = now_rfc3339();
-                let environment = state
-                    .store
-                    .upsert_project_runtime_environment(&environment)
-                    .await?;
-                return response_for_project(state, environment).await;
-            }
-        };
-
     let routing = match resolve_runtime_environment_routing(
         project,
         &state.config,
@@ -113,6 +96,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     environment.not_runnable_reason = None;
     environment.last_agent_run_id = Some(run_id.clone());
     environment.last_error = None;
+    bind_selected_dependencies(&mut environment.detected_stack, selected_dependencies);
     environment.updated_at = now_rfc3339();
     environment = state
         .store
@@ -185,10 +169,13 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         local_inspection.as_ref(),
         &memory,
         user_access_token,
-        run_id.as_str(),
-        &capability_policy,
-        analysis_requirement,
-        selected_dependencies,
+        &ProjectEnvironmentAgentRunContext {
+            run_id: run_id.as_str(),
+            owner_user_id,
+            model_config_id: model_runtime.model_config_id.as_str(),
+            analysis_requirement,
+            selected_dependencies,
+        },
     )
     .await;
 
@@ -241,6 +228,14 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     }
 }
 
+struct ProjectEnvironmentAgentRunContext<'a> {
+    run_id: &'a str,
+    owner_user_id: &'a str,
+    model_config_id: &'a str,
+    analysis_requirement: Option<&'a str>,
+    selected_dependencies: &'a [String],
+}
+
 async fn response_for_project(
     state: &AppState,
     environment: ProjectRuntimeEnvironmentRecord,
@@ -264,10 +259,7 @@ async fn run_project_environment_agent(
     local_inspection: Option<&LocalProjectInspection>,
     memory: &ProjectAgentMemory,
     user_access_token: Option<&str>,
-    run_id: &str,
-    capability_policy: &ResolvedAgentCapabilities,
-    analysis_requirement: Option<&str>,
-    selected_dependencies: &[String],
+    run_context: &ProjectEnvironmentAgentRunContext<'_>,
 ) -> Result<(), String> {
     let agent_prompt = resolve_project_environment_agent_prompt(
         state,
@@ -275,18 +267,89 @@ async fn run_project_environment_agent(
         model_config.provider.as_str(),
     )
     .await?;
-    let executor = build_project_environment_mcp_executor(
-        state,
+    let mcp_resolution = resolve_project_environment_mcp(
         project,
-        &routing,
-        user_access_token,
-        run_id,
-        capability_policy,
-        selected_dependencies,
+        run_context.owner_user_id,
+        run_context.run_id,
+        run_context.model_config_id,
     )
     .await?;
-    ensure_agent_required_tools_available(&executor, &routing)?;
+    match mcp_resolution {
+        ProjectEnvironmentMcpResolution::Legacy => {
+            let capability_policy = resolve_project_agent_capabilities(
+                state,
+                run_context.owner_user_id,
+                user_access_token,
+            )
+            .await?;
+            let executor = build_project_environment_mcp_executor(
+                state,
+                project,
+                &routing,
+                user_access_token,
+                run_context.run_id,
+                &capability_policy,
+                run_context.selected_dependencies,
+            )
+            .await?;
+            ensure_agent_required_tools_available(&executor, &routing)?;
+            execute_project_environment_agent(
+                project,
+                routing,
+                model_config,
+                local_inspection,
+                memory,
+                run_context.run_id,
+                run_context.analysis_requirement,
+                run_context.selected_dependencies,
+                agent_prompt,
+                executor,
+                Some(&capability_policy),
+            )
+            .await
+        }
+        ProjectEnvironmentMcpResolution::Gateway(gateway) => {
+            let result = async {
+                let executor = McpExecutor::builder()
+                    .with_http_server(gateway.server().clone())
+                    .build_initialized()
+                    .await?;
+                ensure_agent_required_tools_available(&executor, &routing)?;
+                execute_project_environment_agent(
+                    project,
+                    routing,
+                    model_config,
+                    local_inspection,
+                    memory,
+                    run_context.run_id,
+                    run_context.analysis_requirement,
+                    run_context.selected_dependencies,
+                    agent_prompt,
+                    executor,
+                    None,
+                )
+                .await
+            }
+            .await;
+            gateway.close(project.id.as_str(), run_context.run_id).await;
+            result
+        }
+    }
+}
 
+async fn execute_project_environment_agent(
+    project: &ProjectRecord,
+    routing: RoutingPlan,
+    model_config: &ModelRuntimeConfig,
+    local_inspection: Option<&LocalProjectInspection>,
+    memory: &ProjectAgentMemory,
+    run_id: &str,
+    analysis_requirement: Option<&str>,
+    selected_dependencies: &[String],
+    agent_prompt: chatos_plugin_management_sdk::ResolvedAgentPrompt,
+    executor: McpExecutor,
+    capability_policy: Option<&ResolvedAgentCapabilities>,
+) -> Result<(), String> {
     let mut prompt = build_project_environment_agent_prompt(
         project,
         local_inspection,
@@ -294,13 +357,15 @@ async fn run_project_environment_agent(
         analysis_requirement,
         selected_dependencies,
     )?;
-    let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(&routing);
-    if let Some(provider_skills_prompt) = capability_policy.compose_provider_skills_prompt(
-        effective_mcp_resource_ids.iter().map(String::as_str),
-        Some("zh-CN"),
-    ) {
-        prompt.push_str("\n\n");
-        prompt.push_str(provider_skills_prompt.trim());
+    if let Some(capability_policy) = capability_policy {
+        let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(&routing);
+        if let Some(provider_skills_prompt) = capability_policy.compose_provider_skills_prompt(
+            effective_mcp_resource_ids.iter().map(String::as_str),
+            Some("zh-CN"),
+        ) {
+            prompt.push_str("\n\n");
+            prompt.push_str(provider_skills_prompt.trim());
+        }
     }
     let metadata = json!({
         "agent": "project_management_environment_agent",
@@ -338,6 +403,26 @@ async fn run_project_environment_agent(
         "project environment agent completed"
     );
     Ok(())
+}
+
+fn bind_selected_dependencies(detected_stack: &mut Value, selected_dependencies: &[String]) {
+    if !detected_stack.is_object() {
+        *detected_stack = json!({});
+    }
+    let Some(object) = detected_stack.as_object_mut() else {
+        return;
+    };
+    let mut selected_dependencies = selected_dependencies
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    selected_dependencies.sort();
+    selected_dependencies.dedup();
+    object.insert(
+        "selected_dependencies".to_string(),
+        json!(selected_dependencies),
+    );
 }
 
 async fn resolve_project_agent_capabilities(
@@ -474,7 +559,7 @@ fn apply_stop_decision(
 
 #[cfg(test)]
 mod tests {
-    use super::project_environment_agent_context;
+    use super::{bind_selected_dependencies, project_environment_agent_context};
 
     #[test]
     fn agent_context_does_not_expose_program_routing_or_environment_state() {
@@ -506,5 +591,22 @@ mod tests {
         ] {
             assert!(!serialized.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn selected_dependencies_are_bound_to_the_persisted_analysis_run() {
+        let mut detected_stack = serde_json::json!({"project_type": "rust"});
+        bind_selected_dependencies(
+            &mut detected_stack,
+            &[
+                " Redis ".to_string(),
+                "PostgreSQL".to_string(),
+                "Redis".to_string(),
+            ],
+        );
+        assert_eq!(
+            detected_stack["selected_dependencies"],
+            serde_json::json!(["PostgreSQL", "Redis"])
+        );
     }
 }

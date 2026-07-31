@@ -86,14 +86,24 @@ impl RoutingEngine {
                 self.resolve_local_command_approval(context, resource, allow_writes)
             }
             SystemMcpKey::SandboxImages => self.resolve_sandbox(context, resource, allow_writes),
-            SystemMcpKey::ProjectManagement
-            | SystemMcpKey::ProjectEnvironment
-            | SystemMcpKey::ProjectRuntimeEnvironment => internal_service_route(
-                resource,
-                descriptor,
-                "project management capabilities are owned by their internal service",
-                allow_writes,
-            ),
+            SystemMcpKey::ProjectEnvironment => {
+                let mut route = internal_service_route(
+                    resource,
+                    descriptor,
+                    "project environment analysis tools are owned by Project Service",
+                    allow_writes,
+                );
+                route.cancel_supported = false;
+                route
+            }
+            SystemMcpKey::ProjectManagement | SystemMcpKey::ProjectRuntimeEnvironment => {
+                internal_service_route(
+                    resource,
+                    descriptor,
+                    "project management capabilities are owned by their internal service",
+                    allow_writes,
+                )
+            }
             SystemMcpKey::TaskProcessLog | SystemMcpKey::TaskRunnerService => {
                 internal_service_route(
                     resource,
@@ -770,6 +780,29 @@ mod tests {
             result.routes[0].provider_ref.as_deref(),
             Some("project_management_service")
         );
+    }
+
+    #[test]
+    fn project_environment_route_is_internal_and_does_not_claim_cancellation() {
+        let result = resolve_one(
+            context(WorkspaceProviderKind::Harness),
+            system_resource(
+                "system_mcp_project_environment",
+                "project_environment",
+                "project_environment",
+                true,
+                true,
+            ),
+        );
+        assert_eq!(
+            result.routes[0].provider_kind,
+            McpProviderKind::InternalService
+        );
+        assert_eq!(
+            result.routes[0].provider_ref.as_deref(),
+            Some("project_management_service")
+        );
+        assert!(!result.routes[0].cancel_supported);
     }
 
     #[test]

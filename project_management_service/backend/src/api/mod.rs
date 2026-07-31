@@ -9,6 +9,7 @@ mod harness_git_access;
 mod harness_mcp;
 mod internal_auth;
 mod plan;
+mod project_environment_agent_mcp;
 mod projects;
 mod requirements;
 mod router;

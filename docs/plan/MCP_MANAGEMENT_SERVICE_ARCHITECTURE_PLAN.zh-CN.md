@@ -982,7 +982,7 @@ Notepad 已从不可执行的 Embedded 占位路由迁移为固定 `InternalServ
 
 Agent Builder 已补齐同一 ChatOS Internal Service Provider。调用只允许 ChatOS 三类运行 Agent，并要求 source session 与 Runtime Session 的 owner、Project 和 active 状态一致；创建 Agent 时 Store 强制写入绑定 owner，工具 Schema 不再暴露 `user_id`，更新 Agent 时入口与 Store 都验证目标 Agent owner，跨用户更新直接拒绝。该 MCP 保持按 Plugin Management 显式配置，不自动加入 Task Runner 默认工具集。
 
-Task Runner 与 ChatOS 调用方均已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。部署默认仍保持 `shadow`；Memory Agent 调用方迁移和旧直连清理尚未开始。
+Task Runner、ChatOS 与 Project Environment Agent 调用方均已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Project Environment Agent 的更新工具通过 Project Service 专用内部 MCP 端点执行，端点再次校验 Runtime Session 冻结的 owner、Agent、Project、run 和 session 身份；本次选择的依赖也绑定到持久化分析 run，网关执行不会丢失旧链路的服务规划校验。该 Agent 只能通过中央工具策略使用 Sandbox Images 的 `get_image_catalog` 与 `search_images`，模型不能直接调用 `create_image`，镜像创建仍由后续服务工作流负责。Gateway Session 在 Agent 完成或失败后显式关闭。部署默认仍保持 `shadow`；Memory Agent 调用方迁移和旧直连清理尚未开始。
 
 ### Phase 5：External 与 Plugin Runtime
 
@@ -1009,7 +1009,7 @@ Session 创建失败时已 prepare 的普通/Plugin Cloud stdio、Plugin Local M
 
 每个调用方只配置一个 MCP Management endpoint。
 
-Task Runner 当前迁移开关 `TASK_RUNNER_MCP_MANAGEMENT_MODE`，ChatOS 当前迁移开关 `CHATOS_MCP_MANAGEMENT_MODE`：
+当前迁移开关包括 Task Runner 的 `TASK_RUNNER_MCP_MANAGEMENT_MODE`、ChatOS 的 `CHATOS_MCP_MANAGEMENT_MODE` 和 Project Environment Agent 的 `PROJECT_SERVICE_MCP_MANAGEMENT_MODE`：
 
 - `off`：仅使用旧 MCP builder。
 - `shadow`：解析并记录 MCP Management Runtime Session，但工具调用仍走旧链路；2.0.10 部署默认值。

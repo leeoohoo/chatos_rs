@@ -11,6 +11,7 @@ pub(in crate::api) const PROJECT_READ_SCOPE: &str = "project.read";
 pub(in crate::api) const PROJECT_SYNC_SCOPE: &str = "project.sync";
 pub(in crate::api) const PROJECT_MCP_SCOPE: &str = "project.mcp";
 pub(in crate::api) const PROJECT_HARNESS_SCOPE: &str = "project.harness";
+pub(in crate::api) const PROJECT_ENVIRONMENT_SCOPE: &str = "project.environment";
 pub(in crate::api) const PROJECT_EXECUTION_CONTEXT_SCOPE: &str = "project.execution_context.read";
 
 pub(in crate::api) const CHATOS_CALLER: &str = "chatos-backend";
