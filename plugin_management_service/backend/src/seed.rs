@@ -21,7 +21,7 @@ mod plugins;
 
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 use internal_skills::{internal_skill_catalog, seed_internal_skills};
-use plugins::seed_bundled_plugins;
+use plugins::{seed_bundled_plugins, BUNDLED_PONYTAIL_AGENT_KEYS, BUNDLED_PONYTAIL_PLUGIN_ID};
 
 pub use chatos_plugin_management_sdk::{
     CHATOS_TASK_RUNNER_MCP_RESOURCE_ID, LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
@@ -42,7 +42,7 @@ pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Res
     remove_retired_system_mcps(store).await?;
     seed_system_mcps(store, admin_user_id).await?;
     seed_internal_skills(store, admin_user_id).await?;
-    seed_bundled_plugins(store).await?;
+    seed_bundled_plugins(store, admin_user_id).await?;
     seed_agents(store).await?;
     seed_agent_prompts(store, admin_user_id).await?;
     seed_agent_bindings(store, admin_user_id).await?;
@@ -408,6 +408,18 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
             resource_id.as_str(),
             false,
             priority,
+        )
+        .await?;
+    }
+    for agent_key in BUNDLED_PONYTAIL_AGENT_KEYS {
+        seed_agent_resource_binding(
+            store,
+            admin_user_id,
+            agent_key,
+            RESOURCE_KIND_PLUGIN,
+            BUNDLED_PONYTAIL_PLUGIN_ID,
+            false,
+            800,
         )
         .await?;
     }

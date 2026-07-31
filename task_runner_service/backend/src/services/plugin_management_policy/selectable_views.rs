@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::PluginComponentKind;
+use std::collections::BTreeMap;
+
+use chatos_plugin_management_sdk::{PluginComponentKind, PluginExecutionHost};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -26,10 +28,27 @@ pub(crate) struct SelectablePluginView {
     pub version: String,
     pub release_id: String,
     pub artifact_sha256: String,
-    pub device_id: String,
+    pub device_id: Option<String>,
+    pub execution_type: String,
+    pub requires_device: bool,
+    pub component_hosts: BTreeMap<String, PluginExecutionHost>,
     pub component_keys: Vec<String>,
+    pub components: Vec<SelectablePluginComponentView>,
     pub commands: Vec<SelectablePluginCommandView>,
     pub agents: Vec<SelectablePluginAgentView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SelectablePluginComponentView {
+    pub component_key: String,
+    pub kind: PluginComponentKind,
+    pub execution_host: PluginExecutionHost,
+    pub available: bool,
+    pub status: chatos_plugin_management_sdk::PluginAvailabilityStatus,
+    pub reason: Option<String>,
+    pub content_sha256: Option<String>,
+    pub prepare_provider: String,
+    pub requires_workspace: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,7 +92,53 @@ impl TaskRunnerCapabilityPolicy {
             .into_iter()
             .filter_map(|plugin| {
                 let release = plugin.release.as_ref()?;
-                let installation = plugin.installation.as_ref()?;
+                let component_hosts = plugin
+                    .components
+                    .iter()
+                    .map(|component| {
+                        (
+                            component.component.component_key.clone(),
+                            component.component.execution_host,
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                let execution_type = plugin_execution_type(component_hosts.values().copied());
+                let local_portable_execution =
+                    super::is_local_task_runner_agent(self.capabilities.agent_key.as_str());
+                let components = plugin
+                    .components
+                    .iter()
+                    .map(|component| {
+                        let snapshot = plugin.component_snapshots.iter().find(|snapshot| {
+                            snapshot.component.component_key == component.component.component_key
+                        });
+                        let uses_local = component.component.execution_host
+                            == PluginExecutionHost::Local
+                            || (component.component.execution_host
+                                == PluginExecutionHost::Portable
+                                && local_portable_execution);
+                        SelectablePluginComponentView {
+                            component_key: component.component.component_key.clone(),
+                            kind: component.component.kind,
+                            execution_host: component.component.execution_host,
+                            available: component.available,
+                            status: component.status,
+                            reason: component.reason.clone(),
+                            content_sha256: snapshot
+                                .map(|snapshot| snapshot.content_sha256.clone()),
+                            prepare_provider: if uses_local {
+                                "local_connector".to_string()
+                            } else {
+                                "task_runner_cloud".to_string()
+                            },
+                            requires_workspace: component
+                                .component
+                                .permissions
+                                .iter()
+                                .any(|permission| permission.permission.starts_with("workspace.")),
+                        }
+                    })
+                    .collect::<Vec<_>>();
                 Some(SelectablePluginView {
                     id: plugin.catalog.id.clone(),
                     plugin_key: plugin.catalog.plugin_key.clone(),
@@ -82,13 +147,23 @@ impl TaskRunnerCapabilityPolicy {
                     version: release.version.clone(),
                     release_id: release.id.clone(),
                     artifact_sha256: release.artifact_sha256.clone(),
-                    device_id: installation.device_id.clone(),
+                    device_id: plugin
+                        .installation
+                        .as_ref()
+                        .map(|installation| installation.device_id.clone()),
+                    requires_device: component_hosts.values().any(|host| {
+                        *host == PluginExecutionHost::Local
+                            || (*host == PluginExecutionHost::Portable && local_portable_execution)
+                    }),
+                    execution_type,
+                    component_hosts,
                     component_keys: plugin
                         .components
                         .iter()
                         .filter(|component| component.available)
                         .map(|component| component.component.component_key.clone())
                         .collect(),
+                    components,
                     commands: plugin
                         .components
                         .iter()
@@ -201,4 +276,21 @@ impl TaskRunnerCapabilityPolicy {
             })
             .collect()
     }
+}
+
+fn plugin_execution_type(hosts: impl Iterator<Item = PluginExecutionHost>) -> String {
+    let hosts = hosts.collect::<std::collections::HashSet<_>>();
+    if hosts.len() != 1 {
+        return "hybrid".to_string();
+    }
+    match hosts
+        .into_iter()
+        .next()
+        .unwrap_or(PluginExecutionHost::Local)
+    {
+        PluginExecutionHost::Cloud => "cloud",
+        PluginExecutionHost::Local => "local",
+        PluginExecutionHost::Portable => "portable",
+    }
+    .to_string()
 }

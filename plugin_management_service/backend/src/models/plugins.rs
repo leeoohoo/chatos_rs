@@ -205,6 +205,13 @@ pub struct PluginCatalogSyncResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginReleasePublicationState {
+    pub release_id: String,
+    pub ready: bool,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginInstallationSyncPayload {
     pub owner_user_id: String,
     pub device_id: String,

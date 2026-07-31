@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::components::{
@@ -10,11 +12,70 @@ use super::components::{
 };
 
 pub const PLUGIN_MANIFEST_SCHEMA_VERSION_V1: u32 = 1;
+pub const PLUGIN_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginExecutionHost {
+    Cloud,
+    #[default]
+    Local,
+    Portable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginExecutionPolicy {
+    #[serde(default)]
+    pub default_host: PluginExecutionHost,
+    #[serde(default)]
+    pub component_hosts: BTreeMap<String, PluginExecutionHost>,
+    #[serde(skip)]
+    implicit_v1: bool,
+}
+
+impl Default for PluginExecutionPolicy {
+    fn default() -> Self {
+        Self {
+            default_host: PluginExecutionHost::Local,
+            component_hosts: BTreeMap::new(),
+            implicit_v1: true,
+        }
+    }
+}
+
+impl PluginExecutionPolicy {
+    pub fn explicit(
+        default_host: PluginExecutionHost,
+        component_hosts: BTreeMap<String, PluginExecutionHost>,
+    ) -> Self {
+        Self {
+            default_host,
+            component_hosts,
+            implicit_v1: false,
+        }
+    }
+
+    pub fn host_for(&self, component_key: &str) -> PluginExecutionHost {
+        self.component_hosts
+            .get(component_key)
+            .copied()
+            .unwrap_or(self.default_host)
+    }
+
+    pub fn is_implicit_v1(&self) -> bool {
+        self.implicit_v1
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginManifest {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "PluginExecutionPolicy::is_implicit_v1")]
+    pub execution: PluginExecutionPolicy,
     pub name: String,
     pub version: String,
     pub description: String,

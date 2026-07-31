@@ -22,6 +22,7 @@ chatos_service_runtime = { path = "../../crates/chatos_service_runtime", feature
 chatos_terminal_runtime = { path = "../../crates/chatos_terminal_runtime" }
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
+chatos_plugin_package = { path = "../../crates/chatos_plugin_package" }
 chatos_project_execution = { path = "../../crates/chatos_project_execution" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 futures-util = "0.3"

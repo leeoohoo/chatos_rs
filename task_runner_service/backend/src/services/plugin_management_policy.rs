@@ -24,7 +24,8 @@ pub(crate) mod selectable_views;
 mod task_config_application;
 
 use plugin_selection::{
-    plugin_snapshot, validate_plugin_component_selection, validate_supported_plugin,
+    is_local_task_runner_agent, plugin_selection_requires_local_execution, plugin_snapshot,
+    validate_plugin_component_selection, validate_supported_plugin,
 };
 
 const LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND: &str = "local_connector_discovered";
@@ -163,7 +164,7 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn validate_plugin_config(&self, config: &TaskPluginConfig) -> Result<(), String> {
-        if !config.selected_plugins.is_empty() {
+        if config.device_id.is_some() {
             normalized_plugin_identifier(
                 config.device_id.as_deref().unwrap_or_default(),
                 "device_id",
@@ -183,7 +184,12 @@ impl TaskRunnerCapabilityPolicy {
                 .capabilities
                 .plugins
                 .iter()
-                .find(|plugin| plugin.catalog.id == plugin_id && plugin.available)
+                .find(|plugin| {
+                    plugin.catalog.id == plugin_id
+                        && (plugin.available
+                            || plugin.status
+                                == chatos_plugin_management_sdk::PluginAvailabilityStatus::PartiallyAvailable)
+                })
                 .ok_or_else(|| {
                     format!(
                         "Plugin is not selectable for {}: {plugin_id}",
@@ -206,6 +212,16 @@ impl TaskRunnerCapabilityPolicy {
                 selected,
                 self.capabilities.agent_key.as_str(),
             )?;
+            if plugin_selection_requires_local_execution(
+                plugin,
+                selected,
+                self.capabilities.agent_key.as_str(),
+            )? {
+                normalized_plugin_identifier(
+                    config.device_id.as_deref().unwrap_or_default(),
+                    "device_id",
+                )?;
+            }
             selected_agent_count =
                 selected_agent_count.saturating_add(selected.selected_agent_ids.len());
             if selected_agent_count > 1 {
@@ -268,13 +284,19 @@ impl TaskRunnerCapabilityPolicy {
                     .capabilities
                     .plugins
                     .iter()
-                    .find(|plugin| plugin.catalog.id == selected.plugin_id && plugin.available)
+                    .find(|plugin| {
+                        plugin.catalog.id == selected.plugin_id
+                            && (plugin.available
+                                || plugin.status
+                                    == chatos_plugin_management_sdk::PluginAvailabilityStatus::PartiallyAvailable)
+                    })
                     .ok_or_else(|| {
                         format!("effective Plugin is unavailable: {}", selected.plugin_id)
                     })?;
                 plugin_snapshot(
                     plugin,
                     selected,
+                    task.plugin_config.device_id.as_deref(),
                     task.plugin_config.workspace_id.as_deref(),
                     command_invocations.as_slice(),
                     self.capabilities.agent_key.as_str(),

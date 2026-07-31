@@ -9,7 +9,7 @@ use chatos_project_execution::{
     build_requirement_execution_user_message, executing_requirement_ids,
     format_planning_feedback_history, read_planning_feedback_history, select_pending_work_items,
     sort_work_items_for_planning, ExecutionPlanIdentity, ExecutionPlane,
-    NEXT_ACTION_PREVIEW_AND_CONFIRM, STATUS_PLANNING_STARTED, STATUS_STOPPED,
+    NEXT_ACTION_PREVIEW_AND_CONFIRM, STATUS_PLANNING_STARTED,
 };
 use serde_json::{json, Value};
 use tracing::warn;
@@ -23,16 +23,16 @@ use crate::services::{access_token_scope, project_management_api_client};
 use super::super::requirement_execution::{
     add_requirement_work_item_dependencies, collect_requirement_execution_scope,
     create_execution_message, ensure_requirement_execution_not_active,
-    load_requirement_execution_request_context, parse_requirements, parse_work_items,
-    project_plan_array, project_plan_value, requirement_dependency_map,
-    resolve_or_create_execution_session, select_contact_runtime, sync_requirement_execution_state,
-    topological_work_item_order, validate_requirement_prerequisites, work_item_dependency_map,
-    HandlerError,
+    load_execution_links_for_work_items, load_requirement_execution_request_context,
+    parse_requirements, parse_work_items, project_plan_array, project_plan_value,
+    requirement_dependency_map, resolve_or_create_execution_session, select_contact_runtime,
+    sync_requirement_execution_state, topological_work_item_order,
+    validate_requirement_prerequisites, work_item_dependency_map, HandlerError,
 };
+use super::rerun_support::ensure_old_cloud_execution_batch_ready_for_replacement;
 use super::{
-    execution_message_status, expected_execution_project_task_ids,
-    load_cloud_execution_source_message, reconcile_requirement_planner_outcome,
-    ExecuteRequirementRequest, RequirementPlannerRecovery,
+    expected_execution_project_task_ids, load_cloud_execution_source_message,
+    reconcile_requirement_planner_outcome, ExecuteRequirementRequest, RequirementPlannerRecovery,
 };
 
 pub(super) async fn execute_requirement_inner(
@@ -64,6 +64,15 @@ pub(super) async fn execute_requirement_inner(
     else {
         return Err(HandlerError::not_found("需求不存在"));
     };
+    let all_work_items = parse_work_items(project_plan_array(&plan, "work_items", "workItems"));
+    let contact_runtime = select_contact_runtime(
+        &auth,
+        cfg,
+        req.contact_id,
+        project.id.as_str(),
+        access_token.as_str(),
+    )
+    .await?;
     let mut previous_planning_feedback = Vec::new();
     let replacement_project_task_ids = if let Some(identity) = replacement_identity.clone() {
         match load_cloud_execution_source_message(
@@ -76,20 +85,55 @@ pub(super) async fn execute_requirement_inner(
         .await
         {
             Ok(replaced_message) => {
-                if execution_message_status(&replaced_message) != STATUS_STOPPED {
-                    return Err(HandlerError::bad_request("重新规划前必须先停止旧执行批次"));
-                }
                 previous_planning_feedback = read_planning_feedback_history(
                     replaced_message
                         .metadata
                         .as_ref()
                         .and_then(|metadata| metadata.get("project_requirement_execution")),
                 );
-                Some(expected_execution_project_task_ids(
+                let project_task_ids = expected_execution_project_task_ids(
                     replaced_message.metadata.as_ref(),
                     project.id.as_str(),
                     requirement_id.as_str(),
-                )?)
+                )?;
+                let replacement_work_items_for_readiness = all_work_items
+                    .iter()
+                    .filter(|item| project_task_ids.contains(item.id.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if replacement_work_items_for_readiness.len() != project_task_ids.len() {
+                    return Err(HandlerError::bad_request(
+                        "原执行批次包含已经删除或不可见的项目任务，不能直接重新规划",
+                    ));
+                }
+                let mut old_links = load_execution_links_for_work_items(
+                    cfg.project_service_base_url.as_str(),
+                    access_token.as_str(),
+                    replacement_work_items_for_readiness.as_slice(),
+                )
+                .await?
+                .into_iter()
+                .filter(|link| {
+                    link.source_session_id.as_deref() == Some(identity.conversation_id.as_str())
+                        && link.source_user_message_id.as_deref()
+                            == Some(identity.execution_group_id.as_str())
+                })
+                .collect::<Vec<_>>();
+                ensure_old_cloud_execution_batch_ready_for_replacement(
+                    &replaced_message,
+                    contact_runtime.task_runner_base_url.as_str(),
+                    contact_runtime.task_runner_agent_token.as_str(),
+                    access_token.as_str(),
+                    cfg.project_service_base_url.as_str(),
+                    project_sync_secret.as_str(),
+                    identity.conversation_id.as_str(),
+                    identity.execution_group_id.as_str(),
+                    root_requirement.title.as_str(),
+                    "重新规划前必须先取消或停止旧执行批次",
+                    old_links.as_mut_slice(),
+                )
+                .await?;
+                Some(project_task_ids)
             }
             Err(error) if error.status == StatusCode::NOT_FOUND => {
                 replacement_identity = None;
@@ -106,7 +150,6 @@ pub(super) async fn execute_requirement_inner(
     );
     let planning_feedback_context =
         format_planning_feedback_history(planning_feedback_history.as_slice());
-    let all_work_items = parse_work_items(project_plan_array(&plan, "work_items", "workItems"));
     let replacement_work_items = replacement_project_task_ids
         .as_ref()
         .map(|project_task_ids| {
@@ -146,14 +189,6 @@ pub(super) async fn execute_requirement_inner(
             "该需求执行范围内没有需要执行的未完成项目任务",
         ));
     }
-    let contact_runtime = select_contact_runtime(
-        &auth,
-        cfg,
-        req.contact_id,
-        project.id.as_str(),
-        access_token.as_str(),
-    )
-    .await?;
     ensure_requirement_execution_not_active(
         &root_requirement,
         &selected_work_items,

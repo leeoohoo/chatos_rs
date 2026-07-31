@@ -73,6 +73,13 @@ impl PluginRuntimeHost {
                     let runtime_kind = optional_body_text(&request.body, "runtime_kind")?;
                     let runtime_metadata = request.body.get("runtime_metadata");
                     let content_sha256 = optional_body_text(&request.body, "content_sha256")?;
+                    self.skill_loader
+                        .validate_component_content_snapshot(
+                            plugin_id.as_str(),
+                            component_key.as_str(),
+                            content_sha256.as_deref(),
+                        )
+                        .map_err(|error| (409, error.to_string()))?;
                     let native_binding = self
                         .skill_loader
                         .load_bundled_native_binding(

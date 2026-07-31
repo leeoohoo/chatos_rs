@@ -259,6 +259,37 @@ async fn sync_plugin_marketplace_inner(
     }
     validate_catalog_against_store(state, &document, unchanged).await?;
 
+    let mut staged_cloud_bundles = Vec::new();
+    for release in &document.releases {
+        let bundles =
+            super::plugin_cloud_bundles::stage_release_cloud_bundles(state, release).await?;
+        for bundle in &bundles {
+            let snapshot = document
+                .component_snapshots
+                .iter()
+                .find(|snapshot| {
+                    snapshot.plugin_id == bundle.plugin_id
+                        && snapshot.release_id == bundle.release_id
+                        && snapshot.component.component_key == bundle.component_key
+                })
+                .ok_or_else(|| {
+                    ApiError::conflict(format!(
+                        "Catalog is missing cloud component snapshot {}/{}/{}",
+                        bundle.plugin_id, bundle.release_id, bundle.component_key
+                    ))
+                })?;
+            if snapshot.content_sha256 != bundle.bundle_sha256
+                || snapshot.component.execution_host != bundle.execution_host
+            {
+                return Err(ApiError::conflict(format!(
+                    "Catalog cloud component snapshot does not match artifact Bundle {}/{}/{}",
+                    bundle.plugin_id, bundle.release_id, bundle.component_key
+                )));
+            }
+        }
+        staged_cloud_bundles.extend(bundles);
+    }
+
     let synced_at = now_rfc3339();
     let sync_record = PluginCatalogSyncRecord {
         marketplace_id: marketplace.id.clone(),
@@ -282,7 +313,13 @@ async fn sync_plugin_marketplace_inner(
             "Plugin Catalog changed concurrently; retry the sync",
         ));
     }
-    materialize_catalog(state, &marketplace, &document).await?;
+    materialize_catalog(
+        state,
+        &marketplace,
+        &document,
+        staged_cloud_bundles.as_slice(),
+    )
+    .await?;
 
     marketplace.trusted_signing_keys = document.signing_keys.clone();
     marketplace.last_catalog_revision = Some(document.revision.clone());
@@ -351,7 +388,10 @@ async fn fetch_catalog_document(
     })
 }
 
-async fn build_catalog_client(url: &Url, timeout: Duration) -> Result<reqwest::Client, ApiError> {
+pub(super) async fn build_catalog_client(
+    url: &Url,
+    timeout: Duration,
+) -> Result<reqwest::Client, ApiError> {
     let host = url
         .host_str()
         .ok_or_else(|| ApiError::conflict("Plugin Catalog URL has no host"))?;
@@ -382,7 +422,7 @@ async fn build_catalog_client(url: &Url, timeout: Duration) -> Result<reqwest::C
         .map_err(|error| ApiError::internal(format!("build Plugin Catalog client failed: {error}")))
 }
 
-fn validate_catalog_url(value: &str) -> Result<Url, ApiError> {
+pub(super) fn validate_catalog_url(value: &str) -> Result<Url, ApiError> {
     let url = Url::parse(value).map_err(|_| ApiError::conflict("Plugin Catalog URL is invalid"))?;
     if url.scheme() != "https"
         || url.host_str().is_none()
@@ -710,11 +750,27 @@ async fn materialize_catalog(
     state: &AppState,
     marketplace: &PluginMarketplaceRecord,
     document: &PluginCatalogDocument,
+    cloud_bundles: &[PluginCloudComponentBundle],
 ) -> Result<(), ApiError> {
+    let mut staged_release_ids = Vec::new();
     for release in &document.releases {
-        match state
+        let ready = state
             .store
             .get_plugin_release(release.id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+            .is_some();
+        if !ready {
+            state
+                .store
+                .set_plugin_release_publication_ready(release.id.as_str(), false)
+                .await
+                .map_err(ApiError::internal)?;
+            staged_release_ids.push(release.id.clone());
+        }
+        match state
+            .store
+            .get_plugin_release_any_state(release.id.as_str())
             .await
             .map_err(ApiError::internal)?
         {
@@ -745,6 +801,18 @@ async fn materialize_catalog(
                 release.id.as_str(),
                 snapshots.as_slice(),
             )
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    state
+        .store
+        .insert_plugin_cloud_component_bundles(cloud_bundles)
+        .await
+        .map_err(ApiError::internal)?;
+    for release_id in staged_release_ids {
+        state
+            .store
+            .set_plugin_release_publication_ready(release_id.as_str(), true)
             .await
             .map_err(ApiError::internal)?;
     }

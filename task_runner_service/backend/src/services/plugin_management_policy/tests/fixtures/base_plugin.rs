@@ -124,7 +124,7 @@ pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
     };
     let binding = AgentBindingRecord {
         id: "binding-plugin-browser".to_string(),
-        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+        agent_key: SystemAgentKey::TaskRunnerLocalRunPhase.as_str().to_string(),
         binding_scope: if required {
             "system_required".to_string()
         } else {

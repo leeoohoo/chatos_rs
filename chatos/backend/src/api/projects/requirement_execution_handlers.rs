@@ -48,7 +48,8 @@ use execution_dispatch::{
 #[cfg(test)]
 use plan_query::{
     cloud_execution_message_is_newer, cloud_execution_message_matches_scope,
-    cloud_execution_planner_message_is_stale, STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS,
+    cloud_execution_planner_message_is_stale, execution_message_is_stopped_terminal,
+    STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS,
 };
 use plan_query::{
     execution_message_status, get_requirement_execution_plan_inner,
@@ -58,7 +59,8 @@ use rerun_execution::rerun_requirement_execution_inner;
 #[cfg(test)]
 use rerun_support::{
     build_planner_coverage_failure_message, replacement_link_scope,
-    validate_rerun_cloned_project_task_scope,
+    resolve_old_cloud_execution_batch_state, validate_rerun_cloned_project_task_scope,
+    OldCloudExecutionBatchState,
 };
 use rerun_support::{
     expand_project_task_scope_to_actual_graph, expected_execution_project_task_ids,
@@ -592,7 +594,7 @@ async fn stop_requirement_execution_inner(
     } else {
         None
     };
-    mark_execution_messages_for_stop(&active_links, STATUS_STOPPED).await;
+    mark_execution_messages_for_stop(&links, STATUS_STOPPED).await;
     if let Some((conversation_id, execution_group_id)) = precise_plan.as_ref() {
         let status_result = set_task_runner_async_overall_status_for_session(
             conversation_id.as_str(),

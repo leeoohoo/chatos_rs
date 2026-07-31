@@ -8,8 +8,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::plugin_manifest::{
-    component_key_from_path, PluginComponentKind, PluginDependencySpec, PluginInterfaceMetadata,
-    PluginManifest, PluginMcpServer, PluginPathRef, PluginPermissionRequirement,
+    component_key_from_path, PluginComponentKind, PluginDependencySpec, PluginExecutionHost,
+    PluginInterfaceMetadata, PluginManifest, PluginMcpServer, PluginPathRef,
+    PluginPermissionRequirement,
 };
 use crate::plugin_signing::{PluginReleaseSignature, SigningKeyRef};
 
@@ -60,6 +61,8 @@ pub enum PluginRequirementStatus {
 pub struct PluginComponentDescriptor {
     pub component_key: String,
     pub kind: PluginComponentKind,
+    #[serde(default)]
+    pub execution_host: PluginExecutionHost,
     pub display_name: String,
     pub runtime_kind: String,
     #[serde(default)]
@@ -270,6 +273,7 @@ struct PluginCommandSnapshotHashInput<'a> {
     plugin_id: &'a str,
     release_id: &'a str,
     component_key: &'a str,
+    execution_host: PluginExecutionHost,
     source_path: &'a str,
     description: Option<&'a str>,
     argument_hint: Option<&'a str>,
@@ -286,6 +290,7 @@ pub fn plugin_command_snapshot_sha256(
     plugin_id: &str,
     release_id: &str,
     component_key: &str,
+    execution_host: PluginExecutionHost,
     source_path: &str,
     description: Option<&str>,
     argument_hint: Option<&str>,
@@ -297,10 +302,11 @@ pub fn plugin_command_snapshot_sha256(
     arguments_sha256: &str,
 ) -> Result<String, serde_json::Error> {
     let payload = PluginCommandSnapshotHashInput {
-        purpose: "chatos.plugin.command.snapshot.v3",
+        purpose: "chatos.plugin.command.snapshot.v4",
         plugin_id,
         release_id,
         component_key,
+        execution_host,
         source_path,
         description,
         argument_hint,
@@ -320,6 +326,7 @@ struct PluginAgentSnapshotHashInput<'a> {
     plugin_id: &'a str,
     release_id: &'a str,
     component_key: &'a str,
+    execution_host: PluginExecutionHost,
     source_path: &'a str,
     description: Option<&'a str>,
     base_agent: &'a str,
@@ -334,6 +341,7 @@ pub fn plugin_agent_snapshot_sha256(
     plugin_id: &str,
     release_id: &str,
     component_key: &str,
+    execution_host: PluginExecutionHost,
     source_path: &str,
     description: Option<&str>,
     base_agent: &str,
@@ -343,10 +351,11 @@ pub fn plugin_agent_snapshot_sha256(
     prompt: &str,
 ) -> Result<String, serde_json::Error> {
     let payload = PluginAgentSnapshotHashInput {
-        purpose: "chatos.plugin.agent.snapshot.v1",
+        purpose: "chatos.plugin.agent.snapshot.v2",
         plugin_id,
         release_id,
         component_key,
+        execution_host,
         source_path,
         description,
         base_agent,
@@ -380,6 +389,7 @@ fn component_descriptor(
         .collect();
     PluginComponentDescriptor {
         display_name: display_name_from_key(component_key.as_str()),
+        execution_host: manifest.execution.host_for(component_key.as_str()),
         component_key,
         kind,
         runtime_kind: runtime_kind.to_string(),
@@ -592,6 +602,33 @@ pub struct PluginComponentSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCloudTextResource {
+    pub path: String,
+    pub text: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCloudComponentBundle {
+    pub plugin_id: String,
+    pub release_id: String,
+    pub version: String,
+    pub component_key: String,
+    pub kind: PluginComponentKind,
+    pub execution_host: PluginExecutionHost,
+    pub entrypoint: String,
+    pub primary_text: String,
+    pub primary_sha256: String,
+    #[serde(default)]
+    pub resources: Vec<PluginCloudTextResource>,
+    pub bundle_sha256: String,
+    pub artifact_sha256: String,
+    pub normalized_manifest_sha256: String,
+    pub ingested_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginOAuthConnectionRecord {
     pub id: String,
     pub owner_user_id: String,
@@ -686,6 +723,8 @@ pub struct TaskPluginConfig {
 pub struct RunPluginComponentSnapshot {
     pub component_key: String,
     pub kind: PluginComponentKind,
+    #[serde(default)]
+    pub execution_host: PluginExecutionHost,
     pub content_sha256: String,
     #[serde(default)]
     pub runtime: BTreeMap<String, Value>,
@@ -697,7 +736,8 @@ pub struct RunPluginSnapshot {
     pub release_id: String,
     pub version: String,
     pub artifact_sha256: String,
-    pub device_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
     #[serde(default)]
     pub workspace_id: Option<String>,
     #[serde(default)]

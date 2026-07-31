@@ -24,8 +24,8 @@ use chat_app_server_rs::{
 };
 use chatos_plugin_management_sdk::{
     PluginArtifactListResponse, PluginArtifactReadResponse, PluginArtifactUiAccess,
-    PluginArtifactWriteOperation, PluginArtifactWriteResponse, PluginUiReadyEventPayload,
-    PLUGIN_UI_READY_EVENT_VERSION_V1,
+    PluginArtifactWriteOperation, PluginArtifactWriteResponse, PluginExecutionHost,
+    PluginUiReadyEventPayload, PLUGIN_UI_READY_EVENT_VERSION_V1,
 };
 use chatos_sandbox_contract::{
     CommandExecutionApprovalDecision, SimpleCommandExecutionApprovalDecision,
@@ -100,6 +100,65 @@ fn loads_active_skill_instructions_and_only_reachable_lazy_resources() {
         .expect_err("unreachable file must fail")
         .to_string()
         .contains("not declared"));
+}
+
+#[test]
+fn portable_skill_uses_the_canonical_bundle_hash_and_rejects_cloud_execution() {
+    let temp = TempDir::new().expect("temp directory");
+    let package = TestSigner::new().package_with_prompt_execution(
+        temp.path(),
+        "1.0.0",
+        PluginExecutionHost::Portable,
+    );
+    let installer = PluginInstaller::new(temp.path().join("plugins"));
+    installer
+        .install_archive(package.install_request())
+        .expect("install portable Plugin");
+    let installation = installer
+        .active_installation(PLUGIN_ID)
+        .expect("read active installation")
+        .expect("active installation");
+    let manifest = super::mcp_adapter::load_verified_manifest(&installation)
+        .expect("verified installed Manifest");
+    let component_key = installation.version.inventory.components[0]
+        .component_key
+        .clone();
+    let bundle = super::portable_bundle::load_local_portable_bundle(
+        &installation,
+        &manifest,
+        component_key.as_str(),
+    )
+    .expect("build portable Bundle")
+    .expect("portable Bundle");
+    assert!(super::portable_bundle::validate_local_portable_bundle(
+        &installation,
+        &manifest,
+        component_key.as_str(),
+        bundle.bundle_sha256.as_str(),
+    )
+    .expect("canonical Bundle hash")
+    .is_some());
+
+    let raw_source_sha256 = &installation.version.package_file_sha256["skills/demo/SKILL.md"];
+    assert_ne!(raw_source_sha256, &bundle.bundle_sha256);
+    let error = super::portable_bundle::validate_local_portable_bundle(
+        &installation,
+        &manifest,
+        component_key.as_str(),
+        raw_source_sha256,
+    )
+    .expect_err("raw source hash must not satisfy the portable snapshot");
+    assert!(error.to_string().contains("immutable component snapshot"));
+
+    let mut cloud_installation = installation;
+    cloud_installation.version.inventory.components[0].execution_host = PluginExecutionHost::Cloud;
+    let error = super::portable_bundle::load_local_portable_bundle(
+        &cloud_installation,
+        &manifest,
+        component_key.as_str(),
+    )
+    .expect_err("cloud component must not prepare through Local Connector");
+    assert!(error.to_string().contains("cloud-only Plugin components"));
 }
 
 #[test]
@@ -4726,6 +4785,7 @@ fn install_test_native_skill(root: &Path, marketplace_id: &str) -> PluginInstall
     let component = PluginComponentDescriptor {
         component_key: "skill-creator".to_string(),
         kind: PluginComponentKind::SkillCollection,
+        execution_host: PluginExecutionHost::Local,
         display_name: "Skill Creator".to_string(),
         runtime_kind: "skill_collection".to_string(),
         entrypoint: Some(PluginPathRef::new("./skills/skill-creator")),

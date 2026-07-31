@@ -21,7 +21,7 @@ pub fn router() -> Router {
 
 #[derive(Debug, Deserialize)]
 struct AvailablePluginsQuery {
-    device_id: String,
+    device_id: Option<String>,
     #[serde(default)]
     plan_mode: bool,
 }
@@ -30,10 +30,11 @@ async fn list_available_plugins(
     _auth: AuthUser,
     Query(query): Query<AvailablePluginsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let device_id = query.device_id.trim();
-    if device_id.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "device_id is required");
-    }
+    let device_id = query
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let Some(access_token) = access_token_scope::get_current_access_token() else {
         return error(
             StatusCode::UNAUTHORIZED,

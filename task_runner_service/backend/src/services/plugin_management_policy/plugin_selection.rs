@@ -4,13 +4,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chatos_plugin_management_sdk::{
-    PluginCommandInvocation, PluginComponentDescriptor, PluginComponentKind, ResolvedPlugin,
-    RunPluginComponentSnapshot, RunPluginSnapshot, SelectedPluginRef,
+    PluginCommandInvocation, PluginComponentDescriptor, PluginComponentKind, PluginExecutionHost,
+    ResolvedPlugin, RunPluginComponentSnapshot, RunPluginSnapshot, SelectedPluginRef,
 };
 use serde_json::Value;
 
 use super::{
-    is_task_runner_execution_agent, normalized_optional_plugin_text, normalized_unique_ids,
+    is_task_runner_execution_agent, normalized_optional_plugin_text, normalized_plugin_identifier,
+    normalized_unique_ids,
 };
 
 pub(super) fn validate_supported_plugin(
@@ -51,21 +52,9 @@ pub(super) fn validate_plugin_component_selection(
         .release
         .as_ref()
         .ok_or_else(|| format!("Plugin Release snapshot is missing: {}", plugin.catalog.id))?;
-    let installation = plugin.installation.as_ref().ok_or_else(|| {
-        format!(
-            "Plugin installation snapshot is missing: {}",
-            plugin.catalog.id
-        )
-    })?;
-    if release.plugin_id != plugin.catalog.id
-        || installation.plugin_id != plugin.catalog.id
-        || installation.release_id != release.id
-        || installation.version != release.version
-        || installation.artifact_sha256 != release.artifact_sha256
-        || !installation.active
-    {
+    if release.plugin_id != plugin.catalog.id {
         return Err(format!(
-            "Plugin installation does not match the active immutable Release: {}",
+            "Plugin Release does not match the Catalog identity: {}",
             plugin.catalog.id
         ));
     }
@@ -76,7 +65,7 @@ pub(super) fn validate_plugin_component_selection(
         .filter(|component| {
             component.available
                 && component.component.kind == PluginComponentKind::SkillCollection
-                && is_task_runner_execution_agent(expected_agent)
+                && plugin_component_supported_for_agent(&component.component, expected_agent)
         })
         .map(|component| plugin_skill_id(&component.component))
         .collect::<HashSet<_>>();
@@ -143,9 +132,44 @@ pub(super) fn validate_plugin_component_selection(
     Ok(())
 }
 
+pub(super) fn plugin_selection_requires_local_execution(
+    plugin: &ResolvedPlugin,
+    selected: &SelectedPluginRef,
+    expected_agent: &str,
+) -> Result<bool, String> {
+    let selected_skill_ids =
+        normalized_unique_ids(&selected.selected_skill_ids, "selected_skill_ids")?
+            .into_iter()
+            .collect::<HashSet<_>>();
+    let selected_command_ids =
+        normalized_unique_ids(&selected.selected_command_ids, "selected_command_ids")?
+            .into_iter()
+            .collect::<HashSet<_>>();
+    let selected_agent_ids =
+        normalized_unique_ids(&selected.selected_agent_ids, "selected_agent_ids")?
+            .into_iter()
+            .collect::<HashSet<_>>();
+    Ok(plugin
+        .components
+        .iter()
+        .filter(|component| component.available)
+        .any(|component| {
+            component_selected_for_run(
+                &component.component,
+                &selected_skill_ids,
+                &selected_command_ids,
+                &selected_agent_ids,
+                expected_agent,
+            ) && (component.component.execution_host == PluginExecutionHost::Local
+                || (component.component.execution_host == PluginExecutionHost::Portable
+                    && is_local_task_runner_agent(expected_agent)))
+        }))
+}
+
 pub(super) fn plugin_snapshot(
     plugin: &ResolvedPlugin,
     selected: &SelectedPluginRef,
+    selected_device_id: Option<&str>,
     workspace_id: Option<&str>,
     command_invocations: &[PluginCommandInvocation],
     expected_agent: &str,
@@ -155,12 +179,6 @@ pub(super) fn plugin_snapshot(
         .release
         .as_ref()
         .ok_or_else(|| format!("Plugin Release snapshot is missing: {}", plugin.catalog.id))?;
-    let installation = plugin.installation.as_ref().ok_or_else(|| {
-        format!(
-            "Plugin installation snapshot is missing: {}",
-            plugin.catalog.id
-        )
-    })?;
     let selected_skill_ids =
         normalized_unique_ids(&selected.selected_skill_ids, "selected_skill_ids")?
             .into_iter()
@@ -185,26 +203,13 @@ pub(super) fn plugin_snapshot(
         .iter()
         .filter(|component| component.available)
     {
-        let include = match component.component.kind {
-            PluginComponentKind::SkillCollection => {
-                is_task_runner_execution_agent(expected_agent)
-                    && (selected_skill_ids.is_empty()
-                        || selected_skill_ids
-                            .contains(plugin_skill_id(&component.component).as_str())
-                        || component.component.required)
-            }
-            PluginComponentKind::McpServer => is_task_runner_execution_agent(expected_agent),
-            PluginComponentKind::Command => {
-                selected_command_ids.contains(component.component.component_key.as_str())
-            }
-            PluginComponentKind::Agent => {
-                selected_agent_ids.contains(component.component.component_key.as_str())
-            }
-            PluginComponentKind::HookSet => is_task_runner_execution_agent(expected_agent),
-            PluginComponentKind::UiContribution => is_task_runner_execution_agent(expected_agent),
-            _ => component.component.required,
-        };
-        if !include {
+        if !component_selected_for_run(
+            &component.component,
+            &selected_skill_ids,
+            &selected_command_ids,
+            &selected_agent_ids,
+            expected_agent,
+        ) {
             continue;
         }
         if !matches!(
@@ -279,6 +284,7 @@ pub(super) fn plugin_snapshot(
         component_snapshots.push(RunPluginComponentSnapshot {
             component_key: component.component.component_key.clone(),
             kind: component.component.kind,
+            execution_host: component.component.execution_host,
             content_sha256: immutable.content_sha256.clone(),
             runtime,
         });
@@ -290,6 +296,37 @@ pub(super) fn plugin_snapshot(
         ));
     }
     component_snapshots.sort_by(|left, right| left.component_key.cmp(&right.component_key));
+
+    let local_execution = component_snapshots.iter().any(|component| {
+        component.execution_host == PluginExecutionHost::Local
+            || (component.execution_host == PluginExecutionHost::Portable
+                && is_local_task_runner_agent(expected_agent))
+    });
+    let device_id = if local_execution {
+        let selected_device_id =
+            normalized_plugin_identifier(selected_device_id.unwrap_or_default(), "device_id")?;
+        let installation = plugin.installation.as_ref().ok_or_else(|| {
+            format!(
+                "Plugin installation snapshot is missing for local execution: {}",
+                plugin.catalog.id
+            )
+        })?;
+        if installation.plugin_id != plugin.catalog.id
+            || installation.release_id != release.id
+            || installation.version != release.version
+            || installation.artifact_sha256 != release.artifact_sha256
+            || !installation.active
+            || installation.device_id != selected_device_id
+        {
+            return Err(format!(
+                "Plugin installation does not match the selected device_id or active immutable Release: {}",
+                plugin.catalog.id
+            ));
+        }
+        Some(selected_device_id)
+    } else {
+        None
+    };
 
     let mut permission_snapshot = release
         .permissions
@@ -326,18 +363,55 @@ pub(super) fn plugin_snapshot(
         release_id: release.id.clone(),
         version: release.version.clone(),
         artifact_sha256: release.artifact_sha256.clone(),
-        device_id: installation.device_id.clone(),
-        workspace_id: normalized_optional_plugin_text(workspace_id, "workspace_id")?,
+        device_id,
+        workspace_id: if local_execution {
+            normalized_optional_plugin_text(workspace_id, "workspace_id")?
+        } else {
+            None
+        },
         component_snapshots,
         permission_snapshot,
         auth_connection_ids,
     })
 }
 
+fn component_selected_for_run(
+    component: &PluginComponentDescriptor,
+    selected_skill_ids: &HashSet<String>,
+    selected_command_ids: &HashSet<String>,
+    selected_agent_ids: &HashSet<String>,
+    expected_agent: &str,
+) -> bool {
+    if !plugin_component_supported_for_agent(component, expected_agent) {
+        return false;
+    }
+    match component.kind {
+        PluginComponentKind::SkillCollection => {
+            selected_skill_ids.is_empty()
+                || selected_skill_ids.contains(plugin_skill_id(component).as_str())
+                || component.required
+        }
+        PluginComponentKind::McpServer
+        | PluginComponentKind::HookSet
+        | PluginComponentKind::UiContribution => true,
+        PluginComponentKind::Command => {
+            selected_command_ids.contains(component.component_key.as_str())
+        }
+        PluginComponentKind::Agent => selected_agent_ids.contains(component.component_key.as_str()),
+        _ => component.required,
+    }
+}
+
 fn plugin_component_supported_for_agent(
     component: &PluginComponentDescriptor,
     expected_agent: &str,
 ) -> bool {
+    let local_agent = is_local_task_runner_agent(expected_agent);
+    if (component.execution_host == PluginExecutionHost::Cloud && local_agent)
+        || (component.execution_host == PluginExecutionHost::Local && !local_agent)
+    {
+        return false;
+    }
     match component.kind {
         PluginComponentKind::SkillCollection | PluginComponentKind::McpServer => {
             is_task_runner_execution_agent(expected_agent)
@@ -358,6 +432,10 @@ fn plugin_component_supported_for_agent(
         PluginComponentKind::UiContribution => is_task_runner_execution_agent(expected_agent),
         _ => false,
     }
+}
+
+pub(super) fn is_local_task_runner_agent(agent_key: &str) -> bool {
+    agent_key == "task_runner_local_plan_phase" || agent_key == "task_runner_local_run_phase"
 }
 
 fn plugin_skill_id(component: &PluginComponentDescriptor) -> String {

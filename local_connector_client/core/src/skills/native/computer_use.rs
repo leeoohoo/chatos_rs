@@ -131,9 +131,10 @@ use window_control::{
     validate_window_fullscreen_capability, validate_window_maximized_capability,
     window_approval_argument, ApprovedFrontmostWindowGuard, WindowBoundsRequest,
 };
+#[cfg(target_os = "macos")]
+pub(in crate::skills::native::computer_use) use window_execution::macos_frontmost_window_control_target_local;
 pub(in crate::skills::native::computer_use) use window_execution::{
-    frontmost_window_control_target, frontmost_window_control_target_local,
-    macos_frontmost_window_control_target_local, restore_window_layout,
+    frontmost_window_control_target, frontmost_window_control_target_local, restore_window_layout,
     rollback_frontmost_window_bounds, rollback_frontmost_window_fullscreen,
     rollback_frontmost_window_maximized, set_frontmost_window_bounds,
     set_frontmost_window_fullscreen, set_frontmost_window_maximized,

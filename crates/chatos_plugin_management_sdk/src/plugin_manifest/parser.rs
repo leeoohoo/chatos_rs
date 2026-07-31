@@ -10,7 +10,10 @@ use super::components::{
     PluginDependencySpec, PluginHook, PluginInterfaceMetadata, PluginMcpServer, PluginPathRef,
     PluginPermissionRequirement, PluginUiContribution,
 };
-use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1};
+use super::normalized::{
+    PluginExecutionPolicy, PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+    PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
+};
 use super::paths::normalize_plugin_relative_path;
 use super::{validate_plugin_manifest, PluginManifestError};
 
@@ -26,6 +29,8 @@ pub enum PluginManifestSource {
 struct RawPluginManifest {
     #[serde(default)]
     schema_version: Option<u32>,
+    #[serde(default)]
+    execution: Option<PluginExecutionPolicy>,
     name: String,
     version: String,
     description: String,
@@ -154,10 +159,31 @@ pub fn parse_plugin_manifest(
     _source: PluginManifestSource,
 ) -> Result<PluginManifest, PluginManifestError> {
     let raw: RawPluginManifest = serde_json::from_str(raw)?;
+    let schema_version = raw
+        .schema_version
+        .unwrap_or(PLUGIN_MANIFEST_SCHEMA_VERSION_V1);
+    let execution = match (schema_version, raw.execution) {
+        (PLUGIN_MANIFEST_SCHEMA_VERSION_V1, None) => PluginExecutionPolicy::default(),
+        (PLUGIN_MANIFEST_SCHEMA_VERSION_V1, Some(_)) => {
+            return Err(PluginManifestError::InvalidField {
+                field: "execution".to_string(),
+                message: "schemaVersion 1 must not declare execution".to_string(),
+            });
+        }
+        (PLUGIN_MANIFEST_SCHEMA_VERSION_V2, Some(execution)) => {
+            PluginExecutionPolicy::explicit(execution.default_host, execution.component_hosts)
+        }
+        (PLUGIN_MANIFEST_SCHEMA_VERSION_V2, None) => {
+            return Err(PluginManifestError::InvalidField {
+                field: "execution".to_string(),
+                message: "schemaVersion 2 requires execution.defaultHost".to_string(),
+            });
+        }
+        (_, execution) => execution.unwrap_or_default(),
+    };
     let manifest = PluginManifest {
-        schema_version: raw
-            .schema_version
-            .unwrap_or(PLUGIN_MANIFEST_SCHEMA_VERSION_V1),
+        schema_version,
+        execution,
         name: raw.name.trim().to_string(),
         version: raw.version.trim().to_string(),
         description: raw.description.trim().to_string(),

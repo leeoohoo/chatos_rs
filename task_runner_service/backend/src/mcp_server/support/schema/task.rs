@@ -296,7 +296,7 @@ fn plugin_device_id_schema() -> Value {
     json!({
         "type": "string",
         "minLength": 1,
-        "description": "Exact Local Connector device id selected by the user or client. Required when selected_plugins is not empty."
+        "description": "Optional exact Local Connector device id. Required only when the selected Plugin components execute locally."
     })
 }
 
@@ -334,7 +334,7 @@ fn selected_plugins_schema() -> Value {
             "additionalProperties": false
         },
         "uniqueItems": true,
-        "description": "Optional exact Plugins to prepare through Local Connector. Use only ids returned by list_available_plugins for plugin_device_id."
+        "description": "Optional exact Plugins to prepare on Task Runner Cloud or Local Connector according to their immutable execution host. Use only ids returned by list_available_plugins for the same optional plugin_device_id."
     })
 }
 

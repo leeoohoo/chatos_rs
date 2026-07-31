@@ -11,6 +11,7 @@ use chatos_project_execution::{
     select_pending_work_items, sort_work_items_for_planning, topological_work_item_order,
     validate_requirement_prerequisites, ExecutionPlanIdentity, ExecutionPlane, RequirementPlanItem,
     WorkItemPlanItem, NEXT_ACTION_PREVIEW_AND_CONFIRM, STATUS_PLANNING, STATUS_PLANNING_STARTED,
+    STATUS_STOPPED, STATUS_STOPPING,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,7 +29,10 @@ use crate::LocalRuntime;
 
 use super::super::super::context::owner_context;
 use super::super::super::error::LocalRuntimeApiError;
-use super::rerun::{cleanup_replaced_local_execution_batch, source_status, validate_source_scope};
+use super::rerun::{
+    cleanup_replaced_local_execution_batch, resolve_local_execution_batch_state, source_status,
+    source_status_is_stopped_terminal, validate_source_scope, LocalExecutionBatchState,
+};
 use super::ExecuteRequirementPayload;
 
 pub(in crate::local_runtime::api::task_runs) async fn execute_requirement(
@@ -83,11 +87,45 @@ pub(in crate::local_runtime::api::task_runs) async fn execute_requirement(
             previous_planning_feedback =
                 read_planning_feedback_history(metadata.get("project_requirement_execution"));
             validate_source_scope(&metadata, project_id.as_str(), requirement_id.as_str())?;
-            if source_status(&metadata) != "stopped" {
-                return Err(LocalRuntimeApiError::conflict(
-                    "local_execution_replan_requires_stopped_batch",
-                    "Stop the previous local execution batch before replanning",
-                ));
+            let source_status = source_status(&metadata);
+            let old_runs = database
+                .list_local_execution_group_task_runs(
+                    owner.owner_user_id.as_str(),
+                    project_id.as_str(),
+                    identity.conversation_id.as_str(),
+                    identity.execution_group_id.as_str(),
+                )
+                .await?;
+            match resolve_local_execution_batch_state(
+                source_status.as_str(),
+                old_runs.iter().map(|run| run.status.as_str()),
+            ) {
+                LocalExecutionBatchState::ReplacementReady => {
+                    if source_status == STATUS_STOPPING
+                        || !source_status_is_stopped_terminal(source_status.as_str())
+                    {
+                        database
+                            .set_turn_task_runner_status(
+                                owner.owner_user_id.as_str(),
+                                identity.execution_group_id.as_str(),
+                                STATUS_STOPPED,
+                                STATUS_STOPPED,
+                            )
+                            .await?;
+                    }
+                }
+                LocalExecutionBatchState::CancellationSettling(_) => {
+                    return Err(LocalRuntimeApiError::conflict(
+                        "local_execution_replan_has_active_runs",
+                        "The previous local execution batch is still stopping",
+                    ));
+                }
+                LocalExecutionBatchState::NotStopped => {
+                    return Err(LocalRuntimeApiError::conflict(
+                        "local_execution_replan_requires_stopped_batch",
+                        "Cancel or stop the previous local execution batch before replanning",
+                    ));
+                }
             }
         } else {
             replacement_identity = None;

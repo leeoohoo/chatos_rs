@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use chatos_project_execution::{
     read_planning_feedback_history, ExecutionPlanIdentity, ExecutionPlane,
-    STATUS_AWAITING_CONFIRMATION, STATUS_EXECUTION_STARTED, STATUS_STOPPED,
+    STATUS_AWAITING_CONFIRMATION, STATUS_EXECUTION_STARTED,
 };
 use serde_json::{json, Value};
 use tracing::warn;
@@ -18,9 +18,9 @@ use super::super::requirement_execution::{
     sync_requirement_execution_state, task_runner_callback_event_for_status, value_string,
     ExecutionLink, HandlerError,
 };
-use super::plan_query::{execution_message_status, load_cloud_execution_source_message};
+use super::plan_query::load_cloud_execution_source_message;
 use super::rerun_support::{
-    discard_cloned_project_execution, ensure_old_cloud_execution_links_inactive_before_rerun,
+    discard_cloned_project_execution, ensure_old_cloud_execution_batch_ready_for_replacement,
     expand_project_task_scope_to_actual_graph, expected_execution_project_task_ids,
     parse_rerun_clone_mappings, started_runs_by_task_id, validate_rerun_cloned_project_task_scope,
 };
@@ -59,11 +59,6 @@ pub(super) async fn rerun_requirement_execution_inner(
         requirement_id.as_str(),
     )
     .await?;
-    if execution_message_status(&old_message) != STATUS_STOPPED {
-        return Err(HandlerError::bad_request(
-            "只有已经停止的执行批次才能重新执行",
-        ));
-    }
     let mut expected_project_task_ids = expected_execution_project_task_ids(
         old_message.metadata.as_ref(),
         context.project.id.as_str(),
@@ -101,7 +96,8 @@ pub(super) async fn rerun_requirement_execution_inner(
             && link.source_user_message_id.as_deref() == Some(identity.execution_group_id.as_str())
     })
     .collect::<Vec<_>>();
-    ensure_old_cloud_execution_links_inactive_before_rerun(
+    ensure_old_cloud_execution_batch_ready_for_replacement(
+        &old_message,
         contact_runtime.task_runner_base_url.as_str(),
         contact_runtime.task_runner_agent_token.as_str(),
         context.access_token.as_str(),
@@ -110,6 +106,7 @@ pub(super) async fn rerun_requirement_execution_inner(
         identity.conversation_id.as_str(),
         identity.execution_group_id.as_str(),
         root_requirement.title.as_str(),
+        "只有已取消或已停止的执行批次才能重新执行",
         old_links.as_mut_slice(),
     )
     .await?;

@@ -147,6 +147,7 @@ pub(super) fn validate_command_response(
         plugin.plugin_id.as_str(),
         plugin.release_id.as_str(),
         component.component_key.as_str(),
+        component.execution_host,
         expected_entrypoint,
         metadata
             .and_then(|value| value.get("description"))
@@ -263,6 +264,7 @@ pub(super) fn validate_agent_response(
         plugin.plugin_id.as_str(),
         plugin.release_id.as_str(),
         component.component_key.as_str(),
+        component.execution_host,
         expected_entrypoint,
         expected_description,
         expected_base_agent,

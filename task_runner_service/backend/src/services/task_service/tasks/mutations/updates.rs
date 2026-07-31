@@ -391,6 +391,12 @@ mod tests {
     ) -> TaskRecord {
         let mut child = create_task(service, title, status).await;
         child.parent_task_id = Some(parent.id.clone());
+        child.task_tool_state.required_for_parent_completion = Some(true);
+        child.task_tool_state.closure_state = Some(if status == TaskStatus::Succeeded {
+            TaskClosureState::Satisfied
+        } else {
+            TaskClosureState::Open
+        });
         service.store.save_task(child).await.expect("save child")
     }
 

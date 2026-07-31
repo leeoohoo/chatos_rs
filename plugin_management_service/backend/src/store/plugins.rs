@@ -320,16 +320,39 @@ impl AppStore {
         let options = FindOptions::builder()
             .sort(doc! { "published_at": -1, "version": -1 })
             .build();
-        self.plugin_releases
+        let releases: Vec<PluginReleaseRecord> = self
+            .plugin_releases
             .find(filter, options)
             .await
             .map_err(|err| err.to_string())?
             .try_collect()
             .await
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        let mut ready = Vec::with_capacity(releases.len());
+        for release in releases {
+            if self.plugin_release_is_ready(release.id.as_str()).await? {
+                ready.push(release);
+            }
+        }
+        Ok(ready)
     }
 
     pub async fn get_plugin_release(
+        &self,
+        id: &str,
+    ) -> Result<Option<PluginReleaseRecord>, String> {
+        let release = self
+            .plugin_releases
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        if release.is_some() && !self.plugin_release_is_ready(id).await? {
+            return Ok(None);
+        }
+        Ok(release)
+    }
+
+    pub async fn get_plugin_release_any_state(
         &self,
         id: &str,
     ) -> Result<Option<PluginReleaseRecord>, String> {
@@ -356,6 +379,31 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    pub async fn set_plugin_release_publication_ready(
+        &self,
+        release_id: &str,
+        ready: bool,
+    ) -> Result<(), String> {
+        let state = PluginReleasePublicationState {
+            release_id: release_id.to_string(),
+            ready,
+            updated_at: now_rfc3339(),
+        };
+        self.plugin_release_publication_states
+            .replace_one(doc! { "release_id": release_id }, state, upsert_options())
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn plugin_release_is_ready(&self, release_id: &str) -> Result<bool, String> {
+        self.plugin_release_publication_states
+            .find_one(doc! { "release_id": release_id }, None)
+            .await
+            .map(|state| state.is_none_or(|state| state.ready))
+            .map_err(|err| err.to_string())
     }
 
     pub async fn replace_plugin_release(&self, record: &PluginReleaseRecord) -> Result<(), String> {
@@ -406,6 +454,74 @@ impl AppStore {
             .try_collect()
             .await
             .map_err(|err| err.to_string())
+    }
+
+    pub async fn get_plugin_cloud_component_bundle(
+        &self,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+    ) -> Result<Option<PluginCloudComponentBundle>, String> {
+        self.plugin_cloud_component_bundles
+            .find_one(
+                doc! {
+                    "plugin_id": plugin_id,
+                    "release_id": release_id,
+                    "component_key": component_key,
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_plugin_cloud_component_bundles(
+        &self,
+        plugin_id: &str,
+        release_id: &str,
+    ) -> Result<Vec<PluginCloudComponentBundle>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "component_key": 1 })
+            .build();
+        self.plugin_cloud_component_bundles
+            .find(
+                doc! { "plugin_id": plugin_id, "release_id": release_id },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn insert_plugin_cloud_component_bundles(
+        &self,
+        records: &[PluginCloudComponentBundle],
+    ) -> Result<(), String> {
+        for record in records {
+            if let Some(existing) = self
+                .get_plugin_cloud_component_bundle(
+                    record.plugin_id.as_str(),
+                    record.release_id.as_str(),
+                    record.component_key.as_str(),
+                )
+                .await?
+            {
+                if existing != *record {
+                    return Err(format!(
+                        "immutable Plugin cloud Bundle conflict: {}/{}/{}",
+                        record.plugin_id, record.release_id, record.component_key
+                    ));
+                }
+                continue;
+            }
+            self.plugin_cloud_component_bundles
+                .insert_one(record, None)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
     }
 
     pub async fn list_plugin_installations(

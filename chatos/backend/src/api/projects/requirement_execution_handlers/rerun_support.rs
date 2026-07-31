@@ -21,6 +21,7 @@ use super::super::requirement_execution::{
     task_runner_callback_event_for_status, task_runner_status_is_active,
     task_runner_status_is_cancelled, value_string, ExecutionLink, HandlerError, WorkItemPlanItem,
 };
+use super::plan_query::execution_status_is_stopped_terminal;
 use super::{execution_message_status, retire_cloud_execution_batch};
 
 pub(super) async fn load_expected_execution_project_task_ids(
@@ -184,7 +185,8 @@ pub(super) fn validate_rerun_cloned_project_task_scope(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn ensure_old_cloud_execution_links_inactive_before_rerun(
+pub(super) async fn ensure_old_cloud_execution_batch_ready_for_replacement(
+    old_message: &crate::models::message::Message,
     task_runner_base_url: &str,
     task_runner_agent_token: &str,
     user_access_token: &str,
@@ -193,6 +195,7 @@ pub(super) async fn ensure_old_cloud_execution_links_inactive_before_rerun(
     conversation_id: &str,
     execution_group_id: &str,
     requirement_title: &str,
+    not_stopped_message: &str,
     links: &mut [ExecutionLink],
 ) -> Result<(), HandlerError> {
     for link in links.iter_mut() {
@@ -213,16 +216,43 @@ pub(super) async fn ensure_old_cloud_execution_links_inactive_before_rerun(
         )
         .await?;
     }
+    sync_execution_message_task_tracking(conversation_id, execution_group_id, links).await?;
+
     let active_links = links
         .iter()
-        .filter(|link| {
-            task_runner_status_is_active(link.task_runner_status.as_deref())
-                || task_runner_status_is_cancelled(link.task_runner_status.as_deref())
-        })
+        .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
         .cloned()
         .collect::<Vec<_>>();
     if active_links.is_empty() {
-        return Ok(());
+        return match resolve_old_cloud_execution_batch_state(old_message, links) {
+            OldCloudExecutionBatchState::ReplacementReady => {
+                let status = execution_message_status(old_message);
+                if status == STATUS_STOPPING
+                    || !execution_status_is_stopped_terminal(status.as_str())
+                {
+                    set_task_runner_async_overall_status_for_session(
+                        conversation_id,
+                        execution_group_id,
+                        STATUS_STOPPED,
+                    )
+                    .await
+                    .map_err(|error| HandlerError::internal("收敛旧执行批次停止状态失败", error))?;
+                    sync_execution_message_task_tracking(
+                        conversation_id,
+                        execution_group_id,
+                        links,
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            OldCloudExecutionBatchState::CancellationSettling(_) => unreachable!(
+                "active link count was already checked before resolving old batch state"
+            ),
+            OldCloudExecutionBatchState::NotStopped => {
+                Err(HandlerError::bad_request(not_stopped_message))
+            }
+        };
     }
     mark_execution_messages_for_stop(active_links.as_slice(), STATUS_STOPPING).await;
     let _ = set_task_runner_async_overall_status_for_session(
@@ -280,6 +310,46 @@ pub(super) async fn ensure_old_cloud_execution_links_inactive_before_rerun(
         "旧执行批次仍有 {} 个 Task Runner 任务正在取消，已重新发送取消请求，请等待取消完成后再重新执行。",
         active_links.len()
     )))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OldCloudExecutionBatchState {
+    ReplacementReady,
+    CancellationSettling(usize),
+    NotStopped,
+}
+
+pub(super) fn resolve_old_cloud_execution_batch_state(
+    message: &crate::models::message::Message,
+    links: &[ExecutionLink],
+) -> OldCloudExecutionBatchState {
+    let active_count = links
+        .iter()
+        .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
+        .count();
+    if active_count > 0 {
+        return OldCloudExecutionBatchState::CancellationSettling(active_count);
+    }
+
+    let message_status = execution_message_status(message);
+    if execution_status_is_stopped_terminal(message_status.as_str())
+        || message_status == STATUS_STOPPING
+        || inactive_links_record_a_cancelled_batch(links)
+    {
+        OldCloudExecutionBatchState::ReplacementReady
+    } else {
+        OldCloudExecutionBatchState::NotStopped
+    }
+}
+
+fn inactive_links_record_a_cancelled_batch(links: &[ExecutionLink]) -> bool {
+    !links.is_empty()
+        && links
+            .iter()
+            .all(|link| !task_runner_status_is_active(link.task_runner_status.as_deref()))
+        && links
+            .iter()
+            .any(|link| task_runner_status_is_cancelled(link.task_runner_status.as_deref()))
 }
 
 #[derive(Debug)]

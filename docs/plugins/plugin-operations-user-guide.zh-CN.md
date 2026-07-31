@@ -7,28 +7,32 @@
 Plugin 体系分为四层：
 
 - Plugin Management Service：保存 Marketplace、Catalog Entry、不可变 Release、publisher review、用户偏好、安装/OAuth 状态投影和审计。它是服务端控制面，需要 MongoDB。
-- Local Connector Client / Service：运行在用户设备侧，负责下载、验签、安装、依赖检查、权限/OAuth、prepare/execute/cancel 和本机 Adapter 调用。
-- Task Runner：在创建和执行任务时固定 Plugin snapshot，保证一次 Run 不被中途升级或回滚影响。
+- Local Connector Client / Service：运行在用户设备侧，负责 Local 和本地执行的 Portable 组件下载、验签、安装、依赖检查、权限/OAuth、prepare/execute/cancel 和本机 Adapter 调用。
+- Task Runner：在创建和执行任务时固定 Plugin snapshot，并直接准备 Cloud 和云端执行的 Portable Prompt Bundle，保证一次 Run 不被中途升级或回滚影响。
 - ChatOS/Okra 客户端：展示插件市场、选择插件、承载 Plugin UI/Artifact，并把用户选择传给 Task Runner。
 
 客户端本身不需要直接连接 MongoDB。MongoDB 只属于后端服务的持久化依赖；桌面客户端和 Local Connector 通过认证 API 同步状态，不应嵌入数据库账号、连接串或直连查询逻辑。
 
 ## 2. 用户侧流程
 
-### 2.1 查看和安装 Plugin
+执行位置和路由细节见 [Cloud / Local / Portable Plugin Runtime 架构](./cloud-local-portable-runtime.zh-CN.md)。
+
+### 2.1 查看、选择和安装 Plugin
 
 1. 在客户端打开 Plugin Marketplace。
 2. 搜索或按分类查看公开、个人或 featured Plugin。
 3. 打开详情页，确认 publisher、版本、权限、OAuth/connected app 要求、支持平台和 release 状态。
-4. 点击安装。Local Connector 会下载 artifact、校验 SHA-256、验证 Release 签名、检查平台和依赖。
+4. Cloud Plugin 可直接选择，不显示本地安装动作。Local 和本地使用的 Portable/Hybrid Plugin 点击安装后，由 Local Connector 下载 artifact、校验 SHA-256、验证 Release 签名、检查平台和依赖。
 5. 如果需要权限或 OAuth，客户端应逐项展示原因并让用户确认；失败时保持未启用或 unavailable，不做云端 fallback。
 6. 安装完成后，用户可以启用 Plugin，并在 ChatOS 输入区或任务创建流程中选择它。
+
+默认开发环境会把 Ponytail seed 为 `chatos-bundled` 中的官方 Portable Plugin。System Admin 首次启动默认启用；其他用户需要先在“插件目录”启用。普通云端任务不需要 Local Connector 或 device，即可在任务 Plugin Picker 中选择 Ponytail。
 
 ### 2.2 在任务中使用 Plugin
 
 - 新任务会保存 `selected_plugins`，其中包含 plugin/release/component snapshot。
 - Run 开始后，即使 Marketplace 里有新 Release，本次 Run 仍使用创建时固定的 snapshot。
-- Plugin disabled、revoked、安装失效或本机设备离线时，新 Run 不能静默启用该 Plugin；旧 Run 按 snapshot 和策略失败关闭或只读保留状态。
+- Plugin disabled、revoked、Bundle 漂移、安装失效或本机设备离线时，新 Run 不能静默切换执行位置；旧 Run 按 snapshot 和策略失败关闭或只读保留状态。
 
 ### 2.3 OAuth 和 connected app
 
@@ -132,6 +136,7 @@ Plugin Management 前端的“安装诊断”页面面向普通用户和管理�
 | Marketplace sync 失败 | Catalog URL 是否 HTTPS、DNS/TLS、Catalog key、revision/issued_at 单调性、Catalog size limit |
 | Release 无法发布 | publisher 是否 approved、release key usage 是否正确、artifact SHA-256 和 signature payload 是否匹配 |
 | 用户看不到 Plugin | Marketplace visibility、Catalog Entry enabled、用户 preference、Release revoked、Agent binding |
+| Cloud Plugin 要求选择设备 | 前端/后端是否仍使用旧的 device 必填合同、Release 是否实际包含 Local 组件 |
 | 安装后不可用 | 安装诊断中的 availability_status、dependency_status、permission_status、auth_status |
 | OAuth 工具失败 | 安装诊断 OAuth 连接状态、scope、expires_at、connected app grant |
 | Run 中插件版本不对 | Task/Run 的 pinned snapshot；Run 中升级不会影响已开始的 Run |

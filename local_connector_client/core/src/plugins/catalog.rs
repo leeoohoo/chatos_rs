@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chatos_plugin_management_sdk::{
-    PluginComponentKind, PluginInstallSourceList, PluginInstallStatus, UserPluginPreferenceRecord,
+    PluginComponentKind, PluginExecutionHost, PluginInstallSourceList, PluginInstallStatus,
+    UserPluginPreferenceRecord,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -99,6 +100,8 @@ pub struct LocalPluginStoreItem {
     pub skill_ids: Vec<String>,
     pub install_source: String,
     pub install_available: bool,
+    pub execution_type: String,
+    pub requires_local_install: bool,
     pub lifecycle_status: String,
     pub update_available: bool,
     pub rollback_available: bool,
@@ -181,6 +184,8 @@ pub fn local_plugin_store_snapshot(
             skill_ids: source.skill_ids,
             install_source: "bundled".to_string(),
             install_available: false,
+            execution_type: "local".to_string(),
+            requires_local_install: true,
             lifecycle_status,
             update_available,
             rollback_available,
@@ -243,6 +248,8 @@ pub fn local_plugin_store_snapshot(
             skill_ids,
             install_source: "installed".to_string(),
             install_available: false,
+            execution_type: "local".to_string(),
+            requires_local_install: true,
             lifecycle_status,
             update_available: false,
             rollback_available,
@@ -324,13 +331,31 @@ pub fn merge_network_plugin_sources(
         let rollback_available = installation
             .as_ref()
             .is_some_and(has_verified_rollback_target);
-        let lifecycle_status = lifecycle_status(
-            installation.as_ref(),
-            active_transaction.as_ref(),
-            latest_transaction.as_ref(),
-            update_available,
-            rollback_available,
+        let has_local_install_path = source.release.components.iter().any(|component| {
+            matches!(
+                component.execution_host,
+                PluginExecutionHost::Local | PluginExecutionHost::Portable
+            )
+        });
+        let execution_type = plugin_execution_type(
+            source
+                .release
+                .components
+                .iter()
+                .map(|component| component.execution_host),
         );
+        let lifecycle_status =
+            if !has_local_install_path && installation.is_none() && active_transaction.is_none() {
+                "cloud_ready".to_string()
+            } else {
+                lifecycle_status(
+                    installation.as_ref(),
+                    active_transaction.as_ref(),
+                    latest_transaction.as_ref(),
+                    update_available,
+                    rollback_available,
+                )
+            };
         let skill_ids = source
             .release
             .components
@@ -361,7 +386,9 @@ pub fn merge_network_plugin_sources(
             artifact_revision: source.release.artifact_sha256,
             skill_ids,
             install_source: "network".to_string(),
-            install_available: true,
+            install_available: has_local_install_path,
+            execution_type,
+            requires_local_install: has_local_install_path,
             lifecycle_status,
             update_available,
             rollback_available,
@@ -372,7 +399,10 @@ pub fn merge_network_plugin_sources(
             latest_transaction,
         });
     }
-    snapshot.network_install_available = !seen.is_empty();
+    snapshot.network_install_available = snapshot
+        .items
+        .iter()
+        .any(|item| item.install_source == "network" && item.install_available);
     snapshot.network_catalog_error = None;
     if !revisions.is_empty() {
         snapshot.marketplace_name = "ChatOS Bundled + Trusted Marketplaces".to_string();
@@ -390,6 +420,23 @@ pub fn merge_network_plugin_sources(
             .then_with(|| left.display_name.cmp(&right.display_name))
     });
     Ok(())
+}
+
+fn plugin_execution_type(hosts: impl IntoIterator<Item = PluginExecutionHost>) -> String {
+    let hosts = hosts.into_iter().collect::<BTreeSet<_>>();
+    if hosts.len() > 1 {
+        return "hybrid".to_string();
+    }
+    match hosts
+        .iter()
+        .next()
+        .copied()
+        .unwrap_or(PluginExecutionHost::Local)
+    {
+        PluginExecutionHost::Cloud => "cloud".to_string(),
+        PluginExecutionHost::Local => "local".to_string(),
+        PluginExecutionHost::Portable => "portable".to_string(),
+    }
 }
 
 pub fn merge_auto_update_state(
@@ -697,6 +744,41 @@ mod tests {
         assert!(item.preference.as_ref().is_some_and(|preference| {
             preference.enabled && preference.auto_update && preference.release_channel == "stable"
         }));
+    }
+
+    #[test]
+    fn cloud_only_network_source_is_ready_without_a_local_install_action() {
+        let temp = TempDir::new().expect("temp directory");
+        let package = TestSigner::new().package_with_prompt_execution(
+            temp.path(),
+            "1.0.0",
+            PluginExecutionHost::Cloud,
+        );
+        let mut snapshot = local_plugin_store_snapshot(LocalPluginStatusSnapshot {
+            registry: LocalPluginRegistry::default(),
+            transactions: PluginTransactionJournal::default(),
+            runtime: Default::default(),
+        })
+        .expect("Plugin store snapshot");
+
+        merge_network_plugin_sources(
+            &mut snapshot,
+            PluginInstallSourceList {
+                items: vec![package.install_source()],
+            },
+        )
+        .expect("merge cloud-only Marketplace source");
+
+        let item = snapshot
+            .items
+            .iter()
+            .find(|item| item.plugin_id == "plugin-demo")
+            .expect("cloud-only Plugin item");
+        assert!(!snapshot.network_install_available);
+        assert!(!item.install_available);
+        assert!(!item.requires_local_install);
+        assert_eq!(item.execution_type, "cloud");
+        assert_eq!(item.lifecycle_status, "cloud_ready");
     }
 
     #[test]

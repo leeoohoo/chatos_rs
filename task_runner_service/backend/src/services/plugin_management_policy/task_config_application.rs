@@ -96,7 +96,11 @@ impl TaskRunnerCapabilityPolicy {
             .chain(
                 self.capabilities
                     .required_plugins()
-                    .filter(|plugin| plugin.available)
+                    .filter(|plugin| {
+                        plugin.available
+                            || plugin.status
+                                == chatos_plugin_management_sdk::PluginAvailabilityStatus::PartiallyAvailable
+                    })
                     .map(|plugin| plugin.catalog.id.as_str()),
             )
             .collect::<HashSet<_>>();
@@ -121,11 +125,11 @@ impl TaskRunnerCapabilityPolicy {
                 });
             }
         }
-        for plugin in self
-            .capabilities
-            .required_plugins()
-            .filter(|plugin| plugin.available)
-        {
+        for plugin in self.capabilities.required_plugins().filter(|plugin| {
+            plugin.available
+                || plugin.status
+                    == chatos_plugin_management_sdk::PluginAvailabilityStatus::PartiallyAvailable
+        }) {
             if !effective
                 .iter()
                 .any(|selected| selected.plugin_id == plugin.catalog.id)
@@ -167,7 +171,12 @@ impl TaskRunnerCapabilityPolicy {
                 .capabilities
                 .plugins
                 .iter()
-                .find(|plugin| plugin.catalog.id == selected.plugin_id && plugin.available)
+                .find(|plugin| {
+                    plugin.catalog.id == selected.plugin_id
+                        && (plugin.available
+                            || plugin.status
+                                == chatos_plugin_management_sdk::PluginAvailabilityStatus::PartiallyAvailable)
+                })
                 .ok_or_else(|| {
                     format!("effective Plugin is unavailable: {}", selected.plugin_id)
                 })?;

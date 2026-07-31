@@ -85,6 +85,44 @@ impl TestSigner {
         )
     }
 
+    pub(in crate::plugins) fn package_with_prompt_execution(
+        &self,
+        root: &Path,
+        version: &str,
+        execution_host: PluginExecutionHost,
+    ) -> TestPackage {
+        let default_host = match execution_host {
+            PluginExecutionHost::Cloud => "cloud",
+            PluginExecutionHost::Local => "local",
+            PluginExecutionHost::Portable => "portable",
+        };
+        self.package_from_manifest(
+            root,
+            version,
+            ArchiveMutation::None,
+            json!({
+                "schemaVersion": 2,
+                "execution": {"defaultHost": default_host, "componentHosts": {}},
+                "name": "demo-plugin",
+                "version": version,
+                "description": "A signed schema v2 Prompt Plugin fixture",
+                "author": {"name": "Demo Publisher"},
+                "skills": ["./skills/demo"],
+                "interface": {
+                    "displayName": "Demo Plugin",
+                    "shortDescription": "Signed Prompt Plugin",
+                    "longDescription": "A signed schema v2 Prompt Plugin fixture",
+                    "developerName": "Demo Publisher",
+                    "category": "Developer Tools"
+                },
+                "dependencies": {},
+                "permissions": []
+            })
+            .to_string(),
+            BTreeMap::new(),
+        )
+    }
+
     pub(in crate::plugins) fn package_with_command(
         &self,
         root: &Path,

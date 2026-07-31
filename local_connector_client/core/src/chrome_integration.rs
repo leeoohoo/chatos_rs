@@ -27,8 +27,10 @@ const CHROME_WINDOWS_REGISTRY_SUBKEY: &str =
 const CHROME_EXTENSION_PUBLIC_KEY: &str = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwtyBLDERxm2J31roRxBzHGFmtn03x51KFG7KLXkLNzNVaEnk6Np4ZnQMiu7ADkVykLoDtBUZCcJ5/Ol7Ceo9eYGOdtKp1KPpW5tM16vj+y0NkwOi27Ofr9ak0P3MvHQnJjAFOHd/vOSF8El94VV6A6iWuhlGSbnvbj+oZ+w3RWQkqKiXr/Qkd77DvvJhQghcz0V5JhVqrMANxOW1kPDVPIZvPfrxh4+LX4jrzPSLzgQcsG6q6M4dkdIH7UeymQv12XVdP2UtSrLyTRC2MpzuohQmau334GnZAGfkfg9ODXbrVdlabFb4JnhZHVCEoMwNI0wNhbkTlxG1bhZlgQTQawIDAQAB";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum ChromeHostPlatform {
     Macos,
+    Linux,
     Windows,
     Unsupported,
 }
@@ -71,20 +73,22 @@ pub(crate) struct ChromeNativeRendezvous {
 
 #[derive(Debug)]
 pub(crate) struct ChromeRendezvousGuard {
-    path: PathBuf,
+    paths: Vec<PathBuf>,
     instance_id: String,
 }
 
 impl Drop for ChromeRendezvousGuard {
     fn drop(&mut self) {
-        let current = fs::read_to_string(self.path.as_path())
-            .ok()
-            .and_then(|text| serde_json::from_str::<ChromeNativeRendezvous>(&text).ok());
-        if current
-            .as_ref()
-            .is_some_and(|value| value.instance_id == self.instance_id)
-        {
-            let _ = fs::remove_file(self.path.as_path());
+        for path in &self.paths {
+            let current = fs::read_to_string(path.as_path())
+                .ok()
+                .and_then(|text| serde_json::from_str::<ChromeNativeRendezvous>(&text).ok());
+            if current
+                .as_ref()
+                .is_some_and(|value| value.instance_id == self.instance_id)
+            {
+                let _ = fs::remove_file(path.as_path());
+            }
         }
     }
 }
@@ -95,11 +99,9 @@ pub(crate) fn chrome_integration_status() -> ChromeIntegrationStatus {
     let host = chrome_native_host_path().and_then(|path| validate_host_binary(&path).map(|_| path));
     let extension = chrome_extension_directory()
         .and_then(|path| validate_extension_directory(&path).map(|_| path));
-    let manifest_path = chrome_native_host_manifest_path();
-    let registration = manifest_path
-        .as_ref()
-        .map(|path| registration_matches(path.as_path()))
-        .transpose();
+    let manifest_paths = chrome_native_host_manifest_paths();
+    let manifest_path = manifest_paths.first().cloned();
+    let registration = registrations_match(manifest_paths.as_slice());
     let bridge = chrome_bridge_status().unwrap_or_else(|_| ChromeBridgeStatus {
         connected: false,
         extension_id: CHROME_EXTENSION_ID.to_string(),
@@ -113,7 +115,7 @@ pub(crate) fn chrome_integration_status() -> ChromeIntegrationStatus {
     });
     let last_error = if !platform_supported {
         Some(
-            "Chrome Native Messaging setup is currently implemented for macOS and Windows only"
+            "Chrome Native Messaging setup is currently implemented for macOS, Linux, and Windows only"
                 .to_string(),
         )
     } else if let Err(error) = &host {
@@ -135,6 +137,7 @@ pub(crate) fn chrome_integration_status() -> ChromeIntegrationStatus {
     } else if enabled {
         match platform {
             ChromeHostPlatform::Windows => "Native Host 已注册到当前 Windows 用户。请在 Chrome 扩展页加载 ChatOS 扩展，再从扩展弹窗逐站点授权并连接标签页。".to_string(),
+            ChromeHostPlatform::Linux => "Native Host 已注册到当前 Linux 用户的 Google Chrome 与 Chromium。请在浏览器扩展页加载 ChatOS 扩展，再从扩展弹窗逐站点授权并连接标签页。".to_string(),
             _ => "Native Host 已注册。请在 Chrome 扩展页加载 ChatOS 扩展，再从扩展弹窗逐站点授权并连接标签页。".to_string(),
         }
     } else {
@@ -165,45 +168,52 @@ pub(crate) fn enable_chrome_integration(
     }
     let platform = chrome_host_platform();
     if platform == ChromeHostPlatform::Unsupported {
-        bail!("Chrome Native Messaging setup is currently implemented for macOS and Windows only");
+        bail!("Chrome Native Messaging setup is currently implemented for macOS, Linux, and Windows only");
     }
     let host_path = chrome_native_host_path()?;
     validate_host_binary(host_path.as_path())?;
     let extension_dir = chrome_extension_directory()?;
     validate_extension_directory(extension_dir.as_path())?;
-    let manifest_path = chrome_native_host_manifest_path()
+    let manifest_paths = chrome_native_host_manifest_paths();
+    let manifest_path = manifest_paths
+        .first()
         .ok_or_else(|| anyhow!("Chrome Native Messaging manifest directory is unavailable"))?;
-    let manifest_existed = manifest_path.exists();
-    if manifest_existed && !registration_owned_by_chatos(manifest_path.as_path())? {
-        bail!("an unrelated Chrome Native Messaging manifest already uses the ChatOS host name");
+    let mut previous_manifests = Vec::with_capacity(manifest_paths.len());
+    for path in &manifest_paths {
+        let previous_manifest = if path.exists() {
+            if !registration_owned_by_chatos(path.as_path())? {
+                bail!("an unrelated Chrome Native Messaging manifest already uses the ChatOS host name at {}", path.display());
+            }
+            Some(read_native_host_manifest(path.as_path())?)
+        } else {
+            None
+        };
+        previous_manifests.push((path.clone(), previous_manifest));
     }
-    let previous_manifest = if manifest_existed {
-        Some(read_native_host_manifest(manifest_path.as_path())?)
-    } else {
-        None
-    };
     if platform == ChromeHostPlatform::Windows {
         ensure_windows_registration_available(manifest_path.as_path())?;
     }
-    let manifest = ChromeNativeHostManifest {
-        name: CHROME_NATIVE_HOST_NAME.to_string(),
-        description: CHROME_HOST_DESCRIPTION.to_string(),
-        path: host_path
-            .canonicalize()
-            .context("canonicalize Chrome Native Host path")?
-            .to_string_lossy()
-            .to_string(),
-        transport_type: "stdio".to_string(),
-        allowed_origins: vec![CHROME_EXTENSION_ORIGIN.to_string()],
-    };
-    write_private_json(manifest_path.as_path(), &manifest)?;
+    let canonical_host_path = host_path
+        .canonicalize()
+        .context("canonicalize Chrome Native Host path")?;
+    for path in &manifest_paths {
+        let registered_host_path =
+            native_host_path_for_manifest(canonical_host_path.as_path(), path.as_path())?;
+        let manifest = ChromeNativeHostManifest {
+            name: CHROME_NATIVE_HOST_NAME.to_string(),
+            description: CHROME_HOST_DESCRIPTION.to_string(),
+            path: registered_host_path.to_string_lossy().to_string(),
+            transport_type: "stdio".to_string(),
+            allowed_origins: vec![CHROME_EXTENSION_ORIGIN.to_string()],
+        };
+        if let Err(error) = write_private_json(path.as_path(), &manifest) {
+            restore_native_host_manifests(previous_manifests.as_slice());
+            return Err(error);
+        }
+    }
     if platform == ChromeHostPlatform::Windows {
         if let Err(error) = register_windows_native_host(manifest_path.as_path()) {
-            if let Some(previous_manifest) = previous_manifest.as_ref() {
-                let _ = write_private_json(manifest_path.as_path(), previous_manifest);
-            } else {
-                let _ = fs::remove_file(manifest_path.as_path());
-            }
+            restore_native_host_manifests(previous_manifests.as_slice());
             return Err(error);
         }
     }
@@ -212,21 +222,25 @@ pub(crate) fn enable_chrome_integration(
 
 pub(crate) fn disable_chrome_integration() -> Result<ChromeIntegrationStatus> {
     let platform = chrome_host_platform();
-    if let Some(path) = chrome_native_host_manifest_path() {
+    let manifest_paths = chrome_native_host_manifest_paths();
+    for path in &manifest_paths {
         if path.exists() {
             if !registration_owned_by_chatos(path.as_path())? {
                 bail!("refusing to remove a Chrome Native Messaging manifest not owned by ChatOS");
             }
-            if platform == ChromeHostPlatform::Windows {
-                ensure_windows_registration_available(path.as_path())?;
-                unregister_windows_native_host()?;
-            }
+        }
+    }
+    if platform == ChromeHostPlatform::Windows {
+        if let Some(path) = manifest_paths.first() {
+            ensure_windows_registration_available(path.as_path())?;
+            unregister_windows_native_host()?;
+        }
+    }
+    for path in &manifest_paths {
+        if path.exists() {
             fs::remove_file(path.as_path()).with_context(|| {
                 format!("remove Chrome Native Host manifest {}", path.display())
             })?;
-        } else if platform == ChromeHostPlatform::Windows {
-            ensure_windows_registration_available(path.as_path())?;
-            unregister_windows_native_host()?;
         }
     }
     Ok(chrome_integration_status())
@@ -242,7 +256,7 @@ pub(crate) fn publish_chrome_native_rendezvous(
     }
     let api_base_url = format!("http://127.0.0.1:{api_port}");
     validate_loopback_api_base(api_base_url.as_str())?;
-    let path = chrome_rendezvous_path(state_path)?;
+    let paths = chrome_rendezvous_paths(state_path)?;
     let instance_id = Uuid::new_v4().to_string();
     let rendezvous = ChromeNativeRendezvous {
         schema_version: 1,
@@ -254,8 +268,17 @@ pub(crate) fn publish_chrome_native_rendezvous(
         core_pid: std::process::id(),
         written_at: chrono::Utc::now().to_rfc3339(),
     };
-    write_private_json(path.as_path(), &rendezvous)?;
-    Ok(ChromeRendezvousGuard { path, instance_id })
+    let mut written_paths = Vec::with_capacity(paths.len());
+    for path in &paths {
+        if let Err(error) = write_private_json(path.as_path(), &rendezvous) {
+            for written_path in written_paths {
+                let _ = fs::remove_file(written_path);
+            }
+            return Err(error);
+        }
+        written_paths.push(path.clone());
+    }
+    Ok(ChromeRendezvousGuard { paths, instance_id })
 }
 
 pub(crate) fn load_chrome_native_rendezvous(path: &Path) -> Result<ChromeNativeRendezvous> {
@@ -298,6 +321,21 @@ fn chrome_rendezvous_path(state_path: &Path) -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("Local Connector state directory is unavailable"))
 }
 
+fn chrome_rendezvous_paths(state_path: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = vec![chrome_rendezvous_path(state_path)?];
+    if chrome_host_platform() == ChromeHostPlatform::Linux {
+        if let Some(home) = home_dir() {
+            if linux_snap_chromium_available(home.as_path()) {
+                let snap_path = linux_snap_chromium_rendezvous_path_for(home.as_path());
+                if !paths.contains(&snap_path) {
+                    paths.push(snap_path);
+                }
+            }
+        }
+    }
+    Ok(paths)
+}
+
 fn chrome_host_platform() -> ChromeHostPlatform {
     #[cfg(target_os = "macos")]
     {
@@ -307,7 +345,11 @@ fn chrome_host_platform() -> ChromeHostPlatform {
     {
         ChromeHostPlatform::Windows
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        ChromeHostPlatform::Linux
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         ChromeHostPlatform::Unsupported
     }
@@ -316,7 +358,9 @@ fn chrome_host_platform() -> ChromeHostPlatform {
 fn chrome_native_host_file_name(platform: ChromeHostPlatform) -> &'static str {
     match platform {
         ChromeHostPlatform::Windows => "chatos_chrome_native_host.exe",
-        ChromeHostPlatform::Macos | ChromeHostPlatform::Unsupported => "chatos_chrome_native_host",
+        ChromeHostPlatform::Macos | ChromeHostPlatform::Linux | ChromeHostPlatform::Unsupported => {
+            "chatos_chrome_native_host"
+        }
     }
 }
 
@@ -342,33 +386,149 @@ fn chrome_extension_directory() -> Result<PathBuf> {
         .join("chrome_extension"))
 }
 
-fn chrome_native_host_manifest_path() -> Option<PathBuf> {
-    home_dir().and_then(|home| {
-        chrome_native_host_manifest_path_for(chrome_host_platform(), home.as_path())
-    })
+fn chrome_native_host_manifest_paths() -> Vec<PathBuf> {
+    let platform = chrome_host_platform();
+    home_dir()
+        .map(|home| {
+            let mut paths = chrome_native_host_manifest_paths_for(platform, home.as_path());
+            if platform == ChromeHostPlatform::Linux
+                && linux_snap_chromium_available(home.as_path())
+            {
+                paths.push(linux_snap_chromium_manifest_path_for(home.as_path()));
+            }
+            paths
+        })
+        .unwrap_or_default()
 }
 
-fn chrome_native_host_manifest_path_for(
+fn chrome_native_host_manifest_paths_for(
     platform: ChromeHostPlatform,
     home: &Path,
-) -> Option<PathBuf> {
+) -> Vec<PathBuf> {
     match platform {
-        ChromeHostPlatform::Macos => Some(
-            home.join("Library")
-                .join("Application Support")
-                .join("Google")
-                .join("Chrome")
-                .join("NativeMessagingHosts")
-                .join(CHROME_NATIVE_HOST_FILE),
-        ),
-        ChromeHostPlatform::Windows => Some(
-            home.join(".chatos")
-                .join("local_connector")
-                .join("chrome-native-messaging")
-                .join(CHROME_NATIVE_HOST_FILE),
-        ),
-        ChromeHostPlatform::Unsupported => None,
+        ChromeHostPlatform::Macos => vec![home
+            .join("Library")
+            .join("Application Support")
+            .join("Google")
+            .join("Chrome")
+            .join("NativeMessagingHosts")
+            .join(CHROME_NATIVE_HOST_FILE)],
+        ChromeHostPlatform::Linux => ["google-chrome", "chromium"]
+            .into_iter()
+            .map(|browser_config| {
+                home.join(".config")
+                    .join(browser_config)
+                    .join("NativeMessagingHosts")
+                    .join(CHROME_NATIVE_HOST_FILE)
+            })
+            .collect(),
+        ChromeHostPlatform::Windows => vec![home
+            .join(".chatos")
+            .join("local_connector")
+            .join("chrome-native-messaging")
+            .join(CHROME_NATIVE_HOST_FILE)],
+        ChromeHostPlatform::Unsupported => Vec::new(),
     }
+}
+
+fn linux_snap_chromium_available(home: &Path) -> bool {
+    let root = home.join("snap").join("chromium");
+    root.join("current").exists() && root.join("common").exists()
+}
+
+fn linux_snap_chromium_manifest_path_for(home: &Path) -> PathBuf {
+    home.join("snap")
+        .join("chromium")
+        .join("common")
+        .join("chromium")
+        .join("NativeMessagingHosts")
+        .join(CHROME_NATIVE_HOST_FILE)
+}
+
+fn linux_snap_chromium_host_path_for(home: &Path) -> PathBuf {
+    linux_snap_chromium_manifest_path_for(home)
+        .parent()
+        .expect("Snap Chromium manifest path has a parent")
+        .join(chrome_native_host_file_name(ChromeHostPlatform::Linux))
+}
+
+fn linux_snap_chromium_rendezvous_path_for(home: &Path) -> PathBuf {
+    home.join("snap")
+        .join("chromium")
+        .join("current")
+        .join(".chatos")
+        .join("local_connector")
+        .join(CHROME_RENDEZVOUS_FILE)
+}
+
+fn is_linux_snap_chromium_manifest_path(path: &Path) -> bool {
+    chrome_host_platform() == ChromeHostPlatform::Linux
+        && home_dir()
+            .map(|home| linux_snap_chromium_manifest_path_for(home.as_path()) == path)
+            .unwrap_or(false)
+}
+
+fn native_host_path_for_manifest(source_host: &Path, manifest_path: &Path) -> Result<PathBuf> {
+    if !is_linux_snap_chromium_manifest_path(manifest_path) {
+        return Ok(source_host.to_path_buf());
+    }
+    let home = home_dir().ok_or_else(|| anyhow!("Linux home directory is unavailable"))?;
+    let destination = linux_snap_chromium_host_path_for(home.as_path());
+    install_linux_snap_native_host(source_host, destination.as_path())?;
+    destination
+        .canonicalize()
+        .context("canonicalize Snap Chromium Native Host path")
+}
+
+fn install_linux_snap_native_host(source: &Path, destination: &Path) -> Result<()> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| anyhow!("Snap Chromium Native Host directory is unavailable"))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create Snap Chromium directory {}", parent.display()))?;
+    if destination.exists() {
+        let metadata = fs::symlink_metadata(destination).with_context(|| {
+            format!(
+                "inspect existing Snap Chromium Native Host {}",
+                destination.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            bail!("Snap Chromium Native Host destination must be a regular non-symlink file");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.uid() != unsafe { libc::geteuid() } {
+                bail!("Snap Chromium Native Host destination is not owned by the current user");
+            }
+        }
+    }
+    let temp = NamedTempFile::new_in(parent).with_context(|| {
+        format!(
+            "create temporary Snap Chromium host in {}",
+            parent.display()
+        )
+    })?;
+    fs::copy(source, temp.path()).context("copy Snap Chromium Native Host")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700))
+            .context("restrict Snap Chromium Native Host permissions")?;
+    }
+    temp.as_file()
+        .sync_all()
+        .context("sync Snap Chromium Native Host")?;
+    temp.persist(destination)
+        .map_err(|error| error.error)
+        .with_context(|| {
+            format!(
+                "publish Snap Chromium Native Host {}",
+                destination.display()
+            )
+        })?;
+    Ok(())
 }
 
 fn validate_host_binary(path: &Path) -> Result<()> {
@@ -510,6 +670,18 @@ fn unregister_windows_native_host() -> Result<()> {
     bail!("Windows Chrome Native Messaging registration is unavailable on this platform")
 }
 
+fn registrations_match(paths: &[PathBuf]) -> Result<Option<bool>> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    for path in paths {
+        if !registration_matches(path.as_path())? {
+            return Ok(Some(false));
+        }
+    }
+    Ok(Some(true))
+}
+
 fn registration_matches(path: &Path) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
@@ -518,9 +690,16 @@ fn registration_matches(path: &Path) -> Result<bool> {
         return Ok(false);
     }
     let manifest = read_native_host_manifest(path)?;
-    let expected_path = chrome_native_host_path()?
-        .canonicalize()
-        .context("canonicalize expected Chrome Native Host path")?;
+    let expected_path = if is_linux_snap_chromium_manifest_path(path) {
+        let home = home_dir().ok_or_else(|| anyhow!("Linux home directory is unavailable"))?;
+        linux_snap_chromium_host_path_for(home.as_path())
+            .canonicalize()
+            .context("canonicalize expected Snap Chromium Native Host path")?
+    } else {
+        chrome_native_host_path()?
+            .canonicalize()
+            .context("canonicalize expected Chrome Native Host path")?
+    };
     let registered_path = PathBuf::from(manifest.path)
         .canonicalize()
         .context("canonicalize registered Chrome Native Host path")?;
@@ -551,6 +730,16 @@ fn read_native_host_manifest(path: &Path) -> Result<ChromeNativeHostManifest> {
         bail!("Chrome Native Host manifest exceeded the safety limit");
     }
     serde_json::from_slice(&bytes).context("decode Chrome Native Host manifest")
+}
+
+fn restore_native_host_manifests(previous: &[(PathBuf, Option<ChromeNativeHostManifest>)]) {
+    for (path, manifest) in previous {
+        if let Some(manifest) = manifest {
+            let _ = write_private_json(path.as_path(), manifest);
+        } else {
+            let _ = fs::remove_file(path.as_path());
+        }
+    }
 }
 
 fn write_private_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
@@ -630,14 +819,35 @@ mod tests {
     #[test]
     fn native_host_paths_are_platform_specific_and_user_scoped() {
         let home = Path::new("/Users/example");
-        let macos = chrome_native_host_manifest_path_for(ChromeHostPlatform::Macos, home)
-            .expect("macOS manifest path");
-        let windows = chrome_native_host_manifest_path_for(ChromeHostPlatform::Windows, home)
-            .expect("Windows manifest path");
-        assert!(macos.ends_with(Path::new(
+        let macos = chrome_native_host_manifest_paths_for(ChromeHostPlatform::Macos, home);
+        let linux = chrome_native_host_manifest_paths_for(ChromeHostPlatform::Linux, home);
+        let windows = chrome_native_host_manifest_paths_for(ChromeHostPlatform::Windows, home);
+        assert_eq!(macos.len(), 1);
+        assert!(macos[0].ends_with(Path::new(
             "Library/Application Support/Google/Chrome/NativeMessagingHosts/com.chatos.chrome.json"
         )));
-        assert!(windows.ends_with(Path::new(
+        assert_eq!(linux.len(), 2);
+        assert!(linux[0].ends_with(Path::new(
+            ".config/google-chrome/NativeMessagingHosts/com.chatos.chrome.json"
+        )));
+        assert!(linux[1].ends_with(Path::new(
+            ".config/chromium/NativeMessagingHosts/com.chatos.chrome.json"
+        )));
+        assert!(
+            linux_snap_chromium_manifest_path_for(home).ends_with(Path::new(
+                "snap/chromium/common/chromium/NativeMessagingHosts/com.chatos.chrome.json"
+            ))
+        );
+        assert!(linux_snap_chromium_host_path_for(home).ends_with(Path::new(
+            "snap/chromium/common/chromium/NativeMessagingHosts/chatos_chrome_native_host"
+        )));
+        assert!(
+            linux_snap_chromium_rendezvous_path_for(home).ends_with(Path::new(
+                "snap/chromium/current/.chatos/local_connector/chrome-native-host.json"
+            ))
+        );
+        assert_eq!(windows.len(), 1);
+        assert!(windows[0].ends_with(Path::new(
             ".chatos/local_connector/chrome-native-messaging/com.chatos.chrome.json"
         )));
         assert_eq!(
@@ -645,8 +855,8 @@ mod tests {
             "chatos_chrome_native_host.exe"
         );
         assert_eq!(
-            chrome_native_host_manifest_path_for(ChromeHostPlatform::Unsupported, home),
-            None
+            chrome_native_host_manifest_paths_for(ChromeHostPlatform::Unsupported, home),
+            Vec::<PathBuf>::new()
         );
     }
 

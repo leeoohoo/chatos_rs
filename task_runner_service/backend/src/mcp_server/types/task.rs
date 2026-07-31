@@ -33,7 +33,8 @@ pub(in crate::mcp_server) struct TaskIdArgs {
 
 #[derive(Debug, Deserialize)]
 pub(in crate::mcp_server) struct ListAvailablePluginsArgs {
-    pub(in crate::mcp_server) device_id: String,
+    #[serde(default)]
+    pub(in crate::mcp_server) device_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

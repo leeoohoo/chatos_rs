@@ -17,8 +17,8 @@ use super::{
     attach_activation_post_action_observation, attach_post_action_observation,
     attach_window_post_action_observation, bounded_integer, capture_display,
     capture_frontmost_window, click, consume_approved_window_layout_snapshot, drag,
-    ensure_action_not_cancelled, execute_jxa, execute_jxa_action, finalize_window_layout_capture,
-    list_displays, parse_application_pid, parse_click, parse_drag, parse_key_action, parse_scroll,
+    ensure_action_not_cancelled, finalize_window_layout_capture, list_displays,
+    parse_application_pid, parse_click, parse_drag, parse_key_action, parse_scroll,
     parse_typed_text, parse_window_bounds_request, parse_window_fullscreen_request,
     parse_window_layout_reference, parse_window_maximized_request, press_key,
     reject_unknown_fields, required_display_index, restore_window_layout, scroll,
@@ -26,9 +26,13 @@ use super::{
     type_text, validate_approved_display, validate_approved_window_display_layout,
     validate_approved_window_layout_snapshot, ApprovedDisplayGuard, PostActionObservationTarget,
     WindowControlRollbackGuard, WindowLayoutCapturePayload, WindowLayoutSnapshot,
-    CAPTURE_WINDOW_LAYOUT_JXA, DEFAULT_TREE_DEPTH, DEFAULT_TREE_NODES, DEFAULT_WINDOW_LIMIT,
-    INSPECT_FRONTMOST_WINDOW_JXA, LIST_WINDOWS_JXA, MAX_TREE_DEPTH, MAX_TREE_NODES,
-    MAX_WINDOW_LAYOUT_WINDOWS, MAX_WINDOW_LIMIT, PREFLIGHT_WINDOW_LAYOUT_JXA,
+    DEFAULT_TREE_DEPTH, DEFAULT_TREE_NODES, DEFAULT_WINDOW_LIMIT, MAX_TREE_DEPTH, MAX_TREE_NODES,
+    MAX_WINDOW_LAYOUT_WINDOWS, MAX_WINDOW_LIMIT,
+};
+#[cfg(target_os = "macos")]
+use super::{
+    execute_jxa, execute_jxa_action, CAPTURE_WINDOW_LAYOUT_JXA, INSPECT_FRONTMOST_WINDOW_JXA,
+    LIST_WINDOWS_JXA, PREFLIGHT_WINDOW_LAYOUT_JXA,
 };
 
 #[cfg(target_os = "macos")]

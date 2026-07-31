@@ -435,6 +435,7 @@ fn expected_manifest_and_inventory(
     }
     let manifest = PluginManifest {
         schema_version: PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+        execution: Default::default(),
         name: spec.name.clone(),
         version: spec.release_version.clone(),
         description: spec.description.clone(),

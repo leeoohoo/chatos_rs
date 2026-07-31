@@ -110,6 +110,38 @@ Use `windows-x64` or `windows-arm64` and the unpacked app's `resources` director
 
 The Windows package includes `chatos_chrome_native_host.exe` and the fixed-identity MV3 extension. Enabling Chrome integration in Local Connector requires an explicit risk acknowledgement, writes the owned manifest under the current user's ChatOS state directory, and registers only `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.chatos.chrome`. Existing registry or manifest ownership conflicts fail closed; disabling removes only the exact ChatOS-owned user registration.
 
+### Linux
+
+Run the Linux packager on the target Linux architecture:
+
+```bash
+./local_connector_client/package-electron-linux-client.sh
+```
+
+The script detects `linux-arm64` versus `linux-x64`, builds the two React frontends and native Rust
+executables on Linux, stages and verifies all 12 Plugin Bundles and 28 Skill Bundles, and creates a
+DEB under:
+
+```text
+local_connector_client/dist/electron-linux/
+```
+
+Linux currently ships the explicit `linux-browser` runtime profile. It contains the desktop app,
+Local Connector Core, sandbox MCP server, bundled `rg`, Plugin/Skill catalogs, ChatOS frontend,
+SQLite migrations, the fixed-identity Chrome extension, and the Linux native messaging host. The
+client registers user-scoped manifests for both Google Chrome and Chromium when the user explicitly
+enables Chrome integration. When Ubuntu's Snap Chromium is installed, the client also writes the
+Snap profile manifest, copies the Native Host into the Snap-accessible user directory, and publishes
+the private rendezvous file into the active Snap revision's user home. The final unpacked resources are checked by
+`verify-installed-package.mjs`, and a redacted `*.deb.verification.json` report is written beside the
+DEB.
+
+The `linux-browser` profile still excludes Computer Use, `agent-browser`/Chrome for Testing, and the
+bundled LibreOffice/Poppler document runtime. These features fail closed until Linux-native runtime
+assets and adapters are added; the package must not be represented as equivalent to the full macOS
+or Windows release profile. The verifier retains `linux-core` for validating older core-only Linux
+packages.
+
 To publish the ZIP to the official website's MinIO release bucket:
 
 ```powershell

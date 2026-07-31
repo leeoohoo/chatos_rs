@@ -43,6 +43,32 @@ const CODEX_FIGMA_MANIFEST: &str = r##"
 }
 "##;
 
+fn schema_v2_prompt_manifest() -> serde_json::Value {
+    json!({
+        "schemaVersion": 2,
+        "execution": {"defaultHost": "portable", "componentHosts": {}},
+        "name": "portable-demo",
+        "version": "1.0.0",
+        "description": "Portable prompt Plugin",
+        "author": {"name": "ChatOS"},
+        "skills": ["./skills/demo"],
+        "commands": [{
+            "componentKey": "review",
+            "source": "./commands/review.md",
+            "targetAgent": "task_runner_run_phase"
+        }],
+        "interface": {
+            "displayName": "Portable Demo",
+            "shortDescription": "Portable demo",
+            "longDescription": "Portable prompt Plugin for schema v2 tests.",
+            "developerName": "ChatOS",
+            "category": "Developer Tools"
+        },
+        "dependencies": {},
+        "permissions": []
+    })
+}
+
 #[test]
 fn parses_codex_manifest_into_v1_normalized_model() {
     let manifest = parse_plugin_manifest(CODEX_FIGMA_MANIFEST, PluginManifestSource::Codex)
@@ -56,6 +82,92 @@ fn parses_codex_manifest_into_v1_normalized_model() {
         manifest.mcp_servers.as_slice(),
         [PluginMcpServer::ConfigFile { path, .. }] if path.path == "./.mcp.json"
     ));
+}
+
+#[test]
+fn schema_v1_execution_is_implicitly_local_and_omitted_from_signing_json() {
+    let manifest = parse_plugin_manifest(CODEX_FIGMA_MANIFEST, PluginManifestSource::Codex)
+        .expect("schema v1 Manifest");
+    assert_eq!(
+        manifest.execution.host_for("skills"),
+        PluginExecutionHost::Local
+    );
+    let normalized = serde_json::to_value(&manifest).expect("normalized Manifest");
+    assert!(normalized.get("execution").is_none());
+
+    let explicit = CODEX_FIGMA_MANIFEST.replace(
+        "\"name\": \"figma\"",
+        "\"schemaVersion\": 1, \"execution\": {\"defaultHost\": \"local\"}, \"name\": \"figma\"",
+    );
+    assert!(parse_plugin_manifest(explicit.as_str(), PluginManifestSource::Codex).is_err());
+}
+
+#[test]
+fn schema_v2_requires_explicit_valid_execution_policy() {
+    let mut missing = schema_v2_prompt_manifest();
+    missing.as_object_mut().expect("object").remove("execution");
+    assert!(
+        parse_plugin_manifest(missing.to_string().as_str(), PluginManifestSource::Chatos).is_err()
+    );
+
+    let mut unknown = schema_v2_prompt_manifest();
+    unknown["execution"]["componentHosts"] = json!({"missing": "cloud"});
+    assert!(
+        parse_plugin_manifest(unknown.to_string().as_str(), PluginManifestSource::Chatos).is_err()
+    );
+
+    let manifest = parse_plugin_manifest(
+        schema_v2_prompt_manifest().to_string().as_str(),
+        PluginManifestSource::Chatos,
+    )
+    .expect("schema v2 portable Manifest");
+    assert!(plugin_component_descriptors(&manifest)
+        .iter()
+        .all(|component| component.execution_host == PluginExecutionHost::Portable));
+}
+
+#[test]
+fn schema_v2_rejects_cloud_runtime_components_and_permissions() {
+    let mut mcp = schema_v2_prompt_manifest();
+    mcp["execution"]["defaultHost"] = json!("cloud");
+    mcp["mcpServers"] = json!({
+        "remote": {"type": "http", "url": "https://mcp.example.com"}
+    });
+    assert!(parse_plugin_manifest(mcp.to_string().as_str(), PluginManifestSource::Chatos).is_err());
+
+    let mut permission = schema_v2_prompt_manifest();
+    permission["execution"]["defaultHost"] = json!("cloud");
+    permission["permissions"] = json!([{
+        "permission": "workspace.read",
+        "components": ["review"]
+    }]);
+    assert!(parse_plugin_manifest(
+        permission.to_string().as_str(),
+        PluginManifestSource::Chatos,
+    )
+    .is_err());
+}
+
+#[test]
+fn schema_v2_hybrid_allows_permissions_bound_only_to_local_components() {
+    let mut hybrid = schema_v2_prompt_manifest();
+    hybrid["execution"]["defaultHost"] = json!("portable");
+    hybrid["execution"]["componentHosts"] = json!({"review": "local"});
+    hybrid["permissions"] = json!([{
+        "permission": "workspace.read",
+        "components": ["review"]
+    }]);
+    let manifest = parse_plugin_manifest(hybrid.to_string().as_str(), PluginManifestSource::Chatos)
+        .expect("hybrid Manifest with local-scoped permission");
+    let descriptors = plugin_component_descriptors(&manifest);
+    assert_eq!(
+        descriptors
+            .iter()
+            .find(|component| component.component_key == "review")
+            .expect("review component")
+            .execution_host,
+        PluginExecutionHost::Local
+    );
 }
 
 #[test]

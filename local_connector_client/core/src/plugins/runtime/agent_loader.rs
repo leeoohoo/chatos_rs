@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::mcp_adapter::load_verified_manifest;
+use super::portable_bundle::validate_local_portable_bundle;
 use crate::plugins::PluginInstaller;
 
 const MAX_AGENT_BYTES: u64 = 256 * 1024;
@@ -91,30 +92,45 @@ impl PluginAgentLoader {
         validate_required_permissions(&installation, component_key, permission_snapshot)?;
 
         let relative_source_path = agent.source.path.as_str();
-        let package_source_path = relative_source_path.trim_start_matches("./");
-        let expected_package_sha256 = installation
-            .version
-            .package_file_sha256
-            .get(package_source_path)
-            .context("Plugin Agent source is not covered by package checksums")?;
-        let source_path = installation.installation_path.join(relative_source_path);
-        let metadata = fs::symlink_metadata(source_path.as_path())
-            .context("read Plugin Agent source metadata")?;
-        if !metadata.is_file()
-            || metadata.file_type().is_symlink()
-            || metadata.len() > MAX_AGENT_BYTES
-        {
-            bail!("Plugin Agent source is missing, unsafe, or exceeds its size limit");
-        }
-        let bytes = fs::read(source_path.as_path()).context("read Plugin Agent source")?;
-        if bytes.len() as u64 > MAX_AGENT_BYTES {
-            bail!("Plugin Agent source exceeds its size limit");
-        }
-        let content_sha256 = sha256_bytes(bytes.as_slice());
-        if content_sha256 != *expected_package_sha256 || content_sha256 != expected_content_sha256 {
-            bail!("Plugin Agent source does not match the immutable component snapshot");
-        }
-        let raw = String::from_utf8(bytes).context("Plugin Agent source is not UTF-8")?;
+        let portable_bundle = validate_local_portable_bundle(
+            &installation,
+            &manifest,
+            component_key,
+            expected_content_sha256,
+        )?;
+        let (raw, content_sha256) = if let Some(bundle) = portable_bundle {
+            (bundle.primary_text, bundle.bundle_sha256)
+        } else {
+            let package_source_path = relative_source_path.trim_start_matches("./");
+            let expected_package_sha256 = installation
+                .version
+                .package_file_sha256
+                .get(package_source_path)
+                .context("Plugin Agent source is not covered by package checksums")?;
+            let source_path = installation.installation_path.join(relative_source_path);
+            let metadata = fs::symlink_metadata(source_path.as_path())
+                .context("read Plugin Agent source metadata")?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || metadata.len() > MAX_AGENT_BYTES
+            {
+                bail!("Plugin Agent source is missing, unsafe, or exceeds its size limit");
+            }
+            let bytes = fs::read(source_path.as_path()).context("read Plugin Agent source")?;
+            if bytes.len() as u64 > MAX_AGENT_BYTES {
+                bail!("Plugin Agent source exceeds its size limit");
+            }
+            let content_sha256 = sha256_bytes(bytes.as_slice());
+            if content_sha256 != *expected_package_sha256
+                || content_sha256 != expected_content_sha256
+            {
+                bail!("Plugin Agent source does not match the immutable component snapshot");
+            }
+            (
+                String::from_utf8(bytes).context("Plugin Agent source is not UTF-8")?,
+                content_sha256,
+            )
+        };
         if raw.contains('\0') {
             bail!("Plugin Agent source contains NUL bytes");
         }
@@ -126,6 +142,7 @@ impl PluginAgentLoader {
             plugin_id,
             installation.version.release_id.as_str(),
             component_key,
+            manifest.execution.host_for(component_key),
             agent.source.path.as_str(),
             agent.description.as_deref(),
             agent.base_agent.as_str(),

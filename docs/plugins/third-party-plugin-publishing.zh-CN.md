@@ -9,7 +9,9 @@
 3. super admin 审核通过发布者。通过时，release key 会并入 Marketplace trust root；拒绝、暂停和恢复都会进入审计。
 4. 发布者生成 Plugin artifact、Manifest、SBOM、Release signature，并把 Release 写入 Marketplace signed Catalog。
 5. 管理员或 owner 触发 Catalog sync。服务端会验证 Catalog/Release 签名、key usage、revision 单调性、artifact hash、release immutability、publisher identity 和 revocation。
-6. 用户安装或选择 Plugin。Task Runner 和 Local Connector 只使用已安装的 immutable Release snapshot。
+6. 用户安装或选择 Plugin。Cloud 组件无需本地安装；Local 和本地执行的 Portable 组件必须安装。Task Runner 与 Local Connector 都只使用 immutable Release snapshot。
+
+Cloud、Local、Portable 与 Hybrid 的完整合同见 [Cloud / Local / Portable Plugin Runtime 架构](./cloud-local-portable-runtime.zh-CN.md)。
 
 ## 2. 身份与密钥边界
 
@@ -21,6 +23,8 @@
 
 ## 3. Runtime 组件选择
 
+schema v2 必须声明 `execution.defaultHost`。纯 Prompt 组件可选择 `cloud` 或 `portable`；MCP、App、Hook、UI、Native Adapter 和任何需要运行时权限的组件必须选择 `local`。schema v1 保持隐式 `local`，不得为了改变执行位置而原地重签历史 Release。
+
 第三方服务通常优先使用以下组件组合：
 
 - `mcpServers`：适合 CircleCI/Sentry 这类远程 API 操作。生产建议使用 HTTPS MCP endpoint；开发可使用 loopback HTTP。
@@ -28,6 +32,8 @@
 - `agents`：适合多步排障、归因、修复建议等受限工具链任务。`baseAgent` 只能是 `task_runner_plan_phase` 或 `task_runner_run_phase`。
 - `ui`：适合只读状态面板、Artifact viewer 或 Workbench。入口必须在 `./ui/` 下，bridge capability 必须逐项声明。
 - `apps`：适合需要 OAuth 或本机 connected app 绑定的服务。凭据不要写入 Manifest，使用 credential reference 或 connected app grant。
+
+Cloud/Portable Skill、Command、Agent 不得申请运行时权限，也不得引用脚本或二进制。Plugin Management 会把已验签 artifact 物化为不可变 canonical text Bundle；发布未完成前 Release 不会对用户或 Task Runner 可见。
 
 ## 4. 凭据与权限
 
@@ -61,7 +67,10 @@
 
 ```bash
 cargo test -p chatos_plugin_management_sdk --test third_party_plugin_examples
+cargo test -p chatos_plugin_package
 cargo test -p plugin_management_service_backend --lib
 ```
+
+仓库内 Plugin 可以使用 `scripts/package-plugin-release.mjs` 生成精确 checksums、SPDX SBOM、确定性 ZIP 和待签名 Release 模板。正式签名必须由仓库外的生产 signer 完成，生产私钥不得进入源码或 CI 日志。Ponytail 的完整流程见 [Ponytail ChatOS Release 发布手册](./ponytail-release-runbook.zh-CN.md)。
 
 如果发布包包含本机 stdio MCP、Hook、UI 或 Artifact 写入，还必须补充对应 Local Connector packaged E2E，并确认没有启动未授权 listener、没有占用固定端口、没有把凭据或用户文件内容写入审计。

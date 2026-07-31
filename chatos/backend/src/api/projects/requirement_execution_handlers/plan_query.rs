@@ -276,6 +276,20 @@ pub(super) fn execution_message_status(message: &crate::models::message::Message
     }
 }
 
+#[cfg(test)]
+pub(super) fn execution_message_is_stopped_terminal(
+    message: &crate::models::message::Message,
+) -> bool {
+    execution_status_is_stopped_terminal(execution_message_status(message).as_str())
+}
+
+pub(super) fn execution_status_is_stopped_terminal(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        STATUS_STOPPED | "cancelled" | "canceled"
+    )
+}
+
 fn execution_status_is_stop_locked(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),

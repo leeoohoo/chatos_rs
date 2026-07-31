@@ -126,9 +126,7 @@ export const InputAreaPluginPicker = ({
             ) : null}
             {!pluginPicker.loading && pluginPicker.filteredPlugins.length === 0 ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
-                {pluginPicker.selectedDeviceId
-                  ? t('inputArea.plugin.empty')
-                  : t('inputArea.plugin.selectDevice')}
+                {t('inputArea.plugin.empty')}
               </div>
             ) : null}
             {!pluginPicker.loading && pluginPicker.filteredPlugins.map((plugin) => {
@@ -146,6 +144,7 @@ export const InputAreaPluginPicker = ({
                       type="checkbox"
                       checked={selected}
                       onChange={() => pluginPicker.togglePlugin(plugin.id)}
+                      disabled={plugin.requires_device && !pluginPicker.selectedDeviceId}
                       className="mt-1"
                     />
                     <span className="min-w-0 flex-1">
@@ -159,6 +158,20 @@ export const InputAreaPluginPicker = ({
                             Browser
                           </span>
                         ) : null}
+                        <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-700 dark:text-violet-300">
+                          {plugin.execution_type === 'cloud'
+                            ? '云端'
+                            : plugin.execution_type === 'portable'
+                              ? '可移植'
+                              : plugin.execution_type === 'hybrid'
+                                ? 'Hybrid'
+                                : '本地'}
+                        </span>
+                        {plugin.requires_device ? (
+                          <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                            需要设备
+                          </span>
+                        ) : null}
                       </span>
                       <span className="mt-1 block text-xs text-muted-foreground">
                         {plugin.description}
@@ -166,6 +179,47 @@ export const InputAreaPluginPicker = ({
                       {plugin.component_keys.length > 0 ? (
                         <span className="mt-1 block truncate text-[10px] text-muted-foreground">
                           {plugin.component_keys.join(' · ')}
+                        </span>
+                      ) : null}
+                      {(Array.isArray(plugin.components) ? plugin.components : []).length > 0 ? (
+                        <span className="mt-2 block space-y-1">
+                          {(Array.isArray(plugin.components) ? plugin.components : []).map((component) => (
+                            <span
+                              key={component.component_key}
+                              className="block rounded border bg-background/60 px-2 py-1 text-[10px] text-muted-foreground"
+                            >
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-mono text-foreground">
+                                  {component.component_key}
+                                </span>
+                                <span>{component.kind}</span>
+                                <span>
+                                  {component.execution_host === 'cloud'
+                                    ? '云端'
+                                    : component.execution_host === 'portable'
+                                      ? '可移植'
+                                      : '本地'}
+                                </span>
+                                <span>{component.available ? 'ready' : component.status}</span>
+                                <span>
+                                  {component.prepare_provider === 'task_runner_cloud'
+                                    ? 'Task Runner Cloud'
+                                    : 'Local Connector'}
+                                </span>
+                                {component.requires_workspace ? <span>需要工作区</span> : null}
+                              </span>
+                              {component.content_sha256 ? (
+                                <span className="mt-0.5 block truncate font-mono">
+                                  sha256:{component.content_sha256}
+                                </span>
+                              ) : null}
+                              {component.reason ? (
+                                <span className="mt-0.5 block text-destructive">
+                                  {component.reason}
+                                </span>
+                              ) : null}
+                            </span>
+                          ))}
                         </span>
                       ) : null}
                     </span>

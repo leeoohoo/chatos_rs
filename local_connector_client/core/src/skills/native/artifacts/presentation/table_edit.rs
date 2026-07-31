@@ -92,7 +92,7 @@ pub(super) fn apply_pptx_xml_edits(
     xml: &str,
     mut edits: Vec<(usize, usize, String)>,
 ) -> Result<String> {
-    edits.sort_by(|left, right| right.0.cmp(&left.0));
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
     let mut next_start = xml.len();
     let mut output = xml.to_string();
     for (start, end, replacement) in edits {

@@ -132,6 +132,37 @@ pub(super) async fn create_plugin_release(
         published_at: now_rfc3339(),
         revoked_at: None,
     };
+    let cloud_bundles =
+        super::plugin_cloud_bundles::stage_release_cloud_bundles(&state, &release).await?;
+    let component_snapshots = cloud_bundles
+        .iter()
+        .map(|bundle| {
+            let component = release
+                .components
+                .iter()
+                .find(|component| component.component_key == bundle.component_key)
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::internal("staged Plugin Bundle has no Release component")
+                })?;
+            Ok(PluginComponentSnapshot {
+                plugin_id: release.plugin_id.clone(),
+                release_id: release.id.clone(),
+                component,
+                content_sha256: bundle.bundle_sha256.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    state
+        .store
+        .set_plugin_release_publication_ready(release.id.as_str(), false)
+        .await
+        .map_err(ApiError::internal)?;
+    state
+        .store
+        .insert_plugin_cloud_component_bundles(cloud_bundles.as_slice())
+        .await
+        .map_err(ApiError::internal)?;
     state
         .store
         .insert_plugin_release(&release)
@@ -143,6 +174,20 @@ pub(super) async fn create_plugin_release(
                 ApiError::internal(err)
             }
         })?;
+    state
+        .store
+        .replace_plugin_component_snapshots(
+            release.plugin_id.as_str(),
+            release.id.as_str(),
+            component_snapshots.as_slice(),
+        )
+        .await
+        .map_err(ApiError::internal)?;
+    state
+        .store
+        .set_plugin_release_publication_ready(release.id.as_str(), true)
+        .await
+        .map_err(ApiError::internal)?;
     if release_channel == "stable" {
         plugin.latest_release_id = release.id.clone();
         plugin.updated_at = now_rfc3339();

@@ -186,7 +186,7 @@ pub(super) fn clone_pptx_table_row_with_text(
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    edits.sort_by(|left, right| right.0.cmp(&left.0));
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
     for (start, end, replacement) in edits {
         output.replace_range(start..end, replacement.as_str());
     }

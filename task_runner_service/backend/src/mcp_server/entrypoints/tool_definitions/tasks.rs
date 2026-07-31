@@ -72,16 +72,16 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "list_available_plugins",
-            "List Plugins enabled for the current user and available on an exact Local Connector device. Use returned id values as selected_plugins when creating execution tasks.",
+            "List Plugins enabled for the current user. Without a device it returns cloud-ready components; with a device it also resolves local and locally executed portable components. Use returned id values as selected_plugins when creating execution tasks.",
             required_object_schema(
                 json!({
                     "device_id": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Exact Local Connector device id selected by the user or client."
+                        "description": "Optional exact Local Connector device id for local Plugin availability."
                     }
                 }),
-                &["device_id"],
+                &[],
             ),
         ),
         tool_definition(

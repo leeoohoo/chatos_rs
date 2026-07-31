@@ -191,7 +191,7 @@ impl TaskRunnerMcpService {
                         Some(current_user),
                         Some(owner_user_id),
                         chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
-                        Some(args.device_id),
+                        args.device_id,
                     )
                     .await?
                     .ok_or_else(|| "Plugin Management policy is unavailable".to_string())?;

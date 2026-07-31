@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
 use semver::{Version, VersionReq};
@@ -16,7 +16,10 @@ use super::components::{
     PLUGIN_UI_SURFACE_ARTIFACT_VIEWER, PLUGIN_UI_SURFACE_DETAIL_PANEL,
     PLUGIN_UI_SURFACE_MESSAGE_PANEL, PLUGIN_UI_SURFACE_WORKBENCH,
 };
-use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1};
+use super::normalized::{
+    PluginExecutionHost, PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+    PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
+};
 use super::paths::normalize_plugin_relative_path;
 use super::validation_support::{
     issue, required_text, validate_brand_color, validate_mcp_http_url, validate_optional_email,
@@ -49,13 +52,20 @@ pub fn validate_plugin_manifest(
 ) -> Result<(), PluginManifestValidationError> {
     let mut issues = Vec::new();
 
-    if manifest.schema_version != PLUGIN_MANIFEST_SCHEMA_VERSION_V1 {
+    if ![
+        PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+        PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
+    ]
+    .contains(&manifest.schema_version)
+    {
         issue(
             &mut issues,
             "schemaVersion",
             format!(
-                "unsupported schema version {}; expected {}",
-                manifest.schema_version, PLUGIN_MANIFEST_SCHEMA_VERSION_V1
+                "unsupported schema version {}; expected {} or {}",
+                manifest.schema_version,
+                PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+                PLUGIN_MANIFEST_SCHEMA_VERSION_V2
             ),
         );
     }
@@ -321,6 +331,7 @@ pub fn validate_plugin_manifest(
 
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
+    validate_execution_policy(manifest, &component_keys, &mut issues);
 
     let component_count = manifest.skills.len()
         + manifest.mcp_servers.len()
@@ -341,6 +352,90 @@ pub fn validate_plugin_manifest(
         Ok(())
     } else {
         Err(PluginManifestValidationError { issues })
+    }
+}
+
+fn validate_execution_policy(
+    manifest: &PluginManifest,
+    component_keys: &HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    if manifest.schema_version == PLUGIN_MANIFEST_SCHEMA_VERSION_V1 {
+        if !manifest.execution.is_implicit_v1() {
+            issue(
+                issues,
+                "execution",
+                "schemaVersion 1 must not declare execution",
+            );
+        }
+        return;
+    }
+
+    let mut kinds = BTreeMap::new();
+    for (index, skill) in manifest.skills.iter().enumerate() {
+        kinds.insert(
+            component_key_from_path(skill.path.as_str(), "skills", index),
+            "skill",
+        );
+    }
+    for component in &manifest.mcp_servers {
+        kinds.insert(component.component_key().to_string(), "mcp_server");
+    }
+    for component in &manifest.apps {
+        kinds.insert(component.component_key.clone(), "connected_app");
+    }
+    for component in &manifest.commands {
+        kinds.insert(component.component_key.clone(), "command");
+    }
+    for component in &manifest.agents {
+        kinds.insert(component.component_key.clone(), "agent");
+    }
+    for component in &manifest.hooks {
+        kinds.insert(component.component_key.clone(), "hook_set");
+    }
+    for component in &manifest.ui {
+        kinds.insert(component.component_key.clone(), "ui_contribution");
+    }
+
+    for component_key in manifest.execution.component_hosts.keys() {
+        if !component_keys.contains(component_key) {
+            issue(
+                issues,
+                "execution.componentHosts",
+                format!("unknown component key {component_key}"),
+            );
+        }
+    }
+
+    for (component_key, kind) in &kinds {
+        let host = manifest.execution.host_for(component_key);
+        if host != PluginExecutionHost::Local && !matches!(*kind, "skill" | "command" | "agent") {
+            issue(
+                issues,
+                "execution",
+                format!("{kind} component {component_key} must use local execution"),
+            );
+        }
+    }
+
+    for (index, permission) in manifest.permissions.iter().enumerate() {
+        let targets_cloud_component = if permission.components.is_empty() {
+            kinds
+                .keys()
+                .any(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+        } else {
+            permission
+                .components
+                .iter()
+                .any(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+        };
+        if targets_cloud_component {
+            issue(
+                issues,
+                format!("permissions[{index}]").as_str(),
+                "cloud and portable components must not request runtime permissions",
+            );
+        }
     }
 }
 

@@ -167,7 +167,7 @@ pub(super) async fn browser_route_list_with_context(
         .get(conversation_key.as_str())
         .cloned()
         .unwrap_or_default();
-    routes.sort_by(|left, right| left.created_at_unix.cmp(&right.created_at_unix));
+    routes.sort_by_key(|route| route.created_at_unix);
     let route_values = routes.iter().map(route_json).collect::<Vec<_>>();
     Ok(json!({
         "success": true,

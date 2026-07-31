@@ -36,6 +36,7 @@ impl RunService {
             ask_user_prompt_service,
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
         }
     }
 
@@ -52,6 +53,7 @@ impl RunService {
             ask_user_prompt_service,
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
         }
     }
 

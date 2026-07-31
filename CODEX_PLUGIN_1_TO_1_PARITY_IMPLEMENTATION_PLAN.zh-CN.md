@@ -79,8 +79,8 @@
 
 - `docs/plans/PLUGIN_MANAGEMENT_SERVICE_IMPLEMENTATION_PLAN.zh-CN.md`：Plugin Management 初始控制面建设历史。
 - `docs/plan/LOCAL_CONNECTOR_CODEX_SKILLS_PLUGIN_INTEGRATION_PLAN.zh-CN.md`：Skill Bundle 和 Local Connector 执行链子方案。
-- `UNIFIED_MCP_ARCHITECTURE_IMPLEMENTATION_PLAN.md`：已经完成的统一 MCP 基础设施。
-- `STRICT_PLUGIN_MANAGED_AGENT_CONFIGURATION_PLAN.zh-CN.md`：已经完成的系统 Agent 严格能力配置基础。
+- `docs/plan/UNIFIED_MCP_ARCHITECTURE_IMPLEMENTATION_PLAN.md`：已经完成的统一 MCP 基础设施。
+- `docs/plan/STRICT_PLUGIN_MANAGED_AGENT_CONFIGURATION_PLAN.zh-CN.md`：已经完成的系统 Agent 严格能力配置基础。
 - 本文：Codex Plugin 1:1 兼容的唯一总实施计划。
 
 ## 2. “1:1 兼容”的定义

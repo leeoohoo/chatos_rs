@@ -34,6 +34,7 @@ mod local_connector_skills;
 mod mcps;
 mod plugin_audit;
 mod plugin_catalog_sync;
+mod plugin_cloud_bundles;
 mod plugin_install_sources;
 mod plugin_installations;
 mod plugin_marketplaces;
@@ -82,6 +83,7 @@ use mcps::{
 use plugin_audit::list_plugin_audit;
 pub use plugin_catalog_sync::start_plugin_catalog_sync_loop;
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
+use plugin_cloud_bundles::get_plugin_cloud_component_bundle_internal;
 use plugin_install_sources::{
     get_plugin_install_source_internal, list_plugin_install_sources_internal,
 };
@@ -341,6 +343,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/internal/runtime/agent-capabilities/resolve",
             post(resolve_agent_capabilities_internal),
+        )
+        .route(
+            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-components/{component_key}",
+            get(get_plugin_cloud_component_bundle_internal),
         )
         .route(
             "/api/internal/local-connector/mcps",

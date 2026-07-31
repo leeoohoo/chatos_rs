@@ -202,8 +202,12 @@ pub(super) async fn prepare_component(
                 "content": [{
                     "type": "input_text",
                     "text": format!(
-                        "[Plugin Skill: {} / {} / {}]\n{}",
-                        plugin.plugin_id, component.component_key, skill_key, instructions
+                        "{}\n\n[Plugin Skill: {} / {} / {}]\n{}",
+                        super::THIRD_PARTY_PLUGIN_ENVELOPE,
+                        plugin.plugin_id,
+                        component.component_key,
+                        skill_key,
+                        instructions
                     )
                 }]
             }));

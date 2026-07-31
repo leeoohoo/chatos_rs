@@ -89,21 +89,10 @@ pub async fn get_task_runner_task(
 pub async fn list_task_runner_available_plugins(
     base_url: &str,
     access_token: &str,
-    device_id: &str,
+    device_id: Option<&str>,
     plan_mode: bool,
 ) -> Result<Value, String> {
-    let device_id = device_id.trim();
-    if device_id.is_empty() {
-        return Err("device_id is required".to_string());
-    }
-    let request = task_runner_request(
-        base_url,
-        access_token,
-        reqwest::Method::GET,
-        "/api/tasks/capabilities/catalog",
-    )
-    .await
-    .query(&[
+    let mut query = vec![
         (
             "task_profile",
             if plan_mode { "chatos_plan" } else { "default" },
@@ -112,8 +101,18 @@ pub async fn list_task_runner_available_plugins(
             "requires_execution",
             if plan_mode { "false" } else { "true" },
         ),
-        ("device_id", device_id),
-    ]);
+    ];
+    if let Some(device_id) = device_id.map(str::trim).filter(|value| !value.is_empty()) {
+        query.push(("device_id", device_id));
+    }
+    let request = task_runner_request(
+        base_url,
+        access_token,
+        reqwest::Method::GET,
+        "/api/tasks/capabilities/catalog",
+    )
+    .await
+    .query(&query);
     send_task_runner_response(request).await
 }
 

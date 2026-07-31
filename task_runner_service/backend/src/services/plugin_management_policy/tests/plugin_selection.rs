@@ -2,17 +2,29 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_plugin_management_sdk::{
-    PluginCommandInvocation, PluginComponentKind, SelectedPluginRef, SystemAgentKey,
-    TaskPluginConfig,
+    PluginCommandInvocation, PluginComponentKind, ResolvedAgentCapabilities, SelectedPluginRef,
+    SystemAgentKey, TaskPluginConfig,
 };
 use serde_json::json;
 
 use super::super::{TaskRunnerCapabilityPolicy, BUILTIN_RUNTIME_KIND};
 use super::fixtures::*;
 
+fn local_capabilities() -> ResolvedAgentCapabilities {
+    let mut capabilities = policy().capabilities;
+    capabilities.agent_key = SystemAgentKey::TaskRunnerLocalRunPhase.as_str().to_string();
+    for mcp in &mut capabilities.mcps {
+        mcp.binding.agent_key = capabilities.agent_key.clone();
+    }
+    for skill in &mut capabilities.skills {
+        skill.binding.agent_key = capabilities.agent_key.clone();
+    }
+    capabilities
+}
+
 #[test]
 fn plugin_selection_requires_exact_device_and_produces_immutable_run_snapshot() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];
     capabilities.mcps.push(resolved_mcp(
         "browser-tools",
@@ -43,7 +55,7 @@ fn plugin_selection_requires_exact_device_and_produces_immutable_run_snapshot() 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].plugin_id, "plugin-browser");
     assert_eq!(snapshots[0].release_id, "release-browser-1");
-    assert_eq!(snapshots[0].device_id, "device-1");
+    assert_eq!(snapshots[0].device_id.as_deref(), Some("device-1"));
     assert_eq!(snapshots[0].workspace_id.as_deref(), Some("workspace-1"));
     assert_eq!(snapshots[0].artifact_sha256, "a".repeat(64));
     assert_eq!(snapshots[0].component_snapshots.len(), 1);
@@ -66,7 +78,7 @@ fn plugin_selection_requires_exact_device_and_produces_immutable_run_snapshot() 
 
 #[test]
 fn plugin_ui_is_pinned_as_a_signed_run_component_without_executable_operations() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_ui_plugin()];
     capabilities.mcps.push(resolved_mcp(
         "browser-tools",
@@ -119,7 +131,7 @@ fn plugin_ui_is_pinned_as_a_signed_run_component_without_executable_operations()
 
 #[test]
 fn plugin_selection_without_device_fails_closed() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];
     capabilities.mcps.push(resolved_mcp(
         "browser-tools",
@@ -147,7 +159,7 @@ fn plugin_selection_without_device_fails_closed() {
 
 #[test]
 fn selected_command_enters_the_immutable_run_snapshot() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_command_plugin(false)];
     let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
     let mut task = task();
@@ -210,7 +222,7 @@ fn selected_command_enters_the_immutable_run_snapshot() {
             .runtime
             .get("metadata")
             .and_then(|metadata| metadata.get("target_agent")),
-        Some(&json!("task_runner_run_phase"))
+        Some(&json!("task_runner_local_run_phase"))
     );
     assert_eq!(
         component
@@ -228,8 +240,8 @@ fn selected_command_enters_the_immutable_run_snapshot() {
 
 #[test]
 fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
-    let mut capabilities = policy().capabilities;
-    capabilities.plugins = vec![resolved_agent_plugin("task_runner_run_phase")];
+    let mut capabilities = local_capabilities();
+    capabilities.plugins = vec![resolved_agent_plugin("task_runner_local_run_phase")];
     let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Agent Plugin policy");
     let views = policy.selectable_plugin_views();
     assert_eq!(views[0].agents.len(), 1);
@@ -264,7 +276,7 @@ fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
             .runtime
             .get("metadata")
             .and_then(|metadata| metadata.get("base_agent")),
-        Some(&json!("task_runner_run_phase"))
+        Some(&json!("task_runner_local_run_phase"))
     );
     assert_eq!(
         component
@@ -277,7 +289,7 @@ fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
 
 #[test]
 fn hook_set_is_automatically_bound_to_the_immutable_run_snapshot() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_hook_plugin()];
     let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Hook Plugin policy");
     let mut task = task();
@@ -309,15 +321,17 @@ fn hook_set_is_automatically_bound_to_the_immutable_run_snapshot() {
 
 #[test]
 fn plugin_agent_must_match_the_existing_plan_or_run_agent() {
-    let mut run_capabilities = policy().capabilities;
-    run_capabilities.plugins = vec![resolved_agent_plugin("task_runner_plan_phase")];
+    let mut run_capabilities = local_capabilities();
+    run_capabilities.plugins = vec![resolved_agent_plugin("task_runner_local_plan_phase")];
     let run_policy = TaskRunnerCapabilityPolicy::new(run_capabilities)
         .expect("incompatible optional Agent components are filtered");
     assert!(run_policy.selectable_plugin_views().is_empty());
 
-    let mut plan_capabilities = policy().capabilities;
-    plan_capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
-    plan_capabilities.plugins = vec![resolved_agent_plugin("task_runner_plan_phase")];
+    let mut plan_capabilities = local_capabilities();
+    plan_capabilities.agent_key = SystemAgentKey::TaskRunnerLocalPlanPhase
+        .as_str()
+        .to_string();
+    plan_capabilities.plugins = vec![resolved_agent_plugin("task_runner_local_plan_phase")];
     let policy =
         TaskRunnerCapabilityPolicy::new(plan_capabilities).expect("plan Agent Plugin policy");
     assert_eq!(
@@ -328,8 +342,8 @@ fn plugin_agent_must_match_the_existing_plan_or_run_agent() {
 
 #[test]
 fn a_task_may_select_only_one_plugin_agent() {
-    let mut capabilities = policy().capabilities;
-    capabilities.plugins = vec![resolved_agent_plugin("task_runner_run_phase")];
+    let mut capabilities = local_capabilities();
+    capabilities.plugins = vec![resolved_agent_plugin("task_runner_local_run_phase")];
     let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Agent Plugin policy");
     let config = TaskPluginConfig {
         device_id: Some("device-1".to_string()),
@@ -349,7 +363,7 @@ fn a_task_may_select_only_one_plugin_agent() {
 
 #[test]
 fn command_requiring_confirmation_is_preserved_for_local_device_approval() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_command_plugin(true)];
     let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
     let config = TaskPluginConfig {
@@ -370,7 +384,7 @@ fn command_requiring_confirmation_is_preserved_for_local_device_approval() {
 
 #[test]
 fn command_invocation_arguments_must_reference_one_exact_selected_command() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_command_plugin(false)];
     let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
     let mut config = TaskPluginConfig {
@@ -418,11 +432,11 @@ fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
         .iter_mut()
         .find(|component| component.component.kind == PluginComponentKind::Command)
         .expect("Command component");
-    component
-        .component
-        .metadata
-        .insert("target_agent".to_string(), json!("task_runner_plan_phase"));
-    let mut capabilities = policy().capabilities;
+    component.component.metadata.insert(
+        "target_agent".to_string(),
+        json!("task_runner_local_plan_phase"),
+    );
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![command_plugin];
     let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("Command Plugin policy");
     let config = TaskPluginConfig {
@@ -447,7 +461,7 @@ fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
 
 #[test]
 fn required_plugin_is_injected_into_effective_task_config() {
-    let mut capabilities = policy().capabilities;
+    let mut capabilities = local_capabilities();
     capabilities.plugins = vec![resolved_plugin(true)];
     capabilities.mcps.push(resolved_mcp(
         "browser-tools",

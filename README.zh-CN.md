@@ -313,6 +313,16 @@ powershell -ExecutionPolicy Bypass `
   -File .\local_connector_client\package-electron-windows-client.ps1
 ```
 
+Linux Core 档打包（必须在 Linux 上运行）：
+
+```bash
+./local_connector_client/package-electron-linux-client.sh
+```
+
+Linux 包包含桌面客户端、Local Connector Core、沙箱 MCP 服务和经过校验的 Plugin/Skill
+清单。浏览器自动化、Chrome Native Messaging、Computer Use 和内置文档运行时需等待
+Linux 原生运行资源补齐后再纳入完整发布档。
+
 ### 构建与测试
 
 ```bash

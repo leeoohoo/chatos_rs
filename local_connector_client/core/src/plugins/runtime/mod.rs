@@ -10,6 +10,7 @@ mod mcp_adapter;
 mod mcp_config;
 mod mcp_credentials;
 mod oauth_broker;
+mod portable_bundle;
 mod protocol;
 mod skill_document;
 mod skill_loader;

@@ -18,6 +18,7 @@ chatos_mcp = { path = "../../mcp" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
+chatos_plugin_package = { path = "../../crates/chatos_plugin_package" }
 chatos_project_execution = { path = "../../crates/chatos_project_execution" }
 chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 dotenvy = "0.15"

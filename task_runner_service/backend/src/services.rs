@@ -70,6 +70,7 @@ mod model_catalog;
 mod model_config_service;
 mod model_runtime_resolver;
 pub(crate) mod path_redaction;
+mod plugin_cloud_runtime;
 mod plugin_management_policy;
 mod plugin_management_prompts;
 mod plugin_runtime_relay;
@@ -190,6 +191,8 @@ pub struct RunService {
     ask_user_prompt_service: AskUserPromptService,
     start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
     callback_delivery_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
+    plugin_cloud_bundle_cache:
+        Arc<parking_lot::Mutex<plugin_cloud_runtime::PluginCloudBundleCache>>,
 }
 
 #[derive(Clone)]
