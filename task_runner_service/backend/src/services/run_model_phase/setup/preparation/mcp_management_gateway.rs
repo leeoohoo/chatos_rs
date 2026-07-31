@@ -9,6 +9,7 @@ use chatos_mcp_management_sdk::{
     RuntimeSessionResponse, SandboxExecutionTarget, SandboxProviderKind,
 };
 use chatos_mcp_runtime::McpHttpServer;
+use chatos_plugin_management_sdk::SystemMcpKey;
 use tracing::{info, warn};
 
 use crate::models::{TaskRecord, TaskRunRecord};
@@ -17,6 +18,8 @@ use crate::services::sandbox_runtime::SandboxRuntimeContext;
 
 const GATEWAY_SERVER_NAME: &str = "mcp_management";
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
+const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
+    chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum McpManagementExecutionMode {
@@ -124,18 +127,43 @@ pub(super) async fn resolve_mcp_management_gateway(
             .unwrap_or(DEFAULT_TOOL_TIMEOUT_MS)
             .clamp(1_000, 2 * 60 * 60 * 1_000),
     );
-    Ok(Some(gateway_server(session, timeout)))
+    let ask_user_timeout = Duration::from_millis(
+        std::env::var("TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(ASK_USER_TRANSPORT_TIMEOUT_MS)
+            .clamp(
+                chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+                7 * 24 * 60 * 60 * 1_000,
+            ),
+    );
+    Ok(Some(gateway_server(session, timeout, ask_user_timeout)?))
 }
 
-fn gateway_server(session: RuntimeSessionResponse, timeout: Duration) -> McpHttpServer {
-    McpHttpServer::new(GATEWAY_SERVER_NAME, session.mcp_server_url)
+fn gateway_server(
+    session: RuntimeSessionResponse,
+    timeout: Duration,
+    ask_user_timeout: Duration,
+) -> Result<McpHttpServer, String> {
+    let mut server = McpHttpServer::new(GATEWAY_SERVER_NAME, session.mcp_server_url)
         .with_headers(HashMap::from([(
             "authorization".to_string(),
             format!("Bearer {}", session.runtime_token),
         )]))
         .with_timeout(timeout)
         .with_preserved_tool_names()
-        .with_fail_on_unavailable()
+        .with_fail_on_unavailable();
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser);
+    for tool in chatos_mcp::system_mcp_static_tools(SystemMcpKey::AskUser)? {
+        let Some(name) = tool.get("name").and_then(serde_json::Value::as_str) else {
+            return Err("Ask User MCP tool catalog contains a tool without a name".to_string());
+        };
+        server = server.with_tool_timeout(
+            format!("{}_{}", descriptor.server_name, name.trim()),
+            ask_user_timeout,
+        );
+    }
+    Ok(server)
 }
 
 fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
@@ -187,10 +215,16 @@ mod tests {
                 unavailable_required_mcps: Vec::new(),
             },
             Duration::from_secs(30),
-        );
+            Duration::from_secs(3_600),
+        )
+        .expect("gateway server");
         assert!(server.preserve_tool_names);
         assert!(server.fail_on_unavailable);
         assert_eq!(server.timeout_duration(), Some(Duration::from_secs(30)));
+        assert_eq!(
+            server.tool_timeout_duration("ask_user_prompt_choices"),
+            Some(Duration::from_secs(3_600))
+        );
         assert_eq!(
             server
                 .headers

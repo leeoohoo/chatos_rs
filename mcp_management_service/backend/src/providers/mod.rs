@@ -25,6 +25,7 @@ pub struct TaskRunnerProviderConfig {
     pub base_url: String,
     pub internal_secret: Option<String>,
     pub request_timeout: Duration,
+    pub ask_user_request_timeout: Duration,
 }
 
 #[derive(Clone)]
@@ -66,6 +67,7 @@ impl ProviderDispatcher {
             task_runner: TaskRunnerProvider::new(
                 task_runner.base_url,
                 task_runner.request_timeout,
+                task_runner.ask_user_request_timeout,
                 task_runner.internal_secret,
                 response_limit_bytes,
             )?,

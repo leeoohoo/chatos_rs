@@ -40,6 +40,7 @@ impl AppState {
                 base_url: config.task_runner_service_base_url.clone(),
                 internal_secret: config.task_runner_internal_api_secret.clone(),
                 request_timeout: config.task_runner_request_timeout,
+                ask_user_request_timeout: config.task_runner_ask_user_request_timeout,
             },
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),

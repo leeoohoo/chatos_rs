@@ -173,7 +173,7 @@ impl McpExecutor {
                                 Some(server.url.clone()),
                                 server.headers.clone(),
                                 server.header_provider.clone(),
-                                server.timeout_duration(),
+                                server.tool_timeout_duration(def.name.as_str()),
                                 None,
                                 server.preserve_tool_names,
                                 def,

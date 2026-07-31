@@ -5,11 +5,13 @@ use super::core::{bearer_token_from_headers, current_user_from_user_service_toke
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use super::internal_auth::{
     require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
@@ -23,6 +25,7 @@ const PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES: usize =
     PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES.div_ceil(3) * 4;
 const PLUGIN_COMMAND_INVOCATION_MAX_ITEMS: usize = 64;
 const PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES: usize = 16 * 1024;
+const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct PluginConnectorDeviceView {
@@ -327,6 +330,7 @@ struct McpManagementBinding {
     owner_user_id: String,
     agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     session_id: String,
+    session_expires_at_unix: i64,
     project_id: String,
     run_id: Option<String>,
     turn_id: Option<String>,
@@ -384,6 +388,9 @@ pub(super) async fn mcp_management_entrypoint(
         }
         chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog => {
             dispatch_bound_task_process_log(&state, request, &binding).await
+        }
+        chatos_plugin_management_sdk::SystemMcpKey::AskUser => {
+            dispatch_bound_ask_user(&state, request, &binding).await
         }
         _ => task_runner_mcp_error(
             id,
@@ -523,11 +530,13 @@ async fn dispatch_bound_task_process_log(
         }
         Err(error) => return task_runner_mcp_error(id, -32000, error),
     };
-    if !task_matches_mcp_management_binding(&task, binding) {
+    if !task_matches_mcp_management_binding(&task, binding)
+        || !task_matches_bound_agent(&task, binding.agent_key)
+    {
         return task_runner_mcp_error(
             id,
             -32001,
-            "bound task does not match MCP Management owner and project scope",
+            "bound task does not match MCP Management owner, project, run, or Agent scope",
         );
     }
     let updated = match state
@@ -566,6 +575,103 @@ async fn dispatch_bound_task_process_log(
     }
 }
 
+async fn dispatch_bound_ask_user(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
+    let id = request.id.unwrap_or(Value::Null);
+    if !matches!(
+        binding.agent_key,
+        SystemAgentKey::TaskRunnerPlanPhase
+            | SystemAgentKey::TaskRunnerLocalPlanPhase
+            | SystemAgentKey::TaskRunnerRunPhase
+            | SystemAgentKey::TaskRunnerLocalRunPhase
+    ) {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "configured Agent is not allowed to use Task Runner Ask User MCP",
+        );
+    }
+    let Some(task_id) = binding.task_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound task_id");
+    };
+    let Some(run_id) = binding.run_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound run_id");
+    };
+    let run = match state.run_service.get_run(run_id).await {
+        Ok(Some(run)) => run,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner run was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if run.task_id != task_id {
+        return task_runner_mcp_error(id, -32001, "bound run does not belong to bound task");
+    }
+    if run.status != crate::models::TaskRunStatus::Running {
+        return task_runner_mcp_error(id, -32001, "bound Task Runner run is no longer active");
+    }
+    let task = match state.task_service.get_task(task_id).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner task was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if !task_matches_mcp_management_binding(&task, binding)
+        || !task_matches_bound_agent(&task, binding.agent_key)
+    {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "bound task does not match MCP Management owner, project, run, or Agent scope",
+        );
+    }
+    let prompt_timeout_ms = match bound_ask_user_prompt_timeout_ms(binding) {
+        Ok(timeout_ms) => timeout_ms,
+        Err(message) => return task_runner_mcp_error(id, -32001, message),
+    };
+    let service = match AskUserService::new(AskUserOptions {
+        server_name: chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::AskUser,
+        )
+        .server_name
+        .to_string(),
+        prompt_timeout_ms,
+        store: AskUserStoreRef::new(Arc::new(state.ask_user_prompt_service.clone())),
+    }) {
+        Ok(service) => service,
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return task_runner_mcp_error(id, -32602, "Ask User tool name is required");
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    match service.call_tool(name, arguments, Some(task_id), Some(run_id), None) {
+        Ok(result) => JsonRpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(result),
+            error: None,
+        },
+        Err(error) => task_runner_mcp_error(id, -32000, error),
+    }
+}
+
 fn mcp_management_binding_from_headers(
     headers: &HeaderMap,
 ) -> Result<McpManagementBinding, String> {
@@ -581,6 +687,11 @@ fn mcp_management_binding_from_headers(
         owner_user_id,
         agent_key,
         session_id: required("x-mcp-management-session-id")?,
+        session_expires_at_unix: required("x-mcp-management-session-expires-at-unix")?
+            .parse::<i64>()
+            .map_err(|_| {
+                "x-mcp-management-session-expires-at-unix must be an integer".to_string()
+            })?,
         project_id: required("x-mcp-management-project-id")?,
         run_id: header_text(headers, "x-mcp-management-run-id"),
         turn_id: header_text(headers, "x-mcp-management-turn-id"),
@@ -618,6 +729,42 @@ fn task_matches_mcp_management_binding(
                 .map(str::trim)
                 .is_some_and(|last_run_id| last_run_id == run_id)
         })
+}
+
+fn task_matches_bound_agent(
+    task: &crate::models::TaskRecord,
+    agent_key: chatos_plugin_management_sdk::SystemAgentKey,
+) -> bool {
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
+    let planning = crate::models::uses_task_runner_planning_agent(
+        task.task_profile.as_str(),
+        task.mcp_config.requires_execution,
+    );
+    if planning {
+        matches!(
+            agent_key,
+            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerLocalPlanPhase
+        )
+    } else {
+        matches!(
+            agent_key,
+            SystemAgentKey::TaskRunnerRunPhase | SystemAgentKey::TaskRunnerLocalRunPhase
+        )
+    }
+}
+
+fn bound_ask_user_prompt_timeout_ms(binding: &McpManagementBinding) -> Result<u64, String> {
+    let now_unix = chrono::Utc::now().timestamp();
+    let remaining_seconds = binding.session_expires_at_unix.saturating_sub(now_unix);
+    let remaining_ms = u64::try_from(remaining_seconds)
+        .unwrap_or_default()
+        .saturating_mul(1_000);
+    let usable_ms = remaining_ms.saturating_sub(ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS);
+    if usable_ms < 10_000 {
+        return Err("MCP Management session expires too soon to start Ask User".to_string());
+    }
+    Ok(usable_ms.min(chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT))
 }
 
 fn task_runner_mcp_text_result(payload: Value) -> Value {
@@ -944,6 +1091,10 @@ mod tests {
             " session-1 ".parse().expect("valid header"),
         );
         headers.insert(
+            "x-mcp-management-session-expires-at-unix",
+            " 4102444800 ".parse().expect("valid header"),
+        );
+        headers.insert(
             "x-mcp-management-project-id",
             " project-1 ".parse().expect("valid header"),
         );
@@ -974,6 +1125,7 @@ mod tests {
         assert_eq!(binding.owner_user_id, "user-1");
         assert_eq!(binding.agent_key.as_str(), "task_runner_run_phase");
         assert_eq!(binding.session_id, "session-1");
+        assert_eq!(binding.session_expires_at_unix, 4_102_444_800);
         assert_eq!(binding.project_id, "project-1");
         assert_eq!(binding.run_id.as_deref(), Some("run-1"));
         assert_eq!(binding.task_id.as_deref(), Some("task-1"));
@@ -997,6 +1149,32 @@ mod tests {
         assert!(mcp_management_binding_from_headers(&headers)
             .expect_err("unknown agent must fail")
             .contains("registered System Agent"));
+    }
+
+    #[test]
+    fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
+        let binding = McpManagementBinding {
+            owner_user_id: "user-1".to_string(),
+            agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
+            session_id: "session-1".to_string(),
+            session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
+            project_id: "project-1".to_string(),
+            run_id: Some("run-1".to_string()),
+            turn_id: None,
+            task_id: Some("task-1".to_string()),
+            source_session_id: None,
+            source_user_message_id: None,
+            default_model_config_id: None,
+            expected_project_task_ids: std::collections::BTreeSet::new(),
+        };
+
+        let timeout = bound_ask_user_prompt_timeout_ms(&binding).expect("usable session lifetime");
+        assert!(timeout <= 25 * 60 * 1_000);
+        assert!(timeout >= 24 * 60 * 1_000);
+
+        let mut expiring = binding;
+        expiring.session_expires_at_unix = chrono::Utc::now().timestamp() + 60;
+        assert!(bound_ask_user_prompt_timeout_ms(&expiring).is_err());
     }
 
     #[test]

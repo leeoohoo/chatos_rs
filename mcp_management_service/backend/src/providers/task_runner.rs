@@ -19,12 +19,15 @@ const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "task-runner";
 const TASK_RUNNER_MCP_SCOPE: &str = "mcp.tools.call";
 const TASK_RUNNER_OWNER_SERVICE: &str = "task_runner_service";
+const TASK_RUNNER_ASK_USER_PROVIDER_REF: &str = "task-runner";
 
 #[derive(Clone)]
 pub(super) struct TaskRunnerProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: Duration,
+    ask_user_request_timeout: Duration,
     response_limit_bytes: usize,
 }
 
@@ -32,6 +35,7 @@ impl TaskRunnerProvider {
     pub(super) fn new(
         base_url: impl Into<String>,
         request_timeout: Duration,
+        ask_user_request_timeout: Duration,
         internal_secret: Option<String>,
         response_limit_bytes: usize,
     ) -> Result<Self, String> {
@@ -52,22 +56,27 @@ impl TaskRunnerProvider {
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
+            request_timeout,
+            ask_user_request_timeout,
             response_limit_bytes,
         })
     }
 
     pub(super) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        if self.internal_secret.is_none()
-            || route.provider_kind != McpProviderKind::InternalService
-            || route.provider_ref.as_deref() != Some(TASK_RUNNER_OWNER_SERVICE)
+        if self.internal_secret.is_none() || route.provider_kind != McpProviderKind::InternalService
         {
             return false;
         }
         system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_some_and(|descriptor| {
-            matches!(
-                descriptor.key,
-                SystemMcpKey::TaskRunnerService | SystemMcpKey::TaskProcessLog
-            )
+            match descriptor.key {
+                SystemMcpKey::TaskRunnerService | SystemMcpKey::TaskProcessLog => {
+                    route.provider_ref.as_deref() == Some(TASK_RUNNER_OWNER_SERVICE)
+                }
+                SystemMcpKey::AskUser => {
+                    route.provider_ref.as_deref() == Some(TASK_RUNNER_ASK_USER_PROVIDER_REF)
+                }
+                _ => false,
+            }
         })
     }
 
@@ -88,8 +97,10 @@ impl TaskRunnerProvider {
             .filter(|descriptor| {
                 matches!(
                     descriptor.key,
-                    SystemMcpKey::TaskRunnerService | SystemMcpKey::TaskProcessLog
-                )
+                    SystemMcpKey::TaskRunnerService
+                        | SystemMcpKey::TaskProcessLog
+                        | SystemMcpKey::AskUser
+                ) && self.supports(route)
             })
             .ok_or_else(|| {
                 ProviderCallError::provider_unavailable(
@@ -120,8 +131,17 @@ impl TaskRunnerProvider {
             )
             .header("x-mcp-management-agent-key", snapshot.agent_key.as_str())
             .header("x-mcp-management-session-id", snapshot.session_id.as_str())
+            .header(
+                "x-mcp-management-session-expires-at-unix",
+                snapshot.expires_at_unix.to_string(),
+            )
             .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header("x-chatos-project-id", snapshot.project_id.as_str());
+            .header("x-chatos-project-id", snapshot.project_id.as_str())
+            .timeout(if descriptor.key == SystemMcpKey::AskUser {
+                self.ask_user_request_timeout
+            } else {
+                self.request_timeout
+            });
         for (header, value) in [
             ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
             ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
@@ -241,15 +261,16 @@ mod tests {
         let provider = TaskRunnerProvider::new(
             format!("http://{address}"),
             Duration::from_secs(2),
+            Duration::from_secs(60),
             Some("task-runner-provider-secret".to_string()),
             1024 * 1024,
         )
         .expect("provider");
-        let route = route(SystemMcpKey::TaskProcessLog);
+        let task_process_route = route(SystemMcpKey::TaskProcessLog);
         let outcome = provider
             .call_tool(
                 &snapshot(),
-                &route,
+                &task_process_route,
                 "record_process",
                 json!({"operation": "append", "content": "verified", "heading": null}),
                 "invocation-1",
@@ -272,6 +293,12 @@ mod tests {
             "task_runner_run_phase"
         );
         assert_eq!(headers["x-mcp-management-session-id"], "session-1");
+        assert_eq!(
+            headers["x-mcp-management-session-expires-at-unix"]
+                .to_str()
+                .expect("session expiry header"),
+            i64::MAX.to_string().as_str()
+        );
         assert_eq!(headers["x-mcp-management-project-id"], "project-1");
         assert_eq!(headers["x-mcp-management-run-id"], "run-1");
         assert_eq!(headers["x-mcp-management-task-id"], "task-1");
@@ -301,19 +328,45 @@ mod tests {
         assert_eq!(body["params"]["name"], "record_process");
         assert!(body["params"]["arguments"].get("task_id").is_none());
         assert!(body["params"]["arguments"].get("run_id").is_none());
+
+        provider
+            .call_tool(
+                &snapshot(),
+                &route(SystemMcpKey::AskUser),
+                "prompt_choices",
+                json!({
+                    "title": "Continue?",
+                    "options": [{"label": "Yes", "value": "yes"}]
+                }),
+                "invocation-ask-user",
+            )
+            .await
+            .expect("Ask User provider call");
+        let (system_key, _, body) = captured
+            .0
+            .lock()
+            .expect("captured Ask User request")
+            .clone()
+            .expect("Ask User request was captured");
+        assert_eq!(system_key, SystemMcpKey::AskUser.as_str());
+        assert_eq!(body["params"]["name"], "prompt_choices");
+        assert!(body["params"]["arguments"].get("task_id").is_none());
+        assert!(body["params"]["arguments"].get("run_id").is_none());
     }
 
     #[test]
-    fn provider_only_supports_task_runner_owned_system_mcps() {
+    fn provider_supports_task_runner_owned_and_callback_system_mcps() {
         let provider = TaskRunnerProvider::new(
             "http://127.0.0.1:39090",
             Duration::from_secs(2),
+            Duration::from_secs(60),
             Some("secret".to_string()),
             1024,
         )
         .expect("provider");
         assert!(provider.supports(&route(SystemMcpKey::TaskRunnerService)));
         assert!(provider.supports(&route(SystemMcpKey::TaskProcessLog)));
+        assert!(provider.supports(&route(SystemMcpKey::AskUser)));
         assert!(!provider.supports(&route(SystemMcpKey::ProjectManagement)));
     }
 
@@ -323,7 +376,11 @@ mod tests {
             resource_id: descriptor.resource_id.to_string(),
             server_name: descriptor.server_name.to_string(),
             provider_kind: McpProviderKind::InternalService,
-            provider_ref: Some(descriptor.owner_service.to_string()),
+            provider_ref: Some(if key == SystemMcpKey::AskUser {
+                TASK_RUNNER_ASK_USER_PROVIDER_REF.to_string()
+            } else {
+                descriptor.owner_service.to_string()
+            }),
             tool_namespace: descriptor.server_name.to_string(),
             allow_writes: descriptor.allow_writes,
             retry_class: McpRetryClass::NoRetry,

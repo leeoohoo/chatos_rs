@@ -27,6 +27,7 @@ pub struct AppConfig {
     pub task_runner_service_base_url: String,
     pub task_runner_internal_api_secret: Option<String>,
     pub task_runner_request_timeout: Duration,
+    pub task_runner_ask_user_request_timeout: Duration,
     pub local_connector_service_base_url: String,
     pub local_connector_internal_api_secret: Option<String>,
     pub sandbox_manager_service_base_url: String,
@@ -132,6 +133,15 @@ impl AppConfig {
                 .unwrap_or(180_000)
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
         );
+        let task_runner_ask_user_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000)
+                .clamp(
+                    chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+                    7 * 24 * 60 * 60 * 1_000,
+                ),
+        );
         let provider_response_limit_bytes =
             env_text("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")
                 .and_then(|value| value.parse::<usize>().ok())
@@ -167,6 +177,7 @@ impl AppConfig {
             ),
             task_runner_internal_api_secret,
             task_runner_request_timeout,
+            task_runner_ask_user_request_timeout,
             local_connector_service_base_url: normalize_base_url(
                 env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL")
                     .or_else(|| env_text("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
@@ -240,6 +251,7 @@ impl AppConfig {
             task_runner_service_base_url: "http://127.0.0.1:39090".to_string(),
             task_runner_internal_api_secret: Some("a-long-task-runner-secret".to_string()),
             task_runner_request_timeout: Duration::from_secs(180),
+            task_runner_ask_user_request_timeout: Duration::from_secs(86_700),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),

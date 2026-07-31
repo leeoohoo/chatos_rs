@@ -29,6 +29,8 @@ pub struct McpHttpServer {
     pub headers: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub tool_timeout_ms: HashMap<String, u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_name_aliases: Vec<McpToolNameAlias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,6 +50,7 @@ impl McpHttpServer {
             url: url.into(),
             headers: None,
             timeout_ms: None,
+            tool_timeout_ms: HashMap::new(),
             tool_name_aliases: Vec::new(),
             allowed_tool_names: None,
             preserve_tool_names: false,
@@ -63,6 +66,17 @@ impl McpHttpServer {
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout_ms = Some(timeout.as_millis().min(u128::from(u64::MAX)) as u64);
+        self
+    }
+
+    pub fn with_tool_timeout(mut self, tool_name: impl Into<String>, timeout: Duration) -> Self {
+        let tool_name = tool_name.into().trim().to_string();
+        if !tool_name.is_empty() {
+            self.tool_timeout_ms.insert(
+                tool_name,
+                timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+            );
+        }
         self
     }
 
@@ -118,6 +132,14 @@ impl McpHttpServer {
 
     pub fn timeout_duration(&self) -> Option<Duration> {
         self.timeout_ms.map(Duration::from_millis)
+    }
+
+    pub fn tool_timeout_duration(&self, tool_name: &str) -> Option<Duration> {
+        self.tool_timeout_ms
+            .get(tool_name.trim())
+            .copied()
+            .map(Duration::from_millis)
+            .or_else(|| self.timeout_duration())
     }
 
     pub fn public_server_name_for_tool<'a>(&'a self, tool_name: &str) -> &'a str {
@@ -648,6 +670,25 @@ mod tests {
         let server =
             McpHttpServer::new("gateway", "http://127.0.0.1:9000/mcp").with_fail_on_unavailable();
         assert!(server.fail_on_unavailable);
+    }
+
+    #[test]
+    fn http_server_can_override_timeout_for_one_tool() {
+        let server = McpHttpServer::new("gateway", "http://127.0.0.1:9000/mcp")
+            .with_timeout(std::time::Duration::from_secs(30))
+            .with_tool_timeout(
+                "ask_user_prompt_choices",
+                std::time::Duration::from_secs(3_600),
+            );
+
+        assert_eq!(
+            server.tool_timeout_duration("ask_user_prompt_choices"),
+            Some(std::time::Duration::from_secs(3_600))
+        );
+        assert_eq!(
+            server.tool_timeout_duration("another_tool"),
+            Some(std::time::Duration::from_secs(30))
+        );
     }
 
     #[test]

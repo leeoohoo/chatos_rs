@@ -47,6 +47,7 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
         url: server.url,
         headers: server.headers,
         timeout_ms: None,
+        tool_timeout_ms: std::collections::HashMap::new(),
         tool_name_aliases: Vec::new(),
         allowed_tool_names: server.allowed_tool_names,
         preserve_tool_names: false,

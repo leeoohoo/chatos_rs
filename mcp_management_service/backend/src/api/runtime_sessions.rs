@@ -75,6 +75,7 @@ pub(super) async fn resolve_runtime_session(
                 context: project_context.clone(),
                 resources: materialized.resources,
             });
+    bind_agent_callback_routes(route_response.routes.as_mut_slice(), agent_key);
     bind_cloud_sandbox_routes(
         route_response.routes.as_mut_slice(),
         sandbox_target.as_ref(),
@@ -295,6 +296,11 @@ fn validate_task_runner_provider_context(
         let resource_id = chatos_mcp::system_mcp_descriptor(system_key).resource_id;
         routes.iter().any(|route| route.resource_id == resource_id)
     };
+    let has_task_runner_ask_user_route = routes.iter().any(|route| {
+        route.resource_id == chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser).resource_id
+            && route.provider_kind == McpProviderKind::InternalService
+            && route.provider_ref.as_deref() == Some("task-runner")
+    });
     if has_route(SystemMcpKey::TaskRunnerService) {
         if !matches!(
             agent_key,
@@ -350,7 +356,63 @@ fn validate_task_runner_provider_context(
             }
         }
     }
+    if has_task_runner_ask_user_route {
+        if !matches!(
+            agent_key,
+            SystemAgentKey::TaskRunnerPlanPhase
+                | SystemAgentKey::TaskRunnerLocalPlanPhase
+                | SystemAgentKey::TaskRunnerRunPhase
+                | SystemAgentKey::TaskRunnerLocalRunPhase
+        ) {
+            return Err(ApiError::conflict(
+                "Task Runner Ask User MCP is only valid for Task Runner phase Agents",
+            ));
+        }
+        for (field, value) in [
+            ("run_id", request.run_id.as_deref()),
+            ("task_id", request.task_id.as_deref()),
+        ] {
+            if value.map(str::trim).is_none_or(|value| value.is_empty()) {
+                return Err(ApiError::conflict(format!(
+                    "Task Runner Ask User MCP requires {field}"
+                )));
+            }
+        }
+    }
     Ok(())
+}
+
+fn bind_agent_callback_routes(routes: &mut [ResolvedMcpRoute], agent_key: SystemAgentKey) {
+    let ask_user_resource_id = chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser).resource_id;
+    for route in routes
+        .iter_mut()
+        .filter(|route| route.resource_id == ask_user_resource_id)
+    {
+        match agent_key {
+            SystemAgentKey::TaskRunnerPlanPhase
+            | SystemAgentKey::TaskRunnerLocalPlanPhase
+            | SystemAgentKey::TaskRunnerRunPhase
+            | SystemAgentKey::TaskRunnerLocalRunPhase => {
+                route.provider_kind = McpProviderKind::InternalService;
+                route.provider_ref = Some("task-runner".to_string());
+                route.reason =
+                    "Ask User is pinned to the Task Runner Agent callback host".to_string();
+            }
+            SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosPlanningAgent
+            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
+                route.provider_kind = McpProviderKind::InternalService;
+                route.provider_ref = Some("chatos".to_string());
+                route.reason = "Ask User is pinned to the ChatOS Agent callback host".to_string();
+            }
+            _ => {
+                route.provider_kind = McpProviderKind::Unavailable;
+                route.provider_ref = None;
+                route.reason =
+                    "configured Agent has no registered Ask User callback host".to_string();
+            }
+        }
+    }
 }
 
 fn normalize_sandbox_target(
@@ -584,6 +646,40 @@ mod tests {
             &[route],
         )
         .is_err());
+    }
+
+    #[test]
+    fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope() {
+        let mut routes = vec![system_route(SystemMcpKey::AskUser)];
+        bind_agent_callback_routes(routes.as_mut_slice(), SystemAgentKey::TaskRunnerRunPhase);
+        assert_eq!(routes[0].provider_ref.as_deref(), Some("task-runner"));
+        let state = AppState::new(crate::config::AppConfig::test()).expect("test state");
+        assert!(state.providers.supports(&routes[0]));
+
+        validate_task_runner_provider_context(
+            SystemAgentKey::TaskRunnerRunPhase,
+            &request(),
+            &[],
+            routes.as_slice(),
+        )
+        .expect("bound Task Runner Ask User route should be accepted");
+
+        let mut missing_task = request();
+        missing_task.task_id = None;
+        let error = validate_task_runner_provider_context(
+            SystemAgentKey::TaskRunnerRunPhase,
+            &missing_task,
+            &[],
+            routes.as_slice(),
+        )
+        .expect_err("task binding is required");
+        assert!(format!("{error:?}").contains("task_id"));
+
+        bind_agent_callback_routes(
+            routes.as_mut_slice(),
+            SystemAgentKey::ChatosConversationAgent,
+        );
+        assert_eq!(routes[0].provider_ref.as_deref(), Some("chatos"));
     }
 
     #[test]
