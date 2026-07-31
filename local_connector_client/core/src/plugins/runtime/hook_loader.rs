@@ -122,7 +122,11 @@ impl PluginHookLoader {
                     "Plugin Hook workspace.write permission is missing from the prepared snapshot"
                 );
             }
-            if !cfg!(target_os = "macos") {
+            if !cfg!(any(
+                target_os = "macos",
+                target_os = "linux",
+                target_os = "windows"
+            )) {
                 bail!("writable workspace Plugin Hooks are not yet supported by this platform sandbox");
             }
         }
@@ -369,6 +373,7 @@ impl PluginHookLoader {
                 installation.installation_path.as_path(),
                 &server,
                 Vec::<String>::new(),
+                &installation.version.package_file_sha256,
                 workspace_root,
             )?
         } else {
@@ -377,6 +382,7 @@ impl PluginHookLoader {
                 installation.installation_path.as_path(),
                 &server,
                 Vec::<String>::new(),
+                &installation.version.package_file_sha256,
             )?
         };
         let input = serde_json::to_vec(&json!({

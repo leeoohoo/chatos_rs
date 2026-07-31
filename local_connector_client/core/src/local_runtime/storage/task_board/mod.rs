@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod async_tasks;
+#[cfg(test)]
 mod create;
-mod lifecycle;
 mod mutations;
 mod queries;
 mod validation;

@@ -8,6 +8,8 @@ use crate::models::{TaskRecord, TaskRunRecord, TaskStatus};
 
 use super::TaskStatusExt;
 
+const PREREQUISITE_PROCESS_LOG_MAX_CHARS: usize = 4_000;
+
 #[derive(Debug, Clone)]
 pub(super) struct PrerequisiteTaskContext {
     pub(super) task_id: String,
@@ -256,6 +258,10 @@ pub(super) fn build_prerequisite_context(
     task: &TaskRecord,
     run: Option<&TaskRunRecord>,
 ) -> PrerequisiteTaskContext {
+    let run_result_summary = run.and_then(|run| run.result_summary.clone());
+    let report_content = run.and_then(extract_report_content);
+    let has_terminal_output =
+        run_result_summary.is_some() || task.result_summary.is_some() || report_content.is_some();
     PrerequisiteTaskContext {
         task_id: task.id.clone(),
         title: task.title.clone(),
@@ -263,10 +269,40 @@ pub(super) fn build_prerequisite_context(
         status: task.status,
         run_id: run.map(|run| run.id.clone()),
         result_summary: task.result_summary.clone(),
-        run_result_summary: run.and_then(|run| run.result_summary.clone()),
-        process_log: task.process_log.clone(),
-        report_content: run.and_then(extract_report_content),
+        run_result_summary,
+        process_log: prerequisite_process_log_for_context(
+            task.process_log.as_deref(),
+            has_terminal_output,
+        ),
+        report_content,
     }
+}
+
+fn prerequisite_process_log_for_context(
+    process_log: Option<&str>,
+    has_terminal_output: bool,
+) -> Option<String> {
+    if has_terminal_output {
+        return None;
+    }
+    bounded_prerequisite_process_log(process_log)
+}
+
+fn bounded_prerequisite_process_log(process_log: Option<&str>) -> Option<String> {
+    let process_log = process_log
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let total_chars = process_log.chars().count();
+    if total_chars <= PREREQUISITE_PROCESS_LOG_MAX_CHARS {
+        return Some(process_log.to_string());
+    }
+    let tail = process_log
+        .chars()
+        .skip(total_chars - PREREQUISITE_PROCESS_LOG_MAX_CHARS)
+        .collect::<String>();
+    Some(format!(
+        "[较早的执行过程已省略，仅保留最近 {PREREQUISITE_PROCESS_LOG_MAX_CHARS} 字符]\n{tail}"
+    ))
 }
 
 pub(super) fn extract_report_content(run: &TaskRunRecord) -> Option<String> {
@@ -337,5 +373,36 @@ mod tests {
         assert!(prompt.starts_with("任务标题：修复阻塞节点"));
         assert!(prompt.contains("[用户对本次重试的补充处理意见]"));
         assert!(prompt.ends_with("配置已经补齐，请重新验证"));
+    }
+
+    #[test]
+    fn prerequisite_process_log_keeps_short_content_unchanged() {
+        assert_eq!(
+            bounded_prerequisite_process_log(Some("最近一次执行已完成")),
+            Some("最近一次执行已完成".to_string())
+        );
+    }
+
+    #[test]
+    fn prerequisite_process_log_drops_stale_prefix_and_keeps_bounded_tail() {
+        let stale_prefix = "旧运行反复分析未完成".repeat(1_000);
+        let recent_result = "最近运行已经完成真实改动和测试";
+        let log = format!("{stale_prefix}\n{recent_result}");
+
+        let bounded = bounded_prerequisite_process_log(Some(log.as_str()))
+            .expect("bounded prerequisite process log");
+
+        assert!(bounded.starts_with("[较早的执行过程已省略"));
+        assert!(bounded.ends_with(recent_result));
+        assert!(!bounded.contains(stale_prefix.as_str()));
+        assert!(bounded.chars().count() < PREREQUISITE_PROCESS_LOG_MAX_CHARS + 100);
+    }
+
+    #[test]
+    fn prerequisite_terminal_output_takes_precedence_over_process_log() {
+        assert_eq!(
+            prerequisite_process_log_for_context(Some("旧运行未完成"), true),
+            None
+        );
     }
 }

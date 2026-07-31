@@ -38,7 +38,6 @@ export type TaskFormValues = {
   projectId: string;
   default_model_config_id?: string;
   requiresExecution: boolean;
-  executionServiceId?: string;
   prerequisite_task_ids?: string[];
   tagsText?: string;
   mcpEnabled: boolean;
@@ -47,7 +46,6 @@ export type TaskFormValues = {
   enabledBuiltinKinds: string[];
   defaultRemoteServerId?: string;
   externalMcpConfigIds?: string[];
-  selectedSkillIds?: string[];
   pluginDeviceId?: string;
   pluginWorkspaceId?: string;
   selectedPluginIds?: string[];
@@ -79,7 +77,6 @@ export function buildCreateTaskFormValues(
     projectId: normalizeTaskProjectId(routeProjectId),
     default_model_config_id: undefined,
     requiresExecution: true,
-    executionServiceId: undefined,
     prerequisite_task_ids: [],
     tagsText: '',
     mcpEnabled: true,
@@ -88,7 +85,6 @@ export function buildCreateTaskFormValues(
     enabledBuiltinKinds: [],
     defaultRemoteServerId: undefined,
     externalMcpConfigIds: [],
-    selectedSkillIds: [],
     pluginDeviceId: undefined,
     pluginWorkspaceId: undefined,
     selectedPluginIds: [],
@@ -112,7 +108,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     projectId: normalizeTaskProjectId(task.project_id),
     default_model_config_id: task.default_model_config_id || undefined,
     requiresExecution: task.mcp_config.requires_execution ?? true,
-    executionServiceId: task.mcp_config.execution_service_id || undefined,
     prerequisite_task_ids: task.prerequisite_task_ids || [],
     tagsText: task.tags.join(', '),
     mcpEnabled: task.mcp_config.enabled,
@@ -121,7 +116,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
     defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
     externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
-    selectedSkillIds: task.mcp_config.selected_skill_ids || [],
     pluginDeviceId: task.plugin_config?.device_id || undefined,
     pluginWorkspaceId: task.plugin_config?.workspace_id || undefined,
     selectedPluginIds:
@@ -233,14 +227,13 @@ export function buildTaskPayload(
     mcp_config: {
       enabled: values.mcpEnabled,
       requires_execution: values.requiresExecution,
-      execution_service_id: values.executionServiceId?.trim() || undefined,
       init_mode: 'full',
       builtin_prompt_mode: values.builtinPromptMode,
       builtin_prompt_locale: values.builtinPromptLocale,
       enabled_builtin_kinds: enabledBuiltinKinds,
       default_remote_server_id: values.defaultRemoteServerId,
       external_mcp_config_ids: values.externalMcpConfigIds || [],
-      selected_skill_ids: values.selectedSkillIds || [],
+      selected_skill_ids: [],
     },
   };
 }

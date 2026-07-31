@@ -60,6 +60,78 @@ pub(super) fn migrate_agent_iteration_changed_keys(keys: &mut Vec<String>) -> bo
     true
 }
 
+pub(super) fn ensure_task_runner_iteration_value(
+    values: &mut BTreeMap<String, Value>,
+    fallback: Value,
+) -> bool {
+    if values.contains_key(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY) {
+        return false;
+    }
+    let selected = values
+        .get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY)
+        .cloned()
+        .unwrap_or(fallback);
+    values.insert(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(), selected);
+    true
+}
+
+pub(super) fn ensure_task_runner_execution_environment_mode_value(
+    values: &mut BTreeMap<String, Value>,
+    fallback: Value,
+) -> bool {
+    if values.contains_key(TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY) {
+        return false;
+    }
+    values.insert(
+        TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY.to_string(),
+        fallback,
+    );
+    true
+}
+
+pub(super) fn task_runner_service_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("task-runner")
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn ensure_task_runner_runtime_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        let changed = if key == TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY {
+            ensure_task_runner_iteration_value(values, fallback.clone())
+        } else if key == TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY {
+            ensure_task_runner_execution_environment_mode_value(values, fallback.clone())
+        } else if values.contains_key(key) {
+            false
+        } else {
+            values.insert(key.clone(), fallback.clone());
+            true
+        };
+        if changed {
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_changed_key(keys: &mut Vec<String>, key: &str) {
+    if !keys.iter().any(|item| item == key) {
+        keys.push(key.to_string());
+        keys.sort();
+    }
+}
+
 pub(super) fn system_user() -> CurrentUser {
     CurrentUser {
         user_id: "system".to_string(),

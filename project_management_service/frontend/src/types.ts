@@ -137,6 +137,7 @@ export interface ProjectRuntimeEnvironmentRecord {
   file_provider: RuntimeEnvironmentProvider;
   analysis_summary?: string | null;
   not_runnable_reason?: string | null;
+  execution_service_id?: string | null;
   detected_stack: unknown;
   required_services: unknown;
   env_vars: unknown;
@@ -187,10 +188,16 @@ export interface ProjectRuntimeEnvironmentImageRecord {
   environment_type: string;
   display_name: string;
   service_id: string;
-  service_role: 'application' | 'dependency' | 'unknown';
+  service_role: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown';
+  source_root: string;
+  component_kind: string;
+  startup_command?: string | null;
+  test_command?: string | null;
+  depends_on: string[];
+  auto_start: boolean;
   mcp_policy: {
     managed_by: 'system';
-    attachment: 'project_gateway_target' | 'none';
+    attachment: 'workspace_gateway_target' | 'none';
     filesystem: boolean;
     terminal: boolean;
   };
@@ -227,7 +234,7 @@ export interface ProjectRuntimeEnvironmentDeploymentService {
   service_id: string;
   environment_key: string;
   display_name: string;
-  service_role: 'application' | 'dependency' | 'unknown';
+  service_role: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown';
   mcp_policy: ProjectRuntimeEnvironmentImageRecord['mcp_policy'];
   status: string;
   image_ref?: string | null;

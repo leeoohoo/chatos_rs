@@ -17,8 +17,6 @@ use crate::models::chatos_agent_types::{
 };
 use crate::services::{agent_builder, chatos_agents};
 
-mod skills;
-
 #[derive(Debug, Deserialize)]
 struct ListAgentsQuery {
     user_id: Option<String>,
@@ -98,18 +96,6 @@ pub fn router() -> Router {
         )
         .route("/api/agents/{agent_id}/sessions", get(list_agent_sessions))
         .route("/api/agents/ai-create", axum::routing::post(ai_create))
-        .route("/api/skills", get(skills::list_skills))
-        .route("/api/skills/plugins", get(skills::list_skill_plugins))
-        .route("/api/skills/{skill_id}", get(skills::get_skill))
-        .route("/api/skills/plugins/detail", get(skills::get_skill_plugin))
-        .route(
-            "/api/skills/import-git",
-            axum::routing::post(skills::import_skills_from_git),
-        )
-        .route(
-            "/api/skills/plugins/install",
-            axum::routing::post(skills::install_skill_plugins),
-        )
         // Compatibility aliases for existing chat_app callers while ownership
         // moves to the chatos API surface.
         .route("/api/memory-agents", get(list_agents).post(create_agent))

@@ -313,6 +313,16 @@ powershell -ExecutionPolicy Bypass `
   -File .\local_connector_client\package-electron-windows-client.ps1
 ```
 
+Package the Linux core profile on Linux:
+
+```bash
+./local_connector_client/package-electron-linux-client.sh
+```
+
+The Linux package includes the desktop client, Local Connector Core, sandbox MCP server, and the
+verified Plugin/Skill catalogs. Browser automation, Chrome Native Messaging, Computer Use, and the
+bundled document runtime remain excluded until Linux-native runtime assets are available.
+
 ### Build and test
 
 ```bash

@@ -205,6 +205,8 @@ impl InMemoryStore {
         failed_at: &str,
     ) -> Vec<TaskRunRecord> {
         let mut data = self.inner.write();
+        let cancel_requested_runs = data.cancel_requested_runs.clone();
+        let mut terminal_run_ids = Vec::new();
         let mut failed_runs = Vec::new();
         for run in data.runs.values_mut() {
             if run.status != TaskRunStatus::Running {
@@ -217,16 +219,29 @@ impl InMemoryStore {
             if !expired {
                 continue;
             }
-            run.status = TaskRunStatus::Failed;
+            let was_cancel_requested =
+                run.cancel_requested || cancel_requested_runs.contains(run.id.as_str());
+            if was_cancel_requested {
+                run.status = TaskRunStatus::Cancelled;
+                run.result_summary =
+                    Some("任务取消请求已生效；运行节点心跳过期后按取消收尾".to_string());
+                run.error_message = None;
+            } else {
+                run.status = TaskRunStatus::Failed;
+                run.result_summary = Some("任务运行节点心跳过期，已标记为失败".to_string());
+                run.error_message = Some("worker claim expired".to_string());
+            }
             run.finished_at = Some(failed_at.to_string());
             run.updated_at = failed_at.to_string();
-            run.result_summary = Some("任务运行节点心跳过期，已标记为失败".to_string());
-            run.error_message = Some("worker claim expired".to_string());
             run.cancel_requested = false;
             run.claim_token = None;
             run.claim_until = None;
             ensure_terminal_callback_pending(run);
+            terminal_run_ids.push(run.id.clone());
             failed_runs.push(run.clone());
+        }
+        for run_id in terminal_run_ids {
+            data.cancel_requested_runs.remove(run_id.as_str());
         }
         failed_runs
     }
@@ -432,6 +447,37 @@ mod tests {
             persisted.error_message.as_deref(),
             Some("worker claim expired")
         );
+    }
+
+    #[test]
+    fn expired_cancel_requested_claim_becomes_cancelled() {
+        let store = test_store();
+        store.save_run(queued_run()).expect("save queued run");
+        store
+            .claim_next_queued_run("worker-1", "claim-1", "2000-01-01T00:00:00Z")
+            .expect("claim run");
+        store
+            .mark_cancel_requested("run-1")
+            .expect("mark cancel requested");
+
+        let terminal_runs =
+            store.fail_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z");
+
+        assert_eq!(terminal_runs.len(), 1);
+        assert_eq!(terminal_runs[0].status, TaskRunStatus::Cancelled);
+        assert_eq!(
+            terminal_runs[0].result_summary.as_deref(),
+            Some("任务取消请求已生效；运行节点心跳过期后按取消收尾")
+        );
+        assert_eq!(terminal_runs[0].error_message, None);
+        assert_eq!(
+            terminal_runs[0]
+                .chatos_callback_delivery
+                .as_ref()
+                .map(|delivery| delivery.event.as_str()),
+            Some("task.cancelled")
+        );
+        assert!(!store.is_cancel_requested("run-1"));
     }
 
     #[test]

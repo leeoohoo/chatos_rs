@@ -173,6 +173,16 @@ fn validate_installation_release(
             "Plugin installation version or artifact hash does not match release",
         ));
     }
+    if !release.components.iter().any(|component| {
+        matches!(
+            component.execution_host,
+            PluginExecutionHost::Local | PluginExecutionHost::Portable
+        )
+    }) {
+        return Err(ApiError::bad_request(
+            "cloud-only Plugins do not create Local Connector installations",
+        ));
+    }
     if !release.supported_platforms.is_empty()
         && !release
             .supported_platforms
@@ -236,6 +246,96 @@ mod tests {
         assert!(normalize_installation_payload(&mut payload).is_err());
         payload.install_status = PluginInstallStatus::Installed;
         assert!(normalize_installation_payload(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn cloud_only_releases_cannot_create_local_installations() {
+        let manifest = chatos_plugin_management_sdk::parse_plugin_manifest(
+            json!({
+                "schemaVersion": 2,
+                "execution": {"defaultHost": "cloud", "componentHosts": {}},
+                "name": "cloud-demo",
+                "version": "1.0.0",
+                "description": "Cloud-only installation rejection fixture",
+                "author": {"name": "ChatOS"},
+                "commands": [{
+                    "componentKey": "review",
+                    "source": "./commands/review.md",
+                    "targetAgent": "task_runner_run_phase"
+                }],
+                "interface": {
+                    "displayName": "Cloud Demo",
+                    "shortDescription": "Cloud demo",
+                    "longDescription": "Cloud-only installation rejection fixture.",
+                    "developerName": "ChatOS",
+                    "category": "Developer Tools"
+                },
+                "dependencies": {},
+                "permissions": []
+            })
+            .to_string()
+            .as_str(),
+            PluginManifestSource::Chatos,
+        )
+        .expect("cloud-only Manifest");
+        let plugin = PluginCatalogRecord {
+            id: "plugin-1".to_string(),
+            plugin_key: "cloud-demo@official".to_string(),
+            marketplace_id: "official".to_string(),
+            owner_user_id: None,
+            name: manifest.name.clone(),
+            display_name: manifest.interface.display_name.clone(),
+            description: manifest.description.clone(),
+            publisher: PluginPublisher {
+                id: "publisher-1".to_string(),
+                name: "ChatOS".to_string(),
+                website: None,
+                verified: true,
+            },
+            interface: manifest.interface.clone(),
+            keywords: Vec::new(),
+            visibility: "public".to_string(),
+            featured: false,
+            enabled: true,
+            latest_release_id: "release-1".to_string(),
+            license: PluginLicenseMetadata {
+                license_id: "MIT".to_string(),
+                license_url: None,
+                redistributable: true,
+                reviewed_at: None,
+            },
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let release = PluginReleaseRecord {
+            id: "release-1".to_string(),
+            plugin_id: plugin.id.clone(),
+            version: manifest.version.clone(),
+            manifest_schema_version: manifest.schema_version,
+            normalized_manifest: manifest.clone(),
+            artifact_ref: "artifact".to_string(),
+            artifact_sha256: "a".repeat(64),
+            signature: PluginReleaseSignature {
+                key_id: "key-1".to_string(),
+                publisher_id: plugin.publisher.id.clone(),
+                marketplace_id: plugin.marketplace_id.clone(),
+                algorithm: "ed25519".to_string(),
+                signature_base64: "signature".to_string(),
+                signed_at: "now".to_string(),
+                manifest_sha256: "b".repeat(64),
+            },
+            sbom_ref: None,
+            supported_platforms: Vec::new(),
+            components: chatos_plugin_management_sdk::plugin_component_descriptors(&manifest),
+            dependencies: manifest.dependencies.clone(),
+            permissions: manifest.permissions.clone(),
+            release_channel: "stable".to_string(),
+            published_at: "now".to_string(),
+            revoked_at: None,
+        };
+        let error = validate_installation_release(&installation_payload(), &plugin, &release)
+            .expect_err("cloud-only Release must not create an installation");
+        assert!(error.message.contains("cloud-only Plugins"));
     }
 
     fn installation_payload() -> PluginInstallationSyncPayload {

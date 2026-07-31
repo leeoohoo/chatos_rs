@@ -116,24 +116,26 @@ fn permission_profile_allowlist_is_complete_and_enforced() {
 
 #[test]
 fn managed_allowlist_cannot_be_bypassed_by_api_selection() {
-    let mut state = crate::sandbox::types::LocalSandboxState::default();
-    state.runtime_permission_profile_layers =
-        crate::sandbox::permission_layers::RuntimePermissionProfileLayers::for_tests(
-            None,
-            None,
-            Some(
-                parse_codex_permission_profile_toml(
-                    r#"
+    let state = crate::sandbox::types::LocalSandboxState {
+        runtime_permission_profile_layers:
+            crate::sandbox::permission_layers::RuntimePermissionProfileLayers::for_tests(
+                None,
+                None,
+                Some(
+                    parse_codex_permission_profile_toml(
+                        r#"
 default_permissions = ":read-only"
 
 [allowed_permission_profiles]
 ":read-only" = true
 ":workspace" = true
 "#,
-                )
-                .expect("parse managed requirements"),
+                    )
+                    .expect("parse managed requirements"),
+                ),
             ),
-        );
+        ..Default::default()
+    };
     let mut req = update_request();
     req.default_permission_profile_id = Some(PermissionProfileId::FullAccess);
     req.risk_acknowledged = true;
@@ -146,14 +148,14 @@ default_permissions = ":read-only"
 
 #[test]
 fn api_cannot_shadow_a_managed_custom_profile() {
-    let mut state = crate::sandbox::types::LocalSandboxState::default();
-    state.runtime_permission_profile_layers =
-        crate::sandbox::permission_layers::RuntimePermissionProfileLayers::for_tests(
-            None,
-            None,
-            Some(
-                parse_codex_permission_profile_toml(
-                    r#"
+    let state = crate::sandbox::types::LocalSandboxState {
+        runtime_permission_profile_layers:
+            crate::sandbox::permission_layers::RuntimePermissionProfileLayers::for_tests(
+                None,
+                None,
+                Some(
+                    parse_codex_permission_profile_toml(
+                        r#"
 default_permissions = "acme-review"
 
 [allowed_permission_profiles]
@@ -162,10 +164,12 @@ acme-review = true
 [permissions.acme-review]
 extends = ":read-only"
 "#,
-                )
-                .expect("parse managed profile"),
+                    )
+                    .expect("parse managed profile"),
+                ),
             ),
-        );
+        ..Default::default()
+    };
     let mut req = update_request();
     req.permission_profiles = Some(std::collections::BTreeMap::from([(
         "acme-review".to_string(),

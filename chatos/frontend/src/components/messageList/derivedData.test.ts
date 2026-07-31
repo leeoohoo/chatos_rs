@@ -428,4 +428,58 @@ describe('buildVisibleMessageState', () => {
       'assistant-final-tool-only-1',
     ]);
   });
+
+  it('anchors task runner receipts to their source turn even when they complete after a newer user message', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-source',
+        content: '先执行一个后台任务',
+        createdAt: new Date('2026-05-07T10:00:00.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-source',
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-source',
+        content: '任务已经安排后台执行。',
+        createdAt: new Date('2026-05-07T10:00:01.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-source',
+          historyFinalForUserMessageId: 'user-source',
+          historyFinalForTurnId: 'turn-source',
+        },
+      }),
+      buildUser({
+        id: 'user-newer',
+        content: '我又发了一条新消息',
+        createdAt: new Date('2026-05-07T10:00:02.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-newer',
+        },
+      }),
+      buildAssistant({
+        id: 'task-runner-receipt',
+        content: '后台任务完成回执',
+        messageMode: 'task_run_receipt',
+        createdAt: new Date('2026-05-07T10:00:03.000Z'),
+        metadata: {
+          task_runner_async: {
+            message_kind: 'task_terminal_update',
+            source_turn_id: 'turn-source',
+            last_task_id: 'lc_async_task_1',
+            overall_status: 'completed',
+          },
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-source',
+      'assistant-source',
+      'task-runner-receipt',
+      'user-newer',
+    ]);
+  });
 });

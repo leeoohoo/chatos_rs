@@ -18,7 +18,6 @@ mod tests;
 use sections::{prompt_section_registry, PromptSectionRegistry};
 
 const SECTION_GLOBAL: &str = "global";
-const SECTION_TASK_MANAGER: &str = "builtin_task_manager";
 const SECTION_PROJECT_MANAGEMENT: &str = "builtin_project_management";
 const SECTION_ASK_USER: &str = "builtin_ask_user";
 const SECTION_CODE_MAINTAINER_READ: &str = "builtin_code_maintainer_read";
@@ -34,7 +33,6 @@ const SECTION_RUNTIME_LIMITATIONS: &str = "runtime_limitations";
 
 const SECTION_ORDER: &[&str] = &[
     SECTION_GLOBAL,
-    SECTION_TASK_MANAGER,
     SECTION_PROJECT_MANAGEMENT,
     SECTION_ASK_USER,
     SECTION_CODE_MAINTAINER_READ,
@@ -154,7 +152,7 @@ fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
         BuiltinMcpKind::CodeMaintainerRead => Some(SECTION_CODE_MAINTAINER_READ),
         BuiltinMcpKind::CodeMaintainerWrite => Some(SECTION_CODE_MAINTAINER_WRITE),
         BuiltinMcpKind::TerminalController => Some(SECTION_TERMINAL_CONTROLLER),
-        BuiltinMcpKind::TaskManager => Some(SECTION_TASK_MANAGER),
+        BuiltinMcpKind::TaskManager => None,
         BuiltinMcpKind::ProjectManagement => Some(SECTION_PROJECT_MANAGEMENT),
         BuiltinMcpKind::Notepad => Some(SECTION_NOTEPAD),
         BuiltinMcpKind::AskUser => Some(SECTION_ASK_USER),

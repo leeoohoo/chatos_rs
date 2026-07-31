@@ -24,7 +24,6 @@ import type {
   McpCatalogEntry,
   RemoteServerRecord,
   SelectableTaskPlugin,
-  SelectableTaskSkill,
   TaskPluginConnectorsResponse,
   TaskProjectRuntimeEnvironmentResponse,
   TaskRecord,
@@ -63,7 +62,6 @@ type TaskEditorDrawerProps = {
   mcpCatalogEntries?: McpCatalogEntry[];
   remoteServers?: RemoteServerRecord[];
   externalMcpConfigs?: ExternalMcpConfigRecord[];
-  selectableSkills?: SelectableTaskSkill[];
   selectablePlugins?: SelectableTaskPlugin[];
   pluginConnectors?: TaskPluginConnectorsResponse;
   pluginConnectorsLoading?: boolean;
@@ -91,7 +89,6 @@ export function TaskEditorDrawer({
   mcpCatalogEntries = [],
   remoteServers = [],
   externalMcpConfigs = [],
-  selectableSkills = [],
   selectablePlugins = [],
   pluginConnectors,
   pluginConnectorsLoading = false,
@@ -110,7 +107,6 @@ export function TaskEditorDrawer({
   const taskProfile = Form.useWatch('taskProfile', form);
   const selectedProjectId = Form.useWatch('projectId', form);
   const requiresExecution = Form.useWatch('requiresExecution', form);
-  const executionServiceId = Form.useWatch('executionServiceId', form);
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
@@ -245,17 +241,6 @@ export function TaskEditorDrawer({
         })),
     [externalMcpConfigs],
   );
-  const skillOptions = useMemo(
-    () =>
-      selectableSkills.map((skill) => ({
-        label: `${skill.display_name} (${skill.entrypoint_kind || 'local'})`,
-        value: skill.id,
-        description: skill.description,
-        platform: skill.platform,
-        version: skill.version,
-      })),
-    [selectableSkills],
-  );
   const onlinePluginDevices = useMemo(
     () => (pluginConnectors?.devices || []).filter((device) => device.status === 'online'),
     [pluginConnectors?.devices],
@@ -329,32 +314,6 @@ export function TaskEditorDrawer({
     }
     form.setFieldValue('pluginWorkspaceId', activePluginWorkspaces[0].id);
   }, [activePluginWorkspaces, form, pluginDeviceId, pluginWorkspaceId]);
-  const runtimeApplicationOptions = useMemo(
-    () =>
-      (runtimeEnvironment?.images || [])
-        .filter((image) => image.service_role === 'application')
-        .filter((image) =>
-          ['ready', 'local', 'available', 'succeeded'].includes(image.status),
-        )
-        .filter(
-          (image) =>
-            image.mcp_policy?.managed_by === 'system' &&
-            image.mcp_policy?.attachment === 'project_gateway_target' &&
-            image.mcp_policy?.filesystem &&
-            image.mcp_policy?.terminal,
-        )
-        .map((image) => ({
-          label: `${image.display_name || image.service_id} (${image.service_id})`,
-          value: image.service_id,
-        })),
-    [runtimeEnvironment?.images],
-  );
-  useEffect(() => {
-    if (!requiresExecution || runtimeApplicationOptions.length !== 1 || executionServiceId) {
-      return;
-    }
-    form.setFieldValue('executionServiceId', runtimeApplicationOptions[0].value);
-  }, [executionServiceId, form, requiresExecution, runtimeApplicationOptions]);
   return (
     <Drawer
       title={editingTask ? t('tasks.drawer.edit') : t('tasks.drawer.create')}
@@ -453,7 +412,6 @@ export function TaskEditorDrawer({
               onChange={(value) => {
                 if (value !== selectedProjectId) {
                   form.setFieldValue('prerequisite_task_ids', []);
-                  form.setFieldValue('executionServiceId', undefined);
                 }
               }}
             />
@@ -500,46 +458,28 @@ export function TaskEditorDrawer({
                   </Space>
                   <Space wrap>
                     {runtimeEnvironment.images.map((image) => {
+                      const isWorkspace = image.service_role === 'workspace';
                       const isApplication = image.service_role === 'application';
+                      const isArtifact = image.service_role === 'artifact';
                       return (
                         <Tag
                           key={image.service_id || image.environment_key}
-                          color={isApplication ? 'green' : 'default'}
+                          color={isWorkspace ? 'green' : isApplication ? 'blue' : 'default'}
                         >
                           {image.display_name || image.service_id} / {image.service_id} /{' '}
-                          {isApplication
-                            ? t('tasks.form.runtimeApplicationTarget')
-                            : t('tasks.form.runtimeDependencyNoMcp')}
+                          {isWorkspace
+                            ? t('tasks.form.runtimeWorkspaceTarget')
+                            : isApplication
+                              ? t('tasks.form.runtimePeerApplication')
+                              : isArtifact
+                                ? t('tasks.form.runtimeArtifact')
+                                : t('tasks.form.runtimeDependencyNoMcp')}
                         </Tag>
                       );
                     })}
                   </Space>
                 </Space>
               </div>
-            ) : null}
-            {requiresExecution && runtimeApplicationOptions.length ? (
-              <Form.Item
-                name="executionServiceId"
-                label={t('tasks.form.executionService')}
-                extra={t('tasks.form.executionServiceHelp')}
-                rules={[
-                  {
-                    validator: async (_, value) => {
-                      if (!requiresExecution || runtimeApplicationOptions.length <= 1 || value) {
-                        return;
-                      }
-                      throw new Error(t('tasks.form.executionServiceRequired'));
-                    },
-                  },
-                ]}
-                style={{ marginBottom: 0 }}
-              >
-                <Select
-                  allowClear={runtimeApplicationOptions.length <= 1}
-                  options={runtimeApplicationOptions}
-                  placeholder={t('tasks.form.executionServicePlaceholder')}
-                />
-              </Form.Item>
             ) : null}
           </Space>
         ) : null}
@@ -837,42 +777,6 @@ export function TaskEditorDrawer({
             message={t('tasks.form.browserPluginReady')}
             description={t('tasks.form.browserPluginHelp')}
           />
-        ) : null}
-
-        <Typography.Title level={5} style={{ marginTop: 8 }}>
-          {t('tasks.form.skills')}
-        </Typography.Title>
-
-        <Form.Item
-          name="selectedSkillIds"
-          label={t('tasks.form.skills')}
-          extra={
-            skillOptions.length
-              ? t('tasks.form.skillsHelp')
-              : t('tasks.form.skillsEmpty')
-          }
-        >
-          <Select
-            mode="multiple"
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            maxTagCount="responsive"
-            options={skillOptions}
-            placeholder={t('tasks.form.skillsPlaceholder')}
-          />
-        </Form.Item>
-
-        {selectableSkills.length ? (
-          <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 16 }}>
-            {selectableSkills.map((skill) => (
-              <Typography.Text key={skill.id} type="secondary">
-                {skill.display_name}: {skill.description || skill.name}
-                {skill.platform ? ` / ${skill.platform}` : ''}
-                {skill.version ? ` / v${skill.version}` : ''}
-              </Typography.Text>
-            ))}
-          </Space>
         ) : null}
 
         <Typography.Title level={5} style={{ marginTop: 8 }}>

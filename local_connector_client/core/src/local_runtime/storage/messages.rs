@@ -129,6 +129,42 @@ impl LocalDatabase {
         overall_status: &str,
         confirmation_status: &str,
     ) -> Result<()> {
+        self.set_turn_task_runner_status_inner(
+            owner_user_id,
+            turn_id,
+            overall_status,
+            confirmation_status,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn set_turn_task_runner_terminal_task_status(
+        &self,
+        owner_user_id: &str,
+        turn_id: &str,
+        task_id: &str,
+        overall_status: &str,
+        confirmation_status: &str,
+    ) -> Result<()> {
+        self.set_turn_task_runner_status_inner(
+            owner_user_id,
+            turn_id,
+            overall_status,
+            confirmation_status,
+            Some(task_id),
+        )
+        .await
+    }
+
+    async fn set_turn_task_runner_status_inner(
+        &self,
+        owner_user_id: &str,
+        turn_id: &str,
+        overall_status: &str,
+        confirmation_status: &str,
+        terminal_task_id: Option<&str>,
+    ) -> Result<()> {
         let raw_metadata = sqlx::query_scalar::<_, Option<String>>(
             r#"
             SELECT messages.metadata_json
@@ -158,6 +194,15 @@ impl LocalDatabase {
             *task_runner = Value::Object(Map::new());
         }
         if let Some(task_runner) = task_runner.as_object_mut() {
+            let current_overall_status = task_runner
+                .get("overall_status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if task_runner_status_is_stop_locked(current_overall_status)
+                && !task_runner_status_is_stop_locked(overall_status)
+            {
+                return Ok(());
+            }
             task_runner.insert(
                 "overall_status".to_string(),
                 Value::String(overall_status.to_string()),
@@ -166,6 +211,42 @@ impl LocalDatabase {
                 "confirmation_status".to_string(),
                 Value::String(confirmation_status.to_string()),
             );
+            if let Some(task_id) = terminal_task_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                task_runner.insert(
+                    "last_task_id".to_string(),
+                    Value::String(task_id.to_string()),
+                );
+                task_runner.insert(
+                    "status".to_string(),
+                    Value::String(overall_status.to_string()),
+                );
+                ensure_string_array_contains(task_runner, "created_task_ids", task_id);
+                ensure_string_array_contains(task_runner, "terminal_task_ids", task_id);
+                remove_string_array_value(task_runner, "running_task_ids", task_id);
+                remove_string_array_value(task_runner, "queued_task_ids", task_id);
+                remove_string_array_value(task_runner, "pending_task_ids", task_id);
+                match overall_status.trim().to_ascii_lowercase().as_str() {
+                    "completed" | "complete" | "done" | "succeeded" | "success" => {
+                        ensure_string_array_contains(task_runner, "succeeded_task_ids", task_id);
+                    }
+                    "blocked" => {
+                        ensure_string_array_contains(task_runner, "blocked_task_ids", task_id);
+                    }
+                    "cancelled" | "canceled" => {
+                        ensure_string_array_contains(task_runner, "cancelled_task_ids", task_id);
+                    }
+                    "failed" | "error" => {
+                        ensure_string_array_contains(task_runner, "failed_task_ids", task_id);
+                    }
+                    _ => {}
+                }
+            }
+            if task_runner_status_is_stop_locked(overall_status) {
+                task_runner.insert("stopped_at".to_string(), Value::String(local_now_rfc3339()));
+            }
         }
         sqlx::query(
             r#"
@@ -397,4 +478,48 @@ impl LocalDatabase {
             .context("commit local runtime process message")?;
         Ok(message)
     }
+}
+
+fn ensure_string_array_contains(metadata: &mut Map<String, Value>, key: &str, value: &str) {
+    let mut values = metadata
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !values.iter().any(|item| item == value) {
+        values.push(value.to_string());
+    }
+    metadata.insert(
+        key.to_string(),
+        Value::Array(values.into_iter().map(Value::String).collect()),
+    );
+}
+
+fn remove_string_array_value(metadata: &mut Map<String, Value>, key: &str, value: &str) {
+    let Some(values) = metadata.get(key).and_then(Value::as_array) else {
+        return;
+    };
+    let values = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty() && *item != value)
+        .map(|item| Value::String(item.to_string()))
+        .collect::<Vec<_>>();
+    metadata.insert(key.to_string(), Value::Array(values));
+}
+
+fn task_runner_status_is_stop_locked(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "stopping" | "stopped" | "cancelled" | "canceled"
+    )
 }

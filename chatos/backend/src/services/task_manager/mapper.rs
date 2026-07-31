@@ -1,56 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document};
 
 use super::normalizer::{
     normalize_priority, normalize_status, normalize_tags, parse_tags_json, trimmed_non_empty,
 };
 use super::types::{TaskOutcomeItem, TaskRecord};
-
-pub(super) fn task_record_to_doc(task: &TaskRecord) -> Document {
-    let tags = task
-        .tags
-        .iter()
-        .cloned()
-        .map(Bson::String)
-        .collect::<Vec<Bson>>();
-
-    let mut doc = doc! {
-        "id": task.id.clone(),
-        "conversation_id": task.conversation_id.clone(),
-        "conversation_turn_id": task.conversation_turn_id.clone(),
-        "title": task.title.clone(),
-        "details": task.details.clone(),
-        "priority": task.priority.clone(),
-        "status": task.status.clone(),
-        "tags": Bson::Array(tags),
-        "outcome_summary": task.outcome_summary.clone(),
-        "outcome_items": Bson::Array(task.outcome_items.iter().map(task_outcome_item_to_bson).collect()),
-        "resume_hint": task.resume_hint.clone(),
-        "blocker_reason": task.blocker_reason.clone(),
-        "blocker_needs": Bson::Array(
-            task.blocker_needs
-                .iter()
-                .cloned()
-                .map(Bson::String)
-                .collect::<Vec<Bson>>(),
-        ),
-        "blocker_kind": task.blocker_kind.clone(),
-        "created_at": task.created_at.clone(),
-        "updated_at": task.updated_at.clone(),
-    };
-    if let Some(due_at) = task.due_at.clone() {
-        doc.insert("due_at", Bson::String(due_at));
-    }
-    if let Some(completed_at) = task.completed_at.clone() {
-        doc.insert("completed_at", Bson::String(completed_at));
-    }
-    if let Some(last_outcome_at) = task.last_outcome_at.clone() {
-        doc.insert("last_outcome_at", Bson::String(last_outcome_at));
-    }
-    doc
-}
 
 pub(super) fn task_record_from_doc(doc: &Document) -> Option<TaskRecord> {
     let id = doc.get_str("id").ok()?.to_string();
@@ -139,24 +95,6 @@ pub(super) fn task_record_from_doc(doc: &Document) -> Option<TaskRecord> {
         created_at,
         updated_at,
     })
-}
-
-fn task_outcome_item_to_bson(item: &TaskOutcomeItem) -> Bson {
-    let refs = item
-        .refs
-        .iter()
-        .cloned()
-        .map(Bson::String)
-        .collect::<Vec<Bson>>();
-    let mut doc = doc! {
-        "kind": item.kind.clone(),
-        "text": item.text.clone(),
-        "refs": Bson::Array(refs),
-    };
-    if let Some(importance) = item.importance.clone() {
-        doc.insert("importance", importance);
-    }
-    Bson::Document(doc)
 }
 
 fn parse_outcome_items(value: Option<&Bson>) -> Vec<TaskOutcomeItem> {

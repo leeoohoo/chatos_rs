@@ -11,6 +11,7 @@ const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const CORE_RESTART_BASE_DELAY_MS = 250;
 const CORE_RESTART_MAX_DELAY_MS = 5_000;
 const CORE_RESTART_STABLE_WINDOW_MS = 10_000;
+const UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER = 'computer-use-unsigned-local-dev.json';
 
 function coreRestartDelayMs(attempt) {
   const normalizedAttempt = Number.isInteger(attempt) && attempt > 0 ? attempt : 0;
@@ -55,6 +56,40 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     return path.join(__dirname, '..', '..', 'chrome_extension');
   }
 
+  function chromeExtensionInstallPath() {
+    return path.join(app.getPath('home'), 'ChatOS Chrome Extension');
+  }
+
+  function prepareChromeExtensionInstallDirectory() {
+    const source = chromeExtensionPath();
+    if (!fs.existsSync(path.join(source, 'manifest.json'))) {
+      throw new Error(`Chrome extension source is missing manifest.json: ${source}`);
+    }
+
+    const destination = chromeExtensionInstallPath();
+    const homeDir = app.getPath('home');
+    const relativeDestination = path.relative(homeDir, destination);
+    if (
+      !relativeDestination
+      || relativeDestination.startsWith('..')
+      || path.isAbsolute(relativeDestination)
+    ) {
+      throw new Error(`Refusing to prepare Chrome extension outside the user home directory: ${destination}`);
+    }
+
+    const temporaryDestination = `${destination}.partial-${process.pid}`;
+    fs.rmSync(temporaryDestination, { recursive: true, force: true });
+    fs.rmSync(destination, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.cpSync(source, temporaryDestination, { recursive: true, dereference: true });
+    if (!fs.existsSync(path.join(temporaryDestination, 'manifest.json'))) {
+      fs.rmSync(temporaryDestination, { recursive: true, force: true });
+      throw new Error(`Prepared Chrome extension directory is missing manifest.json: ${temporaryDestination}`);
+    }
+    fs.renameSync(temporaryDestination, destination);
+    return destination;
+  }
+
   function bundledBrowserRuntime() {
     const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
     const agentBrowser = path.join(
@@ -78,6 +113,23 @@ function createCoreRuntime({ app, desktopAuthToken }) {
       agentBrowser,
       browserExecutable,
     };
+  }
+
+  function unsignedComputerUseLocalDevAllowed() {
+    const envValue = String(process.env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV || '').trim();
+    if (['1', 'true', 'TRUE', 'yes', 'YES'].includes(envValue)) {
+      return true;
+    }
+    const markerPath = resourcePath(UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER);
+    if (!fs.existsSync(markerPath)) {
+      return false;
+    }
+    try {
+      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+      return marker && marker.allowUnsignedComputerUseLocalDev === true;
+    } catch (_error) {
+      return false;
+    }
   }
 
   function coreExecutablePath() {
@@ -144,7 +196,9 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     };
     if (process.platform === 'darwin') {
       env.CHATOS_COMPUTER_USE_HELPER_PATH = resourcePath(computerUseHelperName);
-      if (app.isPackaged) {
+      if (unsignedComputerUseLocalDevAllowed()) {
+        env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV = '1';
+      } else if (app.isPackaged) {
         env.CHATOS_COMPUTER_USE_HELPER_REQUIRE_SIGNED = '1';
       }
     }
@@ -350,8 +404,10 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   return {
     cleanupIpcEndpoint,
     chromeExtensionPath,
+    chromeExtensionInstallPath,
     getIpcEndpoint,
     isRunning,
+    prepareChromeExtensionInstallDirectory,
     resourcePath,
     startCore,
     stopCoreProcessTree,

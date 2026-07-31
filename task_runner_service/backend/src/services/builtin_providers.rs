@@ -11,9 +11,8 @@ use chatos_mcp::{
     build_shared_builtin_tool_service, AskUserOptions, AskUserService, AskUserStoreRef,
     NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
     RemoteConnectionControllerService, RemoteConnectionControllerStoreRef,
-    SharedBuiltinToolService, TaskManagerOptions, TaskManagerService, TaskManagerStoreRef,
-    TaskStreamChunkCallback, TerminalControllerOptions, TerminalControllerService,
-    TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT, REVIEW_TIMEOUT_MS_DEFAULT,
+    SharedBuiltinToolService, TerminalControllerOptions, TerminalControllerService,
+    TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };
 use chatos_mcp_runtime::{
     builtin_kind_by_any, BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer,
@@ -25,7 +24,6 @@ use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::remote_server_runtime::TaskRunnerRemoteConnectionStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
 
-use super::task_manager_bridge::TaskRunnerTaskManagerStore;
 use super::TaskService;
 
 mod builders;

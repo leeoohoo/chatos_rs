@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    ".chatos-plugin/plugin.json": "3170710c60568e9c361a2a6513ebb146b7df52198348a71941f04027a54a665c",
+    "CHATOS-ADAPTATION.md": "99bdada94d5a3886ef190fb80bf6c832b031f4f914ff62a5c663320f89a046a3",
+    "agents/ponytail-full-cloud.md": "cef8bdc6525149a357ae46420a5a10b0788a48eacf97f492eb0f0f0eaaaf547c",
+    "agents/ponytail-full-local.md": "cef8bdc6525149a357ae46420a5a10b0788a48eacf97f492eb0f0f0eaaaf547c",
+    "agents/ponytail-lite-cloud.md": "d191a2a4c1ec3f2dbcea165b1980099f41c98602e6b0e383dd468a9e1c26b4e5",
+    "agents/ponytail-lite-local.md": "d191a2a4c1ec3f2dbcea165b1980099f41c98602e6b0e383dd468a9e1c26b4e5",
+    "agents/ponytail-ultra-cloud.md": "ed97edd9d6fece6deab1d8ddd6ae2aecc200212e62a6307e9dd322c9a8abaacb",
+    "agents/ponytail-ultra-local.md": "ed97edd9d6fece6deab1d8ddd6ae2aecc200212e62a6307e9dd322c9a8abaacb",
+    "assets/logo.svg": "8069ca8d1753a55b869bfddc981bd49d1085bb34aa4a633a0e837817d450d121",
+    "commands/ponytail-audit.md": "50547f5b21102beb24579ed203f8f6616c98d011a985f5f7d5309c6a23550984",
+    "commands/ponytail-debt.md": "d7ecc4370417655feaf2676189ef93853d8e9258b34a0755b4070ef2fce2d56f",
+    "commands/ponytail-help.md": "01a955e7fd8e9f7b8118e92bf55fa12d0011c8d1723870e2dbe79bd36a4f51bd",
+    "commands/ponytail-review.md": "5268932b6bfcdf6f4b599d5f8699b6ec888883b3f1f4e0294337580a8cba2604",
+    "licenses/ponytail-LICENSE": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
+    "sbom.spdx.json": "1771d548ae2431527a0c153eba4264bc0ca74e7649a135cd099cba8b895430d9",
+    "skills/ponytail/SKILL.md": "91a587d1556ef7721638027458c8f1c557d55024d8963136a9716bff9935bd0e"
+  }
+}

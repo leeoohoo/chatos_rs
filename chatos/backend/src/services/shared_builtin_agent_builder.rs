@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use chatos_mcp::{AgentBuilderAgentSnapshot, AgentBuilderSkill, AgentBuilderStore};
+use chatos_mcp::AgentBuilderStore;
 
 use crate::models::chatos_agent_types::{CreateChatosAgentRequest, UpdateChatosAgentRequest};
 use crate::services::chatos_agents;
@@ -14,31 +14,6 @@ pub struct ChatosAgentBuilderStore;
 
 #[async_trait]
 impl AgentBuilderStore for ChatosAgentBuilderStore {
-    async fn list_agents(
-        &self,
-        user_id: &str,
-        enabled: Option<bool>,
-        limit: Option<i64>,
-        offset: i64,
-    ) -> Result<Vec<AgentBuilderAgentSnapshot>, String> {
-        let agents = chatos_agents::list_agents(user_id, enabled, limit, offset).await?;
-        Ok(agents
-            .into_iter()
-            .map(|agent| AgentBuilderAgentSnapshot {
-                skills: agent
-                    .skills
-                    .into_iter()
-                    .map(|skill| AgentBuilderSkill {
-                        id: skill.id,
-                        name: skill.name,
-                        content: skill.content,
-                    })
-                    .collect(),
-                skill_ids: agent.skill_ids,
-            })
-            .collect())
-    }
-
     async fn create_agent(&self, request: Value) -> Result<Value, String> {
         let payload: CreateChatosAgentRequest =
             serde_json::from_value(request).map_err(|err| err.to_string())?;

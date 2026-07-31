@@ -40,6 +40,12 @@ mod tests {
             display_name: environment_key.to_string(),
             service_id: String::new(),
             service_role: RuntimeServiceRole::Unknown,
+            source_root: ".".to_string(),
+            component_kind: environment_type.to_string(),
+            startup_command: None,
+            test_command: None,
+            depends_on: Vec::new(),
+            auto_start: false,
             mcp_policy: ProgramManagedMcpPolicy::default(),
             image_id: None,
             image_ref: image_ref.map(ToOwned::to_owned),
@@ -57,17 +63,20 @@ mod tests {
     }
 
     #[test]
-    fn program_policy_allows_only_verified_application_targets() {
+    fn program_policy_allows_only_workspace_as_execution_target() {
         let mut application = runtime_image("api", "application", Some("FROM node:24\n"), None);
         assert!(apply_program_managed_image_policy(&mut application));
         assert_eq!(application.service_role, RuntimeServiceRole::Application);
-        assert_eq!(
-            application.mcp_policy.attachment,
-            RuntimeMcpAttachment::ProjectGatewayTarget
-        );
-        assert!(application.mcp_policy.filesystem);
-        assert!(application.mcp_policy.terminal);
+        assert_eq!(application.mcp_policy, ProgramManagedMcpPolicy::default());
         assert_eq!(application.service_id, "api");
+
+        let mut workspace = runtime_image("workspace", "workspace", None, None);
+        assert!(apply_program_managed_image_policy(&mut workspace));
+        assert_eq!(workspace.service_role, RuntimeServiceRole::Workspace);
+        assert_eq!(
+            workspace.mcp_policy,
+            ProgramManagedMcpPolicy::workspace_target()
+        );
 
         let mut redis = runtime_image(
             "redis",
@@ -84,6 +93,76 @@ mod tests {
         assert_eq!(unverified.service_id, "api");
         assert_eq!(unverified.service_role, RuntimeServiceRole::Unknown);
         assert_eq!(unverified.mcp_policy, ProgramManagedMcpPolicy::default());
+    }
+
+    #[test]
+    fn project_boundary_creates_one_workspace_and_keeps_applications_peer_equal() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::Ready,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: None,
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mdm = runtime_image(
+            "mdm-service",
+            "application",
+            Some("FROM python:3.14"),
+            None,
+        );
+        let prototype = runtime_image(
+            "web-prototype",
+            "application",
+            Some("FROM nginx:alpine\nCOPY . /usr/share/nginx/html/"),
+            None,
+        );
+        let mut images = vec![prototype, mdm];
+
+        assert!(enforce_project_runtime_boundary(
+            ProjectExecutionPlane::Cloud,
+            &mut environment,
+            &mut images,
+        ));
+        assert_eq!(
+            environment.execution_service_id.as_deref(),
+            Some("workspace")
+        );
+        assert_eq!(
+            images
+                .iter()
+                .find(|image| image.service_id == "mdm-service")
+                .expect("mdm service")
+                .mcp_policy,
+            ProgramManagedMcpPolicy::default(),
+        );
+        assert_eq!(
+            images
+                .iter()
+                .find(|image| image.service_id == "web-prototype")
+                .expect("prototype")
+                .service_role,
+            RuntimeServiceRole::Artifact,
+        );
+        assert_eq!(
+            images
+                .iter()
+                .find(|image| image.service_role == RuntimeServiceRole::Workspace)
+                .expect("workspace")
+                .mcp_policy,
+            ProgramManagedMcpPolicy::workspace_target(),
+        );
     }
 
     #[test]
@@ -126,6 +205,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::LocalConnector,
             analysis_summary: None,
             not_runnable_reason: None,
+            execution_service_id: None,
             detected_stack: empty_object(),
             required_services: empty_array(),
             env_vars: empty_object(),
@@ -163,6 +243,7 @@ mod tests {
                 "云端项目只通过 Harness MCP 读取文件，并只使用云端 Sandbox Manager。".to_string(),
             ),
             not_runnable_reason: None,
+            execution_service_id: None,
             detected_stack: empty_object(),
             required_services: empty_array(),
             env_vars: empty_object(),
@@ -183,10 +264,49 @@ mod tests {
             &[application, dependency],
         ));
         let summary = environment.analysis_summary.expect("technical summary");
-        assert!(summary.contains("1 个应用组件"));
+        assert!(summary.contains("1 个平等应用组件"));
         assert!(summary.contains("1 个依赖服务"));
         assert!(!summary.contains("Harness"));
         assert!(!summary.contains("Sandbox Manager"));
+    }
+
+    #[test]
+    fn legacy_application_image_summary_is_replaced_with_workspace_summary() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::PendingImageBuild,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: Some(
+                "已识别 2 个应用组件和 1 个依赖服务，生成 3 个环境配置文件及项目级 Compose 计划，等待生成应用镜像。"
+                    .to_string(),
+            ),
+            not_runnable_reason: None,
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut application = runtime_image("api", "application", Some("FROM node:24"), None);
+        apply_program_managed_image_policy(&mut application);
+        let mut workspace = runtime_image("workspace", "workspace", None, None);
+        apply_program_managed_image_policy(&mut workspace);
+
+        assert!(replace_legacy_internal_routing_summary(
+            &mut environment,
+            &[application, workspace],
+        ));
+        let summary = environment.analysis_summary.expect("workspace summary");
+        assert!(summary.contains("1 个平等应用组件"));
+        assert!(summary.contains("等待生成工作区执行镜像"));
+        assert!(!summary.contains("等待生成应用镜像"));
     }
 
     #[test]
@@ -199,6 +319,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::Harness,
             analysis_summary: None,
             not_runnable_reason: None,
+            execution_service_id: None,
             detected_stack: empty_object(),
             required_services: empty_array(),
             env_vars: empty_object(),
@@ -217,6 +338,12 @@ mod tests {
             display_name: "Application runtime".to_string(),
             service_id: String::new(),
             service_role: RuntimeServiceRole::Unknown,
+            source_root: ".".to_string(),
+            component_kind: "application".to_string(),
+            startup_command: None,
+            test_command: None,
+            depends_on: Vec::new(),
+            auto_start: false,
             mcp_policy: ProgramManagedMcpPolicy::default(),
             image_id: Some("local-image".to_string()),
             image_ref: Some("local/runtime:latest".to_string()),
@@ -235,15 +362,22 @@ mod tests {
         assert!(enforce_project_runtime_boundary(
             ProjectExecutionPlane::Cloud,
             &mut environment,
-            images.as_mut_slice(),
+            &mut images,
         ));
+        let application = images
+            .iter()
+            .find(|image| image.service_role == RuntimeServiceRole::Application)
+            .expect("application");
         assert_eq!(
-            images[0].image_provider,
+            application.image_provider,
             RuntimeEnvironmentProvider::CloudSandboxManager
         );
-        assert_eq!(images[0].status, "planned");
-        assert!(images[0].image_id.is_none());
-        assert!(images[0].image_ref.is_none());
+        assert_eq!(application.status, "planned");
+        assert!(application.image_id.is_none());
+        assert!(application.image_ref.is_none());
+        assert!(images
+            .iter()
+            .any(|image| image.service_role == RuntimeServiceRole::Workspace));
         assert_eq!(
             environment.status,
             ProjectRuntimeEnvironmentStatus::PendingImageBuild
@@ -251,6 +385,6 @@ mod tests {
         assert!(environment
             .analysis_summary
             .as_deref()
-            .is_some_and(|summary| summary.contains("Local Connector 镜像记录已作废")));
+            .is_some_and(|summary| summary.contains("工作区执行镜像")));
     }
 }

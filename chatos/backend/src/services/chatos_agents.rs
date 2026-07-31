@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::models::agent::{Agent, AgentSkill};
 use crate::models::chatos_agent_types::{
@@ -9,11 +9,11 @@ use crate::models::chatos_agent_types::{
     CreateChatosAgentRequest, UpdateChatosAgentRequest,
 };
 use crate::repositories::agents as agents_repo;
+use crate::services::chatos_memory_engine;
 use crate::services::text_normalization::{
     normalize_optional_text_ref, normalize_required_text_owned, normalize_string_vec,
     resolve_visible_user_ids,
 };
-use crate::services::{chatos_memory_engine, chatos_skills};
 
 mod provisioning;
 mod runtime;
@@ -50,13 +50,11 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
     let role_definition =
         normalize_required_text(Some(payload.role_definition.clone()), "role_definition")?;
     let normalized = normalize_agent_payload(
-        user_id.as_str(),
         payload.plugin_sources.as_deref(),
         payload.skills.as_deref(),
         payload.skill_ids.as_deref(),
         payload.default_skill_ids.as_deref(),
-    )
-    .await?;
+    )?;
 
     let mut agent = Agent::new(
         user_id,
@@ -107,25 +105,30 @@ pub async fn update_agent(
     let existing_inline_skills = dto_skills_from_agent(existing.skills.as_slice());
 
     let normalized = normalize_agent_payload(
-        existing.user_id.as_str(),
-        payload
-            .plugin_sources
-            .as_deref()
-            .or(Some(existing.plugin_sources.as_slice())),
+        payload.plugin_sources.as_deref(),
         payload
             .skills
             .as_deref()
             .or(Some(existing_inline_skills.as_slice())),
-        payload
-            .skill_ids
-            .as_deref()
-            .or(Some(existing.skill_ids.as_slice())),
-        payload
-            .default_skill_ids
-            .as_deref()
-            .or(Some(existing.default_skill_ids.as_slice())),
-    )
-    .await?;
+        payload.skill_ids.as_deref(),
+        payload.default_skill_ids.as_deref(),
+    )?;
+
+    let plugin_sources = if payload.plugin_sources.is_some() {
+        normalized.plugin_sources
+    } else {
+        existing.plugin_sources.clone()
+    };
+    let skill_ids = if payload.skill_ids.is_some() {
+        normalized.skill_ids
+    } else {
+        existing.skill_ids.clone()
+    };
+    let default_skill_ids = if payload.default_skill_ids.is_some() {
+        normalized.default_skill_ids
+    } else {
+        existing.default_skill_ids.clone()
+    };
 
     let updated = Agent {
         id: existing.id,
@@ -136,10 +139,10 @@ pub async fn update_agent(
         role_definition: normalize_optional_text(payload.role_definition.as_deref())
             .unwrap_or(existing.role_definition),
         task_runner_agent_account_id: existing.task_runner_agent_account_id,
-        plugin_sources: normalized.plugin_sources,
+        plugin_sources,
         skills: normalized.skills,
-        skill_ids: normalized.skill_ids,
-        default_skill_ids: normalized.default_skill_ids,
+        skill_ids,
+        default_skill_ids,
         mcp_policy: payload.mcp_policy.clone().or(existing.mcp_policy),
         project_policy: payload.project_policy.clone().or(existing.project_policy),
         enabled: payload.enabled.unwrap_or(existing.enabled),
@@ -236,6 +239,7 @@ fn session_to_dto(session: crate::models::session::Session) -> ChatosSessionDto 
     }
 }
 
+#[derive(Debug)]
 struct NormalizedAgentPayload {
     plugin_sources: Vec<String>,
     skills: Vec<AgentSkill>,
@@ -243,14 +247,19 @@ struct NormalizedAgentPayload {
     default_skill_ids: Vec<String>,
 }
 
-async fn normalize_agent_payload(
-    user_id: &str,
+fn normalize_agent_payload(
     plugin_sources: Option<&[String]>,
     skills: Option<&[ChatosAgentSkillDto]>,
     skill_ids: Option<&[String]>,
     default_skill_ids: Option<&[String]>,
 ) -> Result<NormalizedAgentPayload, String> {
-    let mut plugin_sources = normalize_string_list(plugin_sources.unwrap_or(&[]));
+    let plugin_sources = normalize_string_list(plugin_sources.unwrap_or(&[]));
+    if !plugin_sources.is_empty() {
+        return Err(
+            "plugin_sources is retired; select immutable Plugins per conversation or task through the Plugin Picker"
+                .to_string(),
+        );
+    }
     let skills = normalize_inline_skills(skills.unwrap_or(&[]));
     let skill_ids = normalize_string_list(skill_ids.unwrap_or(&[]));
     let default_skill_ids = normalize_string_list(default_skill_ids.unwrap_or(&[]));
@@ -259,55 +268,16 @@ async fn normalize_agent_payload(
         .map(|item| item.id.clone())
         .collect::<HashSet<_>>();
 
-    if !skill_ids.is_empty() {
-        let visible_skills = chatos_skills::list_skills(user_id, None, None, Some(5000), 0).await?;
-        let skill_map = visible_skills
-            .into_iter()
-            .map(|item| (item.id.clone(), item))
-            .collect::<HashMap<_, _>>();
-
-        let mut missing_skill_ids = Vec::new();
-        for skill_id in &skill_ids {
-            if inline_skill_ids.contains(skill_id) {
-                continue;
-            }
-            match skill_map.get(skill_id) {
-                Some(skill) => {
-                    if !plugin_sources
-                        .iter()
-                        .any(|item| item == &skill.plugin_source)
-                    {
-                        plugin_sources.push(skill.plugin_source.clone());
-                    }
-                }
-                None => missing_skill_ids.push(skill_id.clone()),
-            }
-        }
-        if !missing_skill_ids.is_empty() {
-            return Err(format!(
-                "unknown skill_ids: {}",
-                missing_skill_ids.join(", ")
-            ));
-        }
-    }
-
-    if !plugin_sources.is_empty() {
-        let visible_plugins = chatos_skills::list_skill_plugins(user_id, Some(5000), 0).await?;
-        let plugin_sources_found = visible_plugins
-            .into_iter()
-            .map(|item| item.source)
-            .collect::<HashSet<_>>();
-        let missing_plugin_sources = plugin_sources
-            .iter()
-            .filter(|item| !plugin_sources_found.contains(item.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !missing_plugin_sources.is_empty() {
-            return Err(format!(
-                "unknown plugin_sources: {}",
-                missing_plugin_sources.join(", ")
-            ));
-        }
+    let retired_skill_ids = skill_ids
+        .iter()
+        .filter(|item| !inline_skill_ids.contains(item.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !retired_skill_ids.is_empty() {
+        return Err(format!(
+            "standalone skill_ids are retired; only ids from this agent's inline skills are allowed: {}",
+            retired_skill_ids.join(", ")
+        ));
     }
 
     let invalid_default_skill_ids = default_skill_ids
@@ -326,7 +296,7 @@ async fn normalize_agent_payload(
     }
 
     Ok(NormalizedAgentPayload {
-        plugin_sources,
+        plugin_sources: Vec::new(),
         skills: agent_skills_from_dto(skills.as_slice()),
         skill_ids,
         default_skill_ids,
@@ -365,4 +335,43 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 
 fn normalize_required_text(value: Option<String>, field: &str) -> Result<String, String> {
     normalize_required_text_owned(value, field)
+}
+
+#[cfg(test)]
+mod legacy_plugin_selection_tests {
+    use super::*;
+
+    #[test]
+    fn new_agent_rejects_legacy_plugin_sources() {
+        let error = normalize_agent_payload(Some(&["legacy/plugin".to_string()]), None, None, None)
+            .expect_err("legacy plugin sources must be rejected");
+
+        assert!(error.contains("plugin_sources is retired"));
+    }
+
+    #[test]
+    fn agent_allows_only_its_own_inline_skill_ids() {
+        let inline = ChatosAgentSkillDto {
+            id: "review".to_string(),
+            name: "Review".to_string(),
+            content: "Review changes carefully.".to_string(),
+        };
+        let normalized = normalize_agent_payload(
+            None,
+            Some(std::slice::from_ref(&inline)),
+            Some(&["review".to_string()]),
+            Some(&["review".to_string()]),
+        )
+        .expect("same-agent inline skill ids remain supported");
+        assert_eq!(normalized.skill_ids, vec!["review".to_string()]);
+
+        let error = normalize_agent_payload(
+            None,
+            Some(&[inline]),
+            Some(&["legacy-skill".to_string()]),
+            None,
+        )
+        .expect_err("standalone skill ids must be rejected");
+        assert!(error.contains("standalone skill_ids are retired"));
+    }
 }

@@ -6,6 +6,7 @@ const {
   BrowserWindow,
   Menu,
   WebContentsView,
+  clipboard,
   ipcMain,
   session,
   shell,
@@ -19,6 +20,10 @@ const { createLocalApiBridge } = require('./local-api-bridge.cjs');
 const { createDesktopTicketAuthenticator } = require('./desktop-auth.cjs');
 const { attachRetryingViewLoader } = require('./retrying-view-loader.cjs');
 const { createCoreRuntime } = require('./core-runtime.cjs');
+const {
+  readRuntimeSettings,
+  updateRuntimeSettings,
+} = require('./runtime-settings-store.cjs');
 const {
   isAllowedLocalFrontendUrl,
   isAllowedOriginUrl,
@@ -38,7 +43,8 @@ let bundledChatosServer = null;
 let shutdownStarted = false;
 const desktopAuthToken = crypto.randomBytes(32).toString('base64url');
 const coreRuntime = createCoreRuntime({ app, desktopAuthToken });
-let developerMode = process.env.LOCAL_CONNECTOR_DEVELOPER_MODE === '1';
+let developerMode = process.env.LOCAL_CONNECTOR_DEVELOPER_MODE === '1'
+  || readRuntimeSettings().developer_mode;
 const trustedLocalWebContents = new Set();
 const trustedRuntimeWebContents = new Set();
 const localApiBridge = createLocalApiBridge({
@@ -355,6 +361,11 @@ async function refreshDeveloperModeFromCore() {
     }
     await delay(100);
   }
+  const next = readRuntimeSettings().developer_mode;
+  if (next !== developerMode) {
+    developerMode = next;
+    recreateChatosView();
+  }
 }
 
 function chatosUrlWithDesktopParam() {
@@ -629,17 +640,58 @@ app.whenReady().then(async () => {
       return false;
     }
     const next = Boolean(enabled);
+    updateRuntimeSettings({ developer_mode: next });
     if (next !== developerMode) {
       developerMode = next;
       recreateChatosView();
     }
     return true;
   });
+  ipcMain.handle('local-connector:runtime-settings', (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      throw new Error('Local Connector settings access requires a trusted main frame');
+    }
+    return readRuntimeSettings();
+  });
+  ipcMain.handle('local-connector:runtime-settings-update', (event, payload) => {
+    if (
+      !isTrustedLocalEvent(event)
+      || !settingsView
+      || event.sender.id !== settingsView.webContents.id
+    ) {
+      throw new Error('Local Connector settings update requires the settings window');
+    }
+    const next = updateRuntimeSettings(payload && typeof payload === 'object' ? payload : {});
+    if (next.developer_mode !== developerMode) {
+      developerMode = next.developer_mode;
+      recreateChatosView();
+    }
+    return next;
+  });
   ipcMain.handle('local-connector:chrome-extension-directory-show', async (event) => {
     if (!isTrustedLocalEvent(event)) {
       return false;
     }
-    const error = await shell.openPath(coreRuntime.chromeExtensionPath());
+    const extensionDirectory = coreRuntime.prepareChromeExtensionInstallDirectory();
+    const error = await shell.openPath(extensionDirectory);
+    if (error) {
+      throw new Error(error);
+    }
+    return true;
+  });
+  ipcMain.handle('local-connector:chrome-extension-install-path-copy', (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      return false;
+    }
+    const extensionDirectory = coreRuntime.prepareChromeExtensionInstallDirectory();
+    clipboard.writeText(extensionDirectory);
+    return extensionDirectory;
+  });
+  ipcMain.handle('local-connector:chrome-extensions-page-open', async (event) => {
+    if (!isTrustedLocalEvent(event)) {
+      return false;
+    }
+    const error = await shell.openExternal('chrome://extensions/');
     if (error) {
       throw new Error(error);
     }

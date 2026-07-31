@@ -87,9 +87,5 @@ describe('ConversationProcessToolSummary', () => {
       'notepad_create_folder',
       { name: '调研' },
     ), 'completed')).toBe('已创建笔记文件夹「调研」');
-    expect(toolActionText(buildToolActionSummary(
-      'agent_builder_list_available_skills',
-      {},
-    ), 'completed')).toBe('已读取可用技能列表');
   });
 });

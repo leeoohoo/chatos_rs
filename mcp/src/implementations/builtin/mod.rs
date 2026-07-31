@@ -13,7 +13,6 @@ pub mod memory_readers;
 pub mod notepad;
 pub mod provider;
 pub mod remote_connection_controller;
-pub mod task_manager;
 pub mod terminal_controller;
 pub mod terminal_controller_response;
 mod terminal_process;
@@ -29,8 +28,8 @@ pub mod research_summary_view;
 pub(crate) mod tool_registry;
 
 pub use agent_builder::{
-    AgentBuilderAgentSnapshot, AgentBuilderOptions, AgentBuilderService, AgentBuilderSkill,
-    AgentBuilderStore, AgentBuilderStoreRef,
+    AgentBuilderOptions, AgentBuilderService, AgentBuilderSkill, AgentBuilderStore,
+    AgentBuilderStoreRef,
 };
 pub use ask_user::{
     normalize_kv_fields, AskUserDecision, AskUserOptions, AskUserPromptPayload,
@@ -68,11 +67,6 @@ pub use remote_connection_controller::{
     RemoteConnectionControllerService, RemoteConnectionControllerStore,
     RemoteConnectionControllerStoreRef, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS,
     DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
-};
-pub use task_manager::{
-    TaskClosureDecision, TaskDraft, TaskManagerOptions, TaskManagerService, TaskManagerStore,
-    TaskManagerStoreRef, TaskOutcomeItem, TaskStreamChunkCallback, TaskUpdatePatch,
-    REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
 };
 pub use terminal_controller::{
     coerce_process_identifier, resolve_wait_timeout_ms, TerminalCommandPermissions,

@@ -19,7 +19,7 @@ mod access;
 mod request_guards;
 mod schema;
 
-const PLANNER_REQUIRED_BUILTIN_KINDS: &[&str] = &["TaskManager", "AskUser"];
+const PLANNER_REQUIRED_BUILTIN_KINDS: &[&str] = &["AskUser"];
 
 pub(in crate::mcp_server) fn is_planner_required_builtin_kind(value: &str) -> bool {
     PLANNER_REQUIRED_BUILTIN_KINDS

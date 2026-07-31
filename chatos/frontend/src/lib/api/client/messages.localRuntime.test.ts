@@ -94,4 +94,23 @@ describe('message task runner local routing', () => {
     );
     expect(cloudRequest).not.toHaveBeenCalled();
   });
+
+  it('preserves includeEvents=false when loading a local run for the process modal', async () => {
+    const cloudRequest = vi.fn(() => {
+      throw new Error('cloud task runner must not be called');
+    });
+    const lookup = {
+      sessionId: 'lc_session_1',
+      turnId: 'lc_turn_1',
+      sourceUserMessageId: 'lc_message_1',
+      includeEvents: false,
+      eventLimit: 1,
+      eventOffset: 0,
+    };
+
+    await getMessageTaskRunnerGraphRun(cloudRequest, 'lc_message_1', 'run-1', lookup);
+
+    expect(localTasks.getLocalTaskRunnerRunDetail).toHaveBeenCalledWith('run-1', lookup);
+    expect(cloudRequest).not.toHaveBeenCalled();
+  });
 });

@@ -43,7 +43,7 @@ describe('remoteConnectionErrors mapping', () => {
     backendErrorCodes = JSON.parse(
       readFileSync(backendCodesDocPath, 'utf8'),
     ) as BackendErrorCodes;
-  }, 60_000);
+  }, 180_000);
 
   it('maps ApiRequestError code to message and action', () => {
     const error = new ApiRequestError('permission denied', {

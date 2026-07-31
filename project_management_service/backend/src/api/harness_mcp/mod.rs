@@ -29,8 +29,8 @@ mod tools;
 use self::client::HarnessApiAccessResponse;
 use self::tool_definitions::tool_definitions;
 use self::tools::{
-    tool_append_file, tool_apply_patch, tool_delete_path, tool_edit_file, tool_list_branches,
-    tool_list_dir, tool_read_file_range, tool_read_file_raw, tool_search_text, tool_write_file,
+    tool_append_file, tool_apply_patch, tool_delete_path, tool_edit_file, tool_list_dir,
+    tool_read_file_range, tool_read_file_raw, tool_search_text, tool_write_file,
 };
 
 const SERVER_NAME: &str = "harness_code";
@@ -128,7 +128,7 @@ async fn build_harness_mcp_context(
     enabled_tools: HostCapabilityPolicy,
 ) -> Result<HarnessMcpContext, String> {
     if !enabled_tools.code_read && !enabled_tools.code_write {
-        return Err("Harness MCP has no enabled CodeMaintainer capabilities".to_string());
+        return Err("CodeMaintainer has no enabled project workspace capabilities".to_string());
     }
     let project = state
         .store
@@ -142,7 +142,7 @@ async fn build_harness_mcp_context(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "project is missing harness_repo_path".to_string())?
+        .ok_or_else(|| "project source workspace is not available".to_string())?
         .to_string();
     let owner_user_id = project_owner_user_id(&project)?;
     let access = fetch_harness_api_access(&state, owner_user_id.as_str()).await?;
@@ -150,7 +150,7 @@ async fn build_harness_mcp_context(
     let client = build_http_client(HttpClientTimeouts::new(
         state.config.user_service_request_timeout,
     ))
-    .map_err(|err| format!("build Harness MCP HTTP client failed: {err}"))?;
+    .map_err(|err| format!("build project workspace tool client failed: {err}"))?;
     Ok(HarnessMcpContext {
         project_id,
         repo_path,
@@ -166,7 +166,7 @@ fn ensure_harness_project_ready(project: &ProjectRecord) -> Result<(), String> {
     }
     if project.import_status != ProjectImportStatus::Ready {
         return Err(format!(
-            "project Harness import is not ready: {}",
+            "project source import is not ready: {}",
             project.import_status.as_str()
         ));
     }
@@ -177,7 +177,7 @@ fn ensure_harness_project_ready(project: &ProjectRecord) -> Result<(), String> {
         .filter(|value| !value.is_empty())
         .is_none()
     {
-        return Err("project is not linked to a Harness repo".to_string());
+        return Err("project source workspace is not available".to_string());
     }
     Ok(())
 }
@@ -209,7 +209,7 @@ fn ensure_harness_space_matches(
     {
         return Ok(());
     }
-    Err("Harness access token owner does not match project Harness space".to_string())
+    Err("project source access owner does not match project owner".to_string())
 }
 
 async fn fetch_harness_api_access(
@@ -245,18 +245,18 @@ async fn fetch_harness_api_access(
     )?
     .send()
     .await
-    .map_err(|err| format!("user_service Harness access request failed: {err}"))?;
+    .map_err(|err| format!("project source access request failed: {err}"))?;
     if !response.status().is_success() {
         let status = response.status();
         let text =
             read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(format!(
-            "user_service Harness access request failed: {status} {text}"
+            "project source access request failed: {status} {text}"
         ));
     }
     read_response_json_limited::<HarnessApiAccessResponse>(response, JSON_BODY_LIMIT_BYTES)
         .await
-        .map_err(|err| format!("parse user_service Harness access response failed: {err}"))
+        .map_err(|err| format!("parse project source access response failed: {err}"))
 }
 
 async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Value, String> {
@@ -282,10 +282,6 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
         "list_dir" => {
             ensure_read_allowed(ctx)?;
             tool_list_dir(ctx, &arguments).await
-        }
-        "list_branches" => {
-            ensure_read_allowed(ctx)?;
-            tool_list_branches(ctx, &arguments).await
         }
         "search_text" => {
             ensure_read_allowed(ctx)?;
@@ -336,7 +332,7 @@ fn ensure_read_allowed(ctx: &HarnessMcpContext) -> Result<(), String> {
     if ctx.enabled_tools.code_read {
         Ok(())
     } else {
-        Err("Harness MCP read capability is not enabled for this task".to_string())
+        Err("CodeMaintainer read capability is not enabled for this task".to_string())
     }
 }
 
@@ -344,7 +340,7 @@ fn ensure_write_allowed(ctx: &HarnessMcpContext) -> Result<(), String> {
     if ctx.enabled_tools.code_write {
         Ok(())
     } else {
-        Err("Harness MCP write capability is not enabled for this task".to_string())
+        Err("CodeMaintainer write capability is not enabled for this task".to_string())
     }
 }
 

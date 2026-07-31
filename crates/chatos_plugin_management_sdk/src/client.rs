@@ -16,8 +16,8 @@ use crate::dto::{
 };
 use crate::error::PluginManagementClientError;
 use crate::plugin_runtime::{
-    PluginInstallSource, PluginInstallSourceList, UpdateUserPluginPreferenceRequest,
-    UpdateUserPluginPreferenceResponse,
+    PluginCloudComponentBundle, PluginInstallSource, PluginInstallSourceList,
+    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
 };
 use crate::plugin_runtime::{PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload};
 
@@ -32,6 +32,7 @@ const LOCAL_CONNECTOR_READ_SCOPE: &str = "local-connector.read";
 const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
 const PLUGIN_OAUTH_MANAGE_SCOPE: &str = "plugin.oauth.manage";
 const PLUGIN_INSTALL_MANAGE_SCOPE: &str = "plugin.install.manage";
+const PLUGIN_CLOUD_READ_SCOPE: &str = "plugin.cloud.read";
 
 #[derive(Clone)]
 pub struct PluginManagementClient {
@@ -383,6 +384,26 @@ impl PluginManagementClient {
         let response = self
             .internal_request(Method::PUT, url, PLUGIN_INSTALL_MANAGE_SCOPE)?
             .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn get_plugin_cloud_component_bundle_for_service(
+        &self,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+    ) -> Result<PluginCloudComponentBundle, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/plugins/{}/releases/{}/cloud-components/{}",
+            self.config.base_url,
+            urlencoding::encode(plugin_id),
+            urlencoding::encode(release_id),
+            urlencoding::encode(component_key),
+        );
+        let response = self
+            .internal_request(Method::GET, url, PLUGIN_CLOUD_READ_SCOPE)?
             .send()
             .await?;
         parse_response(response).await

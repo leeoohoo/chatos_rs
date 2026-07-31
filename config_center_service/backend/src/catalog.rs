@@ -2,8 +2,14 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_agent::{
-    AGENT_MAX_ITERATIONS_CONFIG_KEY, AGENT_MAX_ITERATIONS_ENV, DEFAULT_AGENT_MAX_ITERATIONS,
-    LEGACY_CHATOS_MAX_ITERATIONS_ENV, LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
+    AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS,
+    DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
+    DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS, DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
+};
+pub use chatos_agent::{
+    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };
 use chrono::Utc;
 use memory_engine_sdk::{
@@ -19,6 +25,21 @@ pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
     "chatos.ai.max_iterations",
     "task_runner.execution.max_iterations",
 ];
+pub const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
+pub const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
+    "task_runner.execution.environment_mode";
+pub const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str =
+    "task_runner.ai.tool_result_max_chars";
+pub const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
+    "task_runner.ai.tool_results_total_max_chars";
+
+pub fn default_task_runner_execution_environment_mode() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "cloud"
+    } else {
+        "local"
+    }
+}
 
 pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let now = Utc::now().to_rfc3339();
@@ -53,11 +74,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(5000),
             &[],
             "next_request",
-            &[
-                AGENT_MAX_ITERATIONS_ENV,
-                LEGACY_CHATOS_MAX_ITERATIONS_ENV,
-                LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-            ],
+            &[],
             100,
             &now,
         ),
@@ -147,24 +164,75 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
-            "task_runner.runtime.max_iterations",
+            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
             "任务执行最大迭代次数",
             "单次 Task Run 允许的模型与工具循环总次数；最后两轮会自动关闭工具并强制收尾",
             "Task Runner / Execution",
             "service",
             Some("task-runner"),
             "integer",
-            json!(25),
+            json!(DEFAULT_AGENT_MAX_ITERATIONS),
             Some(2),
-            Some(500),
+            Some(5000),
             &[],
             "next_run",
-            &["TASK_RUNNER_EXECUTION_MAX_ITERATIONS"],
+            &[],
             200,
             &now,
         ),
         definition(
-            "task_runner.execution.timeout_ms",
+            TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+            "复盘触发：只读迭代次数",
+            "Task Run 连续多少轮没有真实工程改动时触发一次自动复盘；不会禁用工具",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS),
+            Some(1),
+            Some(5000),
+            &[],
+            "next_run",
+            &[],
+            202,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+            "复盘触发：缺失文件读取次数",
+            "Task Run 连续读取不存在文件达到该次数时触发自动复盘；不会禁用读取工具",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES),
+            Some(1),
+            Some(5000),
+            &[],
+            "next_run",
+            &[],
+            204,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+            "复盘触发：重复间隔",
+            "同一 Task Run 自动复盘之间至少间隔多少轮模型/工具循环",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL),
+            Some(1),
+            Some(5000),
+            &[],
+            "next_run",
+            &[],
+            206,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
             "任务执行超时",
             "单次 Task Run 执行超时毫秒数",
             "Task Runner / Execution",
@@ -176,12 +244,29 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(86_400_000),
             &[],
             "next_run",
-            &["TASK_RUNNER_EXECUTION_TIMEOUT_MS"],
+            &[],
             210,
             &now,
         ),
         definition(
-            "task_runner.ai.tool_result_max_chars",
+            TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
+            "任务执行环境模式",
+            "控制 Task Run 默认在本地执行还是云端沙箱执行",
+            "Task Runner / Execution",
+            "service",
+            Some("task-runner"),
+            "enum",
+            json!(default_task_runner_execution_environment_mode()),
+            None,
+            None,
+            &["local", "cloud"],
+            "next_run",
+            &[],
+            215,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
             "单工具结果字符上限",
             "单个工具结果进入模型上下文的最大字符数",
             "Task Runner / AI",
@@ -193,12 +278,12 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(10_000_000),
             &[],
             "next_run",
-            &["CHATOS_AI_TOOL_RESULT_MODEL_MAX_CHARS"],
+            &[],
             220,
             &now,
         ),
         definition(
-            "task_runner.ai.tool_results_total_max_chars",
+            TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
             "工具结果总字符上限",
             "一轮所有工具结果进入模型上下文的总字符预算",
             "Task Runner / AI",
@@ -210,7 +295,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             Some(100_000_000),
             &[],
             "next_run",
-            &["CHATOS_AI_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS"],
+            &[],
             230,
             &now,
         ),
@@ -522,60 +607,7 @@ fn memory_policy_definition(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_exposes_shared_and_task_runner_iteration_limits() {
-        let definitions = builtin_definitions();
-        let iteration_definitions = definitions
-            .iter()
-            .filter(|definition| definition.key.contains("max_iterations"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(iteration_definitions.len(), 2);
-        let shared = iteration_definitions
-            .iter()
-            .find(|definition| definition.key == AGENT_MAX_ITERATIONS_CONFIG_KEY)
-            .expect("shared agent iteration definition");
-        assert_eq!(shared.scope, "shared");
-        assert_eq!(shared.service_name, None);
-        assert_eq!(shared.default_value, json!(DEFAULT_AGENT_MAX_ITERATIONS));
-
-        let task_runner = iteration_definitions
-            .iter()
-            .find(|definition| definition.key == "task_runner.runtime.max_iterations")
-            .expect("task runner iteration definition");
-        assert_eq!(task_runner.scope, "service");
-        assert_eq!(task_runner.service_name.as_deref(), Some("task-runner"));
-        assert_eq!(task_runner.default_value, json!(25));
-    }
-
-    #[test]
-    fn catalog_exposes_shared_memory_policies_for_server_and_client() {
-        let definitions = builtin_definitions();
-        let memory_definitions = definitions
-            .iter()
-            .filter(|definition| definition.key.starts_with("memory_engine.policy."))
-            .collect::<Vec<_>>();
-
-        assert!(!memory_definitions.is_empty());
-        assert!(memory_definitions
-            .iter()
-            .all(|definition| definition.scope == "shared"));
-        assert!(memory_definitions
-            .iter()
-            .all(|definition| !definition.key.ends_with("model_profile_id")));
-        assert!(memory_definitions.iter().any(|definition| {
-            definition.key == "memory_engine.policy.rollup.keep_level0_count"
-                && definition.default_value == json!(5)
-        }));
-        assert!(memory_definitions.iter().any(|definition| {
-            definition.key == "memory_engine.policy.thread_repair.token_limit"
-                && definition.default_value == json!(200000)
-        }));
-    }
-}
+mod tests;
 
 #[allow(clippy::too_many_arguments)]
 fn definition(

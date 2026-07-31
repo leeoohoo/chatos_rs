@@ -272,9 +272,6 @@ fn insert_user_plugin_headers(
     if normalized_plugin_ids.is_empty() {
         return;
     }
-    let Some(device_id) = normalize_optional_text(plugin_device_id) else {
-        return;
-    };
     let mut normalized_invocations = normalize_plugin_command_invocations(
         normalized_plugin_ids.as_slice(),
         plugin_command_invocations,
@@ -304,7 +301,9 @@ fn insert_user_plugin_headers(
                 .collect(),
         })
         .collect::<Vec<_>>();
-    headers.insert("X-Task-Runner-Plugin-Device-Id".to_string(), device_id);
+    if let Some(device_id) = normalize_optional_text(plugin_device_id) {
+        headers.insert("X-Task-Runner-Plugin-Device-Id".to_string(), device_id);
+    }
     if let Some(workspace_id) = normalize_optional_text(plugin_workspace_id) {
         headers.insert(
             "X-Task-Runner-Plugin-Workspace-Id".to_string(),

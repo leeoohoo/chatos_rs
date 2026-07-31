@@ -158,10 +158,10 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/documents/1.22.0/skill.json"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/pdf/1.12.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/pdf/1.22.0/skill.json"
         )),
         "internal_skill_presentations" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/presentations/1.24.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/presentations/1.32.0/skill.json"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.4.0/skill.json"
@@ -215,7 +215,7 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/skill.json"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.19.0/skill.json"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/skill.json"
@@ -248,10 +248,10 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/documents/1.22.0/instructions.md"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/pdf/1.12.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/pdf/1.22.0/instructions.md"
         )),
         "internal_skill_presentations" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/presentations/1.24.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/presentations/1.32.0/instructions.md"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/spreadsheets/1.4.0/instructions.md"
@@ -305,7 +305,7 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/instructions.md"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.15.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/computer-use/1.19.0/instructions.md"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/excel-live-control/1.4.0/instructions.md"
@@ -338,7 +338,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "e77e59dc908731b8e248575d872ddabedde72c3368e9c752cde35ae20df1cb5a"
+            "51b5c8afc1534e3d77c92e1d4b2b1eb3ccfa364081d935a4f935abb9682b288f"
         );
     }
 
@@ -354,7 +354,7 @@ mod tests {
             .join("\n");
         assert_eq!(
             hex::encode(Sha256::digest(rows.as_bytes())),
-            "708f0c3a0f07340e0e5a0045e5ecb9c990d0375188ccd510d7195c1b72871816"
+            "412e255452cee4204512c3f595c60b052ad418050196afe248523f23c55de9fe"
         );
     }
 }

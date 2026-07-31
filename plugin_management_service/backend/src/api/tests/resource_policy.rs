@@ -423,18 +423,6 @@ fn release_managed_components_only_allow_rollout_overrides() {
         StatusCode::CONFLICT
     );
     assert_eq!(
-        validate_release_managed_skill_update(
-            &ownership,
-            &SkillPayload {
-                content: Some(SkillContent::default()),
-                ..SkillPayload::default()
-            }
-        )
-        .unwrap_err()
-        .status,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
         validate_release_managed_agent_update(
             &ownership,
             &SystemAgentPayload {

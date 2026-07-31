@@ -6,7 +6,7 @@ use super::*;
 pub(super) const PROJECT_COMPOSE_FILE_PATH: &str =
     ".chatos/runtime-environment/docker-compose.chatos.yml";
 
-pub(super) fn upsert_project_compose_config_file(
+pub(in crate::services::environment_agent) fn upsert_project_compose_config_file(
     project_id: &str,
     files: &mut Vec<ProjectRuntimeEnvironmentConfigFileRecord>,
     variables: &[ProjectRuntimeEnvironmentVariableRecord],
@@ -110,7 +110,15 @@ fn append_compose_application_service(
     if let Some(ports) = application.ports.as_array() {
         let ports = ports
             .iter()
-            .filter_map(Value::as_u64)
+            .filter_map(|value| {
+                value.as_u64().or_else(|| {
+                    value
+                        .get("container_port")
+                        .or_else(|| value.get("containerPort"))
+                        .or_else(|| value.get("port"))
+                        .and_then(Value::as_u64)
+                })
+            })
             .filter(|port| *port > 0 && *port <= u16::MAX as u64)
             .collect::<Vec<_>>();
         if !ports.is_empty() {
@@ -120,13 +128,14 @@ fn append_compose_application_service(
             }
         }
     }
-    if !service_kinds.is_empty() {
+    let dependencies = application_dependency_services(application, service_kinds);
+    if !dependencies.is_empty() {
         output.push_str("    depends_on:\n");
-        for service in service_kinds {
+        for service in dependencies {
             output.push_str(
                 format!(
                     "      {}:\n        condition: service_healthy\n",
-                    compose_service_name(service)
+                    compose_service_name(service.as_str())
                 )
                 .as_str(),
             );
@@ -155,9 +164,63 @@ pub(super) fn compose_project_name(project_id: &str) -> String {
 pub(super) fn compose_service_name(service: &str) -> &str {
     match service {
         "mongodb" => "mongodb",
-        "postgres" => "postgres",
+        "postgres" => "postgresql",
         other => other,
     }
+}
+
+fn application_dependency_services(
+    application: &ProjectRuntimeEnvironmentImageRecord,
+    available: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let mut dependencies = application
+        .depends_on
+        .iter()
+        .filter_map(|value| canonical_dependency_kind(value))
+        .filter(|kind| available.contains(kind.as_str()))
+        .collect::<std::collections::BTreeSet<_>>();
+    if dependencies.is_empty() {
+        let evidence = format!(
+            "{} {}",
+            serde_json::to_string(&application.env_vars).unwrap_or_default(),
+            application.dockerfile.as_deref().unwrap_or_default()
+        )
+        .to_ascii_lowercase();
+        for kind in available {
+            let markers: &[&str] = match kind.as_str() {
+                "postgres" => &["postgres", "postgresql"],
+                "mongodb" => &["mongodb", "mongo"],
+                "mysql" => &["mysql", "mariadb"],
+                "redis" => &["redis", "valkey"],
+                "rabbitmq" => &["rabbitmq", "amqp"],
+                other => &[other],
+            };
+            if markers.iter().any(|marker| evidence.contains(marker)) {
+                dependencies.insert(kind.clone());
+            }
+        }
+    }
+    dependencies.into_iter().collect()
+}
+
+fn canonical_dependency_kind(value: &str) -> Option<String> {
+    let value = value.trim().to_ascii_lowercase();
+    for (kind, markers) in [
+        ("postgres", &["postgres", "postgresql"] as &[_]),
+        ("mongodb", &["mongodb", "mongo"]),
+        ("mysql", &["mysql", "mariadb"]),
+        ("redis", &["redis", "valkey", "dragonfly"]),
+        ("nacos", &["nacos"]),
+        ("rabbitmq", &["rabbitmq", "amqp"]),
+        ("kafka", &["kafka", "redpanda"]),
+        ("elasticsearch", &["elasticsearch", "opensearch"]),
+        ("minio", &["minio", "s3"]),
+    ] {
+        if markers.iter().any(|marker| value.contains(marker)) {
+            return Some(kind.to_string());
+        }
+    }
+    None
 }
 
 pub(super) fn compose_service_volume(service: &str) -> Option<&'static str> {
@@ -179,7 +242,7 @@ pub(super) fn append_compose_dependency_service(output: &mut String, service: &s
     match service {
         "mysql" => output.push_str("  mysql:\n    image: mysql:8.4\n    env_file: [.env.chatos]\n    environment:\n      MYSQL_DATABASE: ${MYSQL_DATABASE:-app}\n      MYSQL_USER: ${MYSQL_USER:-app}\n      MYSQL_PASSWORD: ${MYSQL_PASSWORD}\n      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}\n    ports: [\"127.0.0.1:3306:3306\"]\n    volumes: [mysql-data:/var/lib/mysql]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"mysqladmin ping -h 127.0.0.1 -p$${MYSQL_ROOT_PASSWORD} --silent\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "mongodb" => output.push_str("  mongodb:\n    image: mongo:7.0\n    env_file: [.env.chatos]\n    environment:\n      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-app}\n      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}\n      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-app}\n    ports: [\"127.0.0.1:27017:27017\"]\n    volumes: [mongodb-data:/data/db]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' || exit 1\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
-        "postgres" => output.push_str("  postgres:\n    image: postgres:16-alpine\n    env_file: [.env.chatos]\n    environment:\n      POSTGRES_DB: ${POSTGRES_DB:-app}\n      POSTGRES_USER: ${POSTGRES_USER:-app}\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}\n    ports: [\"127.0.0.1:5432:5432\"]\n    volumes: [postgres-data:/var/lib/postgresql/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
+        "postgres" => output.push_str("  postgresql:\n    image: postgres:16-alpine\n    env_file: [.env.chatos]\n    environment:\n      POSTGRES_DB: ${POSTGRES_DB:-app}\n      POSTGRES_USER: ${POSTGRES_USER:-app}\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}\n    ports: [\"127.0.0.1:5432:5432\"]\n    volumes: [postgres-data:/var/lib/postgresql/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "redis" => output.push_str("  redis:\n    image: redis:7-alpine\n    env_file: [.env.chatos]\n    command: [\"sh\", \"-c\", \"exec redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}'\"]\n    ports: [\"127.0.0.1:6379:6379\"]\n    volumes: [redis-data:/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"redis-cli -a '$${REDIS_PASSWORD}' ping | grep PONG\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "nacos" => output.push_str("  nacos:\n    image: nacos/nacos-server:v2.4.3\n    environment:\n      MODE: standalone\n      NACOS_AUTH_ENABLE: \"false\"\n    ports: [\"127.0.0.1:8848:8848\", \"127.0.0.1:9848:9848\", \"127.0.0.1:9849:9849\"]\n    volumes: [nacos-data:/home/nacos/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"curl -fsS http://127.0.0.1:8848/nacos/ >/dev/null || exit 1\"]\n      interval: 15s\n      timeout: 5s\n      retries: 30\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "rabbitmq" => output.push_str("  rabbitmq:\n    image: rabbitmq:3.13-management-alpine\n    env_file: [.env.chatos]\n    environment:\n      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-app}\n      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}\n    ports: [\"127.0.0.1:5672:5672\", \"127.0.0.1:15672:15672\"]\n    volumes: [rabbitmq-data:/var/lib/rabbitmq]\n    healthcheck:\n      test: [\"CMD\", \"rabbitmq-diagnostics\", \"-q\", \"ping\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),

@@ -14,5 +14,12 @@
   "instructions_path": "instructions.md",
   "requires_workspace": false,
   "permissions": ["browser.chrome.control", "workspace.read", "workspace.write"],
-  "platforms": ["macos-arm64", "macos-x64", "windows-arm64", "windows-x64"]
+  "platforms": [
+    "linux-arm64",
+    "linux-x64",
+    "macos-arm64",
+    "macos-x64",
+    "windows-arm64",
+    "windows-x64"
+  ]
 }

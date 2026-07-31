@@ -24,7 +24,7 @@ mod turns;
 
 pub(crate) use agent_prompts::LocalAgentPromptRecord;
 pub(crate) use ask_user::LocalAskUserPromptRecord;
-pub(crate) use database::{database_path_for_state, LocalDatabase};
+pub(crate) use database::{database_path_for_state, embedded_migration_versions, LocalDatabase};
 pub(crate) use models::{
     AppendLocalMessageInput, AppendLocalRuntimeEventInput, BeginLocalBackgroundTurnInput,
     BeginLocalTurnInput, BeginLocalTurnResult, CompleteLocalTurnInput,

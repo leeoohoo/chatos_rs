@@ -24,6 +24,7 @@ pub(super) fn environment_response(
             "file_provider": environment.file_provider,
             "analysis_summary": environment.analysis_summary,
             "not_runnable_reason": environment.not_runnable_reason,
+            "execution_service_id": "workspace",
             "detected_stack": detected_stack,
             "required_services": parse_json(environment.required_services_json.as_str()),
             "env_vars": parse_json(environment.env_vars_json.as_str()),
@@ -33,7 +34,44 @@ pub(super) fn environment_response(
             "created_at": environment.created_at,
             "updated_at": environment.updated_at,
         },
-        "images": images.iter().map(|image| image_response(image, fallback_dockerfile.as_str())).collect::<Vec<_>>(),
+        "images": std::iter::once(workspace_response(environment))
+            .chain(images.iter().map(|image| image_response(image, fallback_dockerfile.as_str())))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn workspace_response(environment: &LocalRuntimeEnvironmentRecord) -> Value {
+    json!({
+        "id": "local-workspace",
+        "project_id": environment.project_id,
+        "environment_key": "workspace",
+        "environment_type": "workspace",
+        "display_name": "Project Workspace",
+        "service_id": "workspace",
+        "service_role": "workspace",
+        "source_root": ".",
+        "component_kind": "workspace",
+        "startup_command": Value::Null,
+        "test_command": Value::Null,
+        "depends_on": [],
+        "auto_start": true,
+        "mcp_policy": {
+            "managed_by": "system",
+            "attachment": "workspace_gateway_target",
+            "filesystem": true,
+            "terminal": true,
+        },
+        "image_id": "local-workspace",
+        "image_ref": Value::Null,
+        "image_provider": "local_connector",
+        "dockerfile": Value::Null,
+        "features": [],
+        "ports": [],
+        "env_vars": {},
+        "status": "local",
+        "error": Value::Null,
+        "created_at": environment.created_at,
+        "updated_at": environment.updated_at,
     })
 }
 
@@ -74,21 +112,12 @@ fn image_response(image: &LocalRuntimeEnvironmentImageRecord, fallback_dockerfil
     });
     let service_role = program_managed_service_role(image, dockerfile);
     let service_id = program_managed_service_id(image.environment_key.as_str(), service_role);
-    let mcp_policy = if service_role == "application" {
-        json!({
-            "managed_by": "system",
-            "attachment": "project_gateway_target",
-            "filesystem": true,
-            "terminal": true,
-        })
-    } else {
-        json!({
-            "managed_by": "system",
-            "attachment": "none",
-            "filesystem": false,
-            "terminal": false,
-        })
-    };
+    let mcp_policy = json!({
+        "managed_by": "system",
+        "attachment": "none",
+        "filesystem": false,
+        "terminal": false,
+    });
     json!({
         "id": image.id,
         "project_id": image.project_id,
@@ -97,6 +126,12 @@ fn image_response(image: &LocalRuntimeEnvironmentImageRecord, fallback_dockerfil
         "display_name": image.display_name,
         "service_id": service_id,
         "service_role": service_role,
+        "source_root": image.source_root,
+        "component_kind": image.component_kind,
+        "startup_command": image.startup_command,
+        "test_command": image.test_command,
+        "depends_on": parse_json(image.depends_on_json.as_str()),
+        "auto_start": image.auto_start,
         "mcp_policy": mcp_policy,
         "image_id": image.image_id,
         "image_ref": image.image_ref,
@@ -131,8 +166,10 @@ pub(super) fn program_managed_service_id(environment_key: &str, service_role: &s
     }
     if normalized.is_empty() {
         normalized = match service_role {
+            "workspace" => "workspace",
             "application" => "application",
             "dependency" => "dependency",
+            "artifact" => "artifact",
             _ => "service",
         }
         .to_string();
@@ -142,8 +179,10 @@ pub(super) fn program_managed_service_id(environment_key: &str, service_role: &s
         .is_some_and(|character| character.is_ascii_digit())
     {
         let prefix = match service_role {
+            "workspace" => "workspace",
             "application" => "app",
             "dependency" => "dependency",
+            "artifact" => "artifact",
             _ => "service",
         };
         normalized = format!("{prefix}-{normalized}");
@@ -186,6 +225,14 @@ fn program_managed_service_role(
     {
         return "dependency";
     }
+    if image
+        .environment_type
+        .trim()
+        .eq_ignore_ascii_case("artifact")
+        || image.component_kind.trim().eq_ignore_ascii_case("artifact")
+    {
+        return "artifact";
+    }
     let declared_application = image
         .environment_type
         .trim()
@@ -211,7 +258,8 @@ fn parse_json(raw: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::program_managed_service_id;
+    use super::{environment_response, program_managed_service_id};
+    use crate::local_runtime::{LocalRuntimeEnvironmentImageRecord, LocalRuntimeEnvironmentRecord};
 
     #[test]
     fn local_service_ids_match_program_managed_compose_constraints() {
@@ -226,5 +274,59 @@ mod tests {
         assert!(service_id.starts_with("app-123-a-deliberately"));
         assert!(service_id.len() <= 63);
         assert!(!service_id.ends_with('-'));
+    }
+
+    #[test]
+    fn local_response_exposes_one_workspace_and_peer_components_without_mcp() {
+        let environment = LocalRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            status: "ready".to_string(),
+            sandbox_enabled: true,
+            sandbox_provider: "local_connector".to_string(),
+            file_provider: "local_connector".to_string(),
+            analysis_summary: None,
+            not_runnable_reason: None,
+            detected_stack_json: "{}".to_string(),
+            required_services_json: "[]".to_string(),
+            env_vars_json: "{}".to_string(),
+            generated_config_files_json: "[]".to_string(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let application = LocalRuntimeEnvironmentImageRecord {
+            id: "app-1".to_string(),
+            project_id: "project-1".to_string(),
+            environment_key: "services/api".to_string(),
+            environment_type: "application".to_string(),
+            display_name: "API".to_string(),
+            source_root: "services/api".to_string(),
+            component_kind: "application".to_string(),
+            startup_command: Some("npm start".to_string()),
+            test_command: Some("npm test".to_string()),
+            depends_on_json: "[\"postgres\"]".to_string(),
+            auto_start: true,
+            image_id: None,
+            image_ref: None,
+            image_provider: "local_connector".to_string(),
+            dockerfile: Some("FROM node:24".to_string()),
+            features_json: "[]".to_string(),
+            ports_json: "[]".to_string(),
+            env_vars_json: "{}".to_string(),
+            status: "planned".to_string(),
+            error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+
+        let response = environment_response(&environment, &[application]);
+        assert_eq!(response["environment"]["execution_service_id"], "workspace");
+        assert_eq!(response["images"][0]["service_role"], "workspace");
+        assert_eq!(response["images"][1]["service_role"], "application");
+        assert_eq!(response["images"][1]["mcp_policy"]["attachment"], "none");
+        assert_eq!(response["images"][1]["source_root"], "services/api");
+        assert_eq!(response["images"][1]["depends_on"][0], "postgres");
     }
 }

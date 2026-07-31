@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use chatos_plugin_management_sdk::{
-    normalized_plugin_manifest_sha256, PluginCatalogRecord, PluginInstallStatus,
-    PluginMarketplaceRecord, PluginReleaseRecord,
+    normalized_plugin_manifest_sha256, PluginCatalogRecord, PluginExecutionHost,
+    PluginInstallStatus, PluginMarketplaceRecord, PluginReleaseRecord,
 };
 use chrono::Utc;
 use serde::Serialize;
@@ -133,6 +133,7 @@ impl PluginInstaller {
         &self,
         request: PluginInstallRequest<'_>,
     ) -> Result<PluginInstallOutcome> {
+        ensure_release_has_local_install_path(request.release)?;
         let _guard = self.operation_guard()?;
         self.ensure_upgrade_is_allowed(
             request.catalog.id.as_str(),
@@ -218,6 +219,7 @@ impl PluginInstaller {
     ) -> Result<PendingPluginInstall> {
         let _guard = self.operation_guard()?;
         verify_plugin_install_source_records(marketplace, catalog, release)?;
+        ensure_release_has_local_install_path(release)?;
         if catalog.latest_release_id != release.id || release.release_channel != "stable" {
             bail!("network Plugin install source is not the current stable Release");
         }
@@ -515,6 +517,19 @@ impl PluginInstaller {
             .map(|vault| vault.purge_release(plugin_id, release_id))
             .transpose()
             .map(|purged| purged.unwrap_or_default())
+    }
+}
+
+fn ensure_release_has_local_install_path(release: &PluginReleaseRecord) -> Result<()> {
+    if release.components.iter().any(|component| {
+        matches!(
+            component.execution_host,
+            PluginExecutionHost::Local | PluginExecutionHost::Portable
+        )
+    }) {
+        Ok(())
+    } else {
+        bail!("cloud-only Plugins run without a Local Connector installation")
     }
 }
 

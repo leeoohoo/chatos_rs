@@ -3,15 +3,16 @@
 
 import {
   ApiOutlined,
-  AppstoreOutlined,
+  AuditOutlined,
   BranchesOutlined,
   GlobalOutlined,
   LogoutOutlined,
+  MonitorOutlined,
   RocketOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
   ShopOutlined,
-  ThunderboltOutlined,
+  SolutionOutlined,
 } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
@@ -22,13 +23,14 @@ import type { CurrentUser } from '../types';
 
 export type AppSection =
   | 'mcps'
-  | 'skills'
-  | 'packages'
   | 'marketplaces'
+  | 'publishers'
+  | 'diagnostics'
   | 'plugins'
   | 'releases'
   | 'agents'
-  | 'runtime';
+  | 'runtime'
+  | 'audit';
 
 interface AppShellProps {
   user: CurrentUser;
@@ -41,15 +43,16 @@ export function AppShell({ user, section, onSectionChange, children }: AppShellP
   const { locale, setLocale, t } = useI18n();
   const menuItems = [
     { key: 'mcps', icon: <ApiOutlined />, label: t('nav.mcps') },
-    { key: 'skills', icon: <ThunderboltOutlined />, label: t('nav.skills') },
-    { key: 'packages', icon: <AppstoreOutlined />, label: t('nav.packages') },
     { key: 'marketplaces', icon: <ShopOutlined />, label: t('nav.pluginMarketplaces') },
+    { key: 'publishers', icon: <SolutionOutlined />, label: t('nav.pluginPublishers') },
+    { key: 'diagnostics', icon: <MonitorOutlined />, label: t('nav.pluginDiagnostics') },
     ...(user.role === 'super_admin'
       ? [
           { key: 'plugins', icon: <SafetyCertificateOutlined />, label: t('nav.plugins') },
           { key: 'releases', icon: <RocketOutlined />, label: t('nav.pluginReleases') },
           { key: 'agents', icon: <RobotOutlined />, label: t('nav.agents') },
           { key: 'runtime', icon: <BranchesOutlined />, label: t('nav.runtime') },
+          { key: 'audit', icon: <AuditOutlined />, label: t('nav.pluginAudit') },
         ]
       : []),
   ];

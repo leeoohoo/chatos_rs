@@ -30,17 +30,38 @@ function parsedSuccessBody(response) {
   }
 }
 
+function isTransientIpcError(error) {
+  return ['ENOENT', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ERROR_PIPE_BUSY'].includes(error?.code);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function localConnectorCoreUnavailableError(error) {
+  const message = error instanceof Error ? error.message : String(error || 'unknown error');
+  const wrapped = new Error(
+    `Local Connector Core is not ready. Please wait a moment and try again. Original error: ${message}`,
+  );
+  if (error?.code) {
+    wrapped.code = error.code;
+  }
+  return wrapped;
+}
+
 function createDesktopTicketAuthenticator({
   sendIpcHttpRequest,
   localApiHeaders,
   getCloudBaseUrl,
+  retryAttempts = 30,
+  retryDelayMs = 100,
 }) {
   return async function authenticateDesktopTicket(ticket) {
     const trimmed = String(ticket || '').trim();
     if (!trimmed) {
       throw new Error('Local Connector authorization ticket is empty');
     }
-    const response = await sendIpcHttpRequest({
+    const request = {
       endpoint: '/api/local/auth/desktop-ticket',
       method: 'POST',
       headers: localApiHeaders(true),
@@ -48,7 +69,28 @@ function createDesktopTicketAuthenticator({
         cloud_base_url: getCloudBaseUrl(),
         ticket: trimmed,
       }),
-    });
+    };
+    let response = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < retryAttempts; attempt += 1) {
+      try {
+        response = await sendIpcHttpRequest(request);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (!isTransientIpcError(error)) {
+          throw error;
+        }
+        if (attempt + 1 >= retryAttempts) {
+          throw localConnectorCoreUnavailableError(error);
+        }
+        await delay(retryDelayMs);
+      }
+    }
+    if (!response) {
+      throw localConnectorCoreUnavailableError(lastError);
+    }
     if (!response?.ok) {
       throw new Error(responseErrorMessage(response));
     }
@@ -58,4 +100,5 @@ function createDesktopTicketAuthenticator({
 
 module.exports = {
   createDesktopTicketAuthenticator,
+  isTransientIpcError,
 };

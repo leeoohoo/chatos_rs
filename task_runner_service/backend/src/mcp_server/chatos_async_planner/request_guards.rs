@@ -87,9 +87,22 @@ fn ensure_planner_mcp_config_defaults(config: &mut TaskMcpConfig) {
     let defaults = TaskMcpConfig::default();
     config.enabled = true;
     config.init_mode = defaults.init_mode;
-    config
-        .enabled_builtin_kinds
-        .retain(|kind| !is_planner_required_builtin_kind(kind));
+    let mut normalized = Vec::new();
+    for value in std::mem::take(&mut config.enabled_builtin_kinds) {
+        if is_planner_required_builtin_kind(value.as_str()) {
+            continue;
+        }
+        let Some(kind) = builtin_kind_by_any(value.as_str()) else {
+            continue;
+        };
+        if !normalized.contains(&kind) {
+            normalized.push(kind);
+        }
+    }
+    config.enabled_builtin_kinds = normalized
+        .into_iter()
+        .map(|kind| kind.kind_name().to_string())
+        .collect();
 }
 
 fn planner_schedule_contact_async_now(

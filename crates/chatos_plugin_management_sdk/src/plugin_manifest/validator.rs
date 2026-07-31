@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
-use reqwest::Url;
 use semver::{Version, VersionReq};
 
 use super::components::{
@@ -17,8 +16,15 @@ use super::components::{
     PLUGIN_UI_SURFACE_ARTIFACT_VIEWER, PLUGIN_UI_SURFACE_DETAIL_PANEL,
     PLUGIN_UI_SURFACE_MESSAGE_PANEL, PLUGIN_UI_SURFACE_WORKBENCH,
 };
-use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1};
+use super::normalized::{
+    PluginExecutionHost, PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+    PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
+};
 use super::paths::normalize_plugin_relative_path;
+use super::validation_support::{
+    issue, required_text, validate_brand_color, validate_mcp_http_url, validate_optional_email,
+    validate_optional_https_url, validate_stdio_environment,
+};
 use super::PluginManifestValidationIssue;
 use crate::SystemAgentKey;
 
@@ -46,13 +52,20 @@ pub fn validate_plugin_manifest(
 ) -> Result<(), PluginManifestValidationError> {
     let mut issues = Vec::new();
 
-    if manifest.schema_version != PLUGIN_MANIFEST_SCHEMA_VERSION_V1 {
+    if ![
+        PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+        PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
+    ]
+    .contains(&manifest.schema_version)
+    {
         issue(
             &mut issues,
             "schemaVersion",
             format!(
-                "unsupported schema version {}; expected {}",
-                manifest.schema_version, PLUGIN_MANIFEST_SCHEMA_VERSION_V1
+                "unsupported schema version {}; expected {} or {}",
+                manifest.schema_version,
+                PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
+                PLUGIN_MANIFEST_SCHEMA_VERSION_V2
             ),
         );
     }
@@ -202,14 +215,16 @@ pub fn validate_plugin_manifest(
         if let Some(target_agent) = command.target_agent.as_deref() {
             if ![
                 SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
                 SystemAgentKey::TaskRunnerRunPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
             ]
             .contains(&target_agent)
             {
                 issue(
                     &mut issues,
                     format!("commands[{index}].target_agent").as_str(),
-                    "target agent must be task_runner_plan_phase or task_runner_run_phase",
+                    "target agent must be task_runner_plan_phase, task_runner_local_plan_phase, task_runner_run_phase, or task_runner_local_run_phase",
                 );
             }
         }
@@ -269,14 +284,16 @@ pub fn validate_plugin_manifest(
         }
         if ![
             SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
         ]
         .contains(&agent.base_agent.as_str())
         {
             issue(
                 &mut issues,
                 format!("agents[{index}].base_agent").as_str(),
-                "base agent must be task_runner_plan_phase or task_runner_run_phase",
+                "base agent must be task_runner_plan_phase, task_runner_local_plan_phase, task_runner_run_phase, or task_runner_local_run_phase",
             );
         }
         validate_allowed_tools(
@@ -314,6 +331,7 @@ pub fn validate_plugin_manifest(
 
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
+    validate_execution_policy(manifest, &component_keys, &mut issues);
 
     let component_count = manifest.skills.len()
         + manifest.mcp_servers.len()
@@ -334,6 +352,90 @@ pub fn validate_plugin_manifest(
         Ok(())
     } else {
         Err(PluginManifestValidationError { issues })
+    }
+}
+
+fn validate_execution_policy(
+    manifest: &PluginManifest,
+    component_keys: &HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    if manifest.schema_version == PLUGIN_MANIFEST_SCHEMA_VERSION_V1 {
+        if !manifest.execution.is_implicit_v1() {
+            issue(
+                issues,
+                "execution",
+                "schemaVersion 1 must not declare execution",
+            );
+        }
+        return;
+    }
+
+    let mut kinds = BTreeMap::new();
+    for (index, skill) in manifest.skills.iter().enumerate() {
+        kinds.insert(
+            component_key_from_path(skill.path.as_str(), "skills", index),
+            "skill",
+        );
+    }
+    for component in &manifest.mcp_servers {
+        kinds.insert(component.component_key().to_string(), "mcp_server");
+    }
+    for component in &manifest.apps {
+        kinds.insert(component.component_key.clone(), "connected_app");
+    }
+    for component in &manifest.commands {
+        kinds.insert(component.component_key.clone(), "command");
+    }
+    for component in &manifest.agents {
+        kinds.insert(component.component_key.clone(), "agent");
+    }
+    for component in &manifest.hooks {
+        kinds.insert(component.component_key.clone(), "hook_set");
+    }
+    for component in &manifest.ui {
+        kinds.insert(component.component_key.clone(), "ui_contribution");
+    }
+
+    for component_key in manifest.execution.component_hosts.keys() {
+        if !component_keys.contains(component_key) {
+            issue(
+                issues,
+                "execution.componentHosts",
+                format!("unknown component key {component_key}"),
+            );
+        }
+    }
+
+    for (component_key, kind) in &kinds {
+        let host = manifest.execution.host_for(component_key);
+        if host != PluginExecutionHost::Local && !matches!(*kind, "skill" | "command" | "agent") {
+            issue(
+                issues,
+                "execution",
+                format!("{kind} component {component_key} must use local execution"),
+            );
+        }
+    }
+
+    for (index, permission) in manifest.permissions.iter().enumerate() {
+        let targets_cloud_component = if permission.components.is_empty() {
+            kinds
+                .keys()
+                .any(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+        } else {
+            permission
+                .components
+                .iter()
+                .any(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+        };
+        if targets_cloud_component {
+            issue(
+                issues,
+                format!("permissions[{index}]").as_str(),
+                "cloud and portable components must not request runtime permissions",
+            );
+        }
     }
 }
 
@@ -729,178 +831,4 @@ fn validate_stdio_command(
             "generic shell evaluation is not allowed for plugin MCP entrypoints",
         );
     }
-}
-
-fn validate_stdio_environment(
-    index: usize,
-    env: &std::collections::BTreeMap<String, String>,
-    issues: &mut Vec<PluginManifestValidationIssue>,
-) {
-    if env.len() > 64 {
-        issue(
-            issues,
-            format!("mcpServers[{index}].env").as_str(),
-            "stdio MCP environment exceeds 64 variables",
-        );
-    }
-    for (name, value) in env {
-        let field = format!("mcpServers[{index}].env.{name}");
-        let valid_name = !name.is_empty()
-            && name.len() <= 128
-            && name
-                .bytes()
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-        if !valid_name {
-            issue(
-                issues,
-                field.as_str(),
-                "stdio MCP environment variable name is invalid",
-            );
-            continue;
-        }
-        if is_host_controlled_environment_name(name) {
-            issue(
-                issues,
-                field.as_str(),
-                "stdio MCP environment variable is controlled by the Host",
-            );
-        }
-        let secret_name = value
-            .strip_prefix("${credential:")
-            .and_then(|value| value.strip_suffix('}'));
-        let valid_secret = secret_name.is_some_and(|secret_name| {
-            !secret_name.is_empty()
-                && secret_name.len() <= 128
-                && secret_name
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        });
-        if !valid_secret {
-            issue(
-                issues,
-                field.as_str(),
-                "stdio MCP environment values must be exact ${credential:<secret_name>} templates",
-            );
-        }
-    }
-}
-
-fn is_host_controlled_environment_name(name: &str) -> bool {
-    let name = name.to_ascii_uppercase();
-    matches!(
-        name.as_str(),
-        "PATH"
-            | "HOME"
-            | "SHELL"
-            | "TMPDIR"
-            | "TMP"
-            | "TEMP"
-            | "COMSPEC"
-            | "PATHEXT"
-            | "SYSTEMROOT"
-            | "WINDIR"
-            | "USERPROFILE"
-            | "NODE_OPTIONS"
-            | "PYTHONHOME"
-            | "PYTHONPATH"
-            | "RUBYOPT"
-            | "PERL5OPT"
-            | "BASH_ENV"
-            | "ENV"
-            | "PROMPT_COMMAND"
-    ) || name.starts_with("LD_")
-        || name.starts_with("DYLD_")
-        || name.starts_with("XDG_")
-}
-
-fn validate_brand_color(value: Option<&str>, issues: &mut Vec<PluginManifestValidationIssue>) {
-    let Some(value) = value else {
-        return;
-    };
-    let valid = value.len() == 7
-        && value.starts_with('#')
-        && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit());
-    if !valid {
-        issue(
-            issues,
-            "interface.brandColor",
-            "brand color must use #RRGGBB",
-        );
-    }
-}
-
-fn validate_optional_email(value: Option<&str>, issues: &mut Vec<PluginManifestValidationIssue>) {
-    if let Some(value) = value {
-        let valid = value
-            .split_once('@')
-            .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'));
-        if !valid {
-            issue(issues, "author.email", "email address is invalid");
-        }
-    }
-}
-
-fn validate_optional_https_url(
-    field: &str,
-    value: Option<&str>,
-    issues: &mut Vec<PluginManifestValidationIssue>,
-) {
-    if let Some(value) = value {
-        validate_https_url(field.to_string(), value, issues);
-    }
-}
-
-fn validate_https_url(field: String, value: &str, issues: &mut Vec<PluginManifestValidationIssue>) {
-    let valid = Url::parse(value)
-        .ok()
-        .is_some_and(|url| url.scheme() == "https" && url.host_str().is_some());
-    if !valid {
-        issue(
-            issues,
-            field.as_str(),
-            "URL must be an absolute https:// URL",
-        );
-    }
-}
-
-fn validate_mcp_http_url(
-    field: String,
-    value: &str,
-    issues: &mut Vec<PluginManifestValidationIssue>,
-) {
-    let valid = Url::parse(value).ok().is_some_and(|url| {
-        let Some(host) = url.host_str() else {
-            return false;
-        };
-        let loopback = host.eq_ignore_ascii_case("localhost")
-            || host
-                .parse::<std::net::IpAddr>()
-                .ok()
-                .is_some_and(|address| address.is_loopback());
-        url.scheme() == "https" || (url.scheme() == "http" && loopback)
-    });
-    if !valid {
-        issue(
-            issues,
-            field.as_str(),
-            "MCP URL must use https://, except for http:// loopback development servers",
-        );
-    }
-}
-
-fn required_text(issues: &mut Vec<PluginManifestValidationIssue>, field: &str, value: &str) {
-    if value.trim().is_empty() {
-        issue(issues, field, "field is required");
-    }
-}
-
-fn issue(issues: &mut Vec<PluginManifestValidationIssue>, field: &str, message: impl Into<String>) {
-    issues.push(PluginManifestValidationIssue {
-        field: field.to_string(),
-        message: message.into(),
-    });
 }

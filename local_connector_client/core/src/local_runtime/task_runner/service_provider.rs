@@ -12,6 +12,7 @@ use chatos_plugin_management_sdk::SystemAgentKey;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::local_runtime::capabilities::remove_retired_task_manager_mcp;
 use crate::local_runtime::project_management::UpdateLocalWorkItemInput;
 use crate::local_runtime::storage::LocalDatabase;
 use crate::local_runtime::task_board::LocalTaskBoardTaskRecord;
@@ -55,29 +56,31 @@ impl LocalTaskRunnerServiceProvider {
         state: &LocalState,
     ) -> Result<Self, String> {
         let owner_user_id = owner_user_id.into();
-        let capabilities = database
+        let mut capabilities = database
             .get_capability_snapshot(
                 owner_user_id.as_str(),
-                SystemAgentKey::TaskRunnerRunPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
             )
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| {
-                "Plugin capability snapshot is missing for task_runner_run_phase".to_string()
+                "Plugin capability snapshot is missing for task_runner_local_run_phase".to_string()
             })?;
+        remove_retired_task_manager_mcp(&mut capabilities);
         capabilities
             .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
-        let planning_capabilities = database
+        let mut planning_capabilities = database
             .get_capability_snapshot(
                 owner_user_id.as_str(),
-                SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
             )
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| {
-                "Plugin capability snapshot is missing for task_runner_plan_phase".to_string()
+                "Plugin capability snapshot is missing for task_runner_local_plan_phase".to_string()
             })?;
+        remove_retired_task_manager_mcp(&mut planning_capabilities);
         planning_capabilities
             .ensure_required_runtime_supported([], [])
             .map_err(|error| error.to_string())?;
@@ -364,6 +367,16 @@ impl LocalTaskRunnerServiceProvider {
             .iter()
             .filter_map(|item| item.get("id").cloned())
             .collect::<Vec<_>>();
+        let skill_options = self
+            .available_skills
+            .iter()
+            .filter_map(|item| catalog_option_schema(item, "id"))
+            .collect::<Vec<_>>();
+        let selected_skill_items = if skill_options.is_empty() {
+            json!({"type": "string", "enum": skill_ids})
+        } else {
+            json!({"type": "string", "oneOf": skill_options})
+        };
         json!({
             "title": {"type": "string", "minLength": 1, "description": "任务标题。"},
             "description": {"type": "string", "description": "任务背景和上下文。"},
@@ -391,7 +404,7 @@ impl LocalTaskRunnerServiceProvider {
                 "type": "array",
                 "items": {"type": "string", "enum": builtin_kinds},
                 "uniqueItems": true,
-                "description": "只能选择插件管理对本地 Task Runner Run Phase 开放的内置能力。需要写入能力时必须同时选择读取能力。"
+                "description": "只能选择插件管理对本地 Task Runner 规划/执行智能体开放的内置能力。is_planning_task=true 时使用 task_runner_local_plan_phase 的 MCP 配置；is_planning_task=false 时使用 task_runner_local_run_phase 的 MCP 配置。网页自动化/网页检索选择 BrowserTools；终端命令选择 TerminalController；需要写入能力时必须同时选择读取能力。不要把本机桌面 App 操作误归类为 BrowserTools。"
             },
             "external_mcp_config_ids": {
                 "type": "array",
@@ -400,8 +413,9 @@ impl LocalTaskRunnerServiceProvider {
             },
             "selected_skill_ids": {
                 "type": "array",
-                "items": {"type": "string", "enum": skill_ids},
-                "uniqueItems": true
+                "items": selected_skill_items,
+                "uniqueItems": true,
+                "description": "插件 / Skill 多选框字段。根据任务目标从 items.oneOf 中选择 0 个或多个可用插件 ID；每个选项都带有人类可读名称和用途说明。网页浏览优先 BrowserTools；本机桌面 App、屏幕、窗口、鼠标键盘使用 Computer Use；文档/PDF/表格/演示文稿按文件类型选择对应 Skill。不要选择与任务无关的插件。"
             }
         })
     }
@@ -1417,6 +1431,32 @@ fn normalize_ids(values: Vec<String>) -> Vec<String> {
     })
 }
 
+fn catalog_option_schema(item: &Value, id_key: &str) -> Option<Value> {
+    let id = item.get(id_key)?.as_str()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let display_name = item
+        .get("display_name")
+        .or_else(|| item.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(id);
+    let description = item
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some(json!({
+        "const": id,
+        "title": display_name,
+        "description": description
+            .map(|value| format!("{display_name} ({id}): {value}"))
+            .unwrap_or_else(|| format!("{display_name} ({id})")),
+    }))
+}
+
 fn normalized(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -1510,32 +1550,4 @@ fn tool_result(payload: Value) -> Value {
 }
 
 #[cfg(test)]
-mod dependency_reduction_tests {
-    use serde_json::json;
-
-    use super::{
-        decode, reduce_local_project_execution_dependencies, CreateProjectExecutionTasksArgs,
-    };
-
-    #[test]
-    fn local_materializer_preserves_removed_hard_edges_as_context() {
-        let mut args: CreateProjectExecutionTasksArgs = decode(json!({
-            "project_id": "project-1",
-            "requirement_id": "requirement-1",
-            "tasks": [
-                { "client_ref": "a", "project_task_id": "p-a", "title": "A", "objective": "A", "is_planning_task": false },
-                { "client_ref": "b", "project_task_id": "p-b", "title": "B", "objective": "B", "is_planning_task": false, "prerequisite_refs": ["a"] },
-                { "client_ref": "c", "project_task_id": "p-c", "title": "C", "objective": "C", "is_planning_task": false, "prerequisite_refs": ["a", "b"] }
-            ]
-        }))
-        .expect("local project graph args");
-
-        let diagnostics = reduce_local_project_execution_dependencies(args.tasks.as_mut_slice())
-            .expect("valid local graph");
-
-        assert_eq!(diagnostics.submitted_edge_count, 3);
-        assert_eq!(diagnostics.persisted_edge_count, 2);
-        assert_eq!(args.tasks[2].prerequisite_refs, vec!["b"]);
-        assert_eq!(args.tasks[2].context_refs, vec!["a"]);
-    }
-}
+mod dependency_reduction_tests;

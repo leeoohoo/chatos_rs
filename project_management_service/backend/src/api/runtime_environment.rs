@@ -12,8 +12,8 @@ use crate::models::*;
 use crate::services::environment_agent::{
     analyze_project_runtime_environment, generate_project_runtime_environment_image,
     get_project_runtime_environment_deployment, get_project_runtime_environment_progress,
-    restart_project_runtime_environment, start_project_runtime_environment,
-    stop_project_runtime_environment,
+    refresh_project_runtime_compose_config, restart_project_runtime_environment,
+    start_project_runtime_environment, stop_project_runtime_environment,
 };
 use crate::services::runtime_environment::{
     apply_environment_variable_overrides, default_runtime_environment_for_project,
@@ -23,6 +23,8 @@ use crate::services::runtime_environment::{
 use crate::state::AppState;
 
 const MAX_ANALYSIS_REQUIREMENT_LENGTH: usize = 4_000;
+const MAX_SELECTED_DEPENDENCIES: usize = 64;
+const MAX_SELECTED_DEPENDENCY_LENGTH: usize = 80;
 
 pub(in crate::api) async fn get_project_runtime_environment(
     Path(project_id): Path<String>,
@@ -44,11 +46,19 @@ pub(in crate::api) async fn get_project_runtime_environment(
         .map_err(ApiError::bad_request)?;
     let mut environment_changed =
         replace_legacy_internal_routing_summary(&mut environment, images.as_slice());
-    if enforce_project_runtime_boundary(
-        project.execution_plane,
-        &mut environment,
-        images.as_mut_slice(),
-    ) {
+    if enforce_project_runtime_boundary(project.execution_plane, &mut environment, &mut images) {
+        environment_changed = true;
+    }
+    if refresh_project_runtime_compose_config(&project_id, &mut environment, images.as_slice())
+        .map_err(ApiError::bad_request)?
+    {
+        environment.analysis_summary = Some(
+            crate::services::runtime_environment::program_generated_runtime_analysis_summary(
+                &environment,
+                images.as_slice(),
+            ),
+        );
+        environment.updated_at = now_rfc3339();
         environment_changed = true;
     }
     if environment_changed {
@@ -94,17 +104,27 @@ pub(in crate::api) async fn update_project_runtime_environment_variables(
         && crate::services::runtime_environment::required_environment_variables_are_complete(
             &environment.environment_variables,
         )
-        && !images.is_empty()
-        && images.iter().all(|image| {
-            matches!(
-                image.status.trim().to_ascii_lowercase().as_str(),
-                "ready" | "available" | "local" | "succeeded" | "running"
-            )
-        })
+        && images
+            .iter()
+            .filter(|image| {
+                crate::services::runtime_environment::runtime_image_is_execution_required(image)
+            })
+            .all(|image| {
+                matches!(
+                    image.status.trim().to_ascii_lowercase().as_str(),
+                    "ready" | "available" | "local" | "succeeded" | "running"
+                )
+            })
     {
         environment.status = ProjectRuntimeEnvironmentStatus::Ready;
         environment.last_error = None;
     }
+    environment.analysis_summary = Some(
+        crate::services::runtime_environment::program_generated_runtime_analysis_summary(
+            &environment,
+            images.as_slice(),
+        ),
+    );
     environment.updated_at = now_rfc3339();
     let environment = state
         .store
@@ -277,9 +297,9 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
     ensure_cloud_agent_execution(&project)?;
-    let analysis_requirement = normalize_analysis_requirement(
-        payload.and_then(|Json(payload)| payload.analysis_requirement),
-    )?;
+    let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
+    let analysis_requirement = normalize_analysis_requirement(payload.analysis_requirement)?;
+    let selected_dependencies = normalize_selected_dependencies(payload.selected_dependencies)?;
 
     {
         let mut active = state.runtime_environment_analysis_jobs.lock().await;
@@ -343,6 +363,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let worker_run_id = run_id.clone();
     let worker_access_token = access_token.0.clone();
     let worker_analysis_requirement = analysis_requirement;
+    let worker_selected_dependencies = selected_dependencies;
     tokio::spawn(async move {
         let task_state = worker_state.clone();
         let task_project = worker_project.clone();
@@ -354,6 +375,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
                 Some(worker_access_token.as_str()),
                 task_run_id.as_str(),
                 worker_analysis_requirement.as_deref(),
+                worker_selected_dependencies.as_slice(),
             )
             .await
         });
@@ -396,12 +418,38 @@ fn normalize_analysis_requirement(value: Option<String>) -> Result<Option<String
     Ok(requirement)
 }
 
+fn normalize_selected_dependencies(values: Vec<String>) -> Result<Vec<String>, ApiError> {
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if value.chars().count() > MAX_SELECTED_DEPENDENCY_LENGTH {
+            return Err(ApiError::bad_request(format!(
+                "selected_dependencies entries must not exceed {MAX_SELECTED_DEPENDENCY_LENGTH} characters"
+            )));
+        }
+        if seen.insert(value.to_lowercase()) {
+            normalized.push(value.to_string());
+        }
+    }
+    if normalized.len() > MAX_SELECTED_DEPENDENCIES {
+        return Err(ApiError::bad_request(format!(
+            "selected_dependencies must not contain more than {MAX_SELECTED_DEPENDENCIES} entries"
+        )));
+    }
+    Ok(normalized)
+}
+
 fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRecord, run_id: &str) {
     environment.status = ProjectRuntimeEnvironmentStatus::Analyzing;
     environment.sandbox_provider = RuntimeEnvironmentProvider::None;
     environment.file_provider = RuntimeEnvironmentProvider::None;
     environment.analysis_summary = Some("正在重新分析项目并准备沙箱运行环境。".to_string());
     environment.not_runnable_reason = None;
+    environment.execution_service_id = None;
     environment.detected_stack = empty_object();
     environment.required_services = empty_array();
     refresh_environment_variable_values(environment);
@@ -455,7 +503,10 @@ async fn persist_background_analysis_failure(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_analysis_requirement, reset_environment_for_analysis};
+    use super::{
+        normalize_analysis_requirement, normalize_selected_dependencies,
+        reset_environment_for_analysis,
+    };
     use crate::models::{
         ProjectRuntimeEnvironmentRecord, ProjectRuntimeEnvironmentStatus,
         RuntimeEnvironmentProvider,
@@ -474,6 +525,25 @@ mod tests {
     }
 
     #[test]
+    fn selected_dependencies_are_trimmed_deduplicated_and_limited() {
+        assert_eq!(
+            normalize_selected_dependencies(vec![
+                " PostgreSQL ".to_string(),
+                "redis".to_string(),
+                "REDIS".to_string(),
+                " ".to_string(),
+            ])
+            .expect("valid dependencies"),
+            vec!["PostgreSQL".to_string(), "redis".to_string()]
+        );
+        assert!(normalize_selected_dependencies(vec!["x".repeat(81)]).is_err());
+        assert!(normalize_selected_dependencies(
+            (0..65).map(|index| format!("service-{index}")).collect()
+        )
+        .is_err());
+    }
+
+    #[test]
     fn reanalysis_clears_stale_provisioning_failure_state() {
         let mut environment = ProjectRuntimeEnvironmentRecord {
             project_id: "project-1".to_string(),
@@ -483,6 +553,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::Harness,
             analysis_summary: Some("old summary".to_string()),
             not_runnable_reason: Some("old reason".to_string()),
+            execution_service_id: Some("old-service".to_string()),
             detected_stack: json!({"stale": true}),
             required_services: json!([{"stale": true}]),
             env_vars: json!({"STALE": "1"}),
@@ -516,6 +587,7 @@ mod tests {
         assert_eq!(environment.last_agent_run_id.as_deref(), Some("run-new"));
         assert!(environment.last_error.is_none());
         assert!(environment.not_runnable_reason.is_none());
+        assert!(environment.execution_service_id.is_none());
         assert_eq!(environment.detected_stack, json!({}));
         assert_eq!(environment.required_services, json!([]));
         assert_eq!(environment.env_vars, json!({"STALE": "1"}));

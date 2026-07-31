@@ -22,6 +22,7 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(properties.contains_key("default_model_config_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
     assert!(properties.contains_key("external_mcp_config_ids"));
+    assert!(!properties.contains_key("selected_skill_ids"));
     assert!(properties.contains_key("plugin_device_id"));
     assert!(properties.contains_key("plugin_workspace_id"));
     assert!(properties.contains_key("selected_plugins"));
@@ -35,7 +36,7 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(kind_enum
         .iter()
         .any(|value| value.as_str() == Some("WebTools")));
-    assert!(kind_enum
+    assert!(!kind_enum
         .iter()
         .any(|value| value.as_str() == Some("RemoteConnectionController")));
 }
@@ -78,6 +79,7 @@ fn task_mcp_config_schema_hides_host_passthrough_fields() {
     assert!(!properties.contains_key("execution_service_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
     assert!(properties.contains_key("external_mcp_config_ids"));
+    assert!(!properties.contains_key("selected_skill_ids"));
 }
 
 #[test]
@@ -119,7 +121,6 @@ fn ai_task_input_cannot_select_execution_service() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        selected_skill_ids: None,
         plugin_device_id: None,
         plugin_workspace_id: None,
         selected_plugins: None,
@@ -169,7 +170,7 @@ fn default_agent_hides_direct_history_status_tools() {
 }
 
 #[test]
-fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection() {
+fn create_task_args_preserve_external_mcp_ids_without_legacy_skill_selection() {
     let request = CreateTaskArgs {
         title: "task".to_string(),
         description: None,
@@ -187,10 +188,6 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
             String::new(),
             "external-mcp-1".to_string(),
         ]),
-        selected_skill_ids: Some(vec![
-            " internal_skill_remotion ".to_string(),
-            "internal_skill_remotion".to_string(),
-        ]),
         plugin_device_id: None,
         plugin_workspace_id: None,
         selected_plugins: None,
@@ -207,10 +204,7 @@ fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection
         mcp_config.external_mcp_config_ids,
         vec!["external-mcp-1".to_string()]
     );
-    assert_eq!(
-        mcp_config.selected_skill_ids,
-        vec!["internal_skill_remotion".to_string()]
-    );
+    assert!(mcp_config.selected_skill_ids.is_empty());
 }
 
 #[test]
@@ -228,7 +222,6 @@ fn create_task_args_preserve_exact_plugin_device_workspace_and_selection() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        selected_skill_ids: None,
         plugin_device_id: Some(" device-1 ".to_string()),
         plugin_workspace_id: Some(" workspace-1 ".to_string()),
         selected_plugins: Some(vec![
@@ -278,7 +271,6 @@ fn request_context_plugin_selection_overrides_model_supplied_plugin_config() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        selected_skill_ids: None,
         plugin_device_id: Some("model-device".to_string()),
         plugin_workspace_id: Some("model-workspace".to_string()),
         selected_plugins: Some(vec![chatos_plugin_management_sdk::SelectedPluginRef {
@@ -431,7 +423,7 @@ fn async_planner_profile_exposes_only_planning_tools() {
     assert!(chatos_async_planner::planner_agent_tool_allowed(
         "list_external_mcp_configs"
     ));
-    assert!(chatos_async_planner::planner_agent_tool_allowed(
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
         "list_available_skills"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
@@ -483,14 +475,13 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
         .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
         .collect::<Vec<_>>();
 
-    assert_eq!(tool_names.len(), 11);
+    assert_eq!(tool_names.len(), 10);
     for expected in [
         "list_tasks",
         "get_task",
         "create_task",
         "list_mcp_builtin_catalog",
         "list_external_mcp_configs",
-        "list_available_skills",
         "list_available_plugins",
         "create_tasks_with_prerequisites",
         "cancel_task",
@@ -501,6 +492,7 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
     }
     for hidden in [
         "get_task_stats",
+        "list_available_skills",
         "create_project_execution_tasks",
         "update_task",
         "set_task_prerequisites",

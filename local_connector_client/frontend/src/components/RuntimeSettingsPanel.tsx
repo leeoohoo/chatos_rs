@@ -5,6 +5,7 @@ import React from 'react';
 import {
   Accessibility,
   AppWindow,
+  Copy,
   ExternalLink,
   FolderOpen,
   Globe2,
@@ -108,7 +109,9 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
     setMessage(null);
     setError(null);
     try {
-      await window.chatosLocalConnector?.requestDesktopSystemPermission?.(permission.id);
+      if (permission.id !== 'accessibility_control' && permission.id !== 'screen_recording') {
+        await window.chatosLocalConnector?.requestDesktopSystemPermission?.(permission.id);
+      }
       await api.requestSystemPermission(permission.id);
       setPermissions(await loadSystemPermissions());
       setMessage('已打开系统设置。完成授权后请刷新状态。');
@@ -229,6 +232,7 @@ function ChromeIntegrationPanel() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [setupMessage, setSetupMessage] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setError(null);
@@ -253,6 +257,7 @@ function ChromeIntegrationPanel() {
     }
     setSaving(true);
     setError(null);
+    setSetupMessage(null);
     try {
       setStatus(await api.enableChromeIntegration());
     } catch (err) {
@@ -268,12 +273,45 @@ function ChromeIntegrationPanel() {
     }
     setSaving(true);
     setError(null);
+    setSetupMessage(null);
     try {
       setStatus(await api.disableChromeIntegration());
     } catch (err) {
       setError(err instanceof Error ? err.message : '停用 Chrome 整合失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openExtensionDirectory = async () => {
+    setError(null);
+    try {
+      await window.chatosLocalConnector?.showChromeExtensionDirectory?.();
+      setSetupMessage('已打开可加载的 ChatOS Chrome 扩展目录。Chrome 里点击“加载已解压的扩展程序”后选择这个目录即可。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '打开 Chrome 扩展目录失败');
+    }
+  };
+
+  const openChromeExtensionsPage = async () => {
+    setError(null);
+    try {
+      await window.chatosLocalConnector?.openChromeExtensionsPage?.();
+      setSetupMessage('已打开 Chrome 扩展管理页。请开启“开发者模式”，再点击“加载已解压的扩展程序”。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '打开 Chrome 扩展页失败');
+    }
+  };
+
+  const copyExtensionPath = async () => {
+    setError(null);
+    try {
+      const path = await window.chatosLocalConnector?.copyChromeExtensionInstallPath?.();
+      if (path) {
+        setSetupMessage(`已复制扩展目录路径：${path}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '复制 Chrome 扩展目录失败');
     }
   };
 
@@ -309,6 +347,17 @@ function ChromeIntegrationPanel() {
             Extension ID: {status.extension_id}。模型不会获得 Native Host 路径、认证 token 或未授权标签页。
           </small>
           {status.last_error ? <div className="formError">{status.last_error}</div> : null}
+          {setupMessage ? <div className="banner">{setupMessage}</div> : null}
+          {status.enabled && !status.bridge.connected ? (
+            <div className="chromeSetupGuide">
+              <strong>首次连接现有 Chrome 需要加载一次扩展：</strong>
+              <ol>
+                <li>点“打开 Chrome 扩展页”，打开右上角“开发者模式”。</li>
+                <li>点“打开扩展目录”，在 Chrome 里选择打开的 <code>ChatOS Chrome Extension</code> 文件夹。</li>
+                <li>加载后回到这里点刷新，再在 Chrome 扩展弹窗里授权当前网页。</li>
+              </ol>
+            </div>
+          ) : null}
           <div className="buttonRow">
             {status.enabled ? (
               <button className="ghostButton compact" disabled={saving} onClick={() => void disable()}>
@@ -321,10 +370,24 @@ function ChromeIntegrationPanel() {
             )}
             <button
               className="ghostButton compact"
+              disabled={!status.platform_supported}
+              onClick={() => void openChromeExtensionsPage()}
+            >
+              <ExternalLink size={14} />打开 Chrome 扩展页
+            </button>
+            <button
+              className="ghostButton compact"
               disabled={!status.extension_available}
-              onClick={() => void window.chatosLocalConnector?.showChromeExtensionDirectory?.()}
+              onClick={() => void openExtensionDirectory()}
             >
               <FolderOpen size={14} />打开扩展目录
+            </button>
+            <button
+              className="ghostButton compact"
+              disabled={!status.extension_available}
+              onClick={() => void copyExtensionPath()}
+            >
+              <Copy size={14} />复制目录路径
             </button>
           </div>
         </div>

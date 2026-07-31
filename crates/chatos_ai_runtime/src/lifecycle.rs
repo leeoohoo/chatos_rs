@@ -20,6 +20,7 @@ pub struct RuntimeBeforeModelRequest {
     pub input_items: Vec<Value>,
     pub stream_output: bool,
     pub tools_enabled: bool,
+    pub disabled_tool_names: Vec<String>,
 }
 
 impl RuntimeBeforeModelRequest {
@@ -28,6 +29,7 @@ impl RuntimeBeforeModelRequest {
             input_items: Vec::new(),
             stream_output: true,
             tools_enabled: true,
+            disabled_tool_names: Vec::new(),
         }
     }
 
@@ -43,6 +45,16 @@ impl RuntimeBeforeModelRequest {
 
     pub fn with_tools_enabled(mut self, tools_enabled: bool) -> Self {
         self.tools_enabled = tools_enabled;
+        self
+    }
+
+    pub fn with_disabled_tool_names<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.disabled_tool_names
+            .extend(names.into_iter().map(Into::into));
         self
     }
 }

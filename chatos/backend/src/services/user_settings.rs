@@ -3,7 +3,7 @@
 
 use std::sync::OnceLock;
 
-use chatos_agent::{agent_max_iterations_from_env, AGENT_MAX_ITERATIONS_CONFIG_KEY};
+use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
 use serde_json::{json, Value};
 
 use crate::config::Config;
@@ -57,7 +57,7 @@ fn coerce(value: &Value, key: &str) -> Value {
 
 pub fn get_default_user_settings() -> Result<Value, String> {
     let cfg = Config::try_get()?;
-    let max_iterations = agent_max_iterations_from_env() as i64;
+    let max_iterations = DEFAULT_AGENT_MAX_ITERATIONS as i64;
     let task_follow_up_max_rounds = std::env::var("TASK_FOLLOW_UP_MAX_ROUNDS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())

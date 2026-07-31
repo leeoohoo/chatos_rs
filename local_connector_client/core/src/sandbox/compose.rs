@@ -92,11 +92,11 @@ pub(crate) async fn start_project_compose_environment(
     let normalized_compose = serde_json::from_str::<Value>(normalized_compose.as_str())
         .context("parse normalized Docker Compose configuration")?;
     validate_normalized_compose(project_root.as_path(), &normalized_compose)?;
-    let up_output = run_compose_command(
+    let up_output = run_compose_up_with_cleanup(
         project_root.as_path(),
         compose_path.as_path(),
         project_name,
-        &["up", "-d", "--build", "--remove-orphans"],
+        &normalized_compose,
     )
     .await
     .context("start project Docker Compose environment")?;
@@ -125,7 +125,7 @@ pub(crate) async fn get_project_compose_environment_status(
 ) -> Result<Value> {
     let input: ComposeProjectRequest =
         serde_json::from_value(body).context("parse Docker Compose status request")?;
-    let (project_name, project_root, compose_path) =
+    let (project_name, project_root, compose_path, _) =
         prepare_existing_project_compose(state, workspace_id, &input).await?;
     let ps_output = run_compose_command(
         project_root.as_path(),
@@ -152,7 +152,7 @@ pub(crate) async fn stop_project_compose_environment(
 ) -> Result<Value> {
     let input: ComposeProjectRequest =
         serde_json::from_value(body).context("parse Docker Compose stop request")?;
-    let (project_name, project_root, compose_path) =
+    let (project_name, project_root, compose_path, _) =
         prepare_existing_project_compose(state, workspace_id, &input).await?;
     let output = run_compose_command(
         project_root.as_path(),
@@ -179,13 +179,13 @@ pub(crate) async fn restart_project_compose_environment(
 ) -> Result<Value> {
     let input: ComposeProjectRequest =
         serde_json::from_value(body).context("parse Docker Compose restart request")?;
-    let (project_name, project_root, compose_path) =
+    let (project_name, project_root, compose_path, normalized_compose) =
         prepare_existing_project_compose(state, workspace_id, &input).await?;
-    let output = run_compose_command(
+    let output = run_compose_up_with_cleanup(
         project_root.as_path(),
         compose_path.as_path(),
         project_name.as_str(),
-        &["up", "-d", "--build", "--remove-orphans"],
+        &normalized_compose,
     )
     .await
     .context("restart project Docker Compose environment")?;
@@ -212,7 +212,7 @@ async fn prepare_existing_project_compose(
     state: &LocalState,
     workspace_id: &str,
     input: &ComposeProjectRequest,
-) -> Result<(String, PathBuf, PathBuf)> {
+) -> Result<(String, PathBuf, PathBuf, Value)> {
     let project_name = validate_project_name(input.project_name.as_str())?.to_string();
     ensure_docker_running().await?;
     let project_root =
@@ -236,7 +236,7 @@ async fn prepare_existing_project_compose(
     let normalized = serde_json::from_str::<Value>(normalized.as_str())
         .context("parse managed Docker Compose configuration")?;
     validate_normalized_compose(project_root.as_path(), &normalized)?;
-    Ok((project_name, project_root, compose_path))
+    Ok((project_name, project_root, compose_path, normalized))
 }
 
 async fn resolve_project_root(
@@ -458,6 +458,150 @@ async fn run_compose_command(
     } else {
         format!("{stdout}\n{stderr}")
     })
+}
+
+async fn run_compose_up_with_cleanup(
+    project_root: &Path,
+    compose_path: &Path,
+    project_name: &str,
+    normalized_compose: &Value,
+) -> Result<String> {
+    let image_refs = managed_application_image_refs(normalized_compose);
+    let previous_images = existing_image_ids(image_refs.as_slice()).await;
+    let build_output = run_compose_command(
+        project_root,
+        compose_path,
+        project_name,
+        &["build", "--force-rm"],
+    )
+    .await?;
+    let cleanup_output = cleanup_replaced_compose_images(previous_images).await;
+    let up_output = run_compose_command(
+        project_root,
+        compose_path,
+        project_name,
+        &["up", "-d", "--no-build", "--remove-orphans"],
+    )
+    .await?;
+    let output = join_compose_outputs([
+        build_output.as_str(),
+        cleanup_output.as_str(),
+        up_output.as_str(),
+    ]);
+    Ok(output)
+}
+
+fn join_compose_outputs<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
+    parts
+        .into_iter()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn managed_application_image_refs(normalized_compose: &Value) -> Vec<String> {
+    let mut refs = std::collections::BTreeSet::new();
+    for service in normalized_compose
+        .get("services")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(_, service)| service.as_object())
+    {
+        if service.get("build").is_none() {
+            continue;
+        }
+        if let Some(image_ref) = service
+            .get("image")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            refs.insert(image_ref.to_string());
+        }
+    }
+    refs.into_iter().collect()
+}
+
+async fn existing_image_ids(image_refs: &[String]) -> Vec<(String, String)> {
+    let mut images = Vec::new();
+    for image_ref in image_refs {
+        if let Some(image_id) = docker_image_id(image_ref.as_str()).await {
+            images.push((image_ref.clone(), image_id));
+        }
+    }
+    images
+}
+
+async fn cleanup_replaced_compose_images(previous_images: Vec<(String, String)>) -> String {
+    let mut output = String::new();
+    for (image_ref, previous_image_id) in previous_images {
+        let Some(current_image_id) = docker_image_id(image_ref.as_str()).await else {
+            output.push_str(
+                format!(
+                    "[local connector] skip old Compose image cleanup: cannot inspect rebuilt image {image_ref}\n"
+                )
+                .as_str(),
+            );
+            continue;
+        };
+        if image_ids_equal(previous_image_id.as_str(), current_image_id.as_str()) {
+            continue;
+        }
+        let remove = docker_command()
+            .args(["image", "rm", previous_image_id.as_str()])
+            .output()
+            .await;
+        match remove {
+            Ok(remove) if remove.status.success() => {
+                output.push_str(
+                    format!(
+                        "[local connector] removed replaced Compose image {previous_image_id} for {image_ref}\n"
+                    )
+                    .as_str(),
+                );
+            }
+            Ok(remove) => {
+                output.push_str(
+                    format!(
+                        "[local connector] old Compose image cleanup skipped for {previous_image_id}: {}\n",
+                        String::from_utf8_lossy(remove.stderr.as_slice()).trim()
+                    )
+                    .as_str(),
+                );
+            }
+            Err(err) => {
+                output.push_str(
+                    format!(
+                        "[local connector] old Compose image cleanup failed for {previous_image_id}: {err}\n"
+                    )
+                    .as_str(),
+                );
+            }
+        }
+    }
+    output
+}
+
+async fn docker_image_id(image_ref: &str) -> Option<String> {
+    let output = docker_command()
+        .args(["image", "inspect", "--format", "{{.Id}}", image_ref])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(output.stdout.as_slice())
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn image_ids_equal(left: &str, right: &str) -> bool {
+    left.trim().trim_start_matches("sha256:") == right.trim().trim_start_matches("sha256:")
 }
 
 fn parse_compose_ps(output: &str) -> Vec<Value> {

@@ -147,7 +147,7 @@ fn sanitize_recent_tool_outputs(
 
     // Prefer the newest evidence when the cumulative history budget is full.
     // The model needs the latest state-changing result (for example an empty
-    // TaskManager board) more than an older, already-consumed file dump.
+    // task board) more than an older, already-consumed file dump.
     for (record_index, record) in records.iter().enumerate().rev() {
         if record.role.trim() != "tool" {
             continue;

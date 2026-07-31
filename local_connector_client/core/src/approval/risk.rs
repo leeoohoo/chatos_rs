@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_sandbox_contract::{FileSystemAccessMode, RequestPermissionProfile};
+
 #[derive(Debug, Clone)]
 pub(crate) struct RiskSummary {
     pub(crate) level: String,
@@ -114,4 +116,3 @@ mod tests {
             .contains("network"));
     }
 }
-use chatos_sandbox_contract::{FileSystemAccessMode, RequestPermissionProfile};

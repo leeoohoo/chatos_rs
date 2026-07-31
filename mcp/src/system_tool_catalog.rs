@@ -110,17 +110,19 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                     },
                     "images": {
                         "type": "array",
-                        "description": "Service plans for one project-level Docker Compose environment. Before saving an application plan, search the current sandbox image catalog. If an initialized matching image exists, return its exact image_id; otherwise omit image_id so the program can initialize it when the user executes image preparation. Generate a Dockerfile only for the application runtime; detected databases, caches, and configuration centers are dependency service records that the platform maps to maintained images under the same Compose project.",
+                        "description": "Peer component and dependency plans for one project workspace. The program creates exactly one workspace execution image from the union of all detected runtimes; no business application is a task execution target. Independently runnable applications are equal peers with stable source roots and commands. Databases, caches, and configuration centers are dependency records. Documentation, static prototypes, examples, demos and fixtures without explicit deployment evidence are artifacts and must not receive Dockerfiles.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "environment_key": {"type": "string"},
                                 "environment_type": {"type": "string"},
                                 "display_name": {"type": "string"},
-                                "image_id": {
-                                    "type": ["string", "null"],
-                                    "description": "Exact initialized image id returned by sandbox image search. Omit when no matching initialized image exists. Never invent an id."
-                                },
+                                "source_root": {"type": "string"},
+                                "component_kind": {"type": "string"},
+                                "startup_command": {"type": ["string", "null"]},
+                                "test_command": {"type": ["string", "null"]},
+                                "depends_on": {"type": "array", "items": {"type": "string"}},
+                                "auto_start": {"type": "boolean"},
                                 "features": {"type": "array"},
                                 "ports": {"type": "array"},
                                 "env_vars": {"type": "object"},
@@ -128,7 +130,7 @@ pub fn project_environment_tool_definitions() -> Vec<Value> {
                                     "type": ["string", "null"],
                                     "minLength": 1,
                                     "maxLength": 131072,
-                                    "description": "Complete generated Dockerfile for the application runtime. Dependency service records may use null because the platform supplies their maintained images in the project-level Compose file. Do not embed secrets."
+                                    "description": "Complete Dockerfile for a runnable application component. Dependency and artifact records use null. This is a business-service plan, not the workspace execution image. Do not embed secrets."
                                 }
                             },
                             "required": ["environment_key", "environment_type", "display_name"],
@@ -157,6 +159,34 @@ pub fn project_runtime_environment_info_tool_definitions() -> Vec<Value> {
 
 pub fn local_command_approval_tool_definitions() -> Vec<Value> {
     vec![local_command_approval_decision_tool_definition()]
+}
+
+pub fn task_process_log_tool_definitions() -> Vec<Value> {
+    vec![json!({
+        "name": "record_process",
+        "description": "Record short visible execution breadcrumbs for the current Task Runner task only. Use append for selected approach, root-cause findings, reuse decisions, verification results, blockers, and next steps. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["append", "replace", "clear"],
+                    "default": "append",
+                    "description": "append adds one timestamped entry; replace rewrites the full process log; clear removes the process log."
+                },
+                "heading": {
+                    "type": ["string", "null"],
+                    "description": "Short visible heading for append entries, or null when not needed."
+                },
+                "content": {
+                    "type": ["string", "null"],
+                    "description": "Visible process content. Required for append/replace; pass null for clear."
+                }
+            },
+            "required": ["operation", "heading", "content"],
+            "additionalProperties": false
+        }
+    })]
 }
 
 pub fn local_command_approval_decision_tool_definition() -> Value {
@@ -217,6 +247,7 @@ mod tests {
             .pointer("/inputSchema/properties")
             .and_then(Value::as_object)
             .expect("top-level properties");
+        assert!(!top_level_properties.contains_key("primary_application"));
         for forbidden in [
             "status",
             "analysis_summary",
@@ -243,7 +274,7 @@ mod tests {
         ] {
             assert!(!image_properties.contains_key(forbidden));
         }
-        assert!(image_properties.contains_key("image_id"));
+        assert!(!image_properties.contains_key("image_id"));
         let runtime_info_tools = project_runtime_environment_info_tool_definitions();
         assert_eq!(runtime_info_tools.len(), 1);
         assert_eq!(
@@ -254,6 +285,12 @@ mod tests {
         assert_eq!(
             local_command_approval_decision_tool_definition()["name"].as_str(),
             Some("approval_decision")
+        );
+        let process_log_tools = task_process_log_tool_definitions();
+        assert_eq!(process_log_tools.len(), 1);
+        assert_eq!(
+            process_log_tools[0].get("name").and_then(Value::as_str),
+            Some("record_process")
         );
     }
 }

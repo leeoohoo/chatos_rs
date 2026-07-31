@@ -180,18 +180,6 @@ impl TaskRunnerMcpService {
                     ))))
                 }
             }
-            "list_available_skills" => {
-                let _ = decode_args::<Value>(args).ok();
-                let owner_user_id = current_user
-                    .effective_owner_user_id()
-                    .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
-                let policy = self
-                    .task_service
-                    .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
-                    .await?
-                    .ok_or_else(|| "Plugin Management policy is unavailable".to_string())?;
-                Ok(text_result(json!(policy.selectable_skill_views())))
-            }
             "list_available_plugins" => {
                 let args: ListAvailablePluginsArgs = decode_args(args)?;
                 let owner_user_id = current_user
@@ -203,7 +191,7 @@ impl TaskRunnerMcpService {
                         Some(current_user),
                         Some(owner_user_id),
                         chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
-                        Some(args.device_id),
+                        args.device_id,
                     )
                     .await?
                     .ok_or_else(|| "Plugin Management policy is unavailable".to_string())?;

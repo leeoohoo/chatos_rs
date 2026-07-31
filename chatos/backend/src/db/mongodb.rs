@@ -50,8 +50,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "users",
         "auth_users",
         "agents",
-        "memory_skills",
-        "memory_skill_plugins",
         "chatos_contacts",
         "chatos_memory_projects",
         "chatos_project_agent_links",
@@ -277,80 +275,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "user_id": 1, "updated_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("memory_skill_plugins")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "id": 1 })
-                .options(
-                    mongodb::options::IndexOptions::builder()
-                        .unique(true)
-                        .build(),
-                )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("memory_skill_plugins")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "user_id": 1, "source": 1 })
-                .options(
-                    mongodb::options::IndexOptions::builder()
-                        .unique(true)
-                        .build(),
-                )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("memory_skill_plugins")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "user_id": 1, "updated_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("memory_skills")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "id": 1 })
-                .options(
-                    mongodb::options::IndexOptions::builder()
-                        .unique(true)
-                        .build(),
-                )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("memory_skills")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "user_id": 1, "plugin_source": 1, "source_path": 1 })
-                .options(
-                    mongodb::options::IndexOptions::builder()
-                        .unique(true)
-                        .build(),
-                )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("memory_skills")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "user_id": 1, "plugin_source": 1, "updated_at": -1 })
                 .build(),
             None,
         )

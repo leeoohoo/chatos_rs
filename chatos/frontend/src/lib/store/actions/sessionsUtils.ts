@@ -252,7 +252,7 @@ const isOffsetSnapshotCursor = (value: string): boolean => /^offset:\d+$/i.test(
 
 const isTaskRunnerCallbackSnapshotMessage = (message: Message): boolean => {
   const messageMode = normalizeSnapshotCursor(message.messageMode);
-  if (messageMode === 'task_runner_callback') {
+  if (messageMode === 'task_runner_callback' || messageMode === 'task_run_receipt') {
     return true;
   }
 

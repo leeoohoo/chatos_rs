@@ -20,6 +20,7 @@ pub const PROJECT_ENVIRONMENT_MCP_RESOURCE_ID: &str = "system_mcp_project_enviro
 pub const PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID: &str =
     "system_mcp_project_runtime_environment";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
+pub const TASK_PROCESS_LOG_MCP_RESOURCE_ID: &str = "system_mcp_task_process_log";
 
 pub const SYSTEM_MCP_RUNTIME_KIND: &str = "system";
 pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
@@ -45,6 +46,7 @@ pub enum SystemMcpKey {
     ProjectEnvironment,
     ProjectRuntimeEnvironment,
     LocalCommandApproval,
+    TaskProcessLog,
     TaskRunnerService,
 }
 
@@ -53,7 +55,6 @@ impl SystemMcpKey {
         Self::CodeMaintainerRead,
         Self::CodeMaintainerWrite,
         Self::TerminalController,
-        Self::TaskManager,
         Self::ProjectManagement,
         Self::Notepad,
         Self::AgentBuilder,
@@ -68,6 +69,7 @@ impl SystemMcpKey {
         Self::ProjectEnvironment,
         Self::ProjectRuntimeEnvironment,
         Self::LocalCommandApproval,
+        Self::TaskProcessLog,
         Self::TaskRunnerService,
     ];
 
@@ -91,6 +93,7 @@ impl SystemMcpKey {
             Self::ProjectEnvironment => "project_environment",
             Self::ProjectRuntimeEnvironment => "project_runtime_environment",
             Self::LocalCommandApproval => "local_command_approval",
+            Self::TaskProcessLog => "task_process_log",
             Self::TaskRunnerService => "task_runner_service",
         }
     }
@@ -121,7 +124,9 @@ pub enum SystemAgentKey {
     ChatosPlanningAgent,
     ProjectRequirementExecutionPlannerAgent,
     TaskRunnerPlanPhase,
+    TaskRunnerLocalPlanPhase,
     TaskRunnerRunPhase,
+    TaskRunnerLocalRunPhase,
     ProjectManagementAgent,
     LocalConnectorCommandApprovalAgent,
     MemoryEngineSummaryAgent,
@@ -132,12 +137,14 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::ChatosConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
         Self::TaskRunnerPlanPhase,
+        Self::TaskRunnerLocalPlanPhase,
         Self::TaskRunnerRunPhase,
+        Self::TaskRunnerLocalRunPhase,
         Self::ProjectManagementAgent,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
@@ -155,7 +162,9 @@ impl SystemAgentKey {
                 "project_requirement_execution_planner_agent"
             }
             Self::TaskRunnerPlanPhase => "task_runner_plan_phase",
+            Self::TaskRunnerLocalPlanPhase => "task_runner_local_plan_phase",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
+            Self::TaskRunnerLocalRunPhase => "task_runner_local_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
             Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",
@@ -672,129 +681,4 @@ fn default_true() -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn system_agent_keys_match_registry_keys() {
-        assert_eq!(SystemAgentKey::ALL.len(), 12);
-        assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 48);
-        assert_eq!(
-            SystemAgentKey::ChatosConversationAgent.as_str(),
-            "chatos_conversation_agent"
-        );
-        assert_eq!(
-            SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
-            "local_connector_command_approval_agent"
-        );
-        assert_eq!(
-            SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
-            "memory_engine_thread_repair_agent"
-        );
-    }
-
-    #[test]
-    fn system_mcp_keys_are_stable_and_complete() {
-        assert_eq!(SystemMcpKey::ALL.len(), 19);
-        assert_eq!(
-            SystemMcpKey::ProjectRuntimeEnvironment.as_str(),
-            "project_runtime_environment"
-        );
-        assert_eq!(
-            "task_runner_service".parse::<SystemMcpKey>(),
-            Ok(SystemMcpKey::TaskRunnerService)
-        );
-    }
-
-    #[test]
-    fn resource_security_default_snapshot_matches_service_policy() {
-        let snapshot = serde_json::to_value(ResourceSecurity::default()).expect("security JSON");
-        assert_eq!(
-            snapshot,
-            serde_json::json!({
-                "allow_writes": null,
-                "max_file_bytes": 262144,
-                "max_write_bytes": 5242880,
-                "search_limit": 40,
-                "allowed_tool_names": [],
-                "blocked_tool_names": []
-            })
-        );
-    }
-
-    #[test]
-    fn local_connector_status_batch_round_trips_flattened_contract() {
-        let snapshot = serde_json::json!({
-            "items": [{
-                "mcp_id": "mcp-1",
-                "owner_user_id": "user-1",
-                "device_id": "device-1",
-                "workspace_id": "workspace-1",
-                "manifest_id": "manifest-1",
-                "status": "available",
-                "last_error": null,
-                "tool_snapshot": [{"name": "read_file"}],
-                "manifest_hash": "sha256:demo"
-            }]
-        });
-
-        let batch: LocalConnectorMcpStatusBatchRequest =
-            serde_json::from_value(snapshot.clone()).expect("decode status batch");
-        assert_eq!(
-            batch.items[0].status.workspace_id.as_deref(),
-            Some("workspace-1")
-        );
-        assert_eq!(
-            serde_json::to_value(batch).expect("encode status batch"),
-            snapshot
-        );
-    }
-
-    #[test]
-    fn plugin_component_ownership_is_flattened_and_legacy_compatible() {
-        let mut snapshot = serde_json::json!({
-            "id": "mcp-1",
-            "owner_user_id": "system",
-            "owner_kind": "system",
-            "visibility": "system_private",
-            "source_kind": "plugin_release",
-            "name": "demo",
-            "display_name": "Demo",
-            "description": null,
-            "enabled": true,
-            "runtime": {"kind": "http"},
-            "security": {},
-            "metadata": {},
-            "plugin_id": "plugin-1",
-            "release_id": "release-1",
-            "component_key": "main",
-            "managed_by_plugin": true,
-            "immutable_from_release": true,
-            "created_by": "system",
-            "updated_by": "system",
-            "created_at": "now",
-            "updated_at": "now"
-        });
-        let record: McpRecord =
-            serde_json::from_value(snapshot.clone()).expect("decode Plugin-owned MCP");
-        assert_eq!(
-            record.plugin_component.complete_identity(),
-            Some(("plugin-1", "release-1", "main"))
-        );
-        let encoded = serde_json::to_value(&record).expect("encode Plugin-owned MCP");
-        assert_eq!(encoded["plugin_id"], "plugin-1");
-        assert!(encoded.get("plugin_component").is_none());
-
-        for field in [
-            "plugin_id",
-            "release_id",
-            "component_key",
-            "managed_by_plugin",
-            "immutable_from_release",
-        ] {
-            snapshot.as_object_mut().expect("object").remove(field);
-        }
-        let legacy: McpRecord = serde_json::from_value(snapshot).expect("decode legacy MCP");
-        assert_eq!(legacy.plugin_component, PluginComponentOwnership::default());
-    }
-}
+mod tests;

@@ -3,9 +3,6 @@
 
 use super::*;
 use crate::auth::CurrentUser;
-use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries,
-};
 
 impl RunService {
     pub async fn cancel_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
@@ -86,14 +83,6 @@ impl RunService {
                 task_record.updated_at = now_rfc3339();
                 self.store.save_task(task_record).await?;
             }
-            let summary = finalize_task_session_entries(
-                &self.store,
-                run.task_id.as_str(),
-                run.id.as_str(),
-                run.status,
-            )
-            .await?;
-            append_task_session_finalized_event(&self.store, &run, &summary).await;
             self.try_send_terminal_callback(run.task_id.as_str(), &run)
                 .await;
         }
@@ -101,7 +90,7 @@ impl RunService {
     }
 
     pub async fn retry_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_with_user(run_id, None, None).await
+        self.retry_run_with_user(run_id, None, None, None).await
     }
 
     pub async fn retry_run_with_instruction(
@@ -109,7 +98,17 @@ impl RunService {
         run_id: &str,
         retry_instruction: Option<String>,
     ) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_with_user(run_id, None, retry_instruction)
+        self.retry_run_with_user(run_id, None, retry_instruction, None)
+            .await
+    }
+
+    pub async fn retry_run_with_instruction_and_execution_service(
+        &self,
+        run_id: &str,
+        retry_instruction: Option<String>,
+        execution_service_id: Option<String>,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.retry_run_with_user(run_id, None, retry_instruction, execution_service_id)
             .await
     }
 
@@ -118,7 +117,7 @@ impl RunService {
         run_id: &str,
         current_user: &CurrentUser,
     ) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_with_user(run_id, Some(current_user), None)
+        self.retry_run_with_user(run_id, Some(current_user), None, None)
             .await
     }
 
@@ -128,7 +127,7 @@ impl RunService {
         current_user: &CurrentUser,
         retry_instruction: Option<String>,
     ) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_with_user(run_id, Some(current_user), retry_instruction)
+        self.retry_run_with_user(run_id, Some(current_user), retry_instruction, None)
             .await
     }
 
@@ -137,12 +136,31 @@ impl RunService {
         run_id: &str,
         current_user: Option<&CurrentUser>,
         retry_instruction: Option<String>,
+        execution_service_id: Option<String>,
     ) -> Result<Option<TaskRunRecord>, String> {
         let Some(run) = self.store.get_run(run_id).await? else {
             return Ok(None);
         };
         if matches!(run.status, TaskRunStatus::Queued | TaskRunStatus::Running) {
             return Err("run is still active and cannot be retried yet".to_string());
+        }
+
+        if let Some(execution_service_id) = execution_service_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            let Some(mut task) = self.store.get_task(run.task_id.as_str()).await? else {
+                return Err("task not found for retry run".to_string());
+            };
+            if !task.mcp_config.requires_execution {
+                return Err(
+                    "execution_service_id can only be selected for an execution task".to_string(),
+                );
+            }
+            task.mcp_config.execution_service_id = Some(execution_service_id);
+            self.validate_sandbox_route_for_task(&task).await?;
+            task.updated_at = now_rfc3339();
+            self.store.save_task(task).await?;
         }
 
         let prompt_override = run

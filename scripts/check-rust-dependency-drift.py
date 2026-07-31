@@ -42,6 +42,7 @@ BASELINE: dict[str, dict[str, str]] = {
     "local_connector_client/core/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
+        "mongodb": "2.8",
     },
     "local_connector_service/backend/Cargo.toml": {
         "axum": "0.8",

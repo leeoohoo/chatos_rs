@@ -614,7 +614,7 @@ pub fn select_pending_work_items(
     work_items
         .iter()
         .filter(|item| requirement_scope.contains(item.requirement_id.as_str()))
-        .filter(|item| item.status.trim().to_ascii_lowercase() != "archived")
+        .filter(|item| !item.status.trim().eq_ignore_ascii_case("archived"))
         .filter(|item| !is_done_status(item.status.as_str()))
         .cloned()
         .collect()

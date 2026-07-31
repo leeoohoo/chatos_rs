@@ -103,38 +103,55 @@ async fn active_message_tasks(
             200,
         )
         .await?;
-    let mut counts = BTreeMap::<(String, String), usize>::new();
+    Ok(Json(active_message_task_summary(records)))
+}
+
+fn active_message_task_summary(records: Vec<LocalTaskBoardTaskRecord>) -> Value {
+    let mut active_counts = BTreeMap::<(String, String), usize>::new();
+    let mut running_counts = BTreeMap::<(String, String), usize>::new();
     for record in records {
-        if !matches!(record.status.as_str(), "todo" | "doing") {
+        if record.task_kind != "task_runner" || !matches!(record.status.as_str(), "todo" | "doing")
+        {
             continue;
         }
         let Some(message_id) = record.source_user_message_id else {
             continue;
         };
-        *counts
-            .entry((message_id, record.source_turn_id))
-            .or_default() += 1;
+        let key = (message_id, record.source_turn_id);
+        *active_counts.entry(key.clone()).or_default() += 1;
+        if record.status != "doing" {
+            continue;
+        }
+        *running_counts.entry(key).or_default() += 1;
     }
-    let items = counts
+    let items = active_counts
         .iter()
-        .map(|((message_id, turn_id), count)| {
+        .map(|((message_id, turn_id), active_count)| {
+            let running_count = running_counts
+                .get(&(message_id.clone(), turn_id.clone()))
+                .copied()
+                .unwrap_or(0);
             json!({
                 "source_user_message_id": message_id,
                 "source_turn_id": turn_id,
-                "running_count": count,
-                "active_count": count,
+                "running_count": running_count,
+                "active_count": active_count,
             })
         })
         .collect::<Vec<_>>();
-    let ids = counts
+    let active_ids = active_counts
         .keys()
         .map(|(message_id, _)| message_id)
         .collect::<Vec<_>>();
-    Ok(Json(json!({
-        "active_source_user_message_ids": ids,
-        "running_source_user_message_ids": ids,
+    let running_ids = running_counts
+        .keys()
+        .map(|(message_id, _)| message_id)
+        .collect::<Vec<_>>();
+    json!({
+        "active_source_user_message_ids": active_ids,
+        "running_source_user_message_ids": running_ids,
         "items": items,
-    })))
+    })
 }
 
 pub(super) async fn load_tasks(
@@ -179,3 +196,6 @@ pub(super) async fn load_tasks(
 fn normalized(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
+
+#[cfg(test)]
+mod tests;

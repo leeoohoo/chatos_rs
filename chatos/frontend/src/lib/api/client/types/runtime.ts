@@ -13,46 +13,6 @@ export interface MemoryAgentSkillResponse {
   content: string;
 }
 
-export interface MemorySkillResponse {
-  id: string;
-  user_id: string;
-  plugin_source: string;
-  name: string;
-  description?: string | null;
-  content: string;
-  source_path: string;
-  version?: string | null;
-  updated_at: string;
-}
-
-export interface MemorySkillPluginCommandResponse {
-  name: string;
-  source_path: string;
-  description?: string | null;
-  argument_hint?: string | null;
-  content: string;
-}
-
-export interface MemorySkillPluginResponse {
-  id: string;
-  user_id: string;
-  source: string;
-  name: string;
-  category?: string | null;
-  description?: string | null;
-  version?: string | null;
-  repository?: string | null;
-  branch?: string | null;
-  cache_path?: string | null;
-  content?: string | null;
-  commands?: MemorySkillPluginCommandResponse[];
-  command_count?: number;
-  installed: boolean;
-  discoverable_skills: number;
-  installed_skill_count: number;
-  updated_at: string;
-}
-
 export interface AiCreateAgentResponse {
   created: boolean;
   agent: MemoryAgentResponse;
@@ -146,7 +106,6 @@ export interface CreateAgentPayload {
   description?: string | null;
   category?: string | null;
   role_definition: string;
-  plugin_sources?: string[];
   skills?: MemoryAgentSkillResponse[];
   skill_ids?: string[];
   default_skill_ids?: string[];
@@ -160,7 +119,6 @@ export interface UpdateAgentPayload {
   description?: string | null;
   category?: string | null;
   role_definition?: string;
-  plugin_sources?: string[];
   skills?: MemoryAgentSkillResponse[];
   skill_ids?: string[];
   default_skill_ids?: string[];

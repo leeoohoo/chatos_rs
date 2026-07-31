@@ -20,6 +20,8 @@ use super::error::LocalRuntimeApiError;
 use response::{environment_response, idle_progress_response, progress_response};
 
 const MAX_ANALYSIS_REQUIREMENT_LENGTH: usize = 4_000;
+const MAX_SELECTED_DEPENDENCIES: usize = 64;
+const MAX_SELECTED_DEPENDENCY_LENGTH: usize = 80;
 
 #[derive(Debug, Default, Deserialize)]
 struct EnvironmentSettingsPayload {
@@ -33,6 +35,9 @@ struct EnvironmentAnalysisPayload {
     analysis_requirement: Option<String>,
     #[serde(rename = "analysisRequirement")]
     analysis_requirement_camel: Option<String>,
+    selected_dependencies: Option<Vec<String>>,
+    #[serde(rename = "selectedDependencies")]
+    selected_dependencies_camel: Option<Vec<String>>,
 }
 
 pub(super) fn router() -> Router<LocalRuntime> {
@@ -99,12 +104,18 @@ async fn analyze_environment(
     payload: Option<Json<EnvironmentAnalysisPayload>>,
 ) -> Result<Json<Value>, LocalRuntimeApiError> {
     let owner = owner_context(&runtime).await?;
-    let analysis_requirement =
-        normalize_analysis_requirement(payload.and_then(|Json(payload)| {
-            payload
-                .analysis_requirement
-                .or(payload.analysis_requirement_camel)
-        }))?;
+    let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
+    let analysis_requirement = normalize_analysis_requirement(
+        payload
+            .analysis_requirement
+            .or(payload.analysis_requirement_camel),
+    )?;
+    let selected_dependencies = normalize_selected_dependencies(
+        payload
+            .selected_dependencies
+            .or(payload.selected_dependencies_camel)
+            .unwrap_or_default(),
+    )?;
     let model_config_id = {
         let state = runtime.state.read().await;
         state
@@ -139,6 +150,7 @@ async fn analyze_environment(
     let task_owner = owner.owner_user_id.clone();
     let task_project = project_id.clone();
     let task_analysis_requirement = analysis_requirement;
+    let task_selected_dependencies = selected_dependencies;
     tokio::spawn(async move {
         if let Err(error) = run_local_environment_analysis(
             task_runtime.clone(),
@@ -147,6 +159,7 @@ async fn analyze_environment(
             model_config_id,
             run_id.clone(),
             task_analysis_requirement,
+            task_selected_dependencies,
         )
         .await
         {
@@ -189,6 +202,39 @@ fn normalize_analysis_requirement(
     Ok(requirement)
 }
 
+fn normalize_selected_dependencies(
+    values: Vec<String>,
+) -> Result<Vec<String>, LocalRuntimeApiError> {
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if value.chars().count() > MAX_SELECTED_DEPENDENCY_LENGTH {
+            return Err(LocalRuntimeApiError::bad_request(
+                "local_environment_selected_dependency_too_long",
+                format!(
+                    "selected_dependencies entries must not exceed {MAX_SELECTED_DEPENDENCY_LENGTH} characters"
+                ),
+            ));
+        }
+        if seen.insert(value.to_lowercase()) {
+            normalized.push(value.to_string());
+        }
+    }
+    if normalized.len() > MAX_SELECTED_DEPENDENCIES {
+        return Err(LocalRuntimeApiError::bad_request(
+            "local_environment_selected_dependencies_too_many",
+            format!(
+                "selected_dependencies must not contain more than {MAX_SELECTED_DEPENDENCIES} entries"
+            ),
+        ));
+    }
+    Ok(normalized)
+}
+
 async fn get_progress(
     Path(project_id): Path<String>,
     State(runtime): State<LocalRuntime>,
@@ -218,7 +264,7 @@ pub(super) async fn response_for(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_analysis_requirement;
+    use super::{normalize_analysis_requirement, normalize_selected_dependencies};
 
     #[test]
     fn analysis_requirement_is_trimmed_and_length_limited() {
@@ -229,5 +275,24 @@ mod tests {
             Some("Use Node.js 22")
         );
         assert!(normalize_analysis_requirement(Some("x".repeat(4_001))).is_err());
+    }
+
+    #[test]
+    fn selected_dependencies_are_trimmed_deduplicated_and_limited() {
+        assert_eq!(
+            normalize_selected_dependencies(vec![
+                " PostgreSQL ".to_string(),
+                "redis".to_string(),
+                "REDIS".to_string(),
+                " ".to_string(),
+            ])
+            .expect("valid dependencies"),
+            vec!["PostgreSQL".to_string(), "redis".to_string()]
+        );
+        assert!(normalize_selected_dependencies(vec!["x".repeat(81)]).is_err());
+        assert!(normalize_selected_dependencies(
+            (0..65).map(|index| format!("service-{index}")).collect()
+        )
+        .is_err());
     }
 }

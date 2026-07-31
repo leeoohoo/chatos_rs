@@ -11,13 +11,15 @@ use chatos_agent::{
 };
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
-    TaskFinalizationLifecycleHook, TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec,
-    TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits, DEFAULT_TASK_RUN_MAX_ITERATIONS,
+    TaskExecutionReviewPolicy, TaskFinalizationLifecycleHook, TaskMemoryRuntimeConfig,
+    TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits,
+    DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 use chatos_mcp_runtime::{
     builtin_servers_from_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
     McpExecutorBuilder, McpHttpServer, McpStdioServer,
 };
+use memory_engine_sdk::ComposeContextPolicy;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
@@ -49,8 +51,8 @@ use super::workspace_mcp::{
     task_uses_harness_code,
 };
 use super::{
-    build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
-    DisabledBuiltinProvider, RunService, TaskService,
+    build_builtin_registry, summarized_report_content, DisabledBuiltinProvider, RunService,
+    TaskService,
 };
 
 mod callbacks;

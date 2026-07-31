@@ -75,15 +75,6 @@ pub(super) struct HarnessListPathsResponse {
     pub(super) files: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub(super) struct HarnessBranch {
-    pub(super) name: String,
-    #[serde(default)]
-    pub(super) sha: String,
-    #[serde(default)]
-    pub(super) is_default: bool,
-}
-
 #[derive(Debug, Serialize)]
 struct HarnessCommitRequest {
     title: String,
@@ -199,7 +190,7 @@ async fn read_harness_file_bytes(
         content.path
     };
     let file_content: HarnessFileContent = serde_json::from_value(content.content)
-        .map_err(|err| format!("parse Harness file content failed: {err}"))?;
+        .map_err(|err| format!("parse project file content failed: {err}"))?;
     let bytes = decode_harness_file_content(&file_content)?;
     if file_content.size > max_file_bytes {
         return Err(format!("File too large ({} bytes).", file_content.size));
@@ -251,25 +242,6 @@ pub(super) async fn list_harness_paths(
         encode_path_segments(ctx.repo_path.as_str())
     );
     harness_request_json::<HarnessListPathsResponse, ()>(
-        &ctx.client,
-        Method::GET,
-        endpoint.as_str(),
-        ctx.access.access_token.as_str(),
-        None,
-    )
-    .await
-    .map_err(|err| err.to_string())
-}
-
-pub(super) async fn list_harness_branches(
-    ctx: &HarnessMcpContext,
-) -> Result<Vec<HarnessBranch>, String> {
-    let endpoint = format!(
-        "{}/api/v1/repos/{}/+/branches",
-        ctx.access.base_url.trim().trim_end_matches('/'),
-        encode_path_segments(ctx.repo_path.as_str())
-    );
-    harness_request_json::<Vec<HarnessBranch>, ()>(
         &ctx.client,
         Method::GET,
         endpoint.as_str(),
@@ -332,7 +304,7 @@ pub(super) async fn commit_file_actions(
 pub(super) fn ensure_action_count(count: usize) -> Result<(), String> {
     if count > MAX_COMMIT_ACTIONS {
         Err(format!(
-            "Harness commit action count exceeds limit: {count} > {MAX_COMMIT_ACTIONS}"
+            "project file change count exceeds limit: {count} > {MAX_COMMIT_ACTIONS}"
         ))
     } else {
         Ok(())
@@ -408,7 +380,7 @@ fn decode_harness_file_content(content: &HarnessFileContent) -> Result<Vec<u8>, 
     if content.encoding.eq_ignore_ascii_case("base64") {
         return base64::engine::general_purpose::STANDARD
             .decode(content.data.as_bytes())
-            .map_err(|err| format!("decode Harness base64 content failed: {err}"));
+            .map_err(|err| format!("decode project file base64 content failed: {err}"));
     }
     Ok(content.data.as_bytes().to_vec())
 }

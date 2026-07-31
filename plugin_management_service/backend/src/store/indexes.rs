@@ -120,6 +120,23 @@ impl AppStore {
         )
         .await?;
 
+        create_unique_index(&self.plugin_publishers, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_publishers,
+            doc! { "marketplace_id": 1, "publisher_id": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_publishers,
+            doc! { "owner_user_id": 1, "status": 1, "updated_at": -1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_publishers,
+            doc! { "marketplace_id": 1, "status": 1, "updated_at": -1 },
+        )
+        .await?;
+
         create_unique_index(&self.plugin_catalog_syncs, doc! { "marketplace_id": 1 }).await?;
 
         create_unique_index(&self.plugin_catalog_entries, doc! { "id": 1 }).await?;
@@ -145,6 +162,16 @@ impl AppStore {
         create_index(
             &self.plugin_releases,
             doc! { "plugin_id": 1, "published_at": -1, "revoked_at": 1 },
+        )
+        .await?;
+        create_unique_index(
+            &self.plugin_release_publication_states,
+            doc! { "release_id": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_release_publication_states,
+            doc! { "ready": 1, "updated_at": -1 },
         )
         .await?;
 
@@ -179,6 +206,17 @@ impl AppStore {
         create_index(
             &self.plugin_component_snapshots,
             doc! { "release_id": 1, "component.kind": 1 },
+        )
+        .await?;
+
+        create_unique_index(
+            &self.plugin_cloud_component_bundles,
+            doc! { "plugin_id": 1, "release_id": 1, "component_key": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_cloud_component_bundles,
+            doc! { "release_id": 1, "execution_host": 1 },
         )
         .await?;
 

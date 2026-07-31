@@ -71,4 +71,44 @@ describe('message task node retry', () => {
 
     expect(onRetry).toHaveBeenCalledWith(task, '回调地址已经补齐，请重新验证');
   });
+
+  it('shows a retry request failure inside the task detail modal', () => {
+    render(
+      <MessageTaskDetailModal
+        task={{
+          id: 'task-blocked',
+          title: '阻塞任务',
+          status: 'blocked',
+          last_run_id: 'run-blocked',
+        }}
+        retryError="模型配置不可用，无法重新处理此节点"
+        onRetry={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('alert').textContent).toContain('模型配置不可用，无法重新处理此节点');
+  });
+
+  it('retries a multi-application task without asking the user to choose an image', async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: 'task-multi-app',
+      title: '多应用任务',
+      status: 'failed',
+      last_run_id: 'run-multi-app',
+    };
+    const onRetry = vi.fn();
+    render(
+      <MessageTaskDetailModal
+        task={task}
+        onRetry={onRetry}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('combobox')).toBeNull();
+    await user.click(screen.getByRole('button', { name: '重试此任务' }));
+    expect(onRetry).toHaveBeenCalledWith(task);
+  });
 });

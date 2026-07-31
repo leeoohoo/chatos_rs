@@ -85,6 +85,44 @@ impl TestSigner {
         )
     }
 
+    pub(in crate::plugins) fn package_with_prompt_execution(
+        &self,
+        root: &Path,
+        version: &str,
+        execution_host: PluginExecutionHost,
+    ) -> TestPackage {
+        let default_host = match execution_host {
+            PluginExecutionHost::Cloud => "cloud",
+            PluginExecutionHost::Local => "local",
+            PluginExecutionHost::Portable => "portable",
+        };
+        self.package_from_manifest(
+            root,
+            version,
+            ArchiveMutation::None,
+            json!({
+                "schemaVersion": 2,
+                "execution": {"defaultHost": default_host, "componentHosts": {}},
+                "name": "demo-plugin",
+                "version": version,
+                "description": "A signed schema v2 Prompt Plugin fixture",
+                "author": {"name": "Demo Publisher"},
+                "skills": ["./skills/demo"],
+                "interface": {
+                    "displayName": "Demo Plugin",
+                    "shortDescription": "Signed Prompt Plugin",
+                    "longDescription": "A signed schema v2 Prompt Plugin fixture",
+                    "developerName": "Demo Publisher",
+                    "category": "Developer Tools"
+                },
+                "dependencies": {},
+                "permissions": []
+            })
+            .to_string(),
+            BTreeMap::new(),
+        )
+    }
+
     pub(in crate::plugins) fn package_with_command(
         &self,
         root: &Path,
@@ -235,6 +273,110 @@ impl TestSigner {
                 (
                     "scripts/audit-hook.sh".to_string(),
                     b"#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true}\\n'\n".to_vec(),
+                ),
+            ]),
+        )
+    }
+
+    pub(in crate::plugins) fn package_with_packaged_hook_suite(
+        &self,
+        root: &Path,
+        version: &str,
+    ) -> TestPackage {
+        let lifecycle_hook_set = json!({
+            "schemaVersion": 1,
+            "hooks": [{
+                "id": "packaged-audit",
+                "events": ["SessionStart"],
+                "entrypoint": {
+                    "type": "command",
+                    "command": "./scripts/packaged-audit-hook.sh",
+                    "args": ["--json"]
+                },
+                "timeoutMs": 8000,
+                "maxOutputBytes": 4096,
+                "failurePolicy": "continue"
+            }]
+        })
+        .to_string();
+        let workspace_hook_set = json!({
+            "schemaVersion": 1,
+            "hooks": [{
+                "id": "packaged-workspace-write",
+                "events": ["SessionStart"],
+                "entrypoint": {
+                    "type": "command",
+                    "command": "./scripts/packaged-workspace-hook.sh",
+                    "args": ["--json"]
+                },
+                "timeoutMs": 8000,
+                "maxOutputBytes": 4096,
+                "failurePolicy": "continue",
+                "workspaceWrite": true
+            }]
+        })
+        .to_string();
+        self.package_from_manifest(
+            root,
+            version,
+            ArchiveMutation::None,
+            json!({
+                "name": "demo-plugin",
+                "version": version,
+                "description": "A signed packaged Local Connector Hook fixture",
+                "author": {"name": "Demo Publisher"},
+                "hooks": [
+                    {
+                        "componentKey": "packaged-lifecycle-hooks",
+                        "source": "./hooks-lifecycle.json"
+                    },
+                    {
+                        "componentKey": "packaged-workspace-hooks",
+                        "source": "./hooks-workspace.json"
+                    }
+                ],
+                "interface": {
+                    "displayName": "Demo Plugin",
+                    "shortDescription": "Signed packaged Hook test Plugin",
+                    "longDescription": "A signed packaged Local Connector Hook fixture",
+                    "developerName": "Demo Publisher",
+                    "category": "Developer Tools"
+                },
+                "permissions": [
+                    {
+                        "permission": "process.spawn",
+                        "required": true,
+                        "components": [
+                            "packaged-lifecycle-hooks",
+                            "packaged-workspace-hooks"
+                        ]
+                    },
+                    {
+                        "permission": "workspace.write",
+                        "required": true,
+                        "components": ["packaged-workspace-hooks"]
+                    }
+                ]
+            })
+            .to_string(),
+            BTreeMap::from([
+                (
+                    "hooks-lifecycle.json".to_string(),
+                    lifecycle_hook_set.into_bytes(),
+                ),
+                (
+                    "hooks-workspace.json".to_string(),
+                    workspace_hook_set.into_bytes(),
+                ),
+                (
+                    "scripts/packaged-audit-hook.sh".to_string(),
+                    b"#!/bin/sh\nprintf 'packaged-hook-stdout-secret\\n'\nprintf 'packaged-hook-stderr-secret\\n' >&2\n"
+                        .to_vec(),
+                ),
+                (
+                    "scripts/packaged-workspace-hook.sh".to_string(),
+                    b"#!/bin/sh\ntest -n \"$CHATOS_WORKSPACE\"\nprintf 'created by packaged Hook\\n' > \"$CHATOS_WORKSPACE/hook-was-here\"\nif printf 'forbidden\\n' > \"$CHATOS_WORKSPACE/.git/plugin-hook-probe\" 2>/dev/null; then\n  exit 29\nfi\nprintf 'packaged-write-stdout-secret\\n'\nprintf 'packaged-write-stderr-secret\\n' >&2\n"
+                        .to_vec(),
                 ),
             ]),
         )

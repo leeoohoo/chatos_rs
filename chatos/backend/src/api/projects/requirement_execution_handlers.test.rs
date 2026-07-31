@@ -104,6 +104,151 @@ mod tests {
     }
 
     #[test]
+    fn stopped_execution_message_marker_recovers_status_after_late_failure_overwrite() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.id = "group-stopped".to_string();
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "failed",
+                "confirmation_status": "failed",
+                "stopped_at": "2026-07-29T09:00:00Z",
+                "stopped_task_ids": ["task-1"]
+            }
+        }));
+
+        assert_eq!(execution_message_status(&message), "stopped");
+    }
+
+    #[test]
+    fn cancelled_execution_message_is_terminal_for_replacement() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "cancelled",
+                "confirmation_status": "cancelled"
+            }
+        }));
+
+        assert_eq!(execution_message_status(&message), "cancelled");
+        assert!(execution_message_is_stopped_terminal(&message));
+    }
+
+    fn execution_link_with_status(status: &str) -> ExecutionLink {
+        ExecutionLink {
+            link_id: None,
+            work_item_id: "work-item-1".to_string(),
+            task_runner_task_id: format!("task-{status}"),
+            task_runner_run_id: None,
+            task_runner_status: Some(status.to_string()),
+            source_session_id: Some("session-1".to_string()),
+            source_user_message_id: Some("group-1".to_string()),
+        }
+    }
+
+    #[test]
+    fn cancelled_links_recover_replacement_readiness_when_message_status_is_stale() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "failed",
+                "confirmation_status": "failed"
+            }
+        }));
+
+        assert_eq!(
+            resolve_old_cloud_execution_batch_state(
+                &message,
+                &[
+                    execution_link_with_status("succeeded"),
+                    execution_link_with_status("cancelled")
+                ],
+            ),
+            OldCloudExecutionBatchState::ReplacementReady
+        );
+    }
+
+    #[test]
+    fn active_links_keep_stopped_batch_in_cancellation_settling() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "stopped",
+                "confirmation_status": "stopped"
+            }
+        }));
+
+        assert_eq!(
+            resolve_old_cloud_execution_batch_state(
+                &message,
+                &[
+                    execution_link_with_status("running"),
+                    execution_link_with_status("cancelled")
+                ],
+            ),
+            OldCloudExecutionBatchState::CancellationSettling(1)
+        );
+    }
+
+    #[test]
+    fn failed_links_without_stop_intent_are_not_replacement_ready() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "failed",
+                "confirmation_status": "failed"
+            }
+        }));
+
+        assert_eq!(
+            resolve_old_cloud_execution_batch_state(
+                &message,
+                &[execution_link_with_status("failed")],
+            ),
+            OldCloudExecutionBatchState::NotStopped
+        );
+    }
+
+    #[test]
     fn planner_prompt_requires_task_creation_for_planning_work_items() {
         let requirement = RequirementPlanItem {
             id: "requirement-1".to_string(),
@@ -269,5 +414,115 @@ mod tests {
             "requirement-1",
         )
         .is_err());
+    }
+
+    #[test]
+    fn existing_graph_scope_expands_when_actual_dag_contains_planner_scope() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let actual = BTreeSet::from([
+            "task-1".to_string(),
+            "task-2".to_string(),
+            "task-extra".to_string(),
+        ]);
+
+        assert_eq!(
+            expand_project_task_scope_to_actual_graph(&expected, &actual),
+            actual
+        );
+    }
+
+    #[test]
+    fn existing_graph_scope_does_not_hide_missing_planner_tasks() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let actual = BTreeSet::from(["task-1".to_string(), "task-extra".to_string()]);
+
+        assert_eq!(
+            expand_project_task_scope_to_actual_graph(&expected, &actual),
+            expected
+        );
+    }
+
+    #[test]
+    fn rerun_clone_validation_allows_multiple_dag_nodes_per_project_task() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let mapped = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+
+        assert!(validate_rerun_cloned_project_task_scope(&expected, &mapped, 4).is_ok());
+    }
+
+    #[test]
+    fn rerun_clone_validation_rejects_project_task_scope_mismatch() {
+        let expected = BTreeSet::from(["task-1".to_string(), "task-2".to_string()]);
+        let mapped = BTreeSet::from([
+            "task-1".to_string(),
+            "task-2".to_string(),
+            "task-extra".to_string(),
+        ]);
+
+        let error = validate_rerun_cloned_project_task_scope(&expected, &mapped, 4)
+            .expect_err("unexpected project task should fail");
+
+        assert!(error.contains("project task scope mismatch"));
+        assert!(error.contains("unexpected=[task-extra]"));
+        assert!(error.contains("cloned_dag_nodes=4"));
+    }
+
+    fn planner_message_created_at(
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> crate::models::message::Message {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.created_at = created_at.to_rfc3339();
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1",
+                "project_task_ids": ["task-1"]
+            },
+            "task_runner_async": {
+                "overall_status": "planning",
+                "confirmation_status": "planning"
+            }
+        }));
+        message
+    }
+
+    #[test]
+    fn planning_message_without_tasks_becomes_stale_after_timeout() {
+        let now = chrono::Utc::now();
+        let message = planner_message_created_at(
+            now - chrono::Duration::seconds(STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS + 1),
+        );
+
+        assert!(cloud_execution_planner_message_is_stale(
+            &message, false, now
+        ));
+    }
+
+    #[test]
+    fn planning_message_with_tasks_is_not_marked_stale() {
+        let now = chrono::Utc::now();
+        let message = planner_message_created_at(
+            now - chrono::Duration::seconds(STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS + 1),
+        );
+
+        assert!(!cloud_execution_planner_message_is_stale(
+            &message, true, now
+        ));
+    }
+
+    #[test]
+    fn recent_planning_message_is_not_marked_stale() {
+        let now = chrono::Utc::now();
+        let message = planner_message_created_at(
+            now - chrono::Duration::seconds(STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS - 1),
+        );
+
+        assert!(!cloud_execution_planner_message_is_stale(
+            &message, false, now
+        ));
     }
 }

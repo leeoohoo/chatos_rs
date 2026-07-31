@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -16,6 +16,7 @@ use reqwest::redirect::Policy;
 use reqwest::Url;
 use semver::Version;
 
+use super::plugin_marketplaces::validate_marketplace_signing_key_progression;
 use super::*;
 
 const SYSTEM_CATALOG_SYNC_ACTOR: &str = "system:plugin-catalog-sync";
@@ -258,6 +259,37 @@ async fn sync_plugin_marketplace_inner(
     }
     validate_catalog_against_store(state, &document, unchanged).await?;
 
+    let mut staged_cloud_bundles = Vec::new();
+    for release in &document.releases {
+        let bundles =
+            super::plugin_cloud_bundles::stage_release_cloud_bundles(state, release).await?;
+        for bundle in &bundles {
+            let snapshot = document
+                .component_snapshots
+                .iter()
+                .find(|snapshot| {
+                    snapshot.plugin_id == bundle.plugin_id
+                        && snapshot.release_id == bundle.release_id
+                        && snapshot.component.component_key == bundle.component_key
+                })
+                .ok_or_else(|| {
+                    ApiError::conflict(format!(
+                        "Catalog is missing cloud component snapshot {}/{}/{}",
+                        bundle.plugin_id, bundle.release_id, bundle.component_key
+                    ))
+                })?;
+            if snapshot.content_sha256 != bundle.bundle_sha256
+                || snapshot.component.execution_host != bundle.execution_host
+            {
+                return Err(ApiError::conflict(format!(
+                    "Catalog cloud component snapshot does not match artifact Bundle {}/{}/{}",
+                    bundle.plugin_id, bundle.release_id, bundle.component_key
+                )));
+            }
+        }
+        staged_cloud_bundles.extend(bundles);
+    }
+
     let synced_at = now_rfc3339();
     let sync_record = PluginCatalogSyncRecord {
         marketplace_id: marketplace.id.clone(),
@@ -281,7 +313,13 @@ async fn sync_plugin_marketplace_inner(
             "Plugin Catalog changed concurrently; retry the sync",
         ));
     }
-    materialize_catalog(state, &marketplace, &document).await?;
+    materialize_catalog(
+        state,
+        &marketplace,
+        &document,
+        staged_cloud_bundles.as_slice(),
+    )
+    .await?;
 
     marketplace.trusted_signing_keys = document.signing_keys.clone();
     marketplace.last_catalog_revision = Some(document.revision.clone());
@@ -350,7 +388,10 @@ async fn fetch_catalog_document(
     })
 }
 
-async fn build_catalog_client(url: &Url, timeout: Duration) -> Result<reqwest::Client, ApiError> {
+pub(super) async fn build_catalog_client(
+    url: &Url,
+    timeout: Duration,
+) -> Result<reqwest::Client, ApiError> {
     let host = url
         .host_str()
         .ok_or_else(|| ApiError::conflict("Plugin Catalog URL has no host"))?;
@@ -381,7 +422,7 @@ async fn build_catalog_client(url: &Url, timeout: Duration) -> Result<reqwest::C
         .map_err(|error| ApiError::internal(format!("build Plugin Catalog client failed: {error}")))
 }
 
-fn validate_catalog_url(value: &str) -> Result<Url, ApiError> {
+pub(super) fn validate_catalog_url(value: &str) -> Result<Url, ApiError> {
     let url = Url::parse(value).map_err(|_| ApiError::conflict("Plugin Catalog URL is invalid"))?;
     if url.scheme() != "https"
         || url.host_str().is_none()
@@ -479,7 +520,10 @@ fn validate_catalog_progression(
     previous: &PluginCatalogDocument,
     next: &PluginCatalogDocument,
 ) -> Result<(), ApiError> {
-    validate_signing_key_progression(previous, next)?;
+    validate_marketplace_signing_key_progression(
+        previous.signing_keys.as_slice(),
+        next.signing_keys.as_slice(),
+    )?;
     let next_plugins = next
         .plugins
         .iter()
@@ -545,74 +589,6 @@ fn validate_catalog_progression(
                 snapshot.plugin_id, snapshot.release_id, snapshot.component.component_key
             )));
         }
-    }
-    Ok(())
-}
-
-fn validate_signing_key_progression(
-    previous: &PluginCatalogDocument,
-    next: &PluginCatalogDocument,
-) -> Result<(), ApiError> {
-    let next_keys = next
-        .signing_keys
-        .iter()
-        .map(|key| (key.key_id.as_str(), key))
-        .collect::<HashMap<_, _>>();
-    for key in &previous.signing_keys {
-        let Some(updated) = next_keys.get(key.key_id.as_str()) else {
-            if key.revoked_at.is_some() {
-                continue;
-            }
-            return Err(ApiError::conflict(format!(
-                "Catalog update removes non-revoked signing key {}",
-                key.key_id
-            )));
-        };
-        if key.publisher_id != updated.publisher_id
-            || key.algorithm != updated.algorithm
-            || key.public_key_base64 != updated.public_key_base64
-            || key.usages.iter().collect::<BTreeSet<_>>()
-                != updated.usages.iter().collect::<BTreeSet<_>>()
-            || key.valid_from != updated.valid_from
-        {
-            return Err(ApiError::conflict(format!(
-                "Catalog update changes immutable signing key material {}",
-                key.key_id
-            )));
-        }
-        if key.revoked_at.is_some() && key.revoked_at != updated.revoked_at {
-            return Err(ApiError::conflict(format!(
-                "Catalog update removes or changes signing key revocation {}",
-                key.key_id
-            )));
-        }
-        validate_key_valid_until_progression(key, updated)?;
-    }
-    Ok(())
-}
-
-fn validate_key_valid_until_progression(
-    previous: &SigningKeyRef,
-    next: &SigningKeyRef,
-) -> Result<(), ApiError> {
-    let Some(previous_until) = previous.valid_until.as_deref() else {
-        return Ok(());
-    };
-    let Some(next_until) = next.valid_until.as_deref() else {
-        return Err(ApiError::conflict(format!(
-            "Catalog update extends signing key validity {}",
-            previous.key_id
-        )));
-    };
-    let previous_until = DateTime::parse_from_rfc3339(previous_until)
-        .map_err(|_| ApiError::conflict("previous signing key validity is invalid"))?;
-    let next_until = DateTime::parse_from_rfc3339(next_until)
-        .map_err(|_| ApiError::conflict("next signing key validity is invalid"))?;
-    if next_until > previous_until {
-        return Err(ApiError::conflict(format!(
-            "Catalog update extends signing key validity {}",
-            previous.key_id
-        )));
     }
     Ok(())
 }
@@ -774,11 +750,27 @@ async fn materialize_catalog(
     state: &AppState,
     marketplace: &PluginMarketplaceRecord,
     document: &PluginCatalogDocument,
+    cloud_bundles: &[PluginCloudComponentBundle],
 ) -> Result<(), ApiError> {
+    let mut staged_release_ids = Vec::new();
     for release in &document.releases {
-        match state
+        let ready = state
             .store
             .get_plugin_release(release.id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+            .is_some();
+        if !ready {
+            state
+                .store
+                .set_plugin_release_publication_ready(release.id.as_str(), false)
+                .await
+                .map_err(ApiError::internal)?;
+            staged_release_ids.push(release.id.clone());
+        }
+        match state
+            .store
+            .get_plugin_release_any_state(release.id.as_str())
             .await
             .map_err(ApiError::internal)?
         {
@@ -809,6 +801,18 @@ async fn materialize_catalog(
                 release.id.as_str(),
                 snapshots.as_slice(),
             )
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    state
+        .store
+        .insert_plugin_cloud_component_bundles(cloud_bundles)
+        .await
+        .map_err(ApiError::internal)?;
+    for release_id in staged_release_ids {
+        state
+            .store
+            .set_plugin_release_publication_ready(release_id.as_str(), true)
             .await
             .map_err(ApiError::internal)?;
     }
@@ -948,11 +952,19 @@ mod tests {
         let key = signing_key("root-v1", None);
         let previous = catalog_with_keys("revision-1", vec![key.clone()]);
         let next = catalog_with_keys("revision-2", Vec::new());
-        assert!(validate_signing_key_progression(&previous, &next).is_err());
+        assert!(validate_marketplace_signing_key_progression(
+            previous.signing_keys.as_slice(),
+            next.signing_keys.as_slice(),
+        )
+        .is_err());
 
         let revoked = signing_key("root-v1", Some("2026-07-25T01:00:00Z"));
         let previous = catalog_with_keys("revision-1", vec![revoked]);
-        assert!(validate_signing_key_progression(&previous, &next).is_ok());
+        assert!(validate_marketplace_signing_key_progression(
+            previous.signing_keys.as_slice(),
+            next.signing_keys.as_slice(),
+        )
+        .is_ok());
     }
 
     fn signing_key(key_id: &str, revoked_at: Option<&str>) -> SigningKeyRef {

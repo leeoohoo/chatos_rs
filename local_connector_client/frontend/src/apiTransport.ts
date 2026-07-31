@@ -27,14 +27,29 @@ export async function request<T>(endpoint: string, options: RequestInit = {}): P
   }
   const response = await sendLocalApiRequest(endpoint, options, headers);
   const text = response.body;
-  const body = text ? JSON.parse(text) : null;
+  const body = parseLocalApiBody(text, response.status);
   if (!response.ok) {
-    throw apiErrorFromBody(body, response.status);
+    throw apiErrorFromBody(body, response.status, text);
   }
   return body as T;
 }
 
-function apiErrorFromBody(body: unknown, status: number): Error {
+function parseLocalApiBody(text: string, status: number): unknown {
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    if (status >= 400) {
+      return { error: text };
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Local API returned invalid JSON: ${message}`);
+  }
+}
+
+function apiErrorFromBody(body: unknown, status: number, fallbackText = ''): Error {
   const record = isRecord(body) ? body : {};
   const error = record.error;
   const errorRecord = isRecord(error) ? error : {};
@@ -45,7 +60,7 @@ function apiErrorFromBody(body: unknown, status: number): Error {
         ? errorRecord.message
         : typeof record.message === 'string'
           ? record.message
-          : `HTTP ${status}`;
+          : fallbackText.trim() || `HTTP ${status}`;
   const code =
     typeof record.code === 'string'
       ? record.code

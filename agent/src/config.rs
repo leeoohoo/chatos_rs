@@ -1,26 +1,81 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-pub const AGENT_MAX_ITERATIONS_CONFIG_KEY: &str = "agent.runtime.max_iterations";
-pub const AGENT_MAX_ITERATIONS_ENV: &str = "AGENT_MAX_ITERATIONS";
-pub const LEGACY_CHATOS_MAX_ITERATIONS_ENV: &str = "MAX_ITERATIONS";
-pub const LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV: &str = "TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS";
-pub const DEFAULT_AGENT_MAX_ITERATIONS: usize = 600;
+#[cfg(feature = "managed-config")]
+use serde::{Deserialize, Serialize};
 
-pub fn agent_max_iterations_from_env() -> usize {
-    [
-        AGENT_MAX_ITERATIONS_ENV,
-        LEGACY_CHATOS_MAX_ITERATIONS_ENV,
-        LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-    ]
-    .into_iter()
-    .find_map(|key| {
-        std::env::var(key)
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|value| *value > 0)
-    })
-    .unwrap_or(DEFAULT_AGENT_MAX_ITERATIONS)
+pub const AGENT_MAX_ITERATIONS_CONFIG_KEY: &str = "agent.runtime.max_iterations";
+pub const DEFAULT_AGENT_MAX_ITERATIONS: usize = 600;
+pub const TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY: &str = "task_runner.runtime.max_iterations";
+pub const TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY: &str =
+    "task_runner.runtime.review_checkpoint.read_only_iterations";
+pub const TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY: &str =
+    "task_runner.runtime.review_checkpoint.missing_read_failures";
+pub const TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY: &str =
+    "task_runner.runtime.review_checkpoint.repeat_interval_iterations";
+pub const DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS: usize = 8;
+pub const DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES: usize = 2;
+pub const DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL: usize = 8;
+
+#[cfg_attr(feature = "managed-config", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskRunnerRuntimeSettings {
+    pub max_iterations: usize,
+    pub review_read_only_iterations: usize,
+    pub review_missing_read_failures: usize,
+    pub review_repeat_interval_iterations: usize,
+}
+
+impl TaskRunnerRuntimeSettings {
+    pub fn defaults() -> Self {
+        Self {
+            max_iterations: DEFAULT_AGENT_MAX_ITERATIONS,
+            review_read_only_iterations: DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS,
+            review_missing_read_failures: DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
+            review_repeat_interval_iterations: DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
+        }
+    }
+}
+
+#[cfg(feature = "managed-config")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManagedRuntimeConfigBundle {
+    pub environment: String,
+    pub revision: i64,
+    pub checksum: String,
+    pub generated_at: String,
+    pub stale: bool,
+    pub source: Option<String>,
+    pub task_runner_runtime_settings: TaskRunnerRuntimeSettings,
+}
+
+#[cfg(feature = "managed-config")]
+impl ManagedRuntimeConfigBundle {
+    pub fn from_config_snapshot(snapshot: chatos_config_sdk::ConfigSnapshot) -> Self {
+        let settings =
+            resolve_task_runner_runtime_settings(Some(&snapshot), DEFAULT_AGENT_MAX_ITERATIONS);
+        Self {
+            environment: snapshot.environment,
+            revision: snapshot.revision,
+            checksum: snapshot.checksum,
+            generated_at: snapshot.generated_at,
+            stale: snapshot.stale,
+            source: snapshot.source,
+            task_runner_runtime_settings: settings,
+        }
+    }
+
+    pub fn defaults() -> Self {
+        Self {
+            environment: "local".to_string(),
+            revision: 0,
+            checksum: "defaults".to_string(),
+            generated_at: String::new(),
+            stale: true,
+            source: Some("defaults".to_string()),
+            task_runner_runtime_settings: TaskRunnerRuntimeSettings::defaults(),
+        }
+    }
 }
 
 #[cfg(feature = "managed-config")]
@@ -35,6 +90,37 @@ pub fn resolve_agent_max_iterations(
 }
 
 #[cfg(feature = "managed-config")]
+pub fn resolve_task_runner_runtime_settings(
+    snapshot: Option<&chatos_config_sdk::ConfigSnapshot>,
+    fallback_max_iterations: usize,
+) -> TaskRunnerRuntimeSettings {
+    TaskRunnerRuntimeSettings {
+        max_iterations: snapshot
+            .and_then(|snapshot| {
+                snapshot
+                    .usize(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
+                    .or_else(|| snapshot.usize(AGENT_MAX_ITERATIONS_CONFIG_KEY))
+            })
+            .unwrap_or(fallback_max_iterations)
+            .max(2),
+        review_read_only_iterations: snapshot
+            .and_then(|snapshot| snapshot.usize(TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY))
+            .unwrap_or(DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS)
+            .max(1),
+        review_missing_read_failures: snapshot
+            .and_then(|snapshot| {
+                snapshot.usize(TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY)
+            })
+            .unwrap_or(DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES)
+            .max(1),
+        review_repeat_interval_iterations: snapshot
+            .and_then(|snapshot| snapshot.usize(TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY))
+            .unwrap_or(DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL)
+            .max(1),
+    }
+}
+
+#[cfg(feature = "managed-config")]
 pub async fn load_agent_max_iterations(service_name: &str) -> usize {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -43,7 +129,7 @@ pub async fn load_agent_max_iterations(service_name: &str) -> usize {
 
     static CLIENTS: OnceLock<Mutex<HashMap<String, Option<ConfigClient>>>> = OnceLock::new();
 
-    let fallback = agent_max_iterations_from_env();
+    let fallback = DEFAULT_AGENT_MAX_ITERATIONS;
     let service_name = service_name.trim();
     if service_name.is_empty() {
         return fallback;
@@ -81,6 +167,10 @@ mod tests {
             AGENT_MAX_ITERATIONS_CONFIG_KEY,
             "agent.runtime.max_iterations"
         );
+        assert_eq!(
+            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
+            "task_runner.runtime.max_iterations"
+        );
     }
 
     #[test]
@@ -99,5 +189,40 @@ mod tests {
 
         assert_eq!(resolve_agent_max_iterations(Some(&snapshot), 100), 725);
         assert_eq!(resolve_agent_max_iterations(None, 100), 100);
+    }
+
+    #[test]
+    fn task_runner_runtime_settings_use_specific_then_shared_values() {
+        let snapshot = ConfigSnapshot {
+            environment: "test".to_string(),
+            service_name: "task-runner".to_string(),
+            revision: 7,
+            checksum: "checksum-7".to_string(),
+            values: BTreeMap::from([
+                (AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(), json!(650)),
+                (
+                    TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY.to_string(),
+                    json!(12),
+                ),
+                (
+                    TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY.to_string(),
+                    json!(3),
+                ),
+            ]),
+            env: BTreeMap::new(),
+            generated_at: "now".to_string(),
+            stale: false,
+            source: None,
+        };
+
+        let settings = resolve_task_runner_runtime_settings(Some(&snapshot), 100);
+
+        assert_eq!(settings.max_iterations, 650);
+        assert_eq!(settings.review_read_only_iterations, 12);
+        assert_eq!(settings.review_missing_read_failures, 3);
+        assert_eq!(
+            settings.review_repeat_interval_iterations,
+            DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL
+        );
     }
 }

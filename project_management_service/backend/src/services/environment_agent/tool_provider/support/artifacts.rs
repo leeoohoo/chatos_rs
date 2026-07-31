@@ -103,7 +103,6 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
     image_catalog: Option<&Value>,
 ) -> Result<ProjectRuntimeEnvironmentImageRecord, String> {
     let now = now_rfc3339();
-    let requested_image_id = image.image_id.and_then(normalize_owned);
     let environment_type = image
         .environment_type
         .and_then(normalize_owned)
@@ -116,6 +115,20 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
         .display_name
         .and_then(normalize_owned)
         .unwrap_or_else(|| environment_key.clone());
+    let source_root = normalize_component_root(image.source_root.as_deref().unwrap_or("."))?;
+    let component_kind = image
+        .component_kind
+        .and_then(normalize_owned)
+        .unwrap_or_else(|| environment_type.clone());
+    let startup_command = image.startup_command.and_then(normalize_owned);
+    let test_command = image.test_command.and_then(normalize_owned);
+    let mut depends_on = image
+        .depends_on
+        .into_iter()
+        .filter_map(normalize_owned)
+        .collect::<Vec<_>>();
+    depends_on.sort();
+    depends_on.dedup();
     let image_id = None;
     let image_ref = None;
     let dockerfile = image.dockerfile.and_then(normalize_multiline_owned);
@@ -136,6 +149,12 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
         display_name,
         service_id: String::new(),
         service_role: RuntimeServiceRole::Unknown,
+        source_root,
+        component_kind,
+        startup_command,
+        test_command,
+        depends_on,
+        auto_start: image.auto_start,
         mcp_policy: ProgramManagedMcpPolicy::default(),
         image_id,
         image_ref,
@@ -165,66 +184,31 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
         record.error = None;
     }
     crate::services::runtime_environment::apply_program_managed_image_policy(&mut record);
-    if let Some(image_id) = requested_image_id {
-        apply_catalog_image_selection(&mut record, image_catalog, image_id.as_str())?;
-    }
+    let _ = image_catalog;
     Ok(record)
 }
 
-fn apply_catalog_image_selection(
-    record: &mut ProjectRuntimeEnvironmentImageRecord,
-    image_catalog: Option<&Value>,
-    image_id: &str,
-) -> Result<(), String> {
-    if record.service_role != RuntimeServiceRole::Application {
-        return Err(format!(
-            "dependency service {} cannot select a sandbox application image_id",
-            record.environment_key
-        ));
+fn normalize_component_root(value: &str) -> Result<String, String> {
+    let value = value.trim().replace('\\', "/");
+    if value.is_empty() || value == "." {
+        return Ok(".".to_string());
     }
-    let image = image_catalog
-        .and_then(|catalog| catalog.get("images"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|image| image.get("id").and_then(Value::as_str) == Some(image_id))
-        .ok_or_else(|| {
-            format!("sandbox image_id is not present in the current catalog: {image_id}")
-        })?;
-    let initialized = image
-        .get("initialized")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let status = image
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    if !initialized
-        && !matches!(
-            status.as_str(),
-            "ready" | "available" | "local" | "succeeded" | "initialized"
-        )
+    if value.starts_with('/')
+        || value
+            .as_bytes()
+            .get(1)
+            .is_some_and(|separator| *separator == b':')
     {
-        return Err(format!(
-            "sandbox image_id is not initialized and cannot be reused: {image_id}"
-        ));
+        return Err(format!("invalid component source_root: {value}"));
     }
-    let image_ref = image
-        .get("image_ref")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("sandbox image_id has no image_ref: {image_id}"))?;
-    record.image_id = Some(image_id.to_string());
-    record.image_ref = Some(image_ref.to_string());
-    if let Some(features) = image.get("features").and_then(Value::as_array) {
-        record.features = Value::Array(features.clone());
+    let segments = value
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect::<Vec<_>>();
+    if segments.is_empty() || segments.contains(&"..") {
+        return Err(format!("invalid component source_root: {value}"));
     }
-    record.status = "ready".to_string();
-    record.error = None;
-    Ok(())
+    Ok(segments.join("/"))
 }
 
 pub(in crate::services::environment_agent::tool_provider) fn ensure_array(value: Value) -> Value {

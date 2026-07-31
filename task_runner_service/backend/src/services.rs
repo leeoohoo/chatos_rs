@@ -24,7 +24,7 @@ use crate::models::{
     CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, PaginatedResponse,
     RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
     StartTaskRunRequest, SystemConfigResponse, TaskClosureState, TaskIndexResponse,
-    TaskListFilters, TaskManagerScope, TaskMcpConfig, TaskMcpResolutionResponse, TaskProjectRecord,
+    TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse, TaskProjectRecord,
     TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
     TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
@@ -70,6 +70,7 @@ mod model_catalog;
 mod model_config_service;
 mod model_runtime_resolver;
 pub(crate) mod path_redaction;
+mod plugin_cloud_runtime;
 mod plugin_management_policy;
 mod plugin_management_prompts;
 mod plugin_runtime_relay;
@@ -93,7 +94,6 @@ mod status_display;
 mod stream_events;
 mod system_mcp_adapter;
 mod task_dependencies;
-mod task_manager_bridge;
 mod task_manager_lifecycle;
 mod task_memory;
 mod task_process_log;
@@ -124,9 +124,6 @@ use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
-use self::task_manager_lifecycle::{
-    effective_task_closure_state, effective_task_required_for_parent_completion,
-};
 use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
 };
@@ -137,6 +134,12 @@ use self::workspace_mcp::{
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
+const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
+const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
+    "task_runner.execution.environment_mode";
+const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str = "task_runner.ai.tool_result_max_chars";
+const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
+    "task_runner.ai.tool_results_total_max_chars";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunTriggerSource {
@@ -188,6 +191,8 @@ pub struct RunService {
     ask_user_prompt_service: AskUserPromptService,
     start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
     callback_delivery_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
+    plugin_cloud_bundle_cache:
+        Arc<parking_lot::Mutex<plugin_cloud_runtime::PluginCloudBundleCache>>,
 }
 
 #[derive(Clone)]
@@ -212,7 +217,7 @@ pub fn health() -> HealthResponse {
 pub fn system_config(
     config: &AppConfig,
     execution_timeout_ms: u64,
-    task_execution_max_iterations: usize,
+    task_runner_runtime_settings: chatos_agent::TaskRunnerRuntimeSettings,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     execution_environment_mode: String,
     sandbox_enabled: bool,
@@ -236,7 +241,13 @@ pub fn system_config(
         scheduler_poll_interval_ms: config.scheduler_poll_interval.as_millis() as u64,
         auto_memory_summary: config.auto_memory_summary,
         default_task_execution_max_iterations: config.default_task_execution_max_iterations,
-        task_execution_max_iterations,
+        task_execution_max_iterations: task_runner_runtime_settings.max_iterations,
+        task_runner_review_read_only_iterations: task_runner_runtime_settings
+            .review_read_only_iterations,
+        task_runner_review_missing_read_failures: task_runner_runtime_settings
+            .review_missing_read_failures,
+        task_runner_review_repeat_interval_iterations: task_runner_runtime_settings
+            .review_repeat_interval_iterations,
         default_tool_result_model_max_chars: config.default_tool_result_model_max_chars,
         tool_result_model_max_chars: tool_result_model_budget_limits.per_result_max_chars,
         default_tool_results_model_total_max_chars: config
@@ -266,8 +277,11 @@ async fn unfinished_subtasks_for_task(
         .await?
         .into_iter()
         .filter(|subtask| {
-            effective_task_required_for_parent_completion(subtask)
-                && effective_task_closure_state(subtask) == TaskClosureState::Open
+            subtask
+                .task_tool_state
+                .required_for_parent_completion
+                .unwrap_or(false)
+                && subtask.task_tool_state.closure_state == Some(TaskClosureState::Open)
         })
         .collect::<Vec<_>>();
     subtasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -354,7 +368,7 @@ pub fn task_runner_internal_prompt_preview(
             "Task description and input-data sections appear only when the current task has those values.".to_string(),
             "The main task prompt asks the runner to understand the real flow, reuse existing code or platform capabilities, and leave the smallest useful verification evidence.".to_string(),
             "The global execution prompt is appended to the current task prompt during execution and is shown separately here for clarity.".to_string(),
-            "The process-log system message is injected only when MCP stays enabled for the task run.".to_string(),
+            "The process-log system message is injected only when MCP stays enabled and the Task Process Log MCP is enabled by Plugin Management for the task run.".to_string(),
             "Builtin MCP system prompt content is shown separately and follows the same prompt-language setting.".to_string(),
         ]
     } else {
@@ -363,7 +377,7 @@ pub fn task_runner_internal_prompt_preview(
             "任务说明和输入数据两段只有当前任务存在对应值时才会出现。".to_string(),
             "任务主 prompt 会要求执行方先理解真实链路、优先复用已有代码或平台能力，并留下最小但有用的验证证据。".to_string(),
             "全局执行 prompt 会在运行时追加到当前任务 prompt 后面，这里单独展示以便核对。".to_string(),
-            "过程日志系统提示只会在该次任务运行保持启用 MCP 时注入。".to_string(),
+            "过程日志系统提示只会在该次任务运行启用 MCP，且配置中心为该 Task Runner Agent 启用 Task Process Log MCP 时注入。".to_string(),
             "Builtin MCP system prompt 会单独展示，并跟随同一个 prompt 语言设置。".to_string(),
         ]
     };
@@ -406,10 +420,6 @@ fn normalized_optional(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
-}
-
-fn normalized_optional_nested(value: Option<String>) -> Option<String> {
-    normalized_optional(value)
 }
 
 fn validate_required(label: &str, value: &str) -> Result<(), String> {

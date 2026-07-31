@@ -203,8 +203,8 @@ impl SandboxManager {
         let workspace_alive = std::fs::metadata(record.run_workspace.as_str())
             .map(|metadata| metadata.is_dir())
             .unwrap_or(false);
-        let primary_service_id = record.primary_service_id.as_deref();
-        let primary_runtime = primary_service_id.and_then(|service_id| {
+        let execution_service_id = record.execution_service_id.as_deref();
+        let execution_runtime = execution_service_id.and_then(|service_id| {
             environment.as_ref().and_then(|environment| {
                 environment
                     .services
@@ -212,15 +212,15 @@ impl SandboxManager {
                     .find(|service| service.service_id == service_id)
             })
         });
-        let primary_record = primary_service_id.and_then(|service_id| {
+        let execution_record = execution_service_id.and_then(|service_id| {
             record
                 .environment_services
                 .iter()
                 .find(|service| service.service_id == service_id)
         });
-        let agent_endpoint = primary_runtime
+        let agent_endpoint = execution_runtime
             .and_then(|service| service.agent_endpoint.clone())
-            .or_else(|| primary_record.and_then(|service| service.agent_endpoint.clone()))
+            .or_else(|| execution_record.and_then(|service| service.agent_endpoint.clone()))
             .or_else(|| record.agent_endpoint.clone());
         let (agent_alive, agent_message) =
             mcp_proxy::check_agent_health(agent_endpoint.as_deref()).await;
@@ -271,11 +271,11 @@ impl SandboxManager {
             });
         }
         checks.push(SandboxHealthCheck {
-            name: "primary_application_agent".to_string(),
-            ok: primary_service_id.is_some() && agent_alive.unwrap_or(false),
-            message: match primary_service_id {
-                Some(service_id) => format!("primary application {service_id}: {agent_message}"),
-                None => "primary application service is not selected".to_string(),
+            name: "workspace_execution_agent".to_string(),
+            ok: execution_service_id.is_some() && agent_alive.unwrap_or(false),
+            message: match execution_service_id {
+                Some(service_id) => format!("workspace service {service_id}: {agent_message}"),
+                None => "workspace execution service is not configured".to_string(),
             },
         });
         checks.push(SandboxHealthCheck {
@@ -290,7 +290,7 @@ impl SandboxManager {
 
         let ok = checks.iter().all(|check| check.ok);
         let message = if ok {
-            "sandbox environment is healthy; all services are running and the primary application MCP Agent is ready".to_string()
+            "sandbox environment is healthy; dependencies are running and the workspace MCP Agent is ready".to_string()
         } else {
             let failed_checks = checks
                 .iter()
@@ -324,7 +324,7 @@ impl SandboxManager {
                 "backend_alive": response.backend_alive,
                 "agent_alive": response.agent_alive,
                 "workspace_alive": response.workspace_alive,
-                "primary_service_id": record.primary_service_id,
+                "execution_service_id": record.execution_service_id,
                 "services": record.environment_services.iter().map(|service| json!({
                     "service_id": service.service_id,
                     "service_role": service.service_role,
@@ -377,9 +377,16 @@ impl SandboxManager {
         input: PrepareSandboxDependencyImagesRequest,
     ) -> Result<PrepareSandboxDependencyImagesResponse, ApiError> {
         auth.require_scope(SCOPE_IMAGES_WRITE)?;
-        images::prepare_dependency_images(&self.config, self.config.backend, &input.image_refs)
-            .await
-            .map_err(ApiError::bad_request)
+        images::prepare_dependency_images(
+            self.image_jobs.clone(),
+            &self.config,
+            self.config.backend,
+            &input.image_refs,
+            input.project_id.as_deref(),
+            input.run_id.as_deref(),
+        )
+        .await
+        .map_err(ApiError::bad_request)
     }
 
     pub async fn pool_status(

@@ -8,7 +8,7 @@ use chatos_mcp::{
     MemoryRuntimeContext, MemoryRuntimePlugin, MemoryRuntimeSkill,
 };
 
-use crate::services::{chatos_agents, chatos_skills};
+use crate::services::chatos_agents;
 
 #[derive(Debug, Clone, Default)]
 pub struct ChatosMemoryReaderStore;
@@ -80,44 +80,17 @@ impl MemoryReaderStore for ChatosMemoryReaderStore {
 
     async fn get_skill(
         &self,
-        user_id: &str,
-        skill_id: &str,
+        _user_id: &str,
+        _skill_id: &str,
     ) -> Result<Option<MemoryFullSkill>, String> {
-        Ok(chatos_skills::get_skill(user_id, skill_id)
-            .await?
-            .map(|skill| MemoryFullSkill {
-                name: skill.name,
-                description: skill.description,
-                content: skill.content,
-                plugin_source: Some(skill.plugin_source),
-                source_path: Some(skill.source_path),
-                updated_at: skill.updated_at,
-            }))
+        Ok(None)
     }
 
     async fn get_skill_plugin(
         &self,
-        user_id: &str,
-        source: &str,
+        _user_id: &str,
+        _source: &str,
     ) -> Result<Option<MemoryFullPlugin>, String> {
-        Ok(chatos_skills::get_skill_plugin(user_id, source)
-            .await?
-            .map(|plugin| MemoryFullPlugin {
-                source: plugin.source,
-                name: plugin.name,
-                category: plugin.category,
-                description: plugin.description,
-                version: plugin.version,
-                repository: plugin.repository,
-                branch: plugin.branch,
-                content: plugin.content,
-                commands: plugin
-                    .commands
-                    .into_iter()
-                    .map(|command| serde_json::to_value(command).unwrap_or(serde_json::Value::Null))
-                    .collect(),
-                command_count: plugin.command_count,
-                updated_at: plugin.updated_at,
-            }))
+        Ok(None)
     }
 }

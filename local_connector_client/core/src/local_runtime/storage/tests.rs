@@ -279,6 +279,251 @@ async fn failed_planner_turn_can_publish_failure_status_and_receipt() {
 }
 
 #[tokio::test]
+async fn stopped_turn_task_runner_status_is_not_overwritten_by_late_failure() {
+    let root = std::env::temp_dir().join(format!("chatos-local-stopped-plan-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-stopped-plan".to_string(),
+            owner_user_id: "user-stopped-plan".to_string(),
+            device_id: "device-stopped-plan".to_string(),
+            workspace_id: "workspace-stopped-plan".to_string(),
+            project_name: "Stopped plan project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("create stopped plan project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-stopped-plan".to_string(),
+            owner_user_id: "user-stopped-plan".to_string(),
+            title: "Stopped plan session".to_string(),
+            selected_model_id: Some("model-1".to_string()),
+            selected_agent_id: None,
+        })
+        .await
+        .expect("create stopped plan session");
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id,
+            owner_user_id: "user-stopped-plan".to_string(),
+            turn_id: "stopped-plan-turn".to_string(),
+            idempotency_key: "stopped-plan-turn".to_string(),
+            content: "Generate plan".to_string(),
+            metadata_json: Some(
+                json!({
+                    "task_runner_async": {
+                        "mode": "project_requirement_execution",
+                        "overall_status": "stopped",
+                        "confirmation_status": "stopped"
+                    }
+                })
+                .to_string(),
+            ),
+        })
+        .await
+        .expect("create stopped planner turn");
+
+    database
+        .set_turn_task_runner_status("user-stopped-plan", "stopped-plan-turn", "failed", "failed")
+        .await
+        .expect("ignore late failed planner metadata");
+
+    let messages = database
+        .list_turn_messages("user-stopped-plan", "stopped-plan-turn")
+        .await
+        .expect("load stopped planner messages");
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0]
+        .metadata_json
+        .as_deref()
+        .is_some_and(|metadata| metadata.contains("\"overall_status\":\"stopped\"")));
+    assert!(!messages[0]
+        .metadata_json
+        .as_deref()
+        .is_some_and(|metadata| metadata.contains("\"overall_status\":\"failed\"")));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup stopped planner database");
+}
+
+#[tokio::test]
+async fn stopped_turn_task_runner_status_writes_stop_marker() {
+    let root = std::env::temp_dir().join(format!("chatos-local-stop-marker-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-stop-marker".to_string(),
+            owner_user_id: "user-stop-marker".to_string(),
+            device_id: "device-stop-marker".to_string(),
+            workspace_id: "workspace-stop-marker".to_string(),
+            project_name: "Stop marker project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("create stop marker project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-stop-marker".to_string(),
+            owner_user_id: "user-stop-marker".to_string(),
+            title: "Stop marker session".to_string(),
+            selected_model_id: Some("model-1".to_string()),
+            selected_agent_id: None,
+        })
+        .await
+        .expect("create stop marker session");
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id,
+            owner_user_id: "user-stop-marker".to_string(),
+            turn_id: "stop-marker-turn".to_string(),
+            idempotency_key: "stop-marker-turn".to_string(),
+            content: "Generate plan".to_string(),
+            metadata_json: Some(
+                json!({
+                    "task_runner_async": {
+                        "mode": "project_requirement_execution",
+                        "overall_status": "processing",
+                        "confirmation_status": "confirmed"
+                    }
+                })
+                .to_string(),
+            ),
+        })
+        .await
+        .expect("create stop marker turn");
+
+    database
+        .set_turn_task_runner_status("user-stop-marker", "stop-marker-turn", "stopped", "stopped")
+        .await
+        .expect("mark stopped planner metadata");
+
+    let messages = database
+        .list_turn_messages("user-stop-marker", "stop-marker-turn")
+        .await
+        .expect("load stop marker messages");
+    let metadata = messages[0]
+        .metadata_json
+        .as_deref()
+        .expect("metadata should be present");
+    assert!(metadata.contains("\"overall_status\":\"stopped\""));
+    assert!(metadata.contains("\"stopped_at\""));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup stop marker database");
+}
+
+#[tokio::test]
+async fn terminal_task_runner_status_moves_task_ids_out_of_running_sets() {
+    let root = std::env::temp_dir().join(format!("chatos-local-terminal-task-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open local database");
+    database
+        .upsert_project(UpsertLocalProjectInput {
+            project_id: "project-terminal-task".to_string(),
+            owner_user_id: "user-terminal-task".to_string(),
+            device_id: "device-terminal-task".to_string(),
+            workspace_id: "workspace-terminal-task".to_string(),
+            project_name: "Terminal task project".to_string(),
+            root_relative_path: None,
+        })
+        .await
+        .expect("create terminal task project");
+    let session = database
+        .create_session(CreateLocalSessionInput {
+            project_id: "project-terminal-task".to_string(),
+            owner_user_id: "user-terminal-task".to_string(),
+            title: "Terminal task session".to_string(),
+            selected_model_id: Some("model-1".to_string()),
+            selected_agent_id: None,
+        })
+        .await
+        .expect("create terminal task session");
+    database
+        .begin_turn(BeginLocalTurnInput {
+            session_id: session.id,
+            owner_user_id: "user-terminal-task".to_string(),
+            turn_id: "terminal-task-turn".to_string(),
+            idempotency_key: "terminal-task-turn".to_string(),
+            content: "Run a local task".to_string(),
+            metadata_json: Some(
+                json!({
+                    "task_runner_async": {
+                        "mode": "contact_async",
+                        "overall_status": "processing",
+                        "confirmation_status": "confirmed",
+                        "created_task_ids": ["lc_async_task_1"],
+                        "running_task_ids": ["lc_async_task_1"],
+                        "queued_task_ids": ["lc_async_task_1"],
+                        "pending_task_ids": ["lc_async_task_1"]
+                    }
+                })
+                .to_string(),
+            ),
+        })
+        .await
+        .expect("create terminal task turn");
+
+    database
+        .set_turn_task_runner_terminal_task_status(
+            "user-terminal-task",
+            "terminal-task-turn",
+            "lc_async_task_1",
+            "completed",
+            "completed",
+        )
+        .await
+        .expect("mark task terminal");
+
+    let messages = database
+        .list_turn_messages("user-terminal-task", "terminal-task-turn")
+        .await
+        .expect("load terminal task messages");
+    let metadata = messages[0]
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .expect("metadata should be valid json");
+    let task_runner = metadata
+        .get("task_runner_async")
+        .and_then(serde_json::Value::as_object)
+        .expect("task runner metadata");
+    assert_eq!(
+        task_runner
+            .get("overall_status")
+            .and_then(serde_json::Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        task_runner
+            .get("running_task_ids")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert!(task_runner
+        .get("terminal_task_ids")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str() == Some("lc_async_task_1"))));
+    assert!(task_runner
+        .get("succeeded_task_ids")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| items
+            .iter()
+            .any(|item| item.as_str() == Some("lc_async_task_1"))));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup terminal task database");
+}
+
+#[tokio::test]
 async fn appends_and_incrementally_lists_ordered_runtime_events() {
     let root = std::env::temp_dir().join(format!("chatos-local-events-{}", Uuid::new_v4()));
     let database = LocalDatabase::open(root.join("runtime.sqlite3"))

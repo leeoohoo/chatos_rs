@@ -248,8 +248,12 @@ export function imageColumns({
         <Typography.Text strong>{row.display_name || row.environment_key}</Typography.Text>
         <Space size={4} wrap>
           <Tag>{row.environment_type || 'service'}</Tag>
-          <Tag color={row.service_role === 'application' ? 'blue' : undefined}>
-            {row.service_role || 'unknown'}
+          <Tag color={row.service_role === 'workspace' ? 'green' : row.service_role === 'application' ? 'blue' : undefined}>
+            {row.service_role === 'workspace'
+              ? '工作区执行镜像'
+              : row.service_role === 'application'
+                ? '平等应用组件'
+                : row.service_role || 'unknown'}
           </Tag>
           <Typography.Text type="secondary" code style={codeTextStyle}>
             {row.service_id || row.environment_key}
@@ -292,9 +296,9 @@ export function imageColumns({
     title: 'MCP 策略',
     width: 150,
     render: (_, row) =>
-      row.mcp_policy?.attachment === 'project_gateway_target' ? (
+      ['workspace_gateway_target', 'project_gateway_target'].includes(row.mcp_policy?.attachment || '') ? (
         <Space direction="vertical" size={2}>
-          <Tag color="green">系统管理目标</Tag>
+          <Tag color="green">工作区执行目标</Tag>
           <Typography.Text type="secondary">
             {row.mcp_policy.filesystem ? '文件' : ''}
             {row.mcp_policy.filesystem && row.mcp_policy.terminal ? ' / ' : ''}

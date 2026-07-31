@@ -38,7 +38,7 @@ pub(in super::super) async fn tool_apply_patch(
     if actions.is_empty() {
         return Ok(tool_text_result(json!({
             "result": applied,
-            "message": "Patch produced no Harness file changes. No commit was created."
+            "message": "Patch produced no project file changes."
         })));
     }
     ensure_action_count(actions.len())?;
@@ -46,15 +46,13 @@ pub(in super::super) async fn tool_apply_patch(
         .iter()
         .map(|action| action.path.clone())
         .collect::<Vec<_>>();
-    let commit = commit_file_actions(ctx, "Chatos: apply patch", actions).await?;
+    commit_file_actions(ctx, "Chatos: apply patch", actions).await?;
     Ok(tool_text_result(json!({
-        "result": applied,
-        "harness": {
-            "project_id": ctx.project_id,
-            "repo_path": ctx.repo_path,
+        "result": {
+            "patch": applied,
             "action": "APPLY_PATCH",
             "changed_paths": changed_paths,
-            "commit": commit
+            "changed": true
         }
     })))
 }
@@ -95,14 +93,14 @@ async fn ensure_move_targets_do_not_exist(
     {
         if existing_by_path.contains_key(target.after_path.as_str()) {
             return Err(format!(
-                "Patch move target already exists in Harness repo: {}",
+                "Patch move target already exists in the project workspace: {}",
                 target.after_path
             ));
         }
         match fetch_harness_content(ctx, target.after_path.as_str()).await {
             Ok(_) => {
                 return Err(format!(
-                    "Patch move target already exists in Harness repo: {}",
+                    "Patch move target already exists in the project workspace: {}",
                     target.after_path
                 ));
             }

@@ -6,7 +6,7 @@ use chatos_plugin_management_sdk::{
     McpRecord, SystemMcpKey, CHATOS_TASK_RUNNER_MCP_RESOURCE_ID, LEGACY_BUILTIN_MCP_RUNTIME_KIND,
     LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
     PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
-    SYSTEM_MCP_RUNTIME_KIND,
+    SYSTEM_MCP_RUNTIME_KIND, TASK_PROCESS_LOG_MCP_RESOURCE_ID,
 };
 
 use crate::{SystemMcpBackend, SystemMcpHost};
@@ -46,9 +46,9 @@ impl SystemMcpDescriptor {
                 SystemMcpKey::CodeMaintainerWrite => 20,
                 SystemMcpKey::TerminalController => 30,
                 SystemMcpKey::BrowserTools => 40,
-                SystemMcpKey::TaskManager => 50,
                 SystemMcpKey::AskUser => 60,
                 SystemMcpKey::ProjectManagement => 70,
+                SystemMcpKey::TaskProcessLog => 75,
                 SystemMcpKey::TaskRunnerService => 80,
                 SystemMcpKey::LocalCommandApproval => 90,
                 _ => 1_000,
@@ -79,6 +79,7 @@ const PROJECT_AND_SANDBOX_HOSTS: &[SystemMcpHost] = &[
     SystemMcpHost::ProjectManagementService,
     SystemMcpHost::SandboxManagerService,
 ];
+const NO_RUNTIME_HOSTS: &[SystemMcpHost] = &[];
 
 macro_rules! embedded_descriptor {
     ($key:ident, $resource_id:expr, $server_name:expr, $display_name:expr, $description:expr, $allow_writes:expr, $owner:expr, $hosts:expr, $kind:ident) => {
@@ -134,17 +135,6 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         TerminalController
     ),
     embedded_descriptor!(
-        TaskManager,
-        "builtin_task_manager",
-        "task_manager",
-        "Task Manager (Builtin)",
-        "Task planning, tracking, review, and completion tools.",
-        true,
-        "shared",
-        CHATOS_TASK_LOCAL_HOSTS,
-        TaskManager
-    ),
-    embedded_descriptor!(
         ProjectManagement,
         "builtin_project_management",
         "project_management_service",
@@ -196,7 +186,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         "Remote connection inspection and command tools.",
         true,
         "shared",
-        CHATOS_TASK_HOSTS,
+        NO_RUNTIME_HOSTS,
         RemoteConnectionController
     ),
     embedded_descriptor!(
@@ -310,6 +300,21 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         owner_service: "local_connector_client",
         backend: SystemMcpBackend::HostAdapter,
         supported_hosts: LOCAL_CONNECTOR_HOST,
+        embedded_kind: None,
+    },
+    SystemMcpDescriptor {
+        key: SystemMcpKey::TaskProcessLog,
+        resource_id: TASK_PROCESS_LOG_MCP_RESOURCE_ID,
+        server_name: "task_run_process",
+        display_name: "Task Process Log",
+        description:
+            "Run-scoped Task Runner MCP for recording short visible execution breadcrumbs on the current task.",
+        allow_writes: true,
+        tags: &["system", "task_runner", "process_log", "run_scoped"],
+        category: Some("task_runner"),
+        owner_service: "task_runner_service",
+        backend: SystemMcpBackend::RunScopedBuiltin,
+        supported_hosts: TASK_AND_LOCAL_HOSTS,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -441,6 +446,17 @@ mod tests {
             system_mcp_descriptor_by_any("builtin_code_maintainer_read").map(|item| item.key),
             Some(SystemMcpKey::CodeMaintainerRead)
         );
+    }
+
+    #[test]
+    fn task_process_log_resolves_as_run_scoped_system_mcp() {
+        let descriptor =
+            system_mcp_descriptor_by_any("task_run_process").expect("task process log descriptor");
+
+        assert_eq!(descriptor.key, SystemMcpKey::TaskProcessLog);
+        assert_eq!(descriptor.backend, SystemMcpBackend::RunScopedBuiltin);
+        assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.supports_host(SystemMcpHost::LocalConnector));
     }
 
     #[test]

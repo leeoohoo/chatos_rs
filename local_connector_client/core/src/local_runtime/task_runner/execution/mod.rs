@@ -5,24 +5,31 @@ mod completion;
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chatos_ai_runtime::{
-    AiRuntimeOptions, RuntimeRecordOptions, TaskFinalizationLifecycleHook, TaskMcpInitMode,
-    TaskRunExecution, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, DEFAULT_TASK_RUN_MAX_ITERATIONS,
+    AiRuntimeOptions, RuntimeBeforeModelRequest, RuntimeIterationContext, RuntimeLifecycleHook,
+    RuntimeRecordOptions, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
+    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger, TaskFinalizationLifecycleHook,
+    TaskMcpInitMode, TaskRunExecution, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
 };
 use chatos_plugin_management_sdk::{required_agent_prompt_vendor, SystemAgentKey};
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::local_runtime::capabilities::merge_system_prompts;
 use crate::local_runtime::chat::{
-    prepare_local_chat_tools, LocalChatEventStream, LocalChatRecordWriter,
+    build_local_memory_context_input_items, prepare_local_chat_tools, LocalChatEventStream,
+    LocalChatRecordWriter,
 };
-use crate::local_runtime::load_installed_agent_prompt;
 use crate::local_runtime::model::build_local_model_config;
 use crate::local_runtime::storage::{
-    BeginLocalBackgroundTurnInput, BeginLocalTurnInput, BeginLocalTurnResult,
+    AppendLocalRuntimeEventInput, BeginLocalBackgroundTurnInput, BeginLocalTurnInput,
+    BeginLocalTurnResult, LocalDatabase, LocalMemoryContext,
 };
 use crate::local_runtime::task_runner::LocalTaskRunRecord;
+use crate::local_runtime::{
+    load_installed_agent_prompt, managed_task_runner_runtime_settings, run_active_task_review,
+};
 use crate::model_configs::resolve_local_model_runtime;
 use crate::terminal::controller::{
     local_terminal_controller_context_for_task_run, LocalConnectorTerminalControllerStore,
@@ -34,8 +41,7 @@ pub(super) use self::completion::complete_requirement_if_done;
 use self::completion::finish_task_run;
 pub(crate) use self::completion::user_visible_task_run_failure_receipt;
 pub(super) use self::completion::{
-    finalize_task_manager_session, persist_task_run_receipt, set_requirement_status,
-    set_work_item_status,
+    persist_task_run_receipt, set_requirement_status, set_work_item_status,
 };
 
 pub(super) async fn execute_local_task_run(
@@ -93,11 +99,7 @@ pub(super) async fn execute_local_task_run(
         .map(|task| task.is_planning_task)
         .or_else(|| work_item.as_ref().map(|task| task.is_planning_task))
         .unwrap_or(false);
-    let agent_key = if is_planning_task {
-        SystemAgentKey::TaskRunnerPlanPhase
-    } else {
-        SystemAgentKey::TaskRunnerRunPhase
-    };
+    let agent_key = local_task_runner_agent_key(is_planning_task);
     let mut task_settings = settings.clone();
     task_settings.selected_model_id = Some(run.model_config_id.clone());
     task_settings.plan_mode_enabled = is_planning_task;
@@ -153,6 +155,7 @@ pub(super) async fn execute_local_task_run(
         true,
         Some(prepared.project_root.display().to_string()),
     );
+    let task_runner_runtime_settings = managed_task_runner_runtime_settings(runtime).await;
     let mut builder = TaskRuntime::builder()
         .with_record_writer_arc(Arc::new(LocalChatRecordWriter::new(
             database.clone(),
@@ -160,7 +163,7 @@ pub(super) async fn execute_local_task_run(
             run.session_id.as_str(),
             run.turn_id.as_str(),
         )))
-        .with_max_iterations(DEFAULT_TASK_RUN_MAX_ITERATIONS);
+        .with_max_iterations(task_runner_runtime_settings.max_iterations);
     if let Some(executor) = prepared.executor {
         builder = builder.with_tool_executor_arc(executor);
     }
@@ -187,6 +190,35 @@ pub(super) async fn execute_local_task_run(
         Some("status"),
         json!({ "run_id": run.id }),
     );
+    let progress = Arc::new(TaskExecutionProgressState::new(
+        TaskExecutionReviewPolicy::new(
+            task_runner_runtime_settings.review_read_only_iterations,
+            task_runner_runtime_settings.review_missing_read_failures,
+            task_runner_runtime_settings.review_repeat_interval_iterations,
+        ),
+    ));
+    let lifecycle_hook = Arc::new(LocalTaskRunnerLifecycleHook::new(
+        task_runner_runtime_settings.max_iterations,
+        Arc::clone(&progress),
+        runtime.clone(),
+        database.clone(),
+        run.owner_user_id.clone(),
+        run.session_id.clone(),
+        run.turn_id.clone(),
+        run.task_id.clone(),
+        settings.memory_recall_limit,
+    ));
+    let mut callbacks = events.callbacks();
+    callbacks.on_tools_stream = Some(Arc::new({
+        let progress = Arc::clone(&progress);
+        let original = callbacks.on_tools_stream.clone();
+        move |payload| {
+            progress.observe_tool_result(&payload);
+            if let Some(callback) = &original {
+                callback(payload);
+            }
+        }
+    }));
     let report = execution
         .run_report_with_runtime_options(
             &builder.build(),
@@ -194,10 +226,8 @@ pub(super) async fn execute_local_task_run(
                 .with_caller_model(Some(model_name))
                 .with_caller_model_runtime(Some(model.to_tool_caller_model_runtime()))
                 .with_abort_token(Some(abort_token.clone()))
-                .with_lifecycle_hook(Some(Arc::new(TaskFinalizationLifecycleHook::new(
-                    DEFAULT_TASK_RUN_MAX_ITERATIONS,
-                ))))
-                .with_callbacks(events.callbacks())
+                .with_lifecycle_hook(Some(lifecycle_hook))
+                .with_callbacks(callbacks)
                 .with_record_options(RuntimeRecordOptions::persist_all()),
         )
         .await;
@@ -223,56 +253,357 @@ pub(super) async fn execute_local_task_run(
     finish_task_run(runtime, run, report, cancel_requested).await
 }
 
-#[cfg(test)]
-mod execution_policy_tests {
-    use chatos_ai_runtime::{
-        RuntimeIterationContext, RuntimeLifecycleHook, TaskFinalizationLifecycleHook,
-        DEFAULT_TASK_RUN_MAX_ITERATIONS,
-    };
-    use serde_json::Value;
+const LOCAL_TASK_RUNNER_REVIEW_TRIGGER_TYPE: &str = "task_runner_execution_review_checkpoint";
 
-    use super::task_run_idempotency_key;
+struct LocalTaskRunnerLifecycleHook {
+    finalization: TaskFinalizationLifecycleHook,
+    progress: Arc<TaskExecutionProgressState>,
+    runtime: LocalRuntime,
+    database: LocalDatabase,
+    owner_user_id: String,
+    session_id: String,
+    turn_id: String,
+    active_parent_task_id: String,
+    memory_recall_limit: i64,
+}
 
-    #[tokio::test]
-    async fn implementation_tasks_reserve_a_tool_free_finalization_round() {
-        assert_eq!(DEFAULT_TASK_RUN_MAX_ITERATIONS, 25);
-        let hook = TaskFinalizationLifecycleHook::new(DEFAULT_TASK_RUN_MAX_ITERATIONS);
-
-        let normal = hook
-            .before_model_request(iteration_context(hook.finalization_iteration() - 1))
-            .await
-            .expect("normal task iteration");
-        assert!(normal.tools_enabled);
-        assert!(normal.input_items.is_empty());
-
-        let finalization = hook
-            .before_model_request(iteration_context(hook.finalization_iteration()))
-            .await
-            .expect("task finalization iteration");
-        assert!(!finalization.tools_enabled);
-        assert_eq!(finalization.input_items.len(), 1);
-        assert!(finalization.input_items[0]
-            .to_string()
-            .contains("不要再调用任何工具"));
-    }
-
-    #[test]
-    fn retry_attempts_use_distinct_turn_idempotency_keys() {
-        assert_ne!(
-            task_run_idempotency_key("run-1", 1),
-            task_run_idempotency_key("run-1", 2),
-        );
-    }
-
-    fn iteration_context(iteration: usize) -> RuntimeIterationContext {
-        RuntimeIterationContext {
-            conversation_id: Some("session-1".to_string()),
-            conversation_turn_id: Some("turn-1".to_string()),
-            iteration,
-            reason: "tool_results".to_string(),
-            input: Value::Array(Vec::new()),
+impl LocalTaskRunnerLifecycleHook {
+    fn new(
+        max_iterations: usize,
+        progress: Arc<TaskExecutionProgressState>,
+        runtime: LocalRuntime,
+        database: LocalDatabase,
+        owner_user_id: String,
+        session_id: String,
+        turn_id: String,
+        active_parent_task_id: String,
+        memory_recall_limit: i64,
+    ) -> Self {
+        Self {
+            finalization: TaskFinalizationLifecycleHook::new(max_iterations),
+            progress,
+            runtime,
+            database,
+            owner_user_id,
+            session_id,
+            turn_id,
+            active_parent_task_id,
+            memory_recall_limit,
         }
     }
+
+    async fn stable_memory_input_items(&self) -> Result<Vec<Value>, String> {
+        let context = self
+            .database
+            .load_memory_context(
+                self.owner_user_id.as_str(),
+                self.session_id.as_str(),
+                self.memory_recall_limit,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let context = sanitize_task_runner_memory_context(context);
+        let task_board = self
+            .database
+            .local_task_runner_context_prompt(
+                self.owner_user_id.as_str(),
+                self.session_id.as_str(),
+                self.active_parent_task_id.as_str(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(build_local_memory_context_input_items(
+            context.summary,
+            context.recalls,
+            context
+                .messages
+                .into_iter()
+                .filter(|message| message.turn_id.as_deref() != Some(self.turn_id.as_str()))
+                .collect(),
+            task_board,
+        ))
+    }
+
+    async fn full_memory_input_items(&self) -> Result<Vec<Value>, String> {
+        let context = self
+            .database
+            .load_memory_context(
+                self.owner_user_id.as_str(),
+                self.session_id.as_str(),
+                self.memory_recall_limit,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let context = sanitize_task_runner_memory_context(context);
+        let task_board = self
+            .database
+            .local_task_runner_context_prompt(
+                self.owner_user_id.as_str(),
+                self.session_id.as_str(),
+                self.active_parent_task_id.as_str(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(build_local_memory_context_input_items(
+            context.summary,
+            context.recalls,
+            context
+                .messages
+                .into_iter()
+                .filter(|message| message.turn_id.as_deref() != Some(self.turn_id.as_str()))
+                .collect(),
+            task_board,
+        ))
+    }
+
+    async fn checkpoint_input_items(
+        &self,
+        checkpoint: TaskExecutionReviewCheckpoint,
+    ) -> Vec<Value> {
+        self.append_runtime_event(
+            "task.execution_review.summary.started",
+            json!({
+                "iteration": checkpoint.iteration,
+                "trigger": checkpoint.trigger.as_str(),
+            }),
+        )
+        .await;
+        match run_active_task_review(
+            &self.runtime,
+            self.owner_user_id.as_str(),
+            self.session_id.as_str(),
+            self.turn_id.as_str(),
+            LOCAL_TASK_RUNNER_REVIEW_TRIGGER_TYPE,
+        )
+        .await
+        {
+            Ok(result) => match self.full_memory_input_items().await {
+                Ok(memory_items) => {
+                    self.append_runtime_event(
+                        "task.execution_review.summary.completed",
+                        json!({
+                            "iteration": checkpoint.iteration,
+                            "trigger": checkpoint.trigger.as_str(),
+                            "generated_summaries": result.generated_summaries,
+                            "marked_messages": result.marked_messages,
+                            "pending_message_count": result.pending_message_count,
+                            "refreshed_memory_item_count": memory_items.len(),
+                        }),
+                    )
+                    .await;
+                    let mut items = vec![local_checkpoint_guidance_message(checkpoint, true, None)];
+                    items.extend(memory_items);
+                    items
+                }
+                Err(error) => {
+                    self.append_runtime_event(
+                        "task.execution_review.summary.failed",
+                        json!({
+                            "iteration": checkpoint.iteration,
+                            "trigger": checkpoint.trigger.as_str(),
+                            "error": error.as_str(),
+                        }),
+                    )
+                    .await;
+                    vec![local_checkpoint_guidance_message(
+                        checkpoint,
+                        false,
+                        Some(error.as_str()),
+                    )]
+                }
+            },
+            Err(error) => {
+                let error = error.to_string();
+                self.append_runtime_event(
+                    "task.execution_review.summary.failed",
+                    json!({
+                        "iteration": checkpoint.iteration,
+                        "trigger": checkpoint.trigger.as_str(),
+                        "error": error.as_str(),
+                    }),
+                )
+                .await;
+                vec![local_checkpoint_guidance_message(
+                    checkpoint,
+                    false,
+                    Some(error.as_str()),
+                )]
+            }
+        }
+    }
+
+    async fn append_runtime_event(&self, event_name: &str, payload: Value) {
+        let _ = self
+            .database
+            .append_runtime_event(AppendLocalRuntimeEventInput {
+                owner_user_id: self.owner_user_id.clone(),
+                session_id: self.session_id.clone(),
+                turn_id: self.turn_id.clone(),
+                event_name: event_name.to_string(),
+                stream_type: Some("status".to_string()),
+                payload,
+            })
+            .await;
+    }
+}
+
+fn sanitize_task_runner_memory_context(mut context: LocalMemoryContext) -> LocalMemoryContext {
+    if let Some(summary) = &mut context.summary {
+        summary.summary_text = redact_task_runner_task_ids(summary.summary_text.as_str());
+    }
+    for recall in &mut context.recalls {
+        recall.recall_text = redact_task_runner_task_ids(recall.recall_text.as_str());
+    }
+    for message in &mut context.messages {
+        message.content = redact_task_runner_task_ids(message.content.as_str());
+        message.reasoning = message
+            .reasoning
+            .as_deref()
+            .map(redact_task_runner_task_ids);
+        message.tool_calls_json = message
+            .tool_calls_json
+            .as_deref()
+            .map(redact_task_runner_task_ids);
+        message.metadata_json = message
+            .metadata_json
+            .as_deref()
+            .map(redact_task_runner_task_ids);
+    }
+    context
+}
+
+fn redact_task_runner_task_ids(value: &str) -> String {
+    redact_ids_with_prefix(
+        &redact_ids_with_prefix(
+            value,
+            "lc_async_task_",
+            "[conversation_parent_task_id_hidden]",
+        ),
+        "lc_task_",
+        "[previous_run_checklist_task_id_hidden]",
+    )
+}
+
+fn redact_ids_with_prefix(value: &str, prefix: &str, redaction: &str) -> String {
+    let Some(mut search_from) = value.find(prefix) else {
+        return value.to_string();
+    };
+    let mut redacted = String::with_capacity(value.len());
+    let mut copied_until = 0_usize;
+    loop {
+        redacted.push_str(&value[copied_until..search_from]);
+        redacted.push_str(redaction);
+        let mut end = search_from + prefix.len();
+        for (offset, character) in value[end..].char_indices() {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                end = search_from + prefix.len() + offset + character.len_utf8();
+            } else {
+                break;
+            }
+        }
+        copied_until = end;
+        let Some(next_relative) = value[copied_until..].find(prefix) else {
+            redacted.push_str(&value[copied_until..]);
+            return redacted;
+        };
+        search_from = copied_until + next_relative;
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+#[async_trait]
+impl RuntimeLifecycleHook for LocalTaskRunnerLifecycleHook {
+    async fn before_model_request(
+        &self,
+        context: RuntimeIterationContext,
+    ) -> Result<RuntimeBeforeModelRequest, String> {
+        self.progress.begin_iteration(context.iteration);
+        let iteration = context.iteration;
+        let mut before = self.finalization.before_model_request(context).await?;
+
+        if before.tools_enabled {
+            if let Some(checkpoint) = self.progress.should_trigger_review(iteration) {
+                self.append_runtime_event(
+                    "task.execution_review.checkpoint",
+                    json!({
+                        "iteration": iteration,
+                        "trigger": checkpoint.trigger.as_str(),
+                        "read_only_iterations": checkpoint.read_only_iterations,
+                        "missing_read_failures": checkpoint.missing_read_failures,
+                        "policy": {
+                            "read_only_iterations": checkpoint.policy.read_only_iterations,
+                            "missing_read_failures": checkpoint.policy.missing_read_failures,
+                            "repeat_interval_iterations": checkpoint.policy.repeat_interval_iterations,
+                        },
+                        "disabled_tool_names": [],
+                    }),
+                )
+                .await;
+                before
+                    .input_items
+                    .extend(self.checkpoint_input_items(checkpoint).await);
+                return Ok(before);
+            }
+        }
+
+        match self.stable_memory_input_items().await {
+            Ok(items) => before.input_items.extend(items),
+            Err(error) => {
+                self.append_runtime_event(
+                    "task.memory_context_refresh.failed",
+                    json!({
+                        "iteration": iteration,
+                        "error": error,
+                    }),
+                )
+                .await;
+            }
+        }
+        Ok(before)
+    }
+}
+
+fn local_checkpoint_guidance_message(
+    checkpoint: TaskExecutionReviewCheckpoint,
+    memory_refreshed: bool,
+    summary_error: Option<&str>,
+) -> Value {
+    let trigger = match checkpoint.trigger {
+        TaskExecutionReviewTrigger::ReadOnlyLoop => "连续多轮只读/观察，没有真实工程改动",
+        TaskExecutionReviewTrigger::MissingTargetedReads => {
+            "连续读取不存在的精确文件路径，疑似路径假设错误或相对路径理解错误"
+        }
+        TaskExecutionReviewTrigger::PlaceholderProgressWrite => {
+            "写入了 progress/unlock/placeholder 这类不能解决任务本身的占位文件"
+        }
+    };
+    let memory_state = if memory_refreshed {
+        "已先触发本地历史动作复盘，并已把复盘后的 Memory 上下文刷新进本次请求。"
+    } else {
+        "尝试触发本地历史动作复盘但未能刷新 Memory；仍需立刻基于已有上下文自我校准。"
+    };
+    let error_detail = summary_error
+        .map(|error| format!("\n- 复盘刷新错误：{error}"))
+        .unwrap_or_default();
+    json!({
+        "role": "system",
+        "content": format!(
+            "[Task Runner 自动复盘 checkpoint]\n\
+             检测原因：{trigger}。\n\
+             {memory_state}{error_detail}\n\
+             \n\
+             现在先在心里复盘：用户目标是什么、当前已经做了哪些真实动作、哪些动作偏离航线、真实路径/工具结果已经证明了什么。\n\
+             然后继续执行，不要因为这次 checkpoint 自行退出、不要把它当成权限限制、不要要求用户替你改代码。\n\
+             工具没有被禁用；如果文件不存在，把它当作路径证据，不要重复读同一个不存在路径。所有代码工具路径都按仓库根目录相对路径理解，没有隐式 cwd。\n\
+             不要创建 TASK_RUNNER_PROGRESS_NOTE、unlock、placeholder、probe 之类的假进展文件；只有修改真实项目文件、运行必要验证、或给出有证据的终态结论才算进展。\n\
+             当前计数：read_only_iterations={}, missing_read_failures={}。"
+            ,
+            checkpoint.read_only_iterations,
+            checkpoint.missing_read_failures
+        ),
+    })
 }
 
 async fn begin_task_turn(
@@ -341,6 +672,13 @@ fn conversation_task_mcp_ids(
 ) -> Result<Vec<String>, String> {
     let mut ids = Vec::new();
     for value in builtin_kinds {
+        if value.eq_ignore_ascii_case("TaskManager")
+            || value.eq_ignore_ascii_case("task_manager")
+            || value.eq_ignore_ascii_case("builtin_task_manager")
+            || value.eq_ignore_ascii_case("builtin:task_manager")
+        {
+            continue;
+        }
         let kind = chatos_mcp_runtime::builtin_kind_by_any(value.as_str())
             .ok_or_else(|| format!("Unknown local Task Runner builtin capability: {value}"))?;
         let descriptor = chatos_mcp::system_mcp_descriptor_by_embedded_kind(kind)
@@ -355,6 +693,17 @@ fn conversation_task_mcp_ids(
     Ok(ids)
 }
 
+fn local_task_runner_agent_key(is_planning_task: bool) -> SystemAgentKey {
+    if is_planning_task {
+        SystemAgentKey::TaskRunnerLocalPlanPhase
+    } else {
+        SystemAgentKey::TaskRunnerLocalRunPhase
+    }
+}
+
 fn task_run_idempotency_key(run_id: &str, attempt: i64) -> String {
     format!("{run_id}:attempt:{}", attempt.max(1))
 }
+
+#[cfg(test)]
+mod execution_policy_tests;

@@ -14,7 +14,17 @@ contextBridge.exposeInMainWorld('chatosLocalConnector', {
   closeSettings: () => ipcRenderer.invoke('local-connector:settings-close'),
   reloadChatOS: () => ipcRenderer.invoke('local-connector:chatos-reload'),
   setDeveloperMode: (enabled) => ipcRenderer.invoke('local-connector:developer-mode', enabled),
+  runtimeSettings: () => ipcRenderer.invoke('local-connector:runtime-settings'),
+  updateRuntimeSettings: (payload) => (
+    ipcRenderer.invoke('local-connector:runtime-settings-update', payload)
+  ),
   showChromeExtensionDirectory: () => (
     ipcRenderer.invoke('local-connector:chrome-extension-directory-show')
+  ),
+  copyChromeExtensionInstallPath: () => (
+    ipcRenderer.invoke('local-connector:chrome-extension-install-path-copy')
+  ),
+  openChromeExtensionsPage: () => (
+    ipcRenderer.invoke('local-connector:chrome-extensions-page-open')
   ),
 });

@@ -22,7 +22,14 @@ export function CreateSandboxPage() {
     queryFn: sandboxesApi.images,
   });
   const images = imagesQuery.data?.images ?? [];
-  const readyImages = useMemo(() => images.filter((image) => image.initialized), [images]);
+  const runnableImages = useMemo(
+    () => images.filter((image) => image.is_default || image.buildable),
+    [images],
+  );
+  const readyImages = useMemo(
+    () => runnableImages.filter((image) => image.initialized),
+    [runnableImages],
+  );
 
   useEffect(() => {
     if (!imagesQuery.data) {
@@ -115,7 +122,7 @@ export function CreateSandboxPage() {
           <Form.Item label={t('common.image')} name="image_id">
             <Select
               loading={imagesQuery.isLoading}
-              options={(imagesQuery.data?.images ?? [
+              options={(runnableImages.length > 0 ? runnableImages : [
                 {
                   id: 'default',
                   name: t('image.default'),

@@ -35,7 +35,7 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_pdf")
         .expect("PDF catalog item");
-    assert_eq!(catalog_item.version, "1.12.0");
+    assert_eq!(catalog_item.version, "1.22.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["workspace.read", "workspace.write"]
@@ -56,11 +56,13 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
         .iter()
         .filter_map(|tool| tool.get("name").and_then(Value::as_str))
         .collect::<HashSet<_>>();
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 24);
     assert!(names.contains("inspect_pdf"));
     assert!(names.contains("extract_pdf_text"));
     assert!(names.contains("render_pdf_pages"));
+    assert!(names.contains("export_pdf_pages_to_png"));
     assert!(names.contains("create_text_pdf"));
+    assert!(names.contains("create_pdf_from_images"));
     assert!(names.contains("update_pdf_metadata"));
     assert!(names.contains("fill_pdf_form_fields"));
     assert!(names.contains("merge_pdfs"));
@@ -68,6 +70,14 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(names.contains("arrange_pdf_pages"));
     assert!(names.contains("rotate_pdf_pages"));
     assert!(names.contains("add_pdf_text_annotation"));
+    assert!(names.contains("add_pdf_markup_annotation"));
+    assert!(names.contains("add_pdf_link_annotation"));
+    assert!(names.contains("add_pdf_annotation_reply"));
+    assert!(names.contains("update_pdf_annotation_text"));
+    assert!(names.contains("delete_pdf_annotation"));
+    assert!(names.contains("add_pdf_file_attachment_annotation"));
+    assert!(names.contains("extract_pdf_file_attachment"));
+    assert!(names.contains("extract_pdf_embedded_file"));
     assert!(names.contains("stamp_pdf_text"));
     assert!(names.contains("stamp_pdf_page_numbers"));
     assert!(names.contains("stamp_pdf_image"));
@@ -79,6 +89,22 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("retain their original physical offset"));
     assert!(instructions.contains("Unicode sticky-note annotations"));
     assert!(instructions.contains("effective page rotation of zero"));
+    assert!(instructions.contains("CropBox-relative lower-left PDF points"));
+    assert!(instructions.contains("highlight, underline, strikeout, or squiggly"));
+    assert!(instructions.contains("page-local annotation index"));
+    assert!(instructions.contains("replies-to-replies"));
+    assert!(instructions.contains("standard `/FileAttachment` annotation"));
+    assert!(instructions.contains("Embedded attachment bytes are never returned"));
+    assert!(instructions.contains("expected_attachment_sha256"));
+    assert!(instructions.contains("Catalog `/Names/EmbeddedFiles`"));
+    assert!(instructions.contains("credential-free HTTPS"));
+    assert!(instructions.contains("direct physical-page `/Fit` navigation"));
+    assert!(instructions.contains("full URL is never returned"));
+    assert!(instructions.contains("expected_relation_type=root"));
+    assert!(instructions.contains("result returns only character count and SHA-256"));
+    assert!(instructions.contains("unsafe Link actions may be removed"));
+    assert!(instructions.contains("prunes its Filespec/EmbeddedFile chain"));
+    assert!(instructions.contains("100 MiB aggregate decoded limits"));
     assert!(instructions.contains("Unicode Document Info inspection and updates"));
     assert!(instructions.contains("semantic no-op fails"));
     assert!(instructions.contains("manifest-verified local PDF page rendering"));
@@ -88,6 +114,10 @@ fn pdf_release_publishes_bounded_generation_and_editing_tools() {
     assert!(instructions.contains("NoToggleToOff"));
     assert!(instructions.contains("exact option order"));
     assert!(instructions.contains("Editable choice fields"));
+    assert!(instructions.contains("combined inputs are limited to 100 MiB and 100 megapixels"));
+    assert!(instructions.contains("Always call `render_pdf_pages` on the generated PDF"));
+    assert!(instructions.contains("target_directory` that does not already exist"));
+    assert!(instructions.contains("commits each file atomically"));
 }
 
 #[test]
@@ -246,7 +276,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
         .into_iter()
         .find(|item| item.skill_id == "internal_skill_presentations")
         .expect("Presentations catalog item");
-    assert_eq!(catalog_item.version, "1.24.0");
+    assert_eq!(catalog_item.version, "1.32.0");
     let instructions = internal_skill_instructions("internal_skill_presentations")
         .expect("Presentations instructions");
     assert!(instructions.contains("image_right"));
@@ -266,6 +296,55 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("`secondary_value_axis_minor_tick_mark`"));
     assert!(instructions.contains("`none`, `inside`, `outside`, or `cross`"));
     assert!(instructions.contains("strictly positive"));
+    assert!(instructions.contains("optional canonical per-series RGB colors"));
+    assert!(instructions.contains("recognized/custom RGB color"));
+    assert!(instructions.contains("`color` using exact `#RRGGBB` syntax"));
+    assert!(instructions.contains("omission or null preserves the prior theme-driven XML bytes"));
+    assert!(instructions.contains("line-only `a:ln/a:solidFill/a:srgbClr`"));
+    assert!(instructions.contains("transformed/duplicated/wrong-namespace series color styling"));
+    assert!(instructions.contains("bounded canonical line/scatter-series markers and smoothing"));
+    assert!(instructions.contains("recognized/custom marker style"));
+    assert!(instructions.contains("`marker_style=none|circle|square|diamond|triangle`"));
+    assert!(instructions.contains("integer `marker_size` from 2 through 72"));
+    assert!(instructions.contains("one exact direct-series `c:marker`"));
+    assert!(instructions.contains("out-of-range series marker styling"));
+    assert!(instructions.contains("line/scatter-series marker styles and sizes"));
+    assert!(instructions.contains("recognized/custom smoothing state"));
+    assert!(instructions.contains("Line and scatter series also accept boolean `smooth`"));
+    assert!(instructions.contains("one exact direct-series `c:smooth` boolean"));
+    assert!(instructions.contains("over-limit series smoothing"));
+    assert!(instructions.contains("2D clustered horizontal `bar`"));
+    assert!(instructions.contains("raw per-group bar direction"));
+    assert!(instructions.contains("exact `c:barDir val=\"bar\"`"));
+    assert!(instructions.contains("visible left category axis with bottom primary value axis"));
+    assert!(instructions.contains("missing, inconsistent, duplicated, attributed"));
+    assert!(instructions.contains("standard 2D `radar`"));
+    assert!(instructions
+        .contains("raw per-group bar direction, radar style, scatter style, and bubble"));
+    assert!(instructions.contains("exact `c:radarStyle val=\"standard\"`"));
+    assert!(
+        instructions.contains("line, radar, and scatter charts emit an exact series line color")
+    );
+    assert!(instructions.contains("canonical XY `scatter`"));
+    assert!(instructions.contains("exact `c:scatterStyle val=\"lineMarker\"`"));
+    assert!(instructions.contains("canonical `bubble`"));
+    assert!(instructions.contains("strictly positive `bubble_sizes`"));
+    assert!(instructions.contains("`<c:bubbleSize><c:numLit>` caches"));
+    assert!(instructions.contains("`c:bubbleScale val=\"100\"`"));
+    assert!(instructions.contains("`c:showNegBubbles val=\"0\"`"));
+    assert!(instructions.contains("`c:sizeRepresents val=\"area\"`"));
+    assert!(instructions.contains("no `c:bubble3D`"));
+    assert!(instructions.contains("shared finite numeric `x_values`"));
+    assert!(instructions.contains("`x_axis_minimum`/`x_axis_maximum`"));
+    assert!(instructions.contains("Every explicit X bound must include all shared `x_values`"));
+    assert!(instructions.contains("`x_axis_number_format`"));
+    assert!(instructions.contains("bottom and hidden-top X axes receive identical canonical"));
+    assert!(instructions.contains("`<c:xVal><c:numLit>` and `<c:yVal><c:numLit>`"));
+    assert!(instructions.contains("bottom X `c:valAx` crossing a left primary Y `c:valAx`"));
+    assert!(instructions
+        .contains("hidden top X `c:valAx` crossing a visible right secondary Y `c:valAx`"));
+    assert!(instructions
+        .contains("bar directions, radar styles, scatter styles, or bubble group metadata"));
     assert!(instructions.contains("`table` layout"));
     assert!(instructions.contains("1–50 rows and 1–20 string columns"));
     assert!(instructions.contains("immediately eligible for `inspect_pptx_table`"));
@@ -278,7 +357,7 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("expected_self_contained_edit_snapshot"));
     assert!(instructions.contains("workbook is never opened"));
     assert!(instructions.contains("The `chart` layout"));
-    assert!(instructions.contains("literal `c:strLit`/`c:numLit` caches"));
+    assert!(instructions.contains("literal `c:strLit` category and `c:numLit` value caches"));
     assert!(instructions.contains("Pie and doughnut charts require exactly one series"));
     assert!(instructions.contains("standard 2D `area`"));
     assert!(instructions.contains("fixed 50% hole"));
@@ -286,10 +365,10 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
     assert!(instructions.contains("`percentage` only for pie/doughnut"));
     assert!(instructions.contains("optional `category_axis_title` and `value_axis_title`"));
     assert!(instructions.contains("canonical `c:dLbls`"));
-    assert!(instructions.contains("literal rich-text category/value-axis titles"));
+    assert!(instructions.contains("literal rich-text category/X/value-axis titles"));
     assert!(instructions.contains("`value_axis=primary` or `secondary`"));
     assert!(instructions.contains("one same-type group on a hidden top category axis"));
-    assert!(instructions.contains("secondary value-axis assignments"));
+    assert!(instructions.contains("primary/secondary Y-axis assignments"));
     assert!(instructions.contains("`value_axis_minimum`/`value_axis_maximum`"));
     assert!(instructions.contains("must include every series value assigned to that axis"));
     assert!(instructions.contains("`value_axis_major_unit`/`value_axis_minor_unit`"));
@@ -392,6 +471,109 @@ fn presentations_release_publishes_render_and_existing_edit_contracts() {
             .and_then(Value::as_u64),
         Some(50)
     );
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/color/pattern")
+            .and_then(Value::as_str),
+        Some("^#[0-9A-Fa-f]{6}$")
+    );
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/marker_style/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("diamond"))));
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/marker_size/minimum")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/marker_size/maximum")
+            .and_then(Value::as_u64),
+        Some(72)
+    );
+    assert_eq!(
+        create
+            .pointer("/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/smooth/type"),
+        Some(&json!(["boolean", "null"]))
+    );
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("bar"))));
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("radar"))));
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("scatter"))));
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/type/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("bubble"))));
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/x_values/type"
+        ),
+        Some(&json!(["array", "null"]))
+    );
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/x_axis_minimum/type"
+        ),
+        Some(&json!(["number", "null"]))
+    );
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/bubble_sizes/type"
+        ),
+        Some(&json!(["array", "null"]))
+    );
+    assert_eq!(
+        create.pointer(
+            "/inputSchema/properties/slides/items/properties/chart/properties/series/items/properties/bubble_sizes/items/exclusiveMinimum"
+        ),
+        Some(&json!(0))
+    );
+    assert!(create
+        .pointer("/inputSchema/properties/slides/items/properties/chart/properties/x_axis_number_format/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.contains(&json!("scientific"))));
+    let replace_chart = tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(Value::as_str) == Some("replace_pptx_chart"))
+        .expect("replace_pptx_chart definition");
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("color"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("marker_style"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("marker_size"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("smooth"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/properties/series/items/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("bubble_sizes"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("x_values"))));
+    assert!(replace_chart
+        .pointer("/inputSchema/properties/expected_self_contained_edit_snapshot/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.contains(&json!("x_axis_number_format"))));
 }
 
 #[test]
@@ -620,7 +802,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         .find(|item| item.skill_id == "internal_skill_computer_use")
         .expect("computer use catalog item");
     assert_eq!(catalog_item.implementation_status, "ready");
-    assert_eq!(catalog_item.version, "1.15.0");
+    assert_eq!(catalog_item.version, "1.19.0");
     assert_eq!(
         catalog_item.permissions,
         vec!["system.accessibility", "desktop.observe", "desktop.control"]
@@ -651,7 +833,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         &relay_request,
     )
     .expect("computer use tool definitions");
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 7);
     let plugin_tools = native::plugin_tool_definitions(
         "internal_skill_computer_use",
         &LocalState::default(),
@@ -660,7 +842,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         true,
     )
     .expect("approved Plugin Computer Use tool definitions");
-    assert_eq!(plugin_tools.len(), 11);
+    assert_eq!(plugin_tools.len(), 16);
     let instructions = internal_skill_instructions("internal_skill_computer_use")
         .expect("Computer Use instructions");
     assert!(instructions.contains("left-button double-click"));
@@ -680,11 +862,26 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
     assert!(instructions.contains("Activation recovery contract"));
     assert!(instructions.contains("foreground_changed_after_activation"));
     assert!(instructions.contains("frontmost_application_activation_only"));
+    assert!(instructions.contains("computer_capture_frontmost_window"));
+    assert!(instructions.contains("identity and geometry"));
+    assert!(instructions.contains("computer_set_frontmost_window_bounds"));
+    assert!(instructions.contains("AXFullScreen"));
+    assert!(instructions.contains("standard Windows window state"));
+    assert!(instructions.contains("Frontmost-window geometry and state contract"));
+    assert!(instructions.contains("capture only that frontmost window"));
+    assert!(instructions.contains("computer_capture_window_layout"));
+    assert!(instructions.contains("computer_restore_window_layout"));
+    assert!(instructions.contains("multi_window_layout_restore"));
+    assert!(instructions.contains("at most 8 ordinary visible top-level windows"));
+    assert!(instructions.contains("application_content_rollback=false"));
+    assert!(
+        instructions.contains("never assumes the controlled window remains on the main display")
+    );
     assert!(instructions.contains("No Computer Use action exposes `acceptForSession`"));
     let manifest: Value = serde_json::from_str(include_str!(
-        "../../../skill_bundles/internal/computer-use/1.15.0/skill.json"
+        "../../../skill_bundles/internal/computer-use/1.19.0/skill.json"
     ))
-    .expect("Computer Use 1.15.0 manifest");
+    .expect("Computer Use 1.19.0 manifest");
     assert_eq!(
         manifest["platforms"],
         json!(["macos-arm64", "macos-x64", "windows-arm64", "windows-x64"])
@@ -697,7 +894,7 @@ fn computer_use_release_keeps_control_on_the_plugin_approval_path() {
         false,
     )
     .expect("fail-closed Plugin Computer Use tool definitions");
-    assert_eq!(plugin_tools_without_approval.len(), 5);
+    assert_eq!(plugin_tools_without_approval.len(), 7);
 
     let bundle_hash = internal_skill_bundle_hash(&catalog_item);
     let prepare = handle_skill_prepare(
@@ -745,7 +942,7 @@ fn ready_bundle_v2_fingerprint_matches_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "e77e59dc908731b8e248575d872ddabedde72c3368e9c752cde35ae20df1cb5a"
+        "51b5c8afc1534e3d77c92e1d4b2b1eb3ccfa364081d935a4f935abb9682b288f"
     );
 }
 
@@ -760,7 +957,7 @@ fn all_28_bundled_skill_fingerprints_match_plugin_management_seed() {
         .join("\n");
     assert_eq!(
         hex::encode(Sha256::digest(rows.as_bytes())),
-        "708f0c3a0f07340e0e5a0045e5ecb9c990d0375188ccd510d7195c1b72871816"
+        "412e255452cee4204512c3f595c60b052ad418050196afe248523f23c55de9fe"
     );
 }
 

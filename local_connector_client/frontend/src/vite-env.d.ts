@@ -16,7 +16,30 @@ interface ChatosLocalConnectorBridge {
   closeSettings?: () => Promise<boolean>;
   reloadChatOS?: () => Promise<void>;
   setDeveloperMode?: (enabled: boolean) => Promise<boolean>;
+  runtimeSettings?: () => Promise<{
+    developer_mode: boolean;
+    browser_full_cdp_access_enabled: boolean;
+    developer_cloud_base_url: string;
+    developer_user_service_base_url: string;
+    developer_chatos_web_url: string;
+  }>;
+  updateRuntimeSettings?: (payload: {
+    developer_mode?: boolean;
+    browser_full_cdp_access_enabled?: boolean;
+    developer_cloud_base_url?: string;
+    developer_user_service_base_url?: string;
+    developer_chatos_web_url?: string;
+    acknowledge_browser_full_cdp_risk?: boolean;
+  }) => Promise<{
+    developer_mode: boolean;
+    browser_full_cdp_access_enabled: boolean;
+    developer_cloud_base_url: string;
+    developer_user_service_base_url: string;
+    developer_chatos_web_url: string;
+  }>;
   showChromeExtensionDirectory?: () => Promise<boolean>;
+  copyChromeExtensionInstallPath?: () => Promise<string | false>;
+  openChromeExtensionsPage?: () => Promise<boolean>;
   getDesktopSystemPermissions?: () => Promise<Record<string, {
     status: string;
     status_label: string;

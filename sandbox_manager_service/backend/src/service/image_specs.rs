@@ -549,12 +549,15 @@ fn parse_image_id_segment(segment: &str) -> Option<RuntimeSelectionSpec> {
         names.sort_by_key(|name| std::cmp::Reverse(name.len()));
         for name in names {
             if let Some(version) = segment.strip_prefix(name) {
-                let version = if version.is_empty() {
-                    default_version(runtime)
-                } else {
-                    find_runtime_version(runtime, version)?
-                };
-                return Some(RuntimeSelectionSpec { runtime, version });
+                if version.is_empty() {
+                    return Some(RuntimeSelectionSpec {
+                        runtime,
+                        version: default_version(runtime),
+                    });
+                }
+                if let Some(version) = find_runtime_version(runtime, version) {
+                    return Some(RuntimeSelectionSpec { runtime, version });
+                }
             }
         }
     }
@@ -566,17 +569,40 @@ fn split_runtime_version(value: &str) -> (&str, Option<&str>) {
         return (runtime.trim(), Some(version.trim()));
     }
 
+    if let Some(runtime) = find_runtime(value) {
+        return (runtime.id, None);
+    }
+
+    let mut fallback = None;
     for runtime in IMAGE_RUNTIMES {
         for name in std::iter::once(runtime.id).chain(runtime.aliases.iter().copied()) {
             if let Some(version) = value.strip_prefix(name) {
-                if !version.is_empty() {
-                    return (runtime.id, Some(version.trim_matches(['-', '_', '@', ':'])));
+                let version = version.trim_matches(['-', '_', '@', ':']);
+                if version.is_empty() {
+                    continue;
+                }
+                if find_runtime_version(runtime, version).is_some() {
+                    return (runtime.id, Some(version));
+                }
+                if fallback.is_none() && runtime_version_looks_explicit(version) {
+                    fallback = Some((runtime.id, version));
                 }
             }
         }
     }
 
-    (value, None)
+    fallback
+        .map(|(runtime, version)| (runtime, Some(version)))
+        .unwrap_or((value, None))
+}
+
+fn runtime_version_looks_explicit(value: &str) -> bool {
+    let value = value.trim().trim_start_matches('v');
+    value
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+        || matches!(value, "stable" | "beta" | "nightly")
 }
 
 fn find_runtime(value: &str) -> Option<RuntimeSpec> {
@@ -617,7 +643,7 @@ fn runtime_index(runtime_id: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_features, selection_feature_token};
+    use super::{canonical_features, parse_generated_image_id, selection_feature_token};
 
     #[test]
     fn build_tool_aliases_resolve_to_supported_language_runtimes() {
@@ -634,5 +660,55 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["java@21", "node@24", "python@3.14"]
         );
+    }
+
+    #[test]
+    fn bare_runtime_names_are_not_split_by_shorter_aliases() {
+        let selections = canonical_features(&["python".to_string(), "javascript".to_string()])
+            .expect("canonical bare runtime names");
+        assert_eq!(
+            selections
+                .iter()
+                .map(selection_feature_token)
+                .collect::<Vec<_>>(),
+            vec!["node@24", "python@3.14"]
+        );
+    }
+
+    #[test]
+    fn compact_runtime_aliases_keep_their_supported_versions() {
+        let selections = canonical_features(&["nodejs22".to_string(), "python3.12".to_string()])
+            .expect("canonical compact runtime aliases");
+        assert_eq!(
+            selections
+                .iter()
+                .map(selection_feature_token)
+                .collect::<Vec<_>>(),
+            vec!["node@22", "python@3.12"]
+        );
+    }
+
+    #[test]
+    fn unsupported_compact_versions_report_the_correct_runtime() {
+        let error = canonical_features(&["python3.99".to_string()])
+            .expect_err("unsupported Python version must be rejected");
+        assert!(error.contains("unknown Python version: 3.99"));
+    }
+
+    #[test]
+    fn generated_python_image_ids_are_not_shadowed_by_shorter_runtime_aliases() {
+        for image_id in ["dev-python3.12", "dev-python3.14"] {
+            let parsed = parse_generated_image_id(image_id)
+                .expect("generated Python image id must remain catalog-visible");
+            assert_eq!(parsed.selections.len(), 1);
+            assert_eq!(parsed.selections[0].runtime.id, "python");
+            assert_eq!(
+                format!(
+                    "{}{}",
+                    parsed.selections[0].runtime.id, parsed.selections[0].version.id
+                ),
+                image_id.trim_start_matches("dev-")
+            );
+        }
     }
 }

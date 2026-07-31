@@ -147,22 +147,6 @@ fn reject_symlink_path(root: &Path, parent: Option<&Path>) -> Result<(), String>
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generated_config_paths_reject_escape_and_absolute_paths() {
-        assert_eq!(
-            normalize_generated_config_path(".chatos/runtime.env").expect("relative path"),
-            PathBuf::from(".chatos/runtime.env")
-        );
-        assert!(normalize_generated_config_path("../runtime.env").is_err());
-        assert!(normalize_generated_config_path("config/../runtime.env").is_err());
-        assert!(normalize_generated_config_path("/tmp/runtime.env").is_err());
-    }
-}
-
 #[cfg(unix)]
 fn prepare_sandbox_workspace_owner(root: &Path) -> Result<(), String> {
     use std::os::unix::fs::{chown, PermissionsExt};
@@ -227,4 +211,20 @@ fn prepare_sandbox_workspace_owner(root: &Path) -> Result<(), String> {
 #[cfg(not(unix))]
 fn prepare_sandbox_workspace_owner(_root: &Path) -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_config_paths_reject_escape_and_absolute_paths() {
+        assert_eq!(
+            normalize_generated_config_path(".chatos/runtime.env").expect("relative path"),
+            PathBuf::from(".chatos/runtime.env")
+        );
+        assert!(normalize_generated_config_path("../runtime.env").is_err());
+        assert!(normalize_generated_config_path("config/../runtime.env").is_err());
+        assert!(normalize_generated_config_path("/tmp/runtime.env").is_err());
+    }
 }

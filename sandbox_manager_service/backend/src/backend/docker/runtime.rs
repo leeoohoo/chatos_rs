@@ -35,7 +35,11 @@ impl DockerSandboxBackend {
         }
 
         let mut ordered_services = spec.services.iter().collect::<Vec<_>>();
-        ordered_services.sort_by_key(|service| service.service_role == "application");
+        ordered_services.sort_by_key(|service| match service.service_role.as_str() {
+            "dependency" => 0,
+            "workspace" => 1,
+            _ => 2,
+        });
         let mut instances = Vec::with_capacity(ordered_services.len());
         for service in ordered_services {
             match self
@@ -311,7 +315,7 @@ impl DockerSandboxBackend {
         let mcp_enabled = inspect
             .pointer("/Config/Labels/chatos.service_role")
             .and_then(Value::as_str)
-            .is_some_and(|role| role == "application");
+            .is_some_and(|role| matches!(role, "workspace" | "application"));
         let running = inspect
             .pointer("/State/Running")
             .and_then(Value::as_bool)

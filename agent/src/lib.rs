@@ -9,13 +9,19 @@ mod core;
 mod implementations;
 
 pub use catalog::{agent_descriptor, system_agent_catalog, AgentDescriptor};
-pub use config::{
-    agent_max_iterations_from_env, AGENT_MAX_ITERATIONS_CONFIG_KEY, AGENT_MAX_ITERATIONS_ENV,
-    DEFAULT_AGENT_MAX_ITERATIONS, LEGACY_CHATOS_MAX_ITERATIONS_ENV,
-    LEGACY_TASK_RUNNER_MAX_ITERATIONS_ENV,
-};
 #[cfg(feature = "managed-config")]
-pub use config::{load_agent_max_iterations, resolve_agent_max_iterations};
+pub use config::{
+    load_agent_max_iterations, resolve_agent_max_iterations, resolve_task_runner_runtime_settings,
+    ManagedRuntimeConfigBundle,
+};
+pub use config::{
+    TaskRunnerRuntimeSettings, AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS,
+    DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
+    DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS, DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
+    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+};
 #[cfg(feature = "runtime")]
 pub use core::{
     merge_system_instructions, resolve_managed_prompt_by_key_for_model,
@@ -29,5 +35,5 @@ pub use implementations::{
     TaskRunnerRunSpecInput, COMMAND_APPROVAL_AGENT, MEMORY_ENGINE_MEMORY_ROLLUP_AGENT,
     MEMORY_ENGINE_ROLLUP_AGENT, MEMORY_ENGINE_SUBJECT_MEMORY_AGENT, MEMORY_ENGINE_SUMMARY_AGENT,
     MEMORY_ENGINE_THREAD_REPAIR_AGENT, PROJECT_ENVIRONMENT_AGENT, TASK_RUNNER_AGENT,
-    TASK_RUNNER_PLAN_AGENT,
+    TASK_RUNNER_LOCAL_AGENT, TASK_RUNNER_LOCAL_PLAN_AGENT, TASK_RUNNER_PLAN_AGENT,
 };

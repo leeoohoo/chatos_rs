@@ -11,15 +11,15 @@ pub(super) fn execute_command_schema() -> Value {
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Local directory path under project root. Defaults to project root when omitted."
+                "description": "Directory path inside the current project workspace. Defaults to the workspace root when omitted."
             },
             "common": {
                 "type": "string",
-                "description": "Local shell command to run."
+                "description": "Shell command to run in the current project workspace."
             },
             "command": {
                 "type": "string",
-                "description": "Alias of common. Local shell command to run."
+                "description": "Alias of common. Shell command to run in the current project workspace."
             },
             "background": {
                 "type": "boolean",
@@ -63,7 +63,7 @@ pub(super) fn process_poll_schema() -> Value {
         "properties": {
             "terminal_id": {
                 "type": "string",
-                "description": "Terminal process id from process_list or execute_command result."
+                "description": "Command process id from process_list or execute_command result."
             },
             "offset": {
                 "type": "integer",
@@ -88,7 +88,7 @@ pub(super) fn process_log_schema() -> Value {
         "properties": {
             "terminal_id": {
                 "type": "string",
-                "description": "Terminal process id."
+                "description": "Command process id."
             },
             "offset": {
                 "type": "integer",
@@ -113,7 +113,7 @@ pub(super) fn process_wait_schema() -> Value {
         "properties": {
             "terminal_id": {
                 "type": "string",
-                "description": "Terminal process id."
+                "description": "Command process id."
             },
             "timeout_ms": {
                 "type": "integer",
@@ -139,7 +139,7 @@ pub(super) fn process_write_schema() -> Value {
         "properties": {
             "terminal_id": {
                 "type": "string",
-                "description": "Terminal process id."
+                "description": "Command process id."
             },
             "data": {
                 "type": "string",
@@ -162,7 +162,7 @@ pub(super) fn process_kill_schema() -> Value {
         "properties": {
             "terminal_id": {
                 "type": "string",
-                "description": "Terminal process id."
+                "description": "Command process id."
             }
         },
         "required": ["terminal_id"],

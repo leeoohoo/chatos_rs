@@ -20,6 +20,8 @@ pub(super) struct ProjectRuntimeEnvironmentSettingsRequest {
 pub(super) struct ProjectRuntimeEnvironmentAnalysisRequest {
     #[serde(default, alias = "analysisRequirement")]
     analysis_requirement: Option<String>,
+    #[serde(default, alias = "selectedDependencies")]
+    selected_dependencies: Vec<String>,
 }
 
 fn is_cloud_project(project: &Project) -> bool {
@@ -123,12 +125,14 @@ pub(super) async fn analyze_project_runtime_environment(
         Ok(context) => context,
         Err(err) => return err,
     };
+    let request = request.map(|Json(request)| request).unwrap_or_default();
     let response = match project_management_api_client::analyze_project_service_runtime_environment(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
         project.id.as_str(),
         &project_management_api_client::AnalyzeProjectRuntimeEnvironmentRequest {
-            analysis_requirement: request.and_then(|Json(request)| request.analysis_requirement),
+            analysis_requirement: request.analysis_requirement,
+            selected_dependencies: request.selected_dependencies,
         },
     )
     .await

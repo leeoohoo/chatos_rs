@@ -65,11 +65,11 @@ pub(super) fn task_process_log_preview_text(locale: BuiltinMcpPromptLocale) -> S
 fn task_process_log_prompt_text(locale: BuiltinMcpPromptLocale, tool_name: &str) -> String {
     if locale.is_english() {
         format!(
-            "[Task Execution Process]\nA private internal tool `{tool_name}` is available during this task run. Use it for short visible breadcrumbs only: selected approach, reused existing code or platform capability, root-cause finding, verification result, blocker, or next step. Prefer concise entries that help a later reviewer understand what changed and why. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts. This tool is internal to Task Runner execution and is not part of the external Task Runner MCP API."
+            "[Task Execution Process]\nThe run-scoped system MCP tool `{tool_name}` is available during this Task Runner run. Use it for short visible breadcrumbs only: selected approach, reused existing code or platform capability, root-cause finding, verification result, blocker, or next step. Prefer concise entries that help a later reviewer understand what changed and why. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts. This MCP is mounted only inside the current Task Runner execution and is not part of the external Task Runner management API."
         )
     } else {
         format!(
-            "[任务执行过程]\n本次任务执行期间提供内部专用工具 `{tool_name}`。只记录简短、可展示的执行路标：选择的方案、复用的已有代码或平台能力、根因发现、验证结果、阻塞和下一步。记录要能帮助后续 review 看懂改了什么、为什么这样改。不要记录隐藏思维链、凭证、密钥、原始大段输出或无关草稿。这个工具只属于 Task Runner 内部执行，不属于对外 Task Runner MCP API。"
+            "[任务执行过程]\n本次 Task Runner 运行期间提供运行期系统 MCP 工具 `{tool_name}`。只记录简短、可展示的执行路标：选择的方案、复用的已有代码或平台能力、根因发现、验证结果、阻塞和下一步。记录要能帮助后续 review 看懂改了什么、为什么这样改。不要记录隐藏思维链、凭证、密钥、原始大段输出或无关草稿。这个 MCP 只挂载在当前 Task Runner 执行内部，不属于对外的 Task Runner 管理 API。"
         )
     }
 }
@@ -125,31 +125,7 @@ impl BuiltinToolProvider for TaskProcessLogBuiltinProvider {
     }
 
     fn list_tools(&self) -> Vec<Value> {
-        vec![json!({
-            "name": TASK_PROCESS_LOG_INTERNAL_TOOL_NAME,
-            "description": "Record short visible execution breadcrumbs for the current Task Runner task only. Use append for selected approach, root-cause findings, reuse decisions, verification results, blockers, and next steps. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["append", "replace", "clear"],
-                        "default": "append",
-                        "description": "append adds one timestamped entry; replace rewrites the full process log; clear removes the process log."
-                    },
-                    "heading": {
-                        "type": ["string", "null"],
-                        "description": "Short visible heading for append entries, or null when not needed."
-                    },
-                    "content": {
-                        "type": ["string", "null"],
-                        "description": "Visible process content. Required for append/replace; pass null for clear."
-                    }
-                },
-                "required": ["operation", "heading", "content"],
-                "additionalProperties": false
-            }
-        })]
+        chatos_mcp::task_process_log_tool_definitions()
     }
 
     async fn call_tool(
@@ -169,11 +145,55 @@ impl BuiltinToolProvider for TaskProcessLogBuiltinProvider {
             .record_task_process(self.task_id.as_str(), input.into_request())
             .await?
             .ok_or_else(|| format!("任务不存在: {}", self.task_id))?;
-        Ok(json!({
-            "task_id": task.id,
-            "run_id": self.run_id,
-            "process_log": task.process_log,
-            "updated_at": task.updated_at,
-        }))
+        Ok(task_process_log_ack(
+            task.id.as_str(),
+            self.run_id.as_str(),
+            task.process_log.as_deref(),
+            task.updated_at.as_str(),
+        ))
+    }
+}
+
+fn task_process_log_ack(
+    task_id: &str,
+    run_id: &str,
+    process_log: Option<&str>,
+    updated_at: &str,
+) -> Value {
+    json!({
+        "recorded": true,
+        "task_id": task_id,
+        "run_id": run_id,
+        "process_log_chars": process_log
+            .map(|value| value.chars().count())
+            .unwrap_or_default(),
+        "updated_at": updated_at,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_log_tool_returns_compact_ack_without_replaying_history() {
+        let history = "旧运行日志".repeat(8_000);
+        let response = task_process_log_ack(
+            "task-1",
+            "run-2",
+            Some(history.as_str()),
+            "2026-07-28T00:00:00Z",
+        );
+
+        assert_eq!(
+            response.get("recorded").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response.get("process_log_chars").and_then(Value::as_u64),
+            Some(history.chars().count() as u64)
+        );
+        assert!(response.get("process_log").is_none());
+        assert!(response.to_string().len() < 256);
     }
 }

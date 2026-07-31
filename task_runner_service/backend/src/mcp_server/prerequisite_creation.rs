@@ -161,7 +161,6 @@ impl TaskRunnerMcpService {
                     schedule: Some(TaskScheduleConfig::default()),
                     enabled_builtin_kinds: item.enabled_builtin_kinds,
                     external_mcp_config_ids: item.external_mcp_config_ids,
-                    selected_skill_ids: item.selected_skill_ids,
                     plugin_device_id: None,
                     plugin_workspace_id: None,
                     selected_plugins: None,

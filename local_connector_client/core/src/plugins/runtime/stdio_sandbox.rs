@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -32,12 +35,14 @@ impl PluginStdioSandboxLauncher {
         plugin_root: &Path,
         server: &McpStdioServer,
         environment_names: impl IntoIterator<Item = String>,
+        package_file_sha256: &BTreeMap<String, String>,
     ) -> Result<(McpStdioServer, Arc<PluginStdioSandboxRuntime>)> {
         self.prepare_inner(
             plugin_storage_root,
             plugin_root,
             server,
             environment_names,
+            package_file_sha256,
             None,
         )
     }
@@ -48,6 +53,7 @@ impl PluginStdioSandboxLauncher {
         plugin_root: &Path,
         server: &McpStdioServer,
         environment_names: impl IntoIterator<Item = String>,
+        package_file_sha256: &BTreeMap<String, String>,
         workspace_root: &Path,
     ) -> Result<(McpStdioServer, Arc<PluginStdioSandboxRuntime>)> {
         self.prepare_inner(
@@ -55,6 +61,7 @@ impl PluginStdioSandboxLauncher {
             plugin_root,
             server,
             environment_names,
+            package_file_sha256,
             Some(workspace_root),
         )
     }
@@ -65,20 +72,28 @@ impl PluginStdioSandboxLauncher {
         plugin_root: &Path,
         server: &McpStdioServer,
         environment_names: impl IntoIterator<Item = String>,
+        package_file_sha256: &BTreeMap<String, String>,
         workspace_root: Option<&Path>,
     ) -> Result<(McpStdioServer, Arc<PluginStdioSandboxRuntime>)> {
-        let runtime = Arc::new(PluginStdioSandboxRuntime::create(plugin_storage_root)?);
+        let runtime = Arc::new(PluginStdioSandboxRuntime::create(
+            plugin_storage_root,
+            package_file_sha256,
+        )?);
         let target_cwd = server.cwd.as_deref().map(Path::new).unwrap_or(plugin_root);
         let mut args = vec![
             PLUGIN_STDIO_WRAPPER_MODE.to_string(),
             "--plugin-root".to_string(),
             plugin_root.to_string_lossy().into_owned(),
+            "--sandbox-id".to_string(),
+            runtime.sandbox_id.clone(),
             "--state-root".to_string(),
             runtime.state_root.to_string_lossy().into_owned(),
             "--cache-root".to_string(),
             runtime.cache_root.to_string_lossy().into_owned(),
             "--temp-root".to_string(),
             runtime.temp_root.to_string_lossy().into_owned(),
+            "--package-index".to_string(),
+            runtime.package_index.to_string_lossy().into_owned(),
             "--cwd".to_string(),
             target_cwd.to_string_lossy().into_owned(),
         ];
@@ -104,32 +119,72 @@ impl PluginStdioSandboxLauncher {
 }
 
 pub(super) struct PluginStdioSandboxRuntime {
+    sandbox_id: String,
     root: PathBuf,
     state_root: PathBuf,
     cache_root: PathBuf,
     temp_root: PathBuf,
+    package_index: PathBuf,
 }
 
 impl PluginStdioSandboxRuntime {
-    fn create(plugin_storage_root: &Path) -> Result<Self> {
+    fn create(
+        plugin_storage_root: &Path,
+        package_file_sha256: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         let parent = plugin_storage_root.join("runtime").join("stdio");
         create_private_directory_all(parent.as_path())?;
-        let root = parent.join(Uuid::new_v4().to_string());
+        let sandbox_id = Uuid::new_v4().to_string();
+        let root = parent.join(sandbox_id.as_str());
         create_private_directory(root.as_path())?;
+        match Self::create_inner(sandbox_id, root.as_path(), package_file_sha256) {
+            Ok(runtime) => Ok(runtime),
+            Err(error) => {
+                let _ = fs::remove_dir_all(root.as_path());
+                Err(error)
+            }
+        }
+    }
+
+    fn create_inner(
+        sandbox_id: String,
+        root: &Path,
+        package_file_sha256: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         let state_root = root.join("state");
         let cache_root = root.join("cache");
         let temp_root = root.join("tmp");
         for directory in [&state_root, &cache_root, &temp_root] {
-            if let Err(error) = create_private_directory(directory.as_path()) {
-                let _ = fs::remove_dir_all(root.as_path());
-                return Err(error);
-            }
+            create_private_directory(directory.as_path())?;
         }
+        let package_index = root.join("package-index.json");
+        let package_index_bytes = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "files": package_file_sha256,
+        }))
+        .context("serialize Plugin stdio signed package index")?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(package_index.as_path())
+            .with_context(|| {
+                format!(
+                    "create Plugin stdio signed package index {}",
+                    package_index.display()
+                )
+            })?;
+        file.write_all(package_index_bytes.as_slice())
+            .context("write Plugin stdio signed package index")?;
+        file.sync_all()
+            .context("sync Plugin stdio signed package index")?;
+        set_private_file_permissions(package_index.as_path())?;
         Ok(Self {
-            root,
+            sandbox_id,
+            root: root.to_path_buf(),
             state_root,
             cache_root,
             temp_root,
+            package_index,
         })
     }
 }
@@ -145,7 +200,24 @@ impl fmt::Debug for PluginStdioSandboxRuntime {
 
 impl Drop for PluginStdioSandboxRuntime {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        cleanup_windows_appcontainer(self.sandbox_id.as_str());
         let _ = fs::remove_dir_all(self.root.as_path());
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_windows_appcontainer(sandbox_id: &str) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Security::Isolation::DeleteAppContainerProfile;
+
+    let name = format!("chatos.plugin.{}", sandbox_id.replace('-', ""));
+    let wide = std::ffi::OsStr::new(name.as_str())
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    unsafe {
+        let _ = DeleteAppContainerProfile(wide.as_ptr());
     }
 }
 
@@ -161,14 +233,28 @@ fn create_private_directory(path: &Path) -> Result<()> {
     set_private_permissions(path)
 }
 
-fn set_private_permissions(path: &Path) -> Result<()> {
+fn set_private_permissions(_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).with_context(|| {
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o700)).with_context(|| {
             format!(
                 "set Plugin stdio runtime directory permissions {}",
-                path.display()
+                _path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn set_private_file_permissions(_path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o600)).with_context(|| {
+            format!(
+                "set Plugin stdio runtime file permissions {}",
+                _path.display()
             )
         })?;
     }
@@ -179,6 +265,7 @@ fn set_private_permissions(path: &Path) -> Result<()> {
 mod tests {
     use super::PluginStdioSandboxLauncher;
     use chatos_mcp_runtime::McpStdioServer;
+    use std::collections::BTreeMap;
 
     #[test]
     fn writable_hook_wrapper_receives_only_the_explicit_workspace_root() {
@@ -201,10 +288,38 @@ mod tests {
                 plugin_root.as_path(),
                 &server,
                 Vec::<String>::new(),
+                &BTreeMap::from([("hook".to_string(), "a".repeat(64))]),
                 workspace_root.as_path(),
             )
             .expect("prepare writable Hook sandbox");
         let args = wrapped.args.expect("wrapper arguments");
+        let sandbox_index = args
+            .iter()
+            .position(|arg| arg == "--sandbox-id")
+            .expect("sandbox ID option");
+        assert!(uuid::Uuid::parse_str(
+            args.get(sandbox_index + 1)
+                .expect("sandbox ID value")
+                .as_str()
+        )
+        .is_ok());
+        let package_index = args
+            .iter()
+            .position(|arg| arg == "--package-index")
+            .and_then(|index| args.get(index + 1))
+            .expect("signed package index option");
+        let package_index: serde_json::Value = serde_json::from_slice(
+            std::fs::read(package_index)
+                .expect("read signed package index")
+                .as_slice(),
+        )
+        .expect("parse signed package index");
+        assert_eq!(
+            package_index
+                .pointer("/files/hook")
+                .and_then(|value| value.as_str()),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
         let workspace_index = args
             .iter()
             .position(|arg| arg == "--workspace-root")

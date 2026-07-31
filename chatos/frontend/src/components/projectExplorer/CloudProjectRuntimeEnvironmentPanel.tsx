@@ -8,7 +8,6 @@ import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type {
   ProjectRuntimeEnvironmentProgressResponse,
-  ProjectRuntimeEnvironmentRecordResponse,
   ProjectRuntimeEnvironmentResponse,
 } from '../../lib/api/client/types';
 import { cn } from '../../lib/utils';
@@ -16,9 +15,21 @@ import {
   actionNoticeForRuntimeStatus,
   type RuntimeActionNotice,
 } from './cloudRuntimeActionNotice';
+import {
+  asRecord,
+  buildDetectedStackView,
+  displayValue,
+  environmentRecord,
+  formatDateTime,
+  formatElapsed,
+  readBoolean,
+  readNumber,
+  readString,
+  serviceConfigEntries,
+  statusTone,
+} from './cloudRuntimeEnvironmentView';
 import CloudRuntimeImagePlans from './CloudRuntimeImagePlans';
-
-const MAX_ANALYSIS_REQUIREMENT_LENGTH = 4_000;
+import RuntimeAnalysisRequirementDialog from './RuntimeAnalysisRequirementDialog';
 
 interface CloudProjectRuntimeEnvironmentPanelProps {
   projectId: string;
@@ -26,108 +37,6 @@ interface CloudProjectRuntimeEnvironmentPanelProps {
   projectSourceType?: string | null;
 }
 
-type UnknownRecord = Record<string, unknown>;
-
-const asRecord = (value: unknown): UnknownRecord => (
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? value as UnknownRecord
-    : {}
-);
-
-const readString = (record: UnknownRecord, keys: string[], fallback = ''): string => {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return fallback;
-};
-
-const readBoolean = (record: UnknownRecord, keys: string[], fallback = false): boolean => {
-  for (const key of keys) {
-    if (typeof record[key] === 'boolean') {
-      return record[key] as boolean;
-    }
-  }
-  return fallback;
-};
-
-const readNumber = (record: UnknownRecord, keys: string[]): number | null => {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return null;
-};
-
-const environmentRecord = (
-  response: ProjectRuntimeEnvironmentResponse | null,
-): ProjectRuntimeEnvironmentRecordResponse => response?.environment || {};
-
-const formatJson = (value: unknown): string => {
-  if (value == null) {
-    return '';
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-};
-
-const formatDateTime = (value: string): string => {
-  if (!value) {
-    return '-';
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-};
-
-const formatElapsed = (startedAt: string): string => {
-  if (!startedAt) {
-    return '-';
-  }
-  const started = new Date(startedAt).getTime();
-  if (!Number.isFinite(started)) {
-    return '-';
-  }
-  const totalSeconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return hours > 0
-    ? `${hours}h ${minutes}m ${seconds}s`
-    : `${minutes}m ${seconds}s`;
-};
-
-const statusTone = (status: string): string => {
-  if (status === 'ready') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700';
-  }
-  if (status === 'failed' || status === 'not_runnable') {
-    return 'border-destructive/30 bg-destructive/10 text-destructive';
-  }
-  if (status === 'analyzing' || status === 'pending' || status === 'pending_image_build') {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
-  }
-  return 'border-border bg-background text-muted-foreground';
-};
-
-const displayValue = (value: unknown): string => {
-  if (value == null || value === '') {
-    return '-';
-  }
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  return formatJson(value);
-};
 
 export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEnvironmentPanelProps> = ({
   projectId,
@@ -147,6 +56,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const [actionNotice, setActionNotice] = useState<RuntimeActionNotice | null>(null);
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
   const [analysisRequirement, setAnalysisRequirement] = useState('');
+  const [selectedDependencies, setSelectedDependencies] = useState<string[]>([]);
   const [analysisRequirementError, setAnalysisRequirementError] = useState<string | null>(null);
 
   const loadEnvironment = useCallback(async () => {
@@ -166,14 +76,18 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
     void loadEnvironment();
   }, [loadEnvironment]);
 
-  const analyzeEnvironment = useCallback(async (requirement: string) => {
+  const analyzeEnvironment = useCallback(async (
+    requirement: string,
+    dependencies: string[],
+  ) => {
     setAnalyzing(true);
     setError(null);
     setActionNotice(null);
     setProgress(null);
     try {
       const nextResponse = await client.analyzeProjectRuntimeEnvironment(projectId, {
-        analysis_requirement: requirement,
+        analysis_requirement: requirement || undefined,
+        selected_dependencies: dependencies,
       });
       const nextEnvironment = asRecord(environmentRecord(nextResponse));
       const nextStatus = readString(nextEnvironment, ['status'], 'pending');
@@ -199,18 +113,19 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
 
   const submitAnalysisRequirement = useCallback(() => {
     const requirement = analysisRequirement.trim();
-    if (!requirement) {
+    if (!requirement && selectedDependencies.length === 0) {
       setAnalysisRequirementError(t('cloudRuntime.requirementRequired'));
       return;
     }
     setAnalysisRequirementError(null);
     setAnalysisDialogOpen(false);
-    void analyzeEnvironment(requirement);
-  }, [analysisRequirement, analyzeEnvironment, t]);
+    void analyzeEnvironment(requirement, selectedDependencies);
+  }, [analysisRequirement, analyzeEnvironment, selectedDependencies, t]);
 
   const generateRuntimeImage = useCallback(async (imageId: string) => {
     setBuildingImageId(imageId);
     setError(null);
+    setProgress(null);
     setActionNotice({
       tone: 'info',
       message: isCloudProject
@@ -238,10 +153,15 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
       setActionNotice(actionNoticeForRuntimeStatus(nextStatus, t, nextSummary));
     } catch (buildError) {
       setError(buildError instanceof Error ? buildError.message : t('cloudRuntime.imageBuildFailed'));
-      try {
-        setResponse(await client.getProjectRuntimeEnvironment(projectId));
-      } catch {
-        // Keep the build error visible; manual refresh can retry the status request.
+      const [nextEnvironment, nextProgress] = await Promise.allSettled([
+        client.getProjectRuntimeEnvironment(projectId),
+        client.getProjectRuntimeEnvironmentProgress(projectId),
+      ]);
+      if (nextEnvironment.status === 'fulfilled') {
+        setResponse(nextEnvironment.value);
+      }
+      if (nextProgress.status === 'fulfilled') {
+        setProgress(nextProgress.value);
       }
     } finally {
       setBuildingImageId(null);
@@ -268,10 +188,14 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const envVars = asRecord(environmentData.env_vars ?? environmentData.envVars);
   const images = response?.images || [];
   const envEntries = useMemo(() => Object.entries(envVars), [envVars]);
-  const detectedStackText = formatJson(detectedStack);
+  const detectedStackView = useMemo(() => buildDetectedStackView(detectedStack, t), [detectedStack, t]);
+  const imagePreparationActive = images.some((image) => {
+    const imageStatus = readString(asRecord(image), ['status']).toLowerCase();
+    return ['building', 'preparing', 'running'].includes(imageStatus);
+  });
   const backendAnalyzing = status === 'analyzing';
-  const backendBuilding = !isCloudProject && status === 'pending_image_build';
-  const backendBusy = backendAnalyzing || backendBuilding;
+  const backendBuilding = status === 'pending_image_build' && imagePreparationActive;
+  const backendBusy = backendAnalyzing || backendBuilding || buildingImageId !== null;
   const progressData = asRecord(progress);
   const progressStatus = readString(progressData, ['status']);
   const progressPhase = readString(
@@ -287,7 +211,10 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const progressUpdatedAt = readString(progressData, ['updated_at', 'updatedAt']);
   const progressLogs = readString(progressData, ['logs']);
   const progressError = readString(progressData, ['error']);
-  const showProgress = backendBusy || Boolean(progressJobId || progressLogs || progressError);
+  const progressActive = ['pending', 'queued', 'running', 'building'].includes(
+    progressStatus.toLowerCase(),
+  );
+  const showProgress = backendBusy || progressActive || Boolean(progressError);
   const visibleNotice = status === 'pending_configuration'
     ? actionNotice || {
       tone: 'warning' as const,
@@ -426,7 +353,9 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
             )}
             {analyzing || backendBusy
               ? backendBuilding
-                ? t('cloudRuntime.localBuilding')
+                ? isCloudProject
+                  ? t('cloudRuntime.preparingAllImages')
+                  : t('cloudRuntime.localBuilding')
                 : t('cloudRuntime.analyzing')
               : status === 'pending_configuration'
                 ? t('cloudRuntime.checkConfiguration')
@@ -436,81 +365,21 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
       </div>
 
       {analysisDialogOpen && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="runtime-analysis-requirement-title"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              closeAnalysisDialog();
-            }
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-              event.preventDefault();
-              submitAnalysisRequirement();
-            }
+        <RuntimeAnalysisRequirementDialog
+          requirement={analysisRequirement}
+          selectedDependencies={selectedDependencies}
+          error={analysisRequirementError}
+          onRequirementChange={(value) => {
+            setAnalysisRequirement(value);
+            setAnalysisRequirementError(null);
           }}
-        >
-          <div className="w-full max-w-xl rounded-lg border border-border bg-card shadow-xl">
-            <div className="border-b border-border px-5 py-4">
-              <h3
-                id="runtime-analysis-requirement-title"
-                className="text-base font-semibold text-foreground"
-              >
-                {t('cloudRuntime.requirementDialogTitle')}
-              </h3>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('cloudRuntime.requirementDialogDescription')}
-              </p>
-            </div>
-            <div className="px-5 py-4">
-              <label
-                htmlFor="runtime-analysis-requirement"
-                className="mb-2 block text-xs font-medium text-foreground"
-              >
-                {t('cloudRuntime.requirementLabel')}
-              </label>
-              <textarea
-                id="runtime-analysis-requirement"
-                autoFocus
-                rows={6}
-                maxLength={MAX_ANALYSIS_REQUIREMENT_LENGTH}
-                value={analysisRequirement}
-                onChange={(event) => {
-                  setAnalysisRequirement(event.target.value);
-                  setAnalysisRequirementError(null);
-                }}
-                placeholder={t('cloudRuntime.requirementPlaceholder')}
-                className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
-              />
-              <div className="mt-2 flex items-start justify-between gap-3 text-xs">
-                <span className={analysisRequirementError ? 'text-destructive' : 'text-muted-foreground'}>
-                  {analysisRequirementError || t('cloudRuntime.requirementHint')}
-                </span>
-                <span className="shrink-0 text-muted-foreground">
-                  {analysisRequirement.length}/{MAX_ANALYSIS_REQUIREMENT_LENGTH}
-                </span>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-              <button
-                type="button"
-                onClick={closeAnalysisDialog}
-                className="h-9 rounded-md border border-border bg-background px-4 text-sm text-foreground hover:bg-accent"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={submitAnalysisRequirement}
-                disabled={!analysisRequirement.trim()}
-                className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {t('cloudRuntime.startAnalysis')}
-              </button>
-            </div>
-          </div>
-        </div>
+          onSelectedDependenciesChange={(dependencies) => {
+            setSelectedDependencies(dependencies);
+            setAnalysisRequirementError(null);
+          }}
+          onCancel={closeAnalysisDialog}
+          onSubmit={submitAnalysisRequirement}
+        />
       )}
 
       {visibleNotice && !(error || lastError || notRunnableReason) && (
@@ -627,10 +496,77 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
 
       <section className="border-t border-border px-4 py-4">
         <h3 className="text-sm font-semibold text-foreground">{t('cloudRuntime.detectedStack')}</h3>
-        {detectedStackText && detectedStackText !== '{}' ? (
-          <pre className="mt-3 max-h-80 overflow-auto border border-border bg-background p-3 text-xs leading-5 text-foreground">
-            {detectedStackText}
-          </pre>
+        {detectedStackView.hasContent ? (
+          <div className="mt-3 overflow-hidden border border-border">
+            <table className="w-full table-fixed text-left text-xs">
+              <tbody className="divide-y divide-border">
+                {detectedStackView.summaryItems.length > 0 ? (
+                  <tr className="align-top">
+                    <th className="w-36 bg-muted/40 px-3 py-2 font-medium text-muted-foreground">
+                      {t('cloudRuntime.stack.summary')}
+                    </th>
+                    <td className="px-3 py-2">
+                      <ul className="list-disc space-y-1 pl-4 leading-5 text-foreground">
+                        {detectedStackView.summaryItems.map((item) => (
+                          <li key={item} className="break-words">{item}</li>
+                        ))}
+                      </ul>
+                    </td>
+                  </tr>
+                ) : null}
+                {detectedStackView.metrics.map((metric) => (
+                  <tr key={metric.label} className="align-top">
+                    <th className="w-36 bg-muted/40 px-3 py-2 font-medium text-muted-foreground">
+                      {metric.label}
+                    </th>
+                    <td className="px-3 py-2 font-mono">{metric.value}</td>
+                  </tr>
+                ))}
+                {detectedStackView.groups.map((group) => (
+                  <tr key={group.label} className="align-top">
+                    <th className="w-36 bg-muted/40 px-3 py-2 font-medium text-muted-foreground">
+                      {group.label}
+                    </th>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.items.slice(0, 12).map((item) => (
+                          <span key={item} className="max-w-full break-words border border-border bg-muted/40 px-2 py-0.5 font-mono text-[11px]">
+                            {item}
+                          </span>
+                        ))}
+                        {group.items.length > 12 ? (
+                          <span className="px-2 py-0.5 text-muted-foreground">
+                            {t('cloudRuntime.stack.andMore')} {group.items.length - 12}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {detectedStackView.files.length > 0 ? (
+                  <tr className="align-top">
+                    <th className="w-36 bg-muted/40 px-3 py-2 font-medium text-muted-foreground">
+                      {t('cloudRuntime.stack.evidenceFiles')} ({detectedStackView.files.length})
+                    </th>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {detectedStackView.files.slice(0, 8).map((file) => (
+                          <span key={file} className="max-w-full break-words border border-border bg-muted/40 px-2 py-0.5 font-mono text-[11px]" title={file}>
+                            {file}
+                          </span>
+                        ))}
+                        {detectedStackView.files.length > 8 ? (
+                          <span className="px-2 py-0.5 text-muted-foreground">
+                            {t('cloudRuntime.stack.andMore')} {detectedStackView.files.length - 8}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <div className="mt-3 text-xs text-muted-foreground">{t('cloudRuntime.noDetectedStack')}</div>
         )}
@@ -653,12 +589,35 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
                 <tr><td className="px-3 py-6 text-center text-muted-foreground" colSpan={4}>{t('cloudRuntime.noServices')}</td></tr>
               ) : requiredServices.map((service, index) => {
                 const record = asRecord(service);
+                const config = asRecord(record.config ?? record.configuration);
+                const configEntries = serviceConfigEntries(record, t);
+                const serviceType = readString(
+                  record,
+                  ['type', 'kind'],
+                  readString(config, ['type', 'kind', 'environment_key', 'environmentKey'], '-'),
+                );
+                const serviceName = readString(
+                  record,
+                  ['name', 'display_name', 'displayName', 'environment_key', 'environmentKey'],
+                  readString(config, ['name', 'display_name', 'displayName', 'environment_key', 'environmentKey'], serviceType),
+                );
                 return (
-                  <tr key={`${readString(record, ['name', 'id'], 'service')}-${index}`}>
-                    <td className="px-3 py-2">{readString(record, ['name', 'display_name', 'displayName'], '-')}</td>
-                    <td className="px-3 py-2">{readString(record, ['type', 'kind'], '-')}</td>
+                  <tr key={`${readString(record, ['id', 'name', 'type', 'kind'], serviceName || 'service')}-${index}`}>
+                    <td className="px-3 py-2">{serviceName}</td>
+                    <td className="px-3 py-2">{serviceType}</td>
                     <td className="px-3 py-2">{readString(record, ['description', 'detail'], '-')}</td>
-                    <td className="max-w-md whitespace-pre-wrap px-3 py-2 font-mono">{displayValue(record.config ?? record.configuration ?? record)}</td>
+                    <td className="max-w-lg px-3 py-2">
+                      {configEntries.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {configEntries.map((entry) => (
+                            <span key={`${entry.label}:${entry.value}`} className="border border-border bg-muted/40 px-2 py-0.5">
+                              <span className="text-muted-foreground">{entry.label}: </span>
+                              <span className="font-mono">{entry.value}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : '-'}
+                    </td>
                   </tr>
                 );
               })}

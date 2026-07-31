@@ -148,7 +148,6 @@ impl TaskRunnerMcpService {
                 &mut tools,
                 policy.selectable_builtin_kind_names().as_slice(),
                 policy.selectable_external_mcp_ids().as_slice(),
-                policy.selectable_skill_ids().as_slice(),
             );
         }
         Ok(tools

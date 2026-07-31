@@ -7,6 +7,8 @@ import { ApiRequestError } from '../../../lib/api/client/shared';
 import type { ProjectExecutionConfirmationState } from '../../messageTasks/projectExecutionConfirmation';
 import {
   buildRequirementExecutionProcess,
+  isRequirementExecutionCancellationSettling,
+  isRequirementExecutionRerunCancellationSettlingError,
   isPendingRequirementExecutionPlanError,
   REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
   resolveRequirementExecutionRecoveryActions,
@@ -53,6 +55,17 @@ describe('requirement execution process phase', () => {
     expect(isPendingRequirementExecutionPlanError(
       new Error('需求执行规划消息不存在'),
     )).toBe(true);
+  });
+
+  it('treats rerun active-run conflicts as cancellation settling', () => {
+    expect(isRequirementExecutionRerunCancellationSettlingError(new ApiRequestError(
+      '旧执行批次仍有 1 个 Task Runner 任务正在取消，已重新发送取消请求，请等待取消完成后再重新执行。',
+      { status: 409 },
+    ))).toBe(true);
+    expect(isRequirementExecutionRerunCancellationSettlingError(new ApiRequestError(
+      '复制 Task Runner 执行图失败',
+      { status: 502 },
+    ))).toBe(false);
   });
 
   it('starts a fresh plan after the previous stopped batch was discarded', () => {
@@ -129,6 +142,19 @@ describe('requirement execution process phase', () => {
   });
 
   it('enables feedback and rerun only after a batch is fully stopped', () => {
+    expect(isRequirementExecutionCancellationSettling({
+      hasActiveRuns: true,
+      phase: 'stopped',
+    })).toBe(true);
+    expect(isRequirementExecutionCancellationSettling({
+      hasActiveRuns: false,
+      phase: 'stopped',
+    })).toBe(false);
+    expect(isRequirementExecutionCancellationSettling({
+      hasActiveRuns: true,
+      phase: 'running',
+    })).toBe(false);
+
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: false,
@@ -295,6 +321,14 @@ describe('requirement execution process phase', () => {
       failureDetected: false,
       planStopped: true,
       taskStatuses: [],
+    })).toBe('stopped');
+
+    expect(resolveRequirementExecutionProcessPhase({
+      confirmationState: confirmationState({ hasStartedTasks: true, overallStatus: 'stopping' }),
+      failureDetected: false,
+      planStopped: false,
+      serverStatus: 'stopping',
+      taskStatuses: ['running'],
     })).toBe('stopped');
 
     expect(resolveRequirementExecutionProcessPhase({

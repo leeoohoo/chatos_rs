@@ -187,4 +187,37 @@ describe('execution pause and cancel controls', () => {
     expect(mocks.resume).toHaveBeenCalledTimes(1);
     expect(mocks.pause).not.toHaveBeenCalled();
   });
+
+  it('keeps a cancellable loading action visible while cancellation is settling', async () => {
+    const user = userEvent.setup();
+    mocks.getPlan.mockResolvedValue({
+      found: true,
+      conversation_id: 'conversation-1',
+      execution_group_id: 'execution-group-1',
+      message_id: 'message-1',
+      status: 'stopping',
+      execution_paused: false,
+      has_started_runs: true,
+    });
+    render(
+      <RequirementExecutionProcessModal
+        process={{ ...process, serverStatus: 'stopping', executionPaused: false }}
+        onClose={vi.fn()}
+        onProcessChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: '重发取消请求' }),
+    ).toBeTruthy());
+    expect(screen.queryByRole('button', { name: '取消本次执行' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '重发取消请求' }));
+
+    expect(mocks.stop).toHaveBeenCalledWith('project-1', 'requirement-1', {
+      execution_group_id: 'execution-group-1',
+      conversation_id: 'conversation-1',
+      contact_id: 'contact-1',
+    });
+  });
 });

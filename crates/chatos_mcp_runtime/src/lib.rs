@@ -12,6 +12,7 @@ pub mod parallelism;
 pub mod registry;
 pub mod rpc;
 pub mod schema;
+pub mod task_types;
 pub mod text;
 pub mod tool_call;
 pub mod types;
@@ -33,9 +34,9 @@ pub use builtin_catalog::{
     MEMORY_SKILL_READER_SERVER_NAME, NOTEPAD_COMMAND, NOTEPAD_MCP_ID, NOTEPAD_SERVER_NAME,
     PROJECT_MANAGEMENT_COMMAND, PROJECT_MANAGEMENT_MCP_ID, PROJECT_MANAGEMENT_SERVER_NAME,
     REMOTE_CONNECTION_CONTROLLER_COMMAND, REMOTE_CONNECTION_CONTROLLER_MCP_ID,
-    REMOTE_CONNECTION_CONTROLLER_SERVER_NAME, TASK_MANAGER_COMMAND, TASK_MANAGER_MCP_ID,
-    TASK_MANAGER_SERVER_NAME, TERMINAL_CONTROLLER_COMMAND, TERMINAL_CONTROLLER_MCP_ID,
-    TERMINAL_CONTROLLER_SERVER_NAME, WEB_TOOLS_COMMAND, WEB_TOOLS_MCP_ID, WEB_TOOLS_SERVER_NAME,
+    REMOTE_CONNECTION_CONTROLLER_SERVER_NAME, TERMINAL_CONTROLLER_COMMAND,
+    TERMINAL_CONTROLLER_MCP_ID, TERMINAL_CONTROLLER_SERVER_NAME, WEB_TOOLS_COMMAND,
+    WEB_TOOLS_MCP_ID, WEB_TOOLS_SERVER_NAME,
 };
 pub use builtin_prompt::{
     builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
@@ -53,6 +54,7 @@ pub use rpc::{
     list_tools_http, list_tools_stdio,
 };
 pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
+pub use task_types::TaskUpdatePatch;
 pub use text::{
     inject_agent_builder_args, to_text_and_structured_result,
     to_text_and_structured_result_with_transient,

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_revision": "2026-07-26.9",
+  "catalog_revision": "2026-07-27.21",
   "release_version": "1.0.0",
   "release_epoch": "2026-07-22T00:00:00Z",
   "artifact_revision": "2026-07-13.5",
@@ -21,9 +21,9 @@
       "description": "Read, create, inspect, render, and verify PDF artifacts.",
       "category": "Productivity",
       "skill_ids": ["internal_skill_pdf"],
-      "release_version": "1.12.0",
-      "release_epoch": "2026-07-26T16:00:00Z",
-      "artifact_revision": "pdf-1.12.0"
+      "release_version": "1.22.0",
+      "release_epoch": "2026-07-27T23:00:00Z",
+      "artifact_revision": "pdf-1.22.0"
     },
     {
       "name": "spreadsheets",
@@ -44,9 +44,9 @@
       "description": "Create and edit presentation decks with visual verification.",
       "category": "Productivity",
       "skill_ids": ["internal_skill_presentations"],
-      "release_version": "1.24.0",
-      "release_epoch": "2026-07-26T13:00:00Z",
-      "artifact_revision": "presentations-1.24.0"
+      "release_version": "1.32.0",
+      "release_epoch": "2026-07-28T07:00:00Z",
+      "artifact_revision": "presentations-1.32.0"
     },
     {
       "name": "template-creator",
@@ -108,12 +108,12 @@
     {
       "name": "computer-use",
       "display_name": "Computer Use",
-      "description": "Observe macOS or Windows multi-display desktop and bounded accessibility control state, isolate macOS TCC actions in a no-listener signed helper, safely type into writable native and explicit contenteditable targets, and restore the exact previous foreground application when an in-flight activation is cancelled without identity or foreground drift.",
+      "description": "Observe and control macOS or Windows desktops with exact native identity binding. Adds a volatile 10-minute opaque snapshot and one-time restore for at most 8 ordinary windows; restore accepts only snapshot ID/SHA-256, requires fresh typed confirmation, and fails closed on display, process, native-window, state, or capability drift.",
       "category": "Automation",
       "skill_ids": ["internal_skill_computer_use"],
-      "release_version": "1.15.0",
-      "release_epoch": "2026-07-25T15:00:00Z",
-      "artifact_revision": "computer-use-1.15.0"
+      "release_version": "1.19.0",
+      "release_epoch": "2026-07-27T15:00:00Z",
+      "artifact_revision": "computer-use-1.19.0"
     },
     {
       "name": "visualize",

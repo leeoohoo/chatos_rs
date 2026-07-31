@@ -47,7 +47,14 @@ pub(super) fn repeated_tool_failure_error(
         .map(|result| truncate_chars(result.content.trim(), 1_000))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "未知工具错误".to_string());
-    format!("连续 {failed_batch_count} 轮工具调用全部失败，已停止自动重试。最后错误：{last_error}")
+    let hint = if looks_like_missing_file_error(&last_error) {
+        "最后一次失败是在读取不存在的文件；这通常不是权限问题，而是模型重复使用了无效路径。"
+    } else {
+        "请优先根据最后错误调整下一步，避免继续重复同一类失败工具调用。"
+    };
+    format!(
+        "模型连续 {failed_batch_count} 轮调用工具都失败，系统已停止自动重试以避免继续循环。{hint}最后错误：{last_error}"
+    )
 }
 
 pub(super) fn fatal_tool_execution_error(tool_results: &[ToolResult]) -> Option<String> {
@@ -64,6 +71,25 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
         output.push_str("...<truncated>");
     }
     output
+}
+
+fn looks_like_missing_file_error(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase();
+    [
+        "no such file",
+        "not found",
+        "cannot find",
+        "can't find",
+        "could not find",
+        "does not exist",
+        "enoent",
+        "os error 2",
+        "不存在",
+        "找不到",
+        "未找到",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 pub(super) async fn execute_runtime_tools(
@@ -177,6 +203,16 @@ mod tests {
 
         assert!(message.contains("连续 8 轮"));
         assert!(message.contains("参数解析失败: expected comma"));
+        assert!(message.contains("系统已停止自动重试"));
+    }
+
+    #[test]
+    fn repeated_failure_error_explains_missing_file_loops() {
+        let message =
+            repeated_tool_failure_error(&[tool_result(false, "pnpm-lock.yaml not found")], 8);
+
+        assert!(message.contains("读取不存在的文件"));
+        assert!(message.contains("不是权限问题"));
     }
 
     #[test]

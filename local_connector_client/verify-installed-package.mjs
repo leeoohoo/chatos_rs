@@ -10,7 +10,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SAFE_PLATFORM = /^(?:macos|windows)-(?:arm64|x64)$/;
+const SAFE_PLATFORM = /^(?:macos|windows|linux)-(?:arm64|x64)$/;
+const SAFE_RUNTIME_PROFILES = new Set(['full', 'linux-core', 'linux-browser']);
 const SAFE_SHA256 = /^[0-9a-f]{64}$/;
 const SAFE_RUNTIME_REVISION = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/;
 const MAX_RESOURCE_FILES = 300_000;
@@ -69,6 +70,13 @@ function parseArgs(argv) {
   }
   if (!SAFE_PLATFORM.test(args.platform)) {
     throw new Error(`Unsupported installed package platform: ${args.platform}`);
+  }
+  args.runtimeProfile = args.runtimeProfile || 'full';
+  if (!SAFE_RUNTIME_PROFILES.has(args.runtimeProfile)) {
+    throw new Error(`Unsupported installed package runtime profile: ${args.runtimeProfile}`);
+  }
+  if (args.runtimeProfile.startsWith('linux-') && !args.platform.startsWith('linux-')) {
+    throw new Error(`${args.runtimeProfile} runtime profile is only valid for Linux packages`);
   }
   args.resources = path.resolve(args.resources);
   args.pluginCatalog = path.resolve(args.pluginCatalog);
@@ -345,13 +353,33 @@ function parsePeArchitecture(buffer) {
   return [];
 }
 
+function parseElfArchitecture(buffer) {
+  if (buffer.length < 20
+    || buffer[0] !== 0x7f
+    || buffer[1] !== 0x45
+    || buffer[2] !== 0x4c
+    || buffer[3] !== 0x46) {
+    return [];
+  }
+  const endianness = buffer[5];
+  if (![1, 2].includes(endianness)) {
+    return [];
+  }
+  const machine = endianness === 1 ? buffer.readUInt16LE(18) : buffer.readUInt16BE(18);
+  if (machine === 0x3e) return ['x64'];
+  if (machine === 0xb7) return ['arm64'];
+  return [];
+}
+
 function binaryArchitectures(filePath, platform) {
   const fd = fs.openSync(filePath, 'r');
   try {
     const buffer = Buffer.alloc(4096);
     const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
     const header = buffer.subarray(0, bytesRead);
-    return platform.startsWith('macos-') ? parseMachOArchitectures(header) : parsePeArchitecture(header);
+    if (platform.startsWith('macos-')) return parseMachOArchitectures(header);
+    if (platform.startsWith('windows-')) return parsePeArchitecture(header);
+    return parseElfArchitecture(header);
   } finally {
     fs.closeSync(fd);
   }
@@ -359,7 +387,7 @@ function binaryArchitectures(filePath, platform) {
 
 async function verifyBinary(resources, relativePath, label, platform, expectedArchitecture) {
   const file = requireRegularFile(resources, relativePath, label, {
-    executable: platform.startsWith('macos-'),
+    executable: !platform.startsWith('windows-'),
   });
   const architectures = binaryArchitectures(file.absolute, platform);
   if (!architectures.includes(expectedArchitecture)) {
@@ -388,12 +416,79 @@ function assertNoObsoleteCriticalAliases(resources, platform) {
   }
   const unexpectedBinaries = platform.startsWith('macos-')
     ? ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe', 'chatos_sandbox_mcp_server.exe', 'chatos_computer_use_helper.exe']
-    : ['local_connector_client_core', 'chatos_chrome_native_host', 'chatos_sandbox_mcp_server', 'chatos_computer_use_helper', 'chatos_computer_use_helper.exe'];
+    : platform.startsWith('windows-')
+      ? ['local_connector_client_core', 'chatos_chrome_native_host', 'chatos_sandbox_mcp_server', 'chatos_computer_use_helper', 'chatos_computer_use_helper.exe']
+      : ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe', 'chatos_sandbox_mcp_server.exe', 'chatos_computer_use_helper.exe'];
   for (const fileName of unexpectedBinaries) {
     if (fs.existsSync(path.join(resources, fileName))) {
       throw new Error(`Installed package contains an unexpected critical executable: ${fileName}`);
     }
   }
+}
+
+function migrationVersionsFromDirectory(migrationsDir) {
+  const versions = fs.readdirSync(migrationsDir)
+    .filter((entry) => entry.endsWith('.sql'))
+    .map((entry) => {
+      const match = entry.match(/^0*(\d+)_.*\.sql$/);
+      if (!match) {
+        throw new Error(`SQLite migration has an unsupported filename: ${entry}`);
+      }
+      return Number.parseInt(match[1], 10);
+    })
+    .sort((a, b) => a - b);
+  if (!versions.length) {
+    throw new Error('Installed package contains no SQLite migrations');
+  }
+  if (new Set(versions).size !== versions.length) {
+    throw new Error('Installed package contains duplicate SQLite migration versions');
+  }
+  return versions;
+}
+
+function currentProcessCanExecuteTarget(platform) {
+  const currentPlatform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform];
+  return platform === `${currentPlatform}-${process.arch}`;
+}
+
+function verifyEmbeddedSqliteMigrations(args, executablePath, migrationsDir) {
+  const resourceVersions = migrationVersionsFromDirectory(migrationsDir);
+  if (!currentProcessCanExecuteTarget(args.platform)) {
+    return {
+      verified: false,
+      reason: 'target executable cannot be run on this host',
+      resource_versions: resourceVersions,
+    };
+  }
+  const result = spawnSync(executablePath, ['--local-runtime-migration-versions'], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`Local Connector Core migration inventory failed: ${result.stderr || result.stdout || result.status}`);
+  }
+  const embeddedVersions = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => Number.parseInt(line, 10));
+  if (
+    embeddedVersions.some((version) => !Number.isSafeInteger(version))
+    || JSON.stringify(embeddedVersions) !== JSON.stringify(resourceVersions)
+  ) {
+    throw new Error(
+      `Local Connector Core embedded SQLite migrations do not match packaged resources: embedded=${embeddedVersions.join(',')} resources=${resourceVersions.join(',')}`,
+    );
+  }
+  return {
+    verified: true,
+    resource_versions: resourceVersions,
+    embedded_versions: embeddedVersions,
+  };
 }
 
 async function verifyChromeExtension(args) {
@@ -641,6 +736,48 @@ async function verifyElectronRuntime(args) {
   return { packaged_path: candidates[0], bytes: fs.lstatSync(packaged).size, sha256: packagedHash };
 }
 
+function verifyLinuxCoreRuntimeProfile(args) {
+  const forbiddenPaths = [
+    'chrome-extension',
+    'chatos_chrome_native_host',
+    'chatos_computer_use_helper',
+    `bundled-tools/${args.platform}/agent-browser`,
+    `bundled-tools/${args.platform}/browser`,
+    `bundled-tools/${args.platform}/documents-runtime`,
+  ];
+  for (const relativePath of forbiddenPaths) {
+    const absolutePath = path.join(args.resources, ...relativePath.split('/'));
+    if (fs.existsSync(absolutePath)) {
+      throw new Error(`Linux core package contains an unsupported full-runtime resource: ${relativePath}`);
+    }
+  }
+  return {
+    chrome_extension: { verified: false, reason: 'not included in the linux-core runtime profile' },
+    browser_runtime: { verified: false, reason: 'not included in the linux-core runtime profile' },
+    document_runtime: { verified: false, reason: 'not included in the linux-core runtime profile' },
+  };
+}
+
+async function verifyLinuxBrowserRuntimeProfile(args) {
+  const forbiddenPaths = [
+    'chatos_computer_use_helper',
+    `bundled-tools/${args.platform}/agent-browser`,
+    `bundled-tools/${args.platform}/browser`,
+    `bundled-tools/${args.platform}/documents-runtime`,
+  ];
+  for (const relativePath of forbiddenPaths) {
+    const absolutePath = path.join(args.resources, ...relativePath.split('/'));
+    if (fs.existsSync(absolutePath)) {
+      throw new Error(`Linux browser package contains an unsupported full-runtime resource: ${relativePath}`);
+    }
+  }
+  return {
+    chrome_extension: await verifyChromeExtension(args),
+    browser_runtime: { verified: false, reason: 'bundled browser automation runtime is not included in the linux-browser profile' },
+    document_runtime: { verified: false, reason: 'bundled document runtime is not included in the linux-browser profile' },
+  };
+}
+
 function codesignDetails(target, deep) {
   const verifyArgs = ['--verify', '--strict'];
   if (deep) verifyArgs.push('--deep');
@@ -726,12 +863,11 @@ async function main(args) {
   requireDirectory(args.resources, 'chatos-frontend', 'Bundled ChatOS frontend');
   requireRegularFile(args.resources, 'chatos-frontend/index.html', 'Bundled ChatOS frontend entrypoint');
   const migrations = requireDirectory(args.resources, 'sqlite-migrations', 'SQLite migrations');
-  if (!fs.readdirSync(migrations).some((entry) => entry.endsWith('.sql'))) {
-    throw new Error('Installed package contains no SQLite migrations');
-  }
 
   const packageArchitecture = args.platform.endsWith('-arm64') ? 'arm64' : 'x64';
   const macos = args.platform.startsWith('macos-');
+  const windows = args.platform.startsWith('windows-');
+  const linuxBrowser = args.runtimeProfile === 'linux-browser';
   const binarySpecs = macos
     ? [
         ['local_connector_client_core', 'Local Connector Core'],
@@ -739,10 +875,16 @@ async function main(args) {
         ['chatos_computer_use_helper', 'Computer Use helper'],
         ['chatos_sandbox_mcp_server', 'Sandbox MCP server'],
       ]
-    : [
+    : windows
+      ? [
         ['local_connector_client_core.exe', 'Local Connector Core'],
         ['chatos_chrome_native_host.exe', 'Chrome Native Messaging Host'],
         ['chatos_sandbox_mcp_server.exe', 'Sandbox MCP server'],
+      ]
+      : [
+        ['local_connector_client_core', 'Local Connector Core'],
+        ...(linuxBrowser ? [['chatos_chrome_native_host', 'Chrome Native Messaging Host']] : []),
+        ['chatos_sandbox_mcp_server', 'Sandbox MCP server'],
       ];
   const executables = [];
   const executablePaths = [];
@@ -751,11 +893,26 @@ async function main(args) {
     executables.push(verified);
     executablePaths.push(path.join(args.resources, relativePath));
   }
+  const localRuntimeMigrations = verifyEmbeddedSqliteMigrations(args, executablePaths[0], migrations);
 
-  const [chromeExtension, browserRuntime, documentRuntime, bundles, electronRuntime] = await Promise.all([
-    verifyChromeExtension(args),
-    verifyBrowserRuntime(args),
-    verifyDocumentRuntime(args),
+  let runtimeVerification;
+  if (args.runtimeProfile === 'full') {
+    runtimeVerification = Promise.all([
+        verifyChromeExtension(args),
+        verifyBrowserRuntime(args),
+        verifyDocumentRuntime(args),
+      ]).then(([chromeExtension, browserRuntime, documentRuntime]) => ({
+        chrome_extension: chromeExtension,
+        browser_runtime: browserRuntime,
+        document_runtime: documentRuntime,
+      }));
+  } else if (args.runtimeProfile === 'linux-browser') {
+    runtimeVerification = verifyLinuxBrowserRuntimeProfile(args);
+  } else {
+    runtimeVerification = Promise.resolve(verifyLinuxCoreRuntimeProfile(args));
+  }
+  const [runtime, bundles, electronRuntime] = await Promise.all([
+    runtimeVerification,
     verifySkillAndPluginBundles(args),
     verifyElectronRuntime(args),
   ]);
@@ -765,11 +922,13 @@ async function main(args) {
     result: 'verified',
     verified_at: new Date().toISOString(),
     platform: args.platform,
+    runtime_profile: args.runtimeProfile,
     resource_tree: tree,
     executables,
-    chrome_extension: chromeExtension,
-    browser_runtime: browserRuntime,
-    document_runtime: documentRuntime,
+    chrome_extension: runtime.chrome_extension,
+    browser_runtime: runtime.browser_runtime,
+    document_runtime: runtime.document_runtime,
+    local_runtime_migrations: localRuntimeMigrations,
     plugin_bundles: bundles,
     electron_runtime: electronRuntime,
     code_signing: codeSigning,

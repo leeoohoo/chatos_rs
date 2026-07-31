@@ -34,10 +34,12 @@ mod local_connector_skills;
 mod mcps;
 mod plugin_audit;
 mod plugin_catalog_sync;
+mod plugin_cloud_bundles;
 mod plugin_install_sources;
 mod plugin_installations;
 mod plugin_marketplaces;
 mod plugin_oauth;
+mod plugin_publishers;
 mod plugin_releases;
 mod plugin_support;
 mod plugins;
@@ -81,15 +83,20 @@ use mcps::{
 use plugin_audit::list_plugin_audit;
 pub use plugin_catalog_sync::start_plugin_catalog_sync_loop;
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
+use plugin_cloud_bundles::get_plugin_cloud_component_bundle_internal;
 use plugin_install_sources::{
     get_plugin_install_source_internal, list_plugin_install_sources_internal,
 };
 use plugin_installations::{list_installed_plugins, sync_plugin_installation_internal};
 use plugin_marketplaces::{
     create_admin_plugin_marketplace, create_plugin_marketplace, list_admin_plugin_marketplaces,
-    list_plugin_marketplaces,
+    list_plugin_marketplaces, update_admin_plugin_marketplace,
 };
 use plugin_oauth::{list_plugin_oauth_connections, sync_plugin_oauth_status_internal};
+use plugin_publishers::{
+    list_admin_plugin_publishers, list_plugin_publishers, review_admin_plugin_publisher,
+    submit_plugin_publisher,
+};
 use plugin_releases::{create_plugin_release, list_plugin_releases, revoke_plugin_release};
 use plugin_support::*;
 use plugins::{
@@ -101,11 +108,8 @@ use runtime_agent_prompts::{
     agent_prompt_bundle_internal, agent_prompt_bundle_manifest_internal,
     resolve_agent_prompt_internal,
 };
-use skill_packages::{
-    create_skill_package, delete_skill_package, get_skill_package, list_skill_packages,
-    update_skill_package,
-};
-use skills::{check_skill, create_skill, delete_skill, get_skill, list_skills, update_skill};
+use skill_packages::{get_skill_package, list_skill_packages};
+use skills::{check_skill, get_skill, list_skills};
 
 const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
     "chatos-backend",
@@ -208,22 +212,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/mcps/{mcp_id}/provider-skills/{skill_id}",
             axum::routing::put(update_mcp_provider_skill),
         )
-        .route("/api/skills", get(list_skills).post(create_skill))
-        .route(
-            "/api/skills/{skill_id}",
-            get(get_skill).patch(update_skill).delete(delete_skill),
-        )
+        .route("/api/skills", get(list_skills))
+        .route("/api/skills/{skill_id}", get(get_skill))
         .route("/api/skills/{skill_id}/check", post(check_skill))
-        .route(
-            "/api/skill-packages",
-            get(list_skill_packages).post(create_skill_package),
-        )
-        .route(
-            "/api/skill-packages/{package_id}",
-            get(get_skill_package)
-                .patch(update_skill_package)
-                .delete(delete_skill_package),
-        )
+        .route("/api/skill-packages", get(list_skill_packages))
+        .route("/api/skill-packages/{package_id}", get(get_skill_package))
         .route(
             "/api/system-agents",
             get(list_system_agents).post(create_system_agent),
@@ -296,12 +289,28 @@ pub fn build_router(state: AppState) -> Router {
             post(sync_plugin_marketplace),
         )
         .route(
+            "/api/plugin-publishers",
+            get(list_plugin_publishers).post(submit_plugin_publisher),
+        )
+        .route(
             "/api/admin/plugin-marketplaces",
             get(list_admin_plugin_marketplaces).post(create_admin_plugin_marketplace),
         )
         .route(
+            "/api/admin/plugin-marketplaces/{marketplace_id}",
+            patch(update_admin_plugin_marketplace),
+        )
+        .route(
             "/api/admin/plugin-marketplaces/{marketplace_id}/sync",
             post(sync_admin_plugin_marketplace),
+        )
+        .route(
+            "/api/admin/plugin-publishers",
+            get(list_admin_plugin_publishers),
+        )
+        .route(
+            "/api/admin/plugin-publishers/{publisher_record_id}/review",
+            patch(review_admin_plugin_publisher),
         )
         .route(
             "/api/admin/plugins",
@@ -334,6 +343,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/internal/runtime/agent-capabilities/resolve",
             post(resolve_agent_capabilities_internal),
+        )
+        .route(
+            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-components/{component_key}",
+            get(get_plugin_cloud_component_bundle_internal),
         )
         .route(
             "/api/internal/local-connector/mcps",

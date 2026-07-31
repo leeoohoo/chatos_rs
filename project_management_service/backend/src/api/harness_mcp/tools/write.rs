@@ -19,7 +19,7 @@ pub(in super::super) async fn tool_write_file(
     let content = required_string(args, "content")?;
     ensure_write_size(content)?;
     let (action, old_sha) = existing_file_sha_for_write(ctx, path.as_str()).await?;
-    let commit = commit_single_file_action(
+    commit_single_file_action(
         ctx,
         action.as_str(),
         path.as_str(),
@@ -28,7 +28,7 @@ pub(in super::super) async fn tool_write_file(
         format!("Chatos: write {path}").as_str(),
     )
     .await?;
-    let payload = write_result_payload(ctx, path.as_str(), content, action.as_str(), commit);
+    let payload = write_result_payload(path.as_str(), content, action.as_str());
     Ok(tool_text_result(payload))
 }
 
@@ -55,7 +55,7 @@ pub(in super::super) async fn tool_append_file(
         "CREATE"
     };
     let old_sha = existing.map(|file| file.harness_blob_sha);
-    let commit = commit_single_file_action(
+    commit_single_file_action(
         ctx,
         action,
         path.as_str(),
@@ -64,7 +64,7 @@ pub(in super::super) async fn tool_append_file(
         format!("Chatos: append {path}").as_str(),
     )
     .await?;
-    let payload = write_result_payload(ctx, path.as_str(), next.as_str(), action, commit);
+    let payload = write_result_payload(path.as_str(), next.as_str(), action);
     Ok(tool_text_result(payload))
 }
 
@@ -78,7 +78,7 @@ pub(in super::super) async fn tool_edit_file(
     let file = read_harness_file(ctx, path.as_str()).await?;
     let edit = apply_text_edit(file.content.as_str(), args, old_text, new_text)?;
     ensure_write_size(edit.content.as_str())?;
-    let commit = commit_single_file_action(
+    commit_single_file_action(
         ctx,
         "UPDATE",
         path.as_str(),
@@ -87,8 +87,7 @@ pub(in super::super) async fn tool_edit_file(
         format!("Chatos: edit {path}").as_str(),
     )
     .await?;
-    let mut payload =
-        write_result_payload(ctx, path.as_str(), edit.content.as_str(), "UPDATE", commit);
+    let mut payload = write_result_payload(path.as_str(), edit.content.as_str(), "UPDATE");
     payload["match"] = edit.info;
     Ok(tool_text_result(payload))
 }
@@ -108,21 +107,16 @@ pub(in super::super) async fn tool_delete_path(
                 encoding: None,
                 sha: non_empty(content.sha),
             };
-            let commit =
-                commit_file_actions(ctx, format!("Chatos: delete {path}").as_str(), vec![action])
-                    .await?;
+            commit_file_actions(ctx, format!("Chatos: delete {path}").as_str(), vec![action])
+                .await?;
             Ok(tool_text_result(json!({
                 "result": {
                     "path": path,
                     "deleted": true,
                     "exists_after_delete": false,
-                    "already_absent": false
-                },
-                "harness": {
-                    "project_id": ctx.project_id,
-                    "repo_path": ctx.repo_path,
+                    "already_absent": false,
                     "action": "DELETE",
-                    "commit": commit
+                    "changed": true
                 }
             })))
         }
@@ -133,7 +127,7 @@ pub(in super::super) async fn tool_delete_path(
                 "exists_after_delete": false,
                 "already_absent": true
             },
-            "message": "Path already absent. No Harness commit was created.",
+            "message": "Path already absent. No project files were changed.",
             "hint": "Verify the exact path with list_dir before retrying delete."
         }))),
         Err(err) => Err(err.to_string()),
@@ -155,7 +149,7 @@ async fn delete_harness_directory(ctx: &HarnessMcpContext, path: &str) -> Result
                 "exists_after_delete": false,
                 "already_absent": true
             },
-            "message": "Directory has no tracked files. No Harness commit was created."
+            "message": "Directory has no tracked project files. No project files were changed."
         })));
     }
     ensure_action_count(files.len())?;
@@ -169,7 +163,7 @@ async fn delete_harness_directory(ctx: &HarnessMcpContext, path: &str) -> Result
             sha: None,
         })
         .collect::<Vec<_>>();
-    let commit = commit_file_actions(
+    commit_file_actions(
         ctx,
         format!("Chatos: delete directory {path}").as_str(),
         actions,
@@ -181,13 +175,9 @@ async fn delete_harness_directory(ctx: &HarnessMcpContext, path: &str) -> Result
             "deleted": true,
             "exists_after_delete": false,
             "already_absent": false,
-            "deleted_files": files
-        },
-        "harness": {
-            "project_id": ctx.project_id,
-            "repo_path": ctx.repo_path,
             "action": "DELETE_DIRECTORY",
-            "commit": commit
+            "changed": true,
+            "deleted_files": files
         }
     })))
 }
@@ -204,42 +194,36 @@ async fn existing_file_sha_for_write(
     }
 }
 
-fn write_result_payload(
-    ctx: &HarnessMcpContext,
-    path: &str,
-    content: &str,
-    action: &str,
-    commit: Value,
-) -> Value {
-    let changed_blob_sha = changed_file_blob_sha(&commit, path);
+fn write_result_payload(path: &str, content: &str, action: &str) -> Value {
     json!({
         "result": {
             "bytes": content.len() as i64,
             "sha256": sha256_hex(content.as_bytes()),
-            "path": path
-        },
-        "harness": {
-            "project_id": ctx.project_id,
-            "repo_path": ctx.repo_path,
             "action": action,
-            "branch": "default",
-            "changed_blob_sha": changed_blob_sha,
-            "commit": commit
+            "changed": true,
+            "path": path
         }
     })
-}
-
-fn changed_file_blob_sha(commit: &Value, path: &str) -> Option<String> {
-    commit
-        .get("changed_files")
-        .and_then(Value::as_array)?
-        .iter()
-        .find(|item| item.get("path").and_then(Value::as_str) == Some(path))
-        .and_then(|item| item.get("blob_sha").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
 }
 
 fn non_empty(value: String) -> Option<String> {
     let value = value.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_result_payload_does_not_expose_storage_backend_details() {
+        let payload = write_result_payload("src/main.rs", "fn main() {}\n", "UPDATE");
+        let text = serde_json::to_string(&payload).expect("serialize payload");
+
+        assert!(text.contains("src/main.rs"));
+        assert!(!text.contains("harness"));
+        assert!(!text.contains("commit-1"));
+        assert!(!text.contains("branch"));
+        assert!(!text.contains("backend-blob-token"));
+    }
 }

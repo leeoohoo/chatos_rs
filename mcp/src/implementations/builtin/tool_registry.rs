@@ -117,21 +117,6 @@ where
     }
 }
 
-pub(crate) fn block_on_option<F, T>(future: F) -> Option<T>
-where
-    F: Future<Output = Option<T>>,
-{
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .ok()?;
-        runtime.block_on(future)
-    }
-}
-
 pub fn text_result(payload: Value) -> Value {
     let text = if payload.is_string() {
         payload.as_str().unwrap_or("").to_string()

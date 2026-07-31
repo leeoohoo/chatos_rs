@@ -62,14 +62,52 @@ pub(super) async fn run_review_inner(
     session_id: &str,
     trigger_type: &str,
 ) -> Result<LocalMemoryReviewResult> {
+    run_review_inner_with_active_turn(runtime, owner_user_id, session_id, trigger_type, None).await
+}
+
+pub(crate) async fn run_active_task_review(
+    runtime: &LocalRuntime,
+    owner_user_id: &str,
+    session_id: &str,
+    active_turn_id: &str,
+    trigger_type: &str,
+) -> Result<LocalMemoryReviewResult> {
+    run_review_inner_with_active_turn(
+        runtime,
+        owner_user_id,
+        session_id,
+        trigger_type,
+        Some(active_turn_id),
+    )
+    .await
+}
+
+async fn run_review_inner_with_active_turn(
+    runtime: &LocalRuntime,
+    owner_user_id: &str,
+    session_id: &str,
+    trigger_type: &str,
+    active_turn_id: Option<&str>,
+) -> Result<LocalMemoryReviewResult> {
     let database = runtime.local_database()?;
     let session = database
         .get_session(session_id, owner_user_id)
         .await?
         .context("local memory session was not found")?;
-    let pending = database
-        .pending_memory_messages(owner_user_id, session_id, LOCAL_MEMORY_BATCH_LIMIT)
-        .await?;
+    let pending = if let Some(active_turn_id) = active_turn_id {
+        database
+            .pending_memory_messages_including_turn(
+                owner_user_id,
+                session_id,
+                active_turn_id,
+                LOCAL_MEMORY_BATCH_LIMIT,
+            )
+            .await?
+    } else {
+        database
+            .pending_memory_messages(owner_user_id, session_id, LOCAL_MEMORY_BATCH_LIMIT)
+            .await?
+    };
     if pending.is_empty() {
         return Ok(review_result(session.project_id, 0, 0, 0));
     }

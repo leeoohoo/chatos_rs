@@ -12,25 +12,36 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
+use super::dispatch::{
+    execute_approved_local, execute_local, preflight_window_layout_snapshot_local,
+};
+use super::permissions::{
+    dependency_error_local, request_macos_accessibility_trust_prompt,
+    request_macos_screen_capture_trust_prompt, screen_capture_dependency_error_local,
+};
 use super::{
-    dependency_error_local, execute_approved_local, execute_local,
-    screen_capture_dependency_error_local, CONTROL_OPERATIONS,
+    macos_frontmost_window_control_target_local, ApprovedFrontmostWindowGuard,
+    WindowLayoutSnapshot, CONTROL_OPERATIONS,
 };
 
-const HELPER_PROTOCOL_VERSION: u32 = 1;
+mod helper_binary;
+mod protocol;
+
+use helper_binary::{
+    codesign_team_identifier, helper_path, helper_signature_required, validate_helper_binary,
+    validate_helper_signature, verify_codesign,
+};
+use protocol::{
+    decode_frame, read_frame, write_frame, HelperCommand, HelperRequest, HelperResponse,
+    HELPER_PROTOCOL_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+};
+
 const HELPER_PROTOCOL_ARGUMENT: &str = "--stdio-v1";
-const HELPER_EXECUTABLE_NAME: &str = "chatos_computer_use_helper";
-const HELPER_PATH_ENV: &str = "CHATOS_COMPUTER_USE_HELPER_PATH";
-const HELPER_REQUIRE_SIGNED_ENV: &str = "CHATOS_COMPUTER_USE_HELPER_REQUIRE_SIGNED";
-const MACOS_CODESIGN_PATH: &str = "/usr/bin/codesign";
 const CORE_EXECUTABLE_NAME: &str = "local_connector_client_core";
 const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * 1024;
-const MAX_REQUEST_BYTES: usize = 256 * 1024;
-const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 64 * 1024;
 const MAX_OPERATION_BYTES: usize = 128;
 const MAX_APPROVED_ARGUMENTS: usize = 64;
@@ -45,70 +56,52 @@ extern "C" {
     fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HelperRequest {
-    protocol_version: u32,
-    #[serde(flatten)]
-    command: HelperCommand,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum HelperCommand {
-    ProtocolProbe,
-    DependencyProbe {
-        screen_capture_only: bool,
-    },
-    Execute {
-        operation: String,
-        arguments: Value,
-    },
-    ExecuteApproved {
-        operation: String,
-        arguments: Value,
-        approved_command_args: Option<Vec<String>>,
-        cancellation_marker: PathBuf,
-    },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HelperResponse {
-    protocol_version: u32,
-    success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-impl HelperResponse {
-    fn success(result: Value) -> Self {
-        Self {
-            protocol_version: HELPER_PROTOCOL_VERSION,
-            success: true,
-            result: Some(result),
-            error: None,
-        }
-    }
-
-    fn error(error: impl Into<String>) -> Self {
-        Self {
-            protocol_version: HELPER_PROTOCOL_VERSION,
-            success: false,
-            result: None,
-            error: Some(error.into()),
-        }
-    }
-}
-
 pub(super) fn dependency_error() -> Option<String> {
     dependency_probe(false)
 }
 
 pub(super) fn screen_capture_dependency_error() -> Option<String> {
     dependency_probe(true)
+}
+
+pub(super) fn request_permission(permission_id: &str) -> Result<bool> {
+    let request = HelperRequest {
+        protocol_version: HELPER_PROTOCOL_VERSION,
+        command: HelperCommand::RequestPermission {
+            permission_id: permission_id.to_string(),
+        },
+    };
+    let result = invoke_helper(&request, None, None)?;
+    Ok(result
+        .get("granted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false))
+}
+
+pub(super) fn frontmost_window_control_target() -> Result<ApprovedFrontmostWindowGuard> {
+    let request = HelperRequest {
+        protocol_version: HELPER_PROTOCOL_VERSION,
+        command: HelperCommand::FrontmostWindowControlTarget,
+    };
+    let result = invoke_helper(&request, None, None)?;
+    let target = serde_json::from_value::<ApprovedFrontmostWindowGuard>(result)
+        .context("decode helper frontmost window control target")?;
+    target.validate()?;
+    Ok(target)
+}
+
+pub(super) fn preflight_window_layout(snapshot: &WindowLayoutSnapshot) -> Result<()> {
+    let request = HelperRequest {
+        protocol_version: HELPER_PROTOCOL_VERSION,
+        command: HelperCommand::WindowLayoutPreflight {
+            snapshot: snapshot.clone(),
+        },
+    };
+    let result = invoke_helper(&request, None, None)?;
+    if result.get("validated").and_then(Value::as_bool) != Some(true) {
+        bail!("macOS Computer Use helper did not validate the window layout snapshot");
+    }
+    Ok(())
 }
 
 fn dependency_probe(screen_capture_only: bool) -> Option<String> {
@@ -337,117 +330,6 @@ fn decode_child_result(
     }
 }
 
-fn helper_path() -> Result<PathBuf> {
-    if let Some(configured) = std::env::var_os(HELPER_PATH_ENV) {
-        let path = PathBuf::from(configured);
-        if !path.is_absolute() {
-            bail!("{HELPER_PATH_ENV} must be an absolute path");
-        }
-        return Ok(path);
-    }
-    let current_executable =
-        std::env::current_exe().context("resolve Local Connector Core path")?;
-    let parent = current_executable
-        .parent()
-        .ok_or_else(|| anyhow!("Local Connector Core executable directory is unavailable"))?;
-    Ok(parent.join(HELPER_EXECUTABLE_NAME))
-}
-
-fn validate_helper_binary(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("Computer Use helper is missing: {}", path.display()))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        bail!("Computer Use helper must be a regular non-symlink file");
-    }
-    use std::os::unix::fs::PermissionsExt;
-    if metadata.permissions().mode() & 0o111 == 0 {
-        bail!("Computer Use helper is not executable");
-    }
-    Ok(())
-}
-
-fn validate_helper_signature(path: &Path) -> Result<()> {
-    if !helper_signature_required() {
-        return Ok(());
-    }
-    if !Path::new(MACOS_CODESIGN_PATH).is_file() {
-        bail!("macOS codesign verification runtime is missing: {MACOS_CODESIGN_PATH}");
-    }
-    verify_codesign(path)?;
-    let current_executable =
-        std::env::current_exe().context("resolve Local Connector Core path")?;
-    verify_codesign(current_executable.as_path())?;
-    let helper_team = codesign_team_identifier(path)?;
-    let core_team = codesign_team_identifier(current_executable.as_path())?;
-    if helper_team != core_team {
-        bail!("Computer Use helper signing team does not match Local Connector Core");
-    }
-    Ok(())
-}
-
-fn helper_signature_required() -> bool {
-    if env_flag(HELPER_REQUIRE_SIGNED_ENV) {
-        return true;
-    }
-    !cfg!(debug_assertions)
-}
-
-fn env_flag(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
-}
-
-fn verify_codesign(path: &Path) -> Result<()> {
-    let output = Command::new(MACOS_CODESIGN_PATH)
-        .args(["--verify", "--strict", "--verbose=2"])
-        .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("verify code signature for {}", path.display()))?;
-    ensure_codesign_output_bounded(&output.stdout, &output.stderr)?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        bail!("Computer Use helper code signature verification failed")
-    }
-}
-
-fn codesign_team_identifier(path: &Path) -> Result<String> {
-    let output = Command::new(MACOS_CODESIGN_PATH)
-        .args(["-d", "--verbose=4"])
-        .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("read code signature identity for {}", path.display()))?;
-    ensure_codesign_output_bounded(&output.stdout, &output.stderr)?;
-    if !output.status.success() {
-        bail!("Computer Use helper code signature identity is unavailable");
-    }
-    let details = String::from_utf8_lossy(output.stderr.as_slice());
-    let team = details
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("TeamIdentifier="))
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "not set")
-        .ok_or_else(|| anyhow!("Computer Use helper requires a Developer ID team signature"))?;
-    if team.len() > 256
-        || !team
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric())
-    {
-        bail!("Computer Use helper signing team identifier is invalid");
-    }
-    Ok(team.to_string())
-}
-
-fn ensure_codesign_output_bounded(stdout: &[u8], stderr: &[u8]) -> Result<()> {
-    if stdout.len() > MAX_STDERR_BYTES || stderr.len() > MAX_STDERR_BYTES {
-        bail!("macOS codesign output exceeded the safety limit");
-    }
-    Ok(())
-}
-
 fn create_cancellation_marker(path: &Path) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     match OpenOptions::new()
@@ -671,6 +553,13 @@ fn dispatch(request: HelperRequest) -> Result<Value> {
             "transport": "single_process_length_prefixed_stdio",
             "network_listener": false,
         })),
+        HelperCommand::FrontmostWindowControlTarget => {
+            serde_json::to_value(macos_frontmost_window_control_target_local()?)
+                .context("encode helper frontmost window control target")
+        }
+        HelperCommand::WindowLayoutPreflight { snapshot } => {
+            preflight_window_layout_snapshot_local(&snapshot)
+        }
         HelperCommand::DependencyProbe {
             screen_capture_only,
         } => Ok(json!({
@@ -680,6 +569,14 @@ fn dispatch(request: HelperRequest) -> Result<Value> {
                 dependency_error_local()
             },
         })),
+        HelperCommand::RequestPermission { permission_id } => {
+            let granted = match permission_id.as_str() {
+                "accessibility_control" => request_macos_accessibility_trust_prompt(),
+                "screen_recording" => request_macos_screen_capture_trust_prompt(),
+                _ => bail!("unknown Computer Use permission request: {permission_id}"),
+            };
+            Ok(json!({ "granted": granted }))
+        }
         HelperCommand::Execute {
             operation,
             arguments,
@@ -707,49 +604,6 @@ fn dispatch(request: HelperRequest) -> Result<Value> {
             )
         }
     }
-}
-
-fn write_frame<W: Write>(writer: &mut W, payload: &[u8], limit: usize) -> Result<()> {
-    if payload.len() > limit || payload.len() > u32::MAX as usize {
-        bail!("Computer Use helper frame exceeded {limit} bytes");
-    }
-    writer
-        .write_all(&(payload.len() as u32).to_le_bytes())
-        .context("write Computer Use helper frame length")?;
-    writer
-        .write_all(payload)
-        .context("write Computer Use helper frame payload")?;
-    writer.flush().context("flush Computer Use helper frame")
-}
-
-fn read_frame<R: Read>(reader: &mut R, limit: usize) -> Result<Vec<u8>> {
-    let mut length = [0_u8; 4];
-    reader
-        .read_exact(&mut length)
-        .context("read Computer Use helper frame length")?;
-    let length = u32::from_le_bytes(length) as usize;
-    if length > limit {
-        bail!("Computer Use helper frame exceeded {limit} bytes");
-    }
-    let mut payload = vec![0_u8; length];
-    reader
-        .read_exact(payload.as_mut_slice())
-        .context("read Computer Use helper frame payload")?;
-    let mut trailing = [0_u8; 1];
-    if reader
-        .read(&mut trailing)
-        .context("read Computer Use helper trailing data")?
-        != 0
-    {
-        bail!("Computer Use helper received trailing protocol data");
-    }
-    Ok(payload)
-}
-
-fn decode_frame(bytes: &[u8], limit: usize) -> Result<HelperResponse> {
-    let mut cursor = std::io::Cursor::new(bytes);
-    let payload = read_frame(&mut cursor, limit)?;
-    serde_json::from_slice(payload.as_slice()).context("decode Computer Use helper JSON frame")
 }
 
 fn read_limited_stream<R: Read>(mut reader: R, label: &str, limit: usize) -> Result<Vec<u8>> {
@@ -802,6 +656,12 @@ mod tests {
 
     #[test]
     fn request_contract_rejects_unknown_fields_and_protocol_mismatch() {
+        let valid =
+            br#"{"protocol_version":1,"kind":"dependency_probe","screen_capture_only":false}"#;
+        assert!(serde_json::from_slice::<HelperRequest>(valid).is_ok());
+        let permission =
+            br#"{"protocol_version":1,"kind":"request_permission","permission_id":"screen_recording"}"#;
+        assert!(serde_json::from_slice::<HelperRequest>(permission).is_ok());
         let unknown = br#"{"protocol_version":1,"kind":"protocol_probe","extra":true}"#;
         assert!(serde_json::from_slice::<HelperRequest>(unknown).is_err());
         let request = HelperRequest {

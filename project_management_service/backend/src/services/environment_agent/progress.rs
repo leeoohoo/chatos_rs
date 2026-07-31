@@ -32,6 +32,8 @@ struct SandboxImageJobProgress {
     #[serde(default)]
     image_ref: String,
     #[serde(default)]
+    features: Vec<String>,
+    #[serde(default)]
     status: String,
     #[serde(default)]
     created_at: String,
@@ -66,13 +68,20 @@ pub async fn get_project_runtime_environment_progress(
             )
         });
     let provider = provider_for_environment(&environment);
+    let active_image_build = environment.status
+        == ProjectRuntimeEnvironmentStatus::PendingImageBuild
+        && environment
+            .last_agent_run_id
+            .as_deref()
+            .is_some_and(|run_id| run_id.starts_with("project_image_build_"));
     let jobs = if environment.sandbox_enabled
-        && matches!(
-            environment.status,
-            ProjectRuntimeEnvironmentStatus::Analyzing
-                | ProjectRuntimeEnvironmentStatus::Ready
-                | ProjectRuntimeEnvironmentStatus::Failed
-        ) {
+        && (active_image_build
+            || matches!(
+                environment.status,
+                ProjectRuntimeEnvironmentStatus::Analyzing
+                    | ProjectRuntimeEnvironmentStatus::Ready
+                    | ProjectRuntimeEnvironmentStatus::Failed
+            )) {
         fetch_image_jobs(state, project, provider, user_access_token).await?
     } else {
         Vec::new()
@@ -104,6 +113,25 @@ pub async fn get_project_runtime_environment_progress(
             environment.analysis_summary = Some("项目运行环境分析任务已中断。".to_string());
             environment.last_error = Some(
                 "analysis worker is no longer active; please initialize the runtime environment again"
+                    .to_string(),
+            );
+            environment.updated_at = now_rfc3339();
+            environment = state
+                .store
+                .upsert_project_runtime_environment(&environment)
+                .await?;
+        }
+    } else if active_image_build && job.is_none() {
+        let image_build_active = state
+            .runtime_environment_image_jobs
+            .lock()
+            .await
+            .contains(project.id.as_str());
+        if !image_build_active {
+            environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+            environment.analysis_summary = Some("项目沙箱镜像准备任务已中断。".to_string());
+            environment.last_error = Some(
+                "image build worker is no longer active; please prepare the runtime images again"
                     .to_string(),
             );
             environment.updated_at = now_rfc3339();
@@ -274,12 +302,21 @@ fn select_project_job(
     let mut exact = jobs
         .iter()
         .filter(|job| {
-            job.project_id.as_deref() == Some(project_id) && job.run_id.as_deref() == run_id
+            job.project_id.as_deref() == Some(project_id)
+                && run_id.is_some_and(|run_id| {
+                    job.run_id.as_deref().is_some_and(|job_run_id| {
+                        job_run_id == run_id
+                            || job_run_id.strip_prefix(run_id).is_some_and(|suffix| {
+                                suffix.starts_with("_workspace_")
+                                    || suffix.starts_with("_dependency_")
+                            })
+                    })
+                })
         })
         .cloned()
         .collect::<Vec<_>>();
     exact.sort_by_key(job_timestamp);
-    if let Some(job) = exact.pop() {
+    if let Some(job) = select_representative_project_job(&exact) {
         return Some(job);
     }
 
@@ -296,7 +333,22 @@ fn select_project_job(
         })
         .collect::<Vec<_>>();
     legacy.sort_by_key(job_timestamp);
-    legacy.pop()
+    select_representative_project_job(&legacy)
+}
+
+fn select_representative_project_job(
+    jobs: &[SandboxImageJobProgress],
+) -> Option<SandboxImageJobProgress> {
+    jobs.iter()
+        .rev()
+        .find(|job| job.status.eq_ignore_ascii_case("failed"))
+        .or_else(|| {
+            jobs.iter()
+                .rev()
+                .find(|job| job.status.eq_ignore_ascii_case("running"))
+        })
+        .or_else(|| jobs.last())
+        .cloned()
 }
 
 fn progress_response(
@@ -307,25 +359,11 @@ fn progress_response(
 ) -> ProjectRuntimeEnvironmentProgressResponse {
     let job_status = job.map(|job| job.status.trim().to_ascii_lowercase());
     let build_progress = job.and_then(|job| estimate_build_progress(job.output.as_str()));
-    let (phase, status, progress_percent) = match environment.status {
-        ProjectRuntimeEnvironmentStatus::Disabled => ("disabled", "idle", Some(0)),
-        ProjectRuntimeEnvironmentStatus::PendingConfiguration => {
-            ("pending_configuration", "idle", Some(0))
-        }
-        ProjectRuntimeEnvironmentStatus::PendingImageBuild => {
-            ("pending_image_build", "idle", Some(100))
-        }
-        ProjectRuntimeEnvironmentStatus::Pending => ("pending", "idle", Some(0)),
-        ProjectRuntimeEnvironmentStatus::Ready => ("completed", "succeeded", Some(100)),
-        ProjectRuntimeEnvironmentStatus::NotRunnable => ("not_runnable", "succeeded", Some(100)),
-        ProjectRuntimeEnvironmentStatus::Failed => ("failed", "failed", Some(100)),
-        ProjectRuntimeEnvironmentStatus::Analyzing => match job_status.as_deref() {
-            Some("running") => ("building_image", "running", build_progress),
-            Some("succeeded") => ("finalizing", "running", Some(90)),
-            Some("failed") => ("failed", "failed", Some(100)),
-            _ => ("analyzing_project", "running", Some(15)),
-        },
-    };
+    let (mut phase, status, progress_percent) =
+        progress_state(environment.status, job_status.as_deref(), build_progress);
+    if job.is_some_and(is_dependency_job) && phase == "building_image" {
+        phase = "preparing_dependency_image";
+    }
     let logs = job
         .map(|job| tail_utf8(job.output.as_str(), MAX_PROGRESS_LOG_BYTES))
         .unwrap_or_default();
@@ -360,6 +398,35 @@ fn progress_response(
         finished_at: job.and_then(|job| job.finished_at.clone()),
         logs,
         error,
+    }
+}
+
+fn progress_state(
+    environment_status: ProjectRuntimeEnvironmentStatus,
+    job_status: Option<&str>,
+    build_progress: Option<u8>,
+) -> (&'static str, &'static str, Option<u8>) {
+    match environment_status {
+        ProjectRuntimeEnvironmentStatus::Disabled => ("disabled", "idle", Some(0)),
+        ProjectRuntimeEnvironmentStatus::PendingConfiguration => {
+            ("pending_configuration", "idle", Some(0))
+        }
+        ProjectRuntimeEnvironmentStatus::PendingImageBuild => match job_status {
+            Some("running") => ("building_image", "running", build_progress),
+            Some("succeeded") => ("finalizing", "running", Some(90)),
+            Some("failed") => ("failed", "failed", Some(100)),
+            _ => ("pending_image_build", "idle", Some(0)),
+        },
+        ProjectRuntimeEnvironmentStatus::Pending => ("pending", "idle", Some(0)),
+        ProjectRuntimeEnvironmentStatus::Ready => ("completed", "succeeded", Some(100)),
+        ProjectRuntimeEnvironmentStatus::NotRunnable => ("not_runnable", "succeeded", Some(100)),
+        ProjectRuntimeEnvironmentStatus::Failed => ("failed", "failed", Some(100)),
+        ProjectRuntimeEnvironmentStatus::Analyzing => match job_status {
+            Some("running") => ("building_image", "running", build_progress),
+            Some("succeeded") => ("finalizing", "running", Some(90)),
+            Some("failed") => ("failed", "failed", Some(100)),
+            _ => ("analyzing_project", "running", Some(15)),
+        },
     }
 }
 
@@ -423,6 +490,15 @@ fn job_failure_detail(job: &SandboxImageJobProgress) -> String {
         .unwrap_or_else(|| error.to_string())
 }
 
+fn is_dependency_job(job: &SandboxImageJobProgress) -> bool {
+    job.id.starts_with("dependency-image-job-")
+        || job.image_id.starts_with("dependency:")
+        || job
+            .features
+            .iter()
+            .any(|feature| feature.starts_with("dependency@"))
+}
+
 fn job_timestamp(job: &SandboxImageJobProgress) -> Option<DateTime<Utc>> {
     parse_timestamp(
         job.started_at
@@ -479,6 +555,7 @@ mod tests {
             file_provider: RuntimeEnvironmentProvider::LocalConnector,
             analysis_summary: None,
             not_runnable_reason: None,
+            execution_service_id: None,
             detected_stack: json!({}),
             required_services: json!([]),
             env_vars: json!({}),
@@ -529,6 +606,96 @@ mod tests {
     }
 
     #[test]
+    fn selects_workspace_job_for_the_current_image_build_batch() {
+        let mut environment = analyzing_environment();
+        environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
+        environment.last_agent_run_id = Some("project_image_build_batch-1".to_string());
+        let selected = select_project_job(
+            vec![SandboxImageJobProgress {
+                id: "workspace-job".to_string(),
+                project_id: Some("project-1".to_string()),
+                run_id: Some("project_image_build_batch-1_workspace_0".to_string()),
+                status: "running".to_string(),
+                created_at: "2026-07-10T10:00:01Z".to_string(),
+                ..SandboxImageJobProgress::default()
+            }],
+            "project-1",
+            &environment,
+        )
+        .expect("current workspace build job");
+
+        assert_eq!(selected.id, "workspace-job");
+        assert_eq!(
+            progress_state(environment.status, Some("running"), Some(42)),
+            ("building_image", "running", Some(42))
+        );
+    }
+
+    #[test]
+    fn selects_dependency_job_for_the_current_image_build_batch() {
+        let mut environment = analyzing_environment();
+        environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
+        environment.last_agent_run_id = Some("project_image_build_batch-1".to_string());
+        let selected = select_project_job(
+            vec![SandboxImageJobProgress {
+                id: "dependency-image-job-1".to_string(),
+                image_id: "dependency:postgres:16-alpine".to_string(),
+                image_ref: "postgres:16-alpine".to_string(),
+                project_id: Some("project-1".to_string()),
+                run_id: Some("project_image_build_batch-1_dependency_0".to_string()),
+                status: "running".to_string(),
+                created_at: "2026-07-10T10:00:01Z".to_string(),
+                ..SandboxImageJobProgress::default()
+            }],
+            "project-1",
+            &environment,
+        )
+        .expect("current dependency pull job");
+
+        assert_eq!(selected.id, "dependency-image-job-1");
+        let response = progress_response(
+            &project_record("project-1"),
+            &environment,
+            RuntimeEnvironmentProvider::CloudSandboxManager,
+            Some(&selected),
+        );
+        assert_eq!(response.phase, "preparing_dependency_image");
+        assert_eq!(response.image_ref.as_deref(), Some("postgres:16-alpine"));
+    }
+
+    #[test]
+    fn representative_job_prefers_failed_then_running_before_latest_completed() {
+        let selected = select_representative_project_job(&[
+            SandboxImageJobProgress {
+                id: "running-workspace".to_string(),
+                status: "running".to_string(),
+                created_at: "2026-07-10T10:00:01Z".to_string(),
+                ..SandboxImageJobProgress::default()
+            },
+            SandboxImageJobProgress {
+                id: "succeeded-dependency".to_string(),
+                status: "succeeded".to_string(),
+                created_at: "2026-07-10T10:00:02Z".to_string(),
+                ..SandboxImageJobProgress::default()
+            },
+        ])
+        .expect("representative running job");
+        assert_eq!(selected.id, "running-workspace");
+
+        let selected = select_representative_project_job(&[
+            selected,
+            SandboxImageJobProgress {
+                id: "failed-dependency".to_string(),
+                status: "failed".to_string(),
+                created_at: "2026-07-10T10:00:00Z".to_string(),
+                ..SandboxImageJobProgress::default()
+            },
+        ])
+        .expect("representative failed job");
+        assert_eq!(selected.id, "failed-dependency");
+    }
+
+    #[test]
     fn does_not_attach_unrelated_late_legacy_job() {
         let environment = analyzing_environment();
         let selected = select_project_job(
@@ -562,5 +729,54 @@ mod tests {
         );
 
         assert_eq!(progress, Some(67));
+    }
+
+    #[test]
+    fn pending_image_build_starts_at_zero_percent() {
+        assert_eq!(
+            progress_state(
+                ProjectRuntimeEnvironmentStatus::PendingImageBuild,
+                None,
+                None,
+            ),
+            ("pending_image_build", "idle", Some(0))
+        );
+    }
+
+    fn project_record(id: &str) -> ProjectRecord {
+        ProjectRecord {
+            id: id.to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: None,
+            owner_username: None,
+            owner_display_name: None,
+            name: "Project".to_string(),
+            root_path: None,
+            git_url: None,
+            source_type: crate::models::ProjectSourceType::Cloud,
+            execution_plane: crate::models::ProjectExecutionPlane::Cloud,
+            cloud_import_source: crate::models::CloudImportSource::None,
+            import_status: crate::models::ProjectImportStatus::None,
+            source_git_url: None,
+            harness_space_identifier: None,
+            harness_repo_identifier: None,
+            harness_repo_path: None,
+            harness_git_url: None,
+            harness_git_ssh_url: None,
+            harness_default_branch: None,
+            harness_provision_status: None,
+            harness_provision_error: None,
+            harness_provisioned_at: None,
+            import_error: None,
+            import_started_at: None,
+            import_finished_at: None,
+            description: None,
+            status: crate::models::ProjectStatus::Active,
+            created_at: "2026-07-10T10:00:00Z".to_string(),
+            updated_at: "2026-07-10T10:00:00Z".to_string(),
+            archived_at: None,
+        }
     }
 }

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp::{TaskDraft, TaskOutcomeItem, TaskUpdatePatch};
+#[cfg(test)]
+use chatos_mcp::TaskDraft;
+use chatos_mcp::{TaskOutcomeItem, TaskUpdatePatch};
 
+#[cfg(test)]
 pub(crate) fn normalize_task_draft(mut draft: TaskDraft) -> Result<TaskDraft, String> {
     draft.title = required_title(draft.title)?;
     draft.details = draft.details.trim().to_string();
@@ -109,6 +112,7 @@ fn normalize_list(values: Vec<String>) -> Vec<String> {
     })
 }
 
+#[cfg(test)]
 fn normalize_prerequisites(single: Option<String>, mut values: Vec<String>) -> Vec<String> {
     if let Some(single) = single {
         values.push(single);
@@ -128,6 +132,7 @@ fn normalize_outcomes(values: Vec<TaskOutcomeItem>) -> Vec<TaskOutcomeItem> {
         .collect()
 }
 
+#[cfg(test)]
 fn normalize_blocker_kind(value: &str, reason: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
         "external_dependency"

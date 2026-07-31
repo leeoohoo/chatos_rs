@@ -3,11 +3,17 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
+use lopdf::content::Content;
 use lopdf::{dictionary, Document, Object, Stream};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use super::*;
@@ -68,6 +74,118 @@ fn write_blank_pdf(path: &Path, page_count: usize) {
     });
     document.trailer.set("Root", catalog_id);
     document.save(path).expect("save test PDF");
+}
+
+fn add_test_pdf_embedded_filespec(
+    document: &mut Document,
+    portable_filename: &str,
+    filename: &str,
+    mime_type: &str,
+    description: &str,
+    content: &[u8],
+) -> lopdf::ObjectId {
+    let embedded_file_id = document.add_object(Stream::new(
+        dictionary! {
+            "Type" => "EmbeddedFile",
+            "Subtype" => Object::Name(mime_type.as_bytes().to_vec()),
+            "Params" => dictionary! { "Size" => content.len() as i64 },
+        },
+        content.to_vec(),
+    ));
+    document.add_object(dictionary! {
+        "Type" => "Filespec",
+        "F" => lopdf::text_string(portable_filename),
+        "UF" => lopdf::text_string(filename),
+        "EF" => dictionary! {
+            "F" => embedded_file_id,
+            "UF" => embedded_file_id,
+        },
+        "Desc" => lopdf::text_string(description),
+    })
+}
+
+fn write_pdf_with_nested_embedded_files(path: &Path) -> (Vec<u8>, Vec<u8>) {
+    write_blank_pdf(path, 1);
+    let text_bytes = b"bounded embedded text\n".to_vec();
+    let json_bytes = br#"{"invoice":"INV-2026-0727","verified":true}"#.to_vec();
+    let mut document = Document::load(path).expect("embedded-files PDF");
+    let text_filespec_id = add_test_pdf_embedded_filespec(
+        &mut document,
+        "alpha.txt",
+        "alpha.txt",
+        "text/plain",
+        "First embedded file",
+        text_bytes.as_slice(),
+    );
+    let json_filespec_id = add_test_pdf_embedded_filespec(
+        &mut document,
+        "attachment.json",
+        "审计记录.json",
+        "application/json",
+        "Unicode embedded file",
+        json_bytes.as_slice(),
+    );
+    let first_key = lopdf::text_string("alpha");
+    let second_key = lopdf::text_string("审计");
+    let first_leaf_id = document.add_object(dictionary! {
+        "Limits" => vec![first_key.clone(), first_key.clone()],
+        "Names" => vec![first_key.clone(), Object::Reference(text_filespec_id)],
+    });
+    let second_leaf_id = document.add_object(dictionary! {
+        "Limits" => vec![second_key.clone(), second_key.clone()],
+        "Names" => vec![second_key.clone(), Object::Reference(json_filespec_id)],
+    });
+    let root_id = document.add_object(dictionary! {
+        "Limits" => vec![first_key, second_key],
+        "Kids" => vec![
+            Object::Reference(first_leaf_id),
+            Object::Reference(second_leaf_id),
+        ],
+    });
+    document
+        .catalog_mut()
+        .expect("embedded-files catalog")
+        .set("Names", dictionary! { "EmbeddedFiles" => root_id });
+    document.save(path).expect("save embedded-files PDF");
+    (text_bytes, json_bytes)
+}
+
+fn write_test_rgba_png(path: &Path, width: u32, height: u32, rgba: [u8; 4]) {
+    fn append_chunk(bytes: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        bytes.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(kind);
+        bytes.extend_from_slice(data);
+        let mut crc = crc32fast::Hasher::new();
+        crc.update(kind);
+        crc.update(data);
+        bytes.extend_from_slice(&crc.finalize().to_be_bytes());
+    }
+
+    assert!(width > 0 && height > 0);
+    let mut row = Vec::with_capacity(width as usize * 4 + 1);
+    row.push(0);
+    for _ in 0..width {
+        row.extend_from_slice(&rgba);
+    }
+    let mut filtered = Vec::with_capacity((width as usize * 4 + 1) * height as usize);
+    for _ in 0..height {
+        filtered.extend_from_slice(row.as_slice());
+    }
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(filtered.as_slice())
+        .expect("compress PNG");
+    let compressed = encoder.finish().expect("finish PNG compression");
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    append_chunk(&mut png, b"IHDR", ihdr.as_slice());
+    append_chunk(&mut png, b"IDAT", compressed.as_slice());
+    append_chunk(&mut png, b"IEND", &[]);
+    fs::write(path, png).expect("write test PNG");
 }
 
 fn write_acroform_pdf(path: &Path) {
@@ -3198,8 +3316,8 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "title":"Revenue by region",
                         "categories":["Q1","Q2","Q3"],
                         "series":[
-                            {"name":"North","values":[10,20,30]},
-                            {"name":"South","values":[12.5,18,36],"value_axis":"secondary"}
+                            {"name":"North","values":[10,20,30],"color":"#1a2b3c"},
+                            {"name":"South","values":[12.5,18,36],"value_axis":"secondary","color":"#DDEEFF"}
                         ],
                         "legend_position":"top",
                         "data_labels":"value",
@@ -3230,7 +3348,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                     "chart":{
                         "type":"line",
                         "categories":["Jan","Feb","Mar"],
-                        "series":[{"name":"Retention","values":[91,92.5,94]}],
+                        "series":[{"name":"Retention","values":[91,92.5,94],"color":"#336699","marker_style":"diamond","marker_size":9,"smooth":true}],
                         "show_legend":false
                     }
                 },
@@ -3241,7 +3359,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "type":"pie",
                         "title":"Current mix",
                         "categories":["Direct","Partner","Organic"],
-                        "series":[{"name":"Share","values":[45,30,25]}]
+                        "series":[{"name":"Share","values":[45,30,25],"color":"#FF8800"}]
                     }
                 },
                 {
@@ -3252,7 +3370,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "title":"Capacity by tier",
                         "categories":["Base","Peak","Burst"],
                         "series":[
-                            {"name":"Committed","values":[20,35,-5]},
+                            {"name":"Committed","values":[20,35,-5],"color":"#00AA44"},
                             {"name":"Available","values":[30,45,15]}
                         ]
                     }
@@ -3264,7 +3382,7 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "type":"doughnut",
                         "title":"Current allocation",
                         "categories":["Core","Growth","Reserve"],
-                        "series":[{"name":"Allocation","values":[60,30,10]}],
+                        "series":[{"name":"Allocation","values":[60,30,10],"color":"#AABBCC"}],
                         "legend_position":"bottom",
                         "data_labels":"percentage"
                     }
@@ -3304,6 +3422,18 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert_eq!(
         inspected.pointer("/chart_metadata/0/series/1/value_axis"),
         Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#1A2B3C"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color_value"),
+        Some(&json!("1A2B3C"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/color"),
+        Some(&json!("#DDEEFF"))
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/0/chart_group_count"),
@@ -3446,6 +3576,10 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("secondary"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/series/0/color"),
+        Some(&json!("#1A2B3C"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/value_axis_minimum"),
         Some(&json!(1.0))
     );
@@ -3479,6 +3613,34 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("line"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/color"),
+        Some(&json!("#336699"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_style"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_style_value"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_size"),
+        Some(&json!(9))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/marker_size_value"),
+        Some(&json!("9"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/series/0/smooth_value"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/1/legend_position"),
         Some(&Value::Null)
     );
@@ -3491,6 +3653,18 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("none"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/1/self_contained_edit_snapshot/series/0/marker_style"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/self_contained_edit_snapshot/series/0/marker_size"),
+        Some(&json!(9))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/1/self_contained_edit_snapshot/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
         inspected
             .pointer("/chart_metadata/1/self_contained_edit_snapshot/value_axis_major_tick_mark"),
         Some(&json!("none"))
@@ -3500,12 +3674,36 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("pie"))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/color"),
+        Some(&json!("#FF8800"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/marker_style"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/marker_size"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/2/series/0/smooth"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/3/chart_types/0"),
         Some(&json!("area"))
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/3/series/0/values_preview/2"),
         Some(&json!("-5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/3/series/0/color"),
+        Some(&json!("#00AA44"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/3/series/1/color"),
+        Some(&Value::Null)
     );
     assert_eq!(
         inspected.pointer("/chart_metadata/4/chart_types/0"),
@@ -3518,6 +3716,10 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     assert_eq!(
         inspected.pointer("/chart_metadata/4/data_labels"),
         Some(&json!("percentage"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/4/series/0/color"),
+        Some(&json!("#AABBCC"))
     );
     for index in 0..5 {
         assert_eq!(
@@ -3545,6 +3747,12 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
     let first_chart =
         read_zip_text(&mut created_archive, "ppt/charts/chart1.xml").expect("generated chart XML");
     assert!(first_chart.contains("<c:tx><c:v>North</c:v></c:tx>"));
+    assert!(first_chart.contains(
+        "<c:tx><c:v>North</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val=\"1A2B3C\"/></a:solidFill></c:spPr>"
+    ));
+    assert!(first_chart.contains(
+        "<c:tx><c:v>South</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val=\"DDEEFF\"/></a:solidFill></c:spPr>"
+    ));
     assert!(first_chart.contains("<c:strLit>"));
     assert!(first_chart.contains("<c:numLit>"));
     assert!(!first_chart.contains("<c:strRef>"));
@@ -3575,18 +3783,34 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         "<c:numFmt formatCode=\"0.0\" sourceLinked=\"0\"/><c:majorTickMark val=\"cross\"/><c:minorTickMark val=\"in\"/><c:tickLblPos val=\"nextTo\"/>"
     ));
     assert!(first_chart.contains("<c:majorUnit val=\"10\"/><c:minorUnit val=\"2.5\"/>"));
+    let line_chart =
+        read_zip_text(&mut created_archive, "ppt/charts/chart2.xml").expect("generated line XML");
+    assert!(line_chart.contains(
+        "<c:tx><c:v>Retention</c:v></c:tx><c:spPr><a:ln><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></a:ln></c:spPr><c:marker>"
+    ));
+    assert!(
+        line_chart.contains("<c:marker><c:symbol val=\"diamond\"/><c:size val=\"9\"/></c:marker>")
+    );
+    assert!(line_chart.contains("<c:smooth val=\"1\"/>"));
+    let pie_chart =
+        read_zip_text(&mut created_archive, "ppt/charts/chart3.xml").expect("generated pie XML");
+    assert!(pie_chart
+        .contains("<c:spPr><a:solidFill><a:srgbClr val=\"FF8800\"/></a:solidFill></c:spPr>"));
     let area_chart =
         read_zip_text(&mut created_archive, "ppt/charts/chart4.xml").expect("generated area XML");
     assert!(area_chart.contains("<c:areaChart>"));
     assert!(area_chart.contains("<c:catAx>"));
     assert!(area_chart.contains("<c:valAx>"));
     assert!(area_chart.contains("<c:crossBetween val=\"midCat\"/>"));
+    assert_eq!(area_chart.matches("<c:spPr>").count(), 1);
+    assert!(area_chart.contains("<a:srgbClr val=\"00AA44\"/>"));
     let doughnut_chart = read_zip_text(&mut created_archive, "ppt/charts/chart5.xml")
         .expect("generated doughnut XML");
     assert!(doughnut_chart.contains("<c:doughnutChart>"));
     assert!(doughnut_chart.contains("<c:holeSize val=\"50\"/>"));
     assert!(doughnut_chart.contains("<c:legendPos val=\"b\"/>"));
     assert!(doughnut_chart.contains("<c:showPercent val=\"1\"/>"));
+    assert!(doughnut_chart.contains("<a:srgbClr val=\"AABBCC\"/>"));
     assert!(!doughnut_chart.contains("<c:catAx>"));
     drop(created_archive);
 
@@ -3603,8 +3827,8 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
                         "type":"area",
                         "categories":["Apr","May"],
                         "series":[
-                            {"name":"Forecast","values":[40,-5]},
-                            {"name":"Actual","values":[35,10],"value_axis":"secondary"}
+                            {"name":"Forecast","values":[40,-5],"color":"#445566"},
+                            {"name":"Actual","values":[35,10],"value_axis":"secondary","color":"#778899"}
                         ],
                         "legend_position":"left",
                         "data_labels":"value",
@@ -3693,6 +3917,14 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         Some(&json!("secondary"))
     );
     assert_eq!(
+        appended_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#445566"))
+    );
+    assert_eq!(
+        appended_inspection.pointer("/chart_metadata/0/series/1/color_value"),
+        Some(&json!("778899"))
+    );
+    assert_eq!(
         appended_inspection.pointer("/chart_metadata/0/secondary_value_axis_title"),
         Some(&json!("Variance"))
     );
@@ -3756,6 +3988,1536 @@ fn creates_and_appends_self_contained_standard_pptx_charts_without_workbooks() {
         appended_inspection.pointer("/chart_metadata/1/data_labels"),
         Some(&json!("percentage"))
     );
+    assert_eq!(
+        appended_inspection.pointer("/chart_metadata/1/series/0/color"),
+        Some(&Value::Null)
+    );
+    let mut appended_archive = ZipArchive::new(
+        File::open(root.join("appended-charts.pptx")).expect("appended chart deck"),
+    )
+    .expect("appended chart deck ZIP");
+    let appended_doughnut = read_zip_text(&mut appended_archive, "ppt/charts/chart7.xml")
+        .expect("appended uncolored doughnut XML");
+    assert!(!appended_doughnut.contains("<c:spPr>"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn creates_appends_and_replaces_canonical_clustered_bar_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"bar-charts.pptx",
+            "slides":[{
+                "title":"Regional performance",
+                "layout":"chart",
+                "chart":{
+                    "type":"bar",
+                    "title":"Revenue by region",
+                    "categories":["North","South","West"],
+                    "series":[
+                        {"name":"Revenue","values":[10,20,30],"color":"#2255AA"},
+                        {"name":"Margin","values":[12,18,25],"value_axis":"secondary","color":"#EE8800"}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Region",
+                    "value_axis_title":"Revenue",
+                    "secondary_value_axis_title":"Margin",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":40,
+                    "value_axis_major_unit":10,
+                    "value_axis_number_format":"integer",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":30,
+                    "secondary_value_axis_major_unit":5,
+                    "secondary_value_axis_number_format":"decimal_1"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical clustered bar chart");
+    let source = root.join("bar-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("bar chart source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"bar-charts.pptx"}), &state, &request)
+            .expect("inspect canonical clustered bar chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types/0"),
+        Some(&json!("bar"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bar_directions"),
+        Some(&json!(["bar", "bar"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("bar"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/category_axis_title"),
+        Some(&json!("Region"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_title"),
+        Some(&json!("Revenue"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
+        Some(&json!("Margin"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/value_axis"),
+        Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_maximum"),
+        Some(&json!("40"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_number_format"),
+        Some(&json!("decimal_1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("bar chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("bar chart snapshot")
+        .clone();
+    let mut source_archive =
+        ZipArchive::new(File::open(source.as_path()).expect("bar chart source"))
+            .expect("bar chart source ZIP");
+    let source_chart =
+        read_zip_text(&mut source_archive, "ppt/charts/chart1.xml").expect("bar chart XML");
+    assert_eq!(source_chart.matches("<c:barChart>").count(), 2);
+    assert_eq!(source_chart.matches("<c:barDir val=\"bar\"/>").count(), 2);
+    assert_eq!(source_chart.matches("<c:axPos val=\"l\"/>").count(), 1);
+    assert_eq!(source_chart.matches("<c:axPos val=\"r\"/>").count(), 1);
+    assert_eq!(source_chart.matches("<c:axPos val=\"b\"/>").count(), 1);
+    assert_eq!(source_chart.matches("<c:axPos val=\"t\"/>").count(), 1);
+    drop(source_archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"bar-charts.pptx",
+            "target_path":"bar-charts-appended.pptx",
+            "slides":[{
+                "title":"Backlog",
+                "layout":"chart",
+                "chart":{
+                    "type":"bar",
+                    "categories":["Open","Blocked"],
+                    "series":[{"name":"Items","values":[8,3]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical clustered bar chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"bar-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended clustered bar chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/bar_directions"),
+        Some(&json!(["bar"]))
+    );
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/self_contained_edit_snapshot/type"),
+        Some(&json!("bar"))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"bar-charts.pptx",
+            "target_path":"bar-to-column.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"column",
+                "title":"Revenue by region",
+                "categories":["North","South","West"],
+                "series":[{"name":"Revenue","values":[11,21,31],"color":"#2255AA"}],
+                "legend_position":"bottom",
+                "data_labels":"value",
+                "category_axis_title":"Region",
+                "value_axis_title":"Revenue",
+                "value_axis_minimum":0,
+                "value_axis_maximum":40,
+                "value_axis_major_unit":10,
+                "value_axis_number_format":"integer"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace bar chart with canonical column chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("bar chart source after replacement"),
+        source_before
+    );
+    let replaced =
+        presentation::inspect_pptx_charts(&json!({"path":"bar-to-column.pptx"}), &state, &request)
+            .expect("inspect bar-to-column replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/bar_directions"),
+        Some(&json!(["col"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("column"))
+    );
+    let mut replaced_archive =
+        ZipArchive::new(File::open(root.join("bar-to-column.pptx")).expect("column replacement"))
+            .expect("column replacement ZIP");
+    let replaced_chart = read_zip_text(&mut replaced_archive, "ppt/charts/chart1.xml")
+        .expect("column replacement XML");
+    assert!(replaced_chart.contains("<c:barDir val=\"col\"/>"));
+    assert!(replaced_chart.contains("<c:axPos val=\"b\"/>"));
+    assert!(replaced_chart.contains("<c:axPos val=\"l\"/>"));
+    assert!(!replaced_chart.contains("<c:axPos val=\"t\"/>"));
+    assert!(!replaced_chart.contains("<c:axPos val=\"r\"/>"));
+    drop(replaced_archive);
+
+    fs::copy(source.as_path(), root.join("custom-bar-direction.pptx"))
+        .expect("copy custom bar direction fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-bar-direction.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| xml.replacen("<c:barDir val=\"bar\"/>", "<c:barDir val=\"cone\"/>", 1),
+    );
+    let custom = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-bar-direction.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect custom bar direction");
+    assert_eq!(
+        custom.pointer("/chart_metadata/0/bar_directions"),
+        Some(&json!(["cone", "bar"]))
+    );
+    assert_eq!(
+        custom.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+    assert!(custom
+        .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| reason.contains("consistent col or bar direction")));
+
+    for (filename, replacement) in [
+        ("missing-bar-direction.pptx", ""),
+        (
+            "attributed-bar-direction.pptx",
+            "<c:barDir val=\"bar\" custom=\"1\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical bar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:barDir val=\"bar\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical bar direction");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-bar-direction.pptx",
+            "<c:barDir val=\"bar\"/><c:barDir val=\"bar\"/>",
+            "multiple bar directions",
+        ),
+        (
+            "wrong-namespace-bar-direction.pptx",
+            "<a:barDir val=\"bar\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid bar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:barDir val=\"bar\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid bar direction must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-bar-direction.pptx"))
+        .expect("copy oversized bar direction fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-bar-direction.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:barDir val=\"bar\"/>",
+                format!("<c:barDir val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-bar-direction.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized bar direction must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("bar direction is empty or exceeds the safety limit"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn creates_appends_and_replaces_canonical_standard_radar_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"radar-charts.pptx",
+            "slides":[{
+                "title":"Capability profile",
+                "layout":"chart",
+                "chart":{
+                    "type":"radar",
+                    "title":"Team comparison",
+                    "categories":["Speed","Quality","Cost"],
+                    "series":[
+                        {"name":"Team A","values":[8,7,6],"color":"#2255AA"},
+                        {"name":"Benchmark","values":[70,80,60],"value_axis":"secondary","color":"#EE8800"}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Capability",
+                    "value_axis_title":"Score",
+                    "secondary_value_axis_title":"Benchmark",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":10,
+                    "value_axis_major_unit":2,
+                    "value_axis_number_format":"integer",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":100,
+                    "secondary_value_axis_major_unit":20,
+                    "secondary_value_axis_number_format":"integer"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical standard radar chart");
+    let source = root.join("radar-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("radar source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"radar-charts.pptx"}), &state, &request)
+            .expect("inspect canonical standard radar chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["radar"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/radar_styles"),
+        Some(&json!(["standard", "standard"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("radar"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/category_axis_title"),
+        Some(&json!("Capability"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_title"),
+        Some(&json!("Score"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
+        Some(&json!("Benchmark"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/value_axis"),
+        Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#2255AA"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("radar chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("radar chart snapshot")
+        .clone();
+    let mut source_archive =
+        ZipArchive::new(File::open(source.as_path()).expect("radar chart source"))
+            .expect("radar chart source ZIP");
+    let source_chart =
+        read_zip_text(&mut source_archive, "ppt/charts/chart1.xml").expect("radar chart XML");
+    assert_eq!(source_chart.matches("<c:radarChart>").count(), 2);
+    assert_eq!(
+        source_chart
+            .matches("<c:radarStyle val=\"standard\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(source_chart.matches("<a:ln>").count(), 2);
+    assert_eq!(source_chart.matches("<c:catAx>").count(), 2);
+    assert_eq!(source_chart.matches("<c:valAx>").count(), 2);
+    drop(source_archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"radar-charts.pptx",
+            "target_path":"radar-charts-appended.pptx",
+            "slides":[{
+                "title":"Risk profile",
+                "layout":"chart",
+                "chart":{
+                    "type":"radar",
+                    "categories":["Impact","Likelihood"],
+                    "series":[{"name":"Risk","values":[4,3]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical standard radar chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"radar-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended radar chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/radar_styles"),
+        Some(&json!(["standard"]))
+    );
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/self_contained_edit_snapshot/type"),
+        Some(&json!("radar"))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"radar-charts.pptx",
+            "target_path":"radar-to-area.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"area",
+                "title":"Team comparison",
+                "categories":["Speed","Quality","Cost"],
+                "series":[{"name":"Team A","values":[9,8,7],"color":"#2255AA"}],
+                "legend_position":"bottom",
+                "data_labels":"value",
+                "category_axis_title":"Capability",
+                "value_axis_title":"Score",
+                "value_axis_minimum":0,
+                "value_axis_maximum":10,
+                "value_axis_major_unit":2,
+                "value_axis_number_format":"integer"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace radar chart with canonical area chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("radar source after replacement"),
+        source_before
+    );
+    let replaced =
+        presentation::inspect_pptx_charts(&json!({"path":"radar-to-area.pptx"}), &state, &request)
+            .expect("inspect radar-to-area replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["area"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/radar_styles"),
+        Some(&json!([]))
+    );
+    let mut replaced_archive =
+        ZipArchive::new(File::open(root.join("radar-to-area.pptx")).expect("area replacement"))
+            .expect("area replacement ZIP");
+    let replaced_chart = read_zip_text(&mut replaced_archive, "ppt/charts/chart1.xml")
+        .expect("area replacement XML");
+    assert!(replaced_chart.contains("<c:areaChart>"));
+    assert!(!replaced_chart.contains("<c:radarStyle"));
+    drop(replaced_archive);
+
+    for (filename, replacement) in [
+        ("custom-radar-style.pptx", "<c:radarStyle val=\"marker\"/>"),
+        ("missing-radar-style.pptx", ""),
+        (
+            "attributed-radar-style.pptx",
+            "<c:radarStyle val=\"standard\" custom=\"1\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical radar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:radarStyle val=\"standard\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical radar style");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-radar-style.pptx",
+            "<c:radarStyle val=\"standard\"/><c:radarStyle val=\"standard\"/>",
+            "multiple radar styles",
+        ),
+        (
+            "wrong-namespace-radar-style.pptx",
+            "<a:radarStyle val=\"standard\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid radar fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:radarStyle val=\"standard\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid radar style must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-radar-style.pptx"))
+        .expect("copy oversized radar fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-radar-style.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:radarStyle val=\"standard\"/>",
+                format!("<c:radarStyle val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-radar-style.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized radar style must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("radar style is empty or exceeds the safety limit"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn creates_appends_and_replaces_canonical_line_marker_scatter_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"scatter-charts.pptx",
+            "slides":[{
+                "title":"Experiment results",
+                "layout":"chart",
+                "chart":{
+                    "type":"scatter",
+                    "title":"Output by elapsed time",
+                    "x_values":[1,2,4],
+                    "x_axis_minimum":1,
+                    "x_axis_maximum":5,
+                    "x_axis_log_base":10,
+                    "x_axis_major_tick_mark":"inside",
+                    "x_axis_minor_tick_mark":"outside",
+                    "x_axis_major_unit":1,
+                    "x_axis_minor_unit":0.5,
+                    "x_axis_number_format":"decimal_2",
+                    "series":[
+                        {"name":"Output","values":[2,4,8],"color":"#2255AA","marker_style":"diamond","marker_size":8,"smooth":true},
+                        {"name":"Reference","values":[10,20,40],"value_axis":"secondary","color":"#EE8800","marker_style":"square","marker_size":6,"smooth":false}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Elapsed time",
+                    "value_axis_title":"Output",
+                    "secondary_value_axis_title":"Reference",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":10,
+                    "value_axis_major_unit":2,
+                    "value_axis_number_format":"decimal_1",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":50,
+                    "secondary_value_axis_major_unit":10,
+                    "secondary_value_axis_number_format":"integer"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical line-marker scatter chart");
+    let source = root.join("scatter-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("scatter source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"scatter-charts.pptx"}), &state, &request)
+            .expect("inspect canonical line-marker scatter chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["scatter"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/scatter_styles"),
+        Some(&json!(["lineMarker", "lineMarker"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/type"),
+        Some(&json!("scatter"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/categories"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_values"),
+        Some(&json!([1.0, 2.0, 4.0]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minimum"),
+        Some(&json!(1.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_maximum"),
+        Some(&json!(5.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_log_base"),
+        Some(&json!(10.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_major_tick_mark"),
+        Some(&json!("inside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minor_tick_mark"),
+        Some(&json!("outside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_major_unit"),
+        Some(&json!(1.0))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minor_unit"),
+        Some(&json!(0.5))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/category_axis_title"),
+        Some(&json!("Elapsed time"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_title"),
+        Some(&json!("Output"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
+        Some(&json!("Reference"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/value_axis"),
+        Some(&json!("secondary"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#2255AA"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&json!("diamond"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_size"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/x_values_preview"),
+        Some(&json!(["1", "2", "4"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/y_values_preview"),
+        Some(&json!(["2", "4", "8"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/value_axis_number_format"),
+        Some(&json!("decimal_1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minimum"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_maximum"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_log_base"),
+        Some(&json!("10"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_major_tick_mark"),
+        Some(&json!("inside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_major_tick_mark_value"),
+        Some(&json!("in"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minor_tick_mark"),
+        Some(&json!("outside"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minor_tick_mark_value"),
+        Some(&json!("out"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_major_unit"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_minor_unit"),
+        Some(&json!("0.5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_number_format_code"),
+        Some(&json!("0.00"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_x_axis_maximum"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_value_axis_number_format"),
+        Some(&json!("integer"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("scatter chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("scatter chart snapshot")
+        .clone();
+    let mut source_archive =
+        ZipArchive::new(File::open(source.as_path()).expect("scatter chart source"))
+            .expect("scatter chart source ZIP");
+    let source_chart =
+        read_zip_text(&mut source_archive, "ppt/charts/chart1.xml").expect("scatter chart XML");
+    assert_eq!(source_chart.matches("<c:scatterChart>").count(), 2);
+    assert_eq!(
+        source_chart
+            .matches("<c:scatterStyle val=\"lineMarker\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(source_chart.matches("<c:xVal>").count(), 2);
+    assert_eq!(source_chart.matches("<c:yVal>").count(), 2);
+    assert_eq!(source_chart.matches("<c:catAx>").count(), 0);
+    assert_eq!(source_chart.matches("<c:valAx>").count(), 4);
+    assert_eq!(source_chart.matches("<a:ln>").count(), 2);
+    assert_eq!(source_chart.matches("<c:logBase val=\"10\"/>").count(), 2);
+    assert_eq!(
+        source_chart
+            .matches("<c:numFmt formatCode=\"0.00\" sourceLinked=\"0\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(
+        source_chart
+            .matches("<c:majorTickMark val=\"in\"/>")
+            .count(),
+        2
+    );
+    assert_eq!(
+        source_chart
+            .matches("<c:minorTickMark val=\"out\"/>")
+            .count(),
+        2
+    );
+    drop(source_archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"scatter-charts.pptx",
+            "target_path":"scatter-charts-appended.pptx",
+            "slides":[{
+                "title":"Latency",
+                "layout":"chart",
+                "chart":{
+                    "type":"scatter",
+                    "x_values":[10,20],
+                    "series":[{"name":"Latency","values":[30,45]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical scatter chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"scatter-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended scatter chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/scatter_styles"),
+        Some(&json!(["lineMarker"]))
+    );
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/self_contained_edit_snapshot/x_values"),
+        Some(&json!([10.0, 20.0]))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"scatter-charts.pptx",
+            "target_path":"scatter-to-line.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"line",
+                "title":"Output by elapsed time",
+                "categories":["1s","2s","4s"],
+                "series":[{"name":"Output","values":[3,5,9],"color":"#2255AA","marker_style":"diamond","marker_size":8,"smooth":true}],
+                "legend_position":"bottom",
+                "data_labels":"value",
+                "category_axis_title":"Elapsed time",
+                "value_axis_title":"Output",
+                "value_axis_minimum":0,
+                "value_axis_maximum":10,
+                "value_axis_major_unit":2,
+                "value_axis_number_format":"decimal_1"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace scatter chart with canonical line chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("scatter source after replacement"),
+        source_before
+    );
+    let replaced = presentation::inspect_pptx_charts(
+        &json!({"path":"scatter-to-line.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect scatter-to-line replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["line"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/scatter_styles"),
+        Some(&json!([]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_values"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/self_contained_edit_snapshot/x_axis_minimum"),
+        Some(&Value::Null)
+    );
+
+    fs::copy(
+        source.as_path(),
+        root.join("mismatched-scatter-x-axes.pptx"),
+    )
+    .expect("copy mismatched scatter X-axis fixture");
+    rewrite_zip_text_entry(
+        root.join("mismatched-scatter-x-axes.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| xml.replacen("<c:max val=\"5\"/>", "<c:max val=\"6\"/>", 1),
+    );
+    let mismatched_x_axes = presentation::inspect_pptx_charts(
+        &json!({"path":"mismatched-scatter-x-axes.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect mismatched scatter X axes");
+    assert_eq!(
+        mismatched_x_axes.pointer("/chart_metadata/0/x_axis_maximum"),
+        Some(&json!("6"))
+    );
+    assert_eq!(
+        mismatched_x_axes.pointer("/chart_metadata/0/secondary_x_axis_maximum"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        mismatched_x_axes
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+
+    fs::copy(source.as_path(), root.join("custom-scatter-x-ticks.pptx"))
+        .expect("copy custom scatter X tick fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-scatter-x-ticks.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:majorTickMark val=\"in\"/>",
+                "<c:majorTickMark val=\"diagonal\"/>",
+                1,
+            )
+        },
+    );
+    let custom_x_ticks = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-scatter-x-ticks.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect custom scatter X ticks");
+    assert_eq!(
+        custom_x_ticks.pointer("/chart_metadata/0/x_axis_major_tick_mark"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        custom_x_ticks.pointer("/chart_metadata/0/x_axis_major_tick_mark_value"),
+        Some(&json!("diagonal"))
+    );
+    assert_eq!(
+        custom_x_ticks.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+
+    for (filename, replacement) in [
+        (
+            "custom-scatter-style.pptx",
+            "<c:scatterStyle val=\"smoothMarker\"/>",
+        ),
+        ("missing-scatter-style.pptx", ""),
+        (
+            "attributed-scatter-style.pptx",
+            "<c:scatterStyle val=\"lineMarker\" custom=\"1\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical scatter fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:scatterStyle val=\"lineMarker\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical scatter style");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some());
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-scatter-style.pptx",
+            "<c:scatterStyle val=\"lineMarker\"/><c:scatterStyle val=\"lineMarker\"/>",
+            "multiple scatter styles",
+        ),
+        (
+            "wrong-namespace-scatter-style.pptx",
+            "<a:scatterStyle val=\"lineMarker\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid scatter fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:scatterStyle val=\"lineMarker\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid scatter style must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-scatter-style.pptx"))
+        .expect("copy oversized scatter fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-scatter-style.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:scatterStyle val=\"lineMarker\"/>",
+                format!("<c:scatterStyle val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-scatter-style.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized scatter style must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("scatter style is empty or exceeds the safety limit"));
+
+    for (target, chart, expected_error) in [
+        (
+            "scatter-with-categories.pptx",
+            json!({
+                "type":"scatter",
+                "categories":["A"],
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "categories must be null or omitted",
+        ),
+        (
+            "scatter-missing-x.pptx",
+            json!({
+                "type":"scatter",
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "x_values must be an array",
+        ),
+        (
+            "scatter-length-mismatch.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "one value per x_value",
+        ),
+        (
+            "scatter-minimum-hides-x.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_minimum":1.5,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis minimum would hide X values",
+        ),
+        (
+            "scatter-maximum-hides-x.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_maximum":1.5,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis maximum would hide X values",
+        ),
+        (
+            "scatter-invalid-x-range.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1],
+                "x_axis_minimum":2,
+                "x_axis_maximum":2,
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "scatter X-axis minimum must be below its maximum",
+        ),
+        (
+            "scatter-log-zero-x.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[0,1],
+                "x_axis_log_base":10,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter logarithmic X axis requires every X value to be positive",
+        ),
+        (
+            "scatter-log-zero-bound.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_minimum":0,
+                "x_axis_log_base":10,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter logarithmic X-axis bounds must be positive",
+        ),
+        (
+            "scatter-invalid-x-units.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_major_unit":1,
+                "x_axis_minor_unit":1,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis minor unit must be below its major unit",
+        ),
+        (
+            "scatter-x-unit-exceeds-range.pptx",
+            json!({
+                "type":"scatter",
+                "x_values":[1,2],
+                "x_axis_minimum":1,
+                "x_axis_maximum":2,
+                "x_axis_major_unit":2,
+                "series":[{"name":"Y","values":[2,3]}]
+            }),
+            "scatter X-axis major unit exceeds its explicit range",
+        ),
+        (
+            "line-with-x-format.pptx",
+            json!({
+                "type":"line",
+                "categories":["A"],
+                "x_axis_number_format":"integer",
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "chart without a numeric X axis does not support X-axis bounds, logarithmic scale, tick marks, units, or number format",
+        ),
+    ] {
+        let error = presentation::create_pptx(
+            &json!({
+                "target_path":target,
+                "slides":[{"title":"Invalid", "layout":"chart", "chart":chart}]
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("invalid scatter input must be rejected");
+        assert!(error.to_string().contains(expected_error));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn creates_appends_inspects_and_replaces_canonical_bubble_pptx_charts() {
+    let (root, state, request) = test_context();
+    presentation::create_pptx(
+        &json!({
+            "target_path":"bubble-charts.pptx",
+            "slides":[{
+                "title":"Portfolio",
+                "layout":"chart",
+                "chart":{
+                    "type":"bubble",
+                    "title":"Return by risk and size",
+                    "x_values":[1,2,4],
+                    "x_axis_minimum":1,
+                    "x_axis_maximum":5,
+                    "x_axis_log_base":10,
+                    "x_axis_major_tick_mark":"inside",
+                    "x_axis_minor_tick_mark":"outside",
+                    "x_axis_major_unit":1,
+                    "x_axis_minor_unit":0.5,
+                    "x_axis_number_format":"decimal_2",
+                    "series":[
+                        {"name":"Growth","values":[2,4,8],"bubble_sizes":[5,10,20],"color":"#2255AA"},
+                        {"name":"Income","values":[10,20,40],"bubble_sizes":[8,16,32],"value_axis":"secondary","color":"#EE8800"}
+                    ],
+                    "legend_position":"bottom",
+                    "data_labels":"value",
+                    "category_axis_title":"Risk",
+                    "value_axis_title":"Return",
+                    "secondary_value_axis_title":"Income return",
+                    "value_axis_minimum":0,
+                    "value_axis_maximum":10,
+                    "value_axis_major_unit":2,
+                    "value_axis_number_format":"decimal_1",
+                    "secondary_value_axis_minimum":0,
+                    "secondary_value_axis_maximum":50,
+                    "secondary_value_axis_major_unit":10,
+                    "secondary_value_axis_number_format":"integer"
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("create canonical bubble chart");
+    let source = root.join("bubble-charts.pptx");
+    let source_before = fs::read(source.as_path()).expect("bubble source bytes");
+    let inspected =
+        presentation::inspect_pptx_charts(&json!({"path":"bubble-charts.pptx"}), &state, &request)
+            .expect("inspect canonical bubble chart");
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["bubble"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bubble_scales"),
+        Some(&json!(["100", "100"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/show_negative_bubbles"),
+        Some(&json!(["0", "0"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bubble_size_represents"),
+        Some(&json!(["area", "area"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/bubble_3d"),
+        Some(&json!([null, null]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/cached_points"),
+        Some(&json!(18))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/x_values_preview"),
+        Some(&json!(["1", "2", "4"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/y_values_preview"),
+        Some(&json!(["2", "4", "8"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/bubble_sizes_preview"),
+        Some(&json!(["5", "10", "20"]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#2255AA"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/smooth"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/self_contained_edit_snapshot/series/0/bubble_sizes"),
+        Some(&json!([5.0, 10.0, 20.0]))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/secondary_x_axis_number_format"),
+        Some(&json!("decimal_2"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(true))
+    );
+    let hash = inspected
+        .pointer("/chart_metadata/0/chart_xml_sha256")
+        .and_then(Value::as_str)
+        .expect("bubble chart hash")
+        .to_string();
+    let snapshot = inspected
+        .pointer("/chart_metadata/0/self_contained_edit_snapshot")
+        .expect("bubble chart snapshot")
+        .clone();
+    let mut archive = ZipArchive::new(File::open(source.as_path()).expect("bubble source"))
+        .expect("bubble source ZIP");
+    let xml = read_zip_text(&mut archive, "ppt/charts/chart1.xml").expect("bubble chart XML");
+    assert_eq!(xml.matches("<c:bubbleChart>").count(), 2);
+    assert_eq!(xml.matches("<c:bubbleScale val=\"100\"/>").count(), 2);
+    assert_eq!(xml.matches("<c:showNegBubbles val=\"0\"/>").count(), 2);
+    assert_eq!(xml.matches("<c:sizeRepresents val=\"area\"/>").count(), 2);
+    assert_eq!(xml.matches("<c:xVal>").count(), 2);
+    assert_eq!(xml.matches("<c:yVal>").count(), 2);
+    assert_eq!(xml.matches("<c:bubbleSize>").count(), 2);
+    assert_eq!(xml.matches("<c:catAx>").count(), 0);
+    assert_eq!(xml.matches("<c:valAx>").count(), 4);
+    assert_eq!(xml.matches("<a:ln>").count(), 0);
+    drop(archive);
+
+    presentation::append_pptx_slides(
+        &json!({
+            "path":"bubble-charts.pptx",
+            "target_path":"bubble-charts-appended.pptx",
+            "slides":[{
+                "title":"Markets",
+                "layout":"chart",
+                "chart":{
+                    "type":"bubble",
+                    "x_values":[10,20],
+                    "series":[{"name":"Markets","values":[30,45],"bubble_sizes":[12,24]}],
+                    "show_legend":false
+                }
+            }]
+        }),
+        &state,
+        &request,
+    )
+    .expect("append canonical bubble chart");
+    let appended = presentation::inspect_pptx_charts(
+        &json!({"path":"bubble-charts-appended.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect appended bubble chart");
+    assert_eq!(appended.get("charts"), Some(&json!(2)));
+    assert_eq!(
+        appended.pointer("/chart_metadata/1/chart_types"),
+        Some(&json!(["bubble"]))
+    );
+
+    presentation::replace_pptx_chart(
+        &json!({
+            "path":"bubble-charts.pptx",
+            "target_path":"bubble-to-scatter.pptx",
+            "slide_number":1,
+            "chart_number":1,
+            "expected_chart_xml_sha256":hash,
+            "expected_self_contained_edit_snapshot":snapshot,
+            "replacement":{
+                "type":"scatter",
+                "title":"Return by risk",
+                "x_values":[1,2,4],
+                "series":[{"name":"Growth","values":[3,5,9],"color":"#2255AA"}],
+                "legend_position":"bottom",
+                "category_axis_title":"Risk",
+                "value_axis_title":"Return"
+            }
+        }),
+        &state,
+        &request,
+    )
+    .expect("replace bubble chart with canonical scatter chart");
+    assert_eq!(
+        fs::read(source.as_path()).expect("bubble source after replacement"),
+        source_before
+    );
+    let replaced = presentation::inspect_pptx_charts(
+        &json!({"path":"bubble-to-scatter.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect bubble-to-scatter replacement");
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/chart_types"),
+        Some(&json!(["scatter"]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/bubble_scales"),
+        Some(&json!([]))
+    );
+    assert_eq!(
+        replaced.pointer("/chart_metadata/0/series/0/cached_bubble_size_points"),
+        Some(&json!(0))
+    );
+
+    for (filename, from, replacement) in [
+        (
+            "missing-bubble-scale.pptx",
+            "<c:bubbleScale val=\"100\"/>",
+            "",
+        ),
+        (
+            "custom-negative-bubbles.pptx",
+            "<c:showNegBubbles val=\"0\"/>",
+            "<c:showNegBubbles val=\"1\"/>",
+        ),
+        (
+            "custom-bubble-representation.pptx",
+            "<c:sizeRepresents val=\"area\"/>",
+            "<c:sizeRepresents val=\"w\"/>",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy noncanonical bubble fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen(from, replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect noncanonical bubble metadata");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+    }
+
+    for (filename, replacement, expected_error) in [
+        (
+            "duplicate-bubble-scale.pptx",
+            "<c:bubbleScale val=\"100\"/><c:bubbleScale val=\"100\"/>",
+            "duplicate group metadata",
+        ),
+        (
+            "wrong-namespace-bubble-scale.pptx",
+            "<a:bubbleScale val=\"100\"/>",
+            "standard c namespace",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy invalid bubble fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:bubbleScale val=\"100\"/>", replacement, 1),
+        );
+        let error = presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+            .expect_err("invalid bubble metadata must fail closed");
+        assert!(error.to_string().contains(expected_error));
+    }
+
+    fs::copy(source.as_path(), root.join("oversized-bubble-scale.pptx"))
+        .expect("copy oversized bubble fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-bubble-scale.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:bubbleScale val=\"100\"/>",
+                format!("<c:bubbleScale val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-bubble-scale.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized bubble metadata must fail closed");
+    assert!(oversized
+        .to_string()
+        .contains("bubble chart group metadata is empty or exceeds the safety limit"));
+
+    for (target, chart, expected_error) in [
+        (
+            "bubble-missing-sizes.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2]}]
+            }),
+            "bubble_sizes must be an array",
+        ),
+        (
+            "bubble-size-length-mismatch.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1,2],
+                "series":[{"name":"Y","values":[2,3],"bubble_sizes":[1]}]
+            }),
+            "one bubble_size per x_value",
+        ),
+        (
+            "bubble-zero-size.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2],"bubble_sizes":[0]}]
+            }),
+            "must be positive",
+        ),
+        (
+            "bubble-with-marker.pptx",
+            json!({
+                "type":"bubble",
+                "x_values":[1],
+                "series":[{"name":"Y","values":[2],"bubble_sizes":[1],"marker_style":"circle"}]
+            }),
+            "supported only for line or scatter charts",
+        ),
+        (
+            "line-with-bubble-sizes.pptx",
+            json!({
+                "type":"line",
+                "categories":["A"],
+                "series":[{"name":"Y","values":[2],"bubble_sizes":[1]}]
+            }),
+            "non-bubble chart series 1 bubble_sizes must be null or omitted",
+        ),
+    ] {
+        let error = presentation::create_pptx(
+            &json!({
+                "target_path":target,
+                "slides":[{"title":"Invalid", "layout":"chart", "chart":chart}]
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("invalid bubble input must be rejected");
+        assert!(error.to_string().contains(expected_error));
+    }
     let _ = fs::remove_dir_all(root);
 }
 
@@ -3769,12 +5531,12 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
                 "title":"Revenue",
                 "layout":"chart",
                 "chart":{
-                    "type":"area",
+                    "type":"line",
                     "title":"Quarterly revenue",
                     "categories":["Q1","Q2"],
                     "series":[
-                        {"name":"North","values":[10,20]},
-                        {"name":"South","values":[12,18],"value_axis":"secondary"}
+                        {"name":"North","values":[10,20],"color":"#112233","marker_style":"square","marker_size":8,"smooth":true},
+                        {"name":"South","values":[12,18],"value_axis":"secondary","color":"#A0B0C0","marker_style":"none","smooth":false}
                     ],
                     "show_legend":true,
                     "legend_position":"left",
@@ -3838,6 +5600,34 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
         Some(&json!([2]))
     );
     assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#112233"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&json!("square"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/marker_size"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/marker_style"),
+        Some(&json!("none"))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/marker_size"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/0/smooth"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        inspected.pointer("/chart_metadata/0/series/1/smooth"),
+        Some(&json!(false))
+    );
+    assert_eq!(
         inspected.pointer("/chart_metadata/0/secondary_value_axis_title"),
         Some(&json!("Margin"))
     );
@@ -3898,7 +5688,7 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
         "type":"doughnut",
         "title":"Channel mix",
         "categories":["Direct","Partner","Organic"],
-        "series":[{"name":"Share","values":[55,30,15]}],
+        "series":[{"name":"Share","values":[55,30,15],"color":"#CC5500"}],
         "show_legend":true,
         "legend_position":"bottom",
         "data_labels":"percentage"
@@ -3952,6 +5742,9 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert!(output_chart.contains("Channel mix"));
     assert!(output_chart.contains("<c:legendPos val=\"b\"/>"));
     assert!(output_chart.contains("<c:showPercent val=\"1\"/>"));
+    assert!(output_chart.contains("<a:srgbClr val=\"CC5500\"/>"));
+    assert!(!output_chart.contains("<c:marker>"));
+    assert!(!output_chart.contains("<c:smooth"));
     assert!(!output_chart.contains("<c:axPos val=\"r\"/>"));
     assert!(!output_chart.contains("<c:majorTickMark"));
     assert!(!output_chart.contains("<c:minorTickMark"));
@@ -3987,6 +5780,10 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert_eq!(
         inspected_output.pointer("/chart_metadata/0/series/0/values_preview/2"),
         Some(&json!("15"))
+    );
+    assert_eq!(
+        inspected_output.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#CC5500"))
     );
     assert_eq!(
         inspected_output.pointer("/chart_metadata/0/value_axis_minimum"),
@@ -4045,8 +5842,8 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
                 "title":"Channel trend",
                 "categories":["Direct","Partner","Organic"],
                 "series":[
-                    {"name":"Current","values":[55,30,15]},
-                    {"name":"Previous","values":[50,35,15],"value_axis":"secondary"}
+                    {"name":"Current","values":[55,30,15],"color":"#0088FF"},
+                    {"name":"Previous","values":[50,35,15],"value_axis":"secondary","color":"#EEAA00"}
                 ],
                 "show_legend":true,
                 "legend_position":"top",
@@ -4093,6 +5890,14 @@ fn replaces_canonical_self_contained_pptx_chart_without_modifying_source_or_rela
     assert_eq!(
         inspected_area.pointer("/chart_metadata/0/series/1/name"),
         Some(&json!("Previous"))
+    );
+    assert_eq!(
+        inspected_area.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("#0088FF"))
+    );
+    assert_eq!(
+        inspected_area.pointer("/chart_metadata/0/series/1/color_value"),
+        Some(&json!("EEAA00"))
     );
     assert_eq!(
         inspected_area.pointer("/chart_metadata/0/legend_position"),
@@ -4186,7 +5991,7 @@ fn rejects_stale_unsafe_or_noncanonical_pptx_chart_replacements_without_output()
                     "type":"line",
                     "title":"Retention",
                     "categories":["Jan","Feb"],
-                    "series":[{"name":"Rate","values":[91,93]}],
+                    "series":[{"name":"Rate","values":[91,93],"color":"#336699"}],
                     "show_legend":false
                 }
             }]
@@ -4519,6 +6324,275 @@ fn rejects_stale_unsafe_or_noncanonical_pptx_chart_replacements_without_output()
         .and_then(Value::as_str)
         .is_some_and(|reason| reason.contains("major tick mark is unsupported")));
 
+    fs::copy(
+        source.as_path(),
+        root.join("custom-series-marker-chart.pptx"),
+    )
+    .expect("copy custom series marker fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-series-marker-chart.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| xml.replacen("<c:symbol val=\"circle\"/>", "<c:symbol val=\"star\"/>", 1),
+    );
+    let custom_marker_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-series-marker-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect custom series marker fixture");
+    assert_eq!(
+        custom_marker_inspection.pointer("/chart_metadata/0/series/0/marker_style"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        custom_marker_inspection.pointer("/chart_metadata/0/series/0/marker_style_value"),
+        Some(&json!("star"))
+    );
+    assert_eq!(
+        custom_marker_inspection.pointer("/chart_metadata/0/series/0/marker_size_value"),
+        Some(&json!("5"))
+    );
+    assert_eq!(
+        custom_marker_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+    assert!(custom_marker_inspection
+        .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| reason.contains("series marker styling")));
+
+    for (filename, original, replacement, expected_style, expected_size) in [
+        (
+            "duplicate-series-marker-symbol-chart.pptx",
+            "<c:symbol val=\"circle\"/>",
+            "<c:symbol val=\"circle\"/><c:symbol val=\"square\"/>",
+            "circle",
+            "5",
+        ),
+        (
+            "wrong-namespace-series-marker-chart.pptx",
+            "<c:symbol val=\"circle\"/>",
+            "<a:symbol val=\"circle\"/>",
+            "circle",
+            "5",
+        ),
+        (
+            "oversized-series-marker-chart.pptx",
+            "<c:size val=\"5\"/>",
+            "<c:size val=\"73\"/>",
+            "circle",
+            "73",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy custom marker fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen(original, replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect custom marker fixture");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/marker_style"),
+            Some(&json!("custom"))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/marker_style_value"),
+            Some(&json!(expected_style))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/marker_size_value"),
+            Some(&json!(expected_size))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason.contains("series marker styling")));
+    }
+
+    for (filename, replacement, expected_value) in [
+        (
+            "unknown-series-smooth-chart.pptx",
+            "<c:smooth val=\"2\"/>",
+            "2",
+        ),
+        (
+            "duplicate-series-smooth-chart.pptx",
+            "<c:smooth val=\"0\"/><c:smooth val=\"1\"/>",
+            "0",
+        ),
+        (
+            "wrong-namespace-series-smooth-chart.pptx",
+            "<a:smooth val=\"0\"/>",
+            "0",
+        ),
+    ] {
+        fs::copy(source.as_path(), root.join(filename)).expect("copy custom smooth fixture");
+        rewrite_zip_text_entry(
+            root.join(filename).as_path(),
+            "ppt/charts/chart1.xml",
+            |xml| xml.replacen("<c:smooth val=\"0\"/>", replacement, 1),
+        );
+        let inspection =
+            presentation::inspect_pptx_charts(&json!({"path":filename}), &state, &request)
+                .expect("inspect custom smooth fixture");
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/smooth"),
+            Some(&json!("custom"))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/series/0/smooth_value"),
+            Some(&json!(expected_value))
+        );
+        assert_eq!(
+            inspection.pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+            Some(&json!(false))
+        );
+        assert!(inspection
+            .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason.contains("series smoothing")));
+    }
+
+    fs::copy(
+        source.as_path(),
+        root.join("oversized-series-smooth-value-chart.pptx"),
+    )
+    .expect("copy oversized smooth fixture");
+    rewrite_zip_text_entry(
+        root.join("oversized-series-smooth-value-chart.pptx")
+            .as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<c:smooth val=\"0\"/>",
+                format!("<c:smooth val=\"{}\"/>", "x".repeat(129)).as_str(),
+                1,
+            )
+        },
+    );
+    let oversized_smooth = presentation::inspect_pptx_charts(
+        &json!({"path":"oversized-series-smooth-value-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect_err("oversized series smooth value must fail closed");
+    assert!(oversized_smooth
+        .to_string()
+        .contains("smooth value is empty or exceeds the safety limit"));
+
+    fs::copy(
+        source.as_path(),
+        root.join("custom-series-color-transform-chart.pptx"),
+    )
+    .expect("copy transformed series color fixture");
+    rewrite_zip_text_entry(
+        root.join("custom-series-color-transform-chart.pptx")
+            .as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "<a:srgbClr val=\"336699\"/>",
+                "<a:srgbClr val=\"336699\"><a:alpha val=\"50000\"/></a:srgbClr>",
+                1,
+            )
+        },
+    );
+    let transformed_color_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"custom-series-color-transform-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect transformed series color fixture");
+    assert_eq!(
+        transformed_color_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        transformed_color_inspection.pointer("/chart_metadata/0/series/0/color_value"),
+        Some(&json!("336699"))
+    );
+    assert_eq!(
+        transformed_color_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+    assert!(transformed_color_inspection
+        .pointer("/chart_metadata/0/self_contained_replacement_unsupported_reason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| reason.contains("series color styling")));
+
+    fs::copy(
+        source.as_path(),
+        root.join("wrong-namespace-series-color-chart.pptx"),
+    )
+    .expect("copy wrong-namespace series color fixture");
+    rewrite_zip_text_entry(
+        root.join("wrong-namespace-series-color-chart.pptx")
+            .as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen("<a:solidFill>", "<c:solidFill>", 1).replacen(
+                "</a:solidFill>",
+                "</c:solidFill>",
+                1,
+            )
+        },
+    );
+    let wrong_namespace_color_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"wrong-namespace-series-color-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect wrong-namespace series color fixture");
+    assert_eq!(
+        wrong_namespace_color_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        wrong_namespace_color_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+
+    fs::copy(
+        source.as_path(),
+        root.join("duplicate-series-color-chart.pptx"),
+    )
+    .expect("copy duplicate series color fixture");
+    rewrite_zip_text_entry(
+        root.join("duplicate-series-color-chart.pptx").as_path(),
+        "ppt/charts/chart1.xml",
+        |xml| {
+            xml.replacen(
+                "</c:spPr><c:marker>",
+                "</c:spPr><c:spPr><a:ln><a:solidFill><a:srgbClr val=\"112233\"/></a:solidFill></a:ln></c:spPr><c:marker>",
+                1,
+            )
+        },
+    );
+    let duplicate_color_inspection = presentation::inspect_pptx_charts(
+        &json!({"path":"duplicate-series-color-chart.pptx"}),
+        &state,
+        &request,
+    )
+    .expect("inspect duplicate series color fixture");
+    assert_eq!(
+        duplicate_color_inspection.pointer("/chart_metadata/0/series/0/color"),
+        Some(&json!("custom"))
+    );
+    assert_eq!(
+        duplicate_color_inspection
+            .pointer("/chart_metadata/0/eligible_for_self_contained_chart_replacement"),
+        Some(&json!(false))
+    );
+
     assert_eq!(
         fs::read(source.as_path()).expect("chart source after rejected edits"),
         source_before
@@ -4807,6 +6881,86 @@ fn rejects_invalid_self_contained_pptx_chart_inputs_without_output() {
                 "chart":{"type":"area","categories":["A"],"series":[{"name":"S","values":[1],"value_axis":"tertiary"}]}
             }),
             "unsupported PPTX chart value_axis",
+        ),
+        (
+            "missing-series-color-hash.pptx",
+            json!({
+                "title":"Invalid color","layout":"chart",
+                "chart":{"type":"column","categories":["A"],"series":[{"name":"S","values":[1],"color":"336699"}]}
+            }),
+            "color must use exact #RRGGBB syntax",
+        ),
+        (
+            "short-series-color.pptx",
+            json!({
+                "title":"Invalid color","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"color":"#12345"}]}
+            }),
+            "color must use exact #RRGGBB syntax",
+        ),
+        (
+            "non-string-series-color.pptx",
+            json!({
+                "title":"Invalid color","layout":"chart",
+                "chart":{"type":"pie","categories":["A"],"series":[{"name":"S","values":[1],"color":123}]}
+            }),
+            "color must be a #RRGGBB string or null",
+        ),
+        (
+            "non-line-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"column","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"circle"}]}
+            }),
+            "supported only for line or scatter charts",
+        ),
+        (
+            "unknown-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"star"}]}
+            }),
+            "unsupported PPTX line/scatter-chart series marker style",
+        ),
+        (
+            "hidden-series-marker-size.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_style":"none","marker_size":5}]}
+            }),
+            "marker_size must be null or omitted when marker_style=none",
+        ),
+        (
+            "small-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_size":1}]}
+            }),
+            "marker_size must be between 2 and 72",
+        ),
+        (
+            "fractional-series-marker.pptx",
+            json!({
+                "title":"Invalid marker","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"marker_size":5.5}]}
+            }),
+            "marker_size must be an integer between 2 and 72",
+        ),
+        (
+            "non-line-series-smooth.pptx",
+            json!({
+                "title":"Invalid smoothing","layout":"chart",
+                "chart":{"type":"area","categories":["A"],"series":[{"name":"S","values":[1],"smooth":true}]}
+            }),
+            "smooth is supported only for line or scatter charts",
+        ),
+        (
+            "non-boolean-series-smooth.pptx",
+            json!({
+                "title":"Invalid smoothing","layout":"chart",
+                "chart":{"type":"line","categories":["A"],"series":[{"name":"S","values":[1],"smooth":"yes"}]}
+            }),
+            "smooth must be a boolean or null",
         ),
         (
             "hidden-left-legend.pptx",
@@ -13427,6 +15581,3899 @@ fn pdf_text_annotation_rejects_invalid_inputs_rotation_malformed_annots_and_in_p
     .expect_err("malformed annotation array must fail");
     assert!(malformed_error.to_string().contains("must be an array"));
     assert!(!root.join("malformed-output.pdf").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn adds_and_inspects_unicode_pdf_markup_annotation_with_crop_box_geometry() {
+    let (root, state, request) = test_context();
+    let source = root.join("artifacts/source.pdf");
+    write_blank_pdf(source.as_path(), 3);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&2];
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "CropBox",
+            vec![10.into(), 20.into(), 510.into(), 720.into()],
+        );
+    let existing_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![36.into(), 36.into(), 60.into(), 60.into()],
+        "Contents" => lopdf::text_string("Existing note"),
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(existing_id)]);
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+
+    let added = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"artifacts/source.pdf",
+            "page":2,
+            "markup":"highlight",
+            "rectangles":[
+                {"x":20,"y":30,"width":100,"height":12},
+                {"x":140,"y":30,"width":80,"height":12}
+            ],
+            "text":"重点：请复核金额。",
+            "author":"李雷",
+            "color":"green",
+            "opacity":0.45,
+            "target_path":"artifacts/highlighted.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("add PDF markup annotation");
+    assert_eq!(
+        added.get("operation").and_then(Value::as_str),
+        Some("add_markup_annotation")
+    );
+    assert_eq!(
+        added.get("markup").and_then(Value::as_str),
+        Some("highlight")
+    );
+    assert_eq!(
+        added.get("quadrilateral_count").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let document = Document::load(root.join("artifacts/highlighted.pdf")).expect("highlighted PDF");
+    let page_id = document.get_pages()[&2];
+    let annotations = document
+        .get_object(page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("annotation array");
+    assert_eq!(annotations.len(), 2);
+    let annotation = annotations
+        .iter()
+        .filter_map(|value| value.as_reference().ok())
+        .filter_map(|id| document.get_object(id).ok())
+        .filter_map(|value| value.as_dict().ok())
+        .find(|dictionary| {
+            dictionary
+                .get(b"Subtype")
+                .ok()
+                .and_then(|value| value.as_name().ok())
+                == Some(b"Highlight")
+        })
+        .expect("highlight annotation");
+    assert_eq!(
+        annotation
+            .get(b"Rect")
+            .and_then(Object::as_array)
+            .expect("annotation rect")
+            .iter()
+            .map(|value| value.as_float().expect("rect number"))
+            .collect::<Vec<_>>(),
+        vec![30.0, 50.0, 230.0, 62.0]
+    );
+    assert_eq!(
+        annotation
+            .get(b"QuadPoints")
+            .and_then(Object::as_array)
+            .expect("quad points")
+            .iter()
+            .map(|value| value.as_float().expect("quad number"))
+            .collect::<Vec<_>>(),
+        vec![
+            30.0, 62.0, 130.0, 62.0, 30.0, 50.0, 130.0, 50.0, 150.0, 62.0, 230.0, 62.0, 150.0,
+            50.0, 230.0, 50.0,
+        ]
+    );
+    assert_eq!(
+        annotation
+            .get(b"Contents")
+            .map(lopdf::decode_text_string)
+            .expect("contents")
+            .expect("decode contents"),
+        "重点：请复核金额。"
+    );
+    assert_eq!(
+        annotation
+            .get(b"T")
+            .map(lopdf::decode_text_string)
+            .expect("author")
+            .expect("decode author"),
+        "李雷"
+    );
+    assert_eq!(
+        annotation
+            .get(b"F")
+            .and_then(Object::as_i64)
+            .expect("annotation flags"),
+        4
+    );
+    assert_eq!(
+        annotation
+            .get(b"P")
+            .and_then(Object::as_reference)
+            .expect("page reference"),
+        page_id
+    );
+    assert_eq!(
+        annotation
+            .get(b"C")
+            .and_then(Object::as_array)
+            .expect("annotation color")
+            .iter()
+            .map(|value| value.as_float().expect("color number"))
+            .collect::<Vec<_>>(),
+        vec![0.35, 0.8, 0.4]
+    );
+    assert_eq!(
+        annotation
+            .get(b"CA")
+            .and_then(Object::as_float)
+            .expect("annotation opacity"),
+        0.45
+    );
+
+    let inspected = inspect_pdf(
+        &json!({"path":"artifacts/highlighted.pdf","page_geometry":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect highlighted PDF");
+    let geometry = inspected.get("page_geometry").expect("page geometry");
+    assert_eq!(geometry.get("page").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        geometry.get("origin_x_points").and_then(Value::as_f64),
+        Some(10.0)
+    );
+    assert_eq!(
+        geometry.get("origin_y_points").and_then(Value::as_f64),
+        Some(20.0)
+    );
+    assert_eq!(
+        geometry.get("width_points").and_then(Value::as_f64),
+        Some(500.0)
+    );
+    assert_eq!(
+        geometry.get("height_points").and_then(Value::as_f64),
+        Some(700.0)
+    );
+    assert_eq!(
+        geometry.get("rotation_degrees").and_then(Value::as_i64),
+        Some(0)
+    );
+    let summary = inspected.get("annotations").expect("annotation summary");
+    assert_eq!(summary.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(summary.get("text_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("markup_count").and_then(Value::as_u64), Some(1));
+    assert!(summary
+        .get("preview")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| {
+            item.get("subtype").and_then(Value::as_str) == Some("Highlight")
+                && item.get("contents").and_then(Value::as_str) == Some("重点：请复核金额。")
+                && item.get("author").and_then(Value::as_str) == Some("李雷")
+                && item.get("quadrilateral_count").and_then(Value::as_u64) == Some(2)
+                && item.get("rect") == Some(&json!([30.0, 50.0, 230.0, 62.0]))
+        })));
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after annotation"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_markup_annotation_rejects_invalid_geometry_rotation_existing_markup_and_in_place() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    for (target, arguments, expected) in [
+        (
+            "outside.pdf",
+            json!({"rectangles":[{"x":580,"y":10,"width":20,"height":10}]}),
+            "within the effective page CropBox",
+        ),
+        (
+            "duplicate.pdf",
+            json!({"rectangles":[
+                {"x":10,"y":10,"width":20,"height":10},
+                {"x":10,"y":10,"width":20,"height":10}
+            ]}),
+            "duplicates an earlier rectangle",
+        ),
+        (
+            "small.pdf",
+            json!({"rectangles":[{"x":10,"y":10,"width":0.01,"height":10}]}),
+            "must be at least 0.1 points",
+        ),
+        (
+            "unknown-field.pdf",
+            json!({"rectangles":[{"x":10,"y":10,"width":20,"height":10,"angle":0}]}),
+            "may only contain x, y, width, and height",
+        ),
+        (
+            "markup.pdf",
+            json!({"markup":"box"}),
+            "markup must be highlight, underline, strikeout, or squiggly",
+        ),
+        (
+            "opacity.pdf",
+            json!({"opacity":0.01}),
+            "opacity must be between 0.05 and 1",
+        ),
+    ] {
+        let mut request_arguments = arguments;
+        request_arguments["path"] = json!("source.pdf");
+        request_arguments["page"] = json!(1);
+        request_arguments["markup"] = request_arguments
+            .get("markup")
+            .cloned()
+            .unwrap_or_else(|| json!("highlight"));
+        request_arguments["rectangles"] = request_arguments
+            .get("rectangles")
+            .cloned()
+            .unwrap_or_else(|| json!([{"x":10,"y":10,"width":20,"height":10}]));
+        request_arguments["target_path"] = json!(target);
+        let error = pdf_edit::add_pdf_markup_annotation(&request_arguments, &state, &request)
+            .expect_err("invalid markup request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        assert!(!root.join(target).exists());
+    }
+
+    let in_place = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"source.pdf",
+            "page":1,
+            "markup":"underline",
+            "rectangles":[{"x":10,"y":10,"width":20,"height":10}],
+            "target_path":"source.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("in-place markup must fail");
+    assert!(in_place.to_string().contains("distinct target_path"));
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after invalid requests"),
+        source_before
+    );
+
+    let rotated = root.join("rotated.pdf");
+    write_blank_pdf(rotated.as_path(), 1);
+    let mut document = Document::load(rotated.as_path()).expect("rotated source");
+    let page_id = document.get_pages()[&1];
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("rotated page")
+        .set("Rotate", 90);
+    document.save(rotated.as_path()).expect("save rotated PDF");
+    let rotation_error = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"rotated.pdf",
+            "page":1,
+            "markup":"strikeout",
+            "rectangles":[{"x":10,"y":10,"width":20,"height":10}],
+            "target_path":"rotated-output.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("rotated markup must fail");
+    assert!(rotation_error
+        .to_string()
+        .contains("requires an unrotated page"));
+    assert!(!root.join("rotated-output.pdf").exists());
+
+    let malformed = root.join("malformed.pdf");
+    write_blank_pdf(malformed.as_path(), 1);
+    let mut document = Document::load(malformed.as_path()).expect("malformed source");
+    let page_id = document.get_pages()[&1];
+    let mut annotations = Vec::new();
+    for index in 0..100 {
+        let contents = format!("Existing note {index}");
+        let annotation_id = document.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 20.into(), 20.into()],
+            "Contents" => lopdf::text_string(contents.as_str()),
+            "P" => page_id,
+        });
+        annotations.push(Object::Reference(annotation_id));
+    }
+    let malformed_annotation_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Highlight",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 20.into()],
+        "QuadPoints" => vec![10.into(), 20.into(), 30.into(), 20.into(), 10.into(), 10.into(), 30.into(), 10.into(), 20.into()],
+        "P" => page_id,
+    });
+    annotations.push(Object::Reference(malformed_annotation_id));
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed page")
+        .set("Annots", annotations);
+    document
+        .save(malformed.as_path())
+        .expect("save malformed PDF");
+    let malformed_error = pdf_edit::add_pdf_markup_annotation(
+        &json!({
+            "path":"malformed.pdf",
+            "page":1,
+            "markup":"squiggly",
+            "rectangles":[{"x":10,"y":10,"width":20,"height":10}],
+            "target_path":"malformed-output.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed existing markup must fail");
+    assert!(malformed_error
+        .to_string()
+        .contains("QuadPoints must contain complete eight-number quadrilaterals"));
+    assert!(!root.join("malformed-output.pdf").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn adds_and_inspects_safe_pdf_link_annotations_without_exposing_urls() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 3);
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let url = "https://example.com/docs?token=secret#section";
+    let url_sha256 = hex::encode(Sha256::digest(url.as_bytes()));
+
+    let external = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "x":10,
+            "y":20,
+            "width":120,
+            "height":18,
+            "destination_type":"https",
+            "url":url,
+            "description":"打开复核说明",
+            "author":"李雷",
+            "target_path":"linked.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add HTTPS Link annotation");
+    assert_eq!(
+        external.get("operation").and_then(Value::as_str),
+        Some("add_link_annotation")
+    );
+    assert_eq!(
+        external.get("annotation_index").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        external.pointer("/destination/destination_type"),
+        Some(&json!("https"))
+    );
+    assert_eq!(
+        external.pointer("/destination/origin"),
+        Some(&json!("https://example.com"))
+    );
+    assert_eq!(
+        external.pointer("/destination/url_sha256"),
+        Some(&json!(url_sha256))
+    );
+    assert!(external.pointer("/destination/url").is_none());
+
+    let linked_path = root.join("linked.pdf");
+    let linked_before = fs::read(linked_path.as_path()).expect("linked PDF bytes");
+    let linked_document = Document::load(linked_path.as_path()).expect("linked PDF");
+    let linked_page_id = linked_document.get_pages()[&1];
+    let link_annotation = linked_document
+        .get_object(linked_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("Link annotations")[0]
+        .as_reference()
+        .and_then(|id| linked_document.get_object(id))
+        .and_then(Object::as_dict)
+        .expect("Link annotation");
+    assert_eq!(
+        link_annotation
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("Link subtype"),
+        b"Link"
+    );
+    assert_eq!(
+        link_annotation
+            .get(b"A")
+            .and_then(Object::as_dict)
+            .and_then(|action| action.get(b"URI"))
+            .map(lopdf::decode_text_string)
+            .expect("Link URI")
+            .expect("decode Link URI"),
+        url
+    );
+
+    let inspected_external = inspect_pdf(
+        &json!({"path":"linked.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect HTTPS Link annotation");
+    let external_summary = inspected_external
+        .get("annotations")
+        .expect("external annotation summary");
+    assert_eq!(
+        external_summary.get("link_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        external_summary
+            .get("safe_link_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        external_summary
+            .get("unsafe_link_count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    let external_preview = external_summary
+        .pointer("/preview/0/link")
+        .expect("external Link preview");
+    assert_eq!(external_preview.get("safe"), Some(&Value::Bool(true)));
+    assert_eq!(
+        external_preview.get("target_type").and_then(Value::as_str),
+        Some("https")
+    );
+    assert_eq!(
+        external_preview.get("origin").and_then(Value::as_str),
+        Some("https://example.com")
+    );
+    assert_eq!(
+        external_preview.get("url_sha256").and_then(Value::as_str),
+        Some(url_sha256.as_str())
+    );
+    assert_eq!(external_preview.get("has_query"), Some(&Value::Bool(true)));
+    assert_eq!(
+        external_preview.get("has_fragment"),
+        Some(&Value::Bool(true))
+    );
+    assert!(external_preview.get("url").is_none());
+    assert!(!external_preview.to_string().contains("secret"));
+
+    let linked_sha256 = sha256_file(linked_path.as_path()).expect("linked hash");
+    let internal = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"linked.pdf",
+            "expected_source_sha256":linked_sha256,
+            "page":1,
+            "x":10,
+            "y":50,
+            "width":100,
+            "height":18,
+            "destination_type":"page",
+            "destination_page":3,
+            "description":"跳转到第三页",
+            "target_path":"linked-internal.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add internal page Link annotation");
+    assert_eq!(
+        internal.get("annotation_index").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        internal.pointer("/destination/destination_page"),
+        Some(&json!(3))
+    );
+    assert_eq!(
+        internal.pointer("/destination/destination_mode"),
+        Some(&json!("Fit"))
+    );
+
+    let inspected_internal = inspect_pdf(
+        &json!({"path":"linked-internal.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect internal Link annotation");
+    let internal_summary = inspected_internal
+        .get("annotations")
+        .expect("internal annotation summary");
+    assert_eq!(
+        internal_summary.get("link_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        internal_summary
+            .get("safe_link_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    let internal_preview = internal_summary
+        .pointer("/preview/1/link")
+        .expect("internal Link preview");
+    assert_eq!(
+        internal_preview.get("target_type").and_then(Value::as_str),
+        Some("page")
+    );
+    assert_eq!(
+        internal_preview
+            .get("destination_page")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after Link annotations"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(linked_path.as_path()).expect("linked source after internal Link"),
+        linked_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_link_annotations_reject_stale_unsafe_malformed_and_overlapping_inputs() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "http.pdf",
+            json!({"url":"http://example.com"}),
+            "must use the https scheme",
+        ),
+        (
+            "credentials.pdf",
+            json!({"url":"https://user:secret@example.com"}),
+            "must not contain embedded credentials",
+        ),
+        (
+            "javascript.pdf",
+            json!({"url":"javascript:alert(1)"}),
+            "must use the https scheme",
+        ),
+        (
+            "missing-url.pdf",
+            json!({"url":Value::Null}),
+            "url is required",
+        ),
+        (
+            "mixed-page.pdf",
+            json!({"destination_type":"page","destination_page":2}),
+            "url is only valid",
+        ),
+        (
+            "mixed-https.pdf",
+            json!({"destination_page":2}),
+            "destination_page is only valid",
+        ),
+        (
+            "missing-page.pdf",
+            json!({"destination_type":"page","url":Value::Null,"destination_page":3}),
+            "destination_page 3 does not exist",
+        ),
+        (
+            "outside.pdf",
+            json!({"x":590,"width":20}),
+            "Rect exceeds the effective page bounds",
+        ),
+        (
+            "unknown.pdf",
+            json!({"destination_type":"launch","url":Value::Null}),
+            "destination_type must be https or page",
+        ),
+        ("source.pdf", json!({}), "distinct target_path"),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "x":10,
+            "y":20,
+            "width":100,
+            "height":18,
+            "destination_type":"https",
+            "url":"https://example.com",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("Link overrides") {
+            if value.is_null() {
+                arguments
+                    .as_object_mut()
+                    .expect("Link arguments")
+                    .remove(key);
+            } else {
+                arguments[key] = value.clone();
+            }
+        }
+        let error = pdf_edit::add_pdf_link_annotation(&arguments, &state, &request)
+            .expect_err("invalid Link request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error:#}"
+        );
+        if target != "source.pdf" {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.pdf"))
+        .expect("source hard-linked target");
+    let hard_link_error = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "x":10,
+            "y":20,
+            "width":100,
+            "height":18,
+            "destination_type":"page",
+            "destination_page":2,
+            "target_path":"source-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked Link target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.as_path(), root.join("linked-output.pdf"))
+            .expect("Link target symlink");
+        let symlink_error = pdf_edit::add_pdf_link_annotation(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "page":1,
+                "x":10,
+                "y":20,
+                "width":100,
+                "height":18,
+                "destination_type":"page",
+                "destination_page":2,
+                "target_path":"linked-output.pdf",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink Link target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    let unsafe_path = root.join("unsafe.pdf");
+    write_blank_pdf(unsafe_path.as_path(), 1);
+    let mut unsafe_document = Document::load(unsafe_path.as_path()).expect("unsafe PDF");
+    let unsafe_page_id = unsafe_document.get_pages()[&1];
+    let javascript_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 10.into(), 110.into(), 28.into()],
+        "A" => dictionary! {
+            "S" => "JavaScript",
+            "JS" => lopdf::text_string("app.alert('secret')"),
+        },
+        "P" => unsafe_page_id,
+    });
+    let both_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 40.into(), 110.into(), 58.into()],
+        "A" => dictionary! {
+            "S" => "URI",
+            "URI" => lopdf::text_string("https://example.com"),
+        },
+        "Dest" => vec![Object::Reference(unsafe_page_id), Object::Name(b"Fit".to_vec())],
+        "P" => unsafe_page_id,
+    });
+    let launch_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 70.into(), 110.into(), 88.into()],
+        "A" => dictionary! {
+            "S" => "Launch",
+            "F" => lopdf::text_string("private-file.exe"),
+        },
+        "P" => unsafe_page_id,
+    });
+    let remote_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 100.into(), 110.into(), 118.into()],
+        "A" => dictionary! {
+            "S" => "GoToR",
+            "F" => lopdf::text_string("remote-secret.pdf"),
+            "D" => lopdf::text_string("destination"),
+        },
+        "P" => unsafe_page_id,
+    });
+    let additional_action_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 130.into(), 110.into(), 148.into()],
+        "Dest" => vec![Object::Reference(unsafe_page_id), Object::Name(b"Fit".to_vec())],
+        "AA" => dictionary! {
+            "E" => dictionary! {
+                "S" => "JavaScript",
+                "JS" => lopdf::text_string("extra-secret"),
+            },
+        },
+        "P" => unsafe_page_id,
+    });
+    let chained_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 160.into(), 110.into(), 178.into()],
+        "A" => dictionary! {
+            "S" => "URI",
+            "URI" => lopdf::text_string("https://example.com"),
+            "Next" => dictionary! {
+                "S" => "JavaScript",
+                "JS" => lopdf::text_string("next-secret"),
+            },
+        },
+        "P" => unsafe_page_id,
+    });
+    let unsupported_destination_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 190.into(), 110.into(), 208.into()],
+        "Dest" => vec![
+            Object::Reference(unsafe_page_id),
+            Object::Name(b"XYZ".to_vec()),
+            Object::Null,
+            Object::Null,
+            Object::Integer(1),
+        ],
+        "P" => unsafe_page_id,
+    });
+    let named_destination_id = unsafe_document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![10.into(), 220.into(), 110.into(), 238.into()],
+        "Dest" => lopdf::text_string("secret-destination"),
+        "P" => unsafe_page_id,
+    });
+    unsafe_document
+        .get_object_mut(unsafe_page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("unsafe page")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(javascript_id),
+                Object::Reference(both_id),
+                Object::Reference(launch_id),
+                Object::Reference(remote_id),
+                Object::Reference(additional_action_id),
+                Object::Reference(chained_id),
+                Object::Reference(unsupported_destination_id),
+                Object::Reference(named_destination_id),
+            ],
+        );
+    unsafe_document
+        .save(unsafe_path.as_path())
+        .expect("save unsafe PDF");
+
+    let inspected = inspect_pdf(
+        &json!({"path":"unsafe.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect unsafe Links without executing actions");
+    assert_eq!(
+        inspected.pointer("/annotations/link_count"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/safe_link_count"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/unsafe_link_count"),
+        Some(&json!(8))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/preview/0/link/target_type"),
+        Some(&json!("unsafe_or_unsupported_action"))
+    );
+    assert_eq!(
+        inspected.pointer("/annotations/preview/1/link/target_type"),
+        Some(&json!("malformed_link_target"))
+    );
+    let inspected_text = inspected.to_string();
+    for secret in [
+        "app.alert",
+        "private-file.exe",
+        "remote-secret.pdf",
+        "extra-secret",
+        "next-secret",
+        "secret-destination",
+    ] {
+        assert!(!inspected_text.contains(secret));
+    }
+
+    let unsafe_error = pdf_edit::add_pdf_link_annotation(
+        &json!({
+            "path":"unsafe.pdf",
+            "expected_source_sha256":sha256_file(unsafe_path.as_path()).expect("unsafe hash"),
+            "page":1,
+            "x":10,
+            "y":70,
+            "width":100,
+            "height":18,
+            "destination_type":"page",
+            "destination_page":1,
+            "target_path":"unsafe-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("source with unsafe Links must fail closed");
+    assert!(unsafe_error
+        .to_string()
+        .contains("unsafe or unsupported existing Link actions"));
+    assert!(!root.join("unsafe-output.pdf").exists());
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after Link failures"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn deletes_exact_leaf_link_direct_and_attachment_pdf_annotations_without_modifying_sources() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let root_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("root"),
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("reply"),
+        "IRT" => root_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let unsafe_link_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![40.into(), 10.into(), 140.into(), 30.into()],
+        "A" => dictionary! {
+            "S" => "JavaScript",
+            "JS" => lopdf::text_string("never-return-this"),
+        },
+        "P" => page_id,
+    });
+    let direct_text = Object::Dictionary(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![150.into(), 10.into(), 174.into(), 34.into()],
+        "Contents" => lopdf::text_string("direct"),
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(reply_id),
+                Object::Reference(unsafe_link_id),
+                direct_text,
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    let deleted_reply = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"reply",
+            "target_path":"reply-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete exact leaf reply");
+    assert_eq!(deleted_reply.get("deleted"), Some(&Value::Bool(true)));
+    assert_eq!(
+        deleted_reply.get("remaining_annotations_total"),
+        Some(&json!(3))
+    );
+    assert_eq!(
+        deleted_reply.get("deleted_indirect_object"),
+        Some(&Value::Bool(true))
+    );
+    let reply_deleted_path = root.join("reply-deleted.pdf");
+    let reply_deleted_before = fs::read(reply_deleted_path.as_path()).expect("reply-deleted bytes");
+    let reply_deleted_inspection = inspect_pdf(
+        &json!({"path":"reply-deleted.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect reply-deleted PDF");
+    assert_eq!(
+        reply_deleted_inspection.pointer("/annotations/reply_count"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        reply_deleted_inspection.pointer("/annotations/unsafe_link_count"),
+        Some(&json!(1))
+    );
+    assert!(!reply_deleted_inspection
+        .to_string()
+        .contains("never-return-this"));
+
+    let reply_deleted_sha256 =
+        sha256_file(reply_deleted_path.as_path()).expect("reply-deleted hash");
+    let deleted_link = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"reply-deleted.pdf",
+            "expected_source_sha256":reply_deleted_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Link",
+            "expected_relation_type":"root",
+            "target_path":"link-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete unsafe Link without executing its action");
+    assert_eq!(deleted_link.get("subtype"), Some(&json!("Link")));
+    let link_deleted_path = root.join("link-deleted.pdf");
+    let link_deleted_before = fs::read(link_deleted_path.as_path()).expect("link-deleted bytes");
+    let link_deleted_inspection = inspect_pdf(
+        &json!({"path":"link-deleted.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect link-deleted PDF");
+    assert_eq!(
+        link_deleted_inspection.pointer("/annotations/link_count"),
+        Some(&json!(0))
+    );
+
+    let link_deleted_sha256 = sha256_file(link_deleted_path.as_path()).expect("link-deleted hash");
+    let deleted_direct = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"link-deleted.pdf",
+            "expected_source_sha256":link_deleted_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "target_path":"direct-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete exact direct Text annotation");
+    assert_eq!(
+        deleted_direct.get("deleted_indirect_object"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        deleted_direct.get("remaining_annotations_on_page"),
+        Some(&json!(1))
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after deletions"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(reply_deleted_path.as_path()).expect("reply-deleted after child edit"),
+        reply_deleted_before
+    );
+    assert_eq!(
+        fs::read(link_deleted_path.as_path()).expect("link-deleted after child edit"),
+        link_deleted_before
+    );
+
+    let attachment_source = root.join("attachment-source.pdf");
+    write_blank_pdf(attachment_source.as_path(), 1);
+    fs::write(root.join("note.txt"), b"attachment payload").expect("attachment file");
+    let attachment_source_sha256 =
+        sha256_file(attachment_source.as_path()).expect("attachment source hash");
+    pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"attachment-source.pdf",
+            "expected_source_sha256":attachment_source_sha256,
+            "attachment_path":"note.txt",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":"attached.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add attachment annotation for deletion");
+    let attached_path = root.join("attached.pdf");
+    let attached_before = fs::read(attached_path.as_path()).expect("attached bytes");
+    let attached_sha256 = sha256_file(attached_path.as_path()).expect("attached hash");
+    pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"FileAttachment",
+            "expected_relation_type":"root",
+            "target_path":"attachment-deleted.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("delete FileAttachment annotation and unreachable object chain");
+    assert_eq!(
+        fs::read(attached_path.as_path()).expect("attached source after deletion"),
+        attached_before
+    );
+    let attachment_deleted = inspect_pdf(
+        &json!({"path":"attachment-deleted.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect attachment-deleted PDF");
+    assert_eq!(
+        attachment_deleted.pointer("/annotations/count"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        attachment_deleted.pointer("/annotations/attachment_count"),
+        Some(&json!(0))
+    );
+    let attachment_deleted_document =
+        Document::load(root.join("attachment-deleted.pdf")).expect("attachment-deleted PDF");
+    let has_attachment_objects = attachment_deleted_document.objects.values().any(|object| {
+        let dictionary = match object {
+            Object::Dictionary(dictionary) => Some(dictionary),
+            Object::Stream(stream) => Some(&stream.dict),
+            _ => None,
+        };
+        dictionary.is_some_and(|dictionary| {
+            dictionary
+                .get(b"Type")
+                .and_then(Object::as_name)
+                .is_ok_and(|value| value == b"Filespec" || value == b"EmbeddedFile")
+        })
+    });
+    assert!(!has_attachment_objects);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_annotation_deletion_rejects_stale_mismatched_referenced_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let root_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("root"),
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("reply"),
+        "IRT" => root_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let widget_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Rect" => vec![40.into(), 10.into(), 80.into(), 30.into()],
+        "P" => page_id,
+    });
+    let structured_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![90.into(), 10.into(), 114.into(), 34.into()],
+        "StructParent" => 1,
+        "P" => page_id,
+    });
+    let popup_parent_id = prepared.new_object_id();
+    let popup_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Popup",
+        "Rect" => vec![120.into(), 10.into(), 220.into(), 80.into()],
+        "Parent" => popup_parent_id,
+        "P" => page_id,
+    });
+    prepared.objects.insert(
+        popup_parent_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![230.into(), 10.into(), 254.into(), 34.into()],
+            "Popup" => popup_id,
+            "P" => page_id,
+        }),
+    );
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(reply_id),
+                Object::Reference(widget_id),
+                Object::Reference(structured_id),
+                Object::Reference(popup_parent_id),
+                Object::Reference(popup_id),
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "missing.pdf",
+            json!({"annotation_index":7}),
+            "does not exist",
+        ),
+        (
+            "subtype.pdf",
+            json!({"annotation_index":2,"expected_subtype":"Link","expected_relation_type":"reply"}),
+            "expected_subtype does not match",
+        ),
+        (
+            "relation.pdf",
+            json!({"annotation_index":2,"expected_relation_type":"root"}),
+            "expected_relation_type does not match",
+        ),
+        (
+            "widget.pdf",
+            json!({"annotation_index":3,"expected_subtype":"Widget"}),
+            "not eligible for safe annotation deletion",
+        ),
+        (
+            "structured.pdf",
+            json!({"annotation_index":4}),
+            "tagged-PDF structure tree",
+        ),
+        (
+            "popup.pdf",
+            json!({"annotation_index":5}),
+            "Popup or Parent relationship",
+        ),
+        (
+            "referenced.pdf",
+            json!({"annotation_index":1}),
+            "is still referenced",
+        ),
+        (
+            "source.pdf",
+            json!({"annotation_index":2,"expected_relation_type":"reply"}),
+            "distinct target_path",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("deletion overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::delete_pdf_annotation(&arguments, &state, &request)
+            .expect_err("unsafe annotation deletion must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error:#}"
+        );
+        if target != "source.pdf" {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.pdf"))
+        .expect("hard-linked deletion target");
+    let hard_link_error = pdf_edit::delete_pdf_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"reply",
+            "target_path":"source-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked deletion target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.as_path(), root.join("linked-output.pdf"))
+            .expect("deletion target symlink");
+        let symlink_error = pdf_edit::delete_pdf_annotation(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "page":1,
+                "annotation_index":2,
+                "expected_subtype":"Text",
+                "expected_relation_type":"reply",
+                "target_path":"linked-output.pdf",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink deletion target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failed deletions"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn updates_exact_markup_reply_and_direct_pdf_annotation_text_without_modifying_sources() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let highlight_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Highlight",
+        "Rect" => vec![10.into(), 40.into(), 180.into(), 56.into()],
+        "QuadPoints" => vec![
+            10.into(), 56.into(), 180.into(), 56.into(),
+            10.into(), 40.into(), 180.into(), 40.into(),
+        ],
+        "Contents" => lopdf::text_string("old highlight"),
+        "T" => lopdf::text_string("old reviewer"),
+        "C" => vec![1.into(), 1.into(), 0.into()],
+        "CA" => 0.4,
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 40.into(), 34.into(), 64.into()],
+        "Contents" => lopdf::text_string("old reply"),
+        "T" => lopdf::text_string("reply reviewer"),
+        "IRT" => highlight_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let direct_text = Object::Dictionary(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![200.into(), 40.into(), 224.into(), 64.into()],
+        "Contents" => lopdf::text_string("direct text"),
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(highlight_id),
+                Object::Reference(reply_id),
+                direct_text,
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    let updated_markup = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Highlight",
+            "expected_relation_type":"root",
+            "text":"更新后的重点批注",
+            "author":"审阅人乙",
+            "target_path":"markup-updated.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("update exact markup annotation text");
+    assert_eq!(updated_markup.get("updated"), Some(&Value::Bool(true)));
+    assert_eq!(
+        updated_markup.get("updated_indirect_object"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(updated_markup.get("annotation_count"), Some(&json!(3)));
+    assert_eq!(
+        updated_markup.get("author").and_then(Value::as_str),
+        Some("审阅人乙")
+    );
+    assert!(!updated_markup.to_string().contains("更新后的重点批注"));
+    let markup_path = root.join("markup-updated.pdf");
+    let markup_before = fs::read(markup_path.as_path()).expect("markup output bytes");
+    let inspected_markup = inspect_pdf(
+        &json!({"path":"markup-updated.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect updated markup annotation");
+    assert_eq!(
+        inspected_markup.pointer("/annotations/preview/0/contents"),
+        Some(&json!("更新后的重点批注"))
+    );
+    assert_eq!(
+        inspected_markup.pointer("/annotations/preview/0/author"),
+        Some(&json!("审阅人乙"))
+    );
+
+    let markup_sha256 = sha256_file(markup_path.as_path()).expect("markup output hash");
+    let updated_reply = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"markup-updated.pdf",
+            "expected_source_sha256":markup_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_subtype":"Text",
+            "expected_relation_type":"reply",
+            "text":"更新后的回复\n第二行",
+            "remove_fields":["author"],
+            "target_path":"reply-updated.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("update exact reply annotation text");
+    assert_eq!(updated_reply.get("relation_type"), Some(&json!("reply")));
+    assert_eq!(
+        updated_reply.get("removed_fields"),
+        Some(&json!(["author"]))
+    );
+    assert!(updated_reply.get("author").is_some_and(Value::is_null));
+    let reply_path = root.join("reply-updated.pdf");
+    let reply_before = fs::read(reply_path.as_path()).expect("reply output bytes");
+    let inspected_reply = inspect_pdf(
+        &json!({"path":"reply-updated.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect updated reply annotation");
+    assert_eq!(
+        inspected_reply.pointer("/annotations/preview/1/contents"),
+        Some(&json!("更新后的回复\n第二行"))
+    );
+    assert!(inspected_reply
+        .pointer("/annotations/preview/1/author")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        inspected_reply.pointer("/annotations/preview/1/relation_type"),
+        Some(&json!("reply"))
+    );
+
+    let reply_sha256 = sha256_file(reply_path.as_path()).expect("reply output hash");
+    let updated_direct = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"reply-updated.pdf",
+            "expected_source_sha256":reply_sha256,
+            "page":1,
+            "annotation_index":3,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "author":"直接批注作者",
+            "remove_fields":["text"],
+            "target_path":"direct-updated.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("update exact direct annotation text");
+    assert_eq!(
+        updated_direct.get("updated_indirect_object"),
+        Some(&Value::Bool(false))
+    );
+    assert!(updated_direct
+        .get("text_characters")
+        .is_some_and(Value::is_null));
+    let inspected_direct = inspect_pdf(
+        &json!({"path":"direct-updated.pdf","annotation_page":1}),
+        &state,
+        &request,
+    )
+    .expect("inspect updated direct annotation");
+    assert!(inspected_direct
+        .pointer("/annotations/preview/2/contents")
+        .is_some_and(Value::is_null));
+    assert_eq!(
+        inspected_direct.pointer("/annotations/preview/2/author"),
+        Some(&json!("直接批注作者"))
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after annotation updates"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(markup_path.as_path()).expect("markup output after reply update"),
+        markup_before
+    );
+    assert_eq!(
+        fs::read(reply_path.as_path()).expect("reply output after direct update"),
+        reply_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_annotation_text_update_rejects_stale_mismatched_noop_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&1];
+    let root_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("root"),
+        "P" => page_id,
+    });
+    let reply_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("reply"),
+        "IRT" => root_id,
+        "RT" => "R",
+        "P" => page_id,
+    });
+    let link_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![40.into(), 10.into(), 140.into(), 30.into()],
+        "Dest" => vec![Object::Reference(page_id), Object::Name(b"Fit".to_vec())],
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(reply_id),
+                Object::Reference(link_id),
+            ],
+        );
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64),"text":"changed"}),
+            "expected_source_sha256",
+        ),
+        (
+            "missing.pdf",
+            json!({"annotation_index":4,"text":"changed"}),
+            "does not exist",
+        ),
+        (
+            "subtype.pdf",
+            json!({"expected_subtype":"Highlight","text":"changed"}),
+            "expected_subtype does not match",
+        ),
+        (
+            "relation.pdf",
+            json!({"annotation_index":2,"expected_relation_type":"root","text":"changed"}),
+            "expected_relation_type does not match",
+        ),
+        (
+            "link.pdf",
+            json!({"annotation_index":3,"expected_subtype":"Link","text":"changed"}),
+            "not eligible for safe annotation text updates",
+        ),
+        ("missing-update.pdf", json!({}), "requires text, author"),
+        (
+            "overlap.pdf",
+            json!({"text":"changed","remove_fields":["text"]}),
+            "cannot be both updated and removed",
+        ),
+        ("noop.pdf", json!({"text":"root"}), "would not change"),
+        (
+            "missing-remove.pdf",
+            json!({"remove_fields":["author"]}),
+            "would not change",
+        ),
+        ("wrong-type.pdf", json!({"text":7}), "text must be a string"),
+        (
+            "control.pdf",
+            json!({"text":"bad\u{0000}text"}),
+            "unsupported control character",
+        ),
+        (
+            "duplicate-remove.pdf",
+            json!({"remove_fields":["text","text"]}),
+            "must be unique",
+        ),
+        (
+            "unknown-remove.pdf",
+            json!({"remove_fields":["contents"]}),
+            "must be text or author",
+        ),
+        (
+            "source.pdf",
+            json!({"text":"changed"}),
+            "distinct target_path",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("update overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::update_pdf_annotation_text(&arguments, &state, &request)
+            .expect_err("unsafe annotation text update must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error:#}"
+        );
+        if target != "source.pdf" {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.pdf"))
+        .expect("hard-linked annotation update target");
+    let hard_link_error = pdf_edit::update_pdf_annotation_text(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_subtype":"Text",
+            "expected_relation_type":"root",
+            "text":"changed",
+            "target_path":"source-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked annotation update target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.as_path(), root.join("linked-output.pdf"))
+            .expect("annotation update target symlink");
+        let symlink_error = pdf_edit::update_pdf_annotation_text(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "page":1,
+                "annotation_index":1,
+                "expected_subtype":"Text",
+                "expected_relation_type":"root",
+                "text":"changed",
+                "target_path":"linked-output.pdf",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink annotation update target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failed annotation updates"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn adds_and_inspects_unicode_pdf_annotation_reply_without_modifying_source() {
+    let (root, state, request) = test_context();
+    let source = root.join("artifacts/source.pdf");
+    write_blank_pdf(source.as_path(), 3);
+    let mut prepared = Document::load(source.as_path()).expect("source PDF");
+    let page_id = prepared.get_pages()[&2];
+    let parent_id = prepared.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Highlight",
+        "Rect" => vec![30.into(), 50.into(), 230.into(), 62.into()],
+        "QuadPoints" => vec![
+            30.into(), 62.into(), 230.into(), 62.into(),
+            30.into(), 50.into(), 230.into(), 50.into(),
+        ],
+        "Contents" => lopdf::text_string("原始重点批注"),
+        "T" => lopdf::text_string("审阅人甲"),
+        "C" => vec![1.into(), 1.into(), 0.into()],
+        "CA" => 0.4,
+        "P" => page_id,
+    });
+    prepared
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(parent_id)]);
+    prepared.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+
+    let inspected_source = inspect_pdf(
+        &json!({"path":"artifacts/source.pdf","annotation_page":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect reply target");
+    let source_sha256 = inspected_source
+        .get("sha256")
+        .and_then(Value::as_str)
+        .expect("source SHA-256")
+        .to_string();
+    assert_eq!(
+        inspected_source.pointer("/annotations/preview_page"),
+        Some(&json!(2))
+    );
+    assert_eq!(
+        inspected_source.pointer("/annotations/preview/0/annotation_index"),
+        Some(&json!(1))
+    );
+
+    let added = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"artifacts/source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":2,
+            "annotation_index":1,
+            "text":"同意，金额已经复核。\n请保留这条说明。",
+            "author":"李雷",
+            "target_path":"artifacts/replied.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("add PDF annotation reply");
+    assert_eq!(
+        added.get("operation").and_then(Value::as_str),
+        Some("add_annotation_reply")
+    );
+    assert_eq!(
+        added.get("parent_annotation_index").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        added.get("reply_annotation_index").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let output = Document::load(root.join("artifacts/replied.pdf")).expect("replied PDF");
+    let output_page_id = output.get_pages()[&2];
+    let annotations = output
+        .get_object(output_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("reply annotation array");
+    assert_eq!(annotations.len(), 2);
+    let output_parent_id = annotations[0]
+        .as_reference()
+        .expect("parent annotation reference");
+    let reply_id = annotations[1]
+        .as_reference()
+        .expect("reply annotation reference");
+    let parent = output
+        .get_object(output_parent_id)
+        .and_then(Object::as_dict)
+        .expect("parent annotation");
+    let reply = output
+        .get_object(reply_id)
+        .and_then(Object::as_dict)
+        .expect("reply annotation");
+    assert_eq!(
+        reply
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("reply subtype"),
+        b"Text"
+    );
+    assert_eq!(
+        reply
+            .get(b"IRT")
+            .and_then(Object::as_reference)
+            .expect("reply IRT"),
+        output_parent_id
+    );
+    assert_eq!(
+        reply
+            .get(b"RT")
+            .and_then(Object::as_name)
+            .expect("reply relation type"),
+        b"R"
+    );
+    assert_eq!(
+        reply
+            .get(b"P")
+            .and_then(Object::as_reference)
+            .expect("reply page"),
+        output_page_id
+    );
+    assert_eq!(
+        reply
+            .get(b"F")
+            .and_then(Object::as_i64)
+            .expect("reply flags"),
+        4
+    );
+    assert_eq!(
+        reply
+            .get(b"Name")
+            .and_then(Object::as_name)
+            .expect("reply icon"),
+        b"Comment"
+    );
+    assert!(!reply
+        .get(b"Open")
+        .and_then(Object::as_bool)
+        .expect("reply open state"));
+    assert_eq!(
+        reply.get(b"Rect").expect("reply Rect"),
+        parent.get(b"Rect").expect("parent Rect")
+    );
+    assert_eq!(
+        reply
+            .get(b"Contents")
+            .map(lopdf::decode_text_string)
+            .expect("reply contents")
+            .expect("decode reply contents"),
+        "同意，金额已经复核。\n请保留这条说明。"
+    );
+    assert_eq!(
+        reply
+            .get(b"T")
+            .map(lopdf::decode_text_string)
+            .expect("reply author")
+            .expect("decode reply author"),
+        "李雷"
+    );
+
+    let inspected_output = inspect_pdf(
+        &json!({"path":"artifacts/replied.pdf","annotation_page":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect PDF reply");
+    let summary = inspected_output
+        .get("annotations")
+        .expect("annotation summary");
+    assert_eq!(summary.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(summary.get("text_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("markup_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("reply_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(summary.get("group_count").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        summary.get("preview_candidates").and_then(Value::as_u64),
+        Some(2)
+    );
+    let reply_preview = summary
+        .get("preview")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("annotation_index").and_then(Value::as_u64) == Some(2))
+        })
+        .expect("reply preview");
+    assert_eq!(reply_preview.get("is_reply"), Some(&Value::Bool(true)));
+    assert_eq!(
+        reply_preview
+            .get("reply_to_annotation_index")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        reply_preview.get("relation_type").and_then(Value::as_str),
+        Some("reply")
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after reply"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_annotation_reply_rejects_stale_ambiguous_unsupported_and_malformed_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let mut document = Document::load(source.as_path()).expect("source PDF");
+    let page_id = document.get_pages()[&1];
+    let annotation_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "Contents" => lopdf::text_string("Root note"),
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(annotation_id)]);
+    document.save(source.as_path()).expect("save source PDF");
+    let source_before = fs::read(source.as_path()).expect("source PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "missing-page.pdf",
+            json!({"page":3}),
+            "page 3 does not exist",
+        ),
+        (
+            "missing-index.pdf",
+            json!({"annotation_index":2}),
+            "annotation_index 2 does not exist",
+        ),
+        (
+            "uninspected-index.pdf",
+            json!({"annotation_index":101}),
+            "annotation_index must be an integer between 1 and 100",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("reply overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::add_pdf_annotation_reply(&arguments, &state, &request)
+            .expect_err("invalid reply target must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        assert!(!root.join(target).exists());
+    }
+
+    let in_place = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"source.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("in-place reply must fail");
+    assert!(in_place.to_string().contains("distinct target_path"));
+
+    let direct = root.join("direct.pdf");
+    write_blank_pdf(direct.as_path(), 1);
+    let mut document = Document::load(direct.as_path()).expect("direct PDF");
+    let page_id = document.get_pages()[&1];
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("direct page")
+        .set(
+            "Annots",
+            vec![Object::Dictionary(dictionary! {
+                "Type" => "Annot",
+                "Subtype" => "Text",
+                "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+                "Contents" => lopdf::text_string("Direct note"),
+                "P" => page_id,
+            })],
+        );
+    document.save(direct.as_path()).expect("save direct PDF");
+    let direct_hash = sha256_file(direct.as_path()).expect("direct hash");
+    let direct_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"direct.pdf",
+            "expected_source_sha256":direct_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"direct-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("direct annotation target must fail");
+    assert!(direct_error.to_string().contains("is direct"));
+
+    let widget = root.join("widget.pdf");
+    write_blank_pdf(widget.as_path(), 1);
+    let mut document = Document::load(widget.as_path()).expect("widget PDF");
+    let page_id = document.get_pages()[&1];
+    let widget_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("widget page")
+        .set("Annots", vec![Object::Reference(widget_id)]);
+    document.save(widget.as_path()).expect("save widget PDF");
+    let widget_hash = sha256_file(widget.as_path()).expect("widget hash");
+    let widget_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"widget.pdf",
+            "expected_source_sha256":widget_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"widget-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("Widget target must fail");
+    assert!(widget_error.to_string().contains("subtype /Widget"));
+
+    let reply_target = root.join("reply-target.pdf");
+    write_blank_pdf(reply_target.as_path(), 1);
+    let mut document = Document::load(reply_target.as_path()).expect("reply target PDF");
+    let page_id = document.get_pages()[&1];
+    let root_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+    });
+    let existing_reply_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+        "IRT" => root_id,
+        "RT" => "R",
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("reply target page")
+        .set(
+            "Annots",
+            vec![
+                Object::Reference(root_id),
+                Object::Reference(existing_reply_id),
+            ],
+        );
+    document
+        .save(reply_target.as_path())
+        .expect("save reply target PDF");
+    let reply_target_hash = sha256_file(reply_target.as_path()).expect("reply target hash");
+    let nested_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"reply-target.pdf",
+            "expected_source_sha256":reply_target_hash,
+            "page":1,
+            "annotation_index":2,
+            "text":"Nested reply",
+            "target_path":"nested-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("reply-to-reply must fail");
+    assert!(nested_error.to_string().contains("replies-to-replies"));
+
+    let malformed_rect = root.join("malformed-rect.pdf");
+    write_blank_pdf(malformed_rect.as_path(), 1);
+    let mut document = Document::load(malformed_rect.as_path()).expect("malformed Rect PDF");
+    let page_id = document.get_pages()[&1];
+    let malformed_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![30.into(), 30.into(), 10.into(), 10.into()],
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed Rect page")
+        .set("Annots", vec![Object::Reference(malformed_id)]);
+    document
+        .save(malformed_rect.as_path())
+        .expect("save malformed Rect PDF");
+    let malformed_hash = sha256_file(malformed_rect.as_path()).expect("malformed Rect hash");
+    let malformed_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"malformed-rect.pdf",
+            "expected_source_sha256":malformed_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"malformed-rect-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed parent Rect must fail");
+    assert!(malformed_error
+        .to_string()
+        .contains("Rect must have positive width and height"));
+
+    let malformed_irt = root.join("malformed-irt.pdf");
+    write_blank_pdf(malformed_irt.as_path(), 1);
+    let mut document = Document::load(malformed_irt.as_path()).expect("malformed IRT PDF");
+    let page_id = document.get_pages()[&1];
+    let malformed_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+        "IRT" => 7,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed IRT page")
+        .set("Annots", vec![Object::Reference(malformed_id)]);
+    document
+        .save(malformed_irt.as_path())
+        .expect("save malformed IRT PDF");
+    let malformed_hash = sha256_file(malformed_irt.as_path()).expect("malformed IRT hash");
+    let malformed_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"malformed-irt.pdf",
+            "expected_source_sha256":malformed_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"malformed-irt-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed IRT must fail");
+    assert!(malformed_error
+        .to_string()
+        .contains("IRT must be an indirect reference"));
+
+    let orphan_rt = root.join("orphan-rt.pdf");
+    write_blank_pdf(orphan_rt.as_path(), 1);
+    let mut document = Document::load(orphan_rt.as_path()).expect("orphan RT PDF");
+    let page_id = document.get_pages()[&1];
+    let orphan_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_id,
+        "RT" => "R",
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("orphan RT page")
+        .set("Annots", vec![Object::Reference(orphan_id)]);
+    document
+        .save(orphan_rt.as_path())
+        .expect("save orphan RT PDF");
+    let orphan_hash = sha256_file(orphan_rt.as_path()).expect("orphan RT hash");
+    let orphan_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"orphan-rt.pdf",
+            "expected_source_sha256":orphan_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"orphan-rt-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("RT without IRT must fail");
+    assert!(orphan_error.to_string().contains("RT requires IRT"));
+
+    let cyclic = root.join("cyclic.pdf");
+    write_blank_pdf(cyclic.as_path(), 1);
+    let mut document = Document::load(cyclic.as_path()).expect("cyclic PDF");
+    let page_id = document.get_pages()[&1];
+    let first_id = document.new_object_id();
+    let second_id = document.new_object_id();
+    document.objects.insert(
+        first_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "P" => page_id,
+            "IRT" => second_id,
+        }),
+    );
+    document.objects.insert(
+        second_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![40.into(), 10.into(), 60.into(), 30.into()],
+            "P" => page_id,
+            "IRT" => first_id,
+        }),
+    );
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("cyclic page")
+        .set(
+            "Annots",
+            vec![Object::Reference(first_id), Object::Reference(second_id)],
+        );
+    document.save(cyclic.as_path()).expect("save cyclic PDF");
+    let cyclic_hash = sha256_file(cyclic.as_path()).expect("cyclic hash");
+    let cyclic_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"cyclic.pdf",
+            "expected_source_sha256":cyclic_hash,
+            "page":1,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"cyclic-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("cyclic IRT must fail");
+    assert!(cyclic_error.to_string().contains("contain a cycle"));
+
+    let cross_page = root.join("cross-page.pdf");
+    write_blank_pdf(cross_page.as_path(), 2);
+    let mut document = Document::load(cross_page.as_path()).expect("cross-page PDF");
+    let page_one_id = document.get_pages()[&1];
+    let page_two_id = document.get_pages()[&2];
+    let root_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_one_id,
+    });
+    let reply_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "P" => page_two_id,
+        "IRT" => root_id,
+    });
+    document
+        .get_object_mut(page_one_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page one")
+        .set("Annots", vec![Object::Reference(root_id)]);
+    document
+        .get_object_mut(page_two_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page two")
+        .set("Annots", vec![Object::Reference(reply_id)]);
+    document
+        .save(cross_page.as_path())
+        .expect("save cross-page PDF");
+    let cross_page_hash = sha256_file(cross_page.as_path()).expect("cross-page hash");
+    let cross_page_error = pdf_edit::add_pdf_annotation_reply(
+        &json!({
+            "path":"cross-page.pdf",
+            "expected_source_sha256":cross_page_hash,
+            "page":2,
+            "annotation_index":1,
+            "text":"Reply",
+            "target_path":"cross-page-output.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("cross-page IRT must fail");
+    assert!(cross_page_error.to_string().contains("same page"));
+
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failures"),
+        source_before
+    );
+    for output in [
+        "direct-output.pdf",
+        "widget-output.pdf",
+        "nested-output.pdf",
+        "malformed-rect-output.pdf",
+        "malformed-irt-output.pdf",
+        "orphan-rt-output.pdf",
+        "cyclic-output.pdf",
+        "cross-page-output.pdf",
+    ] {
+        assert!(!root.join(output).exists(), "unexpected output {output}");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn adds_standard_pdf_file_attachment_annotation_and_inspects_bounded_metadata() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 2);
+    let mut document = Document::load(source.as_path()).expect("source PDF");
+    let page_id = document.get_pages()[&2];
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set(
+            "CropBox",
+            vec![20.into(), 30.into(), 420.into(), 630.into()],
+        );
+    let existing_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![40.into(), 50.into(), 60.into(), 70.into()],
+        "Contents" => lopdf::text_string("Existing note"),
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(existing_id)]);
+    document.save(source.as_path()).expect("save source PDF");
+
+    fs::create_dir_all(root.join("assets")).expect("attachment directory");
+    let attachment = root.join("assets/审计说明.txt");
+    let attachment_bytes = "付款记录已复核。\nReference: INV-2026-0727\n".as_bytes();
+    fs::write(attachment.as_path(), attachment_bytes).expect("attachment");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let attachment_before = fs::read(attachment.as_path()).expect("attachment bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let attachment_sha256 = sha256_file(attachment.as_path()).expect("attachment hash");
+
+    let added = pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"assets/审计说明.txt",
+            "page":2,
+            "x":10,
+            "y":20,
+            "icon_size":24,
+            "description":"审计附件\n请保留原始文件。",
+            "author":"李雷",
+            "icon":"paperclip",
+            "target_path":"artifacts/attached.pdf"
+        }),
+        &state,
+        &request,
+    )
+    .expect("add PDF file attachment annotation");
+    assert_eq!(
+        added.get("operation").and_then(Value::as_str),
+        Some("add_file_attachment_annotation")
+    );
+    assert_eq!(added.get("page").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        added.get("annotation_index").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(added.get("rect"), Some(&json!([10.0, 20.0, 34.0, 44.0])));
+    assert_eq!(
+        added.get("absolute_rect"),
+        Some(&json!([30.0, 50.0, 54.0, 74.0]))
+    );
+    assert_eq!(
+        added.get("attachment_filename").and_then(Value::as_str),
+        Some("审计说明.txt")
+    );
+    assert_eq!(
+        added.get("portable_filename").and_then(Value::as_str),
+        Some("attachment.txt")
+    );
+    assert_eq!(
+        added.get("attachment_sha256").and_then(Value::as_str),
+        Some(attachment_sha256.as_str())
+    );
+
+    let output_path = root.join("artifacts/attached.pdf");
+    let output = Document::load(output_path.as_path()).expect("attached PDF");
+    let output_page_id = output.get_pages()[&2];
+    let annotations = output
+        .get_object(output_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("output annotations");
+    assert_eq!(annotations.len(), 2);
+    let existing = output
+        .get_object(annotations[0].as_reference().expect("existing reference"))
+        .and_then(Object::as_dict)
+        .expect("existing annotation");
+    assert_eq!(
+        existing
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("existing subtype"),
+        b"Text"
+    );
+    let annotation = output
+        .get_object(annotations[1].as_reference().expect("attachment reference"))
+        .and_then(Object::as_dict)
+        .expect("attachment annotation");
+    assert_eq!(
+        annotation
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("attachment subtype"),
+        b"FileAttachment"
+    );
+    assert_eq!(
+        annotation
+            .get(b"Name")
+            .and_then(Object::as_name)
+            .expect("attachment icon"),
+        b"Paperclip"
+    );
+    assert_eq!(
+        annotation
+            .get(b"P")
+            .and_then(Object::as_reference)
+            .expect("attachment page"),
+        output_page_id
+    );
+    let rect = annotation
+        .get(b"Rect")
+        .and_then(Object::as_array)
+        .expect("attachment Rect")
+        .iter()
+        .map(|value| value.as_float().expect("Rect number"))
+        .collect::<Vec<_>>();
+    assert_eq!(rect, vec![30.0, 50.0, 54.0, 74.0]);
+    let filespec = output
+        .get_object(
+            annotation
+                .get(b"FS")
+                .and_then(Object::as_reference)
+                .expect("Filespec reference"),
+        )
+        .and_then(Object::as_dict)
+        .expect("Filespec dictionary");
+    assert_eq!(
+        filespec
+            .get(b"F")
+            .map(lopdf::decode_text_string)
+            .expect("portable filename")
+            .expect("decode portable filename"),
+        "attachment.txt"
+    );
+    assert_eq!(
+        filespec
+            .get(b"UF")
+            .map(lopdf::decode_text_string)
+            .expect("Unicode filename")
+            .expect("decode Unicode filename"),
+        "审计说明.txt"
+    );
+    let embedded_files = filespec
+        .get(b"EF")
+        .and_then(Object::as_dict)
+        .expect("embedded file dictionary");
+    let embedded_file_id = embedded_files
+        .get(b"F")
+        .and_then(Object::as_reference)
+        .expect("embedded file reference");
+    assert_eq!(
+        embedded_files
+            .get(b"UF")
+            .and_then(Object::as_reference)
+            .expect("Unicode embedded file reference"),
+        embedded_file_id
+    );
+    let embedded_file = output
+        .get_object(embedded_file_id)
+        .and_then(Object::as_stream)
+        .expect("EmbeddedFile stream");
+    assert_eq!(
+        embedded_file
+            .dict
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .expect("EmbeddedFile MIME type"),
+        b"text/plain"
+    );
+    assert_eq!(
+        embedded_file
+            .decompressed_content_with_limit(1024)
+            .expect("attachment content"),
+        attachment_bytes
+    );
+
+    let inspected = inspect_pdf(
+        &json!({"path":"artifacts/attached.pdf","annotation_page":2}),
+        &state,
+        &request,
+    )
+    .expect("inspect attached PDF");
+    let summary = inspected.get("annotations").expect("annotation summary");
+    assert_eq!(summary.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(summary.get("text_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        summary.get("attachment_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        summary.get("attachment_bytes").and_then(Value::as_u64),
+        Some(attachment_bytes.len() as u64)
+    );
+    let attachment_preview = summary
+        .get("preview")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("annotation_index").and_then(Value::as_u64) == Some(2))
+        })
+        .and_then(|item| item.get("attachment"))
+        .expect("attachment preview");
+    assert_eq!(
+        attachment_preview.get("filename").and_then(Value::as_str),
+        Some("审计说明.txt")
+    );
+    assert_eq!(
+        attachment_preview.get("mime_type").and_then(Value::as_str),
+        Some("text/plain")
+    );
+    assert_eq!(
+        attachment_preview.get("sha256").and_then(Value::as_str),
+        Some(attachment_sha256.as_str())
+    );
+    assert!(attachment_preview.get("content").is_none());
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after attachment"),
+        source_before
+    );
+    assert_eq!(
+        fs::read(attachment.as_path()).expect("attachment after embedding"),
+        attachment_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_file_attachment_rejects_stale_unsafe_malformed_and_overlapping_inputs() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    fs::write(root.join("note.txt"), b"safe attachment\n").expect("text attachment");
+    fs::write(root.join("disguised.pdf"), b"not a PDF").expect("disguised PDF");
+    fs::write(root.join("unsafe.exe"), b"MZ").expect("unsafe attachment");
+    let source_before = fs::read(source.as_path()).expect("source bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale.pdf",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "unsafe.pdf",
+            json!({"attachment_path":"unsafe.exe"}),
+            "attachment must be PDF",
+        ),
+        (
+            "disguised-output.pdf",
+            json!({"attachment_path":"disguised.pdf"}),
+            "content does not match",
+        ),
+        (
+            "outside.pdf",
+            json!({"x":590}),
+            "exceeds the effective page bounds",
+        ),
+        (
+            "missing-coordinate.pdf",
+            json!({"x":Value::Null}),
+            "x must be a finite number",
+        ),
+    ] {
+        let mut arguments = json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"note.txt",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("attachment overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::add_pdf_file_attachment_annotation(&arguments, &state, &request)
+            .expect_err("invalid attachment request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        assert!(!root.join(target).exists());
+    }
+
+    let same_file_error = pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"source.pdf",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":"same-file.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("source-as-attachment must fail");
+    assert!(same_file_error
+        .to_string()
+        .contains("must be distinct files"));
+
+    let attachment_pdf = root.join("payload.pdf");
+    write_blank_pdf(attachment_pdf.as_path(), 1);
+    fs::hard_link(
+        attachment_pdf.as_path(),
+        root.join("attachment-hard-link.pdf"),
+    )
+    .expect("attachment hard-linked target");
+    let hard_link_error = pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"payload.pdf",
+            "page":1,
+            "x":10,
+            "y":10,
+            "target_path":"attachment-hard-link.pdf",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked attachment target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("note.txt"), root.join("linked.txt"))
+            .expect("attachment symlink");
+        let symlink_error = pdf_edit::add_pdf_file_attachment_annotation(
+            &json!({
+                "path":"source.pdf",
+                "expected_source_sha256":source_sha256,
+                "attachment_path":"linked.txt",
+                "page":1,
+                "x":10,
+                "y":10,
+                "target_path":"linked-output.pdf",
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink attachment must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    let malformed = root.join("malformed.pdf");
+    write_blank_pdf(malformed.as_path(), 1);
+    let mut document = Document::load(malformed.as_path()).expect("malformed PDF");
+    let page_id = document.get_pages()[&1];
+    let malformed_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "FileAttachment",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "FS" => dictionary! {"Type" => "Filespec"},
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("malformed page")
+        .set("Annots", vec![Object::Reference(malformed_id)]);
+    document
+        .save(malformed.as_path())
+        .expect("save malformed PDF");
+    let malformed_error = inspect_pdf(&json!({"path":"malformed.pdf"}), &state, &request)
+        .expect_err("direct Filespec must fail inspection");
+    assert!(malformed_error
+        .to_string()
+        .contains("FS must be an indirect Filespec reference"));
+    let malformed_extract_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"malformed.pdf",
+            "expected_source_sha256":sha256_file(malformed.as_path()).expect("malformed hash"),
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":sha256_file(root.join("note.txt").as_path()).expect("note hash"),
+            "target_path":"malformed-extract.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("malformed Filespec extraction must fail");
+    assert!(malformed_extract_error
+        .to_string()
+        .contains("FS must be an indirect Filespec reference"));
+    assert!(!root.join("malformed-extract.txt").exists());
+
+    assert_eq!(
+        fs::read(source.as_path()).expect("source after failures"),
+        source_before
+    );
+    for output in [
+        "same-file.pdf",
+        "linked-output.pdf",
+        "attachment-output.pdf",
+    ] {
+        assert!(!root.join(output).exists(), "unexpected output {output}");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn extracts_inspected_pdf_file_attachment_with_exact_hashes_and_atomic_overwrite() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    fs::create_dir_all(root.join("assets")).expect("attachment directory");
+    let attachment = root.join("assets/审计说明.txt");
+    let attachment_bytes = "付款记录已复核。\nReference: INV-2026-0727\n".as_bytes();
+    fs::write(attachment.as_path(), attachment_bytes).expect("attachment");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let attachment_sha256 = sha256_file(attachment.as_path()).expect("attachment hash");
+    pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"assets/审计说明.txt",
+            "page":1,
+            "x":10,
+            "y":10,
+            "description":"审计附件",
+            "target_path":"attached.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add attachment");
+
+    let attached = root.join("attached.pdf");
+    let attached_before = fs::read(attached.as_path()).expect("attached PDF bytes");
+    let attached_sha256 = sha256_file(attached.as_path()).expect("attached PDF hash");
+    let extracted = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"exports/审计说明.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect("extract attachment");
+    assert_eq!(
+        extracted.get("operation").and_then(Value::as_str),
+        Some("extract_file_attachment")
+    );
+    assert_eq!(extracted.get("page").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        extracted.get("annotation_index").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        extracted.get("attachment_filename").and_then(Value::as_str),
+        Some("审计说明.txt")
+    );
+    assert_eq!(
+        extracted.get("attachment_sha256").and_then(Value::as_str),
+        Some(attachment_sha256.as_str())
+    );
+    assert!(extracted.get("content").is_none());
+    assert!(extracted.get("attachment_content").is_none());
+    let output = root.join("exports/审计说明.txt");
+    assert_eq!(
+        fs::read(output.as_path()).expect("extracted bytes"),
+        attachment_bytes
+    );
+    assert_eq!(
+        sha256_file(output.as_path()).expect("extracted hash"),
+        attachment_sha256
+    );
+
+    fs::write(output.as_path(), b"stale output").expect("replace extracted output");
+    let overwritten = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"exports/审计说明.txt",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect("overwrite extracted attachment");
+    assert_eq!(
+        overwritten.get("bytes").and_then(Value::as_u64),
+        Some(attachment_bytes.len() as u64)
+    );
+    assert_eq!(
+        fs::read(output.as_path()).expect("overwritten bytes"),
+        attachment_bytes
+    );
+    assert_eq!(
+        fs::read(attached.as_path()).expect("attached PDF after extraction"),
+        attached_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_file_attachment_extraction_rejects_stale_wrong_direct_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("source.pdf");
+    write_blank_pdf(source.as_path(), 1);
+    let mut document = Document::load(source.as_path()).expect("source PDF");
+    let page_id = document.get_pages()[&1];
+    let text_id = document.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 34.into(), 34.into()],
+        "Contents" => lopdf::text_string("Existing note"),
+        "P" => page_id,
+    });
+    document
+        .get_object_mut(page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("page dictionary")
+        .set("Annots", vec![Object::Reference(text_id)]);
+    document.save(source.as_path()).expect("save source PDF");
+    fs::write(root.join("note.txt"), b"safe attachment\n").expect("attachment");
+    let source_sha256 = sha256_file(source.as_path()).expect("source hash");
+    let attachment_sha256 = sha256_file(root.join("note.txt").as_path()).expect("attachment hash");
+    pdf_edit::add_pdf_file_attachment_annotation(
+        &json!({
+            "path":"source.pdf",
+            "expected_source_sha256":source_sha256,
+            "attachment_path":"note.txt",
+            "page":1,
+            "x":50,
+            "y":50,
+            "target_path":"attached.pdf",
+        }),
+        &state,
+        &request,
+    )
+    .expect("add attachment");
+    let attached = root.join("attached.pdf");
+    let attached_before = fs::read(attached.as_path()).expect("attached bytes");
+    let attached_sha256 = sha256_file(attached.as_path()).expect("attached hash");
+
+    for (target, overrides, expected) in [
+        (
+            "stale-source.txt",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "stale-attachment.txt",
+            json!({"expected_attachment_sha256":"0".repeat(64)}),
+            "expected_attachment_sha256",
+        ),
+        (
+            "wrong-subtype.txt",
+            json!({"annotation_index":1}),
+            "is not a FileAttachment",
+        ),
+        (
+            "missing-index.txt",
+            json!({"annotation_index":3}),
+            "does not exist",
+        ),
+        (
+            "wrong-extension.pdf",
+            json!({}),
+            "target extension must match",
+        ),
+        ("CON.txt", json!({}), "reserved portable filename"),
+        ("attached.pdf", json!({}), "requires a distinct target_path"),
+    ] {
+        let mut arguments = json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("extraction overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::extract_pdf_file_attachment(&arguments, &state, &request)
+            .expect_err("invalid extraction request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        if !matches!(target, "attached.pdf" | "CON.txt") {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::write(root.join("existing.txt"), b"existing output").expect("existing target");
+    let existing_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"existing.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("existing target without overwrite must fail");
+    assert!(existing_error
+        .to_string()
+        .contains("without overwrite=true"));
+    assert_eq!(
+        fs::read(root.join("existing.txt")).expect("existing target bytes"),
+        b"existing output"
+    );
+
+    fs::hard_link(attached.as_path(), root.join("source-hard-link.txt"))
+        .expect("source hard-linked target");
+    let hard_link_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"attached.pdf",
+            "expected_source_sha256":attached_sha256,
+            "page":1,
+            "annotation_index":2,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"source-hard-link.txt",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("source hard-linked target must fail");
+    assert!(hard_link_error
+        .to_string()
+        .contains("requires a distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("note.txt"), root.join("linked-output.txt"))
+            .expect("target symlink");
+        let symlink_error = pdf_edit::extract_pdf_file_attachment(
+            &json!({
+                "path":"attached.pdf",
+                "expected_source_sha256":attached_sha256,
+                "page":1,
+                "annotation_index":2,
+                "expected_attachment_sha256":attachment_sha256,
+                "target_path":"linked-output.txt",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    let direct = root.join("direct.pdf");
+    fs::copy(attached.as_path(), direct.as_path()).expect("copy direct PDF");
+    let mut direct_document = Document::load(direct.as_path()).expect("direct PDF");
+    let direct_page_id = direct_document.get_pages()[&1];
+    let attachment_object = direct_document
+        .get_object(direct_page_id)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(Object::as_array)
+        .expect("direct annotations")[1]
+        .clone();
+    let attachment_dictionary = direct_document
+        .get_object(
+            attachment_object
+                .as_reference()
+                .expect("attachment reference"),
+        )
+        .and_then(Object::as_dict)
+        .expect("attachment dictionary")
+        .clone();
+    direct_document
+        .get_object_mut(direct_page_id)
+        .and_then(Object::as_dict_mut)
+        .expect("direct page")
+        .set("Annots", vec![Object::Dictionary(attachment_dictionary)]);
+    direct_document
+        .save(direct.as_path())
+        .expect("save direct PDF");
+    let direct_error = pdf_edit::extract_pdf_file_attachment(
+        &json!({
+            "path":"direct.pdf",
+            "expected_source_sha256":sha256_file(direct.as_path()).expect("direct hash"),
+            "page":1,
+            "annotation_index":1,
+            "expected_attachment_sha256":attachment_sha256,
+            "target_path":"direct-output.txt",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("direct attachment annotation must fail");
+    assert!(direct_error.to_string().contains("is direct"));
+    assert!(!root.join("direct-output.txt").exists());
+
+    assert_eq!(
+        fs::read(attached.as_path()).expect("attached PDF after failures"),
+        attached_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn inspects_and_extracts_nested_pdf_embedded_files_with_exact_hashes() {
+    let (root, state, request) = test_context();
+    let source = root.join("embedded.pdf");
+    let (text_bytes, json_bytes) = write_pdf_with_nested_embedded_files(source.as_path());
+    let source_before = fs::read(source.as_path()).expect("embedded PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("embedded PDF hash");
+    let text_sha256 = hex::encode(Sha256::digest(text_bytes.as_slice()));
+    let json_sha256 = hex::encode(Sha256::digest(json_bytes.as_slice()));
+
+    let inspected = inspect_pdf(&json!({"path":"embedded.pdf"}), &state, &request)
+        .expect("inspect embedded files");
+    let embedded_files = inspected
+        .get("embedded_files")
+        .expect("embedded files inspection");
+    assert_eq!(embedded_files.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        embedded_files.get("bytes").and_then(Value::as_u64),
+        Some((text_bytes.len() + json_bytes.len()) as u64)
+    );
+    assert_eq!(
+        embedded_files
+            .get("preview_truncated")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let preview = embedded_files
+        .get("preview")
+        .and_then(Value::as_array)
+        .expect("embedded files preview");
+    assert_eq!(preview.len(), 2);
+    assert_eq!(
+        preview[0]
+            .get("embedded_file_index")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        preview[0].get("name").and_then(Value::as_str),
+        Some("alpha")
+    );
+    assert_eq!(
+        preview[0].get("filename").and_then(Value::as_str),
+        Some("alpha.txt")
+    );
+    assert_eq!(
+        preview[0].get("sha256").and_then(Value::as_str),
+        Some(text_sha256.as_str())
+    );
+    assert_eq!(
+        preview[1]
+            .get("embedded_file_index")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(preview[1].get("name").and_then(Value::as_str), Some("审计"));
+    assert_eq!(
+        preview[1].get("filename").and_then(Value::as_str),
+        Some("审计记录.json")
+    );
+    assert_eq!(
+        preview[1].get("mime_type").and_then(Value::as_str),
+        Some("application/json")
+    );
+    assert_eq!(
+        preview[1].get("sha256").and_then(Value::as_str),
+        Some(json_sha256.as_str())
+    );
+    assert!(preview.iter().all(|entry| entry.get("content").is_none()));
+
+    let extracted = pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"exports/审计记录.json",
+        }),
+        &state,
+        &request,
+    )
+    .expect("extract embedded file");
+    assert_eq!(
+        extracted.get("operation").and_then(Value::as_str),
+        Some("extract_embedded_file")
+    );
+    assert_eq!(
+        extracted.get("embedded_file_index").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(extracted.get("name").and_then(Value::as_str), Some("审计"));
+    assert_eq!(
+        extracted.get("attachment_filename").and_then(Value::as_str),
+        Some("审计记录.json")
+    );
+    assert_eq!(
+        extracted.get("attachment_sha256").and_then(Value::as_str),
+        Some(json_sha256.as_str())
+    );
+    assert!(extracted.get("content").is_none());
+    assert!(extracted.get("attachment_content").is_none());
+    let output = root.join("exports/审计记录.json");
+    assert_eq!(
+        fs::read(output.as_path()).expect("embedded output"),
+        json_bytes
+    );
+
+    fs::write(output.as_path(), b"stale output").expect("replace embedded output");
+    pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"exports/审计记录.json",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect("overwrite embedded output");
+    assert_eq!(
+        fs::read(output.as_path()).expect("overwritten output"),
+        json_bytes
+    );
+    assert_eq!(
+        fs::read(source.as_path()).expect("embedded PDF after extraction"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_embedded_file_extraction_rejects_stale_missing_and_unsafe_targets() {
+    let (root, state, request) = test_context();
+    let source = root.join("embedded.pdf");
+    let (_, json_bytes) = write_pdf_with_nested_embedded_files(source.as_path());
+    let source_before = fs::read(source.as_path()).expect("embedded PDF bytes");
+    let source_sha256 = sha256_file(source.as_path()).expect("embedded PDF hash");
+    let json_sha256 = hex::encode(Sha256::digest(json_bytes.as_slice()));
+
+    for (target, overrides, expected) in [
+        (
+            "stale-source.json",
+            json!({"expected_source_sha256":"0".repeat(64)}),
+            "expected_source_sha256",
+        ),
+        (
+            "stale-attachment.json",
+            json!({"expected_attachment_sha256":"0".repeat(64)}),
+            "expected_attachment_sha256",
+        ),
+        (
+            "missing.json",
+            json!({"embedded_file_index":3}),
+            "does not exist",
+        ),
+        (
+            "outside.json",
+            json!({"embedded_file_index":101}),
+            "between 1 and 100",
+        ),
+        (
+            "wrong-extension.txt",
+            json!({}),
+            "target extension must match",
+        ),
+        ("CON.json", json!({}), "reserved portable filename"),
+        ("embedded.pdf", json!({}), "requires a distinct target_path"),
+    ] {
+        let mut arguments = json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":target,
+        });
+        for (key, value) in overrides.as_object().expect("embedded overrides") {
+            arguments[key] = value.clone();
+        }
+        let error = pdf_edit::extract_pdf_embedded_file(&arguments, &state, &request)
+            .expect_err("invalid embedded extraction must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {target}: {error}"
+        );
+        if !matches!(target, "embedded.pdf" | "CON.json") {
+            assert!(!root.join(target).exists(), "unexpected output {target}");
+        }
+    }
+
+    fs::write(root.join("existing.json"), b"existing output").expect("existing target");
+    let existing_error = pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"existing.json",
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("existing embedded target must fail");
+    assert!(existing_error
+        .to_string()
+        .contains("without overwrite=true"));
+    assert_eq!(
+        fs::read(root.join("existing.json")).expect("existing bytes"),
+        b"existing output"
+    );
+
+    fs::hard_link(source.as_path(), root.join("source-hard-link.json"))
+        .expect("source hard-linked target");
+    let hard_link_error = pdf_edit::extract_pdf_embedded_file(
+        &json!({
+            "path":"embedded.pdf",
+            "expected_source_sha256":source_sha256,
+            "embedded_file_index":2,
+            "expected_attachment_sha256":json_sha256,
+            "target_path":"source-hard-link.json",
+            "overwrite":true,
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked embedded target must fail");
+    assert!(hard_link_error
+        .to_string()
+        .contains("requires a distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("existing.json"), root.join("linked-output.json"))
+            .expect("embedded target symlink");
+        let symlink_error = pdf_edit::extract_pdf_embedded_file(
+            &json!({
+                "path":"embedded.pdf",
+                "expected_source_sha256":source_sha256,
+                "embedded_file_index":2,
+                "expected_attachment_sha256":json_sha256,
+                "target_path":"linked-output.json",
+                "overwrite":true,
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink embedded target must fail");
+        assert!(symlink_error.to_string().contains("regular non-symlink"));
+    }
+
+    assert_eq!(
+        fs::read(source.as_path()).expect("embedded PDF after failures"),
+        source_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pdf_embedded_files_name_tree_rejects_malformed_structures() {
+    let (root, state, request) = test_context();
+
+    let odd = root.join("odd.pdf");
+    write_pdf_with_nested_embedded_files(odd.as_path());
+    let mut odd_document = Document::load(odd.as_path()).expect("odd PDF");
+    let odd_root_id = odd_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("odd root");
+    let odd_leaf_id = odd_document
+        .get_object(odd_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("odd root kids")[0]
+        .as_reference()
+        .expect("odd leaf");
+    odd_document
+        .get_object_mut(odd_leaf_id)
+        .and_then(Object::as_dict_mut)
+        .expect("odd leaf dictionary")
+        .set("Names", vec![lopdf::text_string("alpha")]);
+    odd_document.save(odd.as_path()).expect("save odd PDF");
+
+    let direct = root.join("direct.pdf");
+    write_pdf_with_nested_embedded_files(direct.as_path());
+    let mut direct_document = Document::load(direct.as_path()).expect("direct PDF");
+    let direct_root_id = direct_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("direct root");
+    let direct_leaf_id = direct_document
+        .get_object(direct_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("direct root kids")[0]
+        .as_reference()
+        .expect("direct leaf");
+    let direct_filespec_id = direct_document
+        .get_object(direct_leaf_id)
+        .and_then(Object::as_dict)
+        .and_then(|leaf| leaf.get(b"Names"))
+        .and_then(Object::as_array)
+        .expect("direct names")[1]
+        .as_reference()
+        .expect("direct Filespec reference");
+    let direct_filespec = direct_document
+        .get_object(direct_filespec_id)
+        .and_then(Object::as_dict)
+        .expect("direct Filespec")
+        .clone();
+    direct_document
+        .get_object_mut(direct_leaf_id)
+        .and_then(Object::as_dict_mut)
+        .expect("direct leaf dictionary")
+        .set(
+            "Names",
+            vec![
+                lopdf::text_string("alpha"),
+                Object::Dictionary(direct_filespec),
+            ],
+        );
+    direct_document
+        .save(direct.as_path())
+        .expect("save direct PDF");
+
+    let both = root.join("both.pdf");
+    write_pdf_with_nested_embedded_files(both.as_path());
+    let mut both_document = Document::load(both.as_path()).expect("both PDF");
+    let both_root_id = both_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("both root");
+    both_document
+        .get_object_mut(both_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("both root dictionary")
+        .set("Names", vec![lopdf::text_string("extra"), Object::Null]);
+    both_document.save(both.as_path()).expect("save both PDF");
+
+    let repeated = root.join("repeated.pdf");
+    write_pdf_with_nested_embedded_files(repeated.as_path());
+    let mut repeated_document = Document::load(repeated.as_path()).expect("repeated PDF");
+    let repeated_root_id = repeated_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("repeated root");
+    let repeated_leaf = repeated_document
+        .get_object(repeated_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("repeated kids")[0]
+        .clone();
+    repeated_document
+        .get_object_mut(repeated_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("repeated root dictionary")
+        .set("Kids", vec![repeated_leaf.clone(), repeated_leaf]);
+    repeated_document
+        .save(repeated.as_path())
+        .expect("save repeated PDF");
+
+    let cyclic = root.join("cyclic.pdf");
+    write_pdf_with_nested_embedded_files(cyclic.as_path());
+    let mut cyclic_document = Document::load(cyclic.as_path()).expect("cyclic PDF");
+    let cyclic_root_id = cyclic_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("cyclic root");
+    cyclic_document
+        .get_object_mut(cyclic_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("cyclic root dictionary")
+        .set("Kids", vec![Object::Reference(cyclic_root_id)]);
+    cyclic_document
+        .save(cyclic.as_path())
+        .expect("save cyclic PDF");
+
+    let duplicate = root.join("duplicate.pdf");
+    write_pdf_with_nested_embedded_files(duplicate.as_path());
+    let mut duplicate_document = Document::load(duplicate.as_path()).expect("duplicate PDF");
+    let duplicate_root_id = duplicate_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("duplicate root");
+    let duplicate_second_leaf_id = duplicate_document
+        .get_object(duplicate_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("duplicate kids")[1]
+        .as_reference()
+        .expect("duplicate second leaf");
+    let duplicate_filespec = duplicate_document
+        .get_object(duplicate_second_leaf_id)
+        .and_then(Object::as_dict)
+        .and_then(|leaf| leaf.get(b"Names"))
+        .and_then(Object::as_array)
+        .expect("duplicate names")[1]
+        .clone();
+    duplicate_document
+        .get_object_mut(duplicate_second_leaf_id)
+        .and_then(Object::as_dict_mut)
+        .expect("duplicate leaf dictionary")
+        .set(
+            "Names",
+            vec![lopdf::text_string("alpha"), duplicate_filespec],
+        );
+    duplicate_document
+        .save(duplicate.as_path())
+        .expect("save duplicate PDF");
+
+    let unordered = root.join("unordered.pdf");
+    write_pdf_with_nested_embedded_files(unordered.as_path());
+    let mut unordered_document = Document::load(unordered.as_path()).expect("unordered PDF");
+    let unordered_root_id = unordered_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("unordered root");
+    let mut unordered_kids = unordered_document
+        .get_object(unordered_root_id)
+        .and_then(Object::as_dict)
+        .and_then(|root| root.get(b"Kids"))
+        .and_then(Object::as_array)
+        .expect("unordered kids")
+        .clone();
+    unordered_kids.reverse();
+    unordered_document
+        .get_object_mut(unordered_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("unordered root dictionary")
+        .set("Kids", unordered_kids);
+    unordered_document
+        .save(unordered.as_path())
+        .expect("save unordered PDF");
+
+    let limits = root.join("limits.pdf");
+    write_pdf_with_nested_embedded_files(limits.as_path());
+    let mut limits_document = Document::load(limits.as_path()).expect("limits PDF");
+    let limits_root_id = limits_document
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Names"))
+        .and_then(Object::as_dict)
+        .and_then(|names| names.get(b"EmbeddedFiles"))
+        .and_then(Object::as_reference)
+        .expect("limits root");
+    limits_document
+        .get_object_mut(limits_root_id)
+        .and_then(Object::as_dict_mut)
+        .expect("limits root dictionary")
+        .set(
+            "Limits",
+            vec![lopdf::text_string("审计"), lopdf::text_string("alpha")],
+        );
+    limits_document
+        .save(limits.as_path())
+        .expect("save limits PDF");
+
+    for (path, expected) in [
+        ("odd.pdf", "one or more name/Filespec pairs"),
+        ("direct.pdf", "must reference an indirect Filespec"),
+        ("both.pdf", "exactly one of Names or Kids"),
+        ("repeated.pdf", "repeated or cyclic node reference"),
+        ("cyclic.pdf", "repeated or cyclic node reference"),
+        ("duplicate.pdf", "duplicate name key"),
+        ("unordered.pdf", "keys must be strictly ascending"),
+        ("limits.pdf", "Limits must be ordered"),
+    ] {
+        let error = inspect_pdf(&json!({"path":path}), &state, &request)
+            .expect_err("malformed EmbeddedFiles Name Tree must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error for {path}: {error:#}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn creates_multi_page_pdf_from_png_images_with_bounded_layout() {
+    let (root, state, request) = test_context();
+    fs::create_dir_all(root.join("assets")).expect("assets");
+    write_test_rgba_png(
+        root.join("assets/wide.png").as_path(),
+        4,
+        2,
+        [255, 0, 0, 160],
+    );
+    write_test_rgba_png(
+        root.join("assets/tall.png").as_path(),
+        2,
+        4,
+        [0, 0, 255, 255],
+    );
+    let wide_before = fs::read(root.join("assets/wide.png")).expect("wide PNG");
+    let tall_before = fs::read(root.join("assets/tall.png")).expect("tall PNG");
+
+    let created = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["assets/wide.png","assets/tall.png"],
+            "target_path":"artifacts/images.pdf",
+            "page_size":"a4",
+            "fit":"contain",
+            "margin_points":36
+        }),
+        &state,
+        &request,
+    )
+    .expect("create PDF from images");
+    assert_eq!(
+        created.get("operation").and_then(Value::as_str),
+        Some("create_pdf_from_images")
+    );
+    assert_eq!(created.get("pages").and_then(Value::as_u64), Some(2));
+    assert_eq!(created.get("page_size").and_then(Value::as_str), Some("a4"));
+    assert_eq!(created.get("fit").and_then(Value::as_str), Some("contain"));
+    assert_eq!(
+        created.pointer("/images/0/format").and_then(Value::as_str),
+        Some("png")
+    );
+    assert_eq!(
+        created
+            .pointer("/images/0/width_pixels")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+
+    let output_path = root.join("artifacts/images.pdf");
+    let document = Document::load(output_path.as_path()).expect("image PDF");
+    let pages = document.get_pages();
+    assert_eq!(pages.len(), 2);
+    for page_id in pages.values() {
+        let page = document
+            .get_object(*page_id)
+            .and_then(Object::as_dict)
+            .expect("image page");
+        let media_box = page
+            .get(b"MediaBox")
+            .and_then(Object::as_array)
+            .expect("image page MediaBox");
+        assert_eq!(media_box[2].as_float().expect("page width"), 595.0);
+        assert_eq!(media_box[3].as_float().expect("page height"), 842.0);
+        let resources_id = page
+            .get(b"Resources")
+            .and_then(Object::as_reference)
+            .expect("page resources");
+        let resources = document
+            .get_object(resources_id)
+            .and_then(Object::as_dict)
+            .expect("resources dictionary");
+        assert_eq!(
+            resources
+                .get(b"XObject")
+                .and_then(Object::as_dict)
+                .expect("XObject dictionary")
+                .len(),
+            1
+        );
+    }
+    let first_page_id = pages[&1];
+    let first_page = document
+        .get_object(first_page_id)
+        .and_then(Object::as_dict)
+        .expect("first page");
+    let first_resources_id = first_page
+        .get(b"Resources")
+        .and_then(Object::as_reference)
+        .expect("first resources");
+    let first_image_id = document
+        .get_object(first_resources_id)
+        .and_then(Object::as_dict)
+        .and_then(|resources| resources.get(b"XObject"))
+        .and_then(Object::as_dict)
+        .and_then(|xobjects| xobjects.get(b"Im1"))
+        .and_then(Object::as_reference)
+        .expect("first image reference");
+    assert!(document
+        .get_object(first_image_id)
+        .and_then(Object::as_stream)
+        .expect("first image stream")
+        .dict
+        .has(b"SMask"));
+    let first_content = document.get_page_content(first_page_id);
+    let operations = Content::decode(first_content.as_slice())
+        .expect("decode first page content")
+        .operations;
+    assert!(operations.iter().any(|operation| operation.operator == "W"));
+    let transform = operations
+        .iter()
+        .find(|operation| operation.operator == "cm")
+        .expect("image transform");
+    assert!((transform.operands[0].as_float().expect("draw width") - 523.0).abs() < 0.01);
+    assert!((transform.operands[3].as_float().expect("draw height") - 261.5).abs() < 0.01);
+
+    assert_eq!(
+        fs::read(root.join("assets/wide.png")).expect("wide after create"),
+        wide_before
+    );
+    assert_eq!(
+        fs::read(root.join("assets/tall.png")).expect("tall after create"),
+        tall_before
+    );
+    if let Some(visual_output) = std::env::var_os("CHATOS_TEST_PDF_IMAGE_VISUAL_OUTPUT") {
+        fs::copy(output_path, visual_output).expect("copy visual QA PDF");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn image_pdf_supports_cover_image_sized_pages_and_jpeg() {
+    let (root, state, request) = test_context();
+    write_test_rgba_png(root.join("wide.png").as_path(), 4, 2, [0, 180, 80, 255]);
+    let covered = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["wide.png"],
+            "target_path":"covered.pdf",
+            "page_size":"letter",
+            "fit":"cover",
+            "margin_points":36
+        }),
+        &state,
+        &request,
+    )
+    .expect("create covered image PDF");
+    assert_eq!(covered.get("pages").and_then(Value::as_u64), Some(1));
+    let covered_document = Document::load(root.join("covered.pdf")).expect("covered PDF");
+    let covered_page_id = covered_document.get_pages()[&1];
+    let covered_content = covered_document.get_page_content(covered_page_id);
+    let covered_operations = Content::decode(covered_content.as_slice())
+        .expect("decode covered content")
+        .operations;
+    let transform = covered_operations
+        .iter()
+        .find(|operation| operation.operator == "cm")
+        .expect("cover transform");
+    assert!((transform.operands[0].as_float().expect("cover width") - 1440.0).abs() < 0.01);
+    assert!((transform.operands[3].as_float().expect("cover height") - 720.0).abs() < 0.01);
+    assert!((transform.operands[4].as_float().expect("cover x") + 414.0).abs() < 0.01);
+    assert!((transform.operands[5].as_float().expect("cover y") - 36.0).abs() < 0.01);
+    if let Some(visual_output) = std::env::var_os("CHATOS_TEST_PDF_IMAGE_COVER_VISUAL_OUTPUT") {
+        fs::copy(root.join("covered.pdf"), visual_output).expect("copy cover visual QA PDF");
+    }
+
+    let image_sized = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["wide.png"],
+            "target_path":"image-sized.pdf",
+            "margin_points":10
+        }),
+        &state,
+        &request,
+    )
+    .expect("create image-sized PDF");
+    assert_eq!(
+        image_sized.get("page_size").and_then(Value::as_str),
+        Some("image")
+    );
+    let image_document = Document::load(root.join("image-sized.pdf")).expect("image-sized PDF");
+    let image_page = image_document
+        .get_object(image_document.get_pages()[&1])
+        .and_then(Object::as_dict)
+        .expect("image-sized page");
+    let media_box = image_page
+        .get(b"MediaBox")
+        .and_then(Object::as_array)
+        .expect("image-sized MediaBox");
+    assert_eq!(media_box[2].as_float().expect("image page width"), 24.0);
+    assert_eq!(media_box[3].as_float().expect("image page height"), 22.0);
+
+    let minimal_jpeg = vec![
+        0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x01, 0x00, 0x01, 0x03, 0x01, 0x11, 0x00,
+        0x02, 0x11, 0x00, 0x03, 0x11, 0x00, 0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11,
+        0x03, 0x11, 0x00, 0x3f, 0x00, 0x00, 0xff, 0xd9,
+    ];
+    fs::write(root.join("pixel.jpg"), minimal_jpeg).expect("minimal JPEG");
+    let jpeg = pdf_edit::create_pdf_from_images(
+        &json!({"image_paths":["pixel.jpg"],"target_path":"jpeg.pdf"}),
+        &state,
+        &request,
+    )
+    .expect("create JPEG PDF");
+    assert_eq!(
+        jpeg.pointer("/images/0/format").and_then(Value::as_str),
+        Some("jpeg")
+    );
+    assert!(root.join("jpeg.pdf").is_file());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn image_pdf_rejects_unsafe_inputs_layouts_and_targets() {
+    let (root, state, request) = test_context();
+    write_test_rgba_png(root.join("valid.png").as_path(), 2, 2, [255, 255, 255, 255]);
+    write_test_rgba_png(
+        root.join("too-wide.png").as_path(),
+        10_001,
+        1,
+        [0, 0, 0, 255],
+    );
+    fs::write(root.join("invalid.png"), b"not a png").expect("invalid PNG");
+    fs::write(root.join("existing.pdf"), b"preserve").expect("existing target");
+    let existing_before = fs::read(root.join("existing.pdf")).expect("existing bytes");
+
+    let too_many = (0..=100)
+        .map(|_| Value::String("valid.png".to_string()))
+        .collect::<Vec<_>>();
+    for (index, arguments, expected) in [
+        (
+            0,
+            json!({"image_paths":[],"target_path":"empty.pdf"}),
+            "between 1 and 100",
+        ),
+        (
+            1,
+            json!({"image_paths":too_many,"target_path":"many.pdf"}),
+            "between 1 and 100",
+        ),
+        (
+            2,
+            json!({"image_paths":["invalid.png"],"target_path":"invalid.pdf"}),
+            "PNG image",
+        ),
+        (
+            3,
+            json!({"image_paths":["too-wide.png"],"target_path":"wide.pdf"}),
+            "10000 px edge",
+        ),
+        (
+            4,
+            json!({"image_paths":["valid.png"],"target_path":"layout.pdf","page_size":"poster"}),
+            "page_size",
+        ),
+        (
+            5,
+            json!({"image_paths":["valid.png"],"target_path":"fit.pdf","fit":"stretch"}),
+            "fit",
+        ),
+        (
+            6,
+            json!({"image_paths":["valid.png"],"target_path":"margin.pdf","page_size":"a4","margin_points":400}),
+            "margin_points",
+        ),
+        (
+            7,
+            json!({"image_paths":["valid.png"],"target_path":"existing.pdf"}),
+            "overwrite=true",
+        ),
+    ] {
+        let error = pdf_edit::create_pdf_from_images(&arguments, &state, &request)
+            .expect_err("unsafe image PDF request must fail");
+        assert!(
+            error.to_string().contains(expected),
+            "case {index}: {error:#}"
+        );
+    }
+    assert_eq!(
+        fs::read(root.join("existing.pdf")).expect("existing after rejection"),
+        existing_before
+    );
+
+    fs::hard_link(root.join("valid.png"), root.join("hard-link.pdf")).expect("hard-linked target");
+    let hard_link_error = pdf_edit::create_pdf_from_images(
+        &json!({
+            "image_paths":["valid.png"],
+            "target_path":"hard-link.pdf",
+            "overwrite":true
+        }),
+        &state,
+        &request,
+    )
+    .expect_err("hard-linked target must fail");
+    assert!(hard_link_error.to_string().contains("distinct target_path"));
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("valid.png"), root.join("linked.png"))
+            .expect("image symlink");
+        let input_symlink_error = pdf_edit::create_pdf_from_images(
+            &json!({"image_paths":["linked.png"],"target_path":"linked-input.pdf"}),
+            &state,
+            &request,
+        )
+        .expect_err("symlink image must fail");
+        assert!(input_symlink_error.to_string().contains("non-symlink"));
+
+        std::os::unix::fs::symlink(root.join("existing.pdf"), root.join("linked-target.pdf"))
+            .expect("target symlink");
+        let target_symlink_error = pdf_edit::create_pdf_from_images(
+            &json!({
+                "image_paths":["valid.png"],
+                "target_path":"linked-target.pdf",
+                "overwrite":true
+            }),
+            &state,
+            &request,
+        )
+        .expect_err("symlink target must fail");
+        assert!(target_symlink_error.to_string().contains("non-symlink"));
+    }
+    for target in [
+        "empty.pdf",
+        "many.pdf",
+        "invalid.pdf",
+        "wide.pdf",
+        "layout.pdf",
+        "fit.pdf",
+        "margin.pdf",
+        "linked-input.pdf",
+    ] {
+        assert!(!root.join(target).exists());
+    }
     let _ = fs::remove_dir_all(root);
 }
 

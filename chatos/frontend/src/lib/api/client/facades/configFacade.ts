@@ -36,9 +36,6 @@ import type {
   MemoryAgentSessionResponse,
   MemoryAgentRuntimeContextResponse,
   MemoryAgentSessionsQueryOptions,
-  MemorySkillsQueryOptions,
-  MemorySkillPluginResponse,
-  MemorySkillResponse,
   SystemContextCreatePayload,
   SystemContextDraftEvaluatePayload,
   SystemContextDraftEvaluateResponse,
@@ -101,10 +98,6 @@ export interface ConfigFacade {
   updateAgent(agentId: string, data: UpdateAgentPayload): Promise<MemoryAgentResponse>;
   deleteAgent(agentId: string): Promise<{ success?: boolean }>;
   aiCreateAgent(data: AiCreateAgentPayload): Promise<AiCreateAgentResponse>;
-  listSkillPlugins(userId?: string, options?: { limit?: number; offset?: number }): Promise<MemorySkillPluginResponse[]>;
-  listSkills(userId?: string, options?: MemorySkillsQueryOptions): Promise<MemorySkillResponse[]>;
-  getSkill(skillId: string): Promise<MemorySkillResponse>;
-  getSkillPlugin(source: string): Promise<MemorySkillPluginResponse>;
   getMemoryAgents(userId?: string, options?: MemoryAgentsQueryOptions): Promise<MemoryAgentResponse[]>;
   getMemoryAgentRuntimeContext(agentId: string): Promise<MemoryAgentRuntimeContextResponse>;
   getConversationDetails(conversationId: string): Promise<ConversationDetailsResponse>;
@@ -247,18 +240,6 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
   },
   async aiCreateAgent(data) {
     return memoryApi.aiCreateAgent(this.getRequestFn(), data);
-  },
-  async listSkillPlugins(userId, options) {
-    return memoryApi.listSkillPlugins(this.getRequestFn(), userId, options);
-  },
-  async listSkills(userId, options) {
-    return memoryApi.listSkills(this.getRequestFn(), userId, options);
-  },
-  async getSkill(skillId) {
-    return memoryApi.getSkill(this.getRequestFn(), skillId);
-  },
-  async getSkillPlugin(source) {
-    return memoryApi.getSkillPlugin(this.getRequestFn(), source);
   },
   async getMemoryAgents(userId, options) {
     return this.getAgents(userId, options);

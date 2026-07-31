@@ -72,19 +72,19 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const pdf = index.plugins.find((plugin) => plugin.name === 'pdf');
-    assert.equal(pdf.release_id, 'bundled-release-pdf-1-12-0');
-    assert.equal(pdf.version, '1.12.0');
-    assert.equal(pdf.published_at, '2026-07-26T16:00:00Z');
+    assert.equal(pdf.release_id, 'bundled-release-pdf-1-22-0');
+    assert.equal(pdf.version, '1.22.0');
+    assert.equal(pdf.published_at, '2026-07-27T23:00:00Z');
     assert.equal(
       pdf.skills[0].bundle_hash,
-      '6857151d9c804d37dc5557381f09415264d048071aa3901fa8e7d6bb0ba250ed',
+      '0978f3fd440eb969551539fd9d0ba6fb449404efccd0d1aae30eea56847c8938',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'pdf',
-        '1.12.0',
+        '1.22.0',
         'skills',
         'pdf',
         'SKILL.md',
@@ -128,19 +128,19 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const presentations = index.plugins.find((plugin) => plugin.name === 'presentations');
-    assert.equal(presentations.release_id, 'bundled-release-presentations-1-24-0');
-    assert.equal(presentations.version, '1.24.0');
-    assert.equal(presentations.published_at, '2026-07-26T13:00:00Z');
+    assert.equal(presentations.release_id, 'bundled-release-presentations-1-32-0');
+    assert.equal(presentations.version, '1.32.0');
+    assert.equal(presentations.published_at, '2026-07-28T07:00:00Z');
     assert.equal(
       presentations.skills[0].bundle_hash,
-      '7798008e1fe66d3f9e27d7552e43ff1843ce0c1e654250a6779b982414b968e2',
+      '393a2d4bab9b209a822e9eeef8ca1a56372747d2deb0e9f41b05318471dc296e',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'presentations',
-        '1.24.0',
+        '1.32.0',
         'skills',
         'presentations',
         'SKILL.md',
@@ -188,19 +188,19 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const computerUse = index.plugins.find((plugin) => plugin.name === 'computer-use');
-    assert.equal(computerUse.release_id, 'bundled-release-computer-use-1-15-0');
-    assert.equal(computerUse.version, '1.15.0');
-    assert.equal(computerUse.published_at, '2026-07-25T15:00:00Z');
+    assert.equal(computerUse.release_id, 'bundled-release-computer-use-1-19-0');
+    assert.equal(computerUse.version, '1.19.0');
+    assert.equal(computerUse.published_at, '2026-07-27T15:00:00Z');
     assert.equal(
       computerUse.skills[0].bundle_hash,
-      'a829b8ba08fd0f00edfe23424d14727824775a2e27ef29205fb0e63e13176424',
+      '5b8bffe9cdbd5bd04dd4136a3a79960c226775f30b34a2441e342eb9c972aac7',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'computer-use',
-        '1.15.0',
+        '1.19.0',
         'skills',
         'computer-use',
         'SKILL.md',

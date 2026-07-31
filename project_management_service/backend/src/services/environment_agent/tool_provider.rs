@@ -15,21 +15,21 @@ use crate::models::{
     RuntimeEnvironmentProvider, RuntimeEnvironmentVariableSource, RuntimeServiceRole,
 };
 use crate::services::runtime_environment::{
-    environment_variable_name_is_secret, normalize_environment_variable_name,
-    normalize_environment_variable_records, program_generated_runtime_analysis_summary,
-    refresh_environment_variable_record, required_environment_variables_are_complete,
+    enforce_project_runtime_boundary, environment_variable_name_is_secret,
+    normalize_environment_variable_name, normalize_environment_variable_records,
+    program_generated_runtime_analysis_summary, refresh_environment_variable_record,
+    required_environment_variables_are_complete, runtime_image_is_execution_required,
 };
 use crate::state::AppState;
 
 use super::super::runtime_environment::default_runtime_environment_for_project;
-use super::mcp_servers::get_sandbox_image_catalog;
 
 #[derive(Clone)]
 pub(super) struct ProjectEnvironmentToolProvider {
     pub(super) state: AppState,
     pub(super) project: ProjectRecord,
     pub(super) run_id: String,
-    pub(super) user_access_token: Option<String>,
+    pub(super) selected_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -106,7 +106,17 @@ struct ProjectRuntimeEnvironmentImageInput {
     #[serde(default)]
     display_name: Option<String>,
     #[serde(default)]
-    image_id: Option<String>,
+    source_root: Option<String>,
+    #[serde(default)]
+    component_kind: Option<String>,
+    #[serde(default)]
+    startup_command: Option<String>,
+    #[serde(default)]
+    test_command: Option<String>,
+    #[serde(default)]
+    depends_on: Vec<String>,
+    #[serde(default)]
+    auto_start: bool,
     #[serde(default)]
     features: Option<Value>,
     #[serde(default)]
@@ -206,12 +216,15 @@ impl ProjectEnvironmentToolProvider {
             .required_services
             .as_ref()
             .unwrap_or(&environment.required_services);
+        let selected_service_kinds =
+            selected_dependency_service_kinds(self.selected_dependencies.as_slice());
         if proposes_not_runnable
-            && environment_has_provisionable_evidence(
-                proposed_stack,
-                proposed_services,
-                args.images.as_slice(),
-            )
+            && (!selected_service_kinds.is_empty()
+                || environment_has_provisionable_evidence(
+                    proposed_stack,
+                    proposed_services,
+                    args.images.as_slice(),
+                ))
         {
             return Err(
                 "not_runnable is rejected because the project contains a provisionable runtime or dependency service. Continue initialization: create/reuse the application runtime image, create local replacements for detected databases/caches/configuration centers, generate connection environment variables, then save ready; use pending_configuration only for irreducible user-supplied business credentials."
@@ -245,6 +258,10 @@ impl ProjectEnvironmentToolProvider {
             args.env_vars.as_ref(),
         );
         ensure_required_service_records(&mut environment.required_services, inferred_service_kinds);
+        ensure_selected_service_records(
+            &mut environment.required_services,
+            selected_service_kinds.clone(),
+        );
         environment.status = if environment.not_runnable_reason.is_some() {
             ProjectRuntimeEnvironmentStatus::NotRunnable
         } else {
@@ -268,25 +285,6 @@ impl ProjectEnvironmentToolProvider {
         environment.last_error = None;
         environment.updated_at = now_rfc3339();
 
-        let image_catalog = if args.images.iter().any(|image| {
-            image
-                .image_id
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-        }) {
-            Some(
-                get_sandbox_image_catalog(
-                    &self.state,
-                    &self.project,
-                    environment.sandbox_provider,
-                    self.user_access_token.as_deref(),
-                    self.run_id.as_str(),
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
         let mut image_records = Vec::new();
         if environment.status != ProjectRuntimeEnvironmentStatus::NotRunnable {
             for (index, image) in args.images.into_iter().enumerate() {
@@ -295,9 +293,22 @@ impl ProjectEnvironmentToolProvider {
                     image,
                     index,
                     environment.sandbox_provider,
-                    image_catalog.as_ref(),
+                    None,
                 )?);
             }
+            ensure_selected_dependency_image_records(
+                self.project.id.as_str(),
+                environment.sandbox_provider,
+                selected_service_kinds,
+                &mut image_records,
+            )?;
+            enforce_project_runtime_boundary(
+                self.project.execution_plane,
+                &mut environment,
+                &mut image_records,
+            );
+        } else {
+            environment.execution_service_id = None;
         }
         environment.generated_config_files = generated_config_files;
         if !matches!(
@@ -318,6 +329,7 @@ impl ProjectEnvironmentToolProvider {
             )?;
             if image_records
                 .iter()
+                .filter(|image| runtime_image_is_execution_required(image))
                 .any(|image| !image_is_real_and_ready(image))
             {
                 environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
@@ -354,6 +366,61 @@ impl ProjectEnvironmentToolProvider {
     }
 }
 
+fn selected_dependency_service_kinds(
+    selected_dependencies: &[String],
+) -> std::collections::BTreeSet<String> {
+    let mut kinds = std::collections::BTreeSet::new();
+    for dependency in selected_dependencies {
+        infer_service_kinds_from_text(dependency, &mut kinds);
+    }
+    kinds
+}
+
+fn ensure_selected_dependency_image_records(
+    project_id: &str,
+    provider: RuntimeEnvironmentProvider,
+    selected_service_kinds: std::collections::BTreeSet<String>,
+    images: &mut Vec<ProjectRuntimeEnvironmentImageRecord>,
+) -> Result<(), String> {
+    for service in selected_service_kinds {
+        if images
+            .iter()
+            .any(|image| image_matches_service(image, service.as_str()))
+        {
+            continue;
+        }
+        let index = images.len();
+        images.push(image_input_to_record(
+            project_id,
+            ProjectRuntimeEnvironmentImageInput {
+                environment_key: Some(service.clone()),
+                environment_type: Some("service".to_string()),
+                display_name: Some(dependency_service_display_name(service.as_str()).to_string()),
+                ..ProjectRuntimeEnvironmentImageInput::default()
+            },
+            index,
+            provider,
+            None,
+        )?);
+    }
+    Ok(())
+}
+
+fn dependency_service_display_name(service: &str) -> &str {
+    match service {
+        "postgres" => "PostgreSQL",
+        "mysql" => "MySQL / MariaDB",
+        "mongodb" => "MongoDB",
+        "redis" => "Redis-compatible cache",
+        "nacos" => "Nacos",
+        "rabbitmq" => "RabbitMQ",
+        "kafka" => "Apache Kafka-compatible broker",
+        "elasticsearch" => "Elasticsearch-compatible search",
+        "minio" => "MinIO / S3-compatible storage",
+        other => other,
+    }
+}
+
 fn agent_visible_runtime_state(
     project: &ProjectRecord,
     environment: &crate::models::ProjectRuntimeEnvironmentRecord,
@@ -366,6 +433,7 @@ fn agent_visible_runtime_state(
         },
         "analysis": {
             "not_runnable_reason": environment.not_runnable_reason,
+            "execution_service_id": environment.execution_service_id,
             "detected_stack": environment.detected_stack,
             "required_services": environment.required_services,
             "environment_variables": environment.environment_variables.iter().map(|record| json!({
@@ -394,7 +462,7 @@ fn agent_visible_runtime_state(
     })
 }
 
-mod compose;
+pub(super) mod compose;
 mod support;
 #[cfg(test)]
 mod tests;

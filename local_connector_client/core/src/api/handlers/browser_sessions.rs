@@ -27,6 +27,8 @@ const BROWSER_UI_DEFAULT_WEBSOCKET_LIMIT: usize = 100;
 const BROWSER_UI_MAX_WEBSOCKET_LIMIT: usize = 200;
 const BROWSER_UI_DEFAULT_WEBSOCKET_PAYLOAD_CHARS: usize = 1_024;
 const BROWSER_UI_MAX_WEBSOCKET_PAYLOAD_CHARS: usize = 4_096;
+const BROWSER_UI_MAX_COORDINATE: f64 = 100_000.0;
+const BROWSER_UI_MAX_SCROLL_DELTA: f64 = 100_000.0;
 
 pub(crate) async fn local_browser_session_command(
     State(runtime): State<LocalRuntime>,
@@ -150,7 +152,8 @@ pub(crate) async fn local_browser_session_command(
         workspace_root.as_path(),
         action.as_str(),
         &request,
-    )?;
+    )
+    .await?;
     let page = structured_browser_result(result);
     if matches!(action.as_str(), "tab_new" | "tab_switch" | "tab_close") {
         let _ = service.stop_attached_managed_session_preview_stream(conversation_id.as_str());
@@ -158,6 +161,22 @@ pub(crate) async fn local_browser_session_command(
     if matches!(
         action.as_str(),
         "websocket_start" | "websocket_frames" | "websocket_stop"
+    ) {
+        return Ok(Json(json!({
+            "success": page.get("success").and_then(Value::as_bool).unwrap_or(true),
+            "session_id": session_id,
+            "workspace_id": workspace_id,
+            "status": "active",
+            "action": action,
+            "page": page,
+            "screenshot_data_url": Value::Null,
+            "screenshot_error": Value::Null,
+            "captured_at": crate::local_now_rfc3339(),
+        })));
+    }
+    if matches!(
+        action.as_str(),
+        "click_point" | "scroll_delta" | "type_text"
     ) {
         return Ok(Json(json!({
             "success": page.get("success").and_then(Value::as_bool).unwrap_or(true),
@@ -194,13 +213,92 @@ pub(crate) async fn local_browser_session_command(
     })))
 }
 
-fn execute_browser_ui_action(
+async fn execute_browser_ui_action(
     service: &BrowserToolsService,
     conversation_id: &str,
     workspace_root: &Path,
     action: &str,
     request: &LocalBrowserSessionCommandRequest,
 ) -> Result<Value, LocalApiError> {
+    match action {
+        "click_point" => {
+            let (x, y) = validate_browser_point(request)?;
+            let button = validate_browser_button(request.button.as_deref())?;
+            let click_count = validate_click_count(request.click_count)?;
+            return service
+                .dispatch_attached_managed_session_click(
+                    conversation_id,
+                    x,
+                    y,
+                    button.as_str(),
+                    click_count,
+                )
+                .await
+                .map(|result| {
+                    json!({
+                        "success": true,
+                        "source": "managed_browser_ui",
+                        "action": "click_point",
+                        "x": x,
+                        "y": y,
+                        "button": button,
+                        "click_count": click_count,
+                        "result": result,
+                    })
+                })
+                .map_err(LocalApiError::bad_gateway);
+        }
+        "scroll_delta" => {
+            let (x, y) = validate_browser_point(request)?;
+            let delta_x = validate_scroll_delta(request.delta_x.unwrap_or(0.0), "delta_x")?;
+            let delta_y = validate_scroll_delta(request.delta_y.unwrap_or(0.0), "delta_y")?;
+            if delta_x == 0.0 && delta_y == 0.0 {
+                return Err(LocalApiError::bad_request(
+                    "delta_x or delta_y must be non-zero",
+                ));
+            }
+            return service
+                .dispatch_attached_managed_session_scroll_delta(
+                    conversation_id,
+                    x,
+                    y,
+                    delta_x,
+                    delta_y,
+                )
+                .await
+                .map(|result| {
+                    json!({
+                        "success": true,
+                        "source": "managed_browser_ui",
+                        "action": "scroll_delta",
+                        "x": x,
+                        "y": y,
+                        "delta_x": delta_x,
+                        "delta_y": delta_y,
+                        "result": result,
+                    })
+                })
+                .map_err(LocalApiError::bad_gateway);
+        }
+        "type_text" => {
+            let text = validate_browser_text(request.text.as_deref())?;
+            return service
+                .insert_text_into_attached_managed_session(conversation_id, text.as_str())
+                .await
+                .map(|result| {
+                    json!({
+                        "success": true,
+                        "source": "managed_browser_ui",
+                        "action": "type_text",
+                        "text_chars": text.chars().count(),
+                        "result": result,
+                    })
+                })
+                .map_err(LocalApiError::bad_gateway);
+        }
+        _ => {}
+    }
+
     let (tool_name, arguments) = match action {
         "tabs" => ("browser_tabs", json!({})),
         "tab_new" => {
@@ -351,6 +449,53 @@ fn execute_browser_ui_action(
     service
         .call_tool(tool_name, arguments, Some(conversation_id))
         .map_err(LocalApiError::bad_gateway)
+}
+
+fn validate_browser_point(
+    request: &LocalBrowserSessionCommandRequest,
+) -> Result<(f64, f64), LocalApiError> {
+    let x = validate_browser_coordinate(request.x, "x")?;
+    let y = validate_browser_coordinate(request.y, "y")?;
+    Ok((x, y))
+}
+
+fn validate_browser_coordinate(value: Option<f64>, field: &str) -> Result<f64, LocalApiError> {
+    let value = value.ok_or_else(|| LocalApiError::bad_request(format!("{field} is required")))?;
+    if !value.is_finite() || !(0.0..=BROWSER_UI_MAX_COORDINATE).contains(&value) {
+        return Err(LocalApiError::bad_request(format!(
+            "{field} must be a finite viewport coordinate"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_scroll_delta(value: f64, field: &str) -> Result<f64, LocalApiError> {
+    if !value.is_finite() || value.abs() > BROWSER_UI_MAX_SCROLL_DELTA {
+        return Err(LocalApiError::bad_request(format!(
+            "{field} must be a finite scroll delta"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_browser_button(value: Option<&str>) -> Result<String, LocalApiError> {
+    let value = value.unwrap_or("left").trim().to_ascii_lowercase();
+    if !matches!(value.as_str(), "left" | "middle" | "right") {
+        return Err(LocalApiError::bad_request(
+            "button must be left, middle, or right",
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_click_count(value: Option<u8>) -> Result<u8, LocalApiError> {
+    let value = value.unwrap_or(1);
+    if !(1..=3).contains(&value) {
+        return Err(LocalApiError::bad_request(
+            "click_count must be between 1 and 3",
+        ));
+    }
+    Ok(value)
 }
 
 fn structured_browser_result(result: Value) -> Value {
@@ -604,5 +749,23 @@ mod tests {
             validate_websocket_payload_chars(Some(BROWSER_UI_MAX_WEBSOCKET_PAYLOAD_CHARS + 1))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn browser_preview_input_values_are_bounded() {
+        assert_eq!(validate_browser_coordinate(Some(42.5), "x").unwrap(), 42.5);
+        assert!(validate_browser_coordinate(None, "x").is_err());
+        assert!(validate_browser_coordinate(Some(-1.0), "x").is_err());
+        assert!(validate_browser_coordinate(Some(f64::INFINITY), "x").is_err());
+        assert!(validate_scroll_delta(120.0, "delta_y").is_ok());
+        assert!(validate_scroll_delta(f64::NAN, "delta_y").is_err());
+        assert!(validate_scroll_delta(BROWSER_UI_MAX_SCROLL_DELTA + 1.0, "delta_y").is_err());
+        assert_eq!(validate_browser_button(None).unwrap(), "left");
+        assert_eq!(validate_browser_button(Some(" RIGHT ")).unwrap(), "right");
+        assert!(validate_browser_button(Some("extra")).is_err());
+        assert_eq!(validate_click_count(None).unwrap(), 1);
+        assert_eq!(validate_click_count(Some(3)).unwrap(), 3);
+        assert!(validate_click_count(Some(0)).is_err());
+        assert!(validate_click_count(Some(4)).is_err());
     }
 }

@@ -21,7 +21,54 @@ const ELECTRON_RUNTIME = path.join(CLIENT_DIR, 'frontend', 'electron', 'core-run
 const CHROME_EXTENSION = path.join(CLIENT_DIR, 'chrome_extension');
 
 let temporaryRoot;
+let nativeMigrationInventoryFixture;
 const baseFixtures = new Map();
+
+function currentPackagePlatform() {
+  const platform = {
+    darwin: 'macos',
+    win32: 'windows',
+    linux: 'linux',
+  }[process.platform];
+  return platform ? `${platform}-${process.arch}` : null;
+}
+
+function compileNativeMigrationInventoryFixture() {
+  const platform = currentPackagePlatform();
+  if (!platform) return null;
+  if (process.env.CHATOS_TEST_LOCAL_CONNECTOR_BINARY) {
+    const executable = path.resolve(process.env.CHATOS_TEST_LOCAL_CONNECTOR_BINARY);
+    assert.equal(fs.statSync(executable).isFile(), true);
+    return { executable, platform };
+  }
+  const migrationOutput = fs.readdirSync(path.join(CLIENT_DIR, 'core', 'migrations'))
+    .filter((entry) => entry.endsWith('.sql'))
+    .map((entry) => entry.match(/^0*(\d+)_.*\.sql$/))
+    .filter(Boolean)
+    .map((match) => Number.parseInt(match[1], 10))
+    .sort((a, b) => a - b)
+    .join('\n');
+  const source = path.join(temporaryRoot, 'migration-inventory.rs');
+  const executable = path.join(
+    temporaryRoot,
+    process.platform === 'win32' ? 'migration-inventory.exe' : 'migration-inventory',
+  );
+  fs.writeFileSync(source, `
+fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--local-runtime-migration-versions") {
+        print!(${JSON.stringify(`${migrationOutput}\n`)});
+        return;
+    }
+    std::process::exit(2);
+}
+`);
+  const result = spawnSync('rustc', [source, '-o', executable], {
+    encoding: 'utf8',
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return { executable, platform };
+}
 
 function sha256File(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
@@ -49,8 +96,20 @@ function peHeader(architecture) {
   return buffer;
 }
 
+function elfHeader(architecture) {
+  const buffer = Buffer.alloc(64);
+  buffer[0] = 0x7f;
+  buffer.write('ELF', 1, 'ascii');
+  buffer[4] = 2;
+  buffer[5] = 1;
+  buffer.writeUInt16LE(architecture === 'arm64' ? 0xb7 : 0x3e, 18);
+  return buffer;
+}
+
 function binaryHeader(platform, architecture) {
-  return platform.startsWith('macos-') ? machOHeader(architecture) : peHeader(architecture);
+  if (platform.startsWith('macos-')) return machOHeader(architecture);
+  if (platform.startsWith('windows-')) return peHeader(architecture);
+  return elfHeader(architecture);
 }
 
 function copyActiveSkillBundles(resources) {
@@ -77,29 +136,54 @@ function stagePluginBundles(resources, platform) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 }
 
-function createFixture(platform) {
-  const fixtureRoot = path.join(temporaryRoot, `base-${platform}`);
+function createFixture(platform, runtimeProfile = 'full') {
+  const fixtureRoot = path.join(temporaryRoot, `base-${platform}-${runtimeProfile}`);
   const resources = path.join(fixtureRoot, 'resources');
   fs.mkdirSync(resources, { recursive: true });
   fs.mkdirSync(path.join(resources, 'chatos-frontend'), { recursive: true });
   fs.writeFileSync(path.join(resources, 'chatos-frontend', 'index.html'), '<!doctype html>\n');
-  fs.mkdirSync(path.join(resources, 'sqlite-migrations'), { recursive: true });
-  fs.writeFileSync(path.join(resources, 'sqlite-migrations', '0001.sql'), 'SELECT 1;\n');
+  fs.cpSync(
+    path.join(CLIENT_DIR, 'core', 'migrations'),
+    path.join(resources, 'sqlite-migrations'),
+    { recursive: true },
+  );
   fs.mkdirSync(path.join(resources, 'app', 'electron'), { recursive: true });
   fs.copyFileSync(ELECTRON_RUNTIME, path.join(resources, 'app', 'electron', 'core-runtime.cjs'));
-  fs.cpSync(CHROME_EXTENSION, path.join(resources, 'chrome-extension'), { recursive: true });
+  if (runtimeProfile === 'full' || runtimeProfile === 'linux-browser') {
+    fs.cpSync(CHROME_EXTENSION, path.join(resources, 'chrome-extension'), { recursive: true });
+  }
   copyActiveSkillBundles(resources);
   stagePluginBundles(resources, platform);
 
   const packageArchitecture = platform.endsWith('-arm64') ? 'arm64' : 'x64';
   const executableNames = platform.startsWith('macos-')
     ? ['local_connector_client_core', 'chatos_chrome_native_host', 'chatos_computer_use_helper', 'chatos_sandbox_mcp_server']
-    : ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe', 'chatos_sandbox_mcp_server.exe'];
+    : platform.startsWith('windows-')
+      ? ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe', 'chatos_sandbox_mcp_server.exe']
+      : [
+        'local_connector_client_core',
+        ...(runtimeProfile === 'linux-browser' ? ['chatos_chrome_native_host'] : []),
+        'chatos_sandbox_mcp_server',
+      ];
   for (const executableName of executableNames) {
-    writeExecutable(path.join(resources, executableName), binaryHeader(platform, packageArchitecture));
+    const destination = path.join(resources, executableName);
+    if (
+      executableName === (platform.startsWith('windows-') ? 'local_connector_client_core.exe' : 'local_connector_client_core')
+      && nativeMigrationInventoryFixture?.platform === platform
+    ) {
+      fs.copyFileSync(nativeMigrationInventoryFixture.executable, destination);
+      fs.chmodSync(destination, 0o755);
+    } else {
+      writeExecutable(destination, binaryHeader(platform, packageArchitecture));
+    }
   }
 
   const platformRoot = path.join(resources, 'bundled-tools', platform);
+  fs.mkdirSync(platformRoot, { recursive: true });
+  if (runtimeProfile !== 'full') {
+    fs.writeFileSync(path.join(platformRoot, 'rg'), 'ripgrep-test\n', { mode: 0o755 });
+    return resources;
+  }
   const browserArchitecture = platform.startsWith('windows-') ? 'x64' : packageArchitecture;
   const agentBrowser = path.join(platformRoot, platform.startsWith('windows-') ? 'agent-browser.exe' : 'agent-browser');
   const chrome = platform.startsWith('macos-')
@@ -153,11 +237,12 @@ function copyFixture(platform, name) {
   return root;
 }
 
-function verify(resources, platform) {
+function verify(resources, platform, runtimeProfile = 'full') {
   const report = path.join(path.dirname(resources), `${path.basename(resources)}.verification.json`);
   const result = spawnSync(process.execPath, [
     VERIFIER,
     '--platform', platform,
+    '--runtime-profile', runtimeProfile,
     '--resources', resources,
     '--plugin-catalog', PLUGIN_CATALOG,
     '--skill-catalog', SKILL_CATALOG,
@@ -170,16 +255,19 @@ function verify(resources, platform) {
 
 before(() => {
   temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-installed-package-test-'));
+  nativeMigrationInventoryFixture = compileNativeMigrationInventoryFixture();
   baseFixtures.set('macos-arm64', createFixture('macos-arm64'));
   baseFixtures.set('windows-x64', createFixture('windows-x64'));
   baseFixtures.set('windows-arm64', createFixture('windows-arm64'));
+  baseFixtures.set('linux-arm64-core', createFixture('linux-arm64', 'linux-core'));
+  baseFixtures.set('linux-arm64-browser', createFixture('linux-arm64', 'linux-browser'));
 });
 
 after(() => {
   if (temporaryRoot) fs.rmSync(temporaryRoot, { recursive: true, force: true });
 });
 
-test('verifies a complete macOS arm64 installed package without launching it', () => {
+test('verifies a complete macOS arm64 installed package contract', () => {
   const resources = copyFixture('macos-arm64', 'macos-positive');
   const result = verify(resources, 'macos-arm64');
   assert.equal(result.status, 0, result.stderr);
@@ -192,7 +280,7 @@ test('verifies a complete macOS arm64 installed package without launching it', (
   assert.equal(fs.readFileSync(result.report, 'utf8').includes(temporaryRoot), false);
 });
 
-test('verifies a complete Windows x64 installed package without launching it', () => {
+test('verifies a complete Windows x64 installed package contract', () => {
   const resources = copyFixture('windows-x64', 'windows-positive');
   const result = verify(resources, 'windows-x64');
   assert.equal(result.status, 0, result.stderr);
@@ -210,6 +298,31 @@ test('requires ARM64 Windows hosts while allowing the pinned x64 browser runtime
   assert.deepEqual(report.executables[0].architectures, ['arm64']);
   assert.deepEqual(report.browser_runtime.agent_browser.architectures, ['x64']);
   assert.equal(report.browser_runtime.windows_arm64_x64_emulation, true);
+});
+
+test('verifies a Linux arm64 core-profile installed package contract', () => {
+  const resources = copyFixture('linux-arm64-core', 'linux-arm64-core-positive');
+  const result = verify(resources, 'linux-arm64', 'linux-core');
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(fs.readFileSync(result.report, 'utf8'));
+  assert.equal(report.platform, 'linux-arm64');
+  assert.equal(report.runtime_profile, 'linux-core');
+  assert.deepEqual(report.executables[0].architectures, ['arm64']);
+  assert.equal(report.browser_runtime.verified, false);
+  assert.equal(report.document_runtime.verified, false);
+});
+
+test('verifies a Linux arm64 browser-profile package with Native Messaging assets', () => {
+  const resources = copyFixture('linux-arm64-browser', 'linux-arm64-browser-positive');
+  const result = verify(resources, 'linux-arm64', 'linux-browser');
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(fs.readFileSync(result.report, 'utf8'));
+  assert.equal(report.platform, 'linux-arm64');
+  assert.equal(report.runtime_profile, 'linux-browser');
+  assert.equal(report.chrome_extension.manifest_version, 3);
+  assert.ok(report.executables.some((executable) => executable.name === 'chatos_chrome_native_host'));
+  assert.equal(report.browser_runtime.verified, false);
+  assert.equal(report.document_runtime.verified, false);
 });
 
 test('rejects a symlink substituted for a critical executable', () => {
@@ -241,13 +354,20 @@ test('rejects a critical executable built for the wrong architecture', () => {
   assert.match(result.stderr, /architecture mismatch/);
 });
 
-test('runs final-resource verification before accepting macOS and Windows archives', () => {
+test('runs final-resource verification before accepting macOS, Windows, and Linux archives', () => {
   const macosScript = fs.readFileSync(path.join(CLIENT_DIR, 'package-electron-macos-client.sh'), 'utf8');
   const windowsScript = fs.readFileSync(path.join(CLIENT_DIR, 'package-electron-windows-client.ps1'), 'utf8');
+  const linuxScript = fs.readFileSync(path.join(CLIENT_DIR, 'package-electron-linux-client.sh'), 'utf8');
   const macosBuilder = fs.readFileSync(path.join(CLIENT_DIR, 'electron-builder-macos.yml'), 'utf8');
+  const linuxBuilder = fs.readFileSync(path.join(CLIENT_DIR, 'electron-builder-linux.yml'), 'utf8');
   assert.ok(macosScript.indexOf('node "$INSTALLED_PACKAGE_VERIFIER"') < macosScript.indexOf('hdiutil verify "$DMG_PATH"'));
   assert.ok(windowsScript.indexOf('Invoke-InstalledPackageVerification -ResourcesDir') < windowsScript.indexOf('Compress-Archive -LiteralPath'));
+  assert.ok(linuxScript.indexOf('node "$INSTALLED_PACKAGE_VERIFIER"') < linuxScript.indexOf('[OK] Linux desktop installer'));
   assert.match(macosScript, /VERIFY_ARGS\+=\(--require-signed\)/);
   assert.match(windowsScript, /\$verificationReport = "\$zipPath\.verification\.json"/);
+  assert.match(linuxScript, /--runtime-profile linux-browser/);
+  assert.match(linuxBuilder, /from: \.\.\/\.package\/linux\/chatos_chrome_native_host/);
+  assert.match(linuxBuilder, /from: \.\.\/\.package\/linux\/chrome-extension/);
   assert.match(macosBuilder, /asarUnpack:\n  - electron\/core-runtime\.cjs/);
+  assert.match(linuxBuilder, /asarUnpack:\n  - electron\/core-runtime\.cjs/);
 });

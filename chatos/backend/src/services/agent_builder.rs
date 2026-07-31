@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::models::chatos_agent_types::{
-    ChatosAgentDto, ChatosAgentSkillDto, ChatosSkillDto, CreateChatosAgentRequest,
+    ChatosAgentDto, ChatosAgentSkillDto, CreateChatosAgentRequest,
 };
+use crate::services::chatos_agents;
 use crate::services::llm_prompt_runner::{run_text_prompt_with_runtime, PromptRunnerRuntime};
 use crate::services::text_normalization::{
     normalize_optional_text_owned, normalize_required_text_owned, normalize_string_vec,
 };
-use crate::services::{chatos_agents, chatos_skills};
 
 mod prompt;
 
@@ -77,19 +77,12 @@ pub async fn ai_create_agent(
     )
     .await?;
 
-    let (visible_skills, visible_agents, visible_plugins) = tokio::try_join!(
-        chatos_skills::list_skills(request.scope_user_id.as_str(), None, None, Some(1000), 0),
-        chatos_agents::list_agents(request.scope_user_id.as_str(), Some(true), Some(200), 0,),
-        chatos_skills::list_skill_plugins(request.scope_user_id.as_str(), Some(300), 0),
-    )?;
+    let visible_agents =
+        chatos_agents::list_agents(request.scope_user_id.as_str(), Some(true), Some(200), 0)
+            .await?;
 
     let system_prompt = build_plain_system_prompt();
-    let user_prompt = build_plain_user_prompt(
-        &request,
-        visible_skills.as_slice(),
-        visible_agents.as_slice(),
-        visible_plugins.as_slice(),
-    );
+    let user_prompt = build_plain_user_prompt(&request, visible_agents.as_slice());
 
     let raw = run_text_prompt_with_runtime(
         &runtime,
@@ -100,8 +93,7 @@ pub async fn ai_create_agent(
     )
     .await?;
 
-    let mut create_req =
-        build_create_agent_request(&request, raw.as_str(), visible_skills.as_slice())?;
+    let mut create_req = build_create_agent_request(&request, raw.as_str())?;
     create_req.auto_provision_task_runner_account = Some(true);
     let created = chatos_agents::create_agent(&create_req).await?;
 
@@ -141,7 +133,6 @@ impl NormalizedRequest {
 fn build_create_agent_request(
     request: &NormalizedRequest,
     raw_content: &str,
-    visible_skills: &[ChatosSkillDto],
 ) -> Result<CreateChatosAgentRequest, String> {
     let payload = parse_json_candidate(raw_content)
         .and_then(|value| value.as_object().cloned())
@@ -188,22 +179,10 @@ fn build_create_agent_request(
         .unwrap_or_default();
     let prompt_inline_skills =
         build_inline_skills_from_prompts(request.skill_prompts.as_deref()).unwrap_or_default();
-    let allow_inline_skills = !prompt_inline_skills.is_empty() || visible_skills.is_empty();
-    if !allow_inline_skills && !requested_inline_skills.is_empty() {
-        return Err(
-            "当前技能中心已有可用技能，AI 创建智能体时禁止内联 skills，请改用 skill_ids"
-                .to_string(),
-        );
-    }
-
-    let mut inline_skills = if allow_inline_skills {
-        if !requested_inline_skills.is_empty() {
-            requested_inline_skills
-        } else {
-            prompt_inline_skills
-        }
+    let mut inline_skills = if !requested_inline_skills.is_empty() {
+        requested_inline_skills
     } else {
-        Vec::new()
+        prompt_inline_skills
     };
     dedupe_skills(&mut inline_skills);
 
@@ -239,30 +218,11 @@ fn build_create_agent_request(
         };
     }
 
-    validate_skill_ids(
-        visible_skills,
+    validate_inline_skill_ids(
         skill_ids.as_slice(),
         default_skill_ids.as_slice(),
         inline_skill_ids.as_slice(),
     )?;
-
-    let mut plugin_sources = payload
-        .get("plugin_sources")
-        .and_then(parse_string_array_from_value)
-        .unwrap_or_default();
-    dedupe_strings(&mut plugin_sources);
-
-    for skill in visible_skills
-        .iter()
-        .filter(|skill| skill_ids.iter().any(|item| item == &skill.id))
-    {
-        if !plugin_sources
-            .iter()
-            .any(|item| item == &skill.plugin_source)
-        {
-            plugin_sources.push(skill.plugin_source.clone());
-        }
-    }
 
     let enabled = request.enabled.unwrap_or_else(|| {
         payload
@@ -280,11 +240,7 @@ fn build_create_agent_request(
         category,
         role_definition,
         auto_provision_task_runner_account: None,
-        plugin_sources: if plugin_sources.is_empty() {
-            None
-        } else {
-            Some(plugin_sources)
-        },
+        plugin_sources: None,
         skills: if inline_skills.is_empty() {
             None
         } else {
@@ -306,16 +262,11 @@ fn build_create_agent_request(
     })
 }
 
-fn validate_skill_ids(
-    visible_skills: &[ChatosSkillDto],
+fn validate_inline_skill_ids(
     skill_ids: &[String],
     default_skill_ids: &[String],
     inline_skill_ids: &[String],
 ) -> Result<(), String> {
-    let visible_ids = visible_skills
-        .iter()
-        .map(|skill| skill.id.as_str())
-        .collect::<HashSet<_>>();
     let inline_ids = inline_skill_ids
         .iter()
         .map(|item| item.as_str())
@@ -323,7 +274,7 @@ fn validate_skill_ids(
     let mut missing = Vec::new();
 
     for skill_id in skill_ids.iter().chain(default_skill_ids.iter()) {
-        if visible_ids.contains(skill_id.as_str()) || inline_ids.contains(skill_id.as_str()) {
+        if inline_ids.contains(skill_id.as_str()) {
             continue;
         }
         if !missing.iter().any(|existing: &String| existing == skill_id) {
@@ -334,7 +285,10 @@ fn validate_skill_ids(
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(format!("存在未安装的 skill_id: {}", missing.join(", ")))
+        Err(format!(
+            "standalone skill_ids are retired; provide matching inline skills: {}",
+            missing.join(", ")
+        ))
     }
 }
 

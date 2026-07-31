@@ -20,14 +20,16 @@ import type {
   OptimizeProviderSkillStreamEvent,
   ResourceCheckRecord,
   RuntimeCapabilitiesResponse,
-  SkillPackageRecord,
-  SkillRecord,
   SystemAgentRecord,
 } from '../types';
 import type {
+  PluginAuditLogRecord,
   PluginCatalogRecord,
   PluginCatalogSyncResponse,
+  PluginInstallationRecord,
   PluginMarketplaceRecord,
+  PluginOAuthConnectionRecord,
+  PluginPublisherRecord,
   PluginReleaseRecord,
 } from '../pluginTypes';
 
@@ -39,6 +41,12 @@ import {
   withQuery,
   type QueryValue,
 } from '@chatos/frontend-runtime';
+import {
+  filterRetiredAgentMcpBindings,
+  filterRetiredMcpList,
+  filterRetiredRuntimeCapabilities,
+  isRetiredTaskManagerMcpId,
+} from '../retiredMcps';
 
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL);
@@ -78,7 +86,9 @@ export const api = {
     }),
   currentUser: () => request<CurrentUser>('/api/auth/me'),
   listMcps: (params?: Record<string, QueryValue>) =>
-    request<ListResponse<McpRecord>>(withQuery('/api/mcps', params || {})),
+    request<ListResponse<McpRecord>>(withQuery('/api/mcps', params || {})).then(
+      filterRetiredMcpList,
+    ),
   createMcp: (payload: unknown) =>
     request<McpRecord>('/api/mcps', {
       method: 'POST',
@@ -128,42 +138,6 @@ export const api = {
         body: JSON.stringify({ instructions }),
       },
     ),
-  listSkills: (params?: Record<string, QueryValue>) =>
-    request<ListResponse<SkillRecord>>(withQuery('/api/skills', params || {})),
-  createSkill: (payload: unknown) =>
-    request<SkillRecord>('/api/skills', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateSkill: (id: string, payload: unknown) =>
-    request<SkillRecord>(`/api/skills/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-  deleteSkill: (id: string) =>
-    request<void>(`/api/skills/${id}`, {
-      method: 'DELETE',
-    }),
-  checkSkill: (id: string) =>
-    request<ResourceCheckRecord>(`/api/skills/${id}/check`, {
-      method: 'POST',
-    }),
-  listSkillPackages: (params?: Record<string, QueryValue>) =>
-    request<ListResponse<SkillPackageRecord>>(withQuery('/api/skill-packages', params || {})),
-  createSkillPackage: (payload: unknown) =>
-    request<SkillPackageRecord>('/api/skill-packages', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateSkillPackage: (id: string, payload: unknown) =>
-    request<SkillPackageRecord>(`/api/skill-packages/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-  deleteSkillPackage: (id: string) =>
-    request<void>(`/api/skill-packages/${id}`, {
-      method: 'DELETE',
-    }),
   listPluginMarketplaces: () =>
     request<ListResponse<PluginMarketplaceRecord>>('/api/plugin-marketplaces'),
   createPluginMarketplace: (payload: unknown) =>
@@ -171,10 +145,37 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  updateAdminPluginMarketplace: (marketplaceId: string, payload: unknown) =>
+    request<PluginMarketplaceRecord>(
+      `/api/admin/plugin-marketplaces/${encodeURIComponent(marketplaceId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
+    ),
   syncPluginMarketplace: (marketplaceId: string) =>
     request<PluginCatalogSyncResponse>(
       `/api/plugin-marketplaces/${encodeURIComponent(marketplaceId)}/sync`,
       { method: 'POST' },
+    ),
+  listPluginPublishers: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginPublisherRecord>>(withQuery('/api/plugin-publishers', params || {})),
+  submitPluginPublisher: (payload: unknown) =>
+    request<PluginPublisherRecord>('/api/plugin-publishers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listAdminPluginPublishers: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginPublisherRecord>>(
+      withQuery('/api/admin/plugin-publishers', params || {}),
+    ),
+  reviewAdminPluginPublisher: (publisherRecordId: string, payload: unknown) =>
+    request<PluginPublisherRecord>(
+      `/api/admin/plugin-publishers/${encodeURIComponent(publisherRecordId)}/review`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
     ),
   listAdminPlugins: (params?: Record<string, QueryValue>) =>
     request<ListResponse<PluginCatalogRecord>>(withQuery('/api/admin/plugins', params || {})),
@@ -200,6 +201,16 @@ export const api = {
       `/api/admin/plugin-releases/${encodeURIComponent(releaseId)}/revoke`,
       { method: 'POST' },
     ),
+  listPluginAudit: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginAuditLogRecord>>(
+      withQuery('/api/admin/plugin-audit', params || {}),
+    ),
+  listInstalledPlugins: (params: Record<string, QueryValue>) =>
+    request<ListResponse<PluginInstallationRecord>>(withQuery('/api/plugins/installed', params)),
+  listPluginOAuthConnections: (pluginId: string, params: Record<string, QueryValue>) =>
+    request<ListResponse<PluginOAuthConnectionRecord>>(
+      withQuery(`/api/plugins/${encodeURIComponent(pluginId)}/oauth`, params),
+    ),
   listSystemAgents: () => request<SystemAgentRecord[]>('/api/system-agents'),
   createSystemAgent: (payload: unknown) =>
     request<SystemAgentRecord>('/api/system-agents', {
@@ -212,15 +223,19 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   getAgentMcpBindings: (agentKey: string) =>
-    request<AgentMcpBindingsResponse>(`/api/system-agents/${agentKey}/mcp-bindings`),
+    request<AgentMcpBindingsResponse>(`/api/system-agents/${agentKey}/mcp-bindings`).then(
+      filterRetiredAgentMcpBindings,
+    ),
   updateAgentMcpBindings: (
     agentKey: string,
     bindings: Array<{ mcp_id: string; mode: string }>,
   ) =>
     request<AgentMcpBindingsResponse>(`/api/system-agents/${agentKey}/mcp-bindings`, {
       method: 'PUT',
-      body: JSON.stringify({ bindings }),
-    }),
+      body: JSON.stringify({
+        bindings: bindings.filter((binding) => !isRetiredTaskManagerMcpId(binding.mcp_id)),
+      }),
+    }).then(filterRetiredAgentMcpBindings),
   listAgentProviderPrompts: (agentKey: string) =>
     request<AgentProviderPromptRecord[]>(
       `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts`,
@@ -262,7 +277,9 @@ export const api = {
   agentPromptCompleteness: () =>
     request<AgentPromptCompleteness[]>('/api/system-agents/prompt-completeness'),
   resolveAgentCapabilities: (params: Record<string, QueryValue>) =>
-    request<RuntimeCapabilitiesResponse>(withQuery('/api/runtime/agent-capabilities', params)),
+    request<RuntimeCapabilitiesResponse>(withQuery('/api/runtime/agent-capabilities', params)).then(
+      filterRetiredRuntimeCapabilities,
+    ),
 };
 
 async function requestSse(

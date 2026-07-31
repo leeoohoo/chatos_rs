@@ -30,7 +30,7 @@ fn register_read_file_raw_tool(
     service.register_tool(
         "read_file_raw",
         &format!(
-            "Return UTF-8 file content.\nwith_line_numbers defaults to true; set false to skip structured numbered lines.\n{workspace_note}"
+            "Return UTF-8 file content from the current project workspace.\nwith_line_numbers defaults to true; set false to skip structured numbered lines.\n{workspace_note}"
         ),
         json!({
             "type": "object",
@@ -98,7 +98,7 @@ fn register_read_file_range_tool(
     service.register_tool(
         "read_file_range",
         &format!(
-            "Return UTF-8 content from start_line to end_line (1-based, inclusive).\nFile size limit: {}.\n{workspace_note}",
+            "Return UTF-8 content from start_line to end_line (1-based, inclusive) from the current project workspace.\nFile size limit: {}.\n{workspace_note}",
             format_bytes(max_file_bytes)
         ),
         json!({
@@ -151,7 +151,7 @@ fn register_list_dir_tool(
 ) {
     service.register_tool(
         "list_dir",
-        &format!("List directory entries.\n{workspace_note}"),
+        &format!("List directory entries from the current project workspace.\n{workspace_note}"),
         json!({
             "type": "object",
             "properties": {
@@ -183,7 +183,7 @@ fn register_search_text_tool(
 ) {
     service.register_tool(
         "search_text",
-        &format!("Search text recursively under a directory.\n{workspace_note}"),
+        &format!("Search text recursively under a directory in the current project workspace.\n{workspace_note}"),
         json!({
             "type": "object",
             "properties": {

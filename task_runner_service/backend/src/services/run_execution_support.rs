@@ -10,9 +10,6 @@ use crate::models::{
     TaskStatus,
 };
 
-use super::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries,
-};
 use super::RunService;
 
 impl RunService {
@@ -115,21 +112,6 @@ impl RunService {
         }
         if !task_already_cancelled {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
-        }
-        match finalize_task_session_entries(
-            &self.store,
-            task.id.as_str(),
-            run.id.as_str(),
-            run.status,
-        )
-        .await
-        {
-            Ok(summary) => append_task_session_finalized_event(&self.store, run, &summary).await,
-            Err(err) => warn!(
-                run_id = run.id.as_str(),
-                error = err.as_str(),
-                "failed to finalize Task Manager session for pre-start cancellation"
-            ),
         }
         self.cleanup_task_terminals(task, run, workspace_dir).await;
         self.store.clear_cancel_requested(&run.id);

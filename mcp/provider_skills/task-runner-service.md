@@ -23,13 +23,13 @@ Task Runner 是你自己的内部异步执行通道，用来延长你对用户�
 2. 选择任务能力前，根据需求调用：
    - `list_mcp_builtin_catalog`：查看任务可选的系统内置能力。
    - `list_external_mcp_configs`：查看用户提供并已启用的 MCP。
-   - `list_available_skills`：查看用户已启用、由 Local Connector 提供的 Skills。
+   - `list_available_plugins`：在用户或客户端已经确定的 Local Connector 设备上查看可用 Plugins。
 3. 单一工作使用 `create_task`；包含多个阶段或前置依赖时使用 `create_tasks_with_prerequisites`。
 4. 只使用目录工具真实返回的 ID：
    - `default_model_config_id` 从创建任务工具动态提供的模型枚举中选择一个；根据模型的使用场景匹配任务。省略时由 Task Runner 自动选择。
    - `enabled_builtin_kinds` 对应系统内置 MCP 能力。
    - `external_mcp_config_ids` 对应用户 MCP 配置。
-   - `selected_skill_ids` 对应已启用的 Local Connector Skills。
+   - `selected_plugins` 对应已启用、已安装且绑定精确 Release/设备的 Plugins；Plugin 内 Skill 只通过该 Plugin 选择快照进入任务。
    - `requires_execution` 表示是否需要运行、构建、测试或验证项目：只读取/分析/修改文件且不需要执行项目时设为 `false`，Task Runner 会使用默认沙箱，不要求项目专属镜像；需要启动、编译、测试或运行验证时设为 `true`，并使用项目已初始化的运行镜像。
 5. 本轮任务安排完成后调用一次 `wait_for_task_completion`，然后停止调用 Task Runner 工具。后台执行和事实结果会通过正常回调链路返回。
 
@@ -40,11 +40,11 @@ Task Runner 是你自己的内部异步执行通道，用来延长你对用户�
 - 任务目标要明确要求执行者读取真实项目内容并留下验证证据，不能根据项目名称或用户描述猜测。
 - 如果当前项目能力暂时不可用，应先创建调查任务确认具体缺失项；只有 Task Runner 明确返回不可用事实后，才向用户说明阻塞原因。
 
-## 能力和 Skills 选择
+## 能力和 Plugins 选择
 
-- 不要凭空编造 MCP 或 Skill ID，必须使用对应目录工具返回的真实值。
-- 只选择真正有助于任务的能力，不要默认把所有 MCP 和 Skills 全部附加给任务。
-- Skills 的代码、文件、浏览器、桌面和本机操作在用户的 Local Connector 客户端执行，不在 Task Runner 云端进程中执行。
+- 不要凭空编造 MCP、Plugin 或 Plugin component ID，必须使用对应目录工具返回的真实值。
+- 只选择真正有助于任务的能力，不要默认把所有 MCP 和 Plugins 全部附加给任务。
+- Plugin 的代码、文件、浏览器、桌面和本机操作在用户的 Local Connector 客户端执行，不在 Task Runner 云端进程中执行。
 - 如果任务需要代码修改，通常应同时选择代码读取、代码写入和终端验证能力。
 - 如果需求包含实现和验收，优先拆成实现任务与依赖它的复核任务。
 

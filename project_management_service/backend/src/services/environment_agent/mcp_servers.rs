@@ -46,6 +46,7 @@ pub(super) async fn build_project_environment_mcp_executor(
     user_access_token: Option<&str>,
     run_id: &str,
     capability_policy: &ResolvedAgentCapabilities,
+    selected_dependencies: &[String],
 ) -> Result<McpExecutor, String> {
     let mut builder = McpExecutor::builder();
     if capability_allows_mcp(capability_policy, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID) {
@@ -55,7 +56,7 @@ pub(super) async fn build_project_environment_mcp_executor(
                 state: state.clone(),
                 project: project.clone(),
                 run_id: run_id.to_string(),
-                user_access_token: user_access_token.map(ToOwned::to_owned),
+                selected_dependencies: selected_dependencies.to_vec(),
             });
     }
 
@@ -207,8 +208,8 @@ pub(super) async fn get_sandbox_image_catalog(
 pub(super) async fn prepare_sandbox_dependency_images(
     state: &AppState,
     provider: RuntimeEnvironmentProvider,
-    _project_id: &str,
-    _run_id: &str,
+    project_id: &str,
+    run_id: &str,
     image_refs: Vec<String>,
 ) -> Result<Value, String> {
     if image_refs.is_empty() {
@@ -250,7 +251,11 @@ pub(super) async fn prepare_sandbox_dependency_images(
         ))
         .header("x-sandbox-caller", client_id)
         .header("x-sandbox-internal-token", internal_token)
-        .json(&json!({ "image_refs": image_refs }));
+        .json(&json!({
+            "image_refs": image_refs,
+            "project_id": project_id,
+            "run_id": run_id,
+        }));
     let response = request
         .send()
         .await

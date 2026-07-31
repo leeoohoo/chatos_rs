@@ -43,7 +43,9 @@ impl LocalDatabase {
         sqlx::query_as::<_, LocalRuntimeEnvironmentImageRecord>(
             r#"
             SELECT id, project_id, environment_key, environment_type,
-                   display_name, image_id, image_ref, image_provider,
+                   display_name, source_root, component_kind, startup_command,
+                   test_command, depends_on_json, auto_start,
+                   image_id, image_ref, image_provider,
                    dockerfile, features_json, ports_json, env_vars_json, status, error,
                    created_at, updated_at
             FROM project_runtime_environment_images

@@ -36,8 +36,6 @@ vi.mock('../lib/store/ChatStoreContext', async () => {
 const mockedUseChatStoreResolved = vi.mocked(useChatStoreResolved);
 
 const createApiClientStub = (modelProviders: AiModelProvider[] = []) => ({
-  listSkillPlugins: vi.fn(async () => []),
-  listSkills: vi.fn(async () => []),
   getMcpConfigResourceByCommand: vi.fn(async () => ({ success: true, config: null })),
   getAiModelProviders: vi.fn(async () => modelProviders),
 } as unknown as ApiClient);

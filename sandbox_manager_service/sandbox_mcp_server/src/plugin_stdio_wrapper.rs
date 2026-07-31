@@ -5,7 +5,15 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(any(target_os = "linux", test))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::Stdio;
+
+#[cfg(windows)]
+mod windows;
+#[cfg(any(windows, test))]
+mod windows_command_line;
+#[cfg(any(windows, test))]
+mod windows_workspace;
 
 const WRAPPER_MODE: &str = "--internal-plugin-stdio-wrapper";
 
@@ -15,17 +23,31 @@ pub(crate) fn is_internal_plugin_stdio_wrapper() -> bool {
 
 pub(crate) async fn run_internal_plugin_stdio_wrapper() -> Result<i32, String> {
     let spec = PluginStdioSandboxSpec::from_args(std::env::args().skip(2).collect())?;
+    #[cfg(windows)]
+    {
+        return windows::run(&spec).await;
+    }
+    #[cfg(not(windows))]
     let mut command = sandboxed_plugin_command(&spec)?;
+    #[cfg(not(windows))]
     let status = command.status().await.map_err(|err| err.to_string())?;
+    #[cfg(not(windows))]
     Ok(status.code().unwrap_or(1))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PluginStdioSandboxSpec {
+    #[cfg_attr(not(windows), allow(dead_code))]
+    sandbox_id: String,
     plugin_root: PathBuf,
+    #[cfg_attr(windows, allow(dead_code))]
     state_root: PathBuf,
+    #[cfg_attr(windows, allow(dead_code))]
     cache_root: PathBuf,
+    #[cfg_attr(windows, allow(dead_code))]
     temp_root: PathBuf,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    package_index: PathBuf,
     workspace_root: Option<PathBuf>,
     cwd: PathBuf,
     environment_names: Vec<String>,
@@ -61,10 +83,12 @@ impl PluginStdioSandboxSpec {
                 }
             } else if matches!(
                 name,
-                "--plugin-root"
+                "--sandbox-id"
+                    | "--plugin-root"
                     | "--state-root"
                     | "--cache-root"
                     | "--temp-root"
+                    | "--package-index"
                     | "--workspace-root"
                     | "--cwd"
             ) {
@@ -80,10 +104,18 @@ impl PluginStdioSandboxSpec {
             }
             index += 2;
         }
+        let sandbox_id = required_option(&values, "--sandbox-id")?.to_string();
+        if uuid::Uuid::parse_str(sandbox_id.as_str()).is_err() {
+            return Err("Plugin stdio sandbox ID is invalid".to_string());
+        }
         let plugin_root = canonical_directory(required_option(&values, "--plugin-root")?)?;
         let state_root = canonical_directory(required_option(&values, "--state-root")?)?;
         let cache_root = canonical_directory(required_option(&values, "--cache-root")?)?;
         let temp_root = canonical_directory(required_option(&values, "--temp-root")?)?;
+        let package_index = canonical_regular_file(
+            Path::new(required_option(&values, "--package-index")?),
+            false,
+        )?;
         let workspace_root = values
             .get("--workspace-root")
             .map(String::as_str)
@@ -103,6 +135,11 @@ impl PluginStdioSandboxSpec {
                 );
             }
         }
+        if package_index.starts_with(plugin_root.as_path()) {
+            return Err(
+                "Plugin stdio signed package index must remain outside Plugin root".to_string(),
+            );
+        }
         if let Some(workspace_root) = workspace_root.as_ref() {
             for protected in [&plugin_root, &state_root, &cache_root, &temp_root] {
                 if workspace_root.starts_with(protected.as_path())
@@ -116,10 +153,12 @@ impl PluginStdioSandboxSpec {
             }
         }
         Ok(Self {
+            sandbox_id,
             plugin_root,
             state_root,
             cache_root,
             temp_root,
+            package_index,
             workspace_root,
             cwd,
             environment_names: environment_names.into_iter().collect(),
@@ -153,6 +192,17 @@ fn canonical_directory(value: &str) -> Result<PathBuf, String> {
             path.display()
         ));
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(format!(
+                "Plugin stdio directory is a reparse point: {}",
+                path.display()
+            ));
+        }
+    }
     path.canonicalize().map_err(|err| {
         format!(
             "canonicalize Plugin stdio directory {} failed: {err}",
@@ -162,6 +212,10 @@ fn canonical_directory(value: &str) -> Result<PathBuf, String> {
 }
 
 fn canonical_file(path: &Path) -> Result<PathBuf, String> {
+    canonical_regular_file(path, true)
+}
+
+fn canonical_regular_file(path: &Path, _require_executable: bool) -> Result<PathBuf, String> {
     let metadata = std::fs::symlink_metadata(path)
         .map_err(|err| format!("read Plugin stdio command {} failed: {err}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -170,10 +224,21 @@ fn canonical_file(path: &Path) -> Result<PathBuf, String> {
             path.display()
         ));
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(format!(
+                "Plugin stdio file is a reparse point: {}",
+                path.display()
+            ));
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 == 0 {
+        if _require_executable && metadata.permissions().mode() & 0o111 == 0 {
             return Err(format!(
                 "Plugin stdio command is not executable: {}",
                 path.display()
@@ -215,6 +280,10 @@ fn validate_environment_name(value: &str) -> Result<(), String> {
             | "SYSTEMROOT"
             | "WINDIR"
             | "USERPROFILE"
+            | "APPDATA"
+            | "LOCALAPPDATA"
+            | "CHATOS_PLUGIN_ROOT"
+            | "CHATOS_WORKSPACE"
             | "NODE_OPTIONS"
             | "PYTHONHOME"
             | "PYTHONPATH"
@@ -461,7 +530,7 @@ fn append_linux_mount(args: &mut Vec<OsString>, option: &str, path: &Path) {
     args.push(path.as_os_str().to_os_string());
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn sandboxed_plugin_command(
     _spec: &PluginStdioSandboxSpec,
 ) -> Result<tokio::process::Command, String> {
@@ -596,6 +665,38 @@ mod tests {
             "/bin/true".to_string(),
         ])
         .is_err());
+        assert!(super::validate_environment_name("CHATOS_WORKSPACE").is_err());
+        assert!(super::validate_environment_name("CHATOS_PLUGIN_ROOT").is_err());
+        assert!(super::validate_environment_name("APPDATA").is_err());
+        assert!(super::validate_environment_name("LOCALAPPDATA").is_err());
+    }
+
+    #[test]
+    fn windows_appcontainer_source_contract_is_offline_read_only_and_tree_scoped() {
+        let source = include_str!("plugin_stdio_wrapper/windows.rs");
+        for required in [
+            "CreateAppContainerProfile",
+            "CapabilityCount: 0",
+            "PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES",
+            "PROC_THREAD_ATTRIBUTE_HANDLE_LIST",
+            "PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY",
+            "PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT",
+            "signed Plugin package file failed SHA-256 verification",
+            "grant_appcontainer_read_only",
+            "Do not deny FILE_GENERIC_WRITE as a single mask",
+            "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+            "JOB_OBJECT_LIMIT_ACTIVE_PROCESS",
+            "WindowsWorkspaceMirror",
+            "workspace.commit()",
+            "CHATOS_WORKSPACE",
+        ] {
+            assert!(
+                source.contains(required),
+                "Windows Plugin stdio isolation contract is missing {required}"
+            );
+        }
+        assert!(!source.contains("internetClient"));
+        assert!(!source.contains("CreateProcessAsUserW"));
     }
 
     #[test]
@@ -605,6 +706,7 @@ mod tests {
         let state_root = temp.path().join("runtime/state");
         let cache_root = temp.path().join("runtime/cache");
         let temp_root = temp.path().join("runtime/tmp");
+        let package_index = temp.path().join("runtime/package-index.json");
         let workspace_root = temp.path().join("workspace");
         for directory in [
             &plugin_root,
@@ -617,6 +719,11 @@ mod tests {
         }
         let command = plugin_root.join("hook.sh");
         std::fs::write(command.as_path(), "#!/bin/sh\n").expect("write Hook command");
+        std::fs::write(
+            package_index.as_path(),
+            r#"{"schema_version":1,"files":{}}"#,
+        )
+        .expect("write package index");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -625,6 +732,8 @@ mod tests {
         }
         let args = |workspace: &Path| {
             vec![
+                "--sandbox-id".to_string(),
+                "00000000-0000-4000-8000-000000000001".to_string(),
                 "--plugin-root".to_string(),
                 plugin_root.to_string_lossy().into_owned(),
                 "--state-root".to_string(),
@@ -633,6 +742,8 @@ mod tests {
                 cache_root.to_string_lossy().into_owned(),
                 "--temp-root".to_string(),
                 temp_root.to_string_lossy().into_owned(),
+                "--package-index".to_string(),
+                package_index.to_string_lossy().into_owned(),
                 "--workspace-root".to_string(),
                 workspace.to_string_lossy().into_owned(),
                 "--cwd".to_string(),
@@ -662,6 +773,7 @@ mod tests {
         let state_root = temp.path().join("runtime/state");
         let cache_root = temp.path().join("runtime/cache");
         let temp_root = temp.path().join("runtime/tmp");
+        let package_index = temp.path().join("runtime/package-index.json");
         let workspace_root = temp.path().join("workspace");
         for directory in [
             &plugin_root,
@@ -674,6 +786,11 @@ mod tests {
         }
         let command = plugin_root.join("hook.sh");
         std::fs::write(command.as_path(), "#!/bin/sh\n").expect("write Hook command");
+        std::fs::write(
+            package_index.as_path(),
+            r#"{"schema_version":1,"files":{}}"#,
+        )
+        .expect("write package index");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -681,6 +798,8 @@ mod tests {
                 .expect("make Hook command executable");
         }
         let spec = PluginStdioSandboxSpec::from_args(vec![
+            "--sandbox-id".to_string(),
+            "00000000-0000-4000-8000-000000000002".to_string(),
             "--plugin-root".to_string(),
             plugin_root.to_string_lossy().into_owned(),
             "--state-root".to_string(),
@@ -689,6 +808,8 @@ mod tests {
             cache_root.to_string_lossy().into_owned(),
             "--temp-root".to_string(),
             temp_root.to_string_lossy().into_owned(),
+            "--package-index".to_string(),
+            package_index.to_string_lossy().into_owned(),
             "--workspace-root".to_string(),
             workspace_root.to_string_lossy().into_owned(),
             "--cwd".to_string(),
@@ -804,6 +925,7 @@ mod tests {
         let state_root = temp.path().join("runtime/state");
         let cache_root = temp.path().join("runtime/cache");
         let temp_root = temp.path().join("runtime/tmp");
+        let package_index = temp.path().join("runtime/package-index.json");
         let workspace_root = temp.path().join("workspace");
         for directory in [
             &plugin_root,
@@ -826,10 +948,17 @@ exit 0
 "#,
         )
         .expect("write Hook command");
+        std::fs::write(
+            package_index.as_path(),
+            r#"{"schema_version":1,"files":{}}"#,
+        )
+        .expect("write package index");
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(command.as_path(), std::fs::Permissions::from_mode(0o700))
             .expect("make Hook command executable");
         let spec = PluginStdioSandboxSpec::from_args(vec![
+            "--sandbox-id".to_string(),
+            "00000000-0000-4000-8000-000000000003".to_string(),
             "--plugin-root".to_string(),
             plugin_root.to_string_lossy().into_owned(),
             "--state-root".to_string(),
@@ -838,6 +967,8 @@ exit 0
             cache_root.to_string_lossy().into_owned(),
             "--temp-root".to_string(),
             temp_root.to_string_lossy().into_owned(),
+            "--package-index".to_string(),
+            package_index.to_string_lossy().into_owned(),
             "--workspace-root".to_string(),
             workspace_root.to_string_lossy().into_owned(),
             "--cwd".to_string(),

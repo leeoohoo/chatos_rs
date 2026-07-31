@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 use serde_json::Value;
+use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
@@ -13,6 +14,8 @@ use super::support::{
     redacted_prompt_payload, redacted_prompt_response, secret_field_keys, status_label,
 };
 use super::*;
+
+const ASK_USER_CALLBACK_RETRY_DELAYS_MS: [u64; 3] = [0, 250, 750];
 
 #[derive(Debug, Clone, Serialize)]
 struct ChatosAskUserPromptCallbackPayload {
@@ -186,18 +189,59 @@ async fn send_chatos_ask_user_prompt_callback(
     };
     let client = build_http_client(HttpClientTimeouts::new(config.callback_timeout))
         .map_err(|err| err.to_string())?;
-    let mut request = client.post(url).json(&payload);
-    if let Some(secret) = config.chatos_callback_secret.clone() {
-        request = request.header("X-Task-Runner-Callback-Secret", secret);
+    let mut last_error: Option<String> = None;
+    for (attempt_index, delay_ms) in ASK_USER_CALLBACK_RETRY_DELAYS_MS.into_iter().enumerate() {
+        if delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+        let mut request = client.post(url.clone()).json(&payload);
+        if let Some(secret) = config.chatos_callback_secret.clone() {
+            request = request.header("X-Task-Runner-Callback-Secret", secret);
+        }
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(err) => {
+                last_error = Some(err.to_string());
+                if attempt_index + 1 < ASK_USER_CALLBACK_RETRY_DELAYS_MS.len() {
+                    warn!(
+                        attempt = attempt_index + 1,
+                        max_attempts = ASK_USER_CALLBACK_RETRY_DELAYS_MS.len(),
+                        "ask user prompt callback delivery failed; retrying: {}",
+                        err
+                    );
+                }
+                continue;
+            }
+        };
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
+        let error = format!("callback request failed: {status} {body}");
+        if !ask_user_callback_status_is_retryable(status) {
+            return Err(error);
+        }
+        last_error = Some(error.clone());
+        if attempt_index + 1 < ASK_USER_CALLBACK_RETRY_DELAYS_MS.len() {
+            warn!(
+                attempt = attempt_index + 1,
+                max_attempts = ASK_USER_CALLBACK_RETRY_DELAYS_MS.len(),
+                "ask user prompt callback delivery failed; retrying: {}",
+                error
+            );
+        }
     }
-    let response = request.send().await.map_err(|err| err.to_string())?;
-    let status = response.status();
-    if status.is_success() {
-        return Ok(());
-    }
-    let body =
-        read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
-    Err(format!("callback request failed: {status} {body}"))
+    Err(last_error.unwrap_or_else(|| "callback request failed".to_string()))
+}
+
+fn ask_user_callback_status_is_retryable(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+        || matches!(
+            status,
+            reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+        )
 }
 
 fn has_chatos_source_context(task: &TaskRecord) -> bool {
@@ -220,5 +264,29 @@ fn task_status_label(status: TaskStatus) -> &'static str {
         TaskStatus::Blocked => "blocked",
         TaskStatus::Cancelled => "cancelled",
         TaskStatus::Archived => "archived",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ask_user_callback_retries_only_transient_http_failures() {
+        assert!(ask_user_callback_status_is_retryable(
+            reqwest::StatusCode::BAD_GATEWAY
+        ));
+        assert!(ask_user_callback_status_is_retryable(
+            reqwest::StatusCode::REQUEST_TIMEOUT
+        ));
+        assert!(ask_user_callback_status_is_retryable(
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        ));
+        assert!(!ask_user_callback_status_is_retryable(
+            reqwest::StatusCode::BAD_REQUEST
+        ));
+        assert!(!ask_user_callback_status_is_retryable(
+            reqwest::StatusCode::UNAUTHORIZED
+        ));
     }
 }

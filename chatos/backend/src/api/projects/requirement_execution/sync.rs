@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_project_execution::STATUS_AWAITING_CONFIRMATION;
+use chatos_project_execution::{STATUS_AWAITING_CONFIRMATION, STATUS_STOPPED, STATUS_STOPPING};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -124,6 +124,15 @@ pub(in crate::api::projects) async fn sync_execution_message_task_tracking(
     if let Some(async_meta) = async_meta.as_object_mut() {
         apply_execution_links_to_task_tracking(async_meta, links);
     }
+    let execution_meta = metadata
+        .entry("project_requirement_execution".to_string())
+        .or_insert_with(|| json!({}));
+    if !execution_meta.is_object() {
+        *execution_meta = json!({});
+    }
+    if let Some(execution_meta) = execution_meta.as_object_mut() {
+        apply_execution_links_to_project_execution_metadata(execution_meta, links);
+    }
     conversation_messages::upsert_message_in_session(&session, &message)
         .await
         .map(|_| ())
@@ -177,6 +186,7 @@ fn apply_execution_links_to_task_tracking(
     async_meta: &mut serde_json::Map<String, Value>,
     links: &[ExecutionLink],
 ) {
+    let stop_locked_status = stop_locked_task_runner_async_status(async_meta);
     let mut created = read_string_set(async_meta.get("created_task_ids"));
     let mut running = read_string_set(async_meta.get("running_task_ids"));
     let mut terminal = read_string_set(async_meta.get("terminal_task_ids"));
@@ -271,32 +281,48 @@ fn apply_execution_links_to_task_tracking(
         "execution_kind".to_string(),
         Value::String("project_requirement_execution".to_string()),
     );
-    async_meta.insert(
-        "overall_status".to_string(),
-        Value::String(
-            if all_terminal {
-                "completed"
-            } else if execution_paused {
-                "paused"
-            } else if awaiting_confirmation {
-                STATUS_AWAITING_CONFIRMATION
-            } else {
-                "processing"
-            }
-            .to_string(),
-        ),
-    );
-    async_meta.insert(
-        "confirmation_status".to_string(),
-        Value::String(
-            if awaiting_confirmation {
-                STATUS_AWAITING_CONFIRMATION
-            } else {
-                "confirmed"
-            }
-            .to_string(),
-        ),
-    );
+    if let Some(stop_locked_status) = stop_locked_status {
+        let locked_status = if stop_locked_status == STATUS_STOPPING && all_terminal {
+            STATUS_STOPPED
+        } else {
+            stop_locked_status.as_str()
+        };
+        async_meta.insert(
+            "overall_status".to_string(),
+            Value::String(locked_status.to_string()),
+        );
+        async_meta.insert(
+            "confirmation_status".to_string(),
+            Value::String(locked_status.to_string()),
+        );
+    } else {
+        async_meta.insert(
+            "overall_status".to_string(),
+            Value::String(
+                if all_terminal {
+                    "completed"
+                } else if execution_paused {
+                    "paused"
+                } else if awaiting_confirmation {
+                    STATUS_AWAITING_CONFIRMATION
+                } else {
+                    "processing"
+                }
+                .to_string(),
+            ),
+        );
+        async_meta.insert(
+            "confirmation_status".to_string(),
+            Value::String(
+                if awaiting_confirmation {
+                    STATUS_AWAITING_CONFIRMATION
+                } else {
+                    "confirmed"
+                }
+                .to_string(),
+            ),
+        );
+    }
     write_string_set(async_meta, "created_task_ids", &created);
     write_string_set(async_meta, "running_task_ids", &running);
     write_string_set(async_meta, "terminal_task_ids", &terminal);
@@ -304,6 +330,82 @@ fn apply_execution_links_to_task_tracking(
     write_string_set(async_meta, "failed_task_ids", &failed);
     write_string_set(async_meta, "blocked_task_ids", &blocked);
     write_string_set(async_meta, "cancelled_task_ids", &cancelled);
+}
+
+fn stop_locked_task_runner_async_status(
+    async_meta: &serde_json::Map<String, Value>,
+) -> Option<String> {
+    let locked_status = ["overall_status", "confirmation_status"]
+        .iter()
+        .filter_map(|key| async_meta.get(*key))
+        .filter_map(Value::as_str)
+        .find_map(|status| {
+            let normalized = status.trim().to_ascii_lowercase();
+            if matches!(
+                normalized.as_str(),
+                STATUS_STOPPING | STATUS_STOPPED | "cancelled" | "canceled"
+            ) {
+                Some(normalized)
+            } else {
+                None
+            }
+        });
+    locked_status.or_else(|| {
+        task_runner_async_has_stop_marker(async_meta).then(|| STATUS_STOPPED.to_string())
+    })
+}
+
+fn task_runner_async_has_stop_marker(async_meta: &serde_json::Map<String, Value>) -> bool {
+    async_meta
+        .get("stopped_at")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+        || async_meta
+            .get("stopped_task_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|values| !values.is_empty())
+}
+
+fn apply_execution_links_to_project_execution_metadata(
+    execution_meta: &mut serde_json::Map<String, Value>,
+    links: &[ExecutionLink],
+) {
+    let mut project_task_ids = BTreeSet::new();
+    let mut task_links = links
+        .iter()
+        .filter_map(|link| {
+            let work_item_id = link.work_item_id.trim();
+            let task_runner_task_id = link.task_runner_task_id.trim();
+            if work_item_id.is_empty() || task_runner_task_id.is_empty() {
+                return None;
+            }
+            project_task_ids.insert(work_item_id.to_string());
+            Some(json!({
+                "project_task_id": work_item_id,
+                "task_runner_task_id": task_runner_task_id,
+                "task_runner_run_id": link.task_runner_run_id,
+                "task_runner_status": link.task_runner_status,
+                "source_session_id": link.source_session_id,
+                "source_user_message_id": link.source_user_message_id,
+            }))
+        })
+        .collect::<Vec<_>>();
+    if project_task_ids.is_empty() {
+        return;
+    }
+    task_links.sort_by(|left, right| {
+        let left_key = (
+            value_string(left, "project_task_id").unwrap_or_default(),
+            value_string(left, "task_runner_task_id").unwrap_or_default(),
+        );
+        let right_key = (
+            value_string(right, "project_task_id").unwrap_or_default(),
+            value_string(right, "task_runner_task_id").unwrap_or_default(),
+        );
+        left_key.cmp(&right_key)
+    });
+    write_string_set(execution_meta, "project_task_ids", &project_task_ids);
+    execution_meta.insert("task_links".to_string(), Value::Array(task_links));
 }
 
 fn read_string_set(value: Option<&Value>) -> BTreeSet<String> {
@@ -449,5 +551,115 @@ mod tests {
             Some("awaiting_confirmation")
         );
         assert!(read_string_set(metadata.get("running_task_ids")).is_empty());
+    }
+
+    #[test]
+    fn stopped_requirement_execution_tracking_is_not_overwritten_by_late_failure() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "overall_status".to_string(),
+            Value::String("stopped".to_string()),
+        );
+        metadata.insert(
+            "confirmation_status".to_string(),
+            Value::String("stopped".to_string()),
+        );
+
+        apply_execution_links_to_task_tracking(
+            &mut metadata,
+            &[link("task-1", "failed"), link("task-2", "cancelled")],
+        );
+
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert_eq!(
+            metadata.get("confirmation_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert!(read_string_set(metadata.get("failed_task_ids")).contains("task-1"));
+        assert!(read_string_set(metadata.get("cancelled_task_ids")).contains("task-2"));
+    }
+
+    #[test]
+    fn stopped_marker_recovers_requirement_execution_tracking_after_status_overwrite() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "overall_status".to_string(),
+            Value::String("failed".to_string()),
+        );
+        metadata.insert(
+            "confirmation_status".to_string(),
+            Value::String("failed".to_string()),
+        );
+        metadata.insert(
+            "stopped_at".to_string(),
+            Value::String("2026-07-29T09:00:00Z".to_string()),
+        );
+        metadata.insert("stopped_task_ids".to_string(), json!(["task-1"]));
+
+        apply_execution_links_to_task_tracking(
+            &mut metadata,
+            &[link("task-1", "failed"), link("task-2", "cancelled")],
+        );
+
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert_eq!(
+            metadata.get("confirmation_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+    }
+
+    #[test]
+    fn stopping_requirement_execution_becomes_stopped_after_all_tracked_tasks_are_terminal() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "overall_status".to_string(),
+            Value::String("stopping".to_string()),
+        );
+        metadata.insert(
+            "confirmation_status".to_string(),
+            Value::String("stopping".to_string()),
+        );
+
+        apply_execution_links_to_task_tracking(
+            &mut metadata,
+            &[link("task-1", "failed"), link("task-2", "cancelled")],
+        );
+
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert_eq!(
+            metadata.get("confirmation_status").and_then(Value::as_str),
+            Some("stopped")
+        );
+    }
+
+    #[test]
+    fn execution_link_tracking_updates_planner_scope_to_actual_graph() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("project_task_ids".to_string(), json!(["work-task-1"]));
+        apply_execution_links_to_project_execution_metadata(
+            &mut metadata,
+            &[link("task-1", "ready"), link("task-2", "ready")],
+        );
+
+        assert_eq!(
+            read_string_set(metadata.get("project_task_ids")),
+            BTreeSet::from(["work-task-1".to_string(), "work-task-2".to_string()])
+        );
+        assert_eq!(
+            metadata
+                .get("task_links")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
     }
 }

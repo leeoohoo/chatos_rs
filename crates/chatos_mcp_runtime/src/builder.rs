@@ -358,9 +358,8 @@ mod tests {
             .expect("builtin executor");
 
         let unavailable = executor.unavailable_tools();
-        assert!(unavailable.iter().any(|item| {
-            item.get("server_name").and_then(Value::as_str) == Some("task_manager")
-                && item.get("server_type").and_then(Value::as_str) == Some("builtin")
+        assert!(unavailable.iter().all(|item| {
+            item.get("server_name").and_then(Value::as_str) != Some("task_manager")
         }));
         assert!(unavailable.iter().all(|item| {
             item.get("server_name").and_then(Value::as_str) != Some("agent_builder")

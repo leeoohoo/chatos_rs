@@ -22,7 +22,10 @@ pub const PLUGIN_VISIBILITY_PUBLIC: &str = "public";
 pub const PLUGIN_VISIBILITY_PRIVATE: &str = "private";
 
 pub const PLUGIN_AUDIT_PUBLISH_MARKETPLACE: &str = "marketplace.publish";
+pub const PLUGIN_AUDIT_UPDATE_MARKETPLACE: &str = "marketplace.update";
 pub const PLUGIN_AUDIT_SYNC_MARKETPLACE: &str = "marketplace.sync";
+pub const PLUGIN_AUDIT_SUBMIT_PUBLISHER: &str = "publisher.submit";
+pub const PLUGIN_AUDIT_REVIEW_PUBLISHER: &str = "publisher.review";
 pub const PLUGIN_AUDIT_RESOLVE_INSTALL_SOURCE: &str = "install_source.resolve";
 pub const PLUGIN_AUDIT_PUBLISH_CATALOG: &str = "catalog.publish";
 pub const PLUGIN_AUDIT_PUBLISH_RELEASE: &str = "release.publish";
@@ -30,6 +33,15 @@ pub const PLUGIN_AUDIT_REVOKE_RELEASE: &str = "release.revoke";
 pub const PLUGIN_AUDIT_SYNC_INSTALLATION: &str = "installation.sync";
 pub const PLUGIN_AUDIT_UPDATE_PREFERENCE: &str = "preference.update";
 pub const PLUGIN_AUDIT_SYNC_OAUTH: &str = "oauth.sync";
+
+pub const PLUGIN_PUBLISHER_STATUS_PENDING: &str = "pending";
+pub const PLUGIN_PUBLISHER_STATUS_APPROVED: &str = "approved";
+pub const PLUGIN_PUBLISHER_STATUS_REJECTED: &str = "rejected";
+pub const PLUGIN_PUBLISHER_STATUS_SUSPENDED: &str = "suspended";
+
+pub const PLUGIN_PUBLISHER_DECISION_APPROVE: &str = "approve";
+pub const PLUGIN_PUBLISHER_DECISION_REJECT: &str = "reject";
+pub const PLUGIN_PUBLISHER_DECISION_SUSPEND: &str = "suspend";
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PluginCatalogQuery {
@@ -68,6 +80,14 @@ pub struct PluginAuditQuery {
     pub offset: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PluginPublisherQuery {
+    pub marketplace_id: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginMarketplacePayload {
     pub id: Option<String>,
@@ -77,6 +97,52 @@ pub struct PluginMarketplacePayload {
     pub enabled: Option<bool>,
     pub trust_level: Option<String>,
     pub trusted_signing_keys: Option<Vec<SigningKeyRef>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginMarketplaceUpdatePayload {
+    pub name: String,
+    pub catalog_url: Option<String>,
+    pub enabled: bool,
+    pub trust_level: String,
+    #[serde(default)]
+    pub trusted_signing_keys: Vec<SigningKeyRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginPublisherApplicationPayload {
+    pub publisher_id: String,
+    pub marketplace_id: String,
+    pub name: String,
+    pub website: Option<String>,
+    #[serde(default)]
+    pub signing_keys: Vec<SigningKeyRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginPublisherReviewPayload {
+    pub decision: String,
+    #[serde(default)]
+    pub review_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginPublisherRecord {
+    pub id: String,
+    pub publisher_id: String,
+    pub marketplace_id: String,
+    pub owner_user_id: String,
+    pub name: String,
+    pub website: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub signing_keys: Vec<SigningKeyRef>,
+    pub submitted_at: String,
+    pub reviewed_at: Option<String>,
+    pub reviewed_by: Option<String>,
+    pub review_note: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +202,13 @@ pub struct PluginCatalogSyncResponse {
     pub component_snapshot_count: usize,
     pub signing_key_count: usize,
     pub synced_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginReleasePublicationState {
+    pub release_id: String,
+    pub ready: bool,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

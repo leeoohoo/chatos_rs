@@ -53,6 +53,10 @@ pub(crate) use state::{
 
 pub use chrome_native_host::run_chrome_native_host;
 
+pub fn local_runtime_migration_versions() -> Vec<i64> {
+    local_runtime::embedded_migration_versions()
+}
+
 pub fn run_computer_use_helper() -> Result<()> {
     skills::native::run_computer_use_helper()
 }

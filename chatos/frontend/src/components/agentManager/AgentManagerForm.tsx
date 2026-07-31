@@ -9,8 +9,6 @@ import type { AgentFormData } from './types';
 interface AgentManagerFormProps {
   editingAgentId: string | null;
   formData: AgentFormData;
-  pluginOptions: Array<{ value: string; label: string }>;
-  skillOptions: Array<{ value: string; label: string }>;
   showTitle?: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCancel: () => void;
@@ -20,8 +18,6 @@ interface AgentManagerFormProps {
 const AgentManagerForm = ({
   editingAgentId,
   formData,
-  pluginOptions,
-  skillOptions,
   showTitle = true,
   onSubmit,
   onCancel,
@@ -80,46 +76,6 @@ const AgentManagerForm = ({
             placeholder={t('agentManager.form.roleDefinitionPlaceholder')}
           />
         </label>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <label className="block space-y-1">
-            <span className="text-xs text-muted-foreground">{t('agentManager.form.pluginSources')}</span>
-            <select
-              multiple
-              value={formData.pluginSources}
-              onChange={(event) => {
-                const values = Array.from(event.currentTarget.selectedOptions).map((option) => option.value);
-                onFormDataChange({ pluginSources: values });
-              }}
-              className="w-full min-h-36 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              {pluginOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block space-y-1">
-            <span className="text-xs text-muted-foreground">{t('agentManager.form.skillIds')}</span>
-            <select
-              multiple
-              value={formData.skillIds}
-              onChange={(event) => {
-                const values = Array.from(event.currentTarget.selectedOptions).map((option) => option.value);
-                onFormDataChange({ skillIds: values });
-              }}
-              className="w-full min-h-36 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              {skillOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
 
         <label className="inline-flex items-center gap-2 text-sm text-foreground">
           <input

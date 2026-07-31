@@ -7,7 +7,10 @@ use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument};
 use crate::repositories::db::with_db;
 use crate::services::task_manager::mapper::task_record_from_doc;
 use crate::services::task_manager::normalizer::trimmed_non_empty;
-use crate::services::task_manager::types::{TaskRecord, TaskUpdatePatch, TASK_NOT_FOUND_ERR};
+use crate::services::task_manager::types::{
+    normalize_task_update_patch, task_update_patch_is_empty, TaskRecord, TaskUpdatePatch,
+    TASK_NOT_FOUND_ERR,
+};
 
 use super::super::get_task_by_id;
 use super::state_rules::{
@@ -26,8 +29,8 @@ pub(super) async fn update_task_by_id_impl(
         .ok_or_else(|| "task_id is required".to_string())?
         .to_string();
 
-    let patch = patch.normalized()?;
-    if patch.is_empty() {
+    let patch = normalize_task_update_patch(patch)?;
+    if task_update_patch_is_empty(&patch) {
         return Err("at least one task field is required".to_string());
     }
     let current = get_task_by_id(conversation_id.as_str(), task_id.as_str()).await?;

@@ -76,33 +76,6 @@ impl LocalDatabase {
             .commit()
             .await
             .context("commit task run recovery")?;
-        let terminal_sessions = sqlx::query_as::<_, (String, String, String, String)>(
-            r#"
-            SELECT runs.owner_user_id, runs.session_id, runs.id, runs.status
-            FROM local_task_runs AS runs
-            WHERE runs.status IN ('completed', 'failed', 'blocked', 'canceled', 'interrupted')
-              AND EXISTS (
-                  SELECT 1 FROM task_board_tasks AS tasks
-                  WHERE tasks.owner_user_id = runs.owner_user_id
-                    AND tasks.session_id = runs.session_id
-                    AND tasks.task_session_id = runs.id
-                    AND tasks.task_kind = 'task_manager'
-              )
-            "#,
-        )
-        .fetch_all(self.pool())
-        .await
-        .context("load terminal local Task Manager sessions during recovery")?;
-        for (owner_user_id, session_id, run_id, status) in terminal_sessions {
-            self.finalize_local_task_manager_session(
-                owner_user_id.as_str(),
-                session_id.as_str(),
-                run_id.as_str(),
-                status.as_str(),
-            )
-            .await
-            .with_context(|| format!("finalize recovered local Task Manager session {run_id}"))?;
-        }
         Ok(result.rows_affected())
     }
 }

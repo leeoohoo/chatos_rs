@@ -22,7 +22,7 @@
 | `config_center_service/backend/Cargo.toml` | `0.8` | `0.7` | `2.8` |
 | `crates/chatos_ai_runtime/Cargo.toml` | `0.8` | - | - |
 | `crates/chatos_service_runtime/Cargo.toml` | `0.8` | - | - |
-| `local_connector_client/core/Cargo.toml` | `0.8` | `0.7` | - |
+| `local_connector_client/core/Cargo.toml` | `0.8` | `0.7` | `2.8`（仅真实插件运行时集成测试） |
 | `local_connector_service/backend/Cargo.toml` | `0.8` | `0.7` | `2.8` |
 | `memory_engine/backend/Cargo.toml` | `0.8` | `0.7` | `3` |
 | `official_website_service/backend/Cargo.toml` | `0.8` | `0.7` | - |

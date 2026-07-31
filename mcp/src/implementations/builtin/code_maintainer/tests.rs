@@ -56,7 +56,7 @@ fn response_text(value: &serde_json::Value) -> String {
 }
 
 #[test]
-fn list_tools_contains_hermes_compat_aliases() {
+fn list_tools_contains_compat_aliases() {
     let (service, _root) = build_service(true);
     let tools = service.list_tools();
     let names: Vec<String> = tools
@@ -71,6 +71,20 @@ fn list_tools_contains_hermes_compat_aliases() {
     assert!(names.iter().any(|name| name == "read_file"));
     assert!(names.iter().any(|name| name == "search_files"));
     assert!(names.iter().any(|name| name == "patch"));
+}
+
+#[test]
+fn list_tools_expose_project_workspace_semantics_only() {
+    let (service, _root) = build_service(true);
+    let tools = service.list_tools();
+    let text = serde_json::to_string(&tools).expect("serialize tool descriptions");
+
+    assert!(text.contains("current project workspace"));
+    assert!(!text.contains("Hermes-compatible"));
+    assert!(!text.contains("Harness repo"));
+    assert!(!text.contains("internal Harness"));
+    assert!(!text.contains("default branch"));
+    assert!(!text.contains("creates a Harness commit"));
 }
 
 #[test]
@@ -102,7 +116,7 @@ fn read_file_alias_supports_full_and_range_modes() {
 fn search_files_alias_maps_query_to_search_text_pattern() {
     let (service, root) = build_service(false);
     let file_path = root.join("README.md");
-    fs::write(&file_path, "Hermes-compatible alias smoke test").expect("write readme");
+    fs::write(&file_path, "Compatibility alias smoke test").expect("write readme");
 
     let result = service
         .call_tool(

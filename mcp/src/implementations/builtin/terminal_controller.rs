@@ -223,7 +223,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "execute_command",
-            "LOCAL ONLY: execute shell command in the local project terminal with path switching. Relative path is resolved from the current project workspace (`/workspace`). This tool does NOT execute on remote SSH hosts. For remote servers, use builtin_remote_connection_controller.run_command instead.",
+            "Run a shell command in the current project workspace (`/workspace`) with path switching. Use `path` as a directory inside the workspace root; relative paths are resolved from `/workspace`. Use background=true for long-running commands and track them with process_poll/process_wait.",
             execute_command_schema(),
             async_text_tool_handler(move |args| {
                 let path = args
@@ -287,7 +287,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "get_recent_logs",
-            "Get recent logs grouped by terminal for current agent project.",
+            "Get recent command logs grouped by process for the current project workspace.",
             recent_logs_schema(),
             async_text_tool_handler(move |args| {
                 let per_terminal_limit = args
@@ -318,7 +318,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "process_list",
-            "List local terminal processes in current agent project context.",
+            "List command processes started in the current project workspace.",
             process_list_schema(),
             async_text_tool_handler(move |args| {
                 let include_exited = args
@@ -344,7 +344,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "process_poll",
-            "Poll one local terminal process (status and buffered output logs).",
+            "Poll one project workspace command process, including status and buffered output logs.",
             process_poll_schema(),
             async_text_tool_handler(move |args| {
                 let terminal_id = required_trimmed_string(&args, "terminal_id")?;
@@ -371,7 +371,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "process_log",
-            "Read process logs in Hermes-compatible text mode with optional offset pagination.",
+            "Read project workspace command process logs with optional offset pagination.",
             process_log_schema(),
             async_text_tool_handler(move |args| {
                 let terminal_id = required_trimmed_string(&args, "terminal_id")?;
@@ -398,7 +398,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "process_wait",
-            "Wait until a local terminal process exits or becomes idle.",
+            "Wait until a project workspace command process exits or becomes idle.",
             process_wait_schema(),
             async_text_tool_handler(move |args| {
                 let terminal_id = required_trimmed_string(&args, "terminal_id")?;
@@ -417,7 +417,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "process_write",
-            "Write stdin content to a local terminal process.",
+            "Write stdin content to a project workspace command process.",
             process_write_schema(),
             async_text_tool_handler(move |args| {
                 let terminal_id = required_trimmed_string(&args, "terminal_id")?;
@@ -441,7 +441,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "process_kill",
-            "Terminate a local terminal process session.",
+            "Terminate a project workspace command process session.",
             process_kill_schema(),
             async_text_tool_handler(move |args| {
                 let terminal_id = required_trimmed_string(&args, "terminal_id")?;
@@ -459,7 +459,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "process",
-            "Hermes-compatible process manager. Actions: list/poll/log/wait/kill/write/submit/close.",
+            "Manage project workspace command processes. Actions: list/poll/log/wait/kill/write/submit/close.",
             process_compat_schema(),
             Arc::new(move |args| {
                 let action = required_trimmed_string(&args, "action")?.to_ascii_lowercase();

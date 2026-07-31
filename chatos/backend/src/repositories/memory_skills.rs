@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#![allow(
+    dead_code,
+    reason = "read-only queries retained for one-time legacy ChatOS Skill migration"
+)]
+
 use futures::TryStreamExt;
 use mongodb::bson::{doc, Regex};
 use mongodb::options::FindOptions;
@@ -183,90 +188,4 @@ pub async fn get_plugin_by_source_for_user_ids(
         }
     }
     Ok(items.first().cloned())
-}
-
-pub async fn get_plugins_by_sources(
-    user_id: &str,
-    sources: &[String],
-) -> Result<Vec<MemorySkillPlugin>, String> {
-    get_plugins_by_sources_for_user_ids(&[user_id.to_string()], sources).await
-}
-
-pub async fn upsert_plugin(mut plugin: MemorySkillPlugin) -> Result<MemorySkillPlugin, String> {
-    plugin.updated_at = crate::core::time::now_rfc3339();
-    with_db(|db| {
-        let plugin = plugin.clone();
-        Box::pin(async move {
-            let filter = doc! { "id": &plugin.id };
-            let exists = db
-                .collection::<MemorySkillPlugin>("memory_skill_plugins")
-                .find_one(filter.clone(), None)
-                .await
-                .map_err(|e| e.to_string())?
-                .is_some();
-            if exists {
-                db.collection::<MemorySkillPlugin>("memory_skill_plugins")
-                    .replace_one(filter, plugin.clone(), None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            } else {
-                db.collection::<MemorySkillPlugin>("memory_skill_plugins")
-                    .insert_one(plugin.clone(), None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            }
-            Ok(plugin)
-        })
-    })
-    .await
-}
-
-pub async fn replace_skills_for_plugin(
-    user_id: &str,
-    plugin_source: &str,
-    skills: Vec<MemorySkill>,
-) -> Result<usize, String> {
-    with_db(|db| {
-        let user_id = user_id.to_string();
-        let plugin_source = plugin_source.to_string();
-        let skills = skills.clone();
-        Box::pin(async move {
-            db.collection::<MemorySkill>("memory_skills")
-                .delete_many(
-                    doc! { "user_id": &user_id, "plugin_source": &plugin_source },
-                    None,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            if skills.is_empty() {
-                return Ok(0usize);
-            }
-            db.collection::<MemorySkill>("memory_skills")
-                .insert_many(skills.clone(), None)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(skills.len())
-        })
-    })
-    .await
-}
-
-pub async fn update_plugin_install_state(
-    user_id: &str,
-    source: &str,
-    installed_skill_count: i64,
-    discoverable_skills: i64,
-) -> Result<Option<MemorySkillPlugin>, String> {
-    let existing = get_plugin_by_source_for_user_ids(&[user_id.to_string()], source).await?;
-    let Some(mut plugin) = existing else {
-        return Ok(None);
-    };
-
-    plugin.installed = true;
-    plugin.installed_skill_count = installed_skill_count.max(0);
-    plugin.discoverable_skills = discoverable_skills.max(installed_skill_count).max(0);
-    plugin.updated_at = crate::core::time::now_rfc3339();
-
-    upsert_plugin(plugin.clone()).await?;
-    Ok(Some(plugin))
 }

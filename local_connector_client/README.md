@@ -56,6 +56,14 @@ Run the reusable packaging script on macOS:
 ./local_connector_client/package-electron-macos-client.sh
 ```
 
+The macOS package includes a ChatOS-owned document runtime for Word/PDF tooling. The script looks for the runtime source in this order:
+
+1. `CHATOS_DOCUMENT_RUNTIME_SOURCE`, for CI or release builds that provide a verified runtime source explicitly.
+2. `local_connector_client/runtime_assets/document-runtime-source/<platform>`, for a repo- or artifact-provided ChatOS runtime source.
+3. `~/Library/Caches/chatos-local-connector/document-runtime-source/<platform>`, for the local ChatOS runtime cache.
+
+For temporary local verification only, `CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE=1` imports Codex's bundled LibreOffice/Poppler source into the ChatOS cache and then packages from that ChatOS-owned cache. Official builds should provide the ChatOS runtime source directly instead of using the Codex import option.
+
 The script validates the 28-entry Skill catalog, stages the 12 signed-control-plane Plugin Bundles with exact manifest/artifact hashes, checksums, and SPDX SBOMs, filters platform assets, verifies the staged Plugin index, detects Apple Silicon versus Intel, builds the desktop resources, and writes a DMG under:
 
 ```text
@@ -101,6 +109,38 @@ node local_connector_client/verify-installed-package.mjs \
 Use `windows-x64` or `windows-arm64` and the unpacked app's `resources` directory on Windows; omit `--require-signed`, which is the macOS Developer ID contract.
 
 The Windows package includes `chatos_chrome_native_host.exe` and the fixed-identity MV3 extension. Enabling Chrome integration in Local Connector requires an explicit risk acknowledgement, writes the owned manifest under the current user's ChatOS state directory, and registers only `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.chatos.chrome`. Existing registry or manifest ownership conflicts fail closed; disabling removes only the exact ChatOS-owned user registration.
+
+### Linux
+
+Run the Linux packager on the target Linux architecture:
+
+```bash
+./local_connector_client/package-electron-linux-client.sh
+```
+
+The script detects `linux-arm64` versus `linux-x64`, builds the two React frontends and native Rust
+executables on Linux, stages and verifies all 12 Plugin Bundles and 28 Skill Bundles, and creates a
+DEB under:
+
+```text
+local_connector_client/dist/electron-linux/
+```
+
+Linux currently ships the explicit `linux-browser` runtime profile. It contains the desktop app,
+Local Connector Core, sandbox MCP server, bundled `rg`, Plugin/Skill catalogs, ChatOS frontend,
+SQLite migrations, the fixed-identity Chrome extension, and the Linux native messaging host. The
+client registers user-scoped manifests for both Google Chrome and Chromium when the user explicitly
+enables Chrome integration. When Ubuntu's Snap Chromium is installed, the client also writes the
+Snap profile manifest, copies the Native Host into the Snap-accessible user directory, and publishes
+the private rendezvous file into the active Snap revision's user home. The final unpacked resources are checked by
+`verify-installed-package.mjs`, and a redacted `*.deb.verification.json` report is written beside the
+DEB.
+
+The `linux-browser` profile still excludes Computer Use, `agent-browser`/Chrome for Testing, and the
+bundled LibreOffice/Poppler document runtime. These features fail closed until Linux-native runtime
+assets and adapters are added; the package must not be represented as equivalent to the full macOS
+or Windows release profile. The verifier retains `linux-core` for validating older core-only Linux
+packages.
 
 To publish the ZIP to the official website's MinIO release bucket:
 

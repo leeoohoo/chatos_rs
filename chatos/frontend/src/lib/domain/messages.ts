@@ -322,6 +322,9 @@ export const isTaskRunnerCallbackMessage = (
   if (messageMode === 'task_runner_callback') {
     return true;
   }
+  if (messageMode === 'task_run_receipt') {
+    return true;
+  }
   return readTaskRunnerAsyncMessageKind(message) === 'task_terminal_update';
 };
 

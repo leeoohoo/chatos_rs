@@ -9,7 +9,7 @@ pub(super) fn append_compat_aliases(service: &CodeMaintainerService, tools: &mut
     if service.has_tool("read_file_raw") {
         tools.push(json!({
             "name": "read_file",
-            "description": "Hermes-compatible alias. Read full file by default; when start_line + end_line are both provided, read a line range.",
+            "description": "Compatibility alias for read_file_raw. Reads from the current project workspace; when start_line + end_line are both provided, reads a line range.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -27,7 +27,7 @@ pub(super) fn append_compat_aliases(service: &CodeMaintainerService, tools: &mut
     if service.has_tool("search_text") {
         tools.push(json!({
             "name": "search_files",
-            "description": "Hermes-compatible alias of search_text. query maps to search_text.pattern.",
+            "description": "Compatibility alias for search_text in the current project workspace. query maps to search_text.pattern.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -44,7 +44,7 @@ pub(super) fn append_compat_aliases(service: &CodeMaintainerService, tools: &mut
     if service.has_tool("apply_patch") {
         tools.push(json!({
             "name": "patch",
-            "description": "Hermes-compatible alias of apply_patch.",
+            "description": "Compatibility alias for apply_patch in the current project workspace.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

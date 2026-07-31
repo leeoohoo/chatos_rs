@@ -247,6 +247,15 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
         *task_runner_async = Value::Object(serde_json::Map::new());
     }
     if let Value::Object(task_runner_async_map) = task_runner_async {
+        let current_overall_status = task_runner_async_map
+            .get("overall_status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if task_runner_async_status_is_stop_locked(current_overall_status)
+            && !task_runner_async_status_is_stop_locked(overall_status)
+        {
+            return;
+        }
         task_runner_async_map
             .entry("mode".to_string())
             .or_insert_with(|| Value::String("contact_async".to_string()));
@@ -264,6 +273,13 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
             );
         }
     }
+}
+
+fn task_runner_async_status_is_stop_locked(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "stopping" | "stopped" | "cancelled" | "canceled"
+    )
 }
 
 pub fn text_has_content(value: &str) -> bool {
@@ -680,6 +696,40 @@ mod tests {
         assert_eq!(
             task_runner.get("mode").and_then(Value::as_str),
             Some("project_requirement_execution")
+        );
+        assert_eq!(
+            task_runner
+                .get("confirmation_status")
+                .and_then(Value::as_str),
+            Some("stopped")
+        );
+    }
+
+    #[test]
+    fn stopped_task_runner_async_status_is_not_overwritten_by_late_failure() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "mode": "project_requirement_execution",
+                "overall_status": "stopped",
+                "confirmation_status": "stopped"
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "failed");
+
+        let task_runner = message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("task_runner_async"))
+            .expect("task runner metadata");
+        assert_eq!(
+            task_runner.get("overall_status").and_then(Value::as_str),
+            Some("stopped")
         );
         assert_eq!(
             task_runner

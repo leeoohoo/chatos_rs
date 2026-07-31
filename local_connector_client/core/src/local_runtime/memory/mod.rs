@@ -9,7 +9,9 @@ mod service;
 
 pub(crate) use auto::maybe_spawn_local_memory_review;
 pub(crate) use control::LocalMemoryJobRegistry;
-pub(crate) use service::{local_memory_review_status, run_local_memory_review};
+pub(crate) use service::{
+    local_memory_review_status, run_active_task_review, run_local_memory_review,
+};
 
 #[cfg(test)]
 mod rollup_test_support;

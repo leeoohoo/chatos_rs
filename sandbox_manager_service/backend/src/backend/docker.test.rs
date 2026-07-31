@@ -2,6 +2,28 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 #[cfg(test)]
+async fn docker_inspect_value(name: &str) -> Result<Value, String> {
+    let output = Command::new("docker")
+        .arg("inspect")
+        .arg(name)
+        .output()
+        .await
+        .map_err(|err| format!("docker inspect failed: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docker inspect failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    serde_json::from_slice::<Value>(&output.stdout)
+        .map_err(|err| format!("parse docker inspect failed: {err}"))?
+        .as_array()
+        .and_then(|values| values.first())
+        .cloned()
+        .ok_or_else(|| "docker inspect returned no record".to_string())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::{NetworkPolicy, ResourceLimits};
@@ -208,26 +230,4 @@ mod tests {
         result.expect("Docker environment smoke result");
         cleanup.expect("Docker environment smoke cleanup");
     }
-}
-
-#[cfg(test)]
-async fn docker_inspect_value(name: &str) -> Result<Value, String> {
-    let output = Command::new("docker")
-        .arg("inspect")
-        .arg(name)
-        .output()
-        .await
-        .map_err(|err| format!("docker inspect failed: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "docker inspect failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    serde_json::from_slice::<Value>(&output.stdout)
-        .map_err(|err| format!("parse docker inspect failed: {err}"))?
-        .as_array()
-        .and_then(|values| values.first())
-        .cloned()
-        .ok_or_else(|| "docker inspect returned no record".to_string())
 }

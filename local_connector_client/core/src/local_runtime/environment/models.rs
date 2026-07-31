@@ -32,6 +32,12 @@ pub(crate) struct LocalRuntimeEnvironmentImageRecord {
     pub(crate) environment_key: String,
     pub(crate) environment_type: String,
     pub(crate) display_name: String,
+    pub(crate) source_root: String,
+    pub(crate) component_kind: String,
+    pub(crate) startup_command: Option<String>,
+    pub(crate) test_command: Option<String>,
+    pub(crate) depends_on_json: String,
+    pub(crate) auto_start: bool,
     pub(crate) image_id: Option<String>,
     pub(crate) image_ref: Option<String>,
     pub(crate) image_provider: String,
@@ -84,6 +90,18 @@ pub(crate) struct LocalEnvironmentImagePlan {
     #[serde(default = "default_environment_type")]
     pub(crate) environment_type: String,
     pub(crate) display_name: String,
+    #[serde(default = "default_source_root")]
+    pub(crate) source_root: String,
+    #[serde(default)]
+    pub(crate) component_kind: String,
+    #[serde(default)]
+    pub(crate) startup_command: Option<String>,
+    #[serde(default)]
+    pub(crate) test_command: Option<String>,
+    #[serde(default)]
+    pub(crate) depends_on: Vec<String>,
+    #[serde(default)]
+    pub(crate) auto_start: bool,
     #[serde(default)]
     pub(crate) dockerfile: Option<String>,
     #[serde(default)]
@@ -96,6 +114,10 @@ pub(crate) struct LocalEnvironmentImagePlan {
 
 fn default_environment_type() -> String {
     "application".to_string()
+}
+
+fn default_source_root() -> String {
+    ".".to_string()
 }
 
 impl LocalEnvironmentAnalysisResult {
@@ -135,7 +157,7 @@ impl LocalEnvironmentAnalysisResult {
         if self.status == "pending_configuration" {
             format!("{base}，仍需补充必填运行参数。")
         } else {
-            format!("{base}，等待生成应用镜像。")
+            format!("{base}，等待构建并启动项目级 Compose 服务。")
         }
     }
 }

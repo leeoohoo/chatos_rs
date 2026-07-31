@@ -7,7 +7,10 @@ use std::process::Stdio;
 
 use axum::extract::{Path as AxumPath, State};
 use axum::Json;
-use chatos_project_execution::{ExecutionPlanIdentity, ExecutionPlane, STATUS_EXECUTION_STARTED};
+use chatos_project_execution::{
+    ExecutionPlanIdentity, ExecutionPlane, STATUS_EXECUTION_STARTED, STATUS_STOPPED,
+    STATUS_STOPPING,
+};
 use serde_json::{json, Value};
 use tokio::process::Command;
 use uuid::Uuid;
@@ -84,12 +87,7 @@ pub(in crate::local_runtime::api::task_runs) async fn rerun_requirement_executio
         project_id.as_str(),
         requirement_id.as_str(),
     )?;
-    if source_status(&source_metadata) != "stopped" {
-        return Err(LocalRuntimeApiError::conflict(
-            "local_execution_rerun_requires_stopped_batch",
-            "Only a stopped local execution batch can be run again",
-        ));
-    }
+    let source_status = source_status(&source_metadata);
     let old_tasks = database
         .list_local_project_execution_tasks(owner.owner_user_id.as_str(), project_id.as_str())
         .await?
@@ -113,14 +111,36 @@ pub(in crate::local_runtime::api::task_runs) async fn rerun_requirement_executio
             identity.execution_group_id.as_str(),
         )
         .await?;
-    if old_runs
-        .iter()
-        .any(|run| matches!(run.status.as_str(), "queued" | "running"))
-    {
-        return Err(LocalRuntimeApiError::conflict(
-            "local_execution_rerun_has_active_runs",
-            "The stopped local execution batch still has active runs",
-        ));
+    match resolve_local_execution_batch_state(
+        source_status.as_str(),
+        old_runs.iter().map(|run| run.status.as_str()),
+    ) {
+        LocalExecutionBatchState::ReplacementReady => {
+            if source_status == STATUS_STOPPING
+                || !source_status_is_stopped_terminal(source_status.as_str())
+            {
+                database
+                    .set_turn_task_runner_status(
+                        owner.owner_user_id.as_str(),
+                        identity.execution_group_id.as_str(),
+                        STATUS_STOPPED,
+                        STATUS_STOPPED,
+                    )
+                    .await?;
+            }
+        }
+        LocalExecutionBatchState::CancellationSettling(_) => {
+            return Err(LocalRuntimeApiError::conflict(
+                "local_execution_rerun_has_active_runs",
+                "The stopped local execution batch still has active runs",
+            ));
+        }
+        LocalExecutionBatchState::NotStopped => {
+            return Err(LocalRuntimeApiError::conflict(
+                "local_execution_rerun_requires_stopped_batch",
+                "Only a cancelled or stopped local execution batch can be run again",
+            ));
+        }
     }
 
     let new_execution_group_id = format!("lc_execution_group_{}", Uuid::new_v4());
@@ -343,6 +363,61 @@ pub(super) fn source_status(metadata: &Value) -> String {
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase()
+}
+
+pub(super) fn source_status_is_stopped_terminal(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "stopped" | "cancelled" | "canceled"
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LocalExecutionBatchState {
+    ReplacementReady,
+    CancellationSettling(usize),
+    NotStopped,
+}
+
+pub(super) fn resolve_local_execution_batch_state<'a>(
+    source_status: &str,
+    run_statuses: impl IntoIterator<Item = &'a str>,
+) -> LocalExecutionBatchState {
+    let normalized_run_statuses = run_statuses
+        .into_iter()
+        .map(|status| status.trim().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let active_count = normalized_run_statuses
+        .iter()
+        .filter(|status| local_execution_run_status_is_active(status.as_str()))
+        .count();
+    if active_count > 0 {
+        return LocalExecutionBatchState::CancellationSettling(active_count);
+    }
+
+    let normalized_source_status = source_status.trim().to_ascii_lowercase();
+    if source_status_is_stopped_terminal(normalized_source_status.as_str())
+        || normalized_source_status == STATUS_STOPPING
+        || inactive_runs_record_a_cancelled_batch(normalized_run_statuses.as_slice())
+    {
+        LocalExecutionBatchState::ReplacementReady
+    } else {
+        LocalExecutionBatchState::NotStopped
+    }
+}
+
+fn local_execution_run_status_is_active(status: &str) -> bool {
+    matches!(status, "queued" | "running")
+}
+
+fn inactive_runs_record_a_cancelled_batch(statuses: &[String]) -> bool {
+    !statuses.is_empty()
+        && statuses
+            .iter()
+            .all(|status| !local_execution_run_status_is_active(status.as_str()))
+        && statuses
+            .iter()
+            .any(|status| matches!(status.as_str(), "cancelled" | "canceled"))
 }
 
 fn replacement_metadata(
@@ -697,4 +772,50 @@ fn normalize_run_component(value: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_cancelled_source_status_is_terminal_for_replacement() {
+        let metadata = json!({
+            "task_runner_async": {
+                "overall_status": "cancelled",
+                "confirmation_status": "cancelled"
+            }
+        });
+
+        let status = source_status(&metadata);
+        assert_eq!(status, "cancelled");
+        assert!(source_status_is_stopped_terminal(status.as_str()));
+        assert!(source_status_is_stopped_terminal("canceled"));
+        assert!(source_status_is_stopped_terminal("stopped"));
+        assert!(!source_status_is_stopped_terminal("stopping"));
+    }
+
+    #[test]
+    fn local_cancelled_runs_recover_replacement_readiness_when_source_status_is_stale() {
+        assert_eq!(
+            resolve_local_execution_batch_state("failed", ["done", "cancelled"]),
+            LocalExecutionBatchState::ReplacementReady
+        );
+    }
+
+    #[test]
+    fn local_active_runs_keep_replacement_in_cancellation_settling() {
+        assert_eq!(
+            resolve_local_execution_batch_state("stopped", ["running", "cancelled"]),
+            LocalExecutionBatchState::CancellationSettling(1)
+        );
+    }
+
+    #[test]
+    fn local_failed_runs_without_stop_intent_are_not_replacement_ready() {
+        assert_eq!(
+            resolve_local_execution_batch_state("failed", ["failed"]),
+            LocalExecutionBatchState::NotStopped
+        );
+    }
 }

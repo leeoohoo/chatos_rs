@@ -7,7 +7,6 @@ use super::*;
 pub(super) enum TaskRunnerBuiltinToolService {
     Shared(SharedBuiltinToolService),
     Notepad(NotepadBuiltinService),
-    TaskManager(TaskManagerService),
     TerminalController(TerminalControllerService),
     AskUser(AskUserService),
     ProjectManagement(ProjectManagementBuiltinService),
@@ -18,7 +17,6 @@ impl TaskRunnerBuiltinToolService {
         match self {
             Self::Shared(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
-            Self::TaskManager(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
             Self::AskUser(service) => service.list_tools(),
             Self::ProjectManagement(service) => service.list_tools(),
@@ -35,18 +33,6 @@ impl TaskRunnerBuiltinToolService {
         match self {
             Self::Shared(service) => service.call_tool(name, args, context, on_stream_chunk),
             Self::Notepad(service) => service.call_tool(name, args),
-            Self::TaskManager(service) => {
-                let callback = on_stream_chunk.map(|callback| -> TaskStreamChunkCallback {
-                    Arc::new(move |chunk| callback(chunk))
-                });
-                service.call_tool(
-                    name,
-                    args,
-                    context.conversation_id.as_deref(),
-                    context.conversation_turn_id.as_deref(),
-                    callback,
-                )
-            }
             Self::TerminalController(service) => {
                 service.call_tool(name, args, context.conversation_id.as_deref())
             }
@@ -67,7 +53,6 @@ impl TaskRunnerBuiltinToolService {
         match self {
             Self::Shared(service) => service.unavailable_tools(),
             Self::Notepad(_) => Vec::new(),
-            Self::TaskManager(_) => Vec::new(),
             Self::TerminalController(_) => Vec::new(),
             Self::AskUser(_) => Vec::new(),
             Self::ProjectManagement(service) => service.unavailable_tools(),

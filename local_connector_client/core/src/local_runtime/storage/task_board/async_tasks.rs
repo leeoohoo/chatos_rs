@@ -358,6 +358,25 @@ fn priority_value(priority: &str) -> i64 {
 
 fn conversation_task_prompt(title: &str, description: &str, objective: &str) -> String {
     format!(
-        "[Local Task Runner]\n任务：{title}\n背景：{description}\n目标：{objective}\n\n请严格使用本任务通过插件管理配置并显式选择的本地工具完成目标，验证真实结果后再给出结论。"
+        "[Local Task Runner]\n任务：{title}\n背景：{description}\n目标：{objective}\n\n请严格使用本任务通过插件管理配置并显式选择的本地工具完成目标，验证真实结果后再给出结论。\n\n[Literal Fidelity]\nURLs, ports, IP addresses, file paths, command names, account names, IDs, hashes, and other exact identifiers are opaque strings. Copy them exactly from the task input or verified tool output; never normalize, abbreviate, truncate, infer, or reconstruct them from memory. If task input and tool output disagree, explicitly report the disagreement with both exact strings instead of choosing a rewritten value."
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::conversation_task_prompt;
+
+    #[test]
+    fn conversation_task_prompt_requires_exact_literal_copying() {
+        let prompt = conversation_task_prompt(
+            "只读检查 13000 端口",
+            "必须访问 http://8.155.171.124:13000/",
+            "确认最终 URL 仍是 http://8.155.171.124:13000/",
+        );
+
+        assert!(prompt.contains("http://8.155.171.124:13000/"));
+        assert!(prompt.contains("Copy them exactly"));
+        assert!(prompt.contains("never normalize, abbreviate, truncate"));
+        assert!(prompt.contains("ports"));
+    }
 }

@@ -84,6 +84,12 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
     expect(request).toHaveBeenLastCalledWith(
       '/task-runner/available-plugins?device_id=device-1&plan_mode=true',
     );
+
+    await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
+      context as never,
+      null,
+    );
+    expect(request).toHaveBeenLastCalledWith('/task-runner/available-plugins');
   });
 
   it('registers a newly created local project before it is selected', async () => {

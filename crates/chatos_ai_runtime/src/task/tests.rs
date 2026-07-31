@@ -89,7 +89,7 @@ fn task_run_spec_injects_configured_builtin_mcp_prompt_from_executor() {
     );
     let options = chatos_mcp_runtime::BuiltinMcpServerOptions::new(".");
     let executor = chatos_mcp_runtime::McpExecutor::builder()
-        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::TaskManager], &options)
+        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::AskUser], &options)
         .build();
 
     let spec = TaskRunSpec::new("task_1", "run_1", config, "execute it")
@@ -113,7 +113,7 @@ fn task_run_spec_injects_configured_builtin_mcp_prompt_from_executor() {
         .first()
         .and_then(|item| item.get("content"))
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|content| content.contains("`task_manager_add_task`")));
+        .is_some_and(|content| content.contains("`ask_user_prompt_choices`")));
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn task_run_spec_replaces_builtin_mcp_prompt_snapshot() {
     );
     let options = chatos_mcp_runtime::BuiltinMcpServerOptions::new(".");
     let mut executor = chatos_mcp_runtime::McpExecutor::builder()
-        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::TaskManager], &options)
+        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::AskUser], &options)
         .build();
     executor.init_builtin_only().expect("builtin init");
 
@@ -166,7 +166,7 @@ fn task_runtime_builder_prepares_configured_builtin_prompt() {
     );
     let options = chatos_mcp_runtime::BuiltinMcpServerOptions::new(".");
     let executor = chatos_mcp_runtime::McpExecutor::builder()
-        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::TaskManager], &options)
+        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::AskUser], &options)
         .build();
     let runtime = TaskRuntime::builder()
         .with_mcp_executor(executor)
@@ -185,7 +185,7 @@ fn task_runtime_builder_prepares_configured_builtin_prompt() {
         .first()
         .and_then(|item| item.get("content"))
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|content| content.contains("`task_manager_add_task`")));
+        .is_some_and(|content| content.contains("`ask_user_prompt_choices`")));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn task_runtime_builder_defaults_to_effective_builtin_prompt() {
     );
     let options = chatos_mcp_runtime::BuiltinMcpServerOptions::new(".");
     let executor = chatos_mcp_runtime::McpExecutor::builder()
-        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::TaskManager], &options)
+        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::AskUser], &options)
         .build_builtin_only()
         .expect("builtin init");
     let runtime = TaskRuntime::builder().with_mcp_executor(executor).build();
@@ -222,7 +222,7 @@ fn task_runtime_builder_defaults_to_effective_builtin_prompt() {
 fn task_runtime_builder_accepts_builtin_only_mcp_builder() {
     let options = chatos_mcp_runtime::BuiltinMcpServerOptions::new(".");
     let mcp_builder = chatos_mcp_runtime::McpExecutor::builder()
-        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::TaskManager], &options);
+        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::AskUser], &options);
 
     let runtime = TaskRuntime::builder()
         .with_builtin_only_mcp_executor_builder(mcp_builder)
@@ -263,7 +263,7 @@ async fn task_runtime_builder_accepts_initialized_mcp_builder() {
 fn task_runtime_config_serializes_runtime_shape() {
     let options = chatos_mcp_runtime::BuiltinMcpServerOptions::new("/tmp/task-runtime");
     let config = TaskRuntimeConfig::new()
-        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::TaskManager], &options)
+        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::AskUser], &options)
         .with_mcp_init_mode(TaskMcpInitMode::BuiltinOnly)
         .with_builtin_prompt_locale(chatos_mcp_runtime::BuiltinMcpPromptLocale::EnUs)
         .with_builtin_prompt_mode(TaskBuiltinMcpPromptMode::Configured)
@@ -286,7 +286,7 @@ fn task_runtime_config_serializes_runtime_shape() {
     assert_eq!(decoded.max_iterations, Some(7));
     assert_eq!(
         decoded.builtin_servers[0].name,
-        chatos_mcp_runtime::TASK_MANAGER_SERVER_NAME
+        chatos_mcp_runtime::ASK_USER_SERVER_NAME
     );
 }
 
@@ -325,7 +325,7 @@ fn task_memory_runtime_config_serializes_direct_memory_settings() {
 async fn task_runtime_config_builds_builtin_only_runtime() {
     let options = chatos_mcp_runtime::BuiltinMcpServerOptions::new("/tmp/task-runtime");
     let config = TaskRuntimeConfig::new()
-        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::TaskManager], &options)
+        .with_builtin_kinds([chatos_mcp_runtime::BuiltinMcpKind::AskUser], &options)
         .with_mcp_init_mode(TaskMcpInitMode::BuiltinOnly)
         .with_builtin_prompt_mode(TaskBuiltinMcpPromptMode::Effective);
 

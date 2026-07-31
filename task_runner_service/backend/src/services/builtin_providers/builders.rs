@@ -12,15 +12,15 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
     let Some(kind) = builtin_kind_by_any(server.kind.as_str()) else {
         return Ok(None);
     };
+    if kind == chatos_mcp_runtime::BuiltinMcpKind::TaskManager {
+        return Ok(None);
+    }
     let descriptor = chatos_mcp::system_mcp_descriptor_by_embedded_kind(kind)
         .ok_or_else(|| format!("missing system MCP descriptor for {}", kind.kind_name()))?;
     if !descriptor.supports_host(chatos_mcp::SystemMcpHost::TaskRunner) {
         return Ok(None);
     }
     let provider = match kind {
-        chatos_mcp_runtime::BuiltinMcpKind::TaskManager => {
-            build_task_manager_provider(server, task_service)?
-        }
         chatos_mcp_runtime::BuiltinMcpKind::Notepad => {
             build_notepad_provider(server, task_service)?
         }
@@ -39,28 +39,6 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
         _ => return build_shared_provider(server),
     };
     Ok(Some(provider))
-}
-
-fn build_task_manager_provider(
-    server: &McpBuiltinServer,
-    task_service: TaskService,
-) -> Result<TaskRunnerBuiltinProvider, String> {
-    let service = TaskManagerService::new(TaskManagerOptions {
-        server_name: server.name.clone(),
-        review_timeout_ms: REVIEW_TIMEOUT_MS_DEFAULT,
-        auto_create_task: true,
-        expose_context_ids: false,
-        default_current_turn_only: true,
-        lifecycle_tools_enabled: true,
-        store: TaskManagerStoreRef::new(Arc::new(TaskRunnerTaskManagerStore::new(
-            task_service,
-            server.project_id.clone(),
-        ))),
-    })?;
-    Ok(TaskRunnerBuiltinProvider::new(
-        server.name.clone(),
-        TaskRunnerBuiltinToolService::TaskManager(service),
-    ))
 }
 
 fn build_notepad_provider(

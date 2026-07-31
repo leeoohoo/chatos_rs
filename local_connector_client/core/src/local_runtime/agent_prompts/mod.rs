@@ -236,6 +236,11 @@ pub(crate) fn spawn_agent_prompt_update_checker(runtime: LocalRuntime) -> JoinHa
                     format!("background managed Memory Policy sync failed: {error}").as_str(),
                 );
             }
+            if let Err(error) = crate::local_runtime::sync_managed_runtime_config(&runtime).await {
+                crate::tracing_stdout(
+                    format!("background managed runtime config sync failed: {error}").as_str(),
+                );
+            }
         }
     })
 }

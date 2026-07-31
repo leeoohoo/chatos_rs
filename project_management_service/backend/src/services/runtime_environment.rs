@@ -6,6 +6,8 @@ use crate::store::AppStore;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub const WORKSPACE_EXECUTION_SERVICE_ID: &str = "workspace";
+
 pub async fn ensure_runtime_environment_for_project(
     store: &AppStore,
     project: &ProjectRecord,
@@ -64,6 +66,7 @@ pub fn default_runtime_environment_for_project(
         file_provider: RuntimeEnvironmentProvider::None,
         analysis_summary: None,
         not_runnable_reason: None,
+        execution_service_id: None,
         detected_stack: empty_object(),
         required_services: empty_array(),
         env_vars: empty_object(),
@@ -105,6 +108,10 @@ pub fn program_generated_runtime_analysis_summary(
         .iter()
         .filter(|image| image.service_role == RuntimeServiceRole::Application)
         .count();
+    let artifact_count = images
+        .iter()
+        .filter(|image| image.service_role == RuntimeServiceRole::Artifact)
+        .count();
     let dependency_count = images
         .iter()
         .filter(|image| image.service_role == RuntimeServiceRole::Dependency)
@@ -123,11 +130,11 @@ pub fn program_generated_runtime_analysis_summary(
         .map(|record| record.name.as_str())
         .collect::<Vec<_>>();
     let base = format!(
-        "已识别 {application_count} 个应用组件和 {dependency_count} 个依赖服务，生成 {config_file_count} 个环境配置文件及项目级 Compose 计划"
+        "已识别 {application_count} 个平等应用组件、{dependency_count} 个依赖服务和 {artifact_count} 个非运行组件，生成唯一工作区执行镜像计划及 {config_file_count} 个环境配置文件"
     );
     match environment.status {
         ProjectRuntimeEnvironmentStatus::PendingImageBuild => {
-            format!("{base}，等待生成应用镜像。")
+            format!("{base}，等待生成工作区执行镜像。")
         }
         ProjectRuntimeEnvironmentStatus::PendingConfiguration if missing_variables.is_empty() => {
             format!("{base}，仍需补充必填运行参数。")
@@ -146,13 +153,16 @@ pub fn replace_legacy_internal_routing_summary(
     environment: &mut ProjectRuntimeEnvironmentRecord,
     images: &[ProjectRuntimeEnvironmentImageRecord],
 ) -> bool {
-    let is_legacy_internal_summary = matches!(
-        environment.analysis_summary.as_deref(),
-        Some("云端项目只通过 Harness MCP 读取文件，并只使用云端 Sandbox Manager。")
-            | Some(
-                "本地项目将通过 Local Connector 文件 MCP 读取文件，并按本地沙箱可用性选择沙箱镜像 MCP。"
-            )
-    );
+    let is_legacy_internal_summary = environment.analysis_summary.as_deref().is_some_and(|summary| {
+        matches!(
+            summary,
+            "云端项目只通过 Harness MCP 读取文件，并只使用云端 Sandbox Manager。"
+                | "本地项目将通过 Local Connector 文件 MCP 读取文件，并按本地沙箱可用性选择沙箱镜像 MCP。"
+        ) || summary.contains("等待生成应用镜像")
+            || summary.contains("等待生成主执行镜像")
+            || summary.contains("主应用")
+            || summary.contains("伴随微服务")
+    });
     if !is_legacy_internal_summary {
         return false;
     }
@@ -167,7 +177,7 @@ pub fn replace_legacy_internal_routing_summary(
 pub fn enforce_project_runtime_boundary(
     execution_plane: ProjectExecutionPlane,
     environment: &mut ProjectRuntimeEnvironmentRecord,
-    images: &mut [ProjectRuntimeEnvironmentImageRecord],
+    images: &mut Vec<ProjectRuntimeEnvironmentImageRecord>,
 ) -> bool {
     let mut changed = false;
     if execution_plane == ProjectExecutionPlane::Cloud && environment.sandbox_enabled {
@@ -181,8 +191,19 @@ pub fn enforce_project_runtime_boundary(
         }
     }
 
-    let mut application_image_reset = false;
-    for image in images {
+    let legacy_target = images
+        .iter()
+        .find(|image| {
+            image.service_role == RuntimeServiceRole::Application
+                && image.mcp_policy.attachment == RuntimeMcpAttachment::WorkspaceGatewayTarget
+        })
+        .cloned();
+    if ensure_workspace_execution_record(environment, images, legacy_target.as_ref()) {
+        changed = true;
+    }
+
+    let mut workspace_image_reset = false;
+    for image in images.iter_mut() {
         let mut image_changed = apply_program_managed_image_policy(image);
         let wrong_provider = execution_plane == ProjectExecutionPlane::Cloud
             && image.image_provider != RuntimeEnvironmentProvider::CloudSandboxManager;
@@ -191,12 +212,12 @@ pub fn enforce_project_runtime_boundary(
             changed = true;
             image_changed = true;
         }
-        if wrong_provider && runtime_image_is_application(image) {
+        if wrong_provider && image.service_role == RuntimeServiceRole::Workspace {
             image.image_id = None;
             image.image_ref = None;
             image.status = "planned".to_string();
             image.error = None;
-            application_image_reset = true;
+            workspace_image_reset = true;
             changed = true;
             image_changed = true;
         }
@@ -206,7 +227,58 @@ pub fn enforce_project_runtime_boundary(
         }
     }
 
-    if application_image_reset
+    let workspace_requires_build = images.iter().any(|image| {
+        image.service_role == RuntimeServiceRole::Workspace
+            && (image
+                .image_id
+                .as_deref()
+                .or(image.image_ref.as_deref())
+                .is_none_or(|value| value.trim().is_empty())
+                || !matches!(
+                    image.status.trim().to_ascii_lowercase().as_str(),
+                    "ready" | "available" | "local" | "succeeded" | "completed" | "running"
+                ))
+    });
+    if workspace_requires_build
+        && !matches!(
+            environment.status,
+            ProjectRuntimeEnvironmentStatus::Disabled
+                | ProjectRuntimeEnvironmentStatus::Analyzing
+                | ProjectRuntimeEnvironmentStatus::NotRunnable
+                | ProjectRuntimeEnvironmentStatus::Failed
+                | ProjectRuntimeEnvironmentStatus::PendingImageBuild
+        )
+    {
+        environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
+        if environment.analysis_summary.is_none() {
+            environment.analysis_summary =
+                Some("项目组件和依赖拓扑已保留，等待生成唯一工作区执行镜像。".to_string());
+        }
+        changed = true;
+    }
+
+    let execution_service_id = images
+        .iter()
+        .find(|image| image.service_role == RuntimeServiceRole::Workspace)
+        .map(|image| image.service_id.clone());
+    if environment.execution_service_id != execution_service_id {
+        environment.execution_service_id = execution_service_id;
+        changed = true;
+    }
+    for image in images.iter_mut() {
+        let desired_policy = if image.service_role == RuntimeServiceRole::Workspace {
+            ProgramManagedMcpPolicy::workspace_target()
+        } else {
+            ProgramManagedMcpPolicy::default()
+        };
+        if image.mcp_policy != desired_policy {
+            image.mcp_policy = desired_policy;
+            image.updated_at = now_rfc3339();
+            changed = true;
+        }
+    }
+
+    if workspace_image_reset
         && !matches!(
             environment.status,
             ProjectRuntimeEnvironmentStatus::Disabled
@@ -229,11 +301,11 @@ pub fn enforce_project_runtime_boundary(
             .map(|record| record.name.as_str())
             .collect::<Vec<_>>();
         environment.analysis_summary = Some(if missing_variables.is_empty() {
-            "运行环境分析和 Dockerfile 计划已保留；原有 Local Connector 镜像记录已作废，请执行生成云端镜像。"
+            "运行环境分析和服务计划已保留；原有 Local Connector 工作区镜像记录已作废，请生成云端工作区执行镜像。"
                 .to_string()
         } else {
             format!(
-                "运行环境分析和 Dockerfile 计划已保留；原有 Local Connector 镜像记录已作废，请先执行生成云端镜像。镜像生成后仍需补充运行参数：{}。",
+                "运行环境分析和服务计划已保留；原有 Local Connector 工作区镜像记录已作废，请先生成云端工作区执行镜像。镜像生成后仍需补充运行参数：{}。",
                 missing_variables.join(", ")
             )
         });
@@ -250,22 +322,270 @@ pub fn apply_program_managed_image_policy(
     let service_role = program_managed_service_role(image);
     let service_id = program_managed_service_id_for_role(image, service_role);
     let mcp_policy = match service_role {
-        RuntimeServiceRole::Application => ProgramManagedMcpPolicy::application_target(),
-        RuntimeServiceRole::Dependency | RuntimeServiceRole::Unknown => {
-            ProgramManagedMcpPolicy::default()
-        }
+        RuntimeServiceRole::Workspace => ProgramManagedMcpPolicy::workspace_target(),
+        RuntimeServiceRole::Application
+        | RuntimeServiceRole::Dependency
+        | RuntimeServiceRole::Artifact
+        | RuntimeServiceRole::Unknown => ProgramManagedMcpPolicy::default(),
     };
-    let changed = image.service_id != service_id
+    let mut changed = image.service_id != service_id
         || image.service_role != service_role
         || image.mcp_policy != mcp_policy;
     image.service_id = service_id;
     image.service_role = service_role;
     image.mcp_policy = mcp_policy;
+    if matches!(
+        service_role,
+        RuntimeServiceRole::Application | RuntimeServiceRole::Artifact
+    ) && (image.image_id.is_some() || image.image_ref.is_some())
+    {
+        image.image_id = None;
+        image.image_ref = None;
+        image.error = None;
+        image.status = if service_role == RuntimeServiceRole::Artifact {
+            "excluded".to_string()
+        } else {
+            "planned".to_string()
+        };
+        changed = true;
+    }
+    if service_role == RuntimeServiceRole::Artifact && image.status != "excluded" {
+        image.status = "excluded".to_string();
+        image.error = None;
+        changed = true;
+    }
     changed
+}
+
+fn ensure_workspace_execution_record(
+    environment: &ProjectRuntimeEnvironmentRecord,
+    images: &mut Vec<ProjectRuntimeEnvironmentImageRecord>,
+    legacy_target: Option<&ProjectRuntimeEnvironmentImageRecord>,
+) -> bool {
+    let features = workspace_runtime_features(images.as_slice(), &environment.detected_stack);
+    if let Some(workspace) = images
+        .iter_mut()
+        .find(|image| program_managed_service_role(image) == RuntimeServiceRole::Workspace)
+    {
+        let desired_features = Value::Array(features.into_iter().map(Value::String).collect());
+        let changed = workspace.environment_key != WORKSPACE_EXECUTION_SERVICE_ID
+            || workspace.environment_type != "workspace"
+            || workspace.display_name != "Project Workspace"
+            || workspace.source_root != "."
+            || workspace.component_kind != "workspace"
+            || workspace.features != desired_features;
+        workspace.environment_key = WORKSPACE_EXECUTION_SERVICE_ID.to_string();
+        workspace.environment_type = "workspace".to_string();
+        workspace.display_name = "Project Workspace".to_string();
+        workspace.source_root = ".".to_string();
+        workspace.component_kind = "workspace".to_string();
+        workspace.features = desired_features;
+        return changed;
+    }
+
+    let now = now_rfc3339();
+    let reusable_legacy = legacy_target.filter(|legacy| {
+        let legacy_features = legacy
+            .features
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<BTreeSet<_>>();
+        !features.is_empty()
+            && features
+                .iter()
+                .all(|feature| legacy_features.contains(feature.as_str()))
+    });
+    images.push(ProjectRuntimeEnvironmentImageRecord {
+        id: format!("project_env_image_{}", uuid::Uuid::new_v4()),
+        project_id: environment.project_id.clone(),
+        environment_key: WORKSPACE_EXECUTION_SERVICE_ID.to_string(),
+        environment_type: "workspace".to_string(),
+        display_name: "Project Workspace".to_string(),
+        service_id: WORKSPACE_EXECUTION_SERVICE_ID.to_string(),
+        service_role: RuntimeServiceRole::Workspace,
+        source_root: ".".to_string(),
+        component_kind: "workspace".to_string(),
+        startup_command: None,
+        test_command: None,
+        depends_on: Vec::new(),
+        auto_start: true,
+        mcp_policy: ProgramManagedMcpPolicy::workspace_target(),
+        image_id: reusable_legacy.and_then(|image| image.image_id.clone()),
+        image_ref: reusable_legacy.and_then(|image| image.image_ref.clone()),
+        image_provider: environment.sandbox_provider,
+        features: Value::Array(features.into_iter().map(Value::String).collect()),
+        ports: empty_array(),
+        env_vars: empty_object(),
+        dockerfile: None,
+        custom_build_script: None,
+        status: if reusable_legacy.is_some() {
+            "ready".to_string()
+        } else {
+            "planned".to_string()
+        },
+        error: None,
+        created_at: now.clone(),
+        updated_at: now,
+    });
+    true
+}
+
+pub fn workspace_runtime_features(
+    images: &[ProjectRuntimeEnvironmentImageRecord],
+    detected_stack: &Value,
+) -> Vec<String> {
+    const ORDERED_RUNTIMES: [&str; 10] = [
+        "java", "node", "python", "rust", "go", "dotnet", "php", "ruby", "gcc", "clang",
+    ];
+    let mut selected = BTreeMap::<&'static str, String>::new();
+    let mut evidence = serde_json::to_string(detected_stack)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    for image in images.iter().filter(|image| {
+        matches!(
+            image.service_role,
+            RuntimeServiceRole::Application | RuntimeServiceRole::Workspace
+        )
+    }) {
+        evidence.push(' ');
+        evidence.push_str(image.dockerfile.as_deref().unwrap_or_default());
+        evidence.push(' ');
+        for raw in image
+            .features
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            evidence.push_str(raw);
+            evidence.push(' ');
+            if let Some((runtime, feature)) = canonical_workspace_runtime(raw) {
+                let entry = selected.entry(runtime).or_insert_with(|| feature.clone());
+                if !entry.contains('@') && feature.contains('@') {
+                    *entry = feature;
+                }
+            }
+        }
+    }
+    let evidence = evidence.to_ascii_lowercase();
+    for (feature, markers) in [
+        (
+            "java",
+            &["java", "maven", "gradle", "spring", "openjdk"][..],
+        ),
+        (
+            "node",
+            &["node", "npm", "pnpm", "yarn", "typescript", "package.json"][..],
+        ),
+        (
+            "python",
+            &["python", "pip", "pyproject.toml", "requirements.txt"][..],
+        ),
+        ("rust", &["rust", "cargo.toml", "cargo build"][..]),
+        ("go", &["golang", "go.mod", "go build"][..]),
+        ("dotnet", &["dotnet", ".csproj", "msbuild"][..]),
+        ("php", &["php", "composer.json"][..]),
+        ("ruby", &["ruby", "gemfile", "bundle install"][..]),
+        ("gcc", &["gcc", "g++", "cmakelists.txt"][..]),
+        ("clang", &["clang", "llvm"][..]),
+    ] {
+        if markers.iter().any(|marker| evidence.contains(marker)) {
+            selected
+                .entry(feature)
+                .or_insert_with(|| feature.to_string());
+        }
+    }
+    ORDERED_RUNTIMES
+        .into_iter()
+        .filter_map(|runtime| selected.get(runtime).cloned())
+        .collect()
+}
+
+fn canonical_workspace_runtime(value: &str) -> Option<(&'static str, String)> {
+    let value = value.trim().to_ascii_lowercase();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some((name, version)) = value.split_once('@').or_else(|| value.split_once(':')) {
+        let runtime = workspace_runtime_name(name.trim())?;
+        let version = version.trim().trim_start_matches('v');
+        return Some((
+            runtime,
+            if version.is_empty() {
+                runtime.to_string()
+            } else {
+                format!("{runtime}@{version}")
+            },
+        ));
+    }
+    if let Some(runtime) = workspace_runtime_name(value.as_str()) {
+        return Some((runtime, runtime.to_string()));
+    }
+    for name in [
+        "javascript",
+        "typescript",
+        "openjdk",
+        "nodejs",
+        "python",
+        "dotnet",
+        "golang",
+        "clang",
+        "java",
+        "rust",
+        "ruby",
+        "node",
+        "gcc",
+        "jdk",
+        "php",
+        "go",
+    ] {
+        let Some(version) = value.strip_prefix(name) else {
+            continue;
+        };
+        let version = version
+            .trim_matches(['-', '_', '@', ':'])
+            .trim_start_matches('v');
+        if version.is_empty()
+            || !(version.chars().any(|character| character.is_ascii_digit())
+                || matches!(version, "stable" | "beta" | "nightly"))
+        {
+            continue;
+        }
+        let runtime = workspace_runtime_name(name)?;
+        return Some((runtime, format!("{runtime}@{version}")));
+    }
+    None
+}
+
+fn workspace_runtime_name(value: &str) -> Option<&'static str> {
+    match value {
+        "java" | "jdk" | "openjdk" | "maven" | "mvn" | "gradle" | "spring" | "springboot"
+        | "spring-boot" => Some("java"),
+        "node" | "nodejs" | "js" | "javascript" | "typescript" | "npm" | "pnpm" | "yarn"
+        | "bun" => Some("node"),
+        "python" | "python3" | "py" | "pip" | "pip3" | "poetry" | "uv" => Some("python"),
+        "rust" | "cargo" => Some("rust"),
+        "go" | "golang" | "gomod" => Some("go"),
+        "dotnet" | "csharp" | "cs" | "fsharp" | "msbuild" => Some("dotnet"),
+        "php" | "composer" => Some("php"),
+        "ruby" | "rails" | "gem" | "bundler" => Some("ruby"),
+        "gcc" | "c" | "cpp" | "c++" | "cplusplus" | "g++" => Some("gcc"),
+        "clang" | "llvm" => Some("clang"),
+        _ => None,
+    }
 }
 
 pub fn program_managed_service_id(image: &ProjectRuntimeEnvironmentImageRecord) -> String {
     program_managed_service_id_for_role(image, program_managed_service_role(image))
+}
+
+pub fn runtime_image_is_execution_required(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
+    matches!(
+        image.service_role,
+        RuntimeServiceRole::Workspace | RuntimeServiceRole::Dependency
+    )
 }
 
 fn program_managed_service_id_for_role(
@@ -290,8 +610,10 @@ fn program_managed_service_id_for_role(
     }
     if normalized.is_empty() {
         normalized = match service_role {
+            RuntimeServiceRole::Workspace => WORKSPACE_EXECUTION_SERVICE_ID,
             RuntimeServiceRole::Application => "application",
             RuntimeServiceRole::Dependency => "dependency",
+            RuntimeServiceRole::Artifact => "artifact",
             RuntimeServiceRole::Unknown => "service",
         }
         .to_string();
@@ -301,8 +623,10 @@ fn program_managed_service_id_for_role(
         .is_some_and(|character| character.is_ascii_digit())
     {
         let prefix = match service_role {
+            RuntimeServiceRole::Workspace => "workspace",
             RuntimeServiceRole::Application => "app",
             RuntimeServiceRole::Dependency => "dependency",
+            RuntimeServiceRole::Artifact => "artifact",
             RuntimeServiceRole::Unknown => "service",
         };
         normalized = format!("{prefix}-{normalized}");
@@ -317,8 +641,18 @@ fn program_managed_service_id_for_role(
 fn program_managed_service_role(
     image: &ProjectRuntimeEnvironmentImageRecord,
 ) -> RuntimeServiceRole {
+    if image.environment_type.eq_ignore_ascii_case("workspace")
+        || image.component_kind.eq_ignore_ascii_case("workspace")
+        || image.environment_key == WORKSPACE_EXECUTION_SERVICE_ID
+            && image.service_role == RuntimeServiceRole::Workspace
+    {
+        return RuntimeServiceRole::Workspace;
+    }
     if runtime_image_is_known_dependency(image) {
         return RuntimeServiceRole::Dependency;
+    }
+    if runtime_image_declares_artifact(image) {
+        return RuntimeServiceRole::Artifact;
     }
     if runtime_image_declares_application(image)
         && image
@@ -331,8 +665,32 @@ fn program_managed_service_role(
     RuntimeServiceRole::Unknown
 }
 
-fn runtime_image_is_application(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
-    image.service_role == RuntimeServiceRole::Application
+fn runtime_image_declares_artifact(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {
+    if image.environment_type.eq_ignore_ascii_case("artifact")
+        || image.component_kind.eq_ignore_ascii_case("artifact")
+    {
+        return true;
+    }
+    let identity = format!(
+        "{} {} {}",
+        image.environment_key, image.display_name, image.component_kind
+    )
+    .to_ascii_lowercase();
+    let artifact_named = [
+        "prototype",
+        "storybook",
+        "docs",
+        "documentation",
+        "example",
+        "fixture",
+    ]
+    .iter()
+    .any(|marker| identity.contains(marker));
+    let static_nginx_plan = image.dockerfile.as_deref().is_some_and(|dockerfile| {
+        let dockerfile = dockerfile.to_ascii_lowercase();
+        dockerfile.contains("from nginx") && dockerfile.contains("/usr/share/nginx/html")
+    });
+    artifact_named && static_nginx_plan
 }
 
 fn runtime_image_declares_application(image: &ProjectRuntimeEnvironmentImageRecord) -> bool {

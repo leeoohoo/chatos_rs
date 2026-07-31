@@ -10,11 +10,12 @@ import { AppShell, type AppSection } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
 import { McpCatalogPage } from './pages/McpCatalogPage';
 import { RuntimePreviewPage } from './pages/RuntimePreviewPage';
-import { SkillCatalogPage } from './pages/SkillCatalogPage';
-import { SkillPackagesPage } from './pages/SkillPackagesPage';
 import { SystemAgentsPage } from './pages/SystemAgentsPage';
 import { PluginCatalogAdminPage } from './pages/PluginCatalogAdminPage';
+import { PluginAuditPage } from './pages/PluginAuditPage';
+import { PluginDiagnosticsPage } from './pages/PluginDiagnosticsPage';
 import { PluginMarketplacesPage } from './pages/PluginMarketplacesPage';
+import { PluginPublishersPage } from './pages/PluginPublishersPage';
 import { PluginReleasesPage } from './pages/PluginReleasesPage';
 import { AgentPromptVersionsPage } from './pages/agentPrompts/AgentPromptVersionsPage';
 
@@ -61,9 +62,9 @@ export function App() {
       }}
     >
       {section === 'mcps' ? <McpCatalogPage user={user} /> : null}
-      {section === 'skills' ? <SkillCatalogPage user={user} /> : null}
-      {section === 'packages' ? <SkillPackagesPage user={user} /> : null}
       {section === 'marketplaces' ? <PluginMarketplacesPage user={user} /> : null}
+      {section === 'publishers' ? <PluginPublishersPage user={user} /> : null}
+      {section === 'diagnostics' ? <PluginDiagnosticsPage /> : null}
       {section === 'plugins' ? (
         <PluginCatalogAdminPage
           user={user}
@@ -87,6 +88,7 @@ export function App() {
         <SystemAgentsPage user={user} onOpenPromptSettings={setPromptAgentKey} />
       ) : null}
       {section === 'runtime' ? <RuntimePreviewPage user={user} /> : null}
+      {section === 'audit' ? <PluginAuditPage user={user} /> : null}
     </AppShell>
   );
 }

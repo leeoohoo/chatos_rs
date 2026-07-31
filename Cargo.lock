@@ -643,6 +643,7 @@ dependencies = [
  "chatos_config_sdk",
  "chatos_mcp_runtime",
  "chatos_plugin_management_sdk",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -760,6 +761,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_plugin_package"
+version = "0.1.0"
+dependencies = [
+ "chatos_plugin_management_sdk",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "zip 2.4.2",
+]
+
+[[package]]
 name = "chatos_project_execution"
 version = "0.1.0"
 dependencies = [
@@ -797,6 +812,7 @@ dependencies = [
  "chatos_terminal_runtime",
  "chrono",
  "globset",
+ "hex",
  "httparse",
  "libc",
  "rcgen",
@@ -806,6 +822,7 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -815,6 +832,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2558,6 +2576,7 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_plugin_package",
  "chatos_project_execution",
  "chatos_sandbox_contract",
  "chrono",
@@ -3329,6 +3348,7 @@ dependencies = [
  "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_plugin_management_sdk",
+ "chatos_plugin_package",
  "chatos_service_runtime",
  "chrono",
  "futures-util",
@@ -4830,6 +4850,7 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_plugin_package",
  "chatos_project_execution",
  "chatos_remote_runtime",
  "chatos_sandbox_contract",

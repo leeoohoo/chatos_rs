@@ -85,6 +85,11 @@ pub(super) async fn resolve_plugin_binding(
             .get_plugin_release(installation.release_id.as_str())
             .await
             .map_err(ApiError::internal)?,
+        None if !catalog.latest_release_id.is_empty() => state
+            .store
+            .get_plugin_release(catalog.latest_release_id.as_str())
+            .await
+            .map_err(ApiError::internal)?,
         None => None,
     };
     let component_snapshots = match release.as_ref() {
@@ -94,6 +99,17 @@ pub(super) async fn resolve_plugin_binding(
             .await
             .map_err(ApiError::internal)?,
         None => Vec::new(),
+    };
+    let cloud_bundle_keys = match release.as_ref() {
+        Some(release) => state
+            .store
+            .list_plugin_cloud_component_bundles(catalog.id.as_str(), release.id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+            .into_iter()
+            .map(|bundle| bundle.component_key)
+            .collect::<HashSet<_>>(),
+        None => HashSet::new(),
     };
     let auth_connection_ids = match installation.as_ref() {
         Some(installation) => state
@@ -122,6 +138,7 @@ pub(super) async fn resolve_plugin_binding(
         component_snapshots,
         auth_connection_ids,
         device_id,
+        &cloud_bundle_keys,
     )))
 }
 
@@ -201,12 +218,17 @@ fn resolve_plugin_records(
     component_snapshots: Vec<PluginComponentSnapshot>,
     auth_connection_ids: Vec<String>,
     device_id: Option<&str>,
+    cloud_bundle_keys: &HashSet<String>,
 ) -> ResolvedPlugin {
+    let portable_uses_local = binding.agent_key == "task_runner_local_plan_phase"
+        || binding.agent_key == "task_runner_local_run_phase";
     let component_result = resolve_components(
         release.as_ref(),
         installation.as_ref(),
         preference.as_ref(),
         &binding,
+        cloud_bundle_keys,
+        portable_uses_local,
     );
     let components = component_result.as_ref().cloned().unwrap_or_default();
     let unavailable = |status, reason: String| ResolvedPlugin {
@@ -241,34 +263,16 @@ fn resolve_plugin_records(
             "Plugin is disabled by user preference".to_string(),
         );
     }
-    let Some(device_id) = device_id else {
-        return unavailable(
-            PluginAvailabilityStatus::Unavailable,
-            "device_id is required to resolve Plugin availability".to_string(),
-        );
-    };
-    let Some(installation_ref) = installation.as_ref() else {
-        return unavailable(
-            PluginAvailabilityStatus::Unavailable,
-            format!("Plugin is not installed on device {device_id}"),
-        );
-    };
     let Some(release_ref) = release.as_ref() else {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
-            "active Plugin installation references a missing Release".to_string(),
+            "Plugin has no active immutable Release".to_string(),
         );
     };
-    if release_ref.plugin_id != catalog.id
-        || installation_ref.plugin_id != catalog.id
-        || installation_ref.release_id != release_ref.id
-        || installation_ref.version != release_ref.version
-        || installation_ref.artifact_sha256 != release_ref.artifact_sha256
-    {
+    if release_ref.plugin_id != catalog.id {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
-            "Plugin installation identity, version, or artifact hash does not match Release"
-                .to_string(),
+            "Plugin Release identity does not match Catalog".to_string(),
         );
     }
     if release_ref.revoked_at.is_some() {
@@ -277,58 +281,10 @@ fn resolve_plugin_records(
             "Plugin Release is revoked".to_string(),
         );
     }
-    if !release_ref.supported_platforms.is_empty()
-        && !release_ref
-            .supported_platforms
-            .iter()
-            .any(|platform| platform == &installation_ref.platform)
-    {
-        return unavailable(
-            PluginAvailabilityStatus::UnsupportedPlatform,
-            "Plugin installation platform is not supported by the active Release".to_string(),
-        );
-    }
-    if !installation_ref.active || installation_ref.install_status != PluginInstallStatus::Installed
-    {
-        return unavailable(
-            PluginAvailabilityStatus::Unavailable,
-            "Plugin installation is not active and installed".to_string(),
-        );
-    }
     if preference_ref.release_channel != release_ref.release_channel {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
             "active Plugin Release does not match the preferred release channel".to_string(),
-        );
-    }
-    if installation_ref.dependency_status != PluginRequirementStatus::Satisfied {
-        return unavailable(
-            PluginAvailabilityStatus::NeedsDependency,
-            "Plugin dependencies are not satisfied".to_string(),
-        );
-    }
-    if installation_ref.permission_status != PluginRequirementStatus::Satisfied {
-        return unavailable(
-            PluginAvailabilityStatus::NeedsPermission,
-            "Plugin permissions are not satisfied".to_string(),
-        );
-    }
-    if installation_ref.auth_status != PluginRequirementStatus::Satisfied {
-        return unavailable(
-            PluginAvailabilityStatus::NeedsAuth,
-            "Plugin authentication is not satisfied".to_string(),
-        );
-    }
-    if !matches!(
-        installation_ref.availability_status,
-        PluginAvailabilityStatus::Ready | PluginAvailabilityStatus::PartiallyAvailable
-    ) {
-        return unavailable(
-            installation_ref.availability_status,
-            installation_ref
-                .last_error
-                .clone()
-                .unwrap_or_else(|| "Plugin installation is unavailable".to_string()),
         );
     }
     let components = match component_result {
@@ -337,6 +293,73 @@ fn resolve_plugin_records(
             return unavailable(PluginAvailabilityStatus::Unavailable, reason);
         }
     };
+    let requires_local = components.iter().any(|component| {
+        component.component.execution_host == PluginExecutionHost::Local
+            || (component.component.execution_host == PluginExecutionHost::Portable
+                && portable_uses_local)
+    });
+    if requires_local {
+        let Some(device_id) = device_id else {
+            return unavailable(
+                PluginAvailabilityStatus::Unavailable,
+                "device_id is required for selected local Plugin components".to_string(),
+            );
+        };
+        let Some(installation_ref) = installation.as_ref() else {
+            return unavailable(
+                PluginAvailabilityStatus::Unavailable,
+                format!("Plugin is not installed on device {device_id}"),
+            );
+        };
+        if installation_ref.plugin_id != catalog.id
+            || installation_ref.release_id != release_ref.id
+            || installation_ref.version != release_ref.version
+            || installation_ref.artifact_sha256 != release_ref.artifact_sha256
+        {
+            return unavailable(
+                PluginAvailabilityStatus::Unavailable,
+                "Plugin installation identity, version, or artifact hash does not match Release"
+                    .to_string(),
+            );
+        }
+        if !release_ref.supported_platforms.is_empty()
+            && !release_ref
+                .supported_platforms
+                .iter()
+                .any(|platform| platform == &installation_ref.platform)
+        {
+            return unavailable(
+                PluginAvailabilityStatus::UnsupportedPlatform,
+                "Plugin installation platform is not supported by the active Release".to_string(),
+            );
+        }
+        if !installation_ref.active
+            || installation_ref.install_status != PluginInstallStatus::Installed
+        {
+            return unavailable(
+                PluginAvailabilityStatus::Unavailable,
+                "Plugin installation is not active and installed".to_string(),
+            );
+        }
+        if installation_ref.dependency_status != PluginRequirementStatus::Satisfied {
+            return unavailable(
+                PluginAvailabilityStatus::NeedsDependency,
+                "Plugin dependencies are not satisfied".to_string(),
+            );
+        }
+        if installation_ref.permission_status != PluginRequirementStatus::Satisfied {
+            return unavailable(
+                PluginAvailabilityStatus::NeedsPermission,
+                "Plugin permissions are not satisfied".to_string(),
+            );
+        }
+        if installation_ref.auth_status != PluginRequirementStatus::Satisfied {
+            return unavailable(
+                PluginAvailabilityStatus::NeedsAuth,
+                "Plugin authentication is not satisfied".to_string(),
+            );
+        }
+    }
     let immutable_components = component_snapshots
         .iter()
         .map(|snapshot| (snapshot.component.component_key.as_str(), snapshot))
@@ -410,6 +433,8 @@ fn resolve_components(
     installation: Option<&PluginInstallationRecord>,
     preference: Option<&UserPluginPreferenceRecord>,
     binding: &AgentBindingRecord,
+    cloud_bundle_keys: &HashSet<String>,
+    portable_uses_local: bool,
 ) -> Result<Vec<ResolvedPluginComponent>, String> {
     let Some(release) = release else {
         return Ok(Vec::new());
@@ -471,8 +496,28 @@ fn resolve_components(
         .components
         .iter()
         .filter(|component| selected.contains(&component.component_key))
-        .map(
-            |component| match statuses.get(component.component_key.as_str()) {
+        .map(|component| {
+            let cloud_execution = component.execution_host == PluginExecutionHost::Cloud
+                || (component.execution_host == PluginExecutionHost::Portable
+                    && !portable_uses_local);
+            if cloud_execution {
+                return if cloud_bundle_keys.contains(component.component_key.as_str()) {
+                    ResolvedPluginComponent {
+                        component: component.clone(),
+                        available: true,
+                        status: PluginAvailabilityStatus::Ready,
+                        reason: None,
+                    }
+                } else {
+                    ResolvedPluginComponent {
+                        component: component.clone(),
+                        available: false,
+                        status: PluginAvailabilityStatus::Unavailable,
+                        reason: Some("immutable cloud Prompt Bundle is missing".to_string()),
+                    }
+                };
+            }
+            match statuses.get(component.component_key.as_str()) {
                 Some(status) if status.kind == component.kind => ResolvedPluginComponent {
                     component: component.clone(),
                     available: status.availability_status == PluginAvailabilityStatus::Ready,
@@ -496,8 +541,8 @@ fn resolve_components(
                         "Plugin component status is missing from installation".to_string(),
                     ),
                 },
-            },
-        )
+            }
+        })
         .collect())
 }
 

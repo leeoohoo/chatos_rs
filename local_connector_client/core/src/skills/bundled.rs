@@ -51,10 +51,10 @@ pub(crate) fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../skill_bundles/internal/documents/1.22.0/skill.json"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../skill_bundles/internal/pdf/1.12.0/skill.json"
+            "../../../skill_bundles/internal/pdf/1.22.0/skill.json"
         )),
         "internal_skill_presentations" => Some(include_str!(
-            "../../../skill_bundles/internal/presentations/1.24.0/skill.json"
+            "../../../skill_bundles/internal/presentations/1.32.0/skill.json"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
             "../../../skill_bundles/internal/spreadsheets/1.4.0/skill.json"
@@ -108,7 +108,7 @@ pub(crate) fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../skill_bundles/internal/control-chrome/1.4.0/skill.json"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../skill_bundles/internal/computer-use/1.15.0/skill.json"
+            "../../../skill_bundles/internal/computer-use/1.19.0/skill.json"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
             "../../../skill_bundles/internal/excel-live-control/1.4.0/skill.json"
@@ -141,10 +141,10 @@ pub(crate) fn internal_skill_instructions(skill_id: &str) -> Option<&'static str
             "../../../skill_bundles/internal/documents/1.22.0/instructions.md"
         )),
         "internal_skill_pdf" => Some(include_str!(
-            "../../../skill_bundles/internal/pdf/1.12.0/instructions.md"
+            "../../../skill_bundles/internal/pdf/1.22.0/instructions.md"
         )),
         "internal_skill_presentations" => Some(include_str!(
-            "../../../skill_bundles/internal/presentations/1.24.0/instructions.md"
+            "../../../skill_bundles/internal/presentations/1.32.0/instructions.md"
         )),
         "internal_skill_spreadsheets" => Some(include_str!(
             "../../../skill_bundles/internal/spreadsheets/1.4.0/instructions.md"
@@ -198,7 +198,7 @@ pub(crate) fn internal_skill_instructions(skill_id: &str) -> Option<&'static str
             "../../../skill_bundles/internal/control-chrome/1.4.0/instructions.md"
         )),
         "internal_skill_computer_use" => Some(include_str!(
-            "../../../skill_bundles/internal/computer-use/1.15.0/instructions.md"
+            "../../../skill_bundles/internal/computer-use/1.19.0/instructions.md"
         )),
         "internal_skill_excel_live_control" => Some(include_str!(
             "../../../skill_bundles/internal/excel-live-control/1.4.0/instructions.md"

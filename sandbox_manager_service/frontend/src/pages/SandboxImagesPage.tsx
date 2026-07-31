@@ -319,7 +319,7 @@ export function SandboxImagesPage() {
                 dataIndex: 'features',
                 width: 260,
                 render: (_, image) =>
-                  image.is_default ? <Tag color="blue">{t('image.default')}</Tag> : renderFeatureTags(image.features, t),
+                  renderImageFeatures(image, t),
               },
               {
                 title: t('image.reference'),
@@ -422,16 +422,17 @@ function renderImageStatus(
   runningJobImageIds: Set<string>,
   t: (key: string) => string,
 ) {
+  const dependency = isDependencyImage(image);
   if (runningJobImageIds.has(image.id)) {
-    return <Tag color="processing">{t('image.initializing')}</Tag>;
+    return <Tag color="processing">{dependency ? t('image.dependencyPulling') : t('image.initializing')}</Tag>;
   }
   if (image.initialized) {
-    return <Tag color="success">{t('image.ready')}</Tag>;
+    return <Tag color="success">{dependency ? t('image.dependencyReady') : t('image.ready')}</Tag>;
   }
   if (image.status.startsWith('inspect_error')) {
     return <Tag color="error">{t('image.inspectError')}</Tag>;
   }
-  return <Tag>{t('image.missing')}</Tag>;
+  return <Tag>{dependency ? t('image.dependencyMissing') : t('image.missing')}</Tag>;
 }
 
 function renderJobStatus(status: string, t: (key: string) => string) {
@@ -460,6 +461,21 @@ function renderFeatureTags(features: string[], t: (key: string) => string) {
   );
 }
 
+function renderImageFeatures(image: SandboxImageRecord, t: (key: string) => string) {
+  if (image.is_default) {
+    return <Tag color="blue">{t('image.default')}</Tag>;
+  }
+  if (isDependencyImage(image)) {
+    return <Tag>{t('image.dependencyFeature')}</Tag>;
+  }
+  return renderFeatureTags(image.features, t);
+}
+
+function isDependencyImage(image: SandboxImageRecord) {
+  return image.id.startsWith('dependency:')
+    || image.features.some((feature) => feature.startsWith('dependency@'));
+}
+
 function formatFeatureLabel(feature: string) {
   const [runtime, version] = feature.split('@');
   if (!version) {
@@ -467,6 +483,9 @@ function formatFeatureLabel(feature: string) {
   }
   if (runtime === 'script') {
     return `Custom script ${version}`;
+  }
+  if (runtime === 'dependency') {
+    return `Dependency ${version}`;
   }
   const runtimeLabels: Record<string, string> = {
     java: 'JDK',

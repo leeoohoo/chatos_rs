@@ -55,11 +55,13 @@ pub(super) fn build_local_compose_plan(
     let mut compose_yaml = String::new();
     compose_yaml.push_str(format!("name: {}\nservices:\n", yaml_string(&project_name)).as_str());
     for (service_id, image) in &application_plans {
+        let application_dependencies = application_dependency_kinds(image, &dependency_kinds);
         append_application_service(
             &mut compose_yaml,
+            project_name.as_str(),
             service_id.as_str(),
             image,
-            &dependency_kinds,
+            &application_dependencies,
         );
     }
     for dependency in &dependency_kinds {
@@ -81,7 +83,12 @@ pub(super) fn build_local_compose_plan(
     let env_file = environment_dotenv(&env_vars)?;
     let mut image_refs = application_plans
         .iter()
-        .map(|(service_id, image)| (image.id.clone(), format!("{project_name}-{service_id}")))
+        .map(|(service_id, image)| {
+            (
+                image.id.clone(),
+                application_image_ref(project_name.as_str(), service_id.as_str()),
+            )
+        })
         .collect::<Vec<_>>();
     for image in images.iter().filter(|image| !image_is_application(image)) {
         if let Some(kind) = dependency_kind_from_identity(image_identity(image).as_str()) {
@@ -117,11 +124,19 @@ fn image_is_application(image: &LocalRuntimeEnvironmentImageRecord) -> bool {
 
 fn append_application_service(
     output: &mut String,
+    project_name: &str,
     service_id: &str,
     image: &LocalRuntimeEnvironmentImageRecord,
     dependency_kinds: &BTreeSet<String>,
 ) {
     output.push_str(format!("  {service_id}:\n").as_str());
+    output.push_str(
+        format!(
+            "    image: {}\n",
+            yaml_string(application_image_ref(project_name, service_id).as_str())
+        )
+        .as_str(),
+    );
     output.push_str("    build:\n      context: ../..\n");
     output.push_str(
         format!("      dockerfile: .chatos/runtime-environment/services/{service_id}/Dockerfile\n")
@@ -150,6 +165,10 @@ fn append_application_service(
     output.push_str("    networks:\n      - chatos-runtime\n    restart: unless-stopped\n");
 }
 
+fn application_image_ref(project_name: &str, service_id: &str) -> String {
+    format!("{project_name}-{service_id}:latest")
+}
+
 fn application_ports(image: &LocalRuntimeEnvironmentImageRecord) -> BTreeSet<u16> {
     let ports = parse_json(image.ports_json.as_str());
     ports
@@ -169,6 +188,45 @@ fn application_ports(image: &LocalRuntimeEnvironmentImageRecord) -> BTreeSet<u16
         .filter(|port| *port > 0 && *port <= u16::MAX as u64)
         .map(|port| port as u16)
         .collect()
+}
+
+fn application_dependency_kinds(
+    image: &LocalRuntimeEnvironmentImageRecord,
+    available: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut dependencies = parse_json(image.depends_on_json.as_str())
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(dependency_kind_from_identity)
+        .filter(|kind| available.contains(*kind))
+        .map(ToOwned::to_owned)
+        .collect::<BTreeSet<_>>();
+    if dependencies.is_empty() {
+        let evidence = format!(
+            "{} {} {} {}",
+            image.env_vars_json,
+            image.dockerfile.as_deref().unwrap_or_default(),
+            image.startup_command.as_deref().unwrap_or_default(),
+            image.test_command.as_deref().unwrap_or_default(),
+        )
+        .to_ascii_lowercase();
+        for kind in available {
+            let markers: &[&str] = match kind.as_str() {
+                "postgres" => &["postgres", "postgresql"],
+                "mongodb" => &["mongodb", "mongo"],
+                "mysql" => &["mysql", "mariadb"],
+                "redis" => &["redis", "valkey", "dragonfly"],
+                "rabbitmq" => &["rabbitmq", "amqp"],
+                other => &[other],
+            };
+            if markers.iter().any(|marker| evidence.contains(marker)) {
+                dependencies.insert(kind.clone());
+            }
+        }
+    }
+    dependencies
 }
 
 fn environment_dotenv(value: &Value) -> Result<String, String> {
@@ -292,7 +350,10 @@ fn dependency_kind_from_identity(value: &str) -> Option<&'static str> {
 }
 
 fn dependency_service_name(value: &str) -> &str {
-    value
+    match value {
+        "postgres" => "postgresql",
+        other => other,
+    }
 }
 
 fn dependency_image_ref(value: &str) -> Option<&'static str> {
@@ -329,7 +390,7 @@ fn append_dependency_service(output: &mut String, service: &str) {
     match service {
         "mysql" => output.push_str("  mysql:\n    image: mysql:8.4\n    env_file: [.env.chatos]\n    environment:\n      MYSQL_DATABASE: \"${MYSQL_DATABASE:-app}\"\n      MYSQL_USER: \"${MYSQL_USER:-app}\"\n      MYSQL_PASSWORD: \"${MYSQL_PASSWORD}\"\n      MYSQL_ROOT_PASSWORD: \"${MYSQL_ROOT_PASSWORD}\"\n    ports: [\"127.0.0.1:3306:3306\"]\n    volumes: [mysql-data:/var/lib/mysql]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"mysqladmin ping -h 127.0.0.1 -p$${MYSQL_ROOT_PASSWORD} --silent\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "mongodb" => output.push_str("  mongodb:\n    image: mongo:7.0\n    env_file: [.env.chatos]\n    environment:\n      MONGO_INITDB_ROOT_USERNAME: \"${MONGO_INITDB_ROOT_USERNAME:-app}\"\n      MONGO_INITDB_ROOT_PASSWORD: \"${MONGO_INITDB_ROOT_PASSWORD}\"\n      MONGO_INITDB_DATABASE: \"${MONGODB_DATABASE:-app}\"\n    ports: [\"127.0.0.1:27017:27017\"]\n    volumes: [mongodb-data:/data/db]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' || exit 1\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
-        "postgres" => output.push_str("  postgres:\n    image: postgres:16-alpine\n    env_file: [.env.chatos]\n    environment:\n      POSTGRES_DB: \"${POSTGRES_DB:-app}\"\n      POSTGRES_USER: \"${POSTGRES_USER:-app}\"\n      POSTGRES_PASSWORD: \"${POSTGRES_PASSWORD}\"\n    ports: [\"127.0.0.1:5432:5432\"]\n    volumes: [postgres-data:/var/lib/postgresql/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
+        "postgres" => output.push_str("  postgresql:\n    image: postgres:16-alpine\n    env_file: [.env.chatos]\n    environment:\n      POSTGRES_DB: \"${POSTGRES_DB:-app}\"\n      POSTGRES_USER: \"${POSTGRES_USER:-app}\"\n      POSTGRES_PASSWORD: \"${POSTGRES_PASSWORD}\"\n    ports: [\"127.0.0.1:5432:5432\"]\n    volumes: [postgres-data:/var/lib/postgresql/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "redis" => output.push_str("  redis:\n    image: redis:7-alpine\n    env_file: [.env.chatos]\n    command: [\"sh\", \"-c\", \"exec redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}'\"]\n    ports: [\"127.0.0.1:6379:6379\"]\n    volumes: [redis-data:/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"redis-cli -a '$${REDIS_PASSWORD}' ping | grep PONG\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "nacos" => output.push_str("  nacos:\n    image: nacos/nacos-server:v2.4.3\n    environment:\n      MODE: standalone\n      NACOS_AUTH_ENABLE: \"false\"\n    ports: [\"127.0.0.1:8848:8848\", \"127.0.0.1:9848:9848\", \"127.0.0.1:9849:9849\"]\n    volumes: [nacos-data:/home/nacos/data]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"curl -fsS http://127.0.0.1:8848/nacos/ >/dev/null || exit 1\"]\n      interval: 15s\n      timeout: 5s\n      retries: 30\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
         "rabbitmq" => output.push_str("  rabbitmq:\n    image: rabbitmq:3.13-management-alpine\n    env_file: [.env.chatos]\n    environment:\n      RABBITMQ_DEFAULT_USER: \"${RABBITMQ_DEFAULT_USER:-app}\"\n      RABBITMQ_DEFAULT_PASS: \"${RABBITMQ_DEFAULT_PASS}\"\n    ports: [\"127.0.0.1:5672:5672\", \"127.0.0.1:15672:15672\"]\n    volumes: [rabbitmq-data:/var/lib/rabbitmq]\n    healthcheck:\n      test: [\"CMD\", \"rabbitmq-diagnostics\", \"-q\", \"ping\"]\n      interval: 10s\n      timeout: 5s\n      retries: 20\n    networks: [chatos-runtime]\n    restart: unless-stopped\n"),
@@ -393,7 +454,7 @@ mod tests {
             analysis_summary: None,
             not_runnable_reason: None,
             detected_stack_json: "{}".to_string(),
-            required_services_json: "[]".to_string(),
+            required_services_json: "[{\"type\":\"postgres\"},{\"type\":\"redis\"}]".to_string(),
             env_vars_json: json!({
                 "NODE_ENV": {
                     "project_value": "development",
@@ -415,6 +476,17 @@ mod tests {
                 environment_key: key.to_string(),
                 environment_type: "application".to_string(),
                 display_name: key.to_string(),
+                source_root: key.to_string(),
+                component_kind: "application".to_string(),
+                startup_command: Some("npm start".to_string()),
+                test_command: Some("npm test".to_string()),
+                depends_on_json: if key == "backend" {
+                    "[\"postgres\"]"
+                } else {
+                    "[\"redis\"]"
+                }
+                .to_string(),
+                auto_start: true,
                 image_id: None,
                 image_ref: None,
                 image_provider: "local_connector".to_string(),
@@ -432,10 +504,23 @@ mod tests {
         let plan = build_local_compose_plan(&project, &environment, images.as_slice())
             .expect("build local Compose plan");
         let compose = plan.request["compose_yaml"].as_str().expect("compose YAML");
+        assert!(compose.contains("image: \"chatos-project1234-backend:latest\""));
+        assert!(compose.contains("image: \"chatos-project1234-frontend:latest\""));
         assert!(compose.contains("services/backend/Dockerfile"));
         assert!(compose.contains("services/frontend/Dockerfile"));
         assert!(compose.contains("127.0.0.1:3000:3000"));
+        assert!(compose.contains("postgresql:"));
+        assert!(compose.contains("redis:"));
+        assert!(compose.matches("depends_on:").count() >= 2);
         assert_eq!(plan.request["env_file"], "NODE_ENV=\"production\"\n");
+        assert!(plan.image_refs.contains(&(
+            "image-backend".to_string(),
+            "chatos-project1234-backend:latest".to_string()
+        )));
+        assert!(plan.image_refs.contains(&(
+            "image-frontend".to_string(),
+            "chatos-project1234-frontend:latest".to_string()
+        )));
         assert_eq!(plan.image_refs.len(), 2);
     }
 }

@@ -532,27 +532,6 @@ fn local_frontend_dist_dir() -> Option<PathBuf> {
         .find(|candidate| candidate.join("index.html").is_file())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::is_benign_ipc_connection_shutdown;
-
-    #[test]
-    fn normal_peer_shutdown_is_not_reported_as_an_ipc_failure() {
-        let error = anyhow::anyhow!("error shutting down connection")
-            .context("serve local connector IPC API connection");
-
-        assert!(is_benign_ipc_connection_shutdown(&error));
-    }
-
-    #[test]
-    fn actionable_ipc_errors_are_still_reported() {
-        let error = anyhow::anyhow!("invalid HTTP request")
-            .context("serve local connector IPC API connection");
-
-        assert!(!is_benign_ipc_connection_shutdown(&error));
-    }
-}
-
 fn should_open_local_ui() -> bool {
     std::env::args().any(|arg| arg == "--open") || env_flag("LOCAL_CONNECTOR_OPEN_UI")
 }
@@ -659,4 +638,25 @@ fn bearer_token_matches(headers: &HeaderMap, expected_token: &str) -> bool {
 
 fn token_digest(value: &str) -> Vec<u8> {
     Sha256::digest(value.as_bytes()).to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_benign_ipc_connection_shutdown;
+
+    #[test]
+    fn normal_peer_shutdown_is_not_reported_as_an_ipc_failure() {
+        let error = anyhow::anyhow!("error shutting down connection")
+            .context("serve local connector IPC API connection");
+
+        assert!(is_benign_ipc_connection_shutdown(&error));
+    }
+
+    #[test]
+    fn actionable_ipc_errors_are_still_reported() {
+        let error = anyhow::anyhow!("invalid HTTP request")
+            .context("serve local connector IPC API connection");
+
+        assert!(!is_benign_ipc_connection_shutdown(&error));
+    }
 }

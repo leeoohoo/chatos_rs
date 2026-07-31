@@ -5,7 +5,10 @@ use super::super::internal_skills::{
     internal_skill_bundle_hash, internal_skill_catalog, InternalSkillCatalogItem,
 };
 use super::*;
-use chatos_plugin_management_sdk::verify_plugin_release_signature;
+use chatos_plugin_management_sdk::{
+    verify_plugin_release_signature, PluginComponentKind, PluginExecutionHost,
+};
+use chatos_plugin_package::plugin_cloud_bundle_sha256;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -58,8 +61,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "pdf")
         .expect("PDF spec");
-    assert_eq!(pdf.release_version, "1.12.0");
-    assert_eq!(pdf.artifact_revision, "pdf-1.12.0");
+    assert_eq!(pdf.release_version, "1.22.0");
+    assert_eq!(pdf.artifact_revision, "pdf-1.22.0");
     let documents = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "documents")
@@ -76,8 +79,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "presentations")
         .expect("Presentations spec");
-    assert_eq!(presentations.release_version, "1.24.0");
-    assert_eq!(presentations.artifact_revision, "presentations-1.24.0");
+    assert_eq!(presentations.release_version, "1.32.0");
+    assert_eq!(presentations.artifact_revision, "presentations-1.32.0");
     let template_creator = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "template-creator")
@@ -100,8 +103,86 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "computer-use")
         .expect("Computer Use spec");
-    assert_eq!(computer_use.release_version, "1.15.0");
-    assert_eq!(computer_use.artifact_revision, "computer-use-1.15.0");
+    assert_eq!(computer_use.release_version, "1.19.0");
+    assert_eq!(computer_use.artifact_revision, "computer-use-1.19.0");
+}
+
+#[test]
+fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
+    let (release, snapshots, bundles, catalog) =
+        bundled_ponytail_release().expect("bundled Ponytail Release");
+
+    assert_eq!(BUNDLED_MARKETPLACE_REVISION, "2026-07-30.1");
+    assert_eq!(
+        BUNDLED_PONYTAIL_AGENT_KEYS,
+        ["task_runner_run_phase", "task_runner_local_run_phase"]
+    );
+    assert_eq!(release.plugin_id, BUNDLED_PONYTAIL_PLUGIN_ID);
+    assert_eq!(release.version, BUNDLED_PONYTAIL_VERSION);
+    assert_eq!(release.artifact_sha256, BUNDLED_PONYTAIL_ARTIFACT_SHA256);
+    assert_eq!(
+        release.signature.manifest_sha256,
+        "c1064afe7ff35eae42730d23efaa6b891f3f26ce797c5c83117e58c59e6159c8"
+    );
+    verify_plugin_release_signature(
+        PluginReleaseVerificationContext {
+            plugin_id: release.plugin_id.as_str(),
+            version: release.version.as_str(),
+            marketplace_id: BUNDLED_MARKETPLACE_ID,
+            publisher_id: BUNDLED_PUBLISHER_ID,
+            artifact_sha256: release.artifact_sha256.as_str(),
+        },
+        &release.normalized_manifest,
+        &release.signature,
+        &bundled_signing_key().expect("bundled public key"),
+    )
+    .expect("bundled Ponytail Release signature");
+
+    assert_eq!(release.components.len(), 11);
+    assert_eq!(snapshots.len(), release.components.len());
+    assert_eq!(bundles.len(), release.components.len());
+    assert!(release
+        .components
+        .iter()
+        .all(|component| component.execution_host == PluginExecutionHost::Portable));
+    assert_eq!(
+        release
+            .components
+            .iter()
+            .filter(|component| component.kind == PluginComponentKind::SkillCollection)
+            .count(),
+        1
+    );
+    assert_eq!(
+        release
+            .components
+            .iter()
+            .filter(|component| component.kind == PluginComponentKind::Command)
+            .count(),
+        4
+    );
+    assert_eq!(
+        release
+            .components
+            .iter()
+            .filter(|component| component.kind == PluginComponentKind::Agent)
+            .count(),
+        6
+    );
+    assert!(bundles.iter().all(|bundle| {
+        plugin_cloud_bundle_sha256(bundle).is_ok_and(|sha256| sha256 == bundle.bundle_sha256)
+            && snapshots.iter().any(|snapshot| {
+                snapshot.component.component_key == bundle.component_key
+                    && snapshot.content_sha256 == bundle.bundle_sha256
+            })
+    }));
+    assert_eq!(catalog.id, BUNDLED_PONYTAIL_PLUGIN_ID);
+    assert_eq!(catalog.marketplace_id, BUNDLED_MARKETPLACE_ID);
+    assert_eq!(catalog.latest_release_id, release.id);
+    assert!(catalog.enabled);
+    assert!(catalog.featured);
+    assert_eq!(catalog.license.license_id, "MIT");
+    assert!(catalog.license.redistributable);
 }
 
 #[test]
@@ -177,8 +258,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "pdf",
             (
-                "21d3fde79f678f2dd98566865328fba3b75a267a917d16224610dad719e85d0c",
-                "f36ed406b169aece35e7b02bc2939d306ff4eefaa67f48d7bfdf095b74cef93f",
+                "014518034e5580c3a1932ac943a240ac03b96ea19b6ed7ca582d8c23e6838505",
+                "67bb9c93b2c79b2eb81ded62860602b1e3dced777f54c5d4eafc17d4d4bbc370",
             ),
         ),
         (
@@ -191,8 +272,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "presentations",
             (
-                "bfd265c913410e734ee284ca9c2584364797fce99319b3ce90e9918739de7fbc",
-                "1e5063498ae1e4a9133fe2fcff4b955694d86773285d6d95ff73d980f0c83efd",
+                "85d204526b382e6a6d6a005b7713944de5d20d8f9f97ebb8d3a04c90db1777f4",
+                "03a4fdc98a9d7877214a3dd9f7e214e95b4943cdf3b9126298a11f38bc3c17ba",
             ),
         ),
         (
@@ -233,8 +314,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "computer-use",
             (
-                "172f89414dcda07f19eb461a251d0d86fdc34cf86daf24fb4e3b59a581b32e08",
-                "0024fdea954e1fd525da0561c1a5d1c9cbed6ac884ab6e313ae3b84b1ff55181",
+                "83f6795819b96b059314bcd0f9bcc5d89e25486638bab46c769737b8009b0b69",
+                "54be7bfffc94c54a501674b360648ac8f627b6243bddc9e25492c43b6a124e6f",
             ),
         ),
         (

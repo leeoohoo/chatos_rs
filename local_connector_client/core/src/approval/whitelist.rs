@@ -99,8 +99,14 @@ mod tests {
             find_matching_whitelist(&[ai_entry], &key, command, args.as_slice(), cwd).is_none()
         );
         assert_eq!(
-            find_matching_whitelist(&[user_entry.clone()], &key, command, args.as_slice(), cwd)
-                .map(|entry| entry.id.as_str()),
+            find_matching_whitelist(
+                std::slice::from_ref(&user_entry),
+                &key,
+                command,
+                args.as_slice(),
+                cwd
+            )
+            .map(|entry| entry.id.as_str()),
             Some(user_entry.id.as_str())
         );
     }

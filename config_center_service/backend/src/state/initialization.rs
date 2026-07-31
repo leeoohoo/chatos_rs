@@ -31,6 +31,7 @@ impl AppState {
             .await?;
         state.purge_user_preferences_from_config_center().await?;
         state.migrate_agent_max_iterations_config().await?;
+        state.migrate_task_runner_runtime_config().await?;
         Ok(state)
     }
 

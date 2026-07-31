@@ -141,12 +141,12 @@ fn remove_planner_required_builtins_from_enum(tool: &mut Value, path: &[&str]) {
 }
 
 fn planner_external_mcp_config_schema_description() -> String {
-    "联系人异步任务可以自由组合 builtin MCP 和用户配置的外部 MCP。TaskManager 和 AskUser 属于系统默认工具，会由后端自动带上，不需要选择。用户点名外部系统、外部平台或外部 MCP 名称时，先调用 list_external_mcp_configs 查看当前用户可用配置，匹配后把对应 id 写入 external_mcp_config_ids；如果任务还需要代码、终端、浏览器等内部能力，也同时在 enabled_builtin_kinds 里选择对应 builtin。".to_string()
+    "联系人异步任务可以自由组合 builtin MCP 和用户配置的外部 MCP。AskUser 属于系统默认工具，会由后端自动带上，不需要选择。用户点名外部系统、外部平台或外部 MCP 名称时，先调用 list_external_mcp_configs 查看当前用户可用配置，匹配后把对应 id 写入 external_mcp_config_ids；如果任务还需要代码、终端、浏览器等内部能力，也同时在 enabled_builtin_kinds 里选择对应 builtin。".to_string()
 }
 
 fn planner_builtin_mcp_kind_schema_description() -> String {
     let mut lines = vec![
-        "联系人异步任务可以自由组合 builtin MCP 和用户配置的外部 MCP。这里选择执行阶段需要的 builtin 能力，但不要选择 TaskManager 或 AskUser；这两个系统默认工具会由后端自动带上。如果任务还需要外部 MCP，同时填写 external_mcp_config_ids。"
+        "联系人异步任务可以自由组合 builtin MCP 和用户配置的外部 MCP。这里选择执行阶段需要的 builtin 能力，但不要选择 AskUser；它会由后端自动带上。如果任务还需要外部 MCP，同时填写 external_mcp_config_ids。"
             .to_string(),
         "硬性约束：如果选择 CodeMaintainerWrite，必须同时选择 CodeMaintainerRead；不要创建只有写入工具、没有读取工具的代码任务。"
             .to_string(),

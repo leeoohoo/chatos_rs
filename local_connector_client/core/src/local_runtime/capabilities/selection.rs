@@ -2,9 +2,22 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_runtime::BuiltinMcpKind;
-use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp, ResolvedSkill};
+use chatos_plugin_management_sdk::{
+    McpRecord, ResolvedAgentCapabilities, ResolvedMcp, ResolvedSkill,
+};
 
 use crate::mcp::manifest::LocalMcpManifestRecord;
+
+const RETIRED_TASK_MANAGER_MCP_IDS: &[&str] = &["builtin_task_manager", "task_manager"];
+const RETIRED_TASK_MANAGER_SERVER_NAME: &str = "task_manager";
+const RETIRED_TASK_MANAGER_SYSTEM_KEY: &str = "task_manager";
+const RETIRED_TASK_MANAGER_KIND: &str = "taskmanager";
+
+pub(crate) fn remove_retired_task_manager_mcp(capabilities: &mut ResolvedAgentCapabilities) {
+    capabilities
+        .mcps
+        .retain(|item| !is_retired_task_manager_mcp(&item.resource));
+}
 
 pub(super) fn filter_builtin_kinds(
     capabilities: &ResolvedAgentCapabilities,
@@ -142,4 +155,36 @@ fn mcp_is_available(item: &ResolvedMcp) -> bool {
 
 fn skill_is_available(item: &ResolvedSkill) -> bool {
     item.available && item.binding.enabled && item.resource.enabled
+}
+
+fn is_retired_task_manager_mcp(record: &McpRecord) -> bool {
+    let system_scope = record.visibility == "system_private"
+        || record.source_kind == "system_seed"
+        || matches!(record.runtime.kind.as_str(), "system" | "builtin");
+    if !system_scope {
+        return false;
+    }
+
+    RETIRED_TASK_MANAGER_MCP_IDS
+        .iter()
+        .any(|value| record.id.eq_ignore_ascii_case(value))
+        || record
+            .name
+            .eq_ignore_ascii_case(RETIRED_TASK_MANAGER_SERVER_NAME)
+        || record
+            .runtime
+            .server_name
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_SERVER_NAME))
+        || record
+            .runtime
+            .system_key
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_SYSTEM_KEY))
+        || record.runtime.builtin_kind.as_deref().is_some_and(|value| {
+            value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_SERVER_NAME)
+                || value
+                    .replace('_', "")
+                    .eq_ignore_ascii_case(RETIRED_TASK_MANAGER_KIND)
+        })
 }

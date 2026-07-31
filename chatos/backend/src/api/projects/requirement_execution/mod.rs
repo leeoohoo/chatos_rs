@@ -25,7 +25,7 @@ pub(super) use plan::{
 pub(super) use request_context::load_requirement_execution_request_context;
 pub(super) use status::{
     task_runner_callback_event_for_status, task_runner_status_is_active,
-    task_runner_status_is_success,
+    task_runner_status_is_cancelled, task_runner_status_is_success,
 };
 pub(super) use sync::{
     load_execution_links_for_work_items, mark_execution_messages_for_stop,

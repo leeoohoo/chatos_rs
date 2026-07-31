@@ -8,6 +8,34 @@ export type PluginMarketplaceSource =
   | 'local_directory';
 export type PluginVisibility = 'public' | 'private';
 export type PluginReleaseChannel = 'stable' | 'beta' | 'canary';
+export type PluginPublisherStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
+export type PluginInstallStatus =
+  | 'not_installed'
+  | 'downloading'
+  | 'verifying'
+  | 'rejected'
+  | 'installing'
+  | 'installed'
+  | 'updating'
+  | 'rolling_back'
+  | 'uninstalling';
+export type PluginAvailabilityStatus =
+  | 'unavailable'
+  | 'needs_dependency'
+  | 'needs_permission'
+  | 'needs_auth'
+  | 'ready'
+  | 'partially_available'
+  | 'unsupported_platform'
+  | 'offline'
+  | 'revoked';
+export type PluginRequirementStatus =
+  | 'unknown'
+  | 'pending'
+  | 'satisfied'
+  | 'denied'
+  | 'missing'
+  | 'failed';
 export type PluginComponentKind =
   | 'skill_collection'
   | 'mcp_server'
@@ -52,6 +80,36 @@ export interface PluginCatalogSyncResponse {
   component_snapshot_count: number;
   signing_key_count: number;
   synced_at: string;
+}
+
+export interface PluginAuditLogRecord {
+  id: string;
+  event: string;
+  owner_user_id: string;
+  device_id?: string | null;
+  plugin_id: string;
+  release_id?: string | null;
+  component_key?: string | null;
+  outcome: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface PluginPublisherRecord {
+  id: string;
+  publisher_id: string;
+  marketplace_id: string;
+  owner_user_id: string;
+  name: string;
+  website?: string | null;
+  status: PluginPublisherStatus;
+  signing_keys: SigningKeyRef[];
+  submitted_at: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  review_note?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PluginPublisher {
@@ -151,4 +209,49 @@ export interface PluginReleaseRecord {
   release_channel: PluginReleaseChannel;
   published_at: string;
   revoked_at?: string | null;
+}
+
+export interface PluginComponentStatusRecord {
+  component_key: string;
+  kind: PluginComponentKind;
+  availability_status: PluginAvailabilityStatus;
+  last_error?: string | null;
+  last_checked_at: string;
+}
+
+export interface PluginInstallationRecord {
+  id: string;
+  owner_user_id: string;
+  device_id: string;
+  plugin_id: string;
+  release_id: string;
+  version: string;
+  artifact_sha256: string;
+  platform: string;
+  install_status: PluginInstallStatus;
+  availability_status: PluginAvailabilityStatus;
+  dependency_status: PluginRequirementStatus;
+  permission_status: PluginRequirementStatus;
+  auth_status: PluginRequirementStatus;
+  component_statuses: PluginComponentStatusRecord[];
+  active: boolean;
+  previous_release_id?: string | null;
+  installed_at: string;
+  last_checked_at: string;
+  last_error?: string | null;
+}
+
+export interface PluginOAuthConnectionRecord {
+  id: string;
+  owner_user_id: string;
+  device_id: string;
+  plugin_id: string;
+  release_id: string;
+  component_key: string;
+  provider: string;
+  scopes: string[];
+  connected: boolean;
+  expires_at?: string | null;
+  account_display?: string | null;
+  updated_at: string;
 }

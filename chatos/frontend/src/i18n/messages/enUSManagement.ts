@@ -151,8 +151,6 @@ export const enUSManagementMessages: MessageDictionary = {
   'agentManager.form.descriptionPlaceholder': 'Add purpose and boundaries',
   'agentManager.form.roleDefinition': 'Role definition',
   'agentManager.form.roleDefinitionPlaceholder': 'Describe the responsibilities, behavior boundaries, and output style of this agent',
-  'agentManager.form.pluginSources': 'Plugin references',
-  'agentManager.form.skillIds': 'Skill references',
   'agentManager.form.enabled': 'Enabled',
   'agentManager.form.submitCreate': 'Create agent',
   'agentManager.form.submitEdit': 'Save changes',

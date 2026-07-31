@@ -203,6 +203,18 @@ pub(super) struct LocalBrowserSessionCommandRequest {
     pub(super) max_entries: Option<usize>,
     #[serde(default)]
     pub(super) after_frame_sequence: Option<u64>,
+    #[serde(default)]
+    pub(super) x: Option<f64>,
+    #[serde(default)]
+    pub(super) y: Option<f64>,
+    #[serde(default)]
+    pub(super) button: Option<String>,
+    #[serde(default)]
+    pub(super) click_count: Option<u8>,
+    #[serde(default)]
+    pub(super) delta_x: Option<f64>,
+    #[serde(default)]
+    pub(super) delta_y: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]

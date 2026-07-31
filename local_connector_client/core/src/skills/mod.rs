@@ -562,8 +562,10 @@ fn local_platform() -> &'static str {
         "windows-arm64"
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         "windows-x64"
-    } else if cfg!(target_os = "linux") {
-        "linux"
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "linux-arm64"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "linux-x64"
     } else {
         "unknown"
     }

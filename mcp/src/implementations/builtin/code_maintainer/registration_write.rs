@@ -95,7 +95,7 @@ fn register_write_file_tool(
     service.register_tool(
         "write_file",
         &format!(
-            "Write file content (overwrite).\nMax write bytes: {}.\n{}.\n{workspace_note}",
+            "Write file content to the current project workspace. Use this for new files or full-file replacement when the target path is known.\nMax write bytes: {}.\n{}.\n{workspace_note}",
             format_bytes(max_write_bytes),
             writes_note
         ),
@@ -154,7 +154,7 @@ fn register_edit_file_tool(
     service.register_tool(
         "edit_file",
         &format!(
-            "Safely edit file content by replacing old_text with new_text.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line.\n{workspace_note}"
+            "Safely edit a file in the current project workspace by replacing old_text with new_text.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line.\n{workspace_note}"
         ),
         json!({
             "type": "object",
@@ -270,7 +270,7 @@ fn register_append_file_tool(
     service.register_tool(
         "append_file",
         &format!(
-            "Append content to file.\nMax write bytes: {}.\n{}.\n{workspace_note}",
+            "Append content to a file in the current project workspace.\nMax write bytes: {}.\n{}.\n{workspace_note}",
             format_bytes(max_write_bytes),
             writes_note
         ),
@@ -337,7 +337,7 @@ fn register_delete_path_tool(
     service.register_tool(
         "delete_path",
         &format!(
-            "Delete a file or directory.\n{}.\n{workspace_note}",
+            "Delete a file or directory recursively from the current project workspace.\n{}.\n{workspace_note}",
             writes_note
         ),
         json!({
@@ -425,7 +425,7 @@ fn register_apply_patch_tool(
     service.register_tool(
         "apply_patch",
         &format!(
-            "Apply a patch to one or more files.\nSupported format A (recommended): *** Begin Patch / *** Update File / *** Add File / *** Delete File / *** End Patch.\nSupported format B (stable text replace):\nUpdate File --- path/to/file\n<old content>\n+++ path/to/file\n<new content>\nEnd Patch\nFormat B requires old content to match uniquely in the file.\n{}.\n{workspace_note}",
+            "Apply a patch to one or more files in the current project workspace.\nSupported format A (recommended): *** Begin Patch / *** Update File / *** Add File / *** Delete File / *** End Patch.\nSupported format B (stable text replace):\nUpdate File --- path/to/file\n<old content>\n+++ path/to/file\n<new content>\nEnd Patch\nFormat B requires old content to match uniquely in the file.\n{}.\n{workspace_note}",
             writes_note
         ),
         json!({

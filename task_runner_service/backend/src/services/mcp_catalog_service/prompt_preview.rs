@@ -221,7 +221,7 @@ mod tests {
             })
             .expect("preview prompt");
 
-        assert!(preview
+        assert!(!preview
             .selected_builtin_kinds
             .contains(&"TaskManager".to_string()));
         assert!(preview
@@ -229,7 +229,7 @@ mod tests {
             .contains(&"AskUser".to_string()));
         let prompt = preview.build.prompt.expect("builtin prompt");
         assert!(prompt.contains("内置 MCP 优先"));
-        assert!(prompt.contains("`task_manager_add_task`"));
+        assert!(!prompt.contains("task_manager"));
         assert!(prompt.contains("`ask_user_prompt_choices`"));
     }
 }

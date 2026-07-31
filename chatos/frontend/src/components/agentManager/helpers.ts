@@ -9,8 +9,6 @@ export const getDefaultAgentFormData = (): AgentFormData => ({
   description: '',
   category: '',
   roleDefinition: '',
-  pluginSources: [],
-  skillIds: [],
   enabled: true,
 });
 
@@ -28,8 +26,6 @@ export const toAgentFormData = (agent: AgentConfig): AgentFormData => ({
   description: agent.description || '',
   category: agent.category || '',
   roleDefinition: agent.role_definition || '',
-  pluginSources: Array.isArray(agent.plugin_sources) ? agent.plugin_sources : [],
-  skillIds: Array.isArray(agent.skill_ids) ? agent.skill_ids : [],
   enabled: agent.enabled !== false,
 });
 

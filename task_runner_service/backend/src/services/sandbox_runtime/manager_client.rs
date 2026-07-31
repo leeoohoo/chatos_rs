@@ -52,7 +52,7 @@ struct CreateSandboxEnvironmentLeaseRequest {
 #[derive(Debug, Serialize)]
 struct StartSandboxEnvironmentRequest<'a> {
     lease_id: &'a str,
-    primary_service_id: &'a str,
+    execution_service_id: &'a str,
     services: &'a [super::SandboxEnvironmentServicePlan],
 }
 
@@ -63,7 +63,8 @@ pub(super) struct CreateSandboxLeaseResponse {
     #[serde(default)]
     pub(super) is_environment: bool,
     #[serde(default)]
-    pub(super) primary_service_id: Option<String>,
+    #[serde(alias = "primary_service_id")]
+    pub(super) execution_service_id: Option<String>,
     pub(super) backend_id: Option<String>,
     #[serde(default)]
     pub(super) status: Option<String>,
@@ -96,7 +97,8 @@ struct SandboxEnvironmentLeaseResponse {
     run_workspace: String,
     expires_at: String,
     #[serde(default)]
-    primary_service_id: Option<String>,
+    #[serde(alias = "primary_service_id")]
+    execution_service_id: Option<String>,
     #[serde(default)]
     services: Vec<SandboxEnvironmentServiceResponse>,
     #[serde(default)]
@@ -109,8 +111,8 @@ struct SandboxEnvironmentLeaseResponse {
 
 impl SandboxEnvironmentLeaseResponse {
     fn into_runtime_response(self) -> CreateSandboxLeaseResponse {
-        let primary_service_id = self.primary_service_id.clone();
-        let primary = primary_service_id.as_deref().and_then(|service_id| {
+        let execution_service_id = self.execution_service_id.clone();
+        let execution = execution_service_id.as_deref().and_then(|service_id| {
             self.services
                 .iter()
                 .find(|service| service.service_id == service_id)
@@ -119,12 +121,12 @@ impl SandboxEnvironmentLeaseResponse {
             lease_id: self.lease_id,
             sandbox_id: self.environment_id,
             is_environment: true,
-            primary_service_id,
+            execution_service_id,
             backend_id: self
                 .backend_id
-                .or_else(|| primary.and_then(|service| service.backend_id.clone())),
+                .or_else(|| execution.and_then(|service| service.backend_id.clone())),
             status: Some(self.status),
-            agent_endpoint: primary.and_then(|service| service.agent_endpoint.clone()),
+            agent_endpoint: execution.and_then(|service| service.agent_endpoint.clone()),
             agent_token: self.agent_token,
             run_workspace: self.run_workspace,
             expires_at: self.expires_at,
@@ -189,7 +191,7 @@ impl CreateSandboxLeaseResponse {
         self.backend_id = record.backend_id;
         self.status = record.status;
         self.agent_endpoint = record.agent_endpoint;
-        self.primary_service_id = record.primary_service_id;
+        self.execution_service_id = record.execution_service_id;
         self.run_workspace = record.run_workspace;
         self.expires_at = record.expires_at;
         self.last_error = record.last_error;
@@ -450,7 +452,7 @@ impl SandboxManagerClient {
         let restart_services = Vec::new();
         let start_payload = StartSandboxEnvironmentRequest {
             lease_id: prepared.lease_id.as_str(),
-            primary_service_id: environment_plan.primary_service_id.as_str(),
+            execution_service_id: environment_plan.execution_service_id.as_str(),
             services: if prepared.status == "stopped" {
                 restart_services.as_slice()
             } else {

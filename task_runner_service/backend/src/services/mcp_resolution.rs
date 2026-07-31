@@ -177,9 +177,7 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
     requested_builtin_kinds.retain(|kind| {
         !matches!(
             kind,
-            BuiltinMcpKind::ProjectManagement
-                | BuiltinMcpKind::TaskManager
-                | BuiltinMcpKind::AskUser
+            BuiltinMcpKind::ProjectManagement | BuiltinMcpKind::AskUser
         )
     });
     let required_builtin_kinds = required_builtin_capabilities(input);
@@ -325,7 +323,7 @@ pub(super) fn caller_builtin_capability_requirements(
     use BuiltinMcpKind::*;
 
     let kinds: &[BuiltinMcpKind] = match caller {
-        ChatosAsyncPlanner | TaskRunnerPlanPhase | TaskRunnerRunPhase => &[TaskManager, AskUser],
+        ChatosAsyncPlanner | TaskRunnerPlanPhase | TaskRunnerRunPhase => &[AskUser],
         ProjectManagementAgent => &[ProjectManagement],
         LocalConnectorClientAgent => &[],
     };
@@ -345,7 +343,6 @@ fn chatos_plan_profile_requirements() -> Vec<McpCapabilityRequirement> {
     use BuiltinMcpKind::*;
     [
         CodeMaintainerRead,
-        TaskManager,
         ProjectManagement,
         Notepad,
         AskUser,

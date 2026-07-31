@@ -3,10 +3,6 @@
 
 use super::*;
 
-use crate::services::task_manager_lifecycle::{
-    append_task_session_finalized_event, finalize_task_session_entries, load_task_session_snapshot,
-};
-
 impl RunService {
     pub(super) async fn finalize_model_phase(
         &self,
@@ -51,58 +47,15 @@ impl RunService {
             chatos_ai_runtime::AiTurnStatus::Failed => TaskRunStatus::Failed,
             chatos_ai_runtime::AiTurnStatus::Aborted => TaskRunStatus::Cancelled,
         };
-        let (session_snapshot, session_inspection_succeeded) =
-            match load_task_session_snapshot(&self.store, &task.id, &run.id).await {
-                Ok(snapshot) => (snapshot, true),
-                Err(err) => {
-                    run.status = TaskRunStatus::Failed;
-                    run.error_message = Some(format!(
-                        "failed to inspect Task Manager session before finalization: {err}"
-                    ));
-                    (Default::default(), false)
-                }
-            };
-        if report.status != chatos_ai_runtime::AiTurnStatus::Aborted
-            && !session_snapshot.terminal_blocked.is_empty()
-        {
-            let blocked_summary =
-                terminal_blocked_tasks_summary(&session_snapshot.terminal_blocked);
-            run.status = TaskRunStatus::Blocked;
-            run.error_message = Some(blocked_summary.clone());
-            run.result_summary = Some(blocked_summary.clone());
-            result_summary = Some(blocked_summary);
-        }
-        if task_already_succeeded
-            && run.status != TaskRunStatus::Succeeded
-            && session_inspection_succeeded
-            && session_snapshot.terminal_blocked.is_empty()
-        {
+        if task_already_succeeded && run.status != TaskRunStatus::Succeeded {
             run.status = TaskRunStatus::Succeeded;
             run.error_message = None;
             result_summary = existing_task
                 .as_ref()
                 .and_then(|task| task.result_summary.clone())
-                .or_else(|| Some("任务已通过 TaskManager 标记为成功。".to_string()));
+                .or_else(|| Some("任务已完成。".to_string()));
             run.result_summary = result_summary.clone();
         }
-        let task_session_summary = match finalize_task_session_entries(
-            &self.store,
-            task.id.as_str(),
-            run.id.as_str(),
-            run.status,
-        )
-        .await
-        {
-            Ok(summary) => summary,
-            Err(err) => {
-                run.status = TaskRunStatus::Failed;
-                let message = format!("failed to finalize Task Manager session: {err}");
-                run.error_message = Some(message.clone());
-                run.result_summary = Some(message.clone());
-                result_summary = Some(message);
-                Default::default()
-            }
-        };
         match self.store.save_run(run.clone()).await {
             Ok(saved) => {
                 *run = saved;
@@ -141,8 +94,6 @@ impl RunService {
                 run.id, err
             );
         }
-        append_task_session_finalized_event(&self.store, run, &task_session_summary).await;
-
         let mut task_already_cancelled = false;
         if let Some(mut task_record) = existing_task {
             task_already_cancelled = task_record.status == TaskStatus::Cancelled;
@@ -253,26 +204,138 @@ impl RunService {
     }
 }
 
+#[cfg(test)]
 fn terminal_blocked_tasks_summary(tasks: &[TaskRecord]) -> String {
-    let examples = tasks
+    let mut reason_groups = Vec::<(String, Vec<String>)>::new();
+    for task in tasks {
+        let raw_reason = task
+            .task_tool_state
+            .closure_reason
+            .as_deref()
+            .or(task.task_tool_state.blocker_reason.as_deref())
+            .unwrap_or("未提供阻塞原因");
+        let reason = user_facing_terminal_block_reason(raw_reason);
+        if let Some((_, titles)) = reason_groups
+            .iter_mut()
+            .find(|(existing, _)| existing == &reason)
+        {
+            titles.push(task.title.trim().to_string());
+        } else {
+            reason_groups.push((reason, vec![task.title.trim().to_string()]));
+        }
+    }
+
+    if let [(reason, titles)] = reason_groups.as_slice() {
+        return format!(
+            "本次运行未完成：{} 个必需步骤未完成。共同原因：{}。未完成步骤：{}",
+            tasks.len(),
+            reason,
+            summarized_blocked_titles(titles)
+        );
+    }
+
+    let details = reason_groups
         .iter()
-        .take(5)
-        .map(|task| {
-            let reason = task
-                .task_tool_state
-                .closure_reason
-                .as_deref()
-                .or(task.task_tool_state.blocker_reason.as_deref())
-                .unwrap_or("未提供阻塞原因");
-            format!("{}：{}", task.title.trim(), reason)
+        .take(3)
+        .map(|(reason, titles)| {
+            format!(
+                "{}（{} 个步骤：{}）",
+                reason,
+                titles.len(),
+                summarized_blocked_titles(titles)
+            )
         })
         .collect::<Vec<_>>()
         .join("；");
     format!(
-        "当前运行有 {} 个已确认的终态阻塞任务，父任务已进入 blocked：{}",
+        "本次运行未完成：{} 个必需步骤未完成。阻塞明细：{}",
         tasks.len(),
-        examples
+        details
     )
+}
+
+#[cfg(test)]
+fn user_facing_terminal_block_reason(reason: &str) -> String {
+    if reason_looks_like_internal_tool_availability_blocker(reason) {
+        return "当前运行没有可继续使用的仓库读取或终端能力，模型未完成必要实现或验证；这属于执行收口原因，不代表业务任务已完成或沙箱初始化失败"
+            .to_string();
+    }
+    if reason.contains("连续两次") && reason.contains("校验没有状态进展") {
+        return "模型结束前仍未完成必要的代码修改或验证，系统连续两次检查都没有看到实际进展"
+            .to_string();
+    }
+    if reason.contains("达到") && reason.contains("最大收口轮次") {
+        return "模型在允许的收尾轮次内仍未完成必要步骤".to_string();
+    }
+    reason.trim().to_string()
+}
+
+#[cfg(test)]
+fn reason_looks_like_internal_tool_availability_blocker(reason: &str) -> bool {
+    let normalized = reason.to_ascii_lowercase();
+    let mentions_tool_surface = [
+        "仓库读取",
+        "读取能力",
+        "文件读取",
+        "源码读取",
+        "未读取",
+        "读取工具",
+        "读文件工具",
+        "代码读取",
+        "真实文件",
+        "schema",
+        "测试执行能力",
+        "执行能力",
+        "验证能力",
+        "运行测试",
+        "终端",
+        "执行工具",
+        "工具清单",
+        "read tool",
+        "read-file",
+        "read_file",
+        "terminal",
+        "tool surface",
+        "tool list",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let mentions_availability = [
+        "未暴露",
+        "未能",
+        "没有",
+        "缺少",
+        "无法",
+        "不能",
+        "不可用",
+        "临时限制",
+        "临时不可用",
+        "被限制",
+        "not exposed",
+        "unavailable",
+        "temporarily unavailable",
+        "disabled",
+        "rate-limited",
+        "rate limited",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    mentions_tool_surface && mentions_availability
+}
+
+#[cfg(test)]
+fn summarized_blocked_titles(titles: &[String]) -> String {
+    let shown = titles
+        .iter()
+        .take(5)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("、");
+    if titles.len() > 5 {
+        format!("{} 等 {} 个", shown, titles.len())
+    } else {
+        shown
+    }
 }
 
 fn report_json_with_outputs(
@@ -468,7 +531,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_report_becomes_blocked_when_session_has_terminal_blocker() {
+    async fn completed_report_ignores_legacy_terminal_checklist_blocker() {
         let (task_service, run_service) = test_services().await;
         let parent = create_task(&task_service, "parent", TaskStatus::Ready).await;
         let mut run = run_record(&parent);
@@ -525,21 +588,28 @@ mod tests {
             .await
             .expect("get run")
             .expect("run");
-        assert_eq!(saved_run.status, TaskRunStatus::Blocked);
-        assert!(saved_run
-            .error_message
-            .as_deref()
-            .is_some_and(|message| message.contains("upstream API unavailable")));
+        assert_eq!(saved_run.status, TaskRunStatus::Succeeded);
+        assert_eq!(saved_run.error_message, None);
         let saved_parent = task_service
             .get_task(parent.id.as_str())
             .await
             .expect("get parent")
             .expect("parent");
-        assert_eq!(saved_parent.status, TaskStatus::Blocked);
+        assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+        let saved_child = task_service
+            .get_task("blocked-child")
+            .await
+            .expect("get child")
+            .expect("child");
+        assert_eq!(saved_child.status, TaskStatus::Blocked);
+        assert_eq!(
+            saved_child.task_tool_state.closure_state,
+            Some(TaskClosureState::BlockedTerminal)
+        );
     }
 
     #[tokio::test]
-    async fn successful_run_waives_unclosed_current_session_checklist_without_faking_success() {
+    async fn completed_report_ignores_legacy_required_open_checklist() {
         let (task_service, run_service) = test_services().await;
         let parent = create_task(&task_service, "parent", TaskStatus::Ready).await;
         let mut run = run_record(&parent);
@@ -596,9 +666,86 @@ mod tests {
             .expect("child");
         assert_eq!(
             saved_child.task_tool_state.closure_state,
-            Some(TaskClosureState::Waived)
+            Some(TaskClosureState::Open)
         );
-        assert_eq!(saved_child.status, TaskStatus::Archived);
+        assert_eq!(saved_child.status, TaskStatus::Ready);
+        let saved_run = run_service
+            .store
+            .get_run(run.id.as_str())
+            .await
+            .expect("get run")
+            .expect("run");
+        assert_eq!(saved_run.status, TaskRunStatus::Succeeded);
+        assert_eq!(saved_run.error_message, None);
+        let saved_parent = task_service
+            .get_task(parent.id.as_str())
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn successful_run_preserves_legacy_optional_open_checklist() {
+        let (task_service, run_service) = test_services().await;
+        let parent = create_task(&task_service, "parent", TaskStatus::Ready).await;
+        let mut run = run_record(&parent);
+        run_service
+            .store
+            .save_run(run.clone())
+            .await
+            .expect("save run");
+
+        let now = now_rfc3339();
+        let mut child = parent.clone();
+        child.id = "optional-child".to_string();
+        child.title = "optional child".to_string();
+        child.status = TaskStatus::Ready;
+        child.parent_task_id = Some(parent.id.clone());
+        child.source_run_id = Some(run.id.clone());
+        child.last_run_id = None;
+        child.task_tool_state.manager_scope = Some(TaskManagerScope::RunChecklist);
+        child.task_tool_state.task_session_id = Some(run.id.clone());
+        child.task_tool_state.required_for_parent_completion = Some(false);
+        child.task_tool_state.closure_state = Some(TaskClosureState::Open);
+        child.task_tool_state.lifecycle_updated_at = Some(now.clone());
+        child.created_at = now.clone();
+        child.updated_at = now;
+        run_service
+            .store
+            .save_task(child.clone())
+            .await
+            .expect("save optional child");
+
+        let report = TaskRunReport {
+            task_id: parent.id.clone(),
+            run_id: run.id.clone(),
+            model_config_id: Some(run.model_config_id.clone()),
+            status: AiTurnStatus::Completed,
+            content: Some("done".to_string()),
+            reasoning: None,
+            error: None,
+            tool_calls: None,
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            response_id: None,
+            completed_at: now_rfc3339(),
+        };
+
+        run_service
+            .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+            .await;
+
+        let saved_child = task_service
+            .get_task(child.id.as_str())
+            .await
+            .expect("get child")
+            .expect("child");
+        assert_eq!(
+            saved_child.task_tool_state.closure_state,
+            Some(TaskClosureState::Open)
+        );
+        assert_eq!(saved_child.status, TaskStatus::Ready);
         let saved_run = run_service
             .store
             .get_run(run.id.as_str())
@@ -612,7 +759,7 @@ mod tests {
     async fn aborted_report_does_not_downgrade_already_succeeded_task() {
         let (task_service, run_service) = test_services().await;
         let mut parent = create_task(&task_service, "parent", TaskStatus::Succeeded).await;
-        parent.result_summary = Some("completed by task manager".to_string());
+        parent.result_summary = Some("completed before abort".to_string());
         run_service
             .store
             .save_task(parent.clone())
@@ -653,7 +800,7 @@ mod tests {
         assert_eq!(saved_run.status, TaskRunStatus::Succeeded);
         assert_eq!(
             saved_run.result_summary.as_deref(),
-            Some("completed by task manager")
+            Some("completed before abort")
         );
         assert_eq!(saved_run.error_message, None);
 
@@ -663,5 +810,38 @@ mod tests {
             .expect("get parent")
             .expect("parent");
         assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn terminal_blocked_summary_groups_repeated_internal_reason() {
+        let (task_service, _) = test_services().await;
+        let reason = "模型完成声明后，连续两次系统收口校验没有状态进展；仍有必需清单未完成，父任务不能标记为成功";
+        let mut first = create_task(&task_service, "实现后端", TaskStatus::Blocked).await;
+        first.task_tool_state.closure_reason = Some(reason.to_string());
+        let mut second = create_task(&task_service, "执行验证", TaskStatus::Blocked).await;
+        second.task_tool_state.closure_reason = Some(reason.to_string());
+
+        let summary = terminal_blocked_tasks_summary(&[first, second]);
+
+        assert!(summary.contains("本次运行未完成：2 个必需步骤未完成"));
+        assert!(summary.contains("共同原因"));
+        assert!(summary.contains("实现后端、执行验证"));
+        assert!(!summary.contains("系统收口"));
+        assert_eq!(summary.matches("连续两次检查").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn terminal_blocked_summary_rewrites_internal_tool_availability_reason() {
+        let (task_service, _) = test_services().await;
+        let mut task = create_task(&task_service, "执行验证", TaskStatus::Blocked).await;
+        task.task_tool_state.closure_reason =
+            Some("当前运行未暴露仓库读取工具与终端执行工具，无法继续。".to_string());
+
+        let summary = terminal_blocked_tasks_summary(&[task]);
+
+        assert!(summary.contains("本次运行未完成：1 个必需步骤未完成"));
+        assert!(summary.contains("不代表业务任务已完成或沙箱初始化失败"));
+        assert!(!summary.contains("未暴露仓库读取工具"));
+        assert!(!summary.contains("系统拦截"));
     }
 }

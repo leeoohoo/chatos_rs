@@ -1,0 +1,52 @@
+appId: com.chatos.local-connector
+productName: Chat OS Local Connector
+extraMetadata:
+  homepage: https://github.com/leeoohoo/chatos_rs
+  desktopName: chat-os-local-connector.desktop
+directories:
+  output: ../dist/electron-linux
+files:
+  - dist/**/*
+  - electron/*.cjs
+  - package.json
+asar: true
+asarUnpack:
+  - electron/core-runtime.cjs
+extraResources:
+  - from: ../.package/linux/local_connector_client_core
+    to: local_connector_client_core
+  - from: ../.package/linux/chatos_chrome_native_host
+    to: chatos_chrome_native_host
+  - from: ../.package/linux/chatos_sandbox_mcp_server
+    to: chatos_sandbox_mcp_server
+  - from: ../.package/linux/bundled-tools
+    to: bundled-tools
+  - from: ../.package/linux/skill-bundles
+    to: skill-bundles
+  - from: ../.package/linux/plugin-bundles
+    to: plugin-bundles
+  - from: ../.package/linux/chatos-frontend
+    to: chatos-frontend
+  - from: ../.package/linux/chrome-extension
+    to: chrome-extension
+  - from: ../.package/linux/sqlite-migrations
+    to: sqlite-migrations
+linux:
+  category: Development
+  executableName: chat-os-local-connector
+  maintainer: AI Chat Team <noreply@jgoool.com>
+  syncDesktopName: true
+  target:
+    - deb
+  artifactName: Chat-OS-Local-Connector-${version}-${arch}.${ext}
+deb:
+  packageName: chat-os-local-connector
+  packageCategory: devel
+  priority: optional
+  depends:
+    - libgtk-3-0 | libgtk-3-0t64
+    - libnss3
+    - libxss1
+    - libasound2 | libasound2t64
+    - libgbm1
+    - xdg-utils

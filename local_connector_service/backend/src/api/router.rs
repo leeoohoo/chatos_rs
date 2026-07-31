@@ -10,6 +10,7 @@ use tracing::Level;
 
 use crate::state::AppState;
 
+use super::managed_runtime_config::get_managed_runtime_config;
 use super::{
     connect_device, create_device, create_local_mcp, create_managed_requirements_assignment,
     create_managed_requirements_policy, create_project_binding, create_sandbox_pairing,
@@ -165,6 +166,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/local-connectors/config/memory-policy",
             get(get_managed_memory_policy),
+        )
+        .route(
+            "/api/local-connectors/config/runtime",
+            get(get_managed_runtime_config),
         )
         .route(
             "/api/plugin-management/local-mcps",

@@ -11,6 +11,7 @@ mod memory;
 mod memory_policy;
 mod model;
 mod project_management;
+mod runtime_config;
 mod storage;
 mod task_board;
 mod task_runner;
@@ -44,7 +45,10 @@ pub(crate) use environment::{
     run_local_environment_analysis, LocalEnvironmentProgressRecord,
     LocalRuntimeEnvironmentImageRecord, LocalRuntimeEnvironmentRecord,
 };
-pub(crate) use memory::LocalMemoryJobRegistry;
+pub(crate) use memory::{run_active_task_review, LocalMemoryJobRegistry};
 pub(crate) use memory_policy::{managed_memory_policy, sync_managed_memory_policy};
-pub(crate) use storage::{database_path_for_state, LocalDatabase};
+pub(crate) use runtime_config::{
+    managed_task_runner_runtime_settings, sync_managed_runtime_config,
+};
+pub(crate) use storage::{database_path_for_state, embedded_migration_versions, LocalDatabase};
 pub(crate) use task_runner::run_local_task_worker_loop;

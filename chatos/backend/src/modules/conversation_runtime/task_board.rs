@@ -5,19 +5,12 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+use super::user_context::load_runtime_user_context;
 use crate::core::internal_context_locale::InternalContextLocale;
 #[cfg(test)]
 use crate::services::task_board_prompt::build_runtime_prefixed_input_items;
 use crate::services::task_board_prompt::format_task_board_prompt;
 use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
-use crate::utils::events::Events;
-
-#[path = "task_board/snapshot.rs"]
-mod snapshot;
-
-use self::snapshot::sync_task_board_turn_snapshot;
-use super::guidance;
-use super::user_context::load_runtime_user_context;
 
 const TASK_BOARD_ACTIVE_LIMIT: usize = 200;
 const TASK_BOARD_DONE_HISTORY_LIMIT: usize = 200;
@@ -42,11 +35,7 @@ pub struct TaskTurnFollowUpDirective {
     pub guidance: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct RefreshedTaskBoardRuntime {
-    pub updated_event: Value,
-}
-
+#[cfg(test)]
 pub async fn build_task_board_prompt(
     session_id: &str,
     turn_id: Option<&str>,
@@ -232,67 +221,6 @@ pub async fn build_runtime_prefixed_input_items_for_turn(
         builtin_mcp_system_prompt,
         command_system_prompt,
     )
-}
-
-pub async fn refresh_task_board_runtime_outcome(
-    session_id: &str,
-    turn_id: &str,
-) -> Option<RefreshedTaskBoardRuntime> {
-    let session_id = session_id.trim();
-    let turn_id = turn_id.trim();
-    if session_id.is_empty() || turn_id.is_empty() {
-        return None;
-    }
-
-    let locale = load_runtime_user_context(None, session_id)
-        .await
-        .internal_context_locale;
-
-    let prompt = build_task_board_prompt(session_id, Some(turn_id), locale).await?;
-    if let Some(guidance) = build_task_board_runtime_guidance(prompt.as_str(), locale) {
-        let _ = guidance::enqueue_runtime_guidance(session_id, turn_id, guidance.as_str());
-    }
-    let _ = sync_task_board_turn_snapshot(session_id, turn_id, prompt.as_str()).await;
-    Some(RefreshedTaskBoardRuntime {
-        updated_event: build_task_board_updated_event(session_id, turn_id, prompt.as_str()),
-    })
-}
-
-pub fn build_task_board_updated_event(
-    session_id: &str,
-    turn_id: &str,
-    task_board_prompt: &str,
-) -> Value {
-    serde_json::json!({
-        "event": Events::TASK_BOARD_UPDATED,
-        "data": {
-            "conversation_id": session_id,
-            "conversation_turn_id": turn_id,
-            "task_board": task_board_prompt,
-        }
-    })
-}
-
-pub fn build_task_board_runtime_guidance(
-    task_board_prompt: &str,
-    locale: InternalContextLocale,
-) -> Option<String> {
-    let task_board_prompt = task_board_prompt.trim();
-    if task_board_prompt.is_empty() {
-        return None;
-    }
-
-    Some(if locale.is_english() {
-        format!(
-            "[Task Board Updated]\n- source: system task board refresh after task mutation\n- rule: replace any stale task assumptions with the latest board below\n- instruction: continue strictly based on this refreshed board\n\n{}",
-            task_board_prompt
-        )
-    } else {
-        format!(
-            "[Task Board Updated]\n- source: 系统在任务变更后刷新了任务看板\n- rule: 用下方最新看板替换任何过时的任务判断\n- instruction: 严格基于这份刷新后的看板继续执行\n\n{}",
-            task_board_prompt
-        )
-    })
 }
 
 fn build_task_turn_follow_up_guidance(

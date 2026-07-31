@@ -75,6 +75,7 @@ jobs:
           set -euo pipefail
           for dir in \
             chatos/frontend \
+            config_center_service/frontend \
             local_connector_client/frontend \
             memory_engine/frontend \
             official_website_service/frontend \
@@ -140,23 +141,11 @@ jobs:
       - name: Bundled tools integrity
         run: bash scripts/check-bundled-tools-integrity.sh
 
-      - name: Code quality gate tests
-        run: python -m unittest discover -s scripts/tests -p "test_code_quality_*.py"
-
-      - name: Source size policy
+      - name: Repository quality policies
         env:
           CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
           CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
-        run: python scripts/check_source_size_policy.py
-
-      - name: New production code clone policy
-        env:
-          CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
-          CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
-        run: python scripts/check_new_code_clones.py --min-lines 25
-
-      - name: Rust dependency drift
-        run: python scripts/check-rust-dependency-drift.py
+        run: bash scripts/verify-repository.sh quality
 
       - name: OpenAPI contract gate
         run: bash scripts/check_openapi_contract_gate.sh
@@ -285,39 +274,57 @@ jobs:
         with:
           workspaces: chatos/backend -> target
 
-      - name: cargo check
-        run: cargo check
-
-      - name: cargo clippy (root workspace)
+      - name: Rust format and Clippy
         working-directory: .
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: bash scripts/verify-repository.sh rust-lint
 
-      - name: cargo clippy (Memory Engine)
-        working-directory: memory_engine/backend
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust workspace tests
+        working-directory: .
+        run: bash scripts/verify-repository.sh rust-test
 
-      - name: cargo clippy (User Service)
-        working-directory: user_service/backend
-        run: cargo clippy --all-targets -- -D warnings
+  native-platform-contracts:
+    name: Native platform (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-latest
+          - platform: macos-arm64
+            runner: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: request-path panic audit
-        run: bash ../../scripts/check-request-path-panics.sh
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: clippy
 
-      - name: non-test unwrap/expect audit
-        run: python ../../scripts/check-non-test-unwrap-expect.py
+      - name: Cache native Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target-shared
+          shared-key: native-${{ matrix.platform }}
 
-      - name: hotspot line budgets
-        run: bash ../../scripts/check-hotspot-line-budgets.sh
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: local_connector_client/frontend/package-lock.json
 
-      - name: cargo test
-        run: cargo test -q
+      - name: Install Local Connector frontend dependencies
+        run: npm --prefix local_connector_client/frontend ci
+
+      - name: Verify native platform contracts
+        shell: bash
+        run: bash scripts/verify-repository.sh native-platform
 
   chat-app-frontend:
     name: chatos/frontend (TypeScript)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: chatos/frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -330,19 +337,40 @@ jobs:
           cache-dependency-path: chatos/frontend/package-lock.json
 
       - name: npm ci
-        run: npm ci
+        run: npm --prefix chatos/frontend ci
 
-      - name: type-check
-        run: npm run type-check
+      - name: Verify frontend
+        run: bash scripts/verify-repository.sh frontend chatos/frontend
 
-      - name: test
-        run: npm run test -- --run
+  service-frontends:
+    name: ${{ matrix.directory }} (TypeScript)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        directory:
+          - config_center_service/frontend
+          - local_connector_client/frontend
+          - memory_engine/frontend
+          - official_website_service/frontend
+          - plugin_management_service/frontend
+          - project_management_service/frontend
+          - sandbox_manager_service/frontend
+          - task_runner_service/frontend
+          - user_service/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: build
-        run: npm run build
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.directory }}/package-lock.json
 
-      - name: lint
-        run: npm run lint
+      - name: npm ci
+        run: npm --prefix "${{ matrix.directory }}" ci
 
-      - name: hotspot line budgets
-        run: bash ../../scripts/check-hotspot-line-budgets.sh
+      - name: Verify frontend
+        run: bash scripts/verify-repository.sh frontend "${{ matrix.directory }}"

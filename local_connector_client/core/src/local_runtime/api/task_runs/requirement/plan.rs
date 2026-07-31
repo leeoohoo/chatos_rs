@@ -5,6 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use chatos_project_execution::{
     read_planning_feedback_history, ExecutionPlanIdentity, ExecutionPlane, STATUS_PLANNING_STARTED,
+    STATUS_STOPPED,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -220,7 +221,7 @@ fn validate_source(
 fn message_status(message: &LocalMessageRecord) -> String {
     let metadata = metadata(message);
     let task_runner = metadata.get("task_runner_async");
-    task_runner
+    let status = task_runner
         .and_then(|value| value.get("overall_status"))
         .and_then(Value::as_str)
         .or_else(|| {
@@ -230,7 +231,35 @@ fn message_status(message: &LocalMessageRecord) -> String {
         })
         .unwrap_or(STATUS_PLANNING_STARTED)
         .trim()
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    if !message_status_is_stop_locked(status.as_str())
+        && task_runner_metadata_has_stop_marker(task_runner)
+    {
+        STATUS_STOPPED.to_string()
+    } else {
+        status
+    }
+}
+
+fn message_status_is_stop_locked(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "stopping" | "stopped" | "cancelled" | "canceled"
+    )
+}
+
+fn task_runner_metadata_has_stop_marker(task_runner: Option<&Value>) -> bool {
+    let Some(task_runner) = task_runner else {
+        return false;
+    };
+    task_runner
+        .get("stopped_at")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+        || task_runner
+            .get("stopped_task_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|values| !values.is_empty())
 }
 
 fn build_response(
@@ -319,5 +348,28 @@ mod tests {
         assert!(local_execution_message_is_newer(&failed, &stopped));
         assert_eq!(source_execution_group_id(&failed), "group-new");
         assert_eq!(message_status(&failed), "failed");
+    }
+
+    #[test]
+    fn stopped_marker_recovers_local_execution_status_after_late_failure_overwrite() {
+        let mut message = source_message("group-stopped", "2026-07-23T06:00:00Z", "failed");
+        message.metadata_json = Some(
+            json!({
+                "project_requirement_execution": {
+                    "project_id": "project-1",
+                    "requirement_id": "requirement-1",
+                    "execution_group_id": "group-stopped",
+                },
+                "task_runner_async": {
+                    "overall_status": "failed",
+                    "confirmation_status": "failed",
+                    "stopped_at": "2026-07-29T09:00:00Z",
+                    "stopped_task_ids": ["task-1"]
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(message_status(&message), "stopped");
     }
 }

@@ -28,9 +28,11 @@ impl ResolvedAgentCapabilities {
     }
 
     pub fn selectable_plugins(&self) -> impl Iterator<Item = &ResolvedPlugin> {
-        self.plugins
-            .iter()
-            .filter(|item| !item.binding.required && item.available)
+        self.plugins.iter().filter(|item| {
+            !item.binding.required
+                && (item.available
+                    || item.status == crate::PluginAvailabilityStatus::PartiallyAvailable)
+        })
     }
 
     pub fn ensure_required_available(&self) -> Result<(), PolicyError> {

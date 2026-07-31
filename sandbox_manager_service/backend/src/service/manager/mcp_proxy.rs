@@ -339,7 +339,7 @@ mod tests {
             network: NetworkPolicy::default(),
             tools: vec!["filesystem".to_string(), "terminal".to_string()],
             lease_kind: "sandbox".to_string(),
-            primary_service_id: None,
+            execution_service_id: None,
             environment_services: Vec::new(),
             agent_token_nonce: Some("nonce-1".to_string()),
             idempotency_key: None,

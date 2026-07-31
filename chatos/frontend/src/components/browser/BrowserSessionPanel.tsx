@@ -14,29 +14,19 @@ import {
   type BrowserSessionUiTarget,
 } from '../../lib/browserSessionUi';
 import BrowserPdfPreview from './BrowserPdfPreview';
+import BrowserSessionDetails, { type BrowserWebsocketDirection } from './BrowserSessionDetails';
+import {
+  number,
+  pageValue,
+  readableError,
+  record,
+  records,
+  text,
+  type BrowserDetailTab,
+  type BrowserPreviewCursor,
+  type BrowserPreviewPoint,
+} from './browserSessionView';
 
-const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-const number = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
-const record = (value: unknown): Record<string, unknown> | null => (
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-);
-const records = (value: unknown): Record<string, unknown>[] => (
-  Array.isArray(value)
-    ? value.map(record).filter((item): item is Record<string, unknown> => item !== null)
-    : []
-);
-
-type BrowserDetailTab = 'snapshot' | 'console' | 'network' | 'websocket';
-
-const pageValue = (response: BrowserSessionCommandResponse | null, key: string): string => (
-  text(response?.page?.[key])
-);
-
-const readableError = (error: unknown): string => (
-  error instanceof Error ? error.message : String(error || 'Unknown error')
-);
 
 const BrowserSessionPanel: React.FC = () => {
   const { t } = useI18n();
@@ -59,13 +49,17 @@ const BrowserSessionPanel: React.FC = () => {
   const [harPage, setHarPage] = useState<Record<string, unknown> | null>(null);
   const [websocketPage, setWebsocketPage] = useState<Record<string, unknown> | null>(null);
   const [websocketActive, setWebsocketActive] = useState(false);
-  const [websocketDirection, setWebsocketDirection] = useState<'' | 'sent' | 'received'>('');
+  const [websocketDirection, setWebsocketDirection] = useState<BrowserWebsocketDirection>('');
   const requestActive = useRef(false);
   const manualCommandPending = useRef(false);
   const previewRequestActive = useRef(false);
   const previewFrameSequence = useRef(0);
+  const previewImageRef = useRef<HTMLImageElement | null>(null);
+  const previewInputQueue = useRef<Promise<void>>(Promise.resolve());
+  const previewWheelSentAt = useRef(0);
   const activeBrowserTabId = useRef('');
   const targetRef = useRef<BrowserSessionUiTarget | null>(null);
+  const [previewCursor, setPreviewCursor] = useState<BrowserPreviewCursor | null>(null);
 
   useEffect(() => subscribeBrowserSessionPanel((nextTarget) => {
     targetRef.current = nextTarget;
@@ -84,8 +78,68 @@ const BrowserSessionPanel: React.FC = () => {
     setWebsocketActive(false);
     setWebsocketDirection('');
     previewFrameSequence.current = 0;
+    previewInputQueue.current = Promise.resolve();
+    setPreviewCursor(null);
     activeBrowserTabId.current = '';
   }), []);
+
+  const previewPointFromEvent = useCallback((
+    event: React.MouseEvent<HTMLElement> | React.WheelEvent<HTMLElement>,
+  ): BrowserPreviewPoint | null => {
+    const image = previewImageRef.current;
+    if (!image) {
+      return null;
+    }
+    const rect = image.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    const displayX = event.clientX - rect.left;
+    const displayY = event.clientY - rect.top;
+    if (displayX < 0 || displayY < 0 || displayX > rect.width || displayY > rect.height) {
+      return null;
+    }
+    const sourceWidth = number(preview?.frame?.width) || image.naturalWidth;
+    const sourceHeight = number(preview?.frame?.height) || image.naturalHeight;
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+      return null;
+    }
+    return {
+      x: displayX,
+      y: displayY,
+      browserX: (displayX / rect.width) * sourceWidth,
+      browserY: (displayY / rect.height) * sourceHeight,
+    };
+  }, [preview?.frame]);
+
+  const sendPreviewInputCommand = useCallback((
+    action: BrowserSessionCommandPayload['action'],
+    extra: Partial<BrowserSessionCommandPayload> = {},
+  ) => {
+    const currentTarget = targetRef.current;
+    if (!currentTarget) {
+      return;
+    }
+    const queued = previewInputQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (targetRef.current?.id !== currentTarget.id) {
+          return;
+        }
+        try {
+          await sendBrowserSessionCommand(currentTarget.id, {
+            workspace_id: currentTarget.workspaceId,
+            action,
+            ...extra,
+          });
+        } catch (commandError) {
+          if (targetRef.current?.id === currentTarget.id) {
+            setError(readableError(commandError));
+          }
+        }
+      });
+    previewInputQueue.current = queued;
+  }, []);
 
   const refreshPreview = useCallback(async () => {
     const currentTarget = targetRef.current;
@@ -230,6 +284,104 @@ const BrowserSessionPanel: React.FC = () => {
     }
   }, []);
 
+  const handlePreviewMouseMove = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    const point = previewPointFromEvent(event);
+    setPreviewCursor(point ? { x: point.x, y: point.y } : null);
+  }, [previewPointFromEvent]);
+
+  const handlePreviewMouseLeave = useCallback(() => {
+    setPreviewCursor(null);
+  }, []);
+
+  const handlePreviewClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    const point = previewPointFromEvent(event);
+    if (!point) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.focus();
+    sendPreviewInputCommand('click_point', {
+      x: point.browserX,
+      y: point.browserY,
+      button: 'left',
+      click_count: Math.min(Math.max(event.detail || 1, 1), 3),
+    });
+  }, [previewPointFromEvent, sendPreviewInputCommand]);
+
+  const handlePreviewContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    const point = previewPointFromEvent(event);
+    event.preventDefault();
+    if (!point) {
+      return;
+    }
+    event.currentTarget.focus();
+    sendPreviewInputCommand('click_point', {
+      x: point.browserX,
+      y: point.browserY,
+      button: 'right',
+      click_count: 1,
+    });
+  }, [previewPointFromEvent, sendPreviewInputCommand]);
+
+  const handlePreviewWheel = useCallback((event: React.WheelEvent<HTMLElement>) => {
+    const point = previewPointFromEvent(event);
+    if (!point) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.focus();
+    const now = Date.now();
+    if (now - previewWheelSentAt.current < 35) {
+      return;
+    }
+    previewWheelSentAt.current = now;
+    sendPreviewInputCommand('scroll_delta', {
+      x: point.browserX,
+      y: point.browserY,
+      delta_x: event.deltaX,
+      delta_y: event.deltaY,
+    });
+  }, [previewPointFromEvent, sendPreviewInputCommand]);
+
+  const handlePreviewKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.nativeEvent.isComposing || event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+    const specialKeys = new Set([
+      'Enter',
+      'Escape',
+      'Backspace',
+      'Delete',
+      'Tab',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+      'Home',
+      'End',
+      'PageUp',
+      'PageDown',
+    ]);
+    if (event.key.length === 1) {
+      event.preventDefault();
+      sendPreviewInputCommand('type_text', { text: event.key });
+      return;
+    }
+    if (specialKeys.has(event.key)) {
+      event.preventDefault();
+      sendPreviewInputCommand('press', { key: event.key });
+    }
+  }, [sendPreviewInputCommand]);
+
+  const handlePreviewPaste = useCallback((event: React.ClipboardEvent<HTMLElement>) => {
+    const pasted = event.clipboardData.getData('text');
+    if (!pasted) {
+      return;
+    }
+    event.preventDefault();
+    sendPreviewInputCommand('type_text', { text: pasted });
+  }, [sendPreviewInputCommand]);
+
   useEffect(() => {
     if (!target) {
       return;
@@ -278,20 +430,6 @@ const BrowserSessionPanel: React.FC = () => {
   const pageTitle = pageValue(response, 'title') || activeBrowserTabTitle || target.title || t('browserSession.untitled');
   const pageUrl = pageValue(response, 'url') || activeBrowserTabUrl || target.url || '';
   const snapshot = pageValue(response, 'snapshot');
-  const consoleMessages = records(consolePage?.console_messages ?? consolePage?.consoleMessages);
-  const consoleErrors = records(consolePage?.js_errors ?? consolePage?.jsErrors);
-  const networkResources = records(networkPage?.resources);
-  const networkRequests = records(networkPage?.requests);
-  const navigation = record(networkPage?.navigation);
-  const networkDetail = record(networkDetailPage?.request);
-  const requestHeaders = record(networkDetail?.request_headers ?? networkDetail?.requestHeaders);
-  const responseHeaders = record(networkDetail?.response_headers ?? networkDetail?.responseHeaders);
-  const requestBody = record(networkDetail?.request_body ?? networkDetail?.requestBody);
-  const responseBody = record(networkDetail?.response_body ?? networkDetail?.responseBody);
-  const harSanitization = record(harPage?.sanitization);
-  const websocketFrames = records(websocketPage?.frames);
-  const websocketTextPayloadsIncluded = websocketPage?.text_payloads_included === true
-    || websocketPage?.textPayloadsIncluded === true;
   const previewSource = text(preview?.frame?.source);
   const previewMediaType = text(preview?.frame?.media_type);
   const previewDataUrl = preview?.frame_data_url || response?.screenshot_data_url;
@@ -428,11 +566,51 @@ const BrowserSessionPanel: React.FC = () => {
                     errorLabel={t('browserSession.previewFailed')}
                   />
                 ) : (
-                  <img
-                    src={previewDataUrl}
-                    alt={pageTitle}
-                    className="max-h-full max-w-full rounded border border-white/10 object-contain shadow-xl"
-                  />
+                  <div
+                    role="application"
+                    aria-label={t('browserSession.interactivePreview')}
+                    tabIndex={0}
+                    className="relative max-h-full max-w-full cursor-none rounded outline-none ring-primary/40 focus-visible:ring-2"
+                    onMouseMove={handlePreviewMouseMove}
+                    onMouseLeave={handlePreviewMouseLeave}
+                    onClick={handlePreviewClick}
+                    onContextMenu={handlePreviewContextMenu}
+                    onWheel={handlePreviewWheel}
+                    onKeyDown={handlePreviewKeyDown}
+                    onPaste={handlePreviewPaste}
+                  >
+                    <img
+                      ref={previewImageRef}
+                      src={previewDataUrl}
+                      alt={pageTitle}
+                      draggable={false}
+                      className="max-h-full max-w-full select-none rounded border border-white/10 object-contain shadow-xl"
+                    />
+                    {previewCursor ? (
+                      <div
+                        className="pointer-events-none absolute z-10"
+                        style={{
+                          left: previewCursor.x,
+                          top: previewCursor.y,
+                          transform: 'translate(2px, 2px)',
+                        }}
+                      >
+                        <svg
+                          width="20"
+                          height="24"
+                          viewBox="0 0 20 24"
+                          className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
+                          aria-hidden="true"
+                        >
+                          <path d="M2 2 L2 19 L7 14 L10 22 L14 20 L11 12 L18 12 Z" fill="white" />
+                          <path d="M2 2 L2 19 L7 14 L10 22 L14 20 L11 12 L18 12 Z" fill="none" stroke="rgb(8 145 178)" strokeWidth="1.5" />
+                        </svg>
+                      </div>
+                    ) : null}
+                    <span className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-[10px] text-white/75">
+                      {t('browserSession.previewControlHint')}
+                    </span>
+                  </div>
                 )}
                 {previewSource ? (
                   <span className="absolute bottom-5 left-5 rounded bg-black/70 px-2 py-1 text-[10px] text-white/75">
@@ -498,341 +676,25 @@ const BrowserSessionPanel: React.FC = () => {
               </div>
             </div>
 
-            <div className="mb-2 mt-4 flex flex-wrap items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setDetailTab('snapshot')}
-                className={`rounded px-2 py-1 text-xs ${detailTab === 'snapshot' ? 'bg-primary text-primary-foreground' : 'border hover:bg-muted'}`}
-              >
-                {t('browserSession.snapshotTab')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDetailTab('console');
-                  void runCommand('console');
-                }}
-                className={`rounded px-2 py-1 text-xs ${detailTab === 'console' ? 'bg-primary text-primary-foreground' : 'border hover:bg-muted'}`}
-              >
-                {t('browserSession.consoleTab')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDetailTab('network');
-                  void runCommand('network', { limit: 100 });
-                }}
-                className={`rounded px-2 py-1 text-xs ${detailTab === 'network' ? 'bg-primary text-primary-foreground' : 'border hover:bg-muted'}`}
-              >
-                {t('browserSession.networkTab')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDetailTab('websocket');
-                  if (websocketActive) {
-                    void runCommand('websocket_frames', {
-                      limit: 100,
-                      direction: websocketDirection || undefined,
-                    });
-                  }
-                }}
-                className={`rounded px-2 py-1 text-xs ${detailTab === 'websocket' ? 'bg-primary text-primary-foreground' : 'border hover:bg-muted'}`}
-              >
-                {t('browserSession.websocketTab')}
-              </button>
-            </div>
-
-            {detailTab === 'snapshot' ? (
-              <>
-                <div className="mb-2 truncate text-[10px] text-muted-foreground">{pageUrl}</div>
-                <pre className="max-h-[45vh] overflow-auto whitespace-pre-wrap rounded-lg border bg-background p-3 text-[11px] leading-5 text-muted-foreground">
-                  {snapshot || t('browserSession.noSnapshot')}
-                </pre>
-              </>
-            ) : null}
-
-            {detailTab === 'console' ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-muted-foreground">
-                    {t('browserSession.consoleCounts', { messages: consoleMessages.length, errors: consoleErrors.length })}
-                  </span>
-                  <button type="button" onClick={() => { void runCommand('console', { clear: true }); }} disabled={loading} className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50">
-                    {t('browserSession.clear')}
-                  </button>
-                </div>
-                {consoleErrors.map((item, index) => (
-                  <div key={`browser-console-error-${index}`} className="rounded border border-destructive/30 bg-destructive/5 p-2 text-[11px] text-destructive">
-                    {text(item.message) || t('browserSession.unknownConsoleError')}
-                  </div>
-                ))}
-                {consoleMessages.map((item, index) => (
-                  <div key={`browser-console-message-${index}`} className="rounded border bg-background p-2 text-[11px]">
-                    <div className="mb-1 text-[10px] font-medium uppercase text-muted-foreground">{text(item.type) || 'log'}</div>
-                    <div className="whitespace-pre-wrap break-words">{text(item.text)}</div>
-                  </div>
-                ))}
-                {consoleMessages.length === 0 && consoleErrors.length === 0 ? (
-                  <div className="rounded border bg-background p-3 text-[11px] text-muted-foreground">{t('browserSession.noConsole')}</div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {detailTab === 'network' ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-muted-foreground">
-                    {t('browserSession.networkCounts', {
-                      returned: number(networkPage?.returned_count ?? networkPage?.returnedCount),
-                      total: number(networkPage?.request_count ?? networkPage?.requestCount ?? networkPage?.resource_count ?? networkPage?.resourceCount),
-                    })}
-                  </span>
-                  <button type="button" onClick={() => { void runCommand('network', { clear: true, limit: 100 }); }} disabled={loading} className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50">
-                    {t('browserSession.clear')}
-                  </button>
-                </div>
-                <div className="space-y-2 rounded border bg-background p-2">
-                  <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                    <span>{t('browserSession.harCapture')}</span>
-                    <span>{harRecording ? t('browserSession.harRecording') : t('browserSession.harStopped')}</span>
-                  </div>
-                  <input
-                    value={harPath}
-                    onChange={(event) => setHarPath(event.target.value)}
-                    placeholder={t('browserSession.harPathPlaceholder')}
-                    className="w-full rounded border bg-background px-2 py-1.5 text-[11px]"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { void runCommand('har_start'); }}
-                      disabled={loading}
-                      className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                    >
-                      {t('browserSession.startHar')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void runCommand('har_stop', {
-                          path: harPath.trim(),
-                          include_request_bodies: false,
-                          include_response_bodies: false,
-                          max_entries: 500,
-                        });
-                      }}
-                      disabled={loading || !harPath.trim()}
-                      className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                    >
-                      {t('browserSession.stopHar')}
-                    </button>
-                  </div>
-                  {harPage ? (
-                    <div className="text-[10px] leading-4 text-muted-foreground">
-                      {text(harPage.path)
-                        ? t('browserSession.harExported', {
-                          path: text(harPage.path),
-                          entries: number(harSanitization?.exported_entries ?? harSanitization?.exportedEntries),
-                          bytes: number(harPage.bytes),
-                        })
-                        : text(harPage.status)}
-                    </div>
-                  ) : null}
-                  <div className="text-[10px] leading-4 text-muted-foreground">{t('browserSession.harPrivacy')}</div>
-                </div>
-                {navigation ? (
-                  <div className="rounded border bg-background p-2 text-[11px]">
-                    <div className="mb-1 text-[10px] font-medium text-muted-foreground">{t('browserSession.navigation')}</div>
-                    <div className="break-all">{text(navigation.url)}</div>
-                    <div className="mt-1 text-[10px] text-muted-foreground">
-                      {text(navigation.type)} · {number(navigation.duration_ms ?? navigation.durationMs).toFixed(1)} ms
-                    </div>
-                  </div>
-                ) : null}
-                {networkRequests.map((item, index) => {
-                  const requestId = text(item.request_id ?? item.requestId);
-                  return (
-                    <div key={`browser-network-request-${requestId || index}`} className="rounded border bg-background p-2 text-[11px]">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="break-all">{text(item.url)}</div>
-                          <div className="mt-1 text-[10px] text-muted-foreground">
-                            {text(item.method) || 'GET'} · {number(item.status)} · {text(item.resource_type ?? item.resourceType) || 'Other'}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => { void runCommand('network_request', { request_id: requestId }); }}
-                          disabled={loading || !requestId}
-                          className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                        >
-                          {t('browserSession.requestDetail')}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {networkResources.map((item, index) => (
-                  <div key={`browser-network-resource-${index}`} className="rounded border bg-background p-2 text-[11px]">
-                    <div className="break-all">{text(item.url)}</div>
-                    <div className="mt-1 text-[10px] text-muted-foreground">
-                      {text(item.initiator_type ?? item.initiatorType) || 'other'} · {number(item.duration_ms ?? item.durationMs).toFixed(1)} ms · {Math.round(number(item.transfer_size ?? item.transferSize))} B
-                    </div>
-                  </div>
-                ))}
-                {networkRequests.length === 0 && networkResources.length === 0 ? (
-                  <div className="rounded border bg-background p-3 text-[11px] text-muted-foreground">{t('browserSession.noNetwork')}</div>
-                ) : null}
-                {networkDetail ? (
-                  <div className="space-y-2 rounded border bg-background p-2 text-[11px]">
-                    <div className="font-medium">{t('browserSession.requestDetail')}</div>
-                    <div className="break-all">{text(networkDetail.method)} · {number(networkDetail.status)} · {text(networkDetail.url)}</div>
-                    <div className="grid grid-cols-1 gap-2">
-                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 text-[10px]">{JSON.stringify(requestHeaders || {}, null, 2)}</pre>
-                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 text-[10px]">{JSON.stringify(responseHeaders || {}, null, 2)}</pre>
-                    </div>
-                    {text(requestBody?.text) ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 text-[10px]">{text(requestBody?.text)}</pre> : null}
-                    {text(responseBody?.text) ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 text-[10px]">{text(responseBody?.text)}</pre> : null}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const requestId = text(networkDetail.request_id ?? networkDetail.requestId);
-                        void runCommand('network_request', {
-                          request_id: requestId,
-                          include_request_body: true,
-                          include_response_body: true,
-                          max_body_chars: 16384,
-                        });
-                      }}
-                      disabled={loading || !text(networkDetail.request_id ?? networkDetail.requestId)}
-                      className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                    >
-                      {t('browserSession.loadRedactedBodies')}
-                    </button>
-                  </div>
-                ) : null}
-                <div className="text-[10px] leading-4 text-muted-foreground">{t('browserSession.networkPrivacy')}</div>
-              </div>
-            ) : null}
-
-            {detailTab === 'websocket' ? (
-              <div className="space-y-2">
-                <div className="rounded border bg-background p-2">
-                  <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                    <span>{t('browserSession.websocketObservation')}</span>
-                    <span>{websocketActive ? t('browserSession.websocketActive') : t('browserSession.websocketStopped')}</span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { void runCommand('websocket_start'); }}
-                      disabled={loading || websocketActive}
-                      className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                    >
-                      {t('browserSession.startWebsocket')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void runCommand('websocket_frames', {
-                          limit: 100,
-                          direction: websocketDirection || undefined,
-                        });
-                      }}
-                      disabled={loading}
-                      className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                    >
-                      {t('browserSession.refreshWebsocket')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void runCommand('websocket_frames', {
-                          clear: true,
-                          limit: 100,
-                          direction: websocketDirection || undefined,
-                        });
-                      }}
-                      disabled={loading || !websocketActive}
-                      className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                    >
-                      {t('browserSession.clearWebsocket')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { void runCommand('websocket_stop'); }}
-                      disabled={loading}
-                      className="rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                    >
-                      {t('browserSession.stopWebsocket')}
-                    </button>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <label className="text-[10px] text-muted-foreground" htmlFor="browser-websocket-direction">
-                      {t('browserSession.websocketDirection')}
-                    </label>
-                    <select
-                      id="browser-websocket-direction"
-                      value={websocketDirection}
-                      onChange={(event) => setWebsocketDirection(event.target.value as '' | 'sent' | 'received')}
-                      className="rounded border bg-background px-2 py-1 text-[10px]"
-                    >
-                      <option value="">{t('browserSession.websocketAllDirections')}</option>
-                      <option value="sent">{t('browserSession.websocketSent')}</option>
-                      <option value="received">{t('browserSession.websocketReceived')}</option>
-                    </select>
-                  </div>
-                  <div className="mt-2 text-[10px] leading-4 text-muted-foreground">
-                    {t('browserSession.websocketCounts', {
-                      returned: number(websocketPage?.returned_count ?? websocketPage?.returnedCount),
-                      total: number(websocketPage?.total_frame_count ?? websocketPage?.totalFrameCount),
-                      sockets: number(websocketPage?.socket_count ?? websocketPage?.socketCount),
-                    })}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void runCommand('websocket_frames', {
-                        limit: 100,
-                        direction: websocketDirection || undefined,
-                        include_text_payloads: true,
-                        max_payload_chars: 1024,
-                      });
-                    }}
-                    disabled={loading || !websocketActive}
-                    className="mt-2 rounded border px-2 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-                  >
-                    {t('browserSession.loadRedactedWebsocketPayloads')}
-                  </button>
-                </div>
-                {websocketFrames.map((frame, index) => {
-                  const requestId = text(frame.request_id ?? frame.requestId);
-                  const payload = text(frame.text_payload ?? frame.textPayload);
-                  return (
-                    <div key={`browser-websocket-frame-${number(frame.sequence) || index}`} className="rounded border bg-background p-2 text-[11px]">
-                      <div className="break-all">{text(frame.url) || requestId}</div>
-                      <div className="mt-1 text-[10px] text-muted-foreground">
-                        {[text(frame.direction), text(frame.frame_type ?? frame.frameType), `${number(frame.payload_bytes ?? frame.payloadBytes)} B`, requestId].filter(Boolean).join(' · ')}
-                      </div>
-                      {payload ? (
-                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 text-[10px]">{payload}</pre>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                {websocketFrames.length === 0 ? (
-                  <div className="rounded border bg-background p-3 text-[11px] text-muted-foreground">
-                    {websocketActive ? t('browserSession.noWebsocketFrames') : t('browserSession.websocketStartHint')}
-                  </div>
-                ) : null}
-                <div className="text-[10px] leading-4 text-muted-foreground">
-                  {websocketTextPayloadsIncluded
-                    ? t('browserSession.websocketPayloadsVisible')
-                    : t('browserSession.websocketPrivacy')}
-                </div>
-              </div>
-            ) : null}
+            <BrowserSessionDetails
+              consolePage={consolePage}
+              detailTab={detailTab}
+              harPage={harPage}
+              harPath={harPath}
+              harRecording={harRecording}
+              loading={loading}
+              networkDetailPage={networkDetailPage}
+              networkPage={networkPage}
+              onDetailTabChange={setDetailTab}
+              onHarPathChange={setHarPath}
+              onWebsocketDirectionChange={setWebsocketDirection}
+              pageUrl={pageUrl}
+              runCommand={runCommand}
+              snapshot={snapshot}
+              websocketActive={websocketActive}
+              websocketDirection={websocketDirection}
+              websocketPage={websocketPage}
+            />
           </aside>
         </div>
       </section>

@@ -24,7 +24,7 @@ use super::model::run_text_turn;
 use super::request::{normalize_optional, LocalChatSendRequest};
 use super::tools::{prepare_local_chat_tools, LocalChatRecordWriter};
 
-const USER_FACING_FINAL_REPLY_POLICY: &str = "[User-Facing Final Reply Policy]\nMake the final reply readable for a normal user and use the language of the user's latest substantive request. Summarize verified outcomes, counts, recognizable artifact names, important dependencies, and the next useful action. Unless the user explicitly asks for diagnostics or an identifier is strictly required for the next action, do not expose internal IDs, raw enum values, tool names, JSON, protocol fields, database field names, or process-message details. If a technical identifier must be shown, copy it exactly from verified tool output; never reconstruct, abbreviate, or guess it.";
+const USER_FACING_FINAL_REPLY_POLICY: &str = "[User-Facing Reply Policy]\nMake every user-visible reply readable for a normal user and use the language of the user's latest substantive request. Summarize verified outcomes, counts, recognizable artifact names, important dependencies, and the next useful action. Unless the user explicitly asks for diagnostics or an identifier is strictly required for the next action, do not expose internal IDs, raw enum values, tool names, JSON, protocol fields, database field names, or process-message details. If a technical identifier must be shown, copy it exactly from the user's message, task input, or verified tool output; never reconstruct, abbreviate, truncate, normalize, or guess it. Treat URLs, ports, IP addresses, file paths, command names, account names, IDs, hashes, and other exact identifiers as opaque strings.";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LocalChatExecutionErrorKind {
@@ -587,5 +587,7 @@ mod prompt_policy_tests {
         assert!(USER_FACING_FINAL_REPLY_POLICY.contains("internal IDs"));
         assert!(USER_FACING_FINAL_REPLY_POLICY.contains("raw enum values"));
         assert!(USER_FACING_FINAL_REPLY_POLICY.contains("never reconstruct"));
+        assert!(USER_FACING_FINAL_REPLY_POLICY.contains("never reconstruct, abbreviate, truncate"));
+        assert!(USER_FACING_FINAL_REPLY_POLICY.contains("URLs, ports, IP addresses"));
     }
 }

@@ -19,7 +19,7 @@ pub(crate) fn build_shared_mcp_executor(
         stdio_servers.into_iter().map(shared_stdio_server).collect(),
         builtin_servers
             .into_iter()
-            .map(shared_builtin_server)
+            .filter_map(shared_builtin_server)
             .collect(),
         registry,
     )
@@ -66,9 +66,9 @@ pub(crate) fn shared_stdio_server(server: ChatosStdioServer) -> chatos_mcp_runti
 
 pub(crate) fn shared_builtin_server(
     server: ChatosBuiltinServer,
-) -> chatos_mcp_runtime::McpBuiltinServer {
-    let kind = shared_builtin_kind(server.kind);
-    chatos_mcp_runtime::McpBuiltinServer {
+) -> Option<chatos_mcp_runtime::McpBuiltinServer> {
+    let kind = shared_builtin_kind(server.kind)?;
+    Some(chatos_mcp_runtime::McpBuiltinServer {
         name: server.name,
         kind: kind.kind_name().to_string(),
         workspace_dir: server.workspace_dir,
@@ -81,42 +81,46 @@ pub(crate) fn shared_builtin_server(
         max_file_bytes: server.max_file_bytes,
         max_write_bytes: server.max_write_bytes,
         search_limit: server.search_limit,
-    }
+    })
 }
 
 pub(crate) fn shared_builtin_kind(
     kind: ChatosBuiltinMcpKind,
-) -> chatos_mcp_runtime::BuiltinMcpKind {
+) -> Option<chatos_mcp_runtime::BuiltinMcpKind> {
     match kind {
         ChatosBuiltinMcpKind::CodeMaintainerRead => {
-            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead
+            Some(chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead)
         }
         ChatosBuiltinMcpKind::CodeMaintainerWrite => {
-            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
+            Some(chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite)
         }
         ChatosBuiltinMcpKind::TerminalController => {
-            chatos_mcp_runtime::BuiltinMcpKind::TerminalController
+            Some(chatos_mcp_runtime::BuiltinMcpKind::TerminalController)
         }
-        ChatosBuiltinMcpKind::TaskManager => chatos_mcp_runtime::BuiltinMcpKind::TaskManager,
+        ChatosBuiltinMcpKind::TaskManager => None,
         ChatosBuiltinMcpKind::ProjectManagement => {
-            chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement
+            Some(chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement)
         }
-        ChatosBuiltinMcpKind::Notepad => chatos_mcp_runtime::BuiltinMcpKind::Notepad,
-        ChatosBuiltinMcpKind::AgentBuilder => chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder,
-        ChatosBuiltinMcpKind::AskUser => chatos_mcp_runtime::BuiltinMcpKind::AskUser,
+        ChatosBuiltinMcpKind::Notepad => Some(chatos_mcp_runtime::BuiltinMcpKind::Notepad),
+        ChatosBuiltinMcpKind::AgentBuilder => {
+            Some(chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder)
+        }
+        ChatosBuiltinMcpKind::AskUser => Some(chatos_mcp_runtime::BuiltinMcpKind::AskUser),
         ChatosBuiltinMcpKind::RemoteConnectionController => {
-            chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController
+            Some(chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController)
         }
-        ChatosBuiltinMcpKind::WebTools => chatos_mcp_runtime::BuiltinMcpKind::WebTools,
-        ChatosBuiltinMcpKind::BrowserTools => chatos_mcp_runtime::BuiltinMcpKind::BrowserTools,
+        ChatosBuiltinMcpKind::WebTools => Some(chatos_mcp_runtime::BuiltinMcpKind::WebTools),
+        ChatosBuiltinMcpKind::BrowserTools => {
+            Some(chatos_mcp_runtime::BuiltinMcpKind::BrowserTools)
+        }
         ChatosBuiltinMcpKind::MemorySkillReader => {
-            chatos_mcp_runtime::BuiltinMcpKind::MemorySkillReader
+            Some(chatos_mcp_runtime::BuiltinMcpKind::MemorySkillReader)
         }
         ChatosBuiltinMcpKind::MemoryCommandReader => {
-            chatos_mcp_runtime::BuiltinMcpKind::MemoryCommandReader
+            Some(chatos_mcp_runtime::BuiltinMcpKind::MemoryCommandReader)
         }
         ChatosBuiltinMcpKind::MemoryPluginReader => {
-            chatos_mcp_runtime::BuiltinMcpKind::MemoryPluginReader
+            Some(chatos_mcp_runtime::BuiltinMcpKind::MemoryPluginReader)
         }
     }
 }
@@ -128,7 +132,8 @@ pub(crate) fn chatos_builtin_server(
         .ok_or_else(|| format!("unknown builtin mcp kind: {}", server.kind))?;
     Ok(ChatosBuiltinServer {
         name: server.name,
-        kind: chatos_builtin_kind(kind),
+        kind: chatos_builtin_kind(kind)
+            .ok_or_else(|| "TaskManager builtin MCP has been removed".to_string())?,
         workspace_dir: server.workspace_dir,
         user_id: server.user_id,
         project_id: server.project_id,
@@ -144,37 +149,41 @@ pub(crate) fn chatos_builtin_server(
 
 pub(crate) fn chatos_builtin_kind(
     kind: chatos_mcp_runtime::BuiltinMcpKind,
-) -> ChatosBuiltinMcpKind {
+) -> Option<ChatosBuiltinMcpKind> {
     match kind {
         chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead => {
-            ChatosBuiltinMcpKind::CodeMaintainerRead
+            Some(ChatosBuiltinMcpKind::CodeMaintainerRead)
         }
         chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite => {
-            ChatosBuiltinMcpKind::CodeMaintainerWrite
+            Some(ChatosBuiltinMcpKind::CodeMaintainerWrite)
         }
         chatos_mcp_runtime::BuiltinMcpKind::TerminalController => {
-            ChatosBuiltinMcpKind::TerminalController
+            Some(ChatosBuiltinMcpKind::TerminalController)
         }
-        chatos_mcp_runtime::BuiltinMcpKind::TaskManager => ChatosBuiltinMcpKind::TaskManager,
+        chatos_mcp_runtime::BuiltinMcpKind::TaskManager => None,
         chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
-            ChatosBuiltinMcpKind::ProjectManagement
+            Some(ChatosBuiltinMcpKind::ProjectManagement)
         }
-        chatos_mcp_runtime::BuiltinMcpKind::Notepad => ChatosBuiltinMcpKind::Notepad,
-        chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder => ChatosBuiltinMcpKind::AgentBuilder,
-        chatos_mcp_runtime::BuiltinMcpKind::AskUser => ChatosBuiltinMcpKind::AskUser,
+        chatos_mcp_runtime::BuiltinMcpKind::Notepad => Some(ChatosBuiltinMcpKind::Notepad),
+        chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder => {
+            Some(ChatosBuiltinMcpKind::AgentBuilder)
+        }
+        chatos_mcp_runtime::BuiltinMcpKind::AskUser => Some(ChatosBuiltinMcpKind::AskUser),
         chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
-            ChatosBuiltinMcpKind::RemoteConnectionController
+            Some(ChatosBuiltinMcpKind::RemoteConnectionController)
         }
-        chatos_mcp_runtime::BuiltinMcpKind::WebTools => ChatosBuiltinMcpKind::WebTools,
-        chatos_mcp_runtime::BuiltinMcpKind::BrowserTools => ChatosBuiltinMcpKind::BrowserTools,
+        chatos_mcp_runtime::BuiltinMcpKind::WebTools => Some(ChatosBuiltinMcpKind::WebTools),
+        chatos_mcp_runtime::BuiltinMcpKind::BrowserTools => {
+            Some(ChatosBuiltinMcpKind::BrowserTools)
+        }
         chatos_mcp_runtime::BuiltinMcpKind::MemorySkillReader => {
-            ChatosBuiltinMcpKind::MemorySkillReader
+            Some(ChatosBuiltinMcpKind::MemorySkillReader)
         }
         chatos_mcp_runtime::BuiltinMcpKind::MemoryCommandReader => {
-            ChatosBuiltinMcpKind::MemoryCommandReader
+            Some(ChatosBuiltinMcpKind::MemoryCommandReader)
         }
         chatos_mcp_runtime::BuiltinMcpKind::MemoryPluginReader => {
-            ChatosBuiltinMcpKind::MemoryPluginReader
+            Some(ChatosBuiltinMcpKind::MemoryPluginReader)
         }
     }
 }

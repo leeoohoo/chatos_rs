@@ -33,6 +33,7 @@ pub(super) async fn get_run(
 pub(super) struct RunDetailQuery {
     event_limit: Option<usize>,
     event_offset: Option<usize>,
+    include_events: Option<bool>,
     limit: Option<usize>,
     offset: Option<usize>,
     path: Option<String>,
@@ -70,92 +71,130 @@ pub(super) async fn get_run_detail(
         .ok_or_else(|| {
             LocalRuntimeApiError::not_found("local_task_not_found", "Local task was not found")
         })?;
-    let runtime_events = database
-        .list_runtime_events(
+    let include_events = query.include_events.unwrap_or(true);
+    let process_tasks = database
+        .list_local_task_board_tasks(
             owner.owner_user_id.as_str(),
             run.session_id.as_str(),
-            Some(run.turn_id.as_str()),
-            0,
-            500,
+            None,
+            true,
+            200,
         )
-        .await?;
-    let process_messages = database
-        .list_turn_messages(owner.owner_user_id.as_str(), run.turn_id.as_str())
-        .await?;
-    let mut all_events = runtime_events
+        .await?
         .into_iter()
-        .filter_map(|event| {
-            let event_type = match event.event_name.as_str() {
-                "chat.thinking" => "thinking",
-                "chat.chunk" => "chunk",
-                "chat.phase" => "phase",
-                "task.run.started" => "run_started",
-                _ => return None,
-            };
-            let payload =
-                serde_json::from_str::<Value>(event.payload_json.as_str()).unwrap_or(Value::Null);
-            Some(json!({
-                "id": event.event_id,
-                "run_id": run.id,
-                "event_type": event_type,
-                "message": payload.get("message").and_then(Value::as_str),
-                "payload": payload,
-                "created_at": event.created_at,
-            }))
+        .filter(|candidate| {
+            candidate.task_kind == "task_manager"
+                && (candidate.task_session_id.as_deref() == Some(run.id.as_str())
+                    || (candidate.task_session_id.is_none()
+                        && candidate.source_turn_id == run.turn_id))
         })
+        .map(|candidate| super::super::task_board::response::task_response(&candidate))
         .collect::<Vec<_>>();
-    for message in process_messages {
-        if let Some(tool_calls) = message
-            .tool_calls_json
-            .as_deref()
-            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-            .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
-        {
-            all_events.push(json!({
-                "id": format!("{}:tools_start", message.id),
-                "run_id": run.id,
-                "event_type": "tools_start",
-                "payload": tool_calls,
-                "created_at": message.created_at.clone(),
-            }));
-        }
-        if message.role == "tool" {
-            let metadata = message
-                .metadata_json
+    let mut all_events = Vec::new();
+    if include_events {
+        let runtime_events = database
+            .list_runtime_events(
+                owner.owner_user_id.as_str(),
+                run.session_id.as_str(),
+                Some(run.turn_id.as_str()),
+                0,
+                500,
+            )
+            .await?;
+        let process_messages = database
+            .list_turn_messages(owner.owner_user_id.as_str(), run.turn_id.as_str())
+            .await?;
+        all_events = runtime_events
+            .into_iter()
+            .filter_map(|event| {
+                let event_type = match event.event_name.as_str() {
+                    "chat.thinking" => "thinking",
+                    "chat.chunk" => "chunk",
+                    "chat.phase" => "phase",
+                    "task.run.started" => "run_started",
+                    "browser_session" => "browser_session",
+                    _ => return None,
+                };
+                let payload = serde_json::from_str::<Value>(event.payload_json.as_str())
+                    .unwrap_or(Value::Null);
+                Some(json!({
+                    "id": event.event_id,
+                    "run_id": run.id,
+                    "event_type": event_type,
+                    "message": payload.get("message").and_then(Value::as_str),
+                    "payload": payload,
+                    "created_at": event.created_at,
+                }))
+            })
+            .collect::<Vec<_>>();
+        for message in process_messages {
+            if let Some(tool_calls) = message
+                .tool_calls_json
                 .as_deref()
                 .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-                .unwrap_or_else(|| json!({}));
-            let result = metadata
-                .get("structured_result")
-                .cloned()
-                .or_else(|| serde_json::from_str::<Value>(message.content.as_str()).ok())
-                .unwrap_or_else(|| Value::String(message.content.clone()));
-            all_events.push(json!({
-                "id": format!("{}:tool_stream", message.id),
-                "run_id": run.id,
-                "event_type": "tool_stream",
-                "payload": {
-                    "tool_call_id": message.tool_call_id,
-                    "name": metadata.get("tool_name").or_else(|| metadata.get("name")),
-                    "success": true,
-                    "is_error": false,
-                    "is_stream": false,
-                    "result": result,
-                },
-                "created_at": message.created_at,
-            }));
+                .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
+            {
+                all_events.push(json!({
+                    "id": format!("{}:tools_start", message.id),
+                    "run_id": run.id,
+                    "event_type": "tools_start",
+                    "payload": tool_calls,
+                    "created_at": message.created_at.clone(),
+                }));
+            }
+            if message.role == "tool" {
+                let metadata = message
+                    .metadata_json
+                    .as_deref()
+                    .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                    .unwrap_or_else(|| json!({}));
+                let result = metadata
+                    .get("structured_result")
+                    .cloned()
+                    .or_else(|| serde_json::from_str::<Value>(message.content.as_str()).ok())
+                    .unwrap_or_else(|| Value::String(message.content.clone()));
+                let success = metadata_bool(&metadata, &["success"])
+                    .unwrap_or_else(|| !tool_result_looks_like_error(&message.content, &result));
+                let is_error =
+                    metadata_bool(&metadata, &["is_error", "isError"]).unwrap_or_else(|| {
+                        !success || tool_result_looks_like_error(&message.content, &result)
+                    });
+                all_events.push(json!({
+                    "id": format!("{}:tool_stream", message.id),
+                    "run_id": run.id,
+                    "event_type": "tool_stream",
+                    "payload": {
+                        "tool_call_id": message.tool_call_id,
+                        "name": metadata.get("tool_name").or_else(|| metadata.get("toolName")).or_else(|| metadata.get("name")),
+                        "success": success,
+                        "is_error": is_error,
+                        "is_stream": false,
+                        "result": result,
+                    },
+                    "created_at": message.created_at,
+                }));
+                if let Some(browser_session) = browser_session_event_payload(&result) {
+                    all_events.push(json!({
+                        "id": format!("{}:browser_session", message.id),
+                        "run_id": run.id,
+                        "event_type": "browser_session",
+                        "payload": browser_session,
+                        "created_at": message.created_at,
+                    }));
+                }
+            }
         }
+        all_events.sort_by(|left, right| {
+            left.get("created_at")
+                .and_then(Value::as_str)
+                .cmp(&right.get("created_at").and_then(Value::as_str))
+                .then_with(|| {
+                    left.get("id")
+                        .and_then(Value::as_str)
+                        .cmp(&right.get("id").and_then(Value::as_str))
+                })
+        });
     }
-    all_events.sort_by(|left, right| {
-        left.get("created_at")
-            .and_then(Value::as_str)
-            .cmp(&right.get("created_at").and_then(Value::as_str))
-            .then_with(|| {
-                left.get("id")
-                    .and_then(Value::as_str)
-                    .cmp(&right.get("id").and_then(Value::as_str))
-            })
-    });
     let total = all_events.len();
     let offset = query.event_offset.unwrap_or_default().min(total);
     let limit = query.event_limit.unwrap_or(40).clamp(1, 200);
@@ -208,12 +247,42 @@ pub(super) async fn get_run_detail(
             "updated_at": run.updated_at,
         },
         "model_config": model_config,
+        "process_tasks": process_tasks,
         "events": events,
         "events_total": total,
         "events_limit": limit,
         "events_offset": offset,
         "events_has_more": offset + limit < total,
     })))
+}
+
+fn browser_session_event_payload(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(map) => {
+            if let Some(session) = map.get("browser_session").filter(|value| value.is_object()) {
+                return Some(session.clone());
+            }
+            map.values().find_map(browser_session_event_payload)
+        }
+        Value::Array(items) => items.iter().find_map(browser_session_event_payload),
+        _ => None,
+    }
+}
+
+fn metadata_bool(metadata: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter()
+        .find_map(|key| metadata.get(*key).and_then(Value::as_bool))
+}
+
+fn tool_result_looks_like_error(content: &str, result: &Value) -> bool {
+    let content = content.trim();
+    if content.starts_with("工具执行失败:") || content.starts_with("工具执行失败：") {
+        return true;
+    }
+    result.as_str().is_some_and(|value| {
+        let value = value.trim();
+        value.starts_with("工具执行失败:") || value.starts_with("工具执行失败：")
+    })
 }
 
 pub(super) async fn get_run_output_changes(
@@ -402,7 +471,9 @@ fn retry_model_config_id(
 
 #[cfg(test)]
 mod retry_tests {
-    use super::retry_model_config_id;
+    use serde_json::json;
+
+    use super::{retry_model_config_id, tool_result_looks_like_error};
 
     #[test]
     fn retry_prefers_the_tasks_current_model_configuration() {
@@ -418,5 +489,21 @@ mod retry_tests {
             retry_model_config_id(Some("  "), "model-failed-run").as_deref(),
             Some("model-failed-run")
         );
+    }
+
+    #[test]
+    fn recognizes_failed_tool_result_text_for_run_detail_events() {
+        assert!(tool_result_looks_like_error(
+            "工具执行失败: requested file was not found in the current workspace",
+            &json!(null),
+        ));
+        assert!(tool_result_looks_like_error(
+            "",
+            &json!("工具执行失败: requested file was not found in the current workspace"),
+        ));
+        assert!(!tool_result_looks_like_error(
+            "{\"success\":true}",
+            &json!({"success": true}),
+        ));
     }
 }

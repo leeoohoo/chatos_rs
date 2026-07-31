@@ -4,6 +4,7 @@
 import { useEffect, useState, type FC } from 'react';
 import { CircleAlert, LoaderCircle, RotateCcw } from 'lucide-react';
 import type {
+  MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerModelConfigSummary,
   MessageTaskRunnerRunSummary,
   MessageTaskRunnerTask,
@@ -19,13 +20,16 @@ interface MessageTaskDetailModalProps {
   onRetry?: (
     task: MessageTaskRunnerTask,
     retryInstruction?: string,
+    executionServiceId?: string,
   ) => unknown | Promise<unknown>;
   retrying?: boolean;
+  retryError?: string | null;
   onClose: () => void;
 }
 
 interface MessageTaskProcessLogModalProps {
   task: MessageTaskRunnerTask | null;
+  runDetail?: MessageTaskRunnerRunDetailResponse | null;
   onClose: () => void;
 }
 
@@ -91,6 +95,7 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   relatedTasks = [],
   onRetry,
   retrying = false,
+  retryError = null,
   onClose,
 }) => {
   const [retryInstruction, setRetryInstruction] = useState('');
@@ -158,11 +163,11 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
             ) : null}
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                {isBlocked ? '当前节点需要人工处理' : '当前节点执行失败'}
+                {isBlocked ? '当前节点未完成' : '当前节点执行失败'}
               </div>
               <p className="mt-0.5 text-xs leading-5 text-amber-800 dark:text-amber-200">
                 {isBlocked
-                  ? '补充处理意见后重新运行此节点；节点成功后，满足依赖条件的后续节点会自动继续。'
+                  ? '系统检测到仍有必需步骤没有完成，因此没有把本次运行算作成功。可以补充处理意见后重新运行；不需要补充时可直接重新处理。节点成功后，满足依赖条件的后续节点会自动继续。'
                   : '仅重新运行此节点；成功后，满足依赖条件的后续节点会继续调度。'}
               </p>
             </div>
@@ -218,6 +223,16 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
               {retrying ? '正在重新处理' : isBlocked ? '重新处理此节点' : '重试此任务'}
             </button>
           </div>
+
+          {retryError ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive"
+            >
+              <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{retryError}</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -325,23 +340,66 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
 
 export const MessageTaskProcessLogModal: FC<MessageTaskProcessLogModalProps> = ({
   task,
+  runDetail = null,
   onClose,
 }) => {
-  if (!task) {
+  if (!task && !runDetail) {
     return null;
   }
+  const effectiveTask = runDetail?.task || task;
+  const processTasks = Array.isArray(runDetail?.process_tasks)
+    ? runDetail.process_tasks
+    : [];
+  const processLog = readString(effectiveTask?.process_log) || readString(task?.process_log);
+  const hasProcessContent = Boolean(processLog) || processTasks.length > 0;
 
   return (
     <ModalShell
       title="执行过程"
-      subtitle={task.title || task.id}
+      subtitle={effectiveTask?.title || effectiveTask?.id || runDetail?.run?.id}
       onClose={onClose}
       widthClassName="max-w-4xl"
     >
-      <CollapsibleText
-        value={task.process_log || '暂无执行过程'}
-        maxHeightClassName="max-h-[68vh]"
-      />
+      {hasProcessContent ? (
+        <div className="space-y-3">
+          {processLog ? (
+            <CollapsibleText
+              value={processLog}
+              maxHeightClassName="max-h-[68vh]"
+            />
+          ) : null}
+          {processTasks.length > 0 ? (
+            <div className="space-y-2">
+              {processTasks.map((item) => {
+                const itemProcess = readString(item.process_log)
+                  || readString(item.task_tool_state?.resume_hint)
+                  || readString(item.result_summary);
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-md border border-border bg-muted/30 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">
+                        {item.title || item.id}
+                      </span>
+                      {item.status ? <StatusBadge status={item.status} /> : null}
+                    </div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+                      {itemProcess || '暂无过程说明'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <CollapsibleText
+          value="暂无执行过程"
+          maxHeightClassName="max-h-[68vh]"
+        />
+      )}
     </ModalShell>
   );
 };

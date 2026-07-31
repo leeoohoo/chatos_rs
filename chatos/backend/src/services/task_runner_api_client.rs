@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use crate::config::Config;
 use bytes::BytesMut;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::OnceLock;
+use std::{sync::OnceLock, time::Duration};
 
 static TASK_RUNNER_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -13,11 +14,17 @@ const TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const TASK_RUNNER_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
+mod message_tasks;
 mod types;
 
 #[cfg(test)]
 mod tests;
 
+pub use message_tasks::{
+    get_message_graph_run, get_message_run, get_message_run_event, get_message_run_output_changes,
+    get_message_run_output_diff, get_message_task, get_message_task_graph, list_message_tasks,
+    list_session_active_message_tasks, retry_message_run,
+};
 pub use types::{
     CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, ExchangedTaskRunnerToken,
     SubmitTaskRunnerPromptRequest, TaskRunnerTaskRecord, UserServiceTaskRunnerExchange,
@@ -82,21 +89,10 @@ pub async fn get_task_runner_task(
 pub async fn list_task_runner_available_plugins(
     base_url: &str,
     access_token: &str,
-    device_id: &str,
+    device_id: Option<&str>,
     plan_mode: bool,
 ) -> Result<Value, String> {
-    let device_id = device_id.trim();
-    if device_id.is_empty() {
-        return Err("device_id is required".to_string());
-    }
-    let request = task_runner_request(
-        base_url,
-        access_token,
-        reqwest::Method::GET,
-        "/api/tasks/capabilities/catalog",
-    )
-    .await
-    .query(&[
+    let mut query = vec![
         (
             "task_profile",
             if plan_mode { "chatos_plan" } else { "default" },
@@ -105,8 +101,18 @@ pub async fn list_task_runner_available_plugins(
             "requires_execution",
             if plan_mode { "false" } else { "true" },
         ),
-        ("device_id", device_id),
-    ]);
+    ];
+    if let Some(device_id) = device_id.map(str::trim).filter(|value| !value.is_empty()) {
+        query.push(("device_id", device_id));
+    }
+    let request = task_runner_request(
+        base_url,
+        access_token,
+        reqwest::Method::GET,
+        "/api/tasks/capabilities/catalog",
+    )
+    .await
+    .query(&query);
     send_task_runner_response(request).await
 }
 
@@ -143,8 +149,29 @@ pub async fn submit_task_runner_prompt(
     send_json(
         task_runner_http_client()
             .post(endpoint)
+            .timeout(task_runner_request_timeout())
             .bearer_auth(access_token.trim())
             .json(request),
+    )
+    .await
+}
+
+pub async fn get_task_runner_prompt(
+    base_url: &str,
+    access_token: &str,
+    prompt_id: &str,
+) -> Result<Value, String> {
+    let base_url = resolve_task_runner_base_url(base_url).await;
+    let endpoint = format!(
+        "{}/api/prompts/{}",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(prompt_id.trim())
+    );
+    send_json(
+        task_runner_http_client()
+            .get(endpoint)
+            .timeout(task_runner_request_timeout())
+            .bearer_auth(access_token.trim()),
     )
     .await
 }
@@ -164,6 +191,7 @@ pub async fn cancel_task_runner_prompt(
     send_json(
         task_runner_http_client()
             .post(endpoint)
+            .timeout(task_runner_request_timeout())
             .bearer_auth(access_token.trim())
             .json(request),
     )
@@ -205,6 +233,7 @@ async fn task_runner_request(
     task_runner_http_client()
         .request(method, endpoint)
         .bearer_auth(access_token.trim())
+        .timeout(task_runner_request_timeout())
 }
 
 async fn send_task_runner_response<T: for<'de> Deserialize<'de>>(
@@ -246,6 +275,14 @@ fn task_runner_http_client() -> &'static reqwest::Client {
     TASK_RUNNER_HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
+fn task_runner_request_timeout() -> Duration {
+    let timeout_ms = Config::try_get()
+        .map(|cfg| cfg.task_runner_request_timeout_ms)
+        .unwrap_or(30_000)
+        .max(300) as u64;
+    Duration::from_millis(timeout_ms)
+}
+
 async fn get_internal_json(
     base_url: &str,
     path: &str,
@@ -254,7 +291,12 @@ async fn get_internal_json(
     let base_url = resolve_task_runner_base_url(base_url).await;
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
     send_task_runner_response_with_limit(
-        signed_chatos_internal_request(task_runner_http_client().get(endpoint))?.query(query),
+        signed_chatos_internal_request(
+            task_runner_http_client()
+                .get(endpoint)
+                .timeout(task_runner_request_timeout()),
+        )?
+        .query(query),
         TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES,
         "Task Runner internal request failed",
     )
@@ -278,8 +320,13 @@ async fn post_internal_json_with_scope<T: Serialize + ?Sized>(
     let base_url = resolve_task_runner_base_url(base_url).await;
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
     send_task_runner_response_with_limit(
-        signed_chatos_internal_request_with_scope(task_runner_http_client().post(endpoint), scope)?
-            .json(body),
+        signed_chatos_internal_request_with_scope(
+            task_runner_http_client()
+                .post(endpoint)
+                .timeout(task_runner_request_timeout()),
+            scope,
+        )?
+        .json(body),
         TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES,
         "Task Runner internal request failed",
     )
@@ -521,255 +568,4 @@ fn ensure_task_runner_body_within_limit(
         ));
     }
     Ok(())
-}
-
-#[derive(Debug, Serialize)]
-struct SessionActiveMessageTasksRequest<'a> {
-    source_session_id: &'a str,
-    source_user_message_ids: &'a [String],
-    source_turn_ids: &'a [String],
-}
-
-pub async fn list_session_active_message_tasks(
-    base_url: &str,
-    source_session_id: &str,
-    source_user_message_ids: &[String],
-    source_turn_ids: &[String],
-) -> Result<Value, String> {
-    post_internal_json(
-        base_url,
-        "/internal/chatos/session-active-message-tasks",
-        &SessionActiveMessageTasksRequest {
-            source_session_id,
-            source_user_message_ids,
-            source_turn_ids,
-        },
-    )
-    .await
-}
-
-pub async fn list_message_tasks(
-    base_url: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-) -> Result<Value, String> {
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    get_internal_json(base_url, "/internal/chatos/message-tasks", query.as_slice()).await
-}
-
-pub async fn get_message_task_graph(
-    base_url: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-) -> Result<Value, String> {
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    get_internal_json(base_url, "/internal/chatos/message-graph", query.as_slice()).await
-}
-
-pub async fn get_message_task(
-    base_url: &str,
-    task_id: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-) -> Result<Value, String> {
-    let path = format!(
-        "/internal/chatos/message-tasks/{}",
-        urlencoding::encode(task_id.trim())
-    );
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    get_internal_json(base_url, path.as_str(), query.as_slice()).await
-}
-
-pub async fn get_message_run(
-    base_url: &str,
-    run_id: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-    event_limit: Option<usize>,
-    event_offset: Option<usize>,
-) -> Result<Value, String> {
-    let path = format!(
-        "/internal/chatos/message-runs/{}",
-        urlencoding::encode(run_id.trim())
-    );
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    let event_limit = event_limit.map(|value| value.to_string());
-    let event_offset = event_offset.map(|value| value.to_string());
-    if let Some(value) = event_limit.as_deref() {
-        query.push(("event_limit", value));
-    }
-    if let Some(value) = event_offset.as_deref() {
-        query.push(("event_offset", value));
-    }
-    get_internal_json(base_url, path.as_str(), query.as_slice()).await
-}
-
-#[derive(Debug, Serialize)]
-struct RetryMessageRunRequest<'a> {
-    source_session_id: &'a str,
-    source_user_message_id: Option<&'a str>,
-    source_turn_id: Option<&'a str>,
-    retry_instruction: Option<&'a str>,
-}
-
-pub async fn retry_message_run(
-    base_url: &str,
-    run_id: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-    retry_instruction: Option<&str>,
-) -> Result<Value, String> {
-    let path = format!(
-        "/internal/chatos/message-runs/{}/retry",
-        urlencoding::encode(run_id.trim())
-    );
-    post_internal_json_with_scope(
-        base_url,
-        path.as_str(),
-        &RetryMessageRunRequest {
-            source_session_id,
-            source_user_message_id,
-            source_turn_id,
-            retry_instruction,
-        },
-        "chatos.execution.start",
-    )
-    .await
-}
-
-pub async fn get_message_run_event(
-    base_url: &str,
-    run_id: &str,
-    event_id: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-) -> Result<Value, String> {
-    let path = format!(
-        "/internal/chatos/message-runs/{}/events/{}",
-        urlencoding::encode(run_id.trim()),
-        urlencoding::encode(event_id.trim())
-    );
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    get_internal_json(base_url, path.as_str(), query.as_slice()).await
-}
-
-pub async fn get_message_run_output_changes(
-    base_url: &str,
-    run_id: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-    limit: Option<usize>,
-    offset: Option<usize>,
-) -> Result<Value, String> {
-    let path = format!(
-        "/internal/chatos/message-runs/{}/output/changes",
-        urlencoding::encode(run_id.trim())
-    );
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    let limit = limit.map(|value| value.to_string());
-    let offset = offset.map(|value| value.to_string());
-    if let Some(value) = limit.as_deref() {
-        query.push(("limit", value));
-    }
-    if let Some(value) = offset.as_deref() {
-        query.push(("offset", value));
-    }
-    get_internal_json(base_url, path.as_str(), query.as_slice()).await
-}
-
-pub async fn get_message_run_output_diff(
-    base_url: &str,
-    run_id: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-    diff_path: &str,
-) -> Result<Value, String> {
-    let path = format!(
-        "/internal/chatos/message-runs/{}/output/diff",
-        urlencoding::encode(run_id.trim())
-    );
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    query.push(("path", diff_path));
-    get_internal_json(base_url, path.as_str(), query.as_slice()).await
-}
-
-pub async fn get_message_graph_run(
-    base_url: &str,
-    run_id: &str,
-    source_session_id: &str,
-    source_user_message_id: Option<&str>,
-    source_turn_id: Option<&str>,
-    event_limit: Option<usize>,
-    event_offset: Option<usize>,
-) -> Result<Value, String> {
-    let path = format!(
-        "/internal/chatos/message-graph/runs/{}",
-        urlencoding::encode(run_id.trim())
-    );
-    let mut query = vec![("source_session_id", source_session_id)];
-    if let Some(source_user_message_id) = source_user_message_id {
-        query.push(("source_user_message_id", source_user_message_id));
-    }
-    if let Some(source_turn_id) = source_turn_id {
-        query.push(("source_turn_id", source_turn_id));
-    }
-    let event_limit = event_limit.map(|value| value.to_string());
-    let event_offset = event_offset.map(|value| value.to_string());
-    if let Some(value) = event_limit.as_deref() {
-        query.push(("event_limit", value));
-    }
-    if let Some(value) = event_offset.as_deref() {
-        query.push(("event_offset", value));
-    }
-    get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }

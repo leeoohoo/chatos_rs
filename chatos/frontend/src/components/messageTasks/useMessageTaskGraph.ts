@@ -128,6 +128,7 @@ export function useMessageTaskGraph({
   const [error, setError] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<MessageTaskRunnerTask | null>(null);
   const [processTask, setProcessTask] = useState<MessageTaskRunnerTask | null>(null);
+  const [processRunDetail, setProcessRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
   const [runDetail, setRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
   const [changesTask, setChangesTask] = useState<MessageTaskRunnerTask | null>(null);
   const [changesSource, setChangesSource] = useState<TaskSourceLookup | null>(null);
@@ -139,7 +140,9 @@ export function useMessageTaskGraph({
   const [loadingChangesRunId, setLoadingChangesRunId] = useState<string | null>(null);
   const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const graphRequestSequenceRef = useRef(0);
+  const overlayRequestSequenceRef = useRef(0);
   const graphRequestIdentity = useMemo(() => JSON.stringify([
     messageId,
     lookup?.sessionId ?? null,
@@ -153,6 +156,44 @@ export function useMessageTaskGraph({
   ]);
   const activeGraphRequestIdentityRef = useRef(graphRequestIdentity);
   activeGraphRequestIdentityRef.current = graphRequestIdentity;
+
+  const nextOverlayRequestSequence = useCallback(() => {
+    overlayRequestSequenceRef.current += 1;
+    return overlayRequestSequenceRef.current;
+  }, []);
+
+  const isCurrentOverlayRequest = useCallback((requestSequence: number) => (
+    overlayRequestSequenceRef.current === requestSequence
+  ), []);
+
+  const clearChangesOverlay = useCallback(() => {
+    setChangesTask(null);
+    setChangesSource(null);
+    setOutputChanges(null);
+    setOutputDiff(null);
+    setSelectedChangePath(null);
+  }, []);
+
+  const clearSiblingOverlays = useCallback((active: 'detail' | 'process' | 'run' | 'changes') => {
+    if (active !== 'detail') {
+      setDetailTask(null);
+      setRetryError(null);
+    }
+    if (active !== 'process') {
+      setProcessTask(null);
+      setProcessRunDetail(null);
+      setLoadingProcessTaskId(null);
+    }
+    if (active !== 'run') {
+      setRunDetail(null);
+      setLoadingRunId(null);
+    }
+    if (active !== 'changes') {
+      clearChangesOverlay();
+      setLoadingChangesRunId(null);
+      setLoadingDiffPath(null);
+    }
+  }, [clearChangesOverlay]);
 
   const reloadGraph = useCallback(async (options: ReloadMessageTaskGraphOptions = {}) => {
     const requestIdentity = graphRequestIdentity;
@@ -234,16 +275,23 @@ export function useMessageTaskGraph({
   );
 
   const openDetail = useCallback((task: MessageTaskRunnerTask) => {
+    nextOverlayRequestSequence();
+    clearSiblingOverlays('detail');
+    setRetryError(null);
     setDetailTask(task);
-  }, []);
+  }, [clearSiblingOverlays, nextOverlayRequestSequence]);
 
   const openProcessLog = useCallback(async (task: MessageTaskRunnerTask) => {
     const taskId = readString(task.id);
     if (!taskId) {
       return;
     }
+    const requestSequence = nextOverlayRequestSequence();
+    clearSiblingOverlays('process');
     setLoadingProcessTaskId(taskId);
     setError(null);
+    setProcessTask(task);
+    setProcessRunDetail(null);
     try {
       const detailSource = buildTaskSourceLookup({
         task,
@@ -251,27 +299,66 @@ export function useMessageTaskGraph({
         fallbackMessageId: messageId,
         fallbackLookup: lookup,
       });
-      const detail = await getMessageTaskRunnerTask(
-        apiClient.getRequestFn(),
-        detailSource.messageId,
-        taskId,
-        detailSource.lookup,
-      );
-      setProcessTask(detail);
+      const runId = readString(task.last_run_id);
+      if (runId) {
+        const detail = await getMessageTaskRunnerGraphRun(
+          apiClient.getRequestFn(),
+          detailSource.messageId,
+          runId,
+          {
+            ...detailSource.lookup,
+            includeEvents: false,
+            eventLimit: 1,
+            eventOffset: 0,
+          },
+        );
+        if (!isCurrentOverlayRequest(requestSequence)) {
+          return;
+        }
+        setProcessTask(detail.task || task);
+        setProcessRunDetail(detail);
+      } else {
+        const detail = await getMessageTaskRunnerTask(
+          apiClient.getRequestFn(),
+          detailSource.messageId,
+          taskId,
+          detailSource.lookup,
+        );
+        if (!isCurrentOverlayRequest(requestSequence)) {
+          return;
+        }
+        setProcessTask(detail);
+      }
     } catch (err) {
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setError(err instanceof Error ? err.message : '读取执行过程失败');
     } finally {
-      setLoadingProcessTaskId(null);
+      if (isCurrentOverlayRequest(requestSequence)) {
+        setLoadingProcessTaskId(null);
+      }
     }
-  }, [apiClient, graph, lookup, messageId]);
+  }, [
+    apiClient,
+    clearSiblingOverlays,
+    graph,
+    isCurrentOverlayRequest,
+    lookup,
+    messageId,
+    nextOverlayRequestSequence,
+  ]);
 
   const openRun = useCallback(async (task: MessageTaskRunnerTask) => {
     const runId = readString(task.last_run_id);
     if (!runId) {
       return;
     }
+    const requestSequence = nextOverlayRequestSequence();
+    clearSiblingOverlays('run');
     setLoadingRunId(runId);
     setError(null);
+    setRunDetail(null);
     try {
       const detailSource = buildTaskSourceLookup({
         task,
@@ -289,13 +376,29 @@ export function useMessageTaskGraph({
           eventOffset: 0,
         },
       );
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setRunDetail(detail);
     } catch (err) {
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setError(err instanceof Error ? err.message : '读取运行详情失败');
     } finally {
-      setLoadingRunId(null);
+      if (isCurrentOverlayRequest(requestSequence)) {
+        setLoadingRunId(null);
+      }
     }
-  }, [apiClient, graph, lookup, messageId]);
+  }, [
+    apiClient,
+    clearSiblingOverlays,
+    graph,
+    isCurrentOverlayRequest,
+    lookup,
+    messageId,
+    nextOverlayRequestSequence,
+  ]);
 
   const retryTask = useCallback(async (
     task: MessageTaskRunnerTask,
@@ -304,13 +407,12 @@ export function useMessageTaskGraph({
     const taskId = readString(task.id);
     const runId = readString(task.last_run_id);
     const status = readString(task.status)?.toLowerCase();
-    if (
-      !taskId
-      || !runId
-      || !status
-      || !['failed', 'blocked'].includes(status)
-      || retryingTaskId
-    ) {
+    if (!taskId || !runId || !status || !['failed', 'blocked'].includes(status)) {
+      setRetryError('当前任务缺少可重试的运行记录，请刷新任务流程后重试。');
+      return false;
+    }
+    if (retryingTaskId) {
+      setRetryError('另一个任务节点正在重新处理，请等待其提交完成后再试。');
       return false;
     }
     const source = buildTaskSourceLookup({
@@ -320,6 +422,7 @@ export function useMessageTaskGraph({
       fallbackLookup: lookup,
     });
     setRetryingTaskId(taskId);
+    setRetryError(null);
     setError(null);
     try {
       const response = await retryMessageTaskRunnerRun(
@@ -341,9 +444,12 @@ export function useMessageTaskGraph({
           : current
       ));
       await reloadGraph();
+      setRetryError(null);
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重试任务节点失败');
+      const message = err instanceof Error ? err.message : '重试任务节点失败';
+      setRetryError(message);
+      setError(message);
       return false;
     } finally {
       setRetryingTaskId(null);
@@ -354,10 +460,14 @@ export function useMessageTaskGraph({
     task: MessageTaskRunnerTask,
     source: TaskSourceLookup,
     file: MessageTaskRunnerFileChange,
+    requestSequence = overlayRequestSequenceRef.current,
   ) => {
     const runId = readString(task.last_run_id);
     const path = readString(file.path);
     if (!runId || !path) {
+      return;
+    }
+    if (!isCurrentOverlayRequest(requestSequence)) {
       return;
     }
     setSelectedChangePath(path);
@@ -371,20 +481,31 @@ export function useMessageTaskGraph({
         path,
         source.lookup,
       );
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setOutputDiff(diff);
     } catch (err) {
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setOutputDiff(null);
       setError(err instanceof Error ? err.message : '读取文件 diff 失败');
     } finally {
-      setLoadingDiffPath(null);
+      if (isCurrentOverlayRequest(requestSequence)) {
+        setLoadingDiffPath(null);
+      }
     }
-  }, [apiClient]);
+  }, [apiClient, isCurrentOverlayRequest]);
 
   const openChanges = useCallback(async (task: MessageTaskRunnerTask) => {
     const runId = readString(task.last_run_id);
     if (!runId) {
       return;
     }
+    const requestSequence = nextOverlayRequestSequence();
+    clearSiblingOverlays('changes');
+    clearChangesOverlay();
     const source = buildTaskSourceLookup({
       task,
       graph,
@@ -393,10 +514,8 @@ export function useMessageTaskGraph({
     });
     setChangesTask(task);
     setChangesSource(source);
-    setOutputChanges(null);
-    setOutputDiff(null);
-    setSelectedChangePath(null);
     setLoadingChangesRunId(runId);
+    setLoadingDiffPath(null);
     setError(null);
     try {
       const changes = await getMessageTaskRunnerRunOutputChanges(
@@ -409,29 +528,49 @@ export function useMessageTaskGraph({
           offset: 0,
         },
       );
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setOutputChanges(changes);
       const firstFile = Array.isArray(changes.files) ? changes.files[0] : null;
       if (firstFile) {
-        await loadChangeDiff(task, source, firstFile);
+        await loadChangeDiff(task, source, firstFile, requestSequence);
       }
     } catch (err) {
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setError(err instanceof Error ? err.message : '读取文件变更失败');
     } finally {
-      setLoadingChangesRunId(null);
+      if (isCurrentOverlayRequest(requestSequence)) {
+        setLoadingChangesRunId(null);
+      }
     }
-  }, [apiClient, graph, loadChangeDiff, lookup, messageId]);
+  }, [
+    apiClient,
+    clearChangesOverlay,
+    clearSiblingOverlays,
+    graph,
+    isCurrentOverlayRequest,
+    loadChangeDiff,
+    lookup,
+    messageId,
+    nextOverlayRequestSequence,
+  ]);
 
   const selectChangeFile = useCallback(async (file: MessageTaskRunnerFileChange) => {
     if (!changesTask || !changesSource) {
       return;
     }
-    await loadChangeDiff(changesTask, changesSource, file);
-  }, [changesSource, changesTask, loadChangeDiff]);
+    const requestSequence = nextOverlayRequestSequence();
+    await loadChangeDiff(changesTask, changesSource, file, requestSequence);
+  }, [changesSource, changesTask, loadChangeDiff, nextOverlayRequestSequence]);
 
   const loadMoreRunEvents = useCallback(async () => {
     if (!runDetail?.events_has_more) {
       return;
     }
+    const requestSequence = overlayRequestSequenceRef.current;
     const runId = readString(runDetail.run?.id);
     if (!runId || loadingRunId === runId) {
       return;
@@ -456,13 +595,29 @@ export function useMessageTaskGraph({
           eventOffset: offset,
         },
       );
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setRunDetail((current) => (current ? mergeRunEventPage(current, detail) : detail));
     } catch (err) {
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
       setError(err instanceof Error ? err.message : '读取更多运行事件失败');
     } finally {
-      setLoadingRunId(null);
+      if (isCurrentOverlayRequest(requestSequence)) {
+        setLoadingRunId(null);
+      }
     }
-  }, [apiClient, graph, loadingRunId, lookup, messageId, runDetail]);
+  }, [
+    apiClient,
+    graph,
+    isCurrentOverlayRequest,
+    loadingRunId,
+    lookup,
+    messageId,
+    runDetail,
+  ]);
 
   useEffect(() => {
     if (!open) {
@@ -473,8 +628,10 @@ export function useMessageTaskGraph({
 
   useEffect(() => {
     if (!open) {
+      nextOverlayRequestSequence();
       setDetailTask(null);
       setProcessTask(null);
+      setProcessRunDetail(null);
       setRunDetail(null);
       setChangesTask(null);
       setChangesSource(null);
@@ -482,9 +639,26 @@ export function useMessageTaskGraph({
       setOutputDiff(null);
       setSelectedChangePath(null);
       setRetryingTaskId(null);
+      setRetryError(null);
       setError(null);
     }
-  }, [open]);
+  }, [nextOverlayRequestSequence, open]);
+
+  useEffect(() => {
+    nextOverlayRequestSequence();
+    setDetailTask(null);
+    setProcessTask(null);
+    setProcessRunDetail(null);
+    setRunDetail(null);
+    clearChangesOverlay();
+    setLoadingProcessTaskId(null);
+    setLoadingRunId(null);
+    setLoadingChangesRunId(null);
+    setLoadingDiffPath(null);
+    setRetryingTaskId(null);
+    setRetryError(null);
+    setError(null);
+  }, [clearChangesOverlay, graphRequestIdentity, nextOverlayRequestSequence]);
 
   return {
     graph,
@@ -495,6 +669,7 @@ export function useMessageTaskGraph({
     error,
     detailTask,
     processTask,
+    processRunDetail,
     loadingProcessTaskId,
     runDetail,
     changesTask,
@@ -505,6 +680,7 @@ export function useMessageTaskGraph({
     loadingChangesRunId,
     loadingDiffPath,
     retryingTaskId,
+    retryError,
     reloadGraph,
     openDetail,
     openProcessLog,
@@ -513,15 +689,27 @@ export function useMessageTaskGraph({
     retryTask,
     selectChangeFile,
     loadMoreRunEvents,
-    closeDetail: () => setDetailTask(null),
-    closeProcessLog: () => setProcessTask(null),
-    closeRun: () => setRunDetail(null),
+    closeDetail: () => {
+      nextOverlayRequestSequence();
+      setDetailTask(null);
+      setRetryError(null);
+    },
+    closeProcessLog: () => {
+      nextOverlayRequestSequence();
+      setProcessTask(null);
+      setProcessRunDetail(null);
+      setLoadingProcessTaskId(null);
+    },
+    closeRun: () => {
+      nextOverlayRequestSequence();
+      setRunDetail(null);
+      setLoadingRunId(null);
+    },
     closeChanges: () => {
-      setChangesTask(null);
-      setChangesSource(null);
-      setOutputChanges(null);
-      setOutputDiff(null);
-      setSelectedChangePath(null);
+      nextOverlayRequestSequence();
+      clearChangesOverlay();
+      setLoadingChangesRunId(null);
+      setLoadingDiffPath(null);
     },
   };
 }

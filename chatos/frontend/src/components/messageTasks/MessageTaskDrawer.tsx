@@ -97,6 +97,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
     error,
     detailTask,
     processTask,
+    processRunDetail,
     runDetail,
     changesTask,
     outputChanges,
@@ -107,6 +108,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
     loadingChangesRunId,
     loadingDiffPath,
     retryingTaskId,
+    retryError,
     reloadGraph,
     openDetail,
     openProcessLog,
@@ -440,11 +442,16 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
       <MessageTaskDetailModal
         task={detailTask}
         relatedTasks={allTasks}
-        retrying={Boolean(detailTask && retryingTaskId === detailTask.id)}
+        retrying={Boolean(retryingTaskId)}
+        retryError={retryError}
         onRetry={retryTask}
         onClose={closeDetail}
       />
-      <MessageTaskProcessLogModal task={processTask} onClose={closeProcessLog} />
+      <MessageTaskProcessLogModal
+        task={processTask}
+        runDetail={processRunDetail}
+        onClose={closeProcessLog}
+      />
       <MessageTaskRunDetailModal
         detail={runDetail}
         messageId={message.id}

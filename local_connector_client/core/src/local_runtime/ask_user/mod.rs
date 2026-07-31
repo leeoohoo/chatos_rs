@@ -7,7 +7,6 @@ mod store;
 
 pub(crate) use provider::LocalAskUserProvider;
 pub(crate) use registry::LocalAskUserPromptRegistry;
-pub(in crate::local_runtime) use store::LocalAskUserStore;
 
 #[cfg(test)]
 mod tests;

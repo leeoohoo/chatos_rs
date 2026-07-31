@@ -427,13 +427,14 @@ mod tests {
     fn builtin_prompt_methods_use_configured_and_effective_builtin_state() {
         let options = BuiltinMcpServerOptions::new(".");
         let mut executor = McpExecutor::builder()
-            .with_builtin_kinds([BuiltinMcpKind::TaskManager], &options)
+            .with_builtin_kinds([BuiltinMcpKind::AskUser], &options)
             .build();
 
         let raw_prompt = executor
             .compose_builtin_mcp_system_prompt(BuiltinMcpPromptLocale::ZhCn)
             .expect("raw builtin prompt");
-        assert!(raw_prompt.contains("`task_manager_add_task`"));
+        assert!(raw_prompt.contains("`ask_user_prompt_choices`"));
+        assert!(!raw_prompt.contains("task_manager"));
 
         executor.init_builtin_only().expect("builtin init");
         assert!(executor.available_tools().is_empty());

@@ -357,6 +357,8 @@ export interface ProjectRuntimeEnvironmentRecordResponse {
   analysisSummary?: string | null;
   not_runnable_reason?: string | null;
   notRunnableReason?: string | null;
+  execution_service_id?: string | null;
+  executionServiceId?: string | null;
   detected_stack?: unknown;
   detectedStack?: unknown;
   required_services?: unknown;
@@ -396,8 +398,20 @@ export interface ProjectRuntimeEnvironmentImageResponse {
   displayName?: string;
   service_id?: string;
   serviceId?: string;
-  service_role?: 'application' | 'dependency' | 'unknown' | string;
-  serviceRole?: 'application' | 'dependency' | 'unknown' | string;
+  service_role?: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown' | string;
+  serviceRole?: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown' | string;
+  source_root?: string;
+  sourceRoot?: string;
+  component_kind?: string;
+  componentKind?: string;
+  startup_command?: string | null;
+  startupCommand?: string | null;
+  test_command?: string | null;
+  testCommand?: string | null;
+  depends_on?: string[];
+  dependsOn?: string[];
+  auto_start?: boolean;
+  autoStart?: boolean;
   mcp_policy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
   mcpPolicy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
   image_id?: string | null;
@@ -424,7 +438,7 @@ export interface ProjectRuntimeEnvironmentImageResponse {
 export interface ProjectRuntimeEnvironmentMcpPolicyResponse {
   managed_by?: 'system' | string;
   managedBy?: 'system' | string;
-  attachment?: 'project_gateway_target' | 'none' | string;
+  attachment?: 'workspace_gateway_target' | 'project_gateway_target' | 'none' | string;
   filesystem?: boolean;
   terminal?: boolean;
 }
@@ -468,6 +482,8 @@ export interface UpdateProjectRuntimeEnvironmentSettingsPayload {
 export interface AnalyzeProjectRuntimeEnvironmentPayload {
   analysis_requirement?: string;
   analysisRequirement?: string;
+  selected_dependencies?: string[];
+  selectedDependencies?: string[];
 }
 
 export interface ProjectContactLinkResponse {

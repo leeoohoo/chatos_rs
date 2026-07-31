@@ -151,8 +151,6 @@ export const zhCNManagementMessages: MessageDictionary = {
   'agentManager.form.descriptionPlaceholder': '补充用途和边界',
   'agentManager.form.roleDefinition': '角色定义',
   'agentManager.form.roleDefinitionPlaceholder': '描述这个智能体的职责、行为边界和输出风格',
-  'agentManager.form.pluginSources': '插件引用',
-  'agentManager.form.skillIds': '技能引用',
   'agentManager.form.enabled': '启用',
   'agentManager.form.submitCreate': '创建智能体',
   'agentManager.form.submitEdit': '保存修改',

@@ -162,6 +162,7 @@ impl SandboxManager {
         }
         let expired_pending = self.store.list_expired_pending(now.as_str(), 100).await?;
         for mut record in expired_pending {
+            let environment_lease = record.lease_kind == "environment";
             record.status = SandboxStatus::Expired;
             record.updated_at = now_rfc3339();
             record.last_error = Some("queued lease expired".to_string());
@@ -174,6 +175,9 @@ impl SandboxManager {
                 None,
             )
             .await;
+            if environment_lease {
+                let _ = self.store.release_active_slot(record.id.as_str()).await;
+            }
         }
         if let Err(err) = self.promote_pending_leases().await {
             tracing::warn!("promote pending sandboxes after cleanup failed: {}", err);

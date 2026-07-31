@@ -76,6 +76,7 @@ pub struct UpdateProjectRuntimeEnvironmentSettingsRequest {
 #[derive(Debug, Default, Serialize)]
 pub struct AnalyzeProjectRuntimeEnvironmentRequest {
     pub analysis_requirement: Option<String>,
+    pub selected_dependencies: Vec<String>,
 }
 
 pub async fn list_project_service_projects(

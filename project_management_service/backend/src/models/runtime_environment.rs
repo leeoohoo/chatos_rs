@@ -74,8 +74,10 @@ pub enum RuntimeEnvironmentVariableSource {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeServiceRole {
+    Workspace,
     Application,
     Dependency,
+    Artifact,
     #[default]
     Unknown,
 }
@@ -90,7 +92,8 @@ pub enum RuntimeMcpPolicyManager {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeMcpAttachment {
-    ProjectGatewayTarget,
+    #[serde(rename = "workspace_gateway_target", alias = "project_gateway_target")]
+    WorkspaceGatewayTarget,
     #[default]
     None,
 }
@@ -119,10 +122,10 @@ impl Default for ProgramManagedMcpPolicy {
 }
 
 impl ProgramManagedMcpPolicy {
-    pub fn application_target() -> Self {
+    pub fn workspace_target() -> Self {
         Self {
             managed_by: RuntimeMcpPolicyManager::System,
-            attachment: RuntimeMcpAttachment::ProjectGatewayTarget,
+            attachment: RuntimeMcpAttachment::WorkspaceGatewayTarget,
             filesystem: true,
             terminal: true,
         }
@@ -194,6 +197,8 @@ pub struct ProjectRuntimeEnvironmentRecord {
     pub file_provider: RuntimeEnvironmentProvider,
     pub analysis_summary: Option<String>,
     pub not_runnable_reason: Option<String>,
+    #[serde(default, alias = "primary_service_id")]
+    pub execution_service_id: Option<String>,
     #[serde(default = "empty_object")]
     pub detected_stack: Value,
     #[serde(default = "empty_array")]
@@ -221,6 +226,18 @@ pub struct ProjectRuntimeEnvironmentImageRecord {
     pub service_id: String,
     #[serde(default)]
     pub service_role: RuntimeServiceRole,
+    #[serde(default = "default_workspace_root")]
+    pub source_root: String,
+    #[serde(default)]
+    pub component_kind: String,
+    #[serde(default)]
+    pub startup_command: Option<String>,
+    #[serde(default)]
+    pub test_command: Option<String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub auto_start: bool,
     #[serde(default)]
     pub mcp_policy: ProgramManagedMcpPolicy,
     pub image_id: Option<String>,
@@ -282,6 +299,8 @@ pub struct UpdateProjectRuntimeEnvironmentVariablesRequest {
 pub struct AnalyzeProjectRuntimeEnvironmentRequest {
     #[serde(default, alias = "analysisRequirement")]
     pub analysis_requirement: Option<String>,
+    #[serde(default, alias = "selectedDependencies")]
+    pub selected_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -292,6 +311,10 @@ pub struct ProjectRuntimeEnvironmentVariableOverride {
 
 pub fn empty_object() -> Value {
     json!({})
+}
+
+fn default_workspace_root() -> String {
+    ".".to_string()
 }
 
 pub fn empty_array() -> Value {

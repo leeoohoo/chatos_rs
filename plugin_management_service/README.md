@@ -53,19 +53,34 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 ## 主要 API
 
 - `/api/mcps`
-- `/api/skills`
-- `/api/skill-packages`
+- `/api/skills`（只读兼容；创建、修改和删除统一通过 Plugin Release）
+- `/api/skill-packages`（只读兼容；旧写接口已移除）
 - `/api/system-agents`
 - `/api/system-agents/:agent_key/mcp-bindings`
 - `/api/plugin-marketplaces`
 - `/api/plugin-marketplaces/:marketplace_id/sync`
+- `/api/plugin-publishers`
 - `/api/admin/plugin-marketplaces`
+- `PATCH /api/admin/plugin-marketplaces/:marketplace_id`
 - `/api/admin/plugin-marketplaces/:marketplace_id/sync`
+- `/api/admin/plugin-publishers`
+- `PATCH /api/admin/plugin-publishers/:publisher_record_id/review`
 - `/api/admin/plugins`
 - `/api/admin/plugins/:plugin_id/releases`
+- `/api/admin/plugin-audit`
 - `/api/runtime/agent-capabilities`
 
 可信网络 Marketplace 的 Catalog 同步同时支持 owner/管理员手动触发和后台定时触发。Catalog 只允许无 credential/fragment 的 HTTPS URL，抓取时禁用 redirect 与系统代理、阻断非公网 DNS 地址，并在写入前验证 Catalog/Release Ed25519 签名、显式 key usage、密钥轮换/撤销、单调 revision/issued_at、Release 不可变性和 artifact URL。personal Marketplace 的 Catalog 和安装源在服务端强制绑定 owner；Local Connector 列表与 exact artifact 代理都会传递并重新校验同一个 effective owner ID，不能通过猜测 Plugin/Release ID 读取其他用户的 private 来源。
+
+`super_admin` 可通过 Marketplace 编辑入口更新名称、HTTPS Catalog URL、enabled/trust 状态和 trust root。签名 key 采用失败关闭的两阶段轮换：先加入 successor key，再把旧 key 标记 `revoked_at`；非 revoked key 不可直接删除，key ID 对应的 publisher、算法、公钥、usage 和 `valid_from` 不可替换，`valid_until` 只能缩短，已有 revocation 不可撤销或改写。下一次更新才可移除已 revoked 的旧 key；可信网络 Marketplace 始终至少保留一个未撤销的 Catalog key。更新使用旧 Marketplace snapshot 做并发比较，Catalog 同步或其他管理员已修改时返回冲突，要求刷新后重试；审计仅记录 key ID 的 added/revoked/removed 集合，不记录公钥内容。
+
+公开可信的 Admin Marketplace 还支持发布者入驻审核。普通用户可提交 publisher ID、名称、HTTPS 网站和 1-32 个 active Ed25519 Release-only 签名 key；服务端强制 key 的 publisher ID 与申请身份一致，pending/approved/suspended 记录不能自行覆盖，rejected 可重新提交。`super_admin` 可审核通过、拒绝、暂停或恢复发布者；通过时会把审核过的 Release key 合并进 Marketplace trust root，并复用 Marketplace snapshot compare-and-replace 与 key progression 校验。管理员手工创建 Plugin Catalog Entry 和 Release 时必须匹配已审核通过的 publisher 身份与 Release key；外部 signed Catalog 同步和 bundled official Registry 不走人工审核入口。publisher 审计只记录 key ID 和决策状态，不记录公钥内容。
+
+第三方发布者接入、CircleCI/Sentry/Build Web 示例 Manifest、发布验收和运维边界见 [第三方 Plugin 发布与接入手册](../docs/plugins/third-party-plugin-publishing.zh-CN.md)。用户安装、诊断、审计、部署和日常排障见 [Plugin 用户与运维手册](../docs/plugins/plugin-operations-user-guide.zh-CN.md)。
+
+`super_admin` 可通过审计诊断页面只读查看 Plugin Marketplace、Catalog、Release、发布者审核、安装来源、OAuth 和用户偏好等事件。查询支持按 event、plugin_id、owner_user_id 和 device_id 过滤；前端只展示服务端已脱敏的审计投影，不回显签名公钥、凭据、Hook stdout/stderr、工具 payload 或用户文件内容。
+
+普通用户和管理员均可通过安装诊断页面按 `device_id` 只读查看当前登录用户的 Plugin installation、component availability 和 OAuth connection 状态，并导出默认脱敏的诊断 JSON。该导出不包含 owner/device 原值、OAuth account display、错误原文、token、屏幕/浏览器内容或用户文件内容。
 
 系统 agent 的 MCP 配置只有三种状态：
 
@@ -73,9 +88,9 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 - `optional`：该 agent 可以按需调用。
 - `required`：该 agent 默认必须携带。
 
-项目来源和运行提供方不属于绑定配置。具体 MCP 在运行时根据项目上下文自行选择云端、本机或其他子实现。
+项目来源仍通过运行上下文条件收口；Task Runner 的运行提供方则拆成独立系统 agent，让云端与本地任务在插件管理中分别维护 MCP / skills 能力边界。具体工具实现（云端服务、本机 Local Connector、或其他 host）由程序按 agent key 与运行平面解析，模型不需要知道底层连接方式。
 
-Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，但使用独立的 Agent 身份、Prompt 与 MCP/skills 能力边界。纯规划任务进入 `task_runner_plan_phase`，工程执行任务进入 `task_runner_run_phase`。
+Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，但按运行平面使用独立的 Agent 身份、Prompt 与 MCP/skills 能力边界。云端纯规划任务进入 `task_runner_plan_phase`，云端工程执行任务进入 `task_runner_run_phase`；本地纯规划任务进入 `task_runner_local_plan_phase`，本地工程执行任务进入 `task_runner_local_run_phase`。
 
 ## 当前系统 Agent
 
@@ -83,12 +98,14 @@ Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker�
 
 - `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
 - `chatos_planning_agent`：Chat OS 规划智能体。必需使用 `task_runner_service`，并将 Task Runner 切换到 `chatos_plan` profile。
-- `task_runner_plan_phase`：Task Runner 规划任务智能体。使用只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
-- `task_runner_run_phase`：Task Runner 执行任务智能体。负责代码修改、终端执行、测试、部署及工程验收。
+- `task_runner_plan_phase`：Task Runner 云端规划任务智能体。使用云端可用的只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
+- `task_runner_local_plan_phase`：Task Runner 本地规划任务智能体。使用 Local Connector 可执行的本地规划 MCP 配置，不复用云端规划能力。
+- `task_runner_run_phase`：Task Runner 云端执行任务智能体。负责云端代码修改、终端执行、测试、部署及工程验收。
+- `task_runner_local_run_phase`：Task Runner 本地执行任务智能体。负责 Local Connector 上的本地代码修改、终端执行、测试及工程验收，不复用云端执行能力。
 - `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、`project_environment`、`sandbox_images`。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 
-Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。Task Runner 根据 `task_profile=chatos_plan && requires_execution=false` 路由到 `task_runner_plan_phase`；其他任务进入 `task_runner_run_phase`。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
+Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。Task Runner 根据 `task_profile=chatos_plan && requires_execution=false` 以及运行提供方路由到云端/本地规划 agent；其他任务进入云端/本地执行 agent。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
 
 ## 环境变量
 

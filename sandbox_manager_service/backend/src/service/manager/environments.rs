@@ -31,9 +31,10 @@ mod support;
 
 use self::support::{
     backend_environment_service_spec, ensure_mcp_target, ensure_terminal_target,
-    environment_backend_error, resolve_primary_service_id, validate_application_service,
+    environment_backend_error, resolve_execution_service_id, validate_application_service,
     validate_dependency_service, validate_environment_identity, validate_environment_values,
-    validate_service_id, PreparedEnvironmentService, MAX_ENVIRONMENT_SERVICES,
+    validate_service_id, validate_workspace_service, PreparedEnvironmentService,
+    MAX_ENVIRONMENT_SERVICES,
 };
 
 impl SandboxManager {
@@ -102,14 +103,13 @@ impl SandboxManager {
         resource_limits.max_processes = resource_limits.max_processes.max(16);
         let network = input.network.unwrap_or_default();
         validate_requested_network_policy(&self.config, &network)?;
-        let capacity_claim_until = (Utc::now() + ChronoDuration::minutes(5)).to_rfc3339();
         let acquired = self
             .store
             .try_acquire_active_slot(
                 self.pool.max_active(),
                 lease_id.as_str(),
                 environment_id.as_str(),
-                capacity_claim_until.as_str(),
+                expires_at.as_str(),
             )
             .await
             .map_err(ApiError::internal)?;
@@ -137,7 +137,7 @@ impl SandboxManager {
             network,
             tools: vec!["filesystem".to_string(), "terminal".to_string()],
             lease_kind: "environment".to_string(),
-            primary_service_id: None,
+            execution_service_id: None,
             environment_services: Vec::new(),
             agent_token_nonce: Some(Uuid::new_v4().simple().to_string()),
             idempotency_key,
@@ -194,14 +194,14 @@ impl SandboxManager {
                 ));
             }
             if let Some(requested) = input
-                .primary_service_id
+                .execution_service_id
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                if record.primary_service_id.as_deref() != Some(requested) {
+                if record.execution_service_id.as_deref() != Some(requested) {
                     return Err(ApiError::bad_request(
-                        "restarting a stopped environment cannot change primary_service_id",
+                        "restarting a stopped environment cannot change execution_service_id",
                     ));
                 }
             }
@@ -228,13 +228,16 @@ impl SandboxManager {
                 }
             }
             record.backend_id = instance.backend_id;
-            record.agent_endpoint = record.primary_service_id.as_deref().and_then(|service_id| {
-                record
-                    .environment_services
-                    .iter()
-                    .find(|service| service.service_id == service_id)
-                    .and_then(|service| service.agent_endpoint.clone())
-            });
+            record.agent_endpoint = record
+                .execution_service_id
+                .as_deref()
+                .and_then(|service_id| {
+                    record
+                        .environment_services
+                        .iter()
+                        .find(|service| service.service_id == service_id)
+                        .and_then(|service| service.agent_endpoint.clone())
+                });
             record.status = SandboxStatus::Ready;
             record.last_error = None;
             record.updated_at = now_rfc3339();
@@ -252,11 +255,13 @@ impl SandboxManager {
             return Ok(self.environment_response(&record));
         }
         let prepared = self.prepare_environment_services(input.services).await?;
-        let primary_service_id =
-            resolve_primary_service_id(input.primary_service_id.as_deref(), prepared.as_slice())?;
+        let execution_service_id = resolve_execution_service_id(
+            input.execution_service_id.as_deref(),
+            prepared.as_slice(),
+        )?;
         let agent_token = self.agent_token_for_record(&record);
         record.status = SandboxStatus::Starting;
-        record.primary_service_id = Some(primary_service_id.clone());
+        record.execution_service_id = Some(execution_service_id.clone());
         record.last_error = None;
         record.updated_at = now_rfc3339();
         self.store
@@ -268,7 +273,7 @@ impl SandboxManager {
             "environment_starting",
             Some("building and starting sandbox environment services"),
             Some(json!({
-                "primary_service_id": primary_service_id,
+                "execution_service_id": execution_service_id,
                 "service_ids": prepared.iter().map(|service| service.input.service_id.as_str()).collect::<Vec<_>>(),
             })),
         )
@@ -295,6 +300,7 @@ impl SandboxManager {
                 record.last_error = Some(error.clone());
                 record.updated_at = now_rfc3339();
                 let _ = self.store.replace_lease(&record).await;
+                let _ = self.store.release_active_slot(record.id.as_str()).await;
                 self.event(&record, "environment_start_failed", Some(&error), None)
                     .await;
                 return Err(ApiError::with_code(
@@ -333,7 +339,7 @@ impl SandboxManager {
         record.agent_endpoint = record
             .environment_services
             .iter()
-            .find(|service| service.service_id == primary_service_id)
+            .find(|service| service.service_id == execution_service_id)
             .and_then(|service| service.agent_endpoint.clone());
         record.status = SandboxStatus::Ready;
         record.updated_at = now_rfc3339();
@@ -345,7 +351,7 @@ impl SandboxManager {
             &record,
             "environment_ready",
             Some("sandbox environment is ready"),
-            Some(json!({ "primary_service_id": primary_service_id })),
+            Some(json!({ "execution_service_id": execution_service_id })),
         )
         .await;
         Ok(self.environment_response(&record))
@@ -477,7 +483,7 @@ impl SandboxManager {
         let service_id = service_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .or(record.primary_service_id.as_deref())
+            .or(record.execution_service_id.as_deref())
             .ok_or_else(|| ApiError::bad_request("environment service_id is required"))?;
         let service = record
             .environment_services
@@ -517,6 +523,17 @@ impl SandboxManager {
             input.service_role = input.service_role.trim().to_ascii_lowercase();
             validate_environment_values(&input.environment)?;
             let image_ref = match input.service_role.as_str() {
+                "workspace" => {
+                    validate_workspace_service(&input)?;
+                    let image = images::resolve_for_create(
+                        &self.config,
+                        self.config.backend,
+                        input.image_id.as_deref(),
+                    )
+                    .await
+                    .map_err(ApiError::bad_request)?;
+                    image.image_ref
+                }
                 "application" => {
                     validate_application_service(&input)?;
                     let image = images::resolve_for_create(
@@ -544,12 +561,14 @@ impl SandboxManager {
             };
             prepared.push(PreparedEnvironmentService { input, image_ref });
         }
-        if !prepared
-            .iter()
-            .any(|service| service.input.service_role == "application")
-        {
+        if !prepared.iter().any(|service| {
+            matches!(
+                service.input.service_role.as_str(),
+                "workspace" | "application"
+            )
+        }) {
             return Err(ApiError::bad_request(
-                "environment must contain at least one application service",
+                "environment must contain one workspace service",
             ));
         }
         Ok(prepared)
@@ -582,7 +601,7 @@ impl SandboxManager {
             status: record.status,
             run_workspace: record.run_workspace.clone(),
             expires_at: record.expires_at.clone(),
-            primary_service_id: record.primary_service_id.clone(),
+            execution_service_id: record.execution_service_id.clone(),
             agent_endpoint: record.agent_endpoint.clone(),
             services: record.environment_services.clone(),
             agent_token: self.agent_token_for_record(record),

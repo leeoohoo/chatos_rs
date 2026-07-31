@@ -98,7 +98,7 @@ impl CodeMaintainerService {
         };
 
         let workspace_note = format!(
-            "Workspace root: {}. Paths must stay inside this directory.",
+            "Current project workspace root: {}. Paths must stay inside this workspace.",
             root.display()
         );
         let writes_note = if opts.allow_writes {

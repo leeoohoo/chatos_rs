@@ -32,54 +32,53 @@ pub(in crate::local_runtime) async fn seed_chat_capabilities(
             ))
             .await?;
     }
-    let execution_mcps = [
-        BuiltinMcpKind::CodeMaintainerRead,
-        BuiltinMcpKind::CodeMaintainerWrite,
-        BuiltinMcpKind::TerminalController,
-        BuiltinMcpKind::BrowserTools,
-        BuiltinMcpKind::TaskManager,
-        BuiltinMcpKind::ProjectManagement,
-        BuiltinMcpKind::AskUser,
-    ]
-    .into_iter()
-    .map(|kind| {
-        resolved_builtin(
-            SystemAgentKey::TaskRunnerRunPhase,
-            kind,
-            matches!(kind, BuiltinMcpKind::TaskManager | BuiltinMcpKind::AskUser),
-        )
-    })
-    .collect();
-    database
-        .save_capability_snapshot(&capabilities(
-            owner_user_id,
-            SystemAgentKey::TaskRunnerRunPhase,
-            execution_mcps,
-        ))
-        .await?;
-    let planning_mcps = [
-        BuiltinMcpKind::CodeMaintainerRead,
-        BuiltinMcpKind::TaskManager,
-        BuiltinMcpKind::ProjectManagement,
-        BuiltinMcpKind::BrowserTools,
-        BuiltinMcpKind::AskUser,
-    ]
-    .into_iter()
-    .map(|kind| {
-        resolved_builtin(
-            SystemAgentKey::TaskRunnerPlanPhase,
-            kind,
-            matches!(kind, BuiltinMcpKind::TaskManager | BuiltinMcpKind::AskUser),
-        )
-    })
-    .collect();
-    database
-        .save_capability_snapshot(&capabilities(
-            owner_user_id,
-            SystemAgentKey::TaskRunnerPlanPhase,
-            planning_mcps,
-        ))
-        .await
+    for agent_key in [
+        SystemAgentKey::TaskRunnerRunPhase,
+        SystemAgentKey::TaskRunnerLocalRunPhase,
+    ] {
+        let execution_mcps = [
+            BuiltinMcpKind::CodeMaintainerRead,
+            BuiltinMcpKind::CodeMaintainerWrite,
+            BuiltinMcpKind::TerminalController,
+            BuiltinMcpKind::BrowserTools,
+            BuiltinMcpKind::ProjectManagement,
+            BuiltinMcpKind::AskUser,
+        ]
+        .into_iter()
+        .map(|kind| resolved_builtin(agent_key, kind, matches!(kind, BuiltinMcpKind::AskUser)))
+        .chain(std::iter::once(resolved_system_mcp(
+            agent_key,
+            chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,
+            true,
+        )))
+        .collect();
+        database
+            .save_capability_snapshot(&capabilities(owner_user_id, agent_key, execution_mcps))
+            .await?;
+    }
+    for agent_key in [
+        SystemAgentKey::TaskRunnerPlanPhase,
+        SystemAgentKey::TaskRunnerLocalPlanPhase,
+    ] {
+        let planning_mcps = [
+            BuiltinMcpKind::CodeMaintainerRead,
+            BuiltinMcpKind::ProjectManagement,
+            BuiltinMcpKind::BrowserTools,
+            BuiltinMcpKind::AskUser,
+        ]
+        .into_iter()
+        .map(|kind| resolved_builtin(agent_key, kind, matches!(kind, BuiltinMcpKind::AskUser)))
+        .chain(std::iter::once(resolved_system_mcp(
+            agent_key,
+            chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,
+            true,
+        )))
+        .collect();
+        database
+            .save_capability_snapshot(&capabilities(owner_user_id, agent_key, planning_mcps))
+            .await?;
+    }
+    Ok(())
 }
 
 pub(in crate::local_runtime) async fn grant_required_builtin(
@@ -204,9 +203,19 @@ fn resolved_builtin(
 }
 
 fn resolved_task_runner(agent_key: SystemAgentKey) -> ResolvedMcp {
-    let descriptor = chatos_mcp::system_mcp_descriptor(
+    resolved_system_mcp(
+        agent_key,
         chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
-    );
+        true,
+    )
+}
+
+fn resolved_system_mcp(
+    agent_key: SystemAgentKey,
+    key: chatos_plugin_management_sdk::SystemMcpKey,
+    required: bool,
+) -> ResolvedMcp {
+    let descriptor = chatos_mcp::system_mcp_descriptor(key);
     ResolvedMcp {
         resource: McpRecord {
             id: descriptor.resource_id.to_string(),
@@ -240,7 +249,7 @@ fn resolved_task_runner(agent_key: SystemAgentKey) -> ResolvedMcp {
             resource_kind: "mcp".to_string(),
             resource_id: descriptor.resource_id.to_string(),
             enabled: true,
-            required: true,
+            required,
             priority: 0,
             conditions: BindingConditions::default(),
             component_allowlist: Vec::new(),
@@ -345,22 +354,30 @@ async fn conversation_and_planning_agents_do_not_inherit_task_runner_file_permis
             .contains(&BuiltinMcpKind::ProjectManagement));
     }
 
-    let task_runner = resolve_local_chat_capabilities(
-        &database,
-        "user-1",
-        &settings,
-        &LocalState::default(),
-        &request,
-        SystemAgentKey::TaskRunnerRunPhase,
-        true,
-        false,
-        Vec::new(),
-    )
-    .await
-    .expect("resolve Task Runner capability");
-    assert!(task_runner
-        .builtin_kinds
-        .contains(&BuiltinMcpKind::CodeMaintainerRead));
+    for agent_key in [
+        SystemAgentKey::TaskRunnerLocalPlanPhase,
+        SystemAgentKey::TaskRunnerLocalRunPhase,
+    ] {
+        let task_runner = resolve_local_chat_capabilities(
+            &database,
+            "user-1",
+            &settings,
+            &LocalState::default(),
+            &request,
+            agent_key,
+            true,
+            false,
+            Vec::new(),
+        )
+        .await
+        .expect("resolve local Task Runner capability");
+        assert!(task_runner
+            .builtin_kinds
+            .contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(task_runner
+            .host_system_mcps
+            .contains(&chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog));
+    }
 
     database.close().await;
     std::fs::remove_dir_all(root).expect("cleanup local capability database");

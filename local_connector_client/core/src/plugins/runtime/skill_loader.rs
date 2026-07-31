@@ -12,6 +12,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::skill_document::{extract_references, parse_skill_document, resolve_reference_path};
+use super::{mcp_adapter::load_verified_manifest, portable_bundle::validate_local_portable_bundle};
 use crate::plugins::{ActivePluginInstallation, PluginInstaller};
 use crate::skills::{
     internal_skill_bundle_hash, internal_skill_catalog, internal_skill_instructions,
@@ -169,6 +170,37 @@ impl PluginSkillLoader {
             .with_context(|| {
                 format!("Plugin Skill is not present in the active component: {skill_key}")
             })
+    }
+
+    pub(super) fn validate_component_content_snapshot(
+        &self,
+        plugin_id: &str,
+        component_key: &str,
+        expected_content_sha256: Option<&str>,
+    ) -> Result<()> {
+        let installation = self
+            .installer
+            .active_installation(plugin_id)?
+            .context("Plugin is not installed and active")?;
+        let component = installation
+            .version
+            .inventory
+            .components
+            .iter()
+            .find(|component| component.component_key == component_key)
+            .context("Plugin Skill component is missing from the signed installation inventory")?;
+        match component.execution_host {
+            chatos_plugin_management_sdk::PluginExecutionHost::Local => return Ok(()),
+            chatos_plugin_management_sdk::PluginExecutionHost::Cloud => {
+                bail!("cloud-only Plugin Skill cannot execute through Local Connector")
+            }
+            chatos_plugin_management_sdk::PluginExecutionHost::Portable => {}
+        }
+        let expected = expected_content_sha256
+            .context("portable Plugin Skill is missing its immutable Bundle SHA-256")?;
+        let manifest = load_verified_manifest(&installation)?;
+        validate_local_portable_bundle(&installation, &manifest, component_key, expected)?;
+        Ok(())
     }
 
     pub fn load_text_resource(

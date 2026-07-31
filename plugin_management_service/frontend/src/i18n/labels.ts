@@ -39,11 +39,6 @@ export function resourceKindLabel(value: string, t: Translate): string {
   return t(`resource.${value}`);
 }
 
-export function sourceKindLabel(value: string, t: Translate): string {
-  const translated = t(`sourceKind.${value}`);
-  return translated.startsWith('sourceKind.') ? value : translated;
-}
-
 export function managedByLabel(value: string, t: Translate): string {
   const translated = t(`managed.${value}`);
   return translated.startsWith('managed.') ? value : translated;

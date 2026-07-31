@@ -29,6 +29,7 @@ fn exact_ready_installation_resolves_selected_components() {
         snapshots,
         Vec::new(),
         Some("device-1"),
+        &std::collections::HashSet::new(),
     );
 
     assert!(resolved.available);
@@ -50,6 +51,7 @@ fn missing_device_fails_closed() {
         snapshots,
         Vec::new(),
         None,
+        &std::collections::HashSet::new(),
     );
 
     assert!(!resolved.available);
@@ -73,6 +75,7 @@ fn artifact_hash_mismatch_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
+        &std::collections::HashSet::new(),
     );
 
     assert!(!resolved.available);
@@ -96,6 +99,7 @@ fn missing_component_status_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
+        &std::collections::HashSet::new(),
     );
 
     assert!(!resolved.available);
@@ -117,6 +121,7 @@ fn missing_immutable_component_snapshot_fails_closed() {
         Vec::new(),
         Vec::new(),
         Some("device-1"),
+        &std::collections::HashSet::new(),
     );
 
     assert!(!resolved.available);

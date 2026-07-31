@@ -54,9 +54,9 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             capabilities: &["执行 shell 命令", "读取命令输出", "管理长运行命令会话"],
         },
         BuiltinMcpKind::TaskManager => McpBuiltinKindGuide {
-            description: "任务管理工具，适合在运行过程中拆分、跟踪和维护子任务。",
-            use_cases: &["拆分复杂任务", "跟踪待办", "记录任务进度"],
-            capabilities: &["创建子任务", "更新任务状态", "查询任务列表"],
+            description: "Task Manager builtin MCP 已移除；该 legacy kind 仅用于兼容旧数据解析，不应出现在可选能力里。",
+            use_cases: &[],
+            capabilities: &[],
         },
         BuiltinMcpKind::ProjectManagement => McpBuiltinKindGuide {
             description: "项目管理工具，适合把规划结果写入项目空间，维护需求、技术说明、项目任务和依赖关系。",

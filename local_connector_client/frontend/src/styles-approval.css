@@ -74,6 +74,33 @@
   line-height: 1.5;
 }
 
+.chromeSetupGuide {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 10px 12px;
+}
+
+.chromeSetupGuide strong {
+  color: var(--text);
+  display: block;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.chromeSetupGuide ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.chromeSetupGuide code {
+  color: var(--text);
+  font-size: 10px;
+}
+
 .developerEndpointGrid {
   display: grid;
   gap: 7px;
