@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use axum::response::Response;
 use chatos_plugin_management_sdk::{
-    normalized_plugin_manifest_sha256, PluginCloudComponentBundle, PluginExecutionHost,
-    PluginReleaseRecord,
+    build_plugin_mcp_cloud_runtime_bundle, normalized_plugin_manifest_sha256,
+    plugin_mcp_cloud_runtime_bundle_sha256, PluginCloudComponentBundle, PluginComponentKind,
+    PluginExecutionHost, PluginReleaseRecord,
 };
 use chatos_plugin_package::{
     build_cloud_component_bundles, plugin_cloud_bundle_sha256, verify_plugin_archive_bytes,
@@ -90,6 +91,64 @@ pub(super) async fn get_plugin_cloud_component_bundle_internal(
     Ok(response)
 }
 
+pub(super) async fn get_plugin_mcp_cloud_runtime_bundle_internal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((plugin_id, release_id, component_key)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    let caller = require_internal_caller_service(&headers)?;
+    if caller != "mcp-management-service" {
+        return Err(ApiError::forbidden(
+            "Plugin MCP cloud runtime Bundles require mcp-management-service caller",
+        ));
+    }
+    require_internal_api_secret(&state, &headers, caller, PLUGIN_CLOUD_READ_SCOPE)?;
+    let release = state
+        .store
+        .get_plugin_release(release_id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Plugin Release not found"))?;
+    if release.plugin_id != plugin_id || release.revoked_at.is_some() {
+        return Err(ApiError::conflict(
+            "Plugin Release is revoked or does not match the requested Plugin",
+        ));
+    }
+    let bundle = build_plugin_mcp_cloud_runtime_bundle(&release, component_key.as_str())
+        .map_err(ApiError::conflict)?;
+    if plugin_mcp_cloud_runtime_bundle_sha256(&bundle).map_err(ApiError::internal)?
+        != bundle.bundle_sha256
+    {
+        return Err(ApiError::conflict(
+            "Plugin MCP cloud runtime Bundle failed immutable identity validation",
+        ));
+    }
+    let snapshot = state
+        .store
+        .list_plugin_component_snapshots(plugin_id.as_str(), release_id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|snapshot| snapshot.component.component_key == component_key)
+        .ok_or_else(|| ApiError::conflict("Plugin component snapshot is missing"))?;
+    if snapshot.component != bundle.component || snapshot.content_sha256 != bundle.bundle_sha256 {
+        return Err(ApiError::conflict(
+            "Plugin MCP cloud runtime Bundle does not match the immutable component snapshot",
+        ));
+    }
+    let mut response = Json(bundle).into_response();
+    response.headers_mut().insert(
+        header::ETAG,
+        HeaderValue::from_str(format!("\"{}\"", snapshot.content_sha256).as_str())
+            .map_err(|_| ApiError::internal("Plugin MCP runtime Bundle ETag is invalid"))?,
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    Ok(response)
+}
+
 pub(super) async fn stage_release_cloud_bundles(
     state: &AppState,
     release: &PluginReleaseRecord,
@@ -97,7 +156,15 @@ pub(super) async fn stage_release_cloud_bundles(
     let expected = release
         .components
         .iter()
-        .filter(|component| component.execution_host != PluginExecutionHost::Local)
+        .filter(|component| {
+            component.execution_host != PluginExecutionHost::Local
+                && matches!(
+                    component.kind,
+                    PluginComponentKind::SkillCollection
+                        | PluginComponentKind::Command
+                        | PluginComponentKind::Agent
+                )
+        })
         .count();
     if expected == 0 {
         return Ok(Vec::new());

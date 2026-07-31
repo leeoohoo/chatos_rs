@@ -12,7 +12,9 @@ use crate::plugin_manifest::{
     PluginInterfaceMetadata, PluginManifest, PluginMcpServer, PluginPathRef,
     PluginPermissionRequirement,
 };
-use crate::plugin_signing::{PluginReleaseSignature, SigningKeyRef};
+use crate::plugin_signing::{
+    normalized_plugin_manifest_sha256, PluginReleaseSignature, SigningKeyRef,
+};
 
 mod ui_artifacts;
 
@@ -626,6 +628,116 @@ pub struct PluginCloudComponentBundle {
     pub artifact_sha256: String,
     pub normalized_manifest_sha256: String,
     pub ingested_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginMcpCloudRuntimeBundle {
+    pub plugin_id: String,
+    pub release_id: String,
+    pub version: String,
+    pub artifact_sha256: String,
+    pub normalized_manifest_sha256: String,
+    pub component: PluginComponentDescriptor,
+    pub runtime: PluginMcpServer,
+    pub bundle_sha256: String,
+}
+
+#[derive(Serialize)]
+struct PluginMcpCloudRuntimeBundleHashInput<'a> {
+    purpose: &'static str,
+    plugin_id: &'a str,
+    release_id: &'a str,
+    version: &'a str,
+    artifact_sha256: &'a str,
+    normalized_manifest_sha256: &'a str,
+    component: &'a PluginComponentDescriptor,
+    runtime: &'a PluginMcpServer,
+}
+
+pub fn build_plugin_mcp_cloud_runtime_bundle(
+    release: &PluginReleaseRecord,
+    component_key: &str,
+) -> Result<PluginMcpCloudRuntimeBundle, String> {
+    let component = release
+        .components
+        .iter()
+        .find(|component| component.component_key == component_key)
+        .cloned()
+        .ok_or_else(|| format!("Plugin MCP component is missing: {component_key}"))?;
+    if component.kind != PluginComponentKind::McpServer
+        || component.execution_host == PluginExecutionHost::Local
+    {
+        return Err(format!(
+            "Plugin component is not a cloud-capable MCP Server: {component_key}"
+        ));
+    }
+    let runtime = release
+        .normalized_manifest
+        .mcp_servers
+        .iter()
+        .find(|runtime| runtime.component_key() == component_key)
+        .cloned()
+        .ok_or_else(|| format!("Plugin MCP runtime is missing: {component_key}"))?;
+    let normalized_manifest_sha256 =
+        normalized_plugin_manifest_sha256(&release.normalized_manifest)
+            .map_err(|error| format!("hash normalized Plugin Manifest failed: {error}"))?;
+    let bundle_sha256 = plugin_mcp_cloud_runtime_bundle_sha256_parts(
+        release.plugin_id.as_str(),
+        release.id.as_str(),
+        release.version.as_str(),
+        release.artifact_sha256.as_str(),
+        normalized_manifest_sha256.as_str(),
+        &component,
+        &runtime,
+    )?;
+    Ok(PluginMcpCloudRuntimeBundle {
+        plugin_id: release.plugin_id.clone(),
+        release_id: release.id.clone(),
+        version: release.version.clone(),
+        artifact_sha256: release.artifact_sha256.clone(),
+        normalized_manifest_sha256,
+        component,
+        runtime,
+        bundle_sha256,
+    })
+}
+
+pub fn plugin_mcp_cloud_runtime_bundle_sha256(
+    bundle: &PluginMcpCloudRuntimeBundle,
+) -> Result<String, String> {
+    plugin_mcp_cloud_runtime_bundle_sha256_parts(
+        bundle.plugin_id.as_str(),
+        bundle.release_id.as_str(),
+        bundle.version.as_str(),
+        bundle.artifact_sha256.as_str(),
+        bundle.normalized_manifest_sha256.as_str(),
+        &bundle.component,
+        &bundle.runtime,
+    )
+}
+
+fn plugin_mcp_cloud_runtime_bundle_sha256_parts(
+    plugin_id: &str,
+    release_id: &str,
+    version: &str,
+    artifact_sha256: &str,
+    normalized_manifest_sha256: &str,
+    component: &PluginComponentDescriptor,
+    runtime: &PluginMcpServer,
+) -> Result<String, String> {
+    let payload = PluginMcpCloudRuntimeBundleHashInput {
+        purpose: "chatos.plugin.cloud-mcp-runtime-bundle.v1",
+        plugin_id,
+        release_id,
+        version,
+        artifact_sha256,
+        normalized_manifest_sha256,
+        component,
+        runtime,
+    };
+    serde_json::to_vec(&payload)
+        .map(|bytes| hex::encode(Sha256::digest(bytes)))
+        .map_err(|error| format!("serialize Plugin MCP cloud runtime Bundle failed: {error}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

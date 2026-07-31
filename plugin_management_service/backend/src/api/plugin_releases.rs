@@ -4,7 +4,8 @@
 use std::collections::BTreeMap;
 
 use chatos_plugin_management_sdk::{
-    parse_plugin_manifest, plugin_component_descriptors, verify_plugin_release_signature,
+    build_plugin_mcp_cloud_runtime_bundle, parse_plugin_manifest, plugin_component_descriptors,
+    verify_plugin_release_signature, PluginComponentKind, PluginExecutionHost,
     PluginReleaseVerificationContext,
 };
 use semver::Version;
@@ -134,7 +135,7 @@ pub(super) async fn create_plugin_release(
     };
     let cloud_bundles =
         super::plugin_cloud_bundles::stage_release_cloud_bundles(&state, &release).await?;
-    let component_snapshots = cloud_bundles
+    let mut component_snapshots = cloud_bundles
         .iter()
         .map(|bundle| {
             let component = release
@@ -153,6 +154,20 @@ pub(super) async fn create_plugin_release(
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
+    for component in release.components.iter().filter(|component| {
+        component.kind == PluginComponentKind::McpServer
+            && component.execution_host != PluginExecutionHost::Local
+    }) {
+        let bundle =
+            build_plugin_mcp_cloud_runtime_bundle(&release, component.component_key.as_str())
+                .map_err(ApiError::conflict)?;
+        component_snapshots.push(PluginComponentSnapshot {
+            plugin_id: release.plugin_id.clone(),
+            release_id: release.id.clone(),
+            component: component.clone(),
+            content_sha256: bundle.bundle_sha256,
+        });
+    }
     state
         .store
         .set_plugin_release_publication_ready(release.id.as_str(), false)

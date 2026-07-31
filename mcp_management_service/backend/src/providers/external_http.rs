@@ -9,13 +9,15 @@ use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 use chatos_mcp_service::{
     MCP_ERROR_AUTH_REQUIRED, METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL,
 };
-use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
+use chatos_plugin_management_sdk::{PluginMcpServer, ResolvedAgentCapabilities, ResolvedMcp};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 
-use crate::runtime::{ExternalHttpProviderBinding, RuntimeSessionSnapshot};
+use crate::runtime::{
+    ExternalHttpProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot,
+};
 
 use super::project_service::decode_jsonrpc_response;
 use super::{
@@ -97,8 +99,91 @@ impl ExternalHttpProvider {
         if route.provider_ref.as_deref() != Some(provider_ref.as_str()) {
             return Err("route target does not match the configured resource".to_string());
         }
-        let endpoint =
-            validate_endpoint(resolved.resource.runtime.url.as_deref().unwrap_or_default())?;
+        let endpoint = resolved.resource.runtime.url.as_deref().unwrap_or_default();
+        self.prepare_bound_http(
+            provider_ref,
+            endpoint,
+            &resolved.resource.runtime.headers,
+            route.allow_writes,
+            resolved.resource.security.allowed_tool_names.as_slice(),
+            resolved.resource.security.blocked_tool_names.as_slice(),
+        )
+        .await
+    }
+
+    pub(super) async fn prepare_plugin_binding(
+        &self,
+        immutable: &PluginMcpRuntimeBinding,
+        route: &ResolvedMcpRoute,
+    ) -> Result<ExternalHttpProviderBinding, String> {
+        if route.provider_kind != McpProviderKind::PluginCloud
+            || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
+            || route.resource_id != immutable.resource_id
+            || route.allow_writes != immutable.allow_writes
+        {
+            return Err("Plugin HTTP route does not match its immutable binding".to_string());
+        }
+        let PluginMcpServer::Http {
+            url,
+            headers,
+            oauth_resource,
+            ..
+        } = &immutable.runtime
+        else {
+            return Err("Plugin MCP runtime is not HTTP".to_string());
+        };
+        if oauth_resource.is_some() {
+            return Err(
+                "Plugin HTTP OAuth requires a configured cloud credential resolver".to_string(),
+            );
+        }
+        validate_plugin_literal_headers(headers)?;
+        let endpoint = validate_endpoint(url)?;
+        let host = endpoint
+            .host_str()
+            .ok_or_else(|| "endpoint has no host".to_string())?
+            .to_ascii_lowercase();
+        let permission = format!("network.domain:{host}");
+        if !immutable
+            .permission_snapshot
+            .iter()
+            .any(|configured| configured == &permission)
+        {
+            return Err(format!(
+                "Plugin HTTP MCP requires {permission} in its immutable permission snapshot"
+            ));
+        }
+        let effective_headers = headers
+            .iter()
+            .filter(|(name, _)| {
+                !matches!(
+                    name.trim().to_ascii_lowercase().as_str(),
+                    "accept" | "content-type"
+                )
+            })
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        self.prepare_bound_http(
+            immutable.provider_ref.clone(),
+            url,
+            &effective_headers,
+            route.allow_writes,
+            immutable.tool_allowlist.as_slice(),
+            immutable.tool_blocklist.as_slice(),
+        )
+        .await
+    }
+
+    async fn prepare_bound_http(
+        &self,
+        provider_ref: String,
+        endpoint: &str,
+        configured_header_values: &std::collections::BTreeMap<String, String>,
+        allow_writes: bool,
+        configured_allowed_tools: &[String],
+        configured_blocked_tools: &[String],
+    ) -> Result<ExternalHttpProviderBinding, String> {
+        let endpoint = validate_endpoint(endpoint)?;
         let host = endpoint
             .host_str()
             .ok_or_else(|| "endpoint has no host".to_string())?;
@@ -119,16 +204,12 @@ impl ExternalHttpProvider {
         if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
             return Err("endpoint must resolve only to public network addresses".to_string());
         }
-        let headers = configured_headers(&resolved.resource.runtime.headers)?;
-        let allowed_tool_names = configured_tool_names(
-            resolved.resource.security.allowed_tool_names.as_slice(),
-            "allowed_tool_names",
-        )?;
-        let blocked_tool_names = configured_tool_names(
-            resolved.resource.security.blocked_tool_names.as_slice(),
-            "blocked_tool_names",
-        )?;
-        if !route.allow_writes && allowed_tool_names.is_empty() {
+        let headers = configured_headers(configured_header_values)?;
+        let allowed_tool_names =
+            configured_tool_names(configured_allowed_tools, "allowed_tool_names")?;
+        let blocked_tool_names =
+            configured_tool_names(configured_blocked_tools, "blocked_tool_names")?;
+        if !allow_writes && allowed_tool_names.is_empty() {
             return Err(
                 "read-only endpoint requires an explicit allowed_tool_names policy".to_string(),
             );
@@ -144,7 +225,7 @@ impl ExternalHttpProvider {
             headers,
             http,
             resolved_addresses: addresses,
-            allow_writes: route.allow_writes,
+            allow_writes,
             allowed_tool_names,
             blocked_tool_names,
         })
@@ -180,6 +261,99 @@ impl ExternalHttpProvider {
                 message: "tool is blocked by the External HTTP MCP policy".to_string(),
             });
         }
+        self.call_bound_tool(
+            binding,
+            original_tool_name,
+            arguments,
+            invocation_id,
+            "External HTTP MCP",
+        )
+        .await
+    }
+
+    pub(super) async fn list_tools_for_binding(
+        &self,
+        binding: &ExternalHttpProviderBinding,
+        request_id: &str,
+        provider_label: &str,
+    ) -> Result<Vec<Value>, ProviderCallError> {
+        let response = binding
+            .http
+            .post(binding.endpoint.clone())
+            .headers(binding.headers.clone())
+            .header(CONTENT_TYPE, JSON_CONTENT_TYPE)
+            .header(ACCEPT, JSON_CONTENT_TYPE)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/list",
+                "params": {}
+            }))
+            .send()
+            .await
+            .map_err(|_| {
+                ProviderCallError::provider_unavailable(format!("{provider_label} request failed"))
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|err| {
+                ProviderCallError::invalid_response(format!(
+                    "{provider_label} response could not be read: {err}"
+                ))
+            })?;
+        if !status.is_success() {
+            return Err(if matches!(status.as_u16(), 401 | 403) {
+                ProviderCallError {
+                    code: MCP_ERROR_AUTH_REQUIRED,
+                    message: format!("{provider_label} rejected its configured credentials"),
+                }
+            } else {
+                ProviderCallError::provider_unavailable(format!(
+                    "{provider_label} returned HTTP {}",
+                    status.as_u16()
+                ))
+            });
+        }
+        let result = decode_jsonrpc_response(bytes.as_slice(), request_id, provider_label)?;
+        let tools = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| {
+                ProviderCallError::invalid_response(format!(
+                    "{provider_label} tools/list response has no tools array"
+                ))
+            })?;
+        if tools.iter().any(|tool| {
+            !tool.is_object()
+                || tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+        }) {
+            return Err(ProviderCallError::invalid_response(format!(
+                "{provider_label} tools/list returned an invalid tool definition"
+            )));
+        }
+        Ok(tools)
+    }
+
+    pub(super) async fn call_bound_tool(
+        &self,
+        binding: &ExternalHttpProviderBinding,
+        original_tool_name: &str,
+        arguments: Value,
+        invocation_id: &str,
+        provider_label: &str,
+    ) -> Result<ProviderCallOutcome, ProviderCallError> {
+        if !binding.allows_tool(original_tool_name) {
+            return Err(ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: format!("tool is blocked by the {provider_label} policy"),
+            });
+        }
         let response = binding
             .http
             .post(binding.endpoint.clone())
@@ -198,30 +372,30 @@ impl ExternalHttpProvider {
             .send()
             .await
             .map_err(|_| {
-                ProviderCallError::provider_unavailable("External HTTP MCP request failed")
+                ProviderCallError::provider_unavailable(format!("{provider_label} request failed"))
             })?;
         let status = response.status();
         let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
             .await
             .map_err(|err| {
                 ProviderCallError::invalid_response(format!(
-                    "External HTTP MCP response could not be read: {err}"
+                    "{provider_label} response could not be read: {err}"
                 ))
             })?;
         if !status.is_success() {
             return Err(if matches!(status.as_u16(), 401 | 403) {
                 ProviderCallError {
                     code: MCP_ERROR_AUTH_REQUIRED,
-                    message: "External HTTP MCP rejected its configured credentials".to_string(),
+                    message: format!("{provider_label} rejected its configured credentials"),
                 }
             } else {
                 ProviderCallError::provider_unavailable(format!(
-                    "External HTTP MCP returned HTTP {}",
+                    "{provider_label} returned HTTP {}",
                     status.as_u16()
                 ))
             });
         }
-        let result = decode_jsonrpc_response(bytes.as_slice(), invocation_id, "External HTTP MCP")?;
+        let result = decode_jsonrpc_response(bytes.as_slice(), invocation_id, provider_label)?;
         Ok(ProviderCallOutcome {
             result,
             response_bytes: bytes.len(),
@@ -280,6 +454,30 @@ impl ExternalHttpProvider {
             })?;
         decode_cancel_notification_response(status, bytes.as_slice(), "External HTTP MCP")
     }
+}
+
+fn validate_plugin_literal_headers(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    for (name, value) in headers {
+        let normalized = name.trim().to_ascii_lowercase();
+        if value.contains("${credential:")
+            || !matches!(
+                normalized.as_str(),
+                "accept"
+                    | "accept-language"
+                    | "content-type"
+                    | "mcp-protocol-version"
+                    | "user-agent"
+                    | "x-plugin-client"
+            )
+        {
+            return Err(format!(
+                "Plugin HTTP header {normalized} requires a configured cloud credential resolver"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_endpoint(value: &str) -> Result<reqwest::Url, String> {
@@ -563,6 +761,31 @@ mod tests {
             )]))
             .is_err());
         }
+    }
+
+    #[test]
+    fn plugin_http_headers_fail_closed_without_cloud_credential_resolution() {
+        assert!(
+            validate_plugin_literal_headers(&std::collections::BTreeMap::from([(
+                "x-plugin-client".to_string(),
+                "chatos".to_string(),
+            )]))
+            .is_ok()
+        );
+        assert!(
+            validate_plugin_literal_headers(&std::collections::BTreeMap::from([(
+                "authorization".to_string(),
+                "Bearer ${credential:access_token}".to_string(),
+            )]))
+            .is_err()
+        );
+        assert!(
+            validate_plugin_literal_headers(&std::collections::BTreeMap::from([(
+                "x-custom-auth".to_string(),
+                "static-secret".to_string(),
+            )]))
+            .is_err()
+        );
     }
 
     #[test]

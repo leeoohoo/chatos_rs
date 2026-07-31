@@ -117,7 +117,7 @@ pub(super) async fn resolve_plugin_binding(
             .map_err(ApiError::internal)?,
         None => Vec::new(),
     };
-    let cloud_bundle_keys = match release.as_ref() {
+    let mut cloud_bundle_keys = match release.as_ref() {
         Some(release) => state
             .store
             .list_plugin_cloud_component_bundles(catalog.id.as_str(), release.id.as_str())
@@ -128,6 +128,27 @@ pub(super) async fn resolve_plugin_binding(
             .collect::<HashSet<_>>(),
         None => HashSet::new(),
     };
+    if let Some(release) = release.as_ref() {
+        for component in release.components.iter().filter(|component| {
+            component.kind == PluginComponentKind::McpServer
+                && component.execution_host != PluginExecutionHost::Local
+        }) {
+            let Ok(bundle) = chatos_plugin_management_sdk::build_plugin_mcp_cloud_runtime_bundle(
+                release,
+                component.component_key.as_str(),
+            ) else {
+                continue;
+            };
+            if component_snapshots.iter().any(|snapshot| {
+                snapshot.plugin_id == bundle.plugin_id
+                    && snapshot.release_id == bundle.release_id
+                    && snapshot.component == bundle.component
+                    && snapshot.content_sha256 == bundle.bundle_sha256
+            }) {
+                cloud_bundle_keys.insert(component.component_key.clone());
+            }
+        }
+    }
     let auth_connection_ids = match installation.as_ref() {
         Some(installation) => state
             .store
@@ -547,7 +568,7 @@ fn resolve_components(
                         component: component.clone(),
                         available: false,
                         status: PluginAvailabilityStatus::Unavailable,
-                        reason: Some("immutable cloud Prompt Bundle is missing".to_string()),
+                        reason: Some("immutable cloud runtime Bundle is missing".to_string()),
                     }
                 };
             }

@@ -287,6 +287,38 @@ async fn sync_plugin_marketplace_inner(
                 )));
             }
         }
+        for component in release.components.iter().filter(|component| {
+            component.kind == PluginComponentKind::McpServer
+                && component.execution_host != PluginExecutionHost::Local
+        }) {
+            let bundle = chatos_plugin_management_sdk::build_plugin_mcp_cloud_runtime_bundle(
+                release,
+                component.component_key.as_str(),
+            )
+            .map_err(ApiError::conflict)?;
+            let snapshot = document
+                .component_snapshots
+                .iter()
+                .find(|snapshot| {
+                    snapshot.plugin_id == bundle.plugin_id
+                        && snapshot.release_id == bundle.release_id
+                        && snapshot.component.component_key == bundle.component.component_key
+                })
+                .ok_or_else(|| {
+                    ApiError::conflict(format!(
+                        "Catalog is missing cloud MCP runtime snapshot {}/{}/{}",
+                        bundle.plugin_id, bundle.release_id, bundle.component.component_key
+                    ))
+                })?;
+            if snapshot.component != bundle.component
+                || snapshot.content_sha256 != bundle.bundle_sha256
+            {
+                return Err(ApiError::conflict(format!(
+                    "Catalog cloud MCP snapshot does not match immutable runtime Bundle {}/{}/{}",
+                    bundle.plugin_id, bundle.release_id, bundle.component.component_key
+                )));
+            }
+        }
         staged_cloud_bundles.extend(bundles);
     }
 

@@ -149,6 +149,35 @@ fn portable_host_uses_runtime_project_provider_before_legacy_agent_name() {
     assert!(portable_uses_local(None, "task_runner_local_run_phase"));
 }
 
+#[test]
+fn cloud_mcp_component_uses_immutable_runtime_bundle_without_local_installation() {
+    let mut records = plugin_records();
+    records.release.components[0].execution_host = PluginExecutionHost::Cloud;
+    let snapshots = component_snapshots(&records);
+    let resolved = resolve_plugin_records(
+        records.catalog,
+        Some(records.release),
+        records.binding,
+        None,
+        Some(records.preference),
+        snapshots,
+        Vec::new(),
+        None,
+        &std::collections::HashSet::from(["main".to_string()]),
+        false,
+    );
+
+    assert!(resolved.available);
+    assert_eq!(
+        resolved.components[0].status,
+        PluginAvailabilityStatus::Ready
+    );
+    assert_eq!(
+        resolved.components[0].component.execution_host,
+        PluginExecutionHost::Cloud
+    );
+}
+
 fn component_snapshots(records: &PluginRecords) -> Vec<PluginComponentSnapshot> {
     records
         .release

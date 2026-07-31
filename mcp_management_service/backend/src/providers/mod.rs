@@ -7,6 +7,7 @@ mod cloud_stdio;
 mod embedded;
 mod external_http;
 mod local_connector;
+mod plugin_cloud;
 mod plugin_local;
 mod project_service;
 mod sandbox_images;
@@ -31,6 +32,7 @@ pub(crate) use external_http::{
     header_is_managed_or_unsafe as external_http_header_is_managed_or_unsafe,
 };
 use local_connector::LocalConnectorProvider;
+use plugin_cloud::PluginCloudProvider;
 use plugin_local::PluginLocalProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
@@ -73,6 +75,7 @@ pub enum ProviderCancelOutcome {
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
+    plugin_cloud: PluginCloudProvider,
     plugin_local: PluginLocalProvider,
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
@@ -100,6 +103,16 @@ impl ProviderDispatcher {
     ) -> Result<Self, String> {
         let local_connector_service_base_url = local_connector_service_base_url.into();
         let sandbox_manager_service_base_url = sandbox_manager_service_base_url.into();
+        let cloud_stdio = CloudStdioProvider::new(
+            sandbox_manager_service_base_url.clone(),
+            sandbox_manager_request_timeout,
+            sandbox_manager_internal_secret.clone(),
+            runtime.response_limit_bytes,
+        )?;
+        let external_http = ExternalHttpProvider::new(
+            runtime.external_http_request_timeout,
+            runtime.response_limit_bytes,
+        );
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
                 local_connector_service_base_url.clone(),
@@ -113,6 +126,7 @@ impl ProviderDispatcher {
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
+            plugin_cloud: PluginCloudProvider::new(cloud_stdio.clone(), external_http.clone()),
             project_service: ProjectServiceProvider::new(
                 project_service_base_url,
                 runtime.downstream_request_timeout,
@@ -140,12 +154,7 @@ impl ProviderDispatcher {
                 sandbox_manager_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
-            cloud_stdio: CloudStdioProvider::new(
-                sandbox_manager_service_base_url.clone(),
-                sandbox_manager_request_timeout,
-                sandbox_manager_internal_secret.clone(),
-                runtime.response_limit_bytes,
-            )?,
+            cloud_stdio,
             sandbox_images: SandboxImagesProvider::new(
                 sandbox_manager_service_base_url,
                 sandbox_manager_internal_secret,
@@ -156,10 +165,7 @@ impl ProviderDispatcher {
                 runtime.response_limit_bytes,
             )?,
             embedded: EmbeddedProvider::new(embedded_work_dir, runtime.response_limit_bytes)?,
-            external_http: ExternalHttpProvider::new(
-                runtime.external_http_request_timeout,
-                runtime.response_limit_bytes,
-            ),
+            external_http,
         })
     }
 
@@ -210,6 +216,43 @@ impl ProviderDispatcher {
         self.plugin_local
             .close_bindings(owner_user_id, runtime_session_id, bindings)
             .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_plugin_cloud_routes(
+        &self,
+        plugin_management: &chatos_plugin_management_sdk::PluginManagementClient,
+        immutable_bindings: &std::collections::HashMap<
+            String,
+            crate::runtime::PluginMcpRuntimeBinding,
+        >,
+        routes: &mut [ResolvedMcpRoute],
+        context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+        target: Option<&SandboxExecutionTarget>,
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: Option<&str>,
+        expires_at_unix: i64,
+    ) -> (
+        std::collections::HashMap<String, crate::runtime::CloudStdioProviderBinding>,
+        std::collections::HashMap<String, crate::runtime::ExternalHttpProviderBinding>,
+        std::collections::HashMap<String, Vec<Value>>,
+    ) {
+        self.plugin_cloud
+            .prepare_routes(
+                plugin_management,
+                immutable_bindings,
+                routes,
+                context,
+                target,
+                runtime_session_id,
+                owner_user_id,
+                project_id,
+                run_id,
+                expires_at_unix,
+            )
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -265,6 +308,30 @@ impl ProviderDispatcher {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn close_prepared_cloud_stdio_bindings(
+        &self,
+        target: &SandboxExecutionTarget,
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: Option<&str>,
+        expires_at_unix: i64,
+        bindings: &std::collections::HashMap<String, crate::runtime::CloudStdioProviderBinding>,
+    ) {
+        self.cloud_stdio
+            .close_bindings(
+                target,
+                runtime_session_id,
+                owner_user_id,
+                project_id,
+                run_id,
+                expires_at_unix,
+                bindings,
+            )
+            .await;
+    }
+
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
             McpProviderKind::InternalService | McpProviderKind::Harness => {
@@ -282,6 +349,7 @@ impl ProviderDispatcher {
             McpProviderKind::Embedded => self.embedded.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
             McpProviderKind::PluginLocal => self.plugin_local.supports(route),
+            McpProviderKind::PluginCloud => self.plugin_cloud.supports(route),
             _ => false,
         }
     }
@@ -430,6 +498,17 @@ impl ProviderDispatcher {
             }
             McpProviderKind::PluginLocal if self.plugin_local.supports(route) => {
                 self.plugin_local
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::PluginCloud if self.plugin_cloud.supports(route) => {
+                self.plugin_cloud
                     .call_tool(
                         snapshot,
                         route,

@@ -17,7 +17,8 @@ use crate::dto::{
 use crate::error::PluginManagementClientError;
 use crate::plugin_runtime::{
     PluginCloudComponentBundle, PluginInstallSource, PluginInstallSourceList,
-    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
+    PluginMcpCloudRuntimeBundle, UpdateUserPluginPreferenceRequest,
+    UpdateUserPluginPreferenceResponse,
 };
 use crate::plugin_runtime::{PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload};
 
@@ -397,6 +398,26 @@ impl PluginManagementClient {
     ) -> Result<PluginCloudComponentBundle, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/plugins/{}/releases/{}/cloud-components/{}",
+            self.config.base_url,
+            urlencoding::encode(plugin_id),
+            urlencoding::encode(release_id),
+            urlencoding::encode(component_key),
+        );
+        let response = self
+            .internal_request(Method::GET, url, PLUGIN_CLOUD_READ_SCOPE)?
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn get_plugin_mcp_cloud_runtime_bundle_for_service(
+        &self,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+    ) -> Result<PluginMcpCloudRuntimeBundle, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/plugins/{}/releases/{}/cloud-mcp-components/{}",
             self.config.base_url,
             urlencoding::encode(plugin_id),
             urlencoding::encode(release_id),

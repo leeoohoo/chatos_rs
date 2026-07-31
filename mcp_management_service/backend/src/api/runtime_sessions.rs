@@ -97,10 +97,23 @@ pub(super) async fn resolve_runtime_session(
         sandbox_target.as_ref(),
     );
     bind_sandbox_image_routes(route_response.routes.as_mut_slice(), &project_context);
-    if route_response
+    let plugin_cloud_requires_sandbox = route_response.routes.iter().any(|route| {
+        route.provider_kind == McpProviderKind::PluginCloud
+            && materialized
+                .plugin_bindings
+                .get(route.resource_id.as_str())
+                .is_some_and(|binding| {
+                    matches!(
+                        &binding.runtime,
+                        chatos_plugin_management_sdk::PluginMcpServer::Stdio { .. }
+                    )
+                })
+    });
+    let routed_sandbox_target_required = route_response
         .routes
         .iter()
-        .any(|route| state.providers.requires_sandbox_target(route))
+        .any(|route| state.providers.requires_sandbox_target(route));
+    if routed_sandbox_target_required || (plugin_cloud_requires_sandbox && sandbox_target.is_some())
     {
         let target = sandbox_target.as_ref().ok_or_else(|| {
             ApiError::conflict("Cloud sandbox-backed route requires a bound sandbox target")
@@ -128,7 +141,7 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
-    let (cloud_stdio_bindings, cloud_stdio_tool_snapshots) = state
+    let (mut cloud_stdio_bindings, cloud_stdio_tool_snapshots) = state
         .providers
         .prepare_cloud_stdio_routes(
             &capabilities,
@@ -141,7 +154,7 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
-    let (plugin_local_bindings, plugin_tool_snapshots) = state
+    let (plugin_local_bindings, mut plugin_tool_snapshots) = state
         .providers
         .prepare_plugin_local_routes(
             &materialized.plugin_bindings,
@@ -152,16 +165,39 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
+    let (plugin_cloud_stdio_bindings, plugin_cloud_http_bindings, plugin_cloud_tool_snapshots) =
+        state
+            .providers
+            .prepare_plugin_cloud_routes(
+                &state.plugin_management_client,
+                &materialized.plugin_bindings,
+                route_response.routes.as_mut_slice(),
+                &project_context,
+                sandbox_target.as_ref(),
+                session_id.as_str(),
+                request.owner_user_id.trim(),
+                request.project_id.trim(),
+                request.run_id.as_deref(),
+                expires_at_unix,
+            )
+            .await;
+    cloud_stdio_bindings.extend(plugin_cloud_stdio_bindings);
+    plugin_tool_snapshots.extend(plugin_cloud_tool_snapshots);
     let cleanup_owner_user_id = request.owner_user_id.trim().to_string();
     let cleanup_session_id = session_id.clone();
     let cleanup_plugin_local_bindings = plugin_local_bindings.clone();
+    let cleanup_cloud_stdio_bindings = cloud_stdio_bindings.clone();
+    let cleanup_sandbox_target = sandbox_target.clone();
+    let cleanup_project_id = request.project_id.trim().to_string();
+    let cleanup_run_id = request.run_id.clone();
     let result = async {
         apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
         apply_live_tool_snapshots(&mut capabilities, cloud_stdio_tool_snapshots);
-        let external_http_bindings = state
+        let mut external_http_bindings = state
             .providers
             .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
             .await;
+        external_http_bindings.extend(plugin_cloud_http_bindings);
         for route in &mut route_response.routes {
             route.cancel_supported &= state.providers.supports_cancellation(route);
         }
@@ -310,6 +346,22 @@ pub(super) async fn resolve_runtime_session(
                 &cleanup_plugin_local_bindings,
             )
             .await;
+    }
+    if result.is_err() && !cleanup_cloud_stdio_bindings.is_empty() {
+        if let Some(target) = cleanup_sandbox_target.as_ref() {
+            state
+                .providers
+                .close_prepared_cloud_stdio_bindings(
+                    target,
+                    cleanup_session_id.as_str(),
+                    cleanup_owner_user_id.as_str(),
+                    cleanup_project_id.as_str(),
+                    cleanup_run_id.as_deref(),
+                    expires_at_unix,
+                    &cleanup_cloud_stdio_bindings,
+                )
+                .await;
+        }
     }
     result
 }

@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxExecutionTarget};
 use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, METHOD_TOOLS_CALL};
-use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
+use chatos_plugin_management_sdk::{PluginMcpServer, ResolvedAgentCapabilities, ResolvedMcp};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::runtime::{CloudStdioProviderBinding, RuntimeSessionSnapshot};
+use crate::runtime::{CloudStdioProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
 
 use super::{ProviderCallError, ProviderCallOutcome};
 
@@ -152,7 +152,10 @@ impl CloudStdioProvider {
                 run_id,
                 expires_at_unix,
             };
-            match self.list_tools(target, &context, route, &binding).await {
+            match self
+                .list_tools(target, &context, route.resource_id.as_str(), &binding)
+                .await
+            {
                 Ok(tools) => {
                     tool_snapshots.insert(route.resource_id.clone(), tools);
                     bindings.insert(route.resource_id.clone(), binding);
@@ -169,12 +172,12 @@ impl CloudStdioProvider {
         &self,
         target: &SandboxExecutionTarget,
         context: &CloudStdioRequestContext<'_>,
-        route: &ResolvedMcpRoute,
+        resource_id: &str,
         binding: &CloudStdioProviderBinding,
     ) -> Result<Vec<Value>, ProviderCallError> {
         let body = CloudStdioCallRequest {
             runtime_session_id: context.runtime_session_id,
-            resource_id: route.resource_id.as_str(),
+            resource_id,
             command: binding.command.as_str(),
             args: binding.args.as_slice(),
             env: &binding.env,
@@ -207,6 +210,94 @@ impl CloudStdioProvider {
             },
         )?;
         extract_tool_snapshot(response.result).map_err(ProviderCallError::invalid_response)
+    }
+
+    pub(super) fn prepare_plugin_binding(
+        &self,
+        immutable: &PluginMcpRuntimeBinding,
+        route: &ResolvedMcpRoute,
+    ) -> Result<CloudStdioProviderBinding, String> {
+        if route.provider_kind != McpProviderKind::PluginCloud
+            || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
+            || route.resource_id != immutable.resource_id
+            || route.allow_writes != immutable.allow_writes
+        {
+            return Err("Plugin stdio route does not match its immutable binding".to_string());
+        }
+        let PluginMcpServer::Stdio {
+            command,
+            args,
+            env,
+            cwd,
+            ..
+        } = &immutable.runtime
+        else {
+            return Err("Plugin MCP runtime is not stdio".to_string());
+        };
+        if !immutable
+            .permission_snapshot
+            .iter()
+            .any(|permission| permission == "process.spawn")
+        {
+            return Err(
+                "Plugin stdio MCP requires process.spawn in its immutable permission snapshot"
+                    .to_string(),
+            );
+        }
+        if !env.is_empty() {
+            return Err(
+                "Plugin stdio environment requires a configured cloud credential resolver"
+                    .to_string(),
+            );
+        }
+        if cwd.is_some() {
+            return Err(
+                "Plugin package-relative cwd requires the cloud artifact mount contract"
+                    .to_string(),
+            );
+        }
+        validate_command(command, args.as_slice())?;
+        validate_arguments(args.as_slice())?;
+        let allowed_tool_names =
+            configured_tool_names(immutable.tool_allowlist.as_slice(), "tool_allowlist")?;
+        let blocked_tool_names =
+            configured_tool_names(immutable.tool_blocklist.as_slice(), "tool_blocklist")?;
+        if !route.allow_writes && allowed_tool_names.is_empty() {
+            return Err("read-only Plugin stdio MCP requires tool_allowlist".to_string());
+        }
+        Ok(CloudStdioProviderBinding {
+            provider_ref: immutable.provider_ref.clone(),
+            command: command.trim().to_string(),
+            args: args.clone(),
+            env: BTreeMap::new(),
+            cwd: None,
+            allow_writes: route.allow_writes,
+            allowed_tool_names,
+            blocked_tool_names,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn list_plugin_tools(
+        &self,
+        target: &SandboxExecutionTarget,
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: Option<&str>,
+        expires_at_unix: i64,
+        resource_id: &str,
+        binding: &CloudStdioProviderBinding,
+    ) -> Result<Vec<Value>, ProviderCallError> {
+        let context = CloudStdioRequestContext {
+            runtime_session_id,
+            owner_user_id,
+            project_id,
+            run_id,
+            expires_at_unix,
+        };
+        self.list_tools(target, &context, resource_id, binding)
+            .await
     }
 
     pub(super) async fn call_tool(
@@ -245,9 +336,38 @@ impl CloudStdioProvider {
                 message: "tool is blocked by the Cloud stdio MCP policy".to_string(),
             });
         }
+        self.call_bound_tool(
+            snapshot,
+            route.resource_id.as_str(),
+            binding,
+            original_tool_name,
+            arguments,
+        )
+        .await
+    }
+
+    pub(super) async fn call_bound_tool(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        resource_id: &str,
+        binding: &CloudStdioProviderBinding,
+        original_tool_name: &str,
+        arguments: Value,
+    ) -> Result<ProviderCallOutcome, ProviderCallError> {
+        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Cloud stdio MCP runtime session has no sandbox target",
+            )
+        })?;
+        if !binding.allows_tool(original_tool_name) {
+            return Err(ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: "tool is blocked by the Cloud stdio MCP policy".to_string(),
+            });
+        }
         let body = CloudStdioCallRequest {
             runtime_session_id: snapshot.session_id.as_str(),
-            resource_id: route.resource_id.as_str(),
+            resource_id,
             command: binding.command.as_str(),
             args: binding.args.as_slice(),
             env: &binding.env,
@@ -293,15 +413,44 @@ impl CloudStdioProvider {
         let Some(target) = snapshot.sandbox_target.as_ref() else {
             return;
         };
-        let context = CloudStdioRequestContext::from_snapshot(snapshot);
-        for resource_id in snapshot.cloud_stdio_bindings.keys() {
+        self.close_bindings(
+            target,
+            snapshot.session_id.as_str(),
+            snapshot.owner_user_id.as_str(),
+            snapshot.project_id.as_str(),
+            snapshot.run_id.as_deref(),
+            snapshot.expires_at_unix,
+            &snapshot.cloud_stdio_bindings,
+        )
+        .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn close_bindings(
+        &self,
+        target: &SandboxExecutionTarget,
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: Option<&str>,
+        expires_at_unix: i64,
+        bindings: &HashMap<String, CloudStdioProviderBinding>,
+    ) {
+        let context = CloudStdioRequestContext {
+            runtime_session_id,
+            owner_user_id,
+            project_id,
+            run_id,
+            expires_at_unix,
+        };
+        for resource_id in bindings.keys() {
             let body = CloudStdioCloseRequest {
-                runtime_session_id: snapshot.session_id.as_str(),
+                runtime_session_id,
                 resource_id: resource_id.as_str(),
             };
             if let Err(error) = self.request(target, &context, "close", &body).await {
                 tracing::warn!(
-                    session_id = snapshot.session_id.as_str(),
+                    session_id = runtime_session_id,
                     resource_id = resource_id.as_str(),
                     error = error.message,
                     "close Cloud stdio MCP session failed"
@@ -626,8 +775,8 @@ mod tests {
         WorkspaceProviderKind,
     };
     use chatos_plugin_management_sdk::{
-        AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
-        ResourceMetadata, ResourceSecurity,
+        AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, PluginExecutionHost,
+        PluginMcpServer, ResolvedAgentCapabilities, ResourceMetadata, ResourceSecurity,
     };
 
     fn resolved() -> ResolvedMcp {
@@ -697,6 +846,50 @@ mod tests {
         }
     }
 
+    fn plugin_binding() -> PluginMcpRuntimeBinding {
+        PluginMcpRuntimeBinding {
+            provider_ref: format!("plugin-binding:{}", "b".repeat(64)),
+            resource_id: "plugin-mcp-1".to_string(),
+            plugin_id: "plugin-1".to_string(),
+            release_id: "release-1".to_string(),
+            version: "1.0.0".to_string(),
+            artifact_sha256: "a".repeat(64),
+            normalized_manifest_sha256: "b".repeat(64),
+            component_key: "runner".to_string(),
+            component_content_sha256: "c".repeat(64),
+            declared_execution_host: PluginExecutionHost::Cloud,
+            installation_device_id: None,
+            permission_snapshot: vec!["process.spawn".to_string()],
+            auth_connection_ids: Vec::new(),
+            runtime: PluginMcpServer::Stdio {
+                component_key: "runner".to_string(),
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@example/mcp".to_string()],
+                env: BTreeMap::new(),
+                cwd: None,
+            },
+            server_key: None,
+            tool_allowlist: vec!["search".to_string()],
+            tool_blocklist: Vec::new(),
+            required: true,
+            allow_writes: false,
+        }
+    }
+
+    fn plugin_route(binding: &PluginMcpRuntimeBinding) -> ResolvedMcpRoute {
+        ResolvedMcpRoute {
+            resource_id: binding.resource_id.clone(),
+            server_name: "plugin_runner".to_string(),
+            provider_kind: McpProviderKind::PluginCloud,
+            provider_ref: Some(binding.provider_ref.clone()),
+            tool_namespace: "plugin_runner".to_string(),
+            allow_writes: binding.allow_writes,
+            retry_class: McpRetryClass::IdempotentRead,
+            cancel_supported: false,
+            reason: "test".to_string(),
+        }
+    }
+
     #[test]
     fn binding_requires_workspace_relative_direct_command() {
         assert!(prepare_binding(&resolved(), &route()).is_ok());
@@ -718,6 +911,39 @@ mod tests {
         let mut escaped = resolved();
         escaped.resource.runtime.cwd = Some("../outside".to_string());
         assert!(prepare_binding(&escaped, &route()).is_err());
+    }
+
+    #[test]
+    fn plugin_stdio_binding_is_permission_bound_and_rejects_unresolved_cloud_secrets() {
+        let provider = CloudStdioProvider::new(
+            "http://127.0.0.1:8095",
+            Duration::from_secs(5),
+            Some("sandbox-secret".to_string()),
+            1024 * 1024,
+        )
+        .unwrap();
+        let binding = plugin_binding();
+        assert!(provider
+            .prepare_plugin_binding(&binding, &plugin_route(&binding))
+            .is_ok());
+
+        let mut missing_permission = binding.clone();
+        missing_permission.permission_snapshot.clear();
+        assert!(provider
+            .prepare_plugin_binding(&missing_permission, &plugin_route(&missing_permission))
+            .is_err());
+
+        let mut unresolved_secret = binding.clone();
+        let PluginMcpServer::Stdio { env, .. } = &mut unresolved_secret.runtime else {
+            unreachable!();
+        };
+        env.insert(
+            "API_TOKEN".to_string(),
+            "${credential:api_token}".to_string(),
+        );
+        assert!(provider
+            .prepare_plugin_binding(&unresolved_secret, &plugin_route(&unresolved_secret))
+            .is_err());
     }
 
     #[tokio::test]
