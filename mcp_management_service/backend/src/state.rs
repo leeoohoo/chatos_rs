@@ -58,6 +58,7 @@ impl AppState {
             ProviderRuntimeConfig {
                 downstream_request_timeout: config.downstream_request_timeout,
                 external_http_request_timeout: config.external_http_request_timeout,
+                sandbox_image_request_timeout: config.sandbox_image_request_timeout,
                 response_limit_bytes: config.provider_response_limit_bytes,
             },
         )?;

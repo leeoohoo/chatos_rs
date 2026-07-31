@@ -36,6 +36,7 @@ pub struct AppConfig {
     pub sandbox_manager_service_base_url: String,
     pub sandbox_manager_internal_api_secret: Option<String>,
     pub sandbox_manager_request_timeout: Duration,
+    pub sandbox_image_request_timeout: Duration,
     pub embedded_work_dir: PathBuf,
     pub downstream_request_timeout: Duration,
     pub external_http_request_timeout: Duration,
@@ -143,6 +144,13 @@ impl AppConfig {
                 .unwrap_or(180_000)
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
         );
+        let sandbox_image_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS")
+                .or_else(|| env_text("SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS"))
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(2 * 60 * 60 * 1_000 + 30_000)
+                .clamp(30_000, 3 * 60 * 60 * 1_000),
+        );
         let task_runner_request_timeout = Duration::from_millis(
             env_text("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")
                 .and_then(|value| value.parse::<u64>().ok())
@@ -223,6 +231,7 @@ impl AppConfig {
             ),
             sandbox_manager_internal_api_secret,
             sandbox_manager_request_timeout,
+            sandbox_image_request_timeout,
             embedded_work_dir: env_text("MCP_MANAGEMENT_EMBEDDED_WORK_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| std::env::temp_dir().join("chatos-mcp-management")),
@@ -301,6 +310,7 @@ impl AppConfig {
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),
             sandbox_manager_internal_api_secret: Some("a-long-sandbox-manager-secret".to_string()),
             sandbox_manager_request_timeout: Duration::from_secs(180),
+            sandbox_image_request_timeout: Duration::from_secs(2 * 60 * 60 + 30),
             embedded_work_dir: std::env::temp_dir().join("chatos-mcp-management-test"),
             downstream_request_timeout: Duration::from_secs(5),
             external_http_request_timeout: Duration::from_secs(60),

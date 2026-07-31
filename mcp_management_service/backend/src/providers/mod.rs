@@ -8,6 +8,7 @@ mod embedded;
 mod external_http;
 mod local_connector;
 mod project_service;
+mod sandbox_images;
 mod task_runner;
 
 use std::time::Duration;
@@ -25,6 +26,11 @@ use external_http::ExternalHttpProvider;
 use local_connector::LocalConnectorProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
+use sandbox_images::SandboxImagesProvider;
+pub(crate) use sandbox_images::{
+    cloud_provider_ref as sandbox_images_cloud_provider_ref,
+    local_provider_ref as sandbox_images_local_provider_ref,
+};
 use task_runner::TaskRunnerProvider;
 
 pub struct TaskRunnerProviderConfig {
@@ -43,6 +49,7 @@ pub struct ChatosProviderConfig {
 pub struct ProviderRuntimeConfig {
     pub downstream_request_timeout: Duration,
     pub external_http_request_timeout: Duration,
+    pub sandbox_image_request_timeout: Duration,
     pub response_limit_bytes: usize,
 }
 
@@ -54,6 +61,7 @@ pub struct ProviderDispatcher {
     chatos: ChatosProvider,
     cloud_sandbox: CloudSandboxProvider,
     cloud_stdio: CloudStdioProvider,
+    sandbox_images: SandboxImagesProvider,
     embedded: EmbeddedProvider,
     external_http: ExternalHttpProvider,
 }
@@ -72,12 +80,13 @@ impl ProviderDispatcher {
         embedded_work_dir: std::path::PathBuf,
         runtime: ProviderRuntimeConfig,
     ) -> Result<Self, String> {
+        let local_connector_service_base_url = local_connector_service_base_url.into();
         let sandbox_manager_service_base_url = sandbox_manager_service_base_url.into();
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
-                local_connector_service_base_url,
+                local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,
-                local_connector_internal_secret,
+                local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
             project_service: ProjectServiceProvider::new(
@@ -106,9 +115,18 @@ impl ProviderDispatcher {
                 runtime.response_limit_bytes,
             )?,
             cloud_stdio: CloudStdioProvider::new(
-                sandbox_manager_service_base_url,
+                sandbox_manager_service_base_url.clone(),
                 sandbox_manager_request_timeout,
+                sandbox_manager_internal_secret.clone(),
+                runtime.response_limit_bytes,
+            )?,
+            sandbox_images: SandboxImagesProvider::new(
+                sandbox_manager_service_base_url,
                 sandbox_manager_internal_secret,
+                local_connector_service_base_url,
+                local_connector_internal_secret,
+                sandbox_manager_request_timeout,
+                runtime.sandbox_image_request_timeout,
                 runtime.response_limit_bytes,
             )?,
             embedded: EmbeddedProvider::new(embedded_work_dir, runtime.response_limit_bytes)?,
@@ -165,13 +183,21 @@ impl ProviderDispatcher {
                     || self.task_runner.supports(route)
                     || self.chatos.supports(route)
             }
-            McpProviderKind::LocalConnector => self.local_connector.supports(route),
-            McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
+            McpProviderKind::LocalConnector => {
+                self.local_connector.supports(route) || self.sandbox_images.supports(route)
+            }
+            McpProviderKind::CloudSandbox => {
+                self.cloud_sandbox.supports(route) || self.sandbox_images.supports(route)
+            }
             McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
             _ => false,
         }
+    }
+
+    pub fn requires_sandbox_target(&self, route: &ResolvedMcpRoute) -> bool {
+        self.cloud_sandbox.supports(route) || self.cloud_stdio.supports(route)
     }
 
     pub async fn validate_sandbox_target(
@@ -221,6 +247,19 @@ impl ProviderDispatcher {
             }
             McpProviderKind::InternalService if self.chatos.supports(route) => {
                 self.chatos
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::LocalConnector | McpProviderKind::CloudSandbox
+                if self.sandbox_images.supports(route) =>
+            {
+                self.sandbox_images
                     .call_tool(
                         snapshot,
                         route,

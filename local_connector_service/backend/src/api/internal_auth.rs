@@ -179,6 +179,17 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             scope: SANDBOX_ROUTING_READ_SCOPE,
             allowed_callers: &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
         }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "sandbox-facade", _, "api", "local", "sandbox", "images", "mcp"],
+        ) => Some(InternalAccess {
+            scope: SANDBOX_SERVICE_SCOPE,
+            allowed_callers: &[
+                TASK_RUNNER_CALLER,
+                PROJECT_SERVICE_CALLER,
+                MCP_MANAGEMENT_CALLER,
+            ],
+        }),
         (_, ["api", "local-connectors", "sandbox-facade", _, ..]) => Some(InternalAccess {
             scope: SANDBOX_SERVICE_SCOPE,
             allowed_callers: &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
@@ -309,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_management_token_can_only_access_the_mcp_relay() {
+    fn mcp_management_token_can_access_mcp_relay_and_sandbox_image_facade_only() {
         let mut config = test_config();
         config.require_signed_internal_requests = true;
         config.internal_api_secrets.insert(
@@ -334,6 +345,32 @@ mod tests {
         .expect("matching MCP relay request")
         .expect("service user");
         assert_eq!(user.user_id, "service:mcp-management-service:user-1");
+
+        let sandbox_token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-mcp-management-local-connector-secret",
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            SANDBOX_SERVICE_SCOPE,
+            60,
+        )
+        .expect("issue Sandbox service token");
+        let sandbox_headers = signed_headers(MCP_MANAGEMENT_CALLER, sandbox_token.as_str());
+        let sandbox_user = internal_service_user_from_request(
+            &config,
+            &sandbox_headers,
+            &Method::POST,
+            "/api/local-connectors/sandbox-facade/pairing-1/api/local/sandbox/images/mcp",
+        )
+        .expect("matching Sandbox image facade request")
+        .expect("service user");
+        assert_eq!(sandbox_user.owner_user_id.as_deref(), Some("user-1"));
+        assert!(internal_service_user_from_request(
+            &config,
+            &sandbox_headers,
+            &Method::POST,
+            "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
+        )
+        .is_err());
 
         for (method, path) in [
             (

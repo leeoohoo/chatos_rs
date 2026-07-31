@@ -89,12 +89,12 @@ pub(super) async fn resolve_runtime_session(
         route_response.routes.as_mut_slice(),
         sandbox_target.as_ref(),
     );
-    if route_response.routes.iter().any(|route| {
-        matches!(
-            route.provider_kind,
-            McpProviderKind::CloudSandbox | McpProviderKind::CloudStdio
-        ) && state.providers.supports(route)
-    }) {
+    bind_sandbox_image_routes(route_response.routes.as_mut_slice(), &project_context);
+    if route_response
+        .routes
+        .iter()
+        .any(|route| state.providers.requires_sandbox_target(route))
+    {
         let target = sandbox_target.as_ref().ok_or_else(|| {
             ApiError::conflict("Cloud sandbox-backed route requires a bound sandbox target")
         })?;
@@ -553,16 +553,64 @@ fn bind_cloud_sandbox_routes(
     routes: &mut [ResolvedMcpRoute],
     target: Option<&SandboxExecutionTarget>,
 ) {
-    for route in routes
-        .iter_mut()
-        .filter(|route| route.provider_kind == McpProviderKind::CloudSandbox)
-    {
+    for route in routes.iter_mut().filter(|route| {
+        route.provider_kind == McpProviderKind::CloudSandbox
+            && route.resource_id
+                != chatos_mcp::system_mcp_descriptor(SystemMcpKey::SandboxImages).resource_id
+    }) {
         if let Some(target) = target {
             route.provider_ref = Some(target.provider_ref());
         } else {
             route.provider_kind = McpProviderKind::Unavailable;
             route.provider_ref = None;
             route.reason = "Cloud Sandbox route requires a runtime sandbox lease".to_string();
+        }
+    }
+}
+
+fn bind_sandbox_image_routes(
+    routes: &mut [ResolvedMcpRoute],
+    context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+) {
+    let resource_id = chatos_mcp::system_mcp_descriptor(SystemMcpKey::SandboxImages).resource_id;
+    for route in routes
+        .iter_mut()
+        .filter(|route| route.resource_id == resource_id)
+    {
+        route.cancel_supported = false;
+        match (context.sandbox_provider, route.provider_kind) {
+            (SandboxProviderKind::Cloud, McpProviderKind::CloudSandbox) => {
+                route.provider_ref =
+                    Some(crate::providers::sandbox_images_cloud_provider_ref().to_string());
+                route.reason = "Sandbox Images is pinned to the cloud Sandbox Manager".to_string();
+            }
+            (SandboxProviderKind::LocalConnector, McpProviderKind::LocalConnector) => {
+                let Some(pairing_id) = context
+                    .sandbox_pairing_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    route.provider_kind = McpProviderKind::Unavailable;
+                    route.provider_ref = None;
+                    route.allow_writes = false;
+                    route.reason =
+                        "local Sandbox Images requires a bound sandbox pairing".to_string();
+                    continue;
+                };
+                route.provider_ref = Some(crate::providers::sandbox_images_local_provider_ref(
+                    pairing_id,
+                ));
+                route.reason =
+                    "Sandbox Images is pinned to the Local Connector sandbox pairing".to_string();
+            }
+            _ => {
+                route.provider_kind = McpProviderKind::Unavailable;
+                route.provider_ref = None;
+                route.allow_writes = false;
+                route.reason =
+                    "Sandbox Images provider does not match the project sandbox policy".to_string();
+            }
         }
     }
 }
@@ -938,6 +986,82 @@ mod tests {
             routes[0].provider_ref.as_deref(),
             Some("sandbox:sandbox-1/lease:lease-1")
         );
+    }
+
+    #[test]
+    fn cloud_sandbox_images_are_bound_without_a_runtime_sandbox_target() {
+        let mut routes = vec![sandbox_images_route(McpProviderKind::CloudSandbox)];
+        let mut context = context();
+        context.sandbox_provider = SandboxProviderKind::Cloud;
+
+        bind_cloud_sandbox_routes(routes.as_mut_slice(), None);
+        bind_sandbox_image_routes(routes.as_mut_slice(), &context);
+
+        assert_eq!(routes[0].provider_kind, McpProviderKind::CloudSandbox);
+        assert_eq!(
+            routes[0].provider_ref.as_deref(),
+            Some(crate::providers::sandbox_images_cloud_provider_ref())
+        );
+        assert!(!routes[0].cancel_supported);
+    }
+
+    #[test]
+    fn local_sandbox_images_are_bound_to_the_authoritative_pairing() {
+        let mut routes = vec![sandbox_images_route(McpProviderKind::LocalConnector)];
+        let mut context = context();
+        context.sandbox_provider = SandboxProviderKind::LocalConnector;
+        context.sandbox_pairing_id = Some(" pairing-1 ".to_string());
+
+        bind_sandbox_image_routes(routes.as_mut_slice(), &context);
+
+        assert_eq!(routes[0].provider_kind, McpProviderKind::LocalConnector);
+        assert_eq!(
+            routes[0].provider_ref.as_deref(),
+            Some("sandbox-images:local:pairing-1")
+        );
+        assert!(!routes[0].cancel_supported);
+    }
+
+    #[test]
+    fn local_sandbox_images_are_unavailable_without_a_pairing() {
+        let mut routes = vec![sandbox_images_route(McpProviderKind::LocalConnector)];
+        let mut context = context();
+        context.sandbox_provider = SandboxProviderKind::LocalConnector;
+
+        bind_sandbox_image_routes(routes.as_mut_slice(), &context);
+
+        assert_eq!(routes[0].provider_kind, McpProviderKind::Unavailable);
+        assert_eq!(routes[0].provider_ref, None);
+        assert!(!routes[0].allow_writes);
+        assert!(!routes[0].cancel_supported);
+    }
+
+    #[test]
+    fn cloud_sandbox_binding_does_not_overwrite_sandbox_images() {
+        let mut routes = vec![sandbox_images_route(McpProviderKind::CloudSandbox)];
+        routes[0].provider_ref =
+            Some(crate::providers::sandbox_images_cloud_provider_ref().to_string());
+        let target = SandboxExecutionTarget {
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        };
+
+        bind_cloud_sandbox_routes(routes.as_mut_slice(), Some(&target));
+
+        assert_eq!(
+            routes[0].provider_ref.as_deref(),
+            Some(crate::providers::sandbox_images_cloud_provider_ref())
+        );
+    }
+
+    fn sandbox_images_route(provider_kind: McpProviderKind) -> ResolvedMcpRoute {
+        let mut route = system_route(SystemMcpKey::SandboxImages);
+        route.provider_kind = provider_kind;
+        route.provider_ref = Some("project:project-1".to_string());
+        route.cancel_supported = true;
+        route
     }
 
     fn system_route(key: SystemMcpKey) -> ResolvedMcpRoute {

@@ -430,7 +430,13 @@ fn authenticate_internal_service(
             SCOPE_IMAGES_READ,
         ],
         "project-service" => vec![SCOPE_IMAGES_READ, SCOPE_IMAGES_WRITE],
-        "mcp-management-service" => vec![SCOPE_LEASE_READ, SCOPE_MCP_TOOLS, SCOPE_MCP_CALL],
+        "mcp-management-service" => vec![
+            SCOPE_LEASE_READ,
+            SCOPE_MCP_TOOLS,
+            SCOPE_MCP_CALL,
+            SCOPE_IMAGES_READ,
+            SCOPE_IMAGES_WRITE,
+        ],
         _ => {
             return Err(ApiError::forbidden(
                 "caller service is not allowed for Sandbox Manager",
