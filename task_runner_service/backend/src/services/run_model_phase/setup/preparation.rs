@@ -6,12 +6,14 @@ use crate::services::TaskRunnerCapabilityPolicy;
 
 mod mcp_builder;
 mod mcp_inputs;
+mod mcp_management_gateway;
 
 use mcp_builder::build_mcp_builder_parts;
 use mcp_inputs::{
     external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
     mcp_provider_skills_prefixed_input_items,
 };
+use mcp_management_gateway::resolve_mcp_management_gateway;
 
 pub(super) async fn prepare_model_execution(
     service: &RunService,
@@ -132,6 +134,8 @@ pub(super) async fn prepare_model_execution(
     let prepared_plugin_runtime = service
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
+    let mcp_management_gateway =
+        resolve_mcp_management_gateway(task, run, sandbox_context.as_ref()).await?;
     let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
         crate::models::task_runner_agent_key_for(
             task.task_profile.as_str(),
@@ -204,12 +208,16 @@ pub(super) async fn prepare_model_execution(
         );
     }
 
-    let mut mcp_builder = McpExecutorBuilder::new()
-        .with_http_servers(system_http_servers)
-        .with_http_servers(loaded_external_mcp.http_servers)
-        .with_stdio_servers(loaded_external_mcp.stdio_servers)
-        .with_builtin_servers(builtin_servers)
-        .with_builtin_registry(builtin_registry);
+    let mut mcp_builder = if let Some(gateway) = mcp_management_gateway {
+        McpExecutorBuilder::new().with_http_server(gateway)
+    } else {
+        McpExecutorBuilder::new()
+            .with_http_servers(system_http_servers)
+            .with_http_servers(loaded_external_mcp.http_servers)
+            .with_stdio_servers(loaded_external_mcp.stdio_servers)
+            .with_builtin_servers(builtin_servers)
+            .with_builtin_registry(builtin_registry)
+    };
     for allowed_tools in command_constraints.tool_allowlists {
         mcp_builder = mcp_builder.with_allowed_tool_names(allowed_tools);
     }

@@ -33,6 +33,10 @@ pub struct McpHttpServer {
     pub tool_name_aliases: Vec<McpToolNameAlias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_tool_names: Option<Vec<String>>,
+    #[serde(default)]
+    pub preserve_tool_names: bool,
+    #[serde(default)]
+    pub fail_on_unavailable: bool,
     #[serde(skip)]
     pub header_provider: Option<Arc<dyn McpHttpHeaderProvider>>,
 }
@@ -46,6 +50,8 @@ impl McpHttpServer {
             timeout_ms: None,
             tool_name_aliases: Vec::new(),
             allowed_tool_names: None,
+            preserve_tool_names: false,
+            fail_on_unavailable: false,
             header_provider: None,
         }
     }
@@ -97,6 +103,16 @@ impl McpHttpServer {
                 .filter(|value| !value.is_empty())
                 .collect(),
         );
+        self
+    }
+
+    pub fn with_preserved_tool_names(mut self) -> Self {
+        self.preserve_tool_names = true;
+        self
+    }
+
+    pub fn with_fail_on_unavailable(mut self) -> Self {
+        self.fail_on_unavailable = true;
         self
     }
 
@@ -618,6 +634,20 @@ mod tests {
         let empty = McpHttpServer::new("remote", "http://127.0.0.1:9000/mcp")
             .with_allowed_tool_names(std::iter::empty::<String>());
         assert!(!empty.allows_tool_name("anything"));
+    }
+
+    #[test]
+    fn http_server_can_preserve_upstream_tool_names() {
+        let server =
+            McpHttpServer::new("gateway", "http://127.0.0.1:9000/mcp").with_preserved_tool_names();
+        assert!(server.preserve_tool_names);
+    }
+
+    #[test]
+    fn http_server_can_fail_closed_when_unavailable() {
+        let server =
+            McpHttpServer::new("gateway", "http://127.0.0.1:9000/mcp").with_fail_on_unavailable();
+        assert!(server.fail_on_unavailable);
     }
 
     #[test]

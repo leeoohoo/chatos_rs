@@ -14,6 +14,7 @@ base64 = "0.22"
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_mcp = { path = "../../mcp" }
+chatos_mcp_management_sdk = { path = "../../crates/chatos_mcp_management_sdk" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_remote_runtime = { path = "../../crates/chatos_remote_runtime" }

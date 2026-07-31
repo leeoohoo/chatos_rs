@@ -29,10 +29,16 @@ pub struct McpManagementClient {
 
 impl McpManagementClient {
     pub fn new(config: McpManagementClientConfig) -> Result<Self, McpManagementClientError> {
-        reqwest::Url::parse(config.base_url.as_str())
+        let base_url = reqwest::Url::parse(config.base_url.as_str())
             .map_err(|err| McpManagementClientError::InvalidBaseUrl(err.to_string()))?;
+        if !matches!(base_url.scheme(), "http" | "https") {
+            return Err(McpManagementClientError::InvalidBaseUrl(
+                "MCP Management base URL must use http or https".to_string(),
+            ));
+        }
         let http = reqwest::Client::builder()
             .timeout(config.request_timeout)
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self { http, config })
     }

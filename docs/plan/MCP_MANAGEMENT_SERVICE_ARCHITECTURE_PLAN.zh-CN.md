@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制；Phase 3 已接通 Local Connector 与 Harness Provider；Phase 4 已接通 Project Management 和 Project Runtime Environment Provider。共享 Session Snapshot 存储、取消传播、Cloud Sandbox、Task Runner、Memory、External/Plugin Provider 和调用方切换仍待完成，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制；Phase 3 已接通 Local Connector 与 Harness Provider；Phase 4 已接通 Project Management 和 Project Runtime Environment Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、Cloud Sandbox、Memory、External/Plugin Provider 和其余调用方切换仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -38,6 +38,8 @@
 ## 2. 服务边界
 
 MCP Management Service 只负责 Agent Tool Plane，不是通用微服务网关。凡是作为 Agent 工具暴露的能力，都必须经过它完成配置解析、Catalog 聚合、Provider 路由和真实调用。
+
+是否经过本服务只有一个判定标准：该调用是否是 Agent 发起的 MCP 工具调用。非工具型的服务间调用继续使用现有 REST、消息队列或内部 SDK，不属于本服务的设计和流量范围。
 
 - Agent 的 tools/list。
 - Agent 的 tools/call。
@@ -911,16 +913,16 @@ cancel outcome
 
 - 同一个文件读取 MCP 在 Local Project 走 Local Connector，在 Cloud Project 走 Harness/Sandbox。
 
-### Phase 4：业务微服务统一
+### Phase 4：Agent 内部工具 Provider 统一
 
 - Task Runner Service MCP 接入。
 - Project Management MCP 接入。
 - Project Runtime Environment MCP 接入。
 - Memory 能力接入标准 MCP Provider。
 - Sandbox Images 接入。
-- ChatOS/Task Runner 删除对应直接客户端和 URL 拼接。
+- ChatOS/Task Runner 删除这些 Agent 工具对应的直接客户端和 URL 拼接。
 
-当前 Project Management MCP 和 Project Runtime Environment MCP 已使用 `mcp-management-service` 专用内部身份真实调用，并校验 owner、Agent、Session 和 Project 绑定。Task Runner、Memory、Sandbox Images 及调用方旧直连清理尚未开始。
+当前 Project Management MCP 和 Project Runtime Environment MCP 已使用 `mcp-management-service` 专用内部身份真实调用，并校验 owner、Agent、Session 和 Project 绑定。Task Runner 已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Memory、Sandbox Images 以及旧直连清理尚未开始。
 
 ### Phase 5：External 与 Plugin Runtime
 
@@ -940,6 +942,14 @@ cancel outcome
 5. 其他 Agent 宿主。
 
 每个调用方只配置一个 MCP Management endpoint。
+
+Task Runner 当前迁移开关：
+
+- `off`：仅使用旧 MCP builder。
+- `shadow`：解析并记录 MCP Management Runtime Session，但工具调用仍走旧链路；2.0.10 部署默认值。
+- `gateway`：模型只看到 MCP Management 聚合 endpoint；Session 解析或调用失败直接失败，不静默回退。
+
+只有 Agent Tool Plane 使用该 endpoint；调用方的普通 REST、事件、队列和内部 SDK 链路不受此迁移影响。
 
 ### Phase 7：删除重复路由
 
@@ -986,7 +996,7 @@ MCP Management Phase 0/1
 - mcp/ 增加路由分类所需的稳定 metadata，但不加入环境判断。
 - chatos_plugin_management_sdk 如需补 Runtime Session DTO，只做兼容扩展。
 - Plugin Management 增加 MCP Management caller scope。
-- Task Runner 增加 MCP Management client，随后替换本地 builder。
+- Task Runner 已增加 MCP Management client，并以 `shadow`/`gateway` 开关逐步替换本地 builder。
 - Local Connector Service 增加 MCP Management caller token。
 - Project Context owner 增加内部 execution-context endpoint。
 

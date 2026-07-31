@@ -155,8 +155,9 @@ mod tests {
     use serde_json::{json, Value};
 
     use crate::{
-        BuiltinMcpServerOptions, BuiltinToolProvider, McpBuiltinServer, ToolCallContext,
-        ToolLifecycleEvent, ToolLifecycleHook, ToolLifecycleOutcome, ToolStreamChunkCallback,
+        BuiltinMcpServerOptions, BuiltinToolProvider, McpBuiltinServer, McpExecutorBuilder,
+        McpHttpServer, ToolCallContext, ToolLifecycleEvent, ToolLifecycleHook,
+        ToolLifecycleOutcome, ToolStreamChunkCallback,
     };
 
     struct EchoProvider;
@@ -347,6 +348,34 @@ mod tests {
         let tools = executor.available_tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"].as_str(), Some("echo_say"));
+    }
+
+    #[tokio::test]
+    async fn required_http_server_unavailability_fails_initialization() {
+        let result = McpExecutorBuilder::new()
+            .with_http_server(
+                McpHttpServer::new("gateway", "not a valid MCP URL").with_fail_on_unavailable(),
+            )
+            .build_initialized()
+            .await;
+
+        let error = match result {
+            Ok(_) => panic!("required gateway must fail closed"),
+            Err(error) => error,
+        };
+        assert!(error.contains("required HTTP MCP server gateway is unavailable"));
+    }
+
+    #[tokio::test]
+    async fn optional_http_server_unavailability_remains_compatible() {
+        let executor = McpExecutorBuilder::new()
+            .with_http_server(McpHttpServer::new("optional", "not a valid MCP URL"))
+            .build_initialized()
+            .await
+            .expect("optional MCP server remains best effort");
+
+        assert!(executor.available_tools().is_empty());
+        assert_eq!(executor.unavailable_tools().len(), 1);
     }
 
     #[test]

@@ -399,6 +399,7 @@ services:
       MCP_MANAGEMENT_PUBLIC_BASE_URL: http://mcp-management-service-backend:39280
       MCP_MANAGEMENT_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_mcp_management_internal_secret}
       MCP_MANAGEMENT_RUNTIME_GRANT_SECRET: ${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}
+      MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS: ${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}
       MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
       MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
@@ -520,6 +521,10 @@ services:
       TASK_RUNNER_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
       TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
+      MCP_MANAGEMENT_SERVICE_BASE_URL: http://mcp-management-service-backend:39280
+      MCP_MANAGEMENT_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_mcp_management_internal_secret}
+      TASK_RUNNER_MCP_MANAGEMENT_MODE: ${TASK_RUNNER_MCP_MANAGEMENT_MODE:-shadow}
+      TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
       TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: http://sandbox-manager-backend:8095
@@ -550,6 +555,8 @@ services:
       project-management-backend:
         condition: service_healthy
       plugin-management-backend:
+        condition: service_healthy
+      mcp-management-service-backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39090/api/health"]
