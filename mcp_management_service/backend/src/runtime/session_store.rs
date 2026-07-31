@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use chatos_mcp_management_sdk::{
     ProjectExecutionContext, ResolvedMcpRoute, RuntimeSessionRoutesResponse, RuntimeToolDescriptor,
+    SandboxExecutionTarget,
 };
 use tokio::sync::RwLock;
 
@@ -19,6 +20,7 @@ pub struct RuntimeSessionSnapshot {
     pub run_id: Option<String>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
+    pub sandbox_target: Option<SandboxExecutionTarget>,
     pub project_context: ProjectExecutionContext,
     pub policy_revision: String,
     pub route_revision: String,

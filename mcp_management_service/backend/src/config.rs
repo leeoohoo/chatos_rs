@@ -26,6 +26,9 @@ pub struct AppConfig {
     pub project_service_internal_api_secret: Option<String>,
     pub local_connector_service_base_url: String,
     pub local_connector_internal_api_secret: Option<String>,
+    pub sandbox_manager_service_base_url: String,
+    pub sandbox_manager_internal_api_secret: Option<String>,
+    pub sandbox_manager_request_timeout: Duration,
     pub downstream_request_timeout: Duration,
     pub provider_response_limit_bytes: usize,
     pub public_base_url: String,
@@ -72,6 +75,8 @@ impl AppConfig {
             env_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET");
         let local_connector_internal_api_secret =
             env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET");
+        let sandbox_manager_internal_api_secret =
+            env_text("MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET");
         validate_production_secret(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             plugin_management_internal_api_secret.as_deref(),
@@ -87,6 +92,11 @@ impl AppConfig {
             local_connector_internal_api_secret.as_deref(),
             &["change_me_mcp_management_local_connector_secret"],
         )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET",
+            sandbox_manager_internal_api_secret.as_deref(),
+            &["change_me_mcp_management_sandbox_manager_secret"],
+        )?;
         let downstream_request_timeout = Duration::from_millis(
             env_text("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")
                 .and_then(|value| value.parse::<u64>().ok())
@@ -98,6 +108,12 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(30 * 60)
                 .clamp(5 * 60, 2 * 60 * 60),
+        );
+        let sandbox_manager_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(180_000)
+                .clamp(1_000, 2 * 60 * 60 * 1_000),
         );
         let provider_response_limit_bytes =
             env_text("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")
@@ -132,6 +148,13 @@ impl AppConfig {
                     .unwrap_or_else(|| "http://127.0.0.1:39230".to_string()),
             ),
             local_connector_internal_api_secret,
+            sandbox_manager_service_base_url: normalize_base_url(
+                env_text("MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL")
+                    .or_else(|| env_text("SANDBOX_MANAGER_SERVICE_BASE_URL"))
+                    .unwrap_or_else(|| "http://127.0.0.1:8095".to_string()),
+            ),
+            sandbox_manager_internal_api_secret,
+            sandbox_manager_request_timeout,
             downstream_request_timeout,
             provider_response_limit_bytes,
             public_base_url,
@@ -160,6 +183,11 @@ impl AppConfig {
             self.local_connector_service_base_url.as_str(),
         )
         .await;
+        self.sandbox_manager_service_base_url = chatos_service_runtime::resolve_service_base_url(
+            "sandbox-manager",
+            self.sandbox_manager_service_base_url.as_str(),
+        )
+        .await;
     }
 
     #[cfg(test)]
@@ -178,6 +206,9 @@ impl AppConfig {
             project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
+            sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),
+            sandbox_manager_internal_api_secret: Some("a-long-sandbox-manager-secret".to_string()),
+            sandbox_manager_request_timeout: Duration::from_secs(180),
             downstream_request_timeout: Duration::from_secs(5),
             provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),

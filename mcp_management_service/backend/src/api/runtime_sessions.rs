@@ -7,7 +7,9 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use chatos_mcp_management_sdk::{
-    CreateRuntimeSessionRequest, RuntimeSessionResponse, RuntimeSessionRoutesResponse,
+    CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute, RuntimeSessionResponse,
+    RuntimeSessionRoutesResponse, SandboxExecutionTarget, SandboxProviderKind,
+    WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{ResolveAgentCapabilitiesRequest, SystemAgentKey};
 use uuid::Uuid;
@@ -28,6 +30,7 @@ pub(super) async fn resolve_runtime_session(
     let caller_service =
         require_internal_request(&state.config, &headers, "runtime.sessions.resolve")?;
     validate_session_request(&request)?;
+    let sandbox_target = normalize_sandbox_target(request.sandbox_target.clone())?;
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
     let project_context = state
         .project_context_client
@@ -64,17 +67,39 @@ pub(super) async fn resolve_runtime_session(
         return Err(ApiError::conflict("configured Agent is disabled"));
     }
     let materialized = materialize_mcp_candidates(&capabilities);
-    let route_response =
+    let mut route_response =
         state
             .routing
             .resolve(chatos_mcp_management_sdk::ResolveMcpRoutesRequest {
                 context: project_context.clone(),
                 resources: materialized.resources,
             });
+    bind_cloud_sandbox_routes(
+        route_response.routes.as_mut_slice(),
+        sandbox_target.as_ref(),
+    );
+    if route_response.routes.iter().any(|route| {
+        route.provider_kind == McpProviderKind::CloudSandbox && state.providers.supports(route)
+    }) {
+        let target = sandbox_target.as_ref().ok_or_else(|| {
+            ApiError::conflict("Cloud Sandbox route requires a bound sandbox target")
+        })?;
+        state
+            .providers
+            .validate_sandbox_target(
+                target,
+                request.owner_user_id.trim(),
+                request.project_id.trim(),
+                request.run_id.as_deref(),
+            )
+            .await
+            .map_err(|error| ApiError::conflict(error.message))?;
+    }
     let tool_result = materialize_runtime_tools(&capabilities, route_response.routes.as_slice())
         .map_err(ApiError::conflict)?;
     let route_revision = runtime_route_revision(
         route_response.route_revision.as_str(),
+        route_response.routes.as_slice(),
         tool_result.tools.as_slice(),
     )
     .map_err(ApiError::internal)?;
@@ -141,6 +166,7 @@ pub(super) async fn resolve_runtime_session(
         run_id: normalized(request.run_id),
         turn_id: normalized(request.turn_id),
         task_id: normalized(request.task_id),
+        sandbox_target,
         project_context,
         policy_revision: capabilities.policy_revision.clone(),
         route_revision: route_revision.clone(),
@@ -204,6 +230,51 @@ fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(),
     Ok(())
 }
 
+fn normalize_sandbox_target(
+    target: Option<SandboxExecutionTarget>,
+) -> Result<Option<SandboxExecutionTarget>, ApiError> {
+    let Some(mut target) = target else {
+        return Ok(None);
+    };
+    target.sandbox_id = target.sandbox_id.trim().to_string();
+    target.lease_id = target.lease_id.trim().to_string();
+    target.service_id = normalized(target.service_id);
+    if target.sandbox_id.is_empty() || target.lease_id.is_empty() {
+        return Err(ApiError::bad_request(
+            "sandbox_target requires sandbox_id and lease_id",
+        ));
+    }
+    if target.is_environment && target.service_id.is_none() {
+        return Err(ApiError::bad_request(
+            "sandbox environment target requires service_id",
+        ));
+    }
+    if !target.is_environment && target.service_id.is_some() {
+        return Err(ApiError::bad_request(
+            "sandbox service_id is only valid for an environment target",
+        ));
+    }
+    Ok(Some(target))
+}
+
+fn bind_cloud_sandbox_routes(
+    routes: &mut [ResolvedMcpRoute],
+    target: Option<&SandboxExecutionTarget>,
+) {
+    for route in routes
+        .iter_mut()
+        .filter(|route| route.provider_kind == McpProviderKind::CloudSandbox)
+    {
+        if let Some(target) = target {
+            route.provider_ref = Some(target.provider_ref());
+        } else {
+            route.provider_kind = McpProviderKind::Unavailable;
+            route.provider_ref = None;
+            route.reason = "Cloud Sandbox route requires a runtime sandbox lease".to_string();
+        }
+    }
+}
+
 fn validate_capability_identity(
     capabilities: &chatos_plugin_management_sdk::ResolvedAgentCapabilities,
     expected_agent_key: &str,
@@ -242,11 +313,21 @@ fn validate_context_overrides(
         }
     }
     if let Some(requested) = request.requested_sandbox_provider {
-        if requested != context.sandbox_provider {
+        let workspace_authorizes_cloud = requested == SandboxProviderKind::Cloud
+            && context.workspace_provider == WorkspaceProviderKind::CloudSandbox;
+        if requested != context.sandbox_provider && !workspace_authorizes_cloud {
             return Err(ApiError::conflict(
                 "sandbox provider override is not authorized by Project Context",
             ));
         }
+    }
+    if request.sandbox_target.is_some()
+        && context.sandbox_provider != SandboxProviderKind::Cloud
+        && context.workspace_provider != WorkspaceProviderKind::CloudSandbox
+    {
+        return Err(ApiError::conflict(
+            "sandbox target is not authorized by Project Context",
+        ));
     }
     Ok(())
 }
@@ -290,6 +371,7 @@ mod tests {
             task_profile: Some("implementation".to_string()),
             requested_device_id: Some("device-1".to_string()),
             requested_sandbox_provider: None,
+            sandbox_target: None,
         }
     }
 
@@ -317,6 +399,23 @@ mod tests {
         let mut invalid = request();
         invalid.requested_device_id = Some("another-device".to_string());
         assert!(validate_context_overrides(&invalid, &context()).is_err());
+    }
+
+    #[test]
+    fn cloud_sandbox_workspace_authorizes_runtime_sandbox_target() {
+        let mut request = request();
+        request.requested_device_id = None;
+        request.requested_sandbox_provider = Some(SandboxProviderKind::Cloud);
+        request.sandbox_target = Some(SandboxExecutionTarget {
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        });
+        let mut context = context();
+        context.workspace_provider = WorkspaceProviderKind::CloudSandbox;
+        context.workspace = None;
+        validate_context_overrides(&request, &context).unwrap();
     }
 
     #[test]
@@ -371,6 +470,32 @@ mod tests {
         assert_eq!(
             required_routes_without_provider_adapter(&required_resource_ids, &routes, |_| false),
             vec!["required-mcp"]
+        );
+    }
+
+    #[test]
+    fn cloud_sandbox_routes_are_bound_to_opaque_runtime_target() {
+        let mut routes = vec![chatos_mcp_management_sdk::ResolvedMcpRoute {
+            resource_id: "builtin_code_maintainer_read".to_string(),
+            server_name: "code_maintainer_read".to_string(),
+            provider_kind: McpProviderKind::CloudSandbox,
+            provider_ref: Some("project:project-1".to_string()),
+            tool_namespace: "code_maintainer_read".to_string(),
+            allow_writes: false,
+            retry_class: chatos_mcp_management_sdk::McpRetryClass::IdempotentRead,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        }];
+        let target = SandboxExecutionTarget {
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        };
+        bind_cloud_sandbox_routes(routes.as_mut_slice(), Some(&target));
+        assert_eq!(
+            routes[0].provider_ref.as_deref(),
+            Some("sandbox:sandbox-1/lease:lease-1")
         );
     }
 }

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpManagementClient, McpManagementClientConfig,
-    RuntimeSessionResponse, SandboxProviderKind,
+    RuntimeSessionResponse, SandboxExecutionTarget, SandboxProviderKind,
 };
 use chatos_mcp_runtime::McpHttpServer;
 use tracing::{info, warn};
@@ -76,6 +76,12 @@ pub(super) async fn resolve_mcp_management_gateway(
         task_profile: Some(task.task_profile.clone()),
         requested_device_id: None,
         requested_sandbox_provider: sandbox_context.map(|_| SandboxProviderKind::Cloud),
+        sandbox_target: sandbox_context.map(|context| SandboxExecutionTarget {
+            sandbox_id: context.sandbox_id.clone(),
+            lease_id: context.lease_id.clone(),
+            is_environment: context.is_environment,
+            service_id: context.service_id.clone(),
+        }),
     };
     let session = match client.resolve_runtime_session(&request).await {
         Ok(session) => session,

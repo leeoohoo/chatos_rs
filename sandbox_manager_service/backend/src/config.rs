@@ -251,7 +251,7 @@ impl AppConfig {
                 )?;
             }
             if config.require_signed_internal_requests {
-                for caller in ["task-runner", "project-service"] {
+                for caller in ["task-runner", "project-service", "mcp-management-service"] {
                     if !config.internal_api_secrets.contains_key(caller) {
                         return Err(format!(
                             "dedicated Sandbox Manager internal secret is required for {caller}"
@@ -266,6 +266,7 @@ impl AppConfig {
                     &[
                         "change_me_task_runner_sandbox_manager_secret",
                         "change_me_project_service_sandbox_manager_secret",
+                        "change_me_mcp_management_sandbox_manager_secret",
                     ],
                 )?;
             }
@@ -293,6 +294,10 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "project-service",
             "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
+        ),
+        (
+            "mcp-management-service",
+            "MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()

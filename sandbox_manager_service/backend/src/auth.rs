@@ -106,6 +106,13 @@ impl SandboxPrincipal {
 }
 
 impl SandboxAuthContext {
+    pub fn system_client_id(&self) -> Option<&str> {
+        match self {
+            Self::System(client) => Some(client.client_id.as_str()),
+            _ => None,
+        }
+    }
+
     pub fn require_admin(&self) -> Result<(), ApiError> {
         match self {
             Self::Disabled | Self::Operator => Ok(()),
@@ -423,6 +430,7 @@ fn authenticate_internal_service(
             SCOPE_IMAGES_READ,
         ],
         "project-service" => vec![SCOPE_IMAGES_READ, SCOPE_IMAGES_WRITE],
+        "mcp-management-service" => vec![SCOPE_LEASE_READ, SCOPE_MCP_TOOLS, SCOPE_MCP_CALL],
         _ => {
             return Err(ApiError::forbidden(
                 "caller service is not allowed for Sandbox Manager",

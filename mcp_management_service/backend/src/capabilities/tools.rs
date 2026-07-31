@@ -104,11 +104,13 @@ pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &s
 
 pub fn runtime_route_revision(
     base_route_revision: &str,
+    routes: &[ResolvedMcpRoute],
     tools: &[RuntimeToolDescriptor],
 ) -> Result<String, String> {
     let bytes = serde_json::to_vec(&(
-        "mcp-runtime-route-with-tool-schema-v1",
+        "mcp-runtime-route-with-provider-and-tool-schema-v2",
         base_route_revision,
+        routes,
         tools,
     ))
     .map_err(|err| format!("serialize runtime route snapshot failed: {err}"))?;
@@ -243,8 +245,29 @@ mod tests {
             ..first[0].clone()
         }];
         assert_ne!(
-            runtime_route_revision("base-route", &first).unwrap(),
-            runtime_route_revision("base-route", &second).unwrap()
+            runtime_route_revision("base-route", &[], &first).unwrap(),
+            runtime_route_revision("base-route", &[], &second).unwrap()
+        );
+    }
+
+    #[test]
+    fn runtime_route_revision_binds_the_selected_provider_target() {
+        let route = ResolvedMcpRoute {
+            resource_id: "builtin_code_maintainer_read".to_string(),
+            server_name: "code_maintainer_read".to_string(),
+            provider_kind: McpProviderKind::CloudSandbox,
+            provider_ref: Some("sandbox:sandbox-1/lease:lease-1".to_string()),
+            tool_namespace: "code_maintainer_read".to_string(),
+            allow_writes: false,
+            retry_class: McpRetryClass::IdempotentRead,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        };
+        let mut another = route.clone();
+        another.provider_ref = Some("sandbox:sandbox-2/lease:lease-2".to_string());
+        assert_ne!(
+            runtime_route_revision("base-route", &[route], &[]).unwrap(),
+            runtime_route_revision("base-route", &[another], &[]).unwrap()
         );
     }
 

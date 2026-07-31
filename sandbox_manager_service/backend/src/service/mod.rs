@@ -8,3 +8,4 @@ mod manager;
 mod output_manifest;
 
 pub use manager::SandboxManager;
+pub(crate) use manager::SandboxMcpRuntimeBinding;

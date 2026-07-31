@@ -476,9 +476,11 @@ impl SandboxManager {
         auth: &SandboxAuthContext,
         environment_id: &str,
         service_id: Option<&str>,
+        binding: Option<&super::mcp_proxy::SandboxMcpRuntimeBinding>,
         payload: Value,
     ) -> Result<Value, ApiError> {
         let record = self.require_environment(environment_id).await?;
+        super::mcp_proxy::validate_mcp_runtime_binding(auth, &record, binding)?;
         super::mcp_proxy::authorize_mcp_proxy_payload(auth, &record, &payload)?;
         let service_id = service_id
             .map(str::trim)

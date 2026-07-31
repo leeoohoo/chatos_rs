@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制；Phase 3 已接通 Local Connector 与 Harness Provider；Phase 4 已接通 Project Management 和 Project Runtime Environment Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、Cloud Sandbox、Memory、External/Plugin Provider 和其余调用方切换仍待完成，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management 和 Project Runtime Environment Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、Memory、Sandbox Images、External/Plugin Provider 和其余调用方切换仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -907,7 +907,9 @@ cancel outcome
 - 实现 CloudSandboxProvider。
 - 迁移 CodeMaintainerRead/Write、Git 和 Terminal。
 
-当前已完成 Local Connector 与 Harness 两条首批真实路由：本地 Workspace 的 CodeMaintainerRead、CodeMaintainerWrite、TerminalController、BrowserTools 经 Local Connector Service 的 `/mcp` relay 到客户端；云端 Harness Workspace 的 CodeMaintainerRead/Write 经 Project Service 的 project-scoped Harness MCP。设备、Workspace 和相对 cwd 只取自 Runtime Session 的权威 Project Context，Provider 故障不自动切换执行位置。Cloud Sandbox Provider 尚未接入。
+当前已完成三类 Workspace 真实路由：本地 Workspace 的 CodeMaintainerRead、CodeMaintainerWrite、TerminalController、BrowserTools 经 Local Connector Service 的 `/mcp` relay 到客户端；云端 Harness Workspace 的 CodeMaintainerRead/Write 经 Project Service 的 project-scoped Harness MCP；Cloud Sandbox 的 CodeMaintainerRead、CodeMaintainerWrite、TerminalController 经 Sandbox Manager 的标准 MCP proxy 到已创建的 Sandbox 或 Environment Service。
+
+Cloud Sandbox Runtime Session 只接收 `sandbox_id`、`lease_id`、`is_environment` 和可选 `service_id`，不接收任意 Provider URL。MCP Management 在签发 Session 前通过专用服务身份向 Sandbox Manager 校验 lease、owner、project、run 和 service 绑定，并把目标写入 `route_revision`；每次调用前再次验证 lease 状态。Sandbox Manager 对来自 MCP Management 的 proxy 请求重复校验同一绑定。Provider 故障或绑定漂移均直接失败，不切换到 Harness、本地 Connector 或其他 Sandbox。
 
 验收：
 

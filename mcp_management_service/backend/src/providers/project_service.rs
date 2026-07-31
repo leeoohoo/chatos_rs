@@ -323,6 +323,7 @@ mod tests {
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
+            sandbox_target: None,
             project_context: ProjectExecutionContext {
                 project_id: "project-1".to_string(),
                 owner_user_id: "user-1".to_string(),

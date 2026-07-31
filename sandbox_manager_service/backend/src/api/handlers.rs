@@ -312,6 +312,7 @@ pub async fn sandbox_environment_mcp_proxy(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
     Ok(Json(
         state
             .manager
@@ -319,6 +320,7 @@ pub async fn sandbox_environment_mcp_proxy(
                 &auth,
                 environment_id.as_str(),
                 header_text(&headers, "x-chatos-service-id").as_deref(),
+                binding.as_ref(),
                 payload,
             )
             .await?,
@@ -369,14 +371,27 @@ pub async fn sandbox_mcp_proxy(
     Path(sandbox_id): Path<String>,
     State(state): State<AppState>,
     Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
     Json(input): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
     Ok(Json(
         state
             .manager
-            .mcp_proxy(&auth, sandbox_id.as_str(), input)
+            .mcp_proxy(&auth, sandbox_id.as_str(), binding.as_ref(), input)
             .await?,
     ))
+}
+
+fn sandbox_mcp_runtime_binding(
+    headers: &HeaderMap,
+) -> Option<crate::service::SandboxMcpRuntimeBinding> {
+    Some(crate::service::SandboxMcpRuntimeBinding {
+        lease_id: header_text(headers, "x-chatos-sandbox-lease-id")?,
+        owner_user_id: header_text(headers, "x-mcp-management-owner-user-id")?,
+        project_id: header_text(headers, "x-mcp-management-project-id")?,
+        run_id: header_text(headers, "x-mcp-management-run-id")?,
+    })
 }
 
 pub async fn release_sandbox(

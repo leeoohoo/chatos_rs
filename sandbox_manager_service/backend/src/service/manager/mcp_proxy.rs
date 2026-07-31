@@ -22,14 +22,24 @@ use super::SandboxManager;
 
 const SANDBOX_AGENT_MCP_TIMEOUT: Duration = Duration::from_secs(135);
 
+#[derive(Debug, Clone)]
+pub struct SandboxMcpRuntimeBinding {
+    pub lease_id: String,
+    pub owner_user_id: String,
+    pub project_id: String,
+    pub run_id: String,
+}
+
 impl SandboxManager {
     pub async fn mcp_proxy(
         &self,
         auth: &SandboxAuthContext,
         sandbox_id: &str,
+        binding: Option<&SandboxMcpRuntimeBinding>,
         mut payload: Value,
     ) -> Result<Value, ApiError> {
         let record = self.require_sandbox(sandbox_id).await?;
+        validate_mcp_runtime_binding(auth, &record, binding)?;
         strip_ungrantable_command_permission_requests(&mut payload);
         authorize_mcp_proxy_payload(auth, &record, &payload)?;
         let agent_endpoint = self.agent_endpoint_for(&record).await?;
@@ -69,6 +79,29 @@ impl SandboxManager {
             .ok_or_else(|| ApiError::bad_request("sandbox agent endpoint is not available"))?;
         validate_http_agent_endpoint(endpoint)
     }
+}
+
+pub(in crate::service::manager) fn validate_mcp_runtime_binding(
+    auth: &SandboxAuthContext,
+    record: &SandboxLeaseRecord,
+    binding: Option<&SandboxMcpRuntimeBinding>,
+) -> Result<(), ApiError> {
+    if auth.system_client_id() != Some("mcp-management-service") {
+        return Ok(());
+    }
+    let binding = binding.ok_or_else(|| {
+        ApiError::bad_request("MCP Management sandbox runtime binding headers are required")
+    })?;
+    if record.id != binding.lease_id
+        || record.tenant_id != binding.owner_user_id
+        || record.project_id != binding.project_id
+        || record.run_id != binding.run_id
+    {
+        return Err(ApiError::forbidden(
+            "MCP Management sandbox runtime binding does not match the lease",
+        ));
+    }
+    Ok(())
 }
 
 fn strip_ungrantable_command_permission_requests(payload: &mut Value) {
@@ -375,6 +408,31 @@ mod tests {
         });
 
         assert!(authorize_mcp_proxy_payload(&auth, &lease_record(), &payload).is_ok());
+    }
+
+    #[test]
+    fn mcp_management_proxy_requires_exact_runtime_binding() {
+        let auth = SandboxAuthContext::System(SandboxSystemClient {
+            client_id: "mcp-management-service".to_string(),
+            scopes: vec![SCOPE_MCP_CALL.to_string()],
+            allowed_tenant_ids: vec!["*".to_string()],
+            allowed_project_ids: vec!["*".to_string()],
+            allowed_tools: vec!["*".to_string()],
+            max_lease_ttl_seconds: 3_600,
+        });
+        let binding = SandboxMcpRuntimeBinding {
+            lease_id: "lease-1".to_string(),
+            owner_user_id: "tenant-1".to_string(),
+            project_id: "project-1".to_string(),
+            run_id: "run-1".to_string(),
+        };
+        validate_mcp_runtime_binding(&auth, &lease_record(), Some(&binding)).unwrap();
+
+        let mut mismatched = binding;
+        mismatched.run_id = "another-run".to_string();
+        let error = validate_mcp_runtime_binding(&auth, &lease_record(), Some(&mismatched))
+            .expect_err("mismatched runtime binding must be rejected");
+        assert_eq!(error.status, StatusCode::FORBIDDEN);
     }
 
     #[test]

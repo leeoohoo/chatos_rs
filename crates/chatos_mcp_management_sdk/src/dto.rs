@@ -71,6 +71,26 @@ pub struct WorkspaceExecutionTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxExecutionTarget {
+    pub sandbox_id: String,
+    pub lease_id: String,
+    #[serde(default)]
+    pub is_environment: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
+}
+
+impl SandboxExecutionTarget {
+    pub fn provider_ref(&self) -> String {
+        format!(
+            "sandbox:{}/lease:{}",
+            self.sandbox_id.trim(),
+            self.lease_id.trim()
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectExecutionContext {
     pub project_id: String,
     pub owner_user_id: String,
@@ -230,6 +250,8 @@ pub struct CreateRuntimeSessionRequest {
     pub task_profile: Option<String>,
     pub requested_device_id: Option<String>,
     pub requested_sandbox_provider: Option<SandboxProviderKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_target: Option<SandboxExecutionTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,5 +323,16 @@ mod tests {
             route.exposed_tool_name("read_file"),
             "code_maintainer_read_read_file"
         );
+    }
+
+    #[test]
+    fn sandbox_execution_target_provider_ref_contains_only_opaque_ids() {
+        let target = SandboxExecutionTarget {
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        };
+        assert_eq!(target.provider_ref(), "sandbox:sandbox-1/lease:lease-1");
     }
 }

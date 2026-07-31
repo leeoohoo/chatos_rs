@@ -296,6 +296,7 @@ SANDBOX_MANAGER_OPERATOR_TOKEN|chatos-sandbox-manager-dev-operator-token
 SANDBOX_MANAGER_AGENT_TOKEN_SECRET|chatos-sandbox-agent-dev-secret
 TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_task_runner_sandbox_manager_secret
 PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_project_service_sandbox_manager_secret
+MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_mcp_management_sandbox_manager_secret
 EOF
 
   if (( failures > 0 )); then

@@ -38,6 +38,9 @@ impl AppState {
             config.project_service_internal_api_secret.clone(),
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),
+            config.sandbox_manager_service_base_url.clone(),
+            config.sandbox_manager_internal_api_secret.clone(),
+            config.sandbox_manager_request_timeout,
             config.downstream_request_timeout,
             config.provider_response_limit_bytes,
         )?;

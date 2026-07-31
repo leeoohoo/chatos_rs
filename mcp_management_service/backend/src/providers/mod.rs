@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod cloud_sandbox;
 mod local_connector;
 mod project_service;
 
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxExecutionTarget};
 use serde_json::Value;
 
 use crate::runtime::RuntimeSessionSnapshot;
 
+use cloud_sandbox::CloudSandboxProvider;
 use local_connector::LocalConnectorProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
@@ -19,6 +21,7 @@ pub use project_service::{ProviderCallError, ProviderCallOutcome};
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     project_service: ProjectServiceProvider,
+    cloud_sandbox: CloudSandboxProvider,
 }
 
 impl ProviderDispatcher {
@@ -27,6 +30,9 @@ impl ProviderDispatcher {
         project_service_internal_secret: Option<String>,
         local_connector_service_base_url: impl Into<String>,
         local_connector_internal_secret: Option<String>,
+        sandbox_manager_service_base_url: impl Into<String>,
+        sandbox_manager_internal_secret: Option<String>,
+        sandbox_manager_request_timeout: Duration,
         request_timeout: Duration,
         response_limit_bytes: usize,
     ) -> Result<Self, String> {
@@ -43,6 +49,12 @@ impl ProviderDispatcher {
                 project_service_internal_secret,
                 response_limit_bytes,
             )?,
+            cloud_sandbox: CloudSandboxProvider::new(
+                sandbox_manager_service_base_url,
+                sandbox_manager_request_timeout,
+                sandbox_manager_internal_secret,
+                response_limit_bytes,
+            )?,
         })
     }
 
@@ -52,8 +64,21 @@ impl ProviderDispatcher {
                 self.project_service.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
+            McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
             _ => false,
         }
+    }
+
+    pub async fn validate_sandbox_target(
+        &self,
+        target: &SandboxExecutionTarget,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: Option<&str>,
+    ) -> Result<(), ProviderCallError> {
+        self.cloud_sandbox
+            .validate_target(target, owner_user_id, project_id, run_id)
+            .await
     }
 
     pub async fn call_tool(
@@ -80,6 +105,17 @@ impl ProviderDispatcher {
             }
             McpProviderKind::LocalConnector if self.local_connector.supports(route) => {
                 self.local_connector
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::CloudSandbox if self.cloud_sandbox.supports(route) => {
+                self.cloud_sandbox
                     .call_tool(
                         snapshot,
                         route,
