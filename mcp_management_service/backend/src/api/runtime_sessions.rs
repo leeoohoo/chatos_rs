@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::auth::require_internal_request;
 use crate::capabilities::{
-    materialize_mcp_candidates, materialize_runtime_tools, runtime_route_revision,
+    materialize_mcp_candidates, materialize_runtime_tools_with_plugins, runtime_route_revision,
 };
 use crate::error::ApiError;
 use crate::runtime::{RuntimeGrantClaims, RuntimeSessionSnapshot};
@@ -73,7 +73,7 @@ pub(super) async fn resolve_runtime_session(
         .runtime_grants
         .next_expires_at_unix()
         .map_err(ApiError::internal)?;
-    let materialized = materialize_mcp_candidates(&capabilities);
+    let materialized = materialize_mcp_candidates(&capabilities).map_err(ApiError::conflict)?;
     let mut route_response =
         state
             .routing
@@ -141,134 +141,177 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
-    apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
-    apply_live_tool_snapshots(&mut capabilities, cloud_stdio_tool_snapshots);
-    let external_http_bindings = state
+    let (plugin_local_bindings, plugin_tool_snapshots) = state
         .providers
-        .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
+        .prepare_plugin_local_routes(
+            &materialized.plugin_bindings,
+            route_response.routes.as_mut_slice(),
+            &project_context,
+            session_id.as_str(),
+            request.owner_user_id.trim(),
+            expires_at_unix,
+        )
         .await;
-    for route in &mut route_response.routes {
-        route.cancel_supported &= state.providers.supports_cancellation(route);
-    }
-    let tool_result = materialize_runtime_tools(&capabilities, route_response.routes.as_slice())
+    let cleanup_owner_user_id = request.owner_user_id.trim().to_string();
+    let cleanup_session_id = session_id.clone();
+    let cleanup_plugin_local_bindings = plugin_local_bindings.clone();
+    let result = async {
+        apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
+        apply_live_tool_snapshots(&mut capabilities, cloud_stdio_tool_snapshots);
+        let external_http_bindings = state
+            .providers
+            .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
+            .await;
+        for route in &mut route_response.routes {
+            route.cancel_supported &= state.providers.supports_cancellation(route);
+        }
+        let tool_result = materialize_runtime_tools_with_plugins(
+            &capabilities,
+            route_response.routes.as_slice(),
+            &materialized.plugin_bindings,
+            &plugin_tool_snapshots,
+        )
         .map_err(ApiError::conflict)?;
-    let route_revision = runtime_route_revision(
-        route_response.route_revision.as_str(),
-        capabilities.policy_revision.as_str(),
-        route_response.routes.as_slice(),
-        tool_result.tools.as_slice(),
-    )
-    .map_err(ApiError::internal)?;
-    let expected_project_task_ids = normalized_unique_items(
-        request.expected_project_task_ids.clone(),
-        "expected_project_task_ids",
-        200,
-    )?;
-    validate_task_runner_provider_context(
-        agent_key,
-        &request,
-        expected_project_task_ids.as_slice(),
-        route_response.routes.as_slice(),
-    )?;
-    let mut unavailable_required_mcps = route_response.unavailable_required_mcps;
-    unavailable_required_mcps.extend(tool_result.missing_required_tool_schemas);
-    let required_resource_ids = capabilities
-        .mcps
-        .iter()
-        .filter(|resolved| {
-            resolved.binding.enabled && resolved.binding.required && resolved.resource.enabled
-        })
-        .map(|resolved| resolved.resource.id.as_str())
-        .collect::<HashSet<_>>();
-    unavailable_required_mcps.extend(required_routes_without_provider_adapter(
-        &required_resource_ids,
-        route_response.routes.as_slice(),
-        |route| state.providers.supports(route),
-    ));
-    unavailable_required_mcps.sort();
-    unavailable_required_mcps.dedup();
-    if !unavailable_required_mcps.is_empty() {
-        return Err(ApiError::conflict(format!(
-            "required MCPs cannot be materialized: {}",
-            unavailable_required_mcps.join(", ")
-        )));
+        let route_revision = runtime_route_revision(
+            route_response.route_revision.as_str(),
+            capabilities.policy_revision.as_str(),
+            route_response.routes.as_slice(),
+            tool_result.tools.as_slice(),
+        )
+        .map_err(ApiError::internal)?;
+        let expected_project_task_ids = normalized_unique_items(
+            request.expected_project_task_ids.clone(),
+            "expected_project_task_ids",
+            200,
+        )?;
+        validate_task_runner_provider_context(
+            agent_key,
+            &request,
+            expected_project_task_ids.as_slice(),
+            route_response.routes.as_slice(),
+        )?;
+        let mut unavailable_required_mcps = materialized.unavailable_required_resources;
+        unavailable_required_mcps.extend(route_response.unavailable_required_mcps);
+        unavailable_required_mcps.extend(tool_result.missing_required_tool_schemas);
+        let mut required_resource_ids = capabilities
+            .mcps
+            .iter()
+            .filter(|resolved| {
+                resolved.binding.enabled && resolved.binding.required && resolved.resource.enabled
+            })
+            .map(|resolved| resolved.resource.id.clone())
+            .collect::<HashSet<_>>();
+        required_resource_ids.extend(
+            materialized
+                .plugin_bindings
+                .values()
+                .filter(|binding| binding.required)
+                .map(|binding| binding.resource_id.clone()),
+        );
+        unavailable_required_mcps.extend(required_routes_without_provider_adapter(
+            &required_resource_ids,
+            route_response.routes.as_slice(),
+            |route| state.providers.supports(route),
+        ));
+        unavailable_required_mcps.sort();
+        unavailable_required_mcps.dedup();
+        if !unavailable_required_mcps.is_empty() {
+            return Err(ApiError::conflict(format!(
+                "required MCPs cannot be materialized: {}",
+                unavailable_required_mcps.join(", ")
+            )));
+        }
+        let mut allowed_resource_ids = route_response
+            .routes
+            .iter()
+            .map(|route| route.resource_id.clone())
+            .collect::<Vec<_>>();
+        allowed_resource_ids.sort();
+        allowed_resource_ids.dedup();
+        let claims = RuntimeGrantClaims {
+            iss: String::new(),
+            sub: caller_service.clone(),
+            aud: String::new(),
+            session_id: session_id.clone(),
+            owner_user_id: request.owner_user_id.trim().to_string(),
+            agent_key: agent_key.as_str().to_string(),
+            project_id: request.project_id.trim().to_string(),
+            run_id: normalized(request.run_id.clone()),
+            turn_id: normalized(request.turn_id.clone()),
+            task_id: normalized(request.task_id.clone()),
+            source_session_id: normalized(request.source_session_id.clone()),
+            source_user_message_id: normalized(request.source_user_message_id.clone()),
+            contact_agent_id: contact_agent_id.clone(),
+            default_model_config_id: normalized(request.default_model_config_id.clone()),
+            expected_project_task_ids: expected_project_task_ids.clone(),
+            policy_revision: capabilities.policy_revision.clone(),
+            route_revision: route_revision.clone(),
+            allowed_resource_ids,
+            iat: 0,
+            exp: 0,
+        };
+        let grant = state
+            .runtime_grants
+            .issue_with_expires_at(claims, expires_at_unix)
+            .map_err(ApiError::internal)?;
+        let configured_mcp_count = route_response.routes.len();
+        let exposed_tool_count = tool_result.tools.len();
+        let snapshot = RuntimeSessionSnapshot {
+            session_id: session_id.clone(),
+            caller_service,
+            owner_user_id: request.owner_user_id.trim().to_string(),
+            agent_key: agent_key.as_str().to_string(),
+            project_id: request.project_id.trim().to_string(),
+            run_id: normalized(request.run_id),
+            turn_id: normalized(request.turn_id),
+            task_id: normalized(request.task_id),
+            source_session_id: normalized(request.source_session_id),
+            source_user_message_id: normalized(request.source_user_message_id),
+            contact_agent_id,
+            default_model_config_id: normalized(request.default_model_config_id),
+            expected_project_task_ids,
+            sandbox_target,
+            project_context,
+            policy_revision: capabilities.policy_revision.clone(),
+            route_revision: route_revision.clone(),
+            routes: route_response.routes,
+            tools: tool_result.tools,
+            plugin_mcp_bindings: materialized.plugin_bindings,
+            plugin_local_bindings,
+            external_http_bindings,
+            cloud_stdio_bindings,
+            expires_at: grant.expires_at.clone(),
+            expires_at_unix: grant.expires_at_unix,
+        };
+        state
+            .runtime_sessions
+            .insert(snapshot)
+            .await
+            .map_err(ApiError::internal)?;
+        Ok(Json(RuntimeSessionResponse {
+            session_id,
+            policy_revision: capabilities.policy_revision,
+            route_revision,
+            expires_at: grant.expires_at,
+            mcp_server_url: format!("{}/mcp", state.config.public_base_url),
+            runtime_token: grant.token,
+            configured_mcp_count,
+            exposed_tool_count,
+            unavailable_required_mcps,
+        }))
     }
-    let mut allowed_resource_ids = route_response
-        .routes
-        .iter()
-        .map(|route| route.resource_id.clone())
-        .collect::<Vec<_>>();
-    allowed_resource_ids.sort();
-    allowed_resource_ids.dedup();
-    let claims = RuntimeGrantClaims {
-        iss: String::new(),
-        sub: caller_service.clone(),
-        aud: String::new(),
-        session_id: session_id.clone(),
-        owner_user_id: request.owner_user_id.trim().to_string(),
-        agent_key: agent_key.as_str().to_string(),
-        project_id: request.project_id.trim().to_string(),
-        run_id: normalized(request.run_id.clone()),
-        turn_id: normalized(request.turn_id.clone()),
-        task_id: normalized(request.task_id.clone()),
-        source_session_id: normalized(request.source_session_id.clone()),
-        source_user_message_id: normalized(request.source_user_message_id.clone()),
-        contact_agent_id: contact_agent_id.clone(),
-        default_model_config_id: normalized(request.default_model_config_id.clone()),
-        expected_project_task_ids: expected_project_task_ids.clone(),
-        policy_revision: capabilities.policy_revision.clone(),
-        route_revision: route_revision.clone(),
-        allowed_resource_ids,
-        iat: 0,
-        exp: 0,
-    };
-    let grant = state
-        .runtime_grants
-        .issue_with_expires_at(claims, expires_at_unix)
-        .map_err(ApiError::internal)?;
-    let configured_mcp_count = route_response.routes.len();
-    let exposed_tool_count = tool_result.tools.len();
-    let snapshot = RuntimeSessionSnapshot {
-        session_id: session_id.clone(),
-        caller_service,
-        owner_user_id: request.owner_user_id.trim().to_string(),
-        agent_key: agent_key.as_str().to_string(),
-        project_id: request.project_id.trim().to_string(),
-        run_id: normalized(request.run_id),
-        turn_id: normalized(request.turn_id),
-        task_id: normalized(request.task_id),
-        source_session_id: normalized(request.source_session_id),
-        source_user_message_id: normalized(request.source_user_message_id),
-        contact_agent_id,
-        default_model_config_id: normalized(request.default_model_config_id),
-        expected_project_task_ids,
-        sandbox_target,
-        project_context,
-        policy_revision: capabilities.policy_revision.clone(),
-        route_revision: route_revision.clone(),
-        routes: route_response.routes,
-        tools: tool_result.tools,
-        external_http_bindings,
-        cloud_stdio_bindings,
-        expires_at: grant.expires_at.clone(),
-        expires_at_unix: grant.expires_at_unix,
-    };
-    state
-        .runtime_sessions
-        .insert(snapshot)
-        .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(RuntimeSessionResponse {
-        session_id,
-        policy_revision: capabilities.policy_revision,
-        route_revision,
-        expires_at: grant.expires_at,
-        mcp_server_url: format!("{}/mcp", state.config.public_base_url),
-        runtime_token: grant.token,
-        configured_mcp_count,
-        exposed_tool_count,
-        unavailable_required_mcps,
-    }))
+    .await;
+    if result.is_err() && !cleanup_plugin_local_bindings.is_empty() {
+        state
+            .providers
+            .close_prepared_plugin_local_bindings(
+                cleanup_owner_user_id.as_str(),
+                cleanup_session_id.as_str(),
+                &cleanup_plugin_local_bindings,
+            )
+            .await;
+    }
+    result
 }
 
 pub(super) async fn runtime_session_routes(
@@ -790,7 +833,7 @@ fn normalized(value: Option<String>) -> Option<String> {
 }
 
 fn required_routes_without_provider_adapter(
-    required_resource_ids: &HashSet<&str>,
+    required_resource_ids: &HashSet<String>,
     routes: &[chatos_mcp_management_sdk::ResolvedMcpRoute],
     mut supports: impl FnMut(&chatos_mcp_management_sdk::ResolvedMcpRoute) -> bool,
 ) -> Vec<String> {
@@ -1076,7 +1119,7 @@ mod tests {
 
     #[test]
     fn required_route_without_registered_provider_adapter_is_blocked() {
-        let required_resource_ids = HashSet::from(["required-mcp"]);
+        let required_resource_ids = HashSet::from(["required-mcp".to_string()]);
         let routes = vec![chatos_mcp_management_sdk::ResolvedMcpRoute {
             resource_id: "required-mcp".to_string(),
             server_name: "required".to_string(),

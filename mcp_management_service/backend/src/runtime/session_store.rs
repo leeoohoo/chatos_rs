@@ -24,8 +24,9 @@ use tokio::sync::RwLock;
 use crate::providers::{
     build_pinned_external_http_client, external_http_header_is_managed_or_unsafe,
 };
+use crate::runtime::{PluginLocalProviderBinding, PluginMcpRuntimeBinding};
 
-const SNAPSHOT_SCHEMA_VERSION: i32 = 1;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 2;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_HEADERS: usize = 64;
 const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
@@ -128,6 +129,8 @@ pub struct RuntimeSessionSnapshot {
     pub route_revision: String,
     pub routes: Vec<ResolvedMcpRoute>,
     pub tools: Vec<RuntimeToolDescriptor>,
+    pub plugin_mcp_bindings: HashMap<String, PluginMcpRuntimeBinding>,
+    pub plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
     pub external_http_bindings: HashMap<String, ExternalHttpProviderBinding>,
     pub cloud_stdio_bindings: HashMap<String, CloudStdioProviderBinding>,
     pub expires_at: String,
@@ -205,6 +208,8 @@ struct PersistedRuntimeSessionSnapshot {
     route_revision: String,
     routes: Vec<ResolvedMcpRoute>,
     tools: Vec<RuntimeToolDescriptor>,
+    plugin_mcp_bindings: HashMap<String, PluginMcpRuntimeBinding>,
+    plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
     external_http_bindings: HashMap<String, PersistedExternalHttpProviderBinding>,
     cloud_stdio_bindings: HashMap<String, CloudStdioProviderBinding>,
     expires_at: String,
@@ -555,6 +560,8 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             route_revision: snapshot.route_revision.clone(),
             routes: snapshot.routes.clone(),
             tools: snapshot.tools.clone(),
+            plugin_mcp_bindings: snapshot.plugin_mcp_bindings.clone(),
+            plugin_local_bindings: snapshot.plugin_local_bindings.clone(),
             external_http_bindings,
             cloud_stdio_bindings: snapshot.cloud_stdio_bindings.clone(),
             expires_at: snapshot.expires_at.clone(),
@@ -596,6 +603,8 @@ impl PersistedRuntimeSessionSnapshot {
             route_revision: self.route_revision,
             routes: self.routes,
             tools: self.tools,
+            plugin_mcp_bindings: self.plugin_mcp_bindings,
+            plugin_local_bindings: self.plugin_local_bindings,
             external_http_bindings,
             cloud_stdio_bindings: self.cloud_stdio_bindings,
             expires_at: self.expires_at,
@@ -714,11 +723,43 @@ mod tests {
     use chatos_mcp_management_sdk::{
         ExecutionPlane, ProjectExecutionContext, SandboxProviderKind, WorkspaceProviderKind,
     };
+    use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
 
     use super::*;
 
+    fn plugin_runtime_binding() -> PluginMcpRuntimeBinding {
+        PluginMcpRuntimeBinding {
+            provider_ref: format!("plugin-binding:{}", "b".repeat(64)),
+            resource_id: "plugin-mcp-1".to_string(),
+            plugin_id: "private-plugin-1".to_string(),
+            release_id: "private-release-1".to_string(),
+            version: "1.0.0".to_string(),
+            artifact_sha256: "a".repeat(64),
+            normalized_manifest_sha256: "b".repeat(64),
+            component_key: "workspace".to_string(),
+            component_content_sha256: "c".repeat(64),
+            declared_execution_host: PluginExecutionHost::Local,
+            installation_device_id: Some("device-private-1".to_string()),
+            permission_snapshot: vec!["workspace.read".to_string()],
+            auth_connection_ids: vec!["oauth-private-reference".to_string()],
+            runtime: PluginMcpServer::Http {
+                component_key: "workspace".to_string(),
+                url: "https://plugin-private.example.com/mcp".to_string(),
+                headers: Default::default(),
+                oauth_resource: None,
+                connect_timeout_ms: None,
+            },
+            server_key: None,
+            tool_allowlist: vec!["read_file".to_string()],
+            tool_blocklist: Vec::new(),
+            required: true,
+            allow_writes: false,
+        }
+    }
+
     fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         let expires_at_unix = chrono::Utc::now().timestamp() + 300;
+        let plugin_runtime = plugin_runtime_binding();
         let mut headers = HeaderMap::new();
         let mut authorization = HeaderValue::from_static("Bearer shared-store-secret");
         authorization.set_sensitive(true);
@@ -758,6 +799,29 @@ mod tests {
             route_revision: "route-1".to_string(),
             routes: Vec::new(),
             tools: Vec::new(),
+            plugin_mcp_bindings: HashMap::from([(
+                plugin_runtime.resource_id.clone(),
+                plugin_runtime.clone(),
+            )]),
+            plugin_local_bindings: HashMap::from([(
+                plugin_runtime.resource_id.clone(),
+                PluginLocalProviderBinding {
+                    runtime: plugin_runtime,
+                    run_id: session_id.to_string(),
+                    device_id: "device-private-1".to_string(),
+                    workspace_id: "workspace-private-1".to_string(),
+                    adapter_session_id: "adapter-private-1".to_string(),
+                    operation: "mcp_tools_call".to_string(),
+                    session_sha256: "d".repeat(64),
+                    tool_snapshot_sha256: "e".repeat(64),
+                    tools: vec![serde_json::json!({
+                        "name": "read_file",
+                        "inputSchema": {"type": "object"}
+                    })],
+                    oauth_connection_id: Some("oauth-private-reference".to_string()),
+                    expires_at_unix,
+                },
+            )]),
             external_http_bindings: HashMap::from([(
                 "external-1".to_string(),
                 ExternalHttpProviderBinding {
@@ -821,6 +885,8 @@ mod tests {
             b"shared-store-secret".as_slice(),
             b"stdio-shared-store-secret".as_slice(),
             b"/workspace/plugin".as_slice(),
+            b"oauth-private-reference".as_slice(),
+            b"plugin-private.example.com".as_slice(),
         ] {
             assert!(!encoded.windows(secret.len()).any(|window| window == secret));
         }
@@ -840,6 +906,14 @@ mod tests {
         assert_eq!(
             restored.cloud_stdio_bindings["stdio-1"].env["PLUGIN_TOKEN"],
             "stdio-shared-store-secret"
+        );
+        assert_eq!(
+            restored.plugin_mcp_bindings["plugin-mcp-1"].release_id,
+            "private-release-1"
+        );
+        assert_eq!(
+            restored.plugin_local_bindings["plugin-mcp-1"].adapter_session_id,
+            "adapter-private-1"
         );
     }
 

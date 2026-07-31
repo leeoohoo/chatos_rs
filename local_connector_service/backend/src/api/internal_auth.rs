@@ -144,7 +144,7 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             ["api", "local-connectors", "relay", _, "plugins", "prepare" | "execute" | "cancel"],
         ) => Some(InternalAccess {
             scope: PLUGIN_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER],
+            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER],
         }),
         (&Method::POST, ["api", "local-connectors", "relay", _, "plugins", "ui", "assets"]) => {
             Some(InternalAccess {
@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_management_token_can_access_mcp_relay_and_sandbox_image_facade_only() {
+    fn mcp_management_tokens_are_limited_to_mcp_plugin_and_sandbox_tool_relays() {
         let mut config = test_config();
         config.require_signed_internal_requests = true;
         config.internal_api_secrets.insert(
@@ -345,6 +345,32 @@ mod tests {
         .expect("matching MCP relay request")
         .expect("service user");
         assert_eq!(user.user_id, "service:mcp-management-service:user-1");
+
+        let plugin_token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-mcp-management-local-connector-secret",
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            PLUGIN_RELAY_SCOPE,
+            60,
+        )
+        .expect("issue Plugin relay token");
+        let plugin_headers = signed_headers(MCP_MANAGEMENT_CALLER, plugin_token.as_str());
+        let plugin_user = internal_service_user_from_request(
+            &config,
+            &plugin_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/prepare",
+        )
+        .expect("matching Plugin relay request")
+        .expect("service user");
+        assert_eq!(plugin_user.owner_user_id.as_deref(), Some("user-1"));
+        assert!(internal_service_user_from_request(
+            &config,
+            &plugin_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .is_err());
 
         let sandbox_token = chatos_service_runtime::issue_internal_service_token(
             "a-long-mcp-management-local-connector-secret",

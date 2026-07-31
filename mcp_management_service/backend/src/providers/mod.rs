@@ -7,6 +7,7 @@ mod cloud_stdio;
 mod embedded;
 mod external_http;
 mod local_connector;
+mod plugin_local;
 mod project_service;
 mod sandbox_images;
 mod task_runner;
@@ -30,6 +31,7 @@ pub(crate) use external_http::{
     header_is_managed_or_unsafe as external_http_header_is_managed_or_unsafe,
 };
 use local_connector::LocalConnectorProvider;
+use plugin_local::PluginLocalProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
 use sandbox_images::SandboxImagesProvider;
@@ -71,6 +73,7 @@ pub enum ProviderCancelOutcome {
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
+    plugin_local: PluginLocalProvider,
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
@@ -99,6 +102,12 @@ impl ProviderDispatcher {
         let sandbox_manager_service_base_url = sandbox_manager_service_base_url.into();
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
+                local_connector_service_base_url.clone(),
+                runtime.downstream_request_timeout,
+                local_connector_internal_secret.clone(),
+                runtime.response_limit_bytes,
+            )?,
+            plugin_local: PluginLocalProvider::new(
                 local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,
                 local_connector_internal_secret.clone(),
@@ -162,6 +171,45 @@ impl ProviderDispatcher {
         self.external_http
             .prepare_routes(capabilities, routes)
             .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_plugin_local_routes(
+        &self,
+        immutable_bindings: &std::collections::HashMap<
+            String,
+            crate::runtime::PluginMcpRuntimeBinding,
+        >,
+        routes: &mut [ResolvedMcpRoute],
+        context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        expires_at_unix: i64,
+    ) -> (
+        std::collections::HashMap<String, crate::runtime::PluginLocalProviderBinding>,
+        std::collections::HashMap<String, Vec<Value>>,
+    ) {
+        self.plugin_local
+            .prepare_routes(
+                immutable_bindings,
+                routes,
+                context,
+                runtime_session_id,
+                owner_user_id,
+                expires_at_unix,
+            )
+            .await
+    }
+
+    pub async fn close_prepared_plugin_local_bindings(
+        &self,
+        owner_user_id: &str,
+        runtime_session_id: &str,
+        bindings: &std::collections::HashMap<String, crate::runtime::PluginLocalProviderBinding>,
+    ) {
+        self.plugin_local
+            .close_bindings(owner_user_id, runtime_session_id, bindings)
+            .await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -233,6 +281,7 @@ impl ProviderDispatcher {
             McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
+            McpProviderKind::PluginLocal => self.plugin_local.supports(route),
             _ => false,
         }
     }
@@ -379,6 +428,17 @@ impl ProviderDispatcher {
                     )
                     .await
             }
+            McpProviderKind::PluginLocal if self.plugin_local.supports(route) => {
+                self.plugin_local
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
             McpProviderKind::Unavailable => Err(ProviderCallError::provider_unavailable(
                 route.reason.clone(),
             )),
@@ -451,6 +511,7 @@ impl ProviderDispatcher {
             );
         }
         self.cloud_stdio.close_session(snapshot).await;
+        self.plugin_local.close_session(snapshot).await;
     }
 }
 

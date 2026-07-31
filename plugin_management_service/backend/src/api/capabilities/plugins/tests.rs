@@ -30,6 +30,7 @@ fn exact_ready_installation_resolves_selected_components() {
         Vec::new(),
         Some("device-1"),
         &std::collections::HashSet::new(),
+        true,
     );
 
     assert!(resolved.available);
@@ -52,6 +53,7 @@ fn missing_device_fails_closed() {
         Vec::new(),
         None,
         &std::collections::HashSet::new(),
+        true,
     );
 
     assert!(!resolved.available);
@@ -76,6 +78,7 @@ fn artifact_hash_mismatch_fails_closed() {
         Vec::new(),
         Some("device-1"),
         &std::collections::HashSet::new(),
+        true,
     );
 
     assert!(!resolved.available);
@@ -100,6 +103,7 @@ fn missing_component_status_fails_closed() {
         Vec::new(),
         Some("device-1"),
         &std::collections::HashSet::new(),
+        true,
     );
 
     assert!(!resolved.available);
@@ -122,6 +126,7 @@ fn missing_immutable_component_snapshot_fails_closed() {
         Vec::new(),
         Some("device-1"),
         &std::collections::HashSet::new(),
+        true,
     );
 
     assert!(!resolved.available);
@@ -129,6 +134,19 @@ fn missing_immutable_component_snapshot_fails_closed() {
         .reason
         .as_deref()
         .is_some_and(|reason| reason.contains("immutable Plugin component snapshot")));
+}
+
+#[test]
+fn portable_host_uses_runtime_project_provider_before_legacy_agent_name() {
+    assert!(portable_uses_local(
+        Some("local_connector"),
+        "chatos_conversation_agent"
+    ));
+    assert!(!portable_uses_local(
+        Some("cloud_sandbox"),
+        "task_runner_local_run_phase"
+    ));
+    assert!(portable_uses_local(None, "task_runner_local_run_phase"));
 }
 
 fn component_snapshots(records: &PluginRecords) -> Vec<PluginComponentSnapshot> {

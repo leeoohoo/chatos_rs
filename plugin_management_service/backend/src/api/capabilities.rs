@@ -109,6 +109,7 @@ async fn resolve_agent_capabilities_for_owner(
         &agent.plugin_component,
         owner_user_id.as_str(),
         device_id.as_deref(),
+        runtime_context.runtime_provider.as_deref(),
     )
     .await?
     {
@@ -157,6 +158,7 @@ async fn resolve_agent_capabilities_for_owner(
                     &resource,
                     owner_user_id.as_str(),
                     device_id.as_deref(),
+                    runtime_context.runtime_provider.as_deref(),
                 )
                 .await?;
                 collect_local_connector_requirement_for_mcp(
@@ -213,6 +215,7 @@ async fn resolve_agent_capabilities_for_owner(
                         &resource,
                         owner_user_id.as_str(),
                         device_id.as_deref(),
+                        runtime_context.runtime_provider.as_deref(),
                     )
                     .await?;
                 collect_local_connector_requirement_for_skill(
@@ -282,6 +285,7 @@ async fn resolve_agent_capabilities_for_owner(
                             &resource,
                             owner_user_id.as_str(),
                             device_id.as_deref(),
+                            runtime_context.runtime_provider.as_deref(),
                         )
                         .await?;
                     collect_local_connector_requirement_for_skill(
@@ -310,6 +314,7 @@ async fn resolve_agent_capabilities_for_owner(
                     binding,
                     owner_user_id.as_str(),
                     device_id.as_deref(),
+                    runtime_context.runtime_provider.as_deref(),
                 )
                 .await?
                 {
@@ -347,6 +352,7 @@ async fn resolve_agent_capabilities_for_owner(
                 &resource,
                 owner_user_id.as_str(),
                 device_id.as_deref(),
+                runtime_context.runtime_provider.as_deref(),
             )
             .await?;
             collect_local_connector_requirement_for_mcp(
@@ -405,6 +411,7 @@ async fn resolve_agent_capabilities_for_owner(
                     &resource,
                     owner_user_id.as_str(),
                     device_id.as_deref(),
+                    runtime_context.runtime_provider.as_deref(),
                 )
                 .await?;
             collect_local_connector_requirement_for_skill(

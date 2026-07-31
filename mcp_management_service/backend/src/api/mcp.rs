@@ -552,6 +552,8 @@ mod tests {
                 resource_id: "mcp-1".to_string(),
                 definition: json!({"name": "demo_search", "inputSchema": {"type": "object"}}),
             }],
+            plugin_mcp_bindings: Default::default(),
+            plugin_local_bindings: Default::default(),
             external_http_bindings: Default::default(),
             cloud_stdio_bindings: Default::default(),
             expires_at: "2099-01-01T00:00:00Z".to_string(),

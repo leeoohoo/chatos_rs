@@ -15,8 +15,16 @@ pub(super) async fn availability_for_mcp_with_plugin_gate(
     resource: &McpRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<(bool, String, Option<String>), ApiError> {
-    match plugin_component_gate(state, &resource.plugin_component, owner_user_id, device_id).await?
+    match plugin_component_gate(
+        state,
+        &resource.plugin_component,
+        owner_user_id,
+        device_id,
+        runtime_provider,
+    )
+    .await?
     {
         Some(gate) if !gate.available => Ok((false, "plugin_unavailable".to_string(), gate.reason)),
         _ => super::availability_for_mcp(state, resource).await,
@@ -28,6 +36,7 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     resource: &SkillRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<
     (
         bool,
@@ -37,7 +46,14 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     ),
     ApiError,
 > {
-    match plugin_component_gate(state, &resource.plugin_component, owner_user_id, device_id).await?
+    match plugin_component_gate(
+        state,
+        &resource.plugin_component,
+        owner_user_id,
+        device_id,
+        runtime_provider,
+    )
+    .await?
     {
         Some(gate) if !gate.available => {
             Ok((false, "plugin_unavailable".to_string(), gate.reason, None))
@@ -51,6 +67,7 @@ pub(super) async fn resolve_plugin_binding(
     binding: AgentBindingRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<Option<ResolvedPlugin>, ApiError> {
     let Some(catalog) = state
         .store
@@ -129,6 +146,7 @@ pub(super) async fn resolve_plugin_binding(
             .collect(),
         None => Vec::new(),
     };
+    let portable_uses_local = portable_uses_local(runtime_provider, binding.agent_key.as_str());
     Ok(Some(resolve_plugin_records(
         catalog,
         release,
@@ -139,6 +157,7 @@ pub(super) async fn resolve_plugin_binding(
         auth_connection_ids,
         device_id,
         &cloud_bundle_keys,
+        portable_uses_local,
     )))
 }
 
@@ -147,6 +166,7 @@ pub(super) async fn plugin_component_gate(
     ownership: &PluginComponentOwnership,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<Option<PluginComponentGate>, ApiError> {
     if !ownership.managed_by_plugin {
         return Ok(None);
@@ -174,7 +194,8 @@ pub(super) async fn plugin_component_gate(
         created_at: String::new(),
         updated_at: String::new(),
     };
-    let Some(resolved) = resolve_plugin_binding(state, binding, owner_user_id, device_id).await?
+    let Some(resolved) =
+        resolve_plugin_binding(state, binding, owner_user_id, device_id, runtime_provider).await?
     else {
         return Ok(Some(PluginComponentGate {
             available: false,
@@ -219,9 +240,8 @@ fn resolve_plugin_records(
     auth_connection_ids: Vec<String>,
     device_id: Option<&str>,
     cloud_bundle_keys: &HashSet<String>,
+    portable_uses_local: bool,
 ) -> ResolvedPlugin {
-    let portable_uses_local = binding.agent_key == "task_runner_local_plan_phase"
-        || binding.agent_key == "task_runner_local_run_phase";
     let component_result = resolve_components(
         release.as_ref(),
         installation.as_ref(),
@@ -425,6 +445,20 @@ fn resolve_plugin_records(
         available: true,
         status: PluginAvailabilityStatus::Ready,
         reason: None,
+    }
+}
+
+fn portable_uses_local(runtime_provider: Option<&str>, agent_key: &str) -> bool {
+    match runtime_provider
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some("local_connector") => true,
+        Some(_) => false,
+        None => {
+            agent_key == "task_runner_local_plan_phase"
+                || agent_key == "task_runner_local_run_phase"
+        }
     }
 }
 
