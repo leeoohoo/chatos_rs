@@ -250,7 +250,11 @@ pub(super) async fn resolve_runtime_session(
         expires_at: grant.expires_at.clone(),
         expires_at_unix: grant.expires_at_unix,
     };
-    state.runtime_sessions.insert(snapshot).await;
+    state
+        .runtime_sessions
+        .insert(snapshot)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(Json(RuntimeSessionResponse {
         session_id,
         policy_revision: capabilities.policy_revision,
@@ -275,6 +279,7 @@ pub(super) async fn runtime_session_routes(
         .runtime_sessions
         .get(session_id.trim())
         .await
+        .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("runtime session was not found or has expired"))?;
     if snapshot.caller_service != caller_service {
         return Err(ApiError::forbidden(
@@ -296,13 +301,19 @@ pub(super) async fn close_runtime_session(
         .runtime_sessions
         .get(session_id)
         .await
+        .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("runtime session was not found or has expired"))?;
     if snapshot.caller_service != caller_service {
         return Err(ApiError::forbidden(
             "runtime session belongs to another caller service",
         ));
     }
-    let Some(snapshot) = state.runtime_sessions.remove(session_id).await else {
+    let Some(snapshot) = state
+        .runtime_sessions
+        .remove(session_id)
+        .await
+        .map_err(ApiError::internal)?
+    else {
         return Err(ApiError::not_found(
             "runtime session was already closed or expired",
         ));
@@ -901,12 +912,14 @@ mod tests {
         .is_err());
     }
 
-    #[test]
-    fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope() {
+    #[tokio::test]
+    async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope() {
         let mut routes = vec![system_route(SystemMcpKey::AskUser)];
         bind_agent_callback_routes(routes.as_mut_slice(), SystemAgentKey::TaskRunnerRunPhase);
         assert_eq!(routes[0].provider_ref.as_deref(), Some("task-runner"));
-        let state = AppState::new(crate::config::AppConfig::test()).expect("test state");
+        let state = AppState::new(crate::config::AppConfig::test())
+            .await
+            .expect("test state");
         assert!(state.providers.supports(&routes[0]));
 
         validate_task_runner_provider_context(

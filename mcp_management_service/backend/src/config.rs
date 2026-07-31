@@ -12,6 +12,8 @@ use chatos_service_runtime::{
 
 const DEFAULT_INTERNAL_SECRET: &str = "change_me_mcp_management_internal_secret";
 const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
+const DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET: &str =
+    "change_me_mcp_management_runtime_session_encryption_secret";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -44,6 +46,8 @@ pub struct AppConfig {
     pub provider_response_limit_bytes: usize,
     pub public_base_url: String,
     pub runtime_grant_secret: String,
+    pub runtime_session_database_url: Option<String>,
+    pub runtime_session_encryption_secret: String,
     pub runtime_session_ttl: Duration,
 }
 
@@ -79,6 +83,18 @@ impl AppConfig {
             Some(runtime_grant_secret.as_str()),
             &[DEFAULT_RUNTIME_GRANT_SECRET],
         )?;
+        let runtime_session_encryption_secret =
+            env_text("MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET")
+                .unwrap_or_else(|| DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET.to_string());
+        validate_production_secret(
+            "MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET",
+            Some(runtime_session_encryption_secret.as_str()),
+            &[DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET],
+        )?;
+        let runtime_session_database_url = Some(
+            env_text("MCP_MANAGEMENT_DATABASE_URL")
+                .unwrap_or_else(|| "mongodb://127.0.0.1:27017/mcp_management_service".to_string()),
+        );
         let plugin_management_internal_api_secret =
             env_text("PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET")
                 .or_else(|| env_text("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"));
@@ -248,6 +264,8 @@ impl AppConfig {
             provider_response_limit_bytes,
             public_base_url,
             runtime_grant_secret,
+            runtime_session_database_url,
+            runtime_session_encryption_secret,
             runtime_session_ttl,
         })
     }
@@ -326,6 +344,9 @@ impl AppConfig {
             provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),
             runtime_grant_secret: "a-long-runtime-grant-secret".to_string(),
+            runtime_session_database_url: None,
+            runtime_session_encryption_secret: "a-long-runtime-session-encryption-secret"
+                .to_string(),
             runtime_session_ttl: Duration::from_secs(30 * 60),
         }
     }

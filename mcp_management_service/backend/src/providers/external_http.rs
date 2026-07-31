@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
@@ -128,20 +128,17 @@ impl ExternalHttpProvider {
                 "read-only endpoint requires an explicit allowed_tool_names policy".to_string(),
             );
         }
-        let http = reqwest::Client::builder()
-            .redirect(Policy::none())
-            .no_proxy()
-            .https_only(true)
-            .connect_timeout(Duration::from_secs(10).min(self.request_timeout))
-            .timeout(self.request_timeout)
-            .resolve_to_addrs(host, addresses.as_slice())
-            .build()
-            .map_err(|_| "build endpoint client failed".to_string())?;
+        let http = build_pinned_external_http_client(
+            &endpoint,
+            addresses.as_slice(),
+            self.request_timeout,
+        )?;
         Ok(ExternalHttpProviderBinding {
             provider_ref,
             endpoint,
             headers,
             http,
+            resolved_addresses: addresses,
             allow_writes: route.allow_writes,
             allowed_tool_names,
             blocked_tool_names,
@@ -230,6 +227,11 @@ impl ExternalHttpProvider {
 fn validate_endpoint(value: &str) -> Result<reqwest::Url, String> {
     let endpoint =
         reqwest::Url::parse(value.trim()).map_err(|_| "endpoint URL is invalid".to_string())?;
+    validate_endpoint_url(&endpoint)?;
+    Ok(endpoint)
+}
+
+fn validate_endpoint_url(endpoint: &reqwest::Url) -> Result<(), String> {
     if endpoint.scheme() != "https"
         || endpoint.host_str().is_none()
         || !endpoint.username().is_empty()
@@ -238,7 +240,40 @@ fn validate_endpoint(value: &str) -> Result<reqwest::Url, String> {
     {
         return Err("endpoint must use HTTPS without URL credentials or fragments".to_string());
     }
-    Ok(endpoint)
+    Ok(())
+}
+
+pub(crate) fn build_pinned_external_http_client(
+    endpoint: &reqwest::Url,
+    addresses: &[SocketAddr],
+    request_timeout: Duration,
+) -> Result<reqwest::Client, String> {
+    validate_endpoint_url(endpoint)?;
+    let host = endpoint
+        .host_str()
+        .ok_or_else(|| "endpoint has no host".to_string())?;
+    let port = endpoint
+        .port_or_known_default()
+        .ok_or_else(|| "endpoint has no usable port".to_string())?;
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| address.port() != port || !is_public_ip(address.ip()))
+    {
+        return Err(
+            "endpoint must remain pinned only to public addresses on its configured port"
+                .to_string(),
+        );
+    }
+    reqwest::Client::builder()
+        .redirect(Policy::none())
+        .no_proxy()
+        .https_only(true)
+        .connect_timeout(Duration::from_secs(10).min(request_timeout))
+        .timeout(request_timeout)
+        .resolve_to_addrs(host, addresses)
+        .build()
+        .map_err(|_| "build endpoint client failed".to_string())
 }
 
 fn configured_headers(
@@ -276,7 +311,7 @@ fn configured_headers(
     Ok(headers)
 }
 
-fn header_is_managed_or_unsafe(name: &HeaderName) -> bool {
+pub(crate) fn header_is_managed_or_unsafe(name: &HeaderName) -> bool {
     matches!(
         name.as_str(),
         "accept"
@@ -477,6 +512,7 @@ mod tests {
             endpoint: reqwest::Url::parse("https://mcp.example.com").unwrap(),
             headers: HeaderMap::new(),
             http: reqwest::Client::new(),
+            resolved_addresses: vec!["8.8.8.8:443".parse().unwrap()],
             allow_writes: false,
             allowed_tool_names: HashSet::from(["search".to_string(), "delete".to_string()]),
             blocked_tool_names: HashSet::from(["delete".to_string()]),
@@ -530,6 +566,7 @@ mod tests {
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap(),
+            resolved_addresses: vec![address],
             allow_writes: false,
             allowed_tool_names: HashSet::from(["search".to_string()]),
             blocked_tool_names: HashSet::new(),

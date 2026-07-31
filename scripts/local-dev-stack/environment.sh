@@ -70,6 +70,7 @@ export_local_env() {
   export MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}"
   export MCP_MANAGEMENT_INTERNAL_API_SECRET="${MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_mcp_management_internal_secret}"
   export MCP_MANAGEMENT_RUNTIME_GRANT_SECRET="${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}"
+  export MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET="${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}"
   export MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS="${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}"
   export MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET="${MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_mcp_management_sandbox_manager_secret}"
   export MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS:-180000}"
@@ -126,6 +127,7 @@ export_local_env() {
   export LOCAL_CONNECTOR_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/local_connector_service?authSource=admin"
   export SANDBOX_MANAGER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/sandbox_manager_service?authSource=admin"
   export TASK_RUNNER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/task_runner_service?authSource=admin"
+  export MCP_MANAGEMENT_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/mcp_management_service?authSource=admin"
   export LEGACY_AUTH_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin"
 
   export MEMORY_ENGINE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"

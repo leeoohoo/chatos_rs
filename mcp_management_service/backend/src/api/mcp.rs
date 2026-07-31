@@ -46,12 +46,27 @@ pub(super) async fn mcp_entrypoint(
             ))
         }
     };
-    let Some(snapshot) = state.runtime_sessions.get(claims.session_id.as_str()).await else {
-        return Json(jsonrpc_error(
-            id,
-            MCP_ERROR_AUTH_REQUIRED,
-            "runtime session was not found or has expired",
-        ));
+    let snapshot = match state.runtime_sessions.get(claims.session_id.as_str()).await {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => {
+            return Json(jsonrpc_error(
+                id,
+                MCP_ERROR_AUTH_REQUIRED,
+                "runtime session was not found or has expired",
+            ))
+        }
+        Err(error) => {
+            tracing::error!(
+                session_id = claims.session_id.as_str(),
+                error = error.as_str(),
+                "load Runtime Session Snapshot failed"
+            );
+            return Json(jsonrpc_error(
+                id,
+                MCP_ERROR_INTERNAL,
+                "runtime session snapshot store is unavailable",
+            ));
+        }
     };
     if !grant_matches_snapshot(&claims, &snapshot) {
         return Json(jsonrpc_error(
@@ -294,7 +309,9 @@ mod tests {
 
     #[tokio::test]
     async fn tools_list_returns_only_session_namespaced_tools() {
-        let state = AppState::new(crate::config::AppConfig::test()).unwrap();
+        let state = AppState::new(crate::config::AppConfig::test())
+            .await
+            .unwrap();
         let response = handle_session_request(
             JsonRpcRequest {
                 jsonrpc: Some("2.0".to_string()),
@@ -338,7 +355,7 @@ mod tests {
         });
         let mut config = crate::config::AppConfig::test();
         config.project_service_base_url = format!("http://{address}");
-        let state = AppState::new(config).unwrap();
+        let state = AppState::new(config).await.unwrap();
         let mut snapshot = snapshot();
         snapshot.routes = vec![ResolvedMcpRoute {
             resource_id: "builtin_project_management".to_string(),

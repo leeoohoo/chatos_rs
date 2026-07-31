@@ -49,8 +49,8 @@ mod tests {
     use super::*;
     use crate::config::AppConfig;
 
-    fn state() -> AppState {
-        AppState::new(AppConfig::test()).unwrap()
+    async fn state() -> AppState {
+        AppState::new(AppConfig::test()).await.unwrap()
     }
 
     #[tokio::test]
@@ -69,7 +69,7 @@ mod tests {
             .header("x-mcp-management-internal-token", token)
             .body(Body::empty())
             .unwrap();
-        let response = build_router(state()).oneshot(request).await.unwrap();
+        let response = build_router(state().await).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let catalog = serde_json::from_slice::<McpCatalogResponse>(&body).unwrap();
@@ -82,7 +82,7 @@ mod tests {
             .uri("/api/internal/catalog")
             .body(Body::empty())
             .unwrap();
-        let response = build_router(state()).oneshot(request).await.unwrap();
+        let response = build_router(state().await).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

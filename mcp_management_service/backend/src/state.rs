@@ -22,7 +22,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: AppConfig) -> Result<Self, String> {
+    pub async fn new(config: AppConfig) -> Result<Self, String> {
         let plugin_management_client = PluginManagementClient::new(PluginManagementClientConfig {
             base_url: config.plugin_management_service_base_url.clone(),
             request_timeout: config.downstream_request_timeout,
@@ -64,6 +64,17 @@ impl AppState {
                 response_limit_bytes: config.provider_response_limit_bytes,
             },
         )?;
+        let runtime_sessions = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => {
+                RuntimeSessionStore::connect(
+                    database_url,
+                    config.runtime_session_encryption_secret.as_str(),
+                    config.external_http_request_timeout,
+                )
+                .await?
+            }
+            None => RuntimeSessionStore::memory(),
+        };
         Ok(Self {
             runtime_grants: RuntimeGrantService::new(
                 config.runtime_grant_secret.clone(),
@@ -74,7 +85,7 @@ impl AppState {
             plugin_management_client,
             project_context_client,
             providers,
-            runtime_sessions: RuntimeSessionStore::default(),
+            runtime_sessions,
         })
     }
 }

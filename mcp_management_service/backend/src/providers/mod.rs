@@ -25,6 +25,10 @@ use cloud_sandbox::CloudSandboxProvider;
 use cloud_stdio::CloudStdioProvider;
 use embedded::EmbeddedProvider;
 use external_http::ExternalHttpProvider;
+pub(crate) use external_http::{
+    build_pinned_external_http_client,
+    header_is_managed_or_unsafe as external_http_header_is_managed_or_unsafe,
+};
 use local_connector::LocalConnectorProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};

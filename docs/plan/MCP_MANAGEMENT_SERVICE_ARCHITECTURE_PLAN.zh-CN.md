@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools 和 Sandbox Images Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、其余 External/Plugin Provider、Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools 和 Sandbox Images Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。取消传播、其余 External/Plugin Provider、Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -799,7 +799,10 @@ Project Context owner 必须与 Runtime Grant owner 一致。
 ### 17.1 无状态优先
 
 - Runtime Session 使用签名 Grant。
-- Route snapshot 可以编码为压缩引用并存 Redis/Mongo，也可以短期放共享缓存。
+- Runtime Session Snapshot 已固定存入 MongoDB 共享集合，服务实例只保留可校验的本地重建缓存；每次读取仍确认共享记录存在，因此其他实例的显式关闭会立即生效。
+- Snapshot 使用独立服务 Secret 经 SHA-256 派生 AES-256-GCM Key，Session ID 作为附加认证数据；External HTTP Header、固定 DNS 地址、Cloud stdio command/args/env/cwd 等私有 Binding 不以明文落库。
+- 所有 MCP Management 副本必须使用同一个 Session 加密 Secret；轮换 Secret 会按 fail closed 语义使旧的短期 Session 失效，不做历史 Session 数据迁移。
+- MongoDB `expires_at` TTL 索引负责最终清理，调用入口同时按 `expires_at_unix` 即时拒绝过期 Session，不依赖 TTL Monitor 的扫描周期。
 - 服务实例不拥有不可恢复的 Agent 状态。
 
 ### 17.2 缓存
@@ -893,7 +896,7 @@ cancel outcome
 - required MCP 路由失败时阻断。
 - 生成 route_revision 和 Runtime Grant。
 
-当前已完成本阶段主链路：只按 `binding.enabled && resource.enabled` 物化 MCP，`available=false` 不会让已配置 MCP 消失；MCP Management 通过 Project Management 的 owner-scoped 内部接口获取权威 Context，通过专用 caller 身份调用 Plugin Management；required MCP 无合法路由或无可用工具 Schema 时 fail closed；Runtime Grant 绑定 caller、owner、Agent、Project、run/turn/task、policy revision、包含 Schema 快照的 route revision 和精确资源集合。当前 Session Snapshot 暂存进程内存，水平扩展前需迁移到 Redis/Mongo 等共享存储。
+当前已完成本阶段主链路：只按 `binding.enabled && resource.enabled` 物化 MCP，`available=false` 不会让已配置 MCP 消失；MCP Management 通过 Project Management 的 owner-scoped 内部接口获取权威 Context，通过专用 caller 身份调用 Plugin Management；required MCP 无合法路由或无可用工具 Schema 时 fail closed；Runtime Grant 绑定 caller、owner、Agent、Project、run/turn/task、policy revision、包含 Schema 快照的 route revision 和精确资源集合。Runtime Session Snapshot 已迁移到 MongoDB 共享存储并使用 AES-256-GCM 加密私有 Binding，实例间可以读取和原子关闭同一 Session；数据库错误直接使 Session 创建或调用失败，不回退进程内存副本。
 
 验收：
 
