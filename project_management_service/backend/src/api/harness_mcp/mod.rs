@@ -9,8 +9,8 @@ use reqwest::Method;
 use serde_json::{json, Value};
 
 use super::internal_auth::{
-    require_project_internal_request, CHATOS_CALLER, PROJECT_HARNESS_SCOPE, PROJECT_SERVICE_CALLER,
-    TASK_RUNNER_CALLER,
+    require_project_internal_request, CHATOS_CALLER, MCP_MANAGEMENT_CALLER, PROJECT_HARNESS_SCOPE,
+    PROJECT_SERVICE_CALLER, TASK_RUNNER_CALLER,
 };
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse};
@@ -57,7 +57,12 @@ pub(in crate::api) async fn harness_project_mcp_entrypoint(
     if let Err(err) = require_project_internal_request(
         &state.config,
         &headers,
-        &[CHATOS_CALLER, TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
+        &[
+            CHATOS_CALLER,
+            TASK_RUNNER_CALLER,
+            PROJECT_SERVICE_CALLER,
+            MCP_MANAGEMENT_CALLER,
+        ],
         PROJECT_HARNESS_SCOPE,
     ) {
         return Json(mcp_server::jsonrpc_error_response(

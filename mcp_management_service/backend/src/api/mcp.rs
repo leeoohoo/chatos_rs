@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeSet;
+use std::time::Instant;
+
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -11,8 +14,9 @@ use chatos_mcp_service::{
     METHOD_NOTIFICATIONS_INITIALIZED, METHOD_PING, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
 };
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use uuid::Uuid;
 
+use crate::capabilities::route_allows_system_tool;
 use crate::runtime::RuntimeSessionSnapshot;
 use crate::state::AppState;
 
@@ -56,12 +60,13 @@ pub(super) async fn mcp_entrypoint(
             "runtime session grant does not match its route snapshot",
         ));
     }
-    Json(handle_session_request(request, &snapshot))
+    Json(handle_session_request(request, &snapshot, &state).await)
 }
 
-fn handle_session_request(
+async fn handle_session_request(
     request: JsonRpcRequest,
     snapshot: &RuntimeSessionSnapshot,
+    state: &AppState,
 ) -> JsonRpcResponse {
     let id = request.id.unwrap_or(Value::Null);
     match request.method.as_str() {
@@ -84,7 +89,7 @@ fn handle_session_request(
                     .collect::<Vec<_>>()
             }),
         ),
-        METHOD_TOOLS_CALL => handle_tool_call(id, request.params, snapshot),
+        METHOD_TOOLS_CALL => handle_tool_call(id, request.params, snapshot, state).await,
         other => jsonrpc_error(
             id,
             MCP_ERROR_METHOD_NOT_FOUND,
@@ -93,10 +98,11 @@ fn handle_session_request(
     }
 }
 
-fn handle_tool_call(
+async fn handle_tool_call(
     id: Value,
     params: Value,
     snapshot: &RuntimeSessionSnapshot,
+    state: &AppState,
 ) -> JsonRpcResponse {
     let name = params
         .get("name")
@@ -120,6 +126,13 @@ fn handle_tool_call(
     else {
         return jsonrpc_error(id, MCP_ERROR_INTERNAL, "tool route snapshot is missing");
     };
+    if !route_allows_system_tool(route, tool.original_name.as_str()) {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "tool is blocked by the immutable read-only route policy",
+        );
+    }
     if route.provider_kind == McpProviderKind::Unavailable {
         return jsonrpc_error(
             id,
@@ -127,14 +140,60 @@ fn handle_tool_call(
             format!("provider unavailable: {}", route.reason),
         );
     }
-    jsonrpc_error(
-        id,
-        MCP_ERROR_INTERNAL,
-        format!(
-            "provider execution is not implemented yet for {:?}; route remains pinned",
-            route.provider_kind
-        ),
-    )
+    let arguments = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !arguments.is_object() {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "tools/call.arguments must be an object",
+        );
+    }
+    let invocation_id = format!("mcp_invocation_{}", Uuid::new_v4().simple());
+    let started = Instant::now();
+    let outcome = state
+        .providers
+        .call_tool(
+            snapshot,
+            route,
+            tool.original_name.as_str(),
+            arguments,
+            invocation_id.as_str(),
+        )
+        .await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+    match outcome {
+        Ok(outcome) => {
+            tracing::info!(
+                invocation_id = invocation_id.as_str(),
+                session_id = snapshot.session_id.as_str(),
+                resource_id = route.resource_id.as_str(),
+                exposed_tool_name = tool.exposed_name.as_str(),
+                provider_kind = route.provider_kind.as_str(),
+                duration_ms,
+                result_bytes = outcome.response_bytes,
+                status = "succeeded",
+                "MCP Provider invocation completed"
+            );
+            jsonrpc_ok(id, outcome.result)
+        }
+        Err(error) => {
+            tracing::warn!(
+                invocation_id = invocation_id.as_str(),
+                session_id = snapshot.session_id.as_str(),
+                resource_id = route.resource_id.as_str(),
+                exposed_tool_name = tool.exposed_name.as_str(),
+                provider_kind = route.provider_kind.as_str(),
+                duration_ms,
+                error_code = error.code,
+                status = "failed",
+                "MCP Provider invocation failed"
+            );
+            jsonrpc_error(id, error.code, error.message)
+        }
+    }
 }
 
 fn grant_matches_snapshot(
@@ -168,6 +227,8 @@ fn grant_matches_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::routing::post;
+    use axum::{Json, Router};
     use chatos_mcp_management_sdk::{
         ExecutionPlane, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
         RuntimeToolDescriptor, SandboxProviderKind, WorkspaceProviderKind,
@@ -218,8 +279,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tools_list_returns_only_session_namespaced_tools() {
+    #[tokio::test]
+    async fn tools_list_returns_only_session_namespaced_tools() {
+        let state = AppState::new(crate::config::AppConfig::test()).unwrap();
         let response = handle_session_request(
             JsonRpcRequest {
                 jsonrpc: Some("2.0".to_string()),
@@ -228,7 +290,9 @@ mod tests {
                 params: json!({}),
             },
             &snapshot(),
-        );
+            &state,
+        )
+        .await;
         assert_eq!(
             response
                 .result
@@ -237,6 +301,74 @@ mod tests {
                 .and_then(Value::as_str),
             Some("demo_search")
         );
+    }
+
+    #[tokio::test]
+    async fn tools_call_dispatches_the_original_name_to_project_service() {
+        async fn provider(Json(request): Json<Value>) -> Json<Value> {
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": request.get("id").cloned().unwrap_or(Value::Null),
+                "result": {
+                    "called": request.pointer("/params/name"),
+                    "arguments": request.pointer("/params/arguments")
+                }
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/mcp", post(provider)))
+                .await
+                .unwrap();
+        });
+        let mut config = crate::config::AppConfig::test();
+        config.project_service_base_url = format!("http://{address}");
+        let state = AppState::new(config).unwrap();
+        let mut snapshot = snapshot();
+        snapshot.routes = vec![ResolvedMcpRoute {
+            resource_id: "builtin_project_management".to_string(),
+            server_name: "project_management_service".to_string(),
+            provider_kind: McpProviderKind::InternalService,
+            provider_ref: Some("project_management_service".to_string()),
+            tool_namespace: "project_management_service".to_string(),
+            allow_writes: true,
+            retry_class: McpRetryClass::NoRetry,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        }];
+        snapshot.tools = vec![RuntimeToolDescriptor {
+            exposed_name: "project_management_service_list_requirements".to_string(),
+            original_name: "list_requirements".to_string(),
+            resource_id: "builtin_project_management".to_string(),
+            definition: json!({
+                "name": "project_management_service_list_requirements",
+                "inputSchema": {"type": "object"}
+            }),
+        }];
+        let response = handle_session_request(
+            JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!(2)),
+                method: METHOD_TOOLS_CALL.to_string(),
+                params: json!({
+                    "name": "project_management_service_list_requirements",
+                    "arguments": {"status": "draft"}
+                }),
+            },
+            &snapshot,
+            &state,
+        )
+        .await;
+        assert_eq!(
+            response.result,
+            Some(json!({
+                "called": "list_requirements",
+                "arguments": {"status": "draft"}
+            }))
+        );
+        server.abort();
     }
 
     #[test]

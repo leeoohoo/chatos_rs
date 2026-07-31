@@ -190,6 +190,7 @@ Project Management:       http://localhost:39211
 Plugin Management:        http://localhost:39261
 Sandbox Manager:          http://localhost:8096
 Local Connector Service:  http://localhost:39230
+MCP Management Service:   http://localhost:39280
 Official Website:         http://localhost:39251
 
 Status:  $0 status

@@ -23,6 +23,7 @@ DOCKER_APP_SERVICES=(
   project-management-backend
   plugin-management-backend
   local-connector-service-backend
+  mcp-management-service-backend
   sandbox-manager-backend
   task-runner-backend
   chatos-backend
@@ -45,6 +46,7 @@ BACKEND_SERVICES=(
   "project-management-backend|project-service|project_management_service/backend/Cargo.toml|/api/health|39210|project_management_service_backend"
   "plugin-management-backend|plugin-management-service|plugin_management_service/backend/Cargo.toml|/api/health|39260|plugin_management_service_backend"
   "local-connector-service-backend|local-connector-service|local_connector_service/backend/Cargo.toml|/api/health|39230|local_connector_service_backend"
+  "mcp-management-service-backend|mcp-management-service|mcp_management_service/backend/Cargo.toml|/health|39280|mcp_management_service_backend"
   "sandbox-manager-backend|sandbox-manager|sandbox_manager_service/backend/Cargo.toml|/health|8095|sandbox_manager_service_backend"
   "task-runner-backend|task-runner|task_runner_service/backend/Cargo.toml|/api/health|39090|task_runner_service_backend"
   "chatos-backend|chatos-backend|chatos/backend/Cargo.toml|/health|3997|chat_app_server_rs"

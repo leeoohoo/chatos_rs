@@ -3,6 +3,7 @@
 
 use crate::config::AppConfig;
 use crate::project_context::ProjectContextClient;
+use crate::providers::ProviderDispatcher;
 use crate::routing::RoutingEngine;
 use crate::runtime::{RuntimeGrantService, RuntimeSessionStore};
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
@@ -13,6 +14,7 @@ pub struct AppState {
     pub routing: RoutingEngine,
     pub plugin_management_client: PluginManagementClient,
     pub project_context_client: ProjectContextClient,
+    pub providers: ProviderDispatcher,
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
 }
@@ -31,6 +33,14 @@ impl AppState {
             config.downstream_request_timeout,
             config.project_service_internal_api_secret.clone(),
         )?;
+        let providers = ProviderDispatcher::new(
+            config.project_service_base_url.clone(),
+            config.project_service_internal_api_secret.clone(),
+            config.local_connector_service_base_url.clone(),
+            config.local_connector_internal_api_secret.clone(),
+            config.downstream_request_timeout,
+            config.provider_response_limit_bytes,
+        )?;
         Ok(Self {
             runtime_grants: RuntimeGrantService::new(
                 config.runtime_grant_secret.clone(),
@@ -40,6 +50,7 @@ impl AppState {
             routing: RoutingEngine,
             plugin_management_client,
             project_context_client,
+            providers,
             runtime_sessions: RuntimeSessionStore::default(),
         })
     }

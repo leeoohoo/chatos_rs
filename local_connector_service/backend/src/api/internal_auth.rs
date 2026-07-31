@@ -23,6 +23,7 @@ const CHATOS_CALLER: &str = "chatos-backend";
 const TASK_RUNNER_CALLER: &str = "task-runner";
 const PROJECT_SERVICE_CALLER: &str = "project-service";
 const MEMORY_ENGINE_CALLER: &str = "memory-engine";
+const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 
 pub(super) fn internal_service_user_from_request(
     config: &AppConfig,
@@ -129,7 +130,7 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
     match (method, parts.as_slice()) {
         (&Method::POST, ["api", "local-connectors", "relay", _, "mcp"]) => Some(InternalAccess {
             scope: MCP_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER],
+            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER],
         }),
         (
             &Method::POST,
@@ -305,6 +306,48 @@ mod tests {
             "/api/local-connectors/devices",
         )
         .is_err());
+    }
+
+    #[test]
+    fn mcp_management_token_can_only_access_the_mcp_relay() {
+        let mut config = test_config();
+        config.require_signed_internal_requests = true;
+        config.internal_api_secrets.insert(
+            MCP_MANAGEMENT_CALLER.to_string(),
+            "a-long-mcp-management-local-connector-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-mcp-management-local-connector-secret",
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            MCP_RELAY_SCOPE,
+            60,
+        )
+        .expect("issue MCP Management token");
+        let headers = signed_headers(MCP_MANAGEMENT_CALLER, token.as_str());
+        let user = internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .expect("matching MCP relay request")
+        .expect("service user");
+        assert_eq!(user.user_id, "service:mcp-management-service:user-1");
+
+        for (method, path) in [
+            (
+                Method::POST,
+                "/api/local-connectors/relay/device-1/terminal/exec",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/relay/device-1/skills/execute",
+            ),
+            (Method::GET, "/api/local-connectors/model-runtime/model-1"),
+        ] {
+            assert!(internal_service_user_from_request(&config, &headers, &method, path).is_err());
+        }
     }
 
     #[test]

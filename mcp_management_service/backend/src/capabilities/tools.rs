@@ -3,7 +3,10 @@
 
 use std::collections::HashSet;
 
-use chatos_mcp::{system_mcp_descriptor_for_record, system_mcp_tool_catalog, SystemMcpToolCatalog};
+use chatos_mcp::{
+    system_mcp_descriptor_by_resource_id, system_mcp_descriptor_for_record,
+    system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
+};
 use chatos_mcp_management_sdk::{ResolvedMcpRoute, RuntimeToolDescriptor};
 use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
 use serde_json::Value;
@@ -49,6 +52,9 @@ pub fn materialize_runtime_tools(
                         resolved.resource.id
                     )
                 })?;
+            if !route_allows_system_tool(route, original_name) {
+                continue;
+            }
             let exposed_name = route.exposed_tool_name(original_name);
             if !seen.insert(exposed_name.clone()) {
                 return Err(format!(
@@ -78,6 +84,22 @@ pub fn materialize_runtime_tools(
         tools,
         missing_required_tool_schemas,
     })
+}
+
+pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &str) -> bool {
+    let Some(descriptor) = system_mcp_descriptor_by_resource_id(route.resource_id.as_str()) else {
+        return true;
+    };
+    if route.allow_writes || !descriptor.allow_writes {
+        return true;
+    }
+    match descriptor.key {
+        SystemMcpKey::ProjectManagement => {
+            chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
+                .contains(&original_tool_name)
+        }
+        _ => false,
+    }
 }
 
 pub fn runtime_route_revision(
@@ -224,5 +246,22 @@ mod tests {
             runtime_route_revision("base-route", &first).unwrap(),
             runtime_route_revision("base-route", &second).unwrap()
         );
+    }
+
+    #[test]
+    fn read_only_project_management_route_blocks_mutating_tools() {
+        let route = ResolvedMcpRoute {
+            resource_id: "builtin_project_management".to_string(),
+            server_name: "project_management_service".to_string(),
+            provider_kind: McpProviderKind::InternalService,
+            provider_ref: Some("project_management_service".to_string()),
+            tool_namespace: "project_management_service".to_string(),
+            allow_writes: false,
+            retry_class: McpRetryClass::IdempotentRead,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        };
+        assert!(route_allows_system_tool(&route, "list_requirements"));
+        assert!(!route_allows_system_tool(&route, "create_requirement"));
     }
 }

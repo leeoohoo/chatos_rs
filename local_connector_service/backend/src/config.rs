@@ -161,6 +161,7 @@ impl AppConfig {
                 "task-runner",
                 "project-service",
                 "memory-engine",
+                "mcp-management-service",
             ] {
                 if !config.internal_api_secrets.contains_key(caller) {
                     return Err(format!(
@@ -180,6 +181,7 @@ impl AppConfig {
                     "change_me_task_runner_local_connector_secret",
                     "change_me_project_service_local_connector_secret",
                     "change_me_memory_engine_local_connector_secret",
+                    "change_me_mcp_management_local_connector_secret",
                 ],
             )?;
         }
@@ -194,6 +196,7 @@ impl AppConfig {
                     "change_me_task_runner_local_connector_secret",
                     "change_me_project_service_local_connector_secret",
                     "change_me_memory_engine_local_connector_secret",
+                    "change_me_mcp_management_local_connector_secret",
                 ],
             )?;
         }
@@ -272,6 +275,10 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "memory-engine",
             "MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        ),
+        (
+            "mcp-management-service",
+            "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()

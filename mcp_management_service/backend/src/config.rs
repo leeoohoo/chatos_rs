@@ -24,7 +24,10 @@ pub struct AppConfig {
     pub plugin_management_internal_api_secret: Option<String>,
     pub project_service_base_url: String,
     pub project_service_internal_api_secret: Option<String>,
+    pub local_connector_service_base_url: String,
+    pub local_connector_internal_api_secret: Option<String>,
     pub downstream_request_timeout: Duration,
+    pub provider_response_limit_bytes: usize,
     pub public_base_url: String,
     pub runtime_grant_secret: String,
     pub runtime_session_ttl: Duration,
@@ -67,6 +70,8 @@ impl AppConfig {
                 .or_else(|| env_text("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"));
         let project_service_internal_api_secret =
             env_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET");
+        let local_connector_internal_api_secret =
+            env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET");
         validate_production_secret(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             plugin_management_internal_api_secret.as_deref(),
@@ -76,6 +81,11 @@ impl AppConfig {
             "MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
             project_service_internal_api_secret.as_deref(),
             &["change_me_mcp_management_project_service_secret"],
+        )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+            local_connector_internal_api_secret.as_deref(),
+            &["change_me_mcp_management_local_connector_secret"],
         )?;
         let downstream_request_timeout = Duration::from_millis(
             env_text("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")
@@ -89,6 +99,11 @@ impl AppConfig {
                 .unwrap_or(30 * 60)
                 .clamp(5 * 60, 2 * 60 * 60),
         );
+        let provider_response_limit_bytes =
+            env_text("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(2 * 1024 * 1024)
+                .clamp(64 * 1024, 16 * 1024 * 1024);
         let public_base_url = normalize_base_url(
             env_text("MCP_MANAGEMENT_PUBLIC_BASE_URL")
                 .unwrap_or_else(|| format!("http://127.0.0.1:{port}")),
@@ -111,7 +126,14 @@ impl AppConfig {
                     .unwrap_or_else(|| "http://127.0.0.1:39210".to_string()),
             ),
             project_service_internal_api_secret,
+            local_connector_service_base_url: normalize_base_url(
+                env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL")
+                    .or_else(|| env_text("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
+                    .unwrap_or_else(|| "http://127.0.0.1:39230".to_string()),
+            ),
+            local_connector_internal_api_secret,
             downstream_request_timeout,
+            provider_response_limit_bytes,
             public_base_url,
             runtime_grant_secret,
             runtime_session_ttl,
@@ -133,6 +155,11 @@ impl AppConfig {
             self.project_service_base_url.as_str(),
         )
         .await;
+        self.local_connector_service_base_url = chatos_service_runtime::resolve_service_base_url(
+            "local-connector-service",
+            self.local_connector_service_base_url.as_str(),
+        )
+        .await;
     }
 
     #[cfg(test)]
@@ -149,7 +176,10 @@ impl AppConfig {
             ),
             project_service_base_url: "http://127.0.0.1:39210".to_string(),
             project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
+            local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
+            local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             downstream_request_timeout: Duration::from_secs(5),
+            provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),
             runtime_grant_secret: "a-long-runtime-grant-secret".to_string(),
             runtime_session_ttl: Duration::from_secs(30 * 60),

@@ -11,8 +11,8 @@ use chatos_mcp_service::{McpRequestContext, McpToolProvider};
 use serde_json::{json, Value};
 
 use super::internal_auth::{
-    require_project_internal_request, PROJECT_READ_SCOPE, PROJECT_SERVICE_CALLER,
-    TASK_RUNNER_CALLER,
+    require_project_internal_request, MCP_MANAGEMENT_CALLER, PROJECT_READ_SCOPE,
+    PROJECT_SERVICE_CALLER, TASK_RUNNER_CALLER,
 };
 use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse};
 use crate::services::runtime_environment::{
@@ -34,7 +34,11 @@ pub(in crate::api) async fn project_runtime_environment_mcp_entrypoint(
     if let Err(err) = require_project_internal_request(
         &state.config,
         &headers,
-        &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
+        &[
+            TASK_RUNNER_CALLER,
+            PROJECT_SERVICE_CALLER,
+            MCP_MANAGEMENT_CALLER,
+        ],
         PROJECT_READ_SCOPE,
     ) {
         return Json(mcp_server::jsonrpc_error_response(

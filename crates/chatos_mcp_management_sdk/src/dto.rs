@@ -101,6 +101,23 @@ pub enum McpProviderKind {
     Unavailable,
 }
 
+impl McpProviderKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Embedded => "embedded",
+            Self::InternalService => "internal_service",
+            Self::LocalConnector => "local_connector",
+            Self::Harness => "harness",
+            Self::CloudSandbox => "cloud_sandbox",
+            Self::ExternalHttp => "external_http",
+            Self::CloudStdio => "cloud_stdio",
+            Self::PluginLocal => "plugin_local",
+            Self::PluginCloud => "plugin_cloud",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpRouteResourceKind {

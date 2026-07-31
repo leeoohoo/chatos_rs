@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashSet;
+
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
@@ -78,6 +80,19 @@ pub(super) async fn resolve_runtime_session(
     .map_err(ApiError::internal)?;
     let mut unavailable_required_mcps = route_response.unavailable_required_mcps;
     unavailable_required_mcps.extend(tool_result.missing_required_tool_schemas);
+    let required_resource_ids = capabilities
+        .mcps
+        .iter()
+        .filter(|resolved| {
+            resolved.binding.enabled && resolved.binding.required && resolved.resource.enabled
+        })
+        .map(|resolved| resolved.resource.id.as_str())
+        .collect::<HashSet<_>>();
+    unavailable_required_mcps.extend(required_routes_without_provider_adapter(
+        &required_resource_ids,
+        route_response.routes.as_slice(),
+        |route| state.providers.supports(route),
+    ));
     unavailable_required_mcps.sort();
     unavailable_required_mcps.dedup();
     if !unavailable_required_mcps.is_empty() {
@@ -242,6 +257,20 @@ fn normalized(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn required_routes_without_provider_adapter(
+    required_resource_ids: &HashSet<&str>,
+    routes: &[chatos_mcp_management_sdk::ResolvedMcpRoute],
+    mut supports: impl FnMut(&chatos_mcp_management_sdk::ResolvedMcpRoute) -> bool,
+) -> Vec<String> {
+    routes
+        .iter()
+        .filter(|route| {
+            required_resource_ids.contains(route.resource_id.as_str()) && !supports(route)
+        })
+        .map(|route| route.resource_id.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,5 +352,25 @@ mod tests {
             "another-user"
         )
         .is_err());
+    }
+
+    #[test]
+    fn required_route_without_registered_provider_adapter_is_blocked() {
+        let required_resource_ids = HashSet::from(["required-mcp"]);
+        let routes = vec![chatos_mcp_management_sdk::ResolvedMcpRoute {
+            resource_id: "required-mcp".to_string(),
+            server_name: "required".to_string(),
+            provider_kind: chatos_mcp_management_sdk::McpProviderKind::ExternalHttp,
+            provider_ref: Some("mcp-resource:required-mcp".to_string()),
+            tool_namespace: "required".to_string(),
+            allow_writes: false,
+            retry_class: chatos_mcp_management_sdk::McpRetryClass::NoRetry,
+            cancel_supported: false,
+            reason: "test".to_string(),
+        }];
+        assert_eq!(
+            required_routes_without_provider_adapter(&required_resource_ids, &routes, |_| false),
+            vec!["required-mcp"]
+        );
     }
 }

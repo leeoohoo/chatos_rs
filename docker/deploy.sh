@@ -19,6 +19,7 @@ LOCAL_BUILD_SERVICES=(
   project-management-backend
   plugin-management-backend
   local-connector-service-backend
+  mcp-management-service-backend
   sandbox-manager-backend
   task-runner-backend
   chatos-backend
@@ -273,14 +274,19 @@ PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET|change_me_plugin_management_ta
 PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_project_service_secret
 PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_local_connector_secret
 PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_plugin_management_memory_engine_secret
+PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET|change_me_plugin_management_mcp_management_secret
 TASK_RUNNER_CHATOS_CALLBACK_SECRET|change_me_chatos_task_runner_secret
 CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_chatos_project_service_secret
 TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_task_runner_project_service_secret
 PROJECT_SERVICE_SELF_INTERNAL_API_SECRET|change_me_project_service_self_secret
+MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_mcp_management_project_service_secret
 CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_chatos_local_connector_secret
 TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_task_runner_local_connector_secret
 PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_project_service_local_connector_secret
 MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_memory_engine_local_connector_secret
+MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_mcp_management_local_connector_secret
+MCP_MANAGEMENT_INTERNAL_API_SECRET|change_me_mcp_management_internal_secret
+MCP_MANAGEMENT_RUNTIME_GRANT_SECRET|change_me_mcp_management_runtime_grant_secret
 CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_chatos_memory_engine_secret
 TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_task_runner_memory_engine_secret
 PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_project_service_memory_engine_secret
@@ -302,7 +308,7 @@ print_urls() {
   local frontend_port main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
   local plugin_management_frontend_port sandbox_manager_frontend_port local_connector_service_port
-  local official_website_frontend_port config_center_frontend_port
+  local official_website_frontend_port config_center_frontend_port mcp_management_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
   frontend_port="$(env_value FRONTEND_PORT 8088)"
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
@@ -317,6 +323,7 @@ print_urls() {
   plugin_management_frontend_port="$(env_value PLUGIN_MANAGEMENT_FRONTEND_PORT 39261)"
   sandbox_manager_frontend_port="$(env_value SANDBOX_MANAGER_FRONTEND_PORT 8096)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
+  mcp_management_port="$(env_value MCP_MANAGEMENT_PORT 39280)"
   official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
   config_center_frontend_port="$(env_value CONFIG_CENTER_FRONTEND_PORT 39271)"
   cat <<EOF
@@ -336,6 +343,7 @@ Plugin Management:        http://localhost:${plugin_management_frontend_port}
 Configuration Center:     http://localhost:${config_center_frontend_port}
 Sandbox Manager:          http://localhost:${sandbox_manager_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
+MCP Management Service:   http://localhost:${mcp_management_port}
 Official Website:         http://localhost:${official_website_frontend_port}
 
 Logs:    $0 logs

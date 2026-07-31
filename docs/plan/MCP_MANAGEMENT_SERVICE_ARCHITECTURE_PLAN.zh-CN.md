@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 已提供聚合 `/mcp` 的 `initialize`、`ping`、`tools/list` 以及 `tools/call` 的固定路由校验。真实 Provider Adapter、共享 Session Snapshot 存储、调用审计、取消、超时和结果限制仍待接通，调用方尚未切换，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制；Phase 3 已接通 Local Connector 与 Harness Provider；Phase 4 已接通 Project Management 和 Project Runtime Environment Provider。共享 Session Snapshot 存储、取消传播、Cloud Sandbox、Task Runner、Memory、External/Plugin Provider 和调用方切换仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -35,11 +35,9 @@
 
 ---
 
-## 2. “所有微服务调用走新服务”的准确边界
+## 2. 服务边界
 
-MCP 不适合替代所有基础设施协议。为了避免把新服务变成无法维护的万能代理，需要区分两个平面。
-
-### 2.1 必须经过 MCP Management Service
+MCP Management Service 只负责 Agent Tool Plane，不是通用微服务网关。凡是作为 Agent 工具暴露的能力，都必须经过它完成配置解析、Catalog 聚合、Provider 路由和真实调用。
 
 - Agent 的 tools/list。
 - Agent 的 tools/call。
@@ -49,20 +47,6 @@ MCP 不适合替代所有基础设施协议。为了避免把新服务变成无�
 - Agent 调 Plugin 提供的 MCP、Skill executable tool、Command 和 Agent tool。
 - ChatOS、Task Runner、Project Environment Agent 等为模型构建 MCP Tool Catalog。
 - MCP Provider 的统一可用性查询、路由解析、调用取消和审计。
-
-### 2.2 不强制经过 MCP Management Service
-
-- 登录、用户身份和 Token 签发。
-- 服务健康检查。
-- 普通管理后台 CRUD。
-- 数据同步事件和消息队列。
-- 文件上传到对象存储。
-- Realtime/SSE 业务事件。
-- 服务启动配置和 Secret 获取。
-
-这些调用可以继续使用 REST、消息队列或内部 SDK。否则 MCP Management Service 会成为系统所有流量的单点瓶颈，也会把非工具业务错误地包装成 MCP。
-
-因此，本方案中的“所有微服务调用”应理解为：
 
 > 所有面向 Agent 的内部服务能力调用，统一通过 MCP Management Service。
 
@@ -912,12 +896,16 @@ cancel outcome
 - 实现 invocation audit、超时和结果限制。
 - 先接 InternalServiceProvider 和 EmbeddedProvider。
 
+当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id。当前已注册的 Internal Service Adapter 是 Project Management 与 Project Runtime Environment，Embedded Provider 尚未接入。
+
 ### Phase 3：Workspace Router
 
 - 实现 LocalConnectorProvider。
 - 实现 HarnessProvider。
 - 实现 CloudSandboxProvider。
 - 迁移 CodeMaintainerRead/Write、Git 和 Terminal。
+
+当前已完成 Local Connector 与 Harness 两条首批真实路由：本地 Workspace 的 CodeMaintainerRead、CodeMaintainerWrite、TerminalController、BrowserTools 经 Local Connector Service 的 `/mcp` relay 到客户端；云端 Harness Workspace 的 CodeMaintainerRead/Write 经 Project Service 的 project-scoped Harness MCP。设备、Workspace 和相对 cwd 只取自 Runtime Session 的权威 Project Context，Provider 故障不自动切换执行位置。Cloud Sandbox Provider 尚未接入。
 
 验收：
 
@@ -931,6 +919,8 @@ cancel outcome
 - Memory 能力接入标准 MCP Provider。
 - Sandbox Images 接入。
 - ChatOS/Task Runner 删除对应直接客户端和 URL 拼接。
+
+当前 Project Management MCP 和 Project Runtime Environment MCP 已使用 `mcp-management-service` 专用内部身份真实调用，并校验 owner、Agent、Session 和 Project 绑定。Task Runner、Memory、Sandbox Images 及调用方旧直连清理尚未开始。
 
 ### Phase 5：External 与 Plugin Runtime
 

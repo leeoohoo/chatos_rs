@@ -7,6 +7,7 @@ pub mod capabilities;
 pub mod config;
 pub mod error;
 pub mod project_context;
+pub mod providers;
 pub mod routing;
 pub mod runtime;
 pub mod state;
