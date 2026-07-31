@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad 和 Sandbox Images Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、云端 Browser、其余 External/Plugin Provider、Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder 和 Sandbox Images Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、云端 Browser、其余 External/Plugin Provider、Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -908,7 +908,7 @@ cancel outcome
 - 实现 invocation audit、超时和结果限制。
 - 先接 InternalServiceProvider 和 EmbeddedProvider。
 
-当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id，并允许 AskUser 这类长等待工具使用独立的逐工具超时，不放宽普通工具超时。当前已注册的 Internal Service Adapter 是 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、Task Runner AskUser Callback、ChatOS AskUser Callback、ChatOS Memory Readers 与 ChatOS Notepad；Embedded Provider 已先接入无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 固定使用 Runtime Session 绑定 owner 的 ChatOS 云端用户 Store，不在 MCP Management 主进程或 Local Connector 创建第二份数据；BrowserTools 仍需要受控 Browser Runtime，因此不在 MCP Management 主进程中临时创建本地替代实现。
+当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id，并允许 AskUser 这类长等待工具使用独立的逐工具超时，不放宽普通工具超时。当前已注册的 Internal Service Adapter 是 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、Task Runner AskUser Callback、ChatOS AskUser Callback、ChatOS Memory Readers、ChatOS Notepad 与 ChatOS Agent Builder；Embedded Provider 已先接入无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 固定使用 Runtime Session 绑定 owner 的 ChatOS 云端用户 Store，Agent Builder 固定使用同一 owner 的 ChatOS Agent Store；两者都不在 MCP Management 主进程或 Local Connector 创建第二份数据。BrowserTools 仍需要受控 Browser Runtime，因此不在 MCP Management 主进程中临时创建本地替代实现。
 
 ### Phase 3：Workspace Router
 
@@ -941,6 +941,8 @@ Sandbox Images 已接入同一聚合调用入口。Cloud Project 固定为 `sand
 Memory Skill/Command/Plugin Reader 的权威数据实际属于 ChatOS contact-agent runtime，而不是 Memory Engine 微服务，因此已把此前的 `memory-engine` 占位路由纠正为 ChatOS Provider。Runtime Session 会冻结 `contact_agent_id`，路由固定为 `chatos:memory:<contact_agent_id>`，该身份同时写入 Runtime Grant；ChatOS 内部 MCP Provider 再次验证 source session 的 owner、Project、active 状态以及 contact agent 的 owner。模型只能提交 `skill_ref`、`command_ref` 或 `plugin_ref`，不能覆盖 contact agent。Provider 故障或身份漂移直接失败，不回退 ChatOS 旧内嵌工具链。
 
 Notepad 已从不可执行的 Embedded 占位路由迁移为固定 `InternalService/chatos` 路由。本地与云端 Project 都使用 ChatOS 的 owner-scoped 云端 Notepad Store；MCP Management 只转发 Runtime Session 中冻结的 `owner_user_id`，ChatOS 拒绝工具参数中的 `owner_user_id`/`user_id` 覆盖。ChatOS 三类运行 Agent 和 Task Runner 四个 phase Agent 均可配置该 MCP，数据不按 Workspace 复制到 Local Connector 或 Task Runner 本地目录。
+
+Agent Builder 已补齐同一 ChatOS Internal Service Provider。调用只允许 ChatOS 三类运行 Agent，并要求 source session 与 Runtime Session 的 owner、Project 和 active 状态一致；创建 Agent 时 Store 强制写入绑定 owner，工具 Schema 不再暴露 `user_id`，更新 Agent 时入口与 Store 都验证目标 Agent owner，跨用户更新直接拒绝。该 MCP 保持按 Plugin Management 显式配置，不自动加入 Task Runner 默认工具集。
 
 Task Runner 与 ChatOS 调用方均已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。部署默认仍保持 `shadow`；Memory Agent 调用方迁移和旧直连清理尚未开始。
 

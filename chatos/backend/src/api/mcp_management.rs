@@ -8,10 +8,11 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp::{
-    AskUserOptions, AskUserService, AskUserStoreRef, MemoryCommandReaderOptions,
-    MemoryCommandReaderService, MemoryPluginReaderOptions, MemoryPluginReaderService,
-    MemoryReaderStoreRef, MemorySkillReaderOptions, MemorySkillReaderService,
-    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, SystemMcpKey,
+    AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, AskUserOptions, AskUserService,
+    AskUserStoreRef, MemoryCommandReaderOptions, MemoryCommandReaderService,
+    MemoryPluginReaderOptions, MemoryPluginReaderService, MemoryReaderStoreRef,
+    MemorySkillReaderOptions, MemorySkillReaderService, NotepadBuiltinService, NotepadOptions,
+    NotepadStoreRef, SystemMcpKey,
 };
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
@@ -24,6 +25,7 @@ use crate::config::Config;
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
+use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
 use crate::services::shared_builtin_notepad::ChatosNotepadStore;
@@ -79,6 +81,7 @@ async fn mcp_management_entrypoint(
         ));
     }
     let response = match system_key {
+        SystemMcpKey::AgentBuilder => dispatch_bound_agent_builder(request, &binding).await,
         SystemMcpKey::AskUser => dispatch_bound_ask_user(request, &binding).await,
         SystemMcpKey::Notepad => dispatch_bound_notepad(request, &binding).await,
         SystemMcpKey::MemorySkillReader
@@ -93,6 +96,115 @@ async fn mcp_management_entrypoint(
         ),
     };
     Json(response)
+}
+
+async fn dispatch_bound_agent_builder(
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    if !is_chatos_agent(binding.agent_key) {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "configured Agent is not allowed to use ChatOS Agent Builder MCP",
+        );
+    }
+    let conversation_id = match binding.source_session_id.as_deref() {
+        Some(value) => value,
+        None => {
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INVALID_PARAMS,
+                "ChatOS Agent Builder requires bound source_session_id",
+            )
+        }
+    };
+    let session = match chatos_sessions::get_session_by_id(conversation_id).await {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            return jsonrpc_error(id, MCP_ERROR_INTERNAL, "bound ChatOS session was not found")
+        }
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    if !session_matches_binding(&session, binding) {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "bound ChatOS session does not match MCP Management owner or project scope",
+        );
+    }
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "Agent Builder tool name is required",
+        );
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Err(message) = reject_agent_builder_identity_overrides(&arguments) {
+        return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message);
+    }
+    if name == "update_memory_agent" {
+        let Some(agent_id) = arguments
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INVALID_PARAMS,
+                "Agent Builder update requires agent_id",
+            );
+        };
+        match chatos_agents::get_agent(agent_id).await {
+            Ok(Some(agent)) if agent.user_id.trim() == binding.owner_user_id => {}
+            Ok(Some(_)) => {
+                return jsonrpc_error(
+                    id,
+                    MCP_ERROR_AUTH_REQUIRED,
+                    "Agent Builder cannot update an agent owned by another user",
+                )
+            }
+            Ok(None) => {}
+            Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+        }
+    }
+    let store = match ChatosAgentBuilderStore::new(binding.owner_user_id.as_str()) {
+        Ok(store) => store,
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    let service = match AgentBuilderService::new(AgentBuilderOptions {
+        server_name: chatos_mcp::system_mcp_descriptor(SystemMcpKey::AgentBuilder)
+            .server_name
+            .to_string(),
+        user_id: Some(binding.owner_user_id.clone()),
+        store: Some(AgentBuilderStoreRef::new(Arc::new(store))),
+    }) {
+        Ok(service) => service,
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    match service.call_tool(
+        name,
+        arguments,
+        Some(conversation_id),
+        binding.turn_id.as_deref(),
+        None,
+    ) {
+        Ok(result) => jsonrpc_ok(id, result),
+        Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    }
 }
 
 async fn dispatch_bound_notepad(
@@ -498,6 +610,22 @@ fn reject_notepad_identity_overrides(arguments: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn reject_agent_builder_identity_overrides(arguments: &Value) -> Result<(), String> {
+    let Some(arguments) = arguments.as_object() else {
+        return Ok(());
+    };
+    if ["owner_user_id", "user_id"]
+        .into_iter()
+        .any(|key| arguments.contains_key(key))
+    {
+        return Err(
+            "Agent Builder owner identity is bound by MCP Management and cannot be supplied by tool arguments"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn bound_ask_user_prompt_timeout_ms(binding: &McpManagementBinding) -> Result<u64, String> {
     let now_unix = chrono::Utc::now().timestamp();
     let remaining_seconds = binding.session_expires_at_unix.saturating_sub(now_unix);
@@ -653,6 +781,21 @@ mod tests {
         .is_err());
         assert!(reject_notepad_identity_overrides(&json!({
             "user_id": "attacker"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn agent_builder_tool_arguments_cannot_override_the_bound_owner() {
+        assert!(reject_agent_builder_identity_overrides(&json!({
+            "name": "safe",
+            "role_definition": "safe"
+        }))
+        .is_ok());
+        assert!(reject_agent_builder_identity_overrides(&json!({
+            "user_id": "attacker",
+            "name": "unsafe",
+            "role_definition": "unsafe"
         }))
         .is_err());
     }

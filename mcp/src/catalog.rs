@@ -159,17 +159,20 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         supported_hosts: CHATOS_TASK_HOSTS,
         embedded_kind: Some(BuiltinMcpKind::Notepad),
     },
-    embedded_descriptor!(
-        AgentBuilder,
-        "builtin_agent_builder",
-        "agent_builder",
-        "Agent Builder (Builtin)",
-        "Agent configuration and skill composition tools.",
-        true,
-        "chatos",
-        CHATOS_HOST,
-        AgentBuilder
-    ),
+    SystemMcpDescriptor {
+        key: SystemMcpKey::AgentBuilder,
+        resource_id: "builtin_agent_builder",
+        server_name: "agent_builder",
+        display_name: "Agent Builder (Builtin)",
+        description: "Owner-scoped agent configuration and skill composition tools.",
+        allow_writes: true,
+        tags: &["system", "builtin"],
+        category: Some("builtin"),
+        owner_service: "chatos",
+        backend: SystemMcpBackend::ServiceHttp,
+        supported_hosts: CHATOS_HOST,
+        embedded_kind: Some(BuiltinMcpKind::AgentBuilder),
+    },
     embedded_descriptor!(
         AskUser,
         "builtin_ask_user",
@@ -471,6 +474,17 @@ mod tests {
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::Notepad));
         assert!(descriptor.supports_host(SystemMcpHost::Chatos));
         assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
+    }
+
+    #[test]
+    fn agent_builder_is_owned_by_the_chatos_cloud_service() {
+        let descriptor = system_mcp_descriptor(SystemMcpKey::AgentBuilder);
+
+        assert_eq!(descriptor.owner_service, "chatos");
+        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
+        assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::AgentBuilder));
+        assert!(descriptor.supports_host(SystemMcpHost::Chatos));
+        assert!(!descriptor.supports_host(SystemMcpHost::TaskRunner));
     }
 
     #[test]

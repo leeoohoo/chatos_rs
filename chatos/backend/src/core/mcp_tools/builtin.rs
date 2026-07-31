@@ -110,10 +110,18 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             Ok(BuiltinToolService::Notepad(service))
         }
         BuiltinMcpKind::AgentBuilder => {
+            let user_id = server
+                .user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "missing owner user id for agent_builder".to_string())?;
             let service = AgentBuilderService::new(AgentBuilderOptions {
                 server_name: server.name.clone(),
-                user_id: server.user_id.clone(),
-                store: Some(AgentBuilderStoreRef::new(Arc::new(ChatosAgentBuilderStore))),
+                user_id: Some(user_id.to_string()),
+                store: Some(AgentBuilderStoreRef::new(Arc::new(
+                    ChatosAgentBuilderStore::new(user_id)?,
+                ))),
             })?;
             Ok(BuiltinToolService::AgentBuilder(service))
         }

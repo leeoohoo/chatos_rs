@@ -739,6 +739,25 @@ mod tests {
     }
 
     #[test]
+    fn agent_builder_routes_to_the_chatos_owner() {
+        let result = resolve_one(
+            context(WorkspaceProviderKind::LocalConnector),
+            system_resource(
+                "builtin_agent_builder",
+                "agent_builder",
+                "agent_builder",
+                true,
+                true,
+            ),
+        );
+        assert_eq!(
+            result.routes[0].provider_kind,
+            McpProviderKind::InternalService
+        );
+        assert_eq!(result.routes[0].provider_ref.as_deref(), Some("chatos"));
+    }
+
+    #[test]
     fn notepad_routes_to_the_chatos_cloud_store_on_every_workspace_plane() {
         for workspace_provider in [
             WorkspaceProviderKind::Harness,
