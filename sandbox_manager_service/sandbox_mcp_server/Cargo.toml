@@ -14,12 +14,16 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_mcp = { path = "../../mcp" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
+chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
+chatos_plugin_package = { path = "../../crates/chatos_plugin_package" }
 chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chatos_terminal_runtime = { path = "../../crates/chatos_terminal_runtime" }
+futures-util = "0.3"
 globset = "0.4"
 hex = "0.4"
 httparse = "1"
 rcgen = "0.14.7"
+reqwest = { version = "0.12", features = ["rustls-tls", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
 rustls-pemfile = "2"
@@ -48,3 +52,4 @@ hex = "0.4"
 sha2 = "0.10"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -255,6 +255,10 @@ pub struct CloudStdioMcpCallRequest {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub plugin_artifact: Option<chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle>,
+    #[serde(default)]
+    pub plugin_workspace_write: bool,
     pub method: String,
     #[serde(default)]
     pub params: serde_json::Value,

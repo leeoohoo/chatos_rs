@@ -626,7 +626,8 @@ fn apply_safe_environment_common(
         .env("TMPDIR", spec.temp_root.as_os_str())
         .env("XDG_CACHE_HOME", spec.cache_root.as_os_str())
         .env("XDG_CONFIG_HOME", spec.state_root.join("config"))
-        .env("XDG_STATE_HOME", spec.state_root.join("state"));
+        .env("XDG_STATE_HOME", spec.state_root.join("state"))
+        .env("CHATOS_PLUGIN_ROOT", spec.plugin_root.as_os_str());
     if let Some(workspace_root) = spec.workspace_root.as_ref() {
         command.env("CHATOS_WORKSPACE", workspace_root.as_os_str());
     }

@@ -13,6 +13,7 @@ use chatos_mcp_management_sdk::{
     ProjectExecutionContext, ResolvedMcpRoute, RuntimeSessionRoutesResponse, RuntimeToolDescriptor,
     SandboxExecutionTarget,
 };
+use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
 use mongodb::options::{IndexOptions, ReplaceOptions};
 use mongodb::{Client, Collection, IndexModel};
@@ -78,6 +79,7 @@ pub struct CloudStdioProviderBinding {
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
+    pub plugin_artifact: Option<PluginMcpCloudRuntimeBundle>,
     pub allow_writes: bool,
     pub allowed_tool_names: HashSet<String>,
     pub blocked_tool_names: HashSet<String>,
@@ -101,6 +103,10 @@ impl fmt::Debug for CloudStdioProviderBinding {
             .field("args", &"[redacted]")
             .field("env", &"[redacted]")
             .field("cwd", &"[redacted]")
+            .field(
+                "plugin_artifact",
+                &self.plugin_artifact.as_ref().map(|_| "[bound]"),
+            )
             .field("allow_writes", &self.allow_writes)
             .field("allowed_tool_names", &self.allowed_tool_names)
             .field("blocked_tool_names", &self.blocked_tool_names)
@@ -846,6 +852,7 @@ mod tests {
                         "stdio-shared-store-secret".to_string(),
                     )]),
                     cwd: Some("/workspace/plugin".to_string()),
+                    plugin_artifact: None,
                     allow_writes: true,
                     allowed_tool_names: HashSet::new(),
                     blocked_tool_names: HashSet::new(),

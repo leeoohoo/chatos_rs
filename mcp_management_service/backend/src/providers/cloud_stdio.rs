@@ -7,7 +7,10 @@ use std::time::Duration;
 
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxExecutionTarget};
 use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, METHOD_TOOLS_CALL};
-use chatos_plugin_management_sdk::{PluginMcpServer, ResolvedAgentCapabilities, ResolvedMcp};
+use chatos_plugin_management_sdk::{
+    normalize_plugin_relative_path, PluginMcpCloudRuntimeBundle, PluginMcpServer,
+    ResolvedAgentCapabilities, ResolvedMcp,
+};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
@@ -46,6 +49,8 @@ struct CloudStdioCallRequest<'a> {
     args: &'a [String],
     env: &'a BTreeMap<String, String>,
     cwd: Option<&'a str>,
+    plugin_artifact: Option<&'a PluginMcpCloudRuntimeBundle>,
+    plugin_workspace_write: bool,
     method: &'a str,
     params: Value,
     expires_at_unix: i64,
@@ -182,6 +187,8 @@ impl CloudStdioProvider {
             args: binding.args.as_slice(),
             env: &binding.env,
             cwd: binding.cwd.as_deref(),
+            plugin_artifact: binding.plugin_artifact.as_ref(),
+            plugin_workspace_write: binding.plugin_artifact.is_some() && binding.allow_writes,
             method: "tools/list",
             params: json!({}),
             expires_at_unix: context.expires_at_unix,
@@ -217,6 +224,7 @@ impl CloudStdioProvider {
         immutable: &PluginMcpRuntimeBinding,
         route: &ResolvedMcpRoute,
         resolved_environment: &BTreeMap<String, String>,
+        runtime_bundle: &PluginMcpCloudRuntimeBundle,
     ) -> Result<CloudStdioProviderBinding, String> {
         if route.provider_kind != McpProviderKind::PluginCloud
             || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
@@ -265,13 +273,35 @@ impl CloudStdioProvider {
                     .to_string(),
             );
         }
-        if cwd.is_some() {
-            return Err(
-                "Plugin package-relative cwd requires the cloud artifact mount contract"
-                    .to_string(),
-            );
+        if runtime_bundle.bundle_sha256 != immutable.component_content_sha256
+            || runtime_bundle.plugin_id != immutable.plugin_id
+            || runtime_bundle.release_id != immutable.release_id
+            || runtime_bundle.component.component_key != immutable.component_key
+            || runtime_bundle.runtime != immutable.runtime
+        {
+            return Err("Plugin artifact Bundle does not match the immutable binding".to_string());
         }
-        validate_command(command, args.as_slice())?;
+        let package_relative_command = command.contains('/');
+        let (command, cwd, plugin_artifact) = if package_relative_command {
+            validate_plugin_artifact_ref(runtime_bundle.artifact_ref.as_str())?;
+            let command = normalize_plugin_relative_path(command)
+                .map_err(|error| format!("Plugin package-relative command is invalid: {error}"))?;
+            let cwd = cwd
+                .as_ref()
+                .map(|value| normalize_plugin_relative_path(value.path.as_str()))
+                .transpose()
+                .map_err(|error| format!("Plugin package-relative cwd is invalid: {error}"))?;
+            (command, cwd, Some(runtime_bundle.clone()))
+        } else {
+            if cwd.is_some() {
+                return Err(
+                    "Plugin package-relative cwd requires a package-relative executable"
+                        .to_string(),
+                );
+            }
+            validate_command(command, args.as_slice())?;
+            (command.trim().to_string(), None, None)
+        };
         validate_arguments(args.as_slice())?;
         validate_environment(resolved_environment)?;
         let allowed_tool_names =
@@ -283,10 +313,11 @@ impl CloudStdioProvider {
         }
         Ok(CloudStdioProviderBinding {
             provider_ref: immutable.provider_ref.clone(),
-            command: command.trim().to_string(),
+            command,
             args: args.clone(),
             env: resolved_environment.clone(),
-            cwd: None,
+            cwd,
+            plugin_artifact,
             allow_writes: route.allow_writes,
             allowed_tool_names,
             blocked_tool_names,
@@ -388,6 +419,8 @@ impl CloudStdioProvider {
             args: binding.args.as_slice(),
             env: &binding.env,
             cwd: binding.cwd.as_deref(),
+            plugin_artifact: binding.plugin_artifact.as_ref(),
+            plugin_workspace_write: binding.plugin_artifact.is_some() && binding.allow_writes,
             method: METHOD_TOOLS_CALL,
             params: json!({
                 "name": original_tool_name,
@@ -632,6 +665,7 @@ fn prepare_binding(
         args: resolved.resource.runtime.args.clone(),
         env: resolved.resource.runtime.env.clone(),
         cwd,
+        plugin_artifact: None,
         allow_writes: route.allow_writes,
         allowed_tool_names,
         blocked_tool_names,
@@ -662,6 +696,22 @@ fn validate_command(command: &str, args: &[String]) -> Result<(), String> {
     });
     if is_shell && invokes_inline_command {
         return Err("shell inline command execution is forbidden".to_string());
+    }
+    Ok(())
+}
+
+fn validate_plugin_artifact_ref(value: &str) -> Result<(), String> {
+    let url =
+        reqwest::Url::parse(value).map_err(|_| "Plugin artifact URL is invalid".to_string())?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "Plugin artifact URL must use HTTPS without credentials or fragments".to_string(),
+        );
     }
     Ok(())
 }
@@ -791,8 +841,9 @@ mod tests {
         WorkspaceProviderKind,
     };
     use chatos_plugin_management_sdk::{
-        AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, PluginExecutionHost,
-        PluginMcpServer, ResolvedAgentCapabilities, ResourceMetadata, ResourceSecurity,
+        AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, PluginComponentDescriptor,
+        PluginComponentKind, PluginExecutionHost, PluginMcpServer, PluginPathRef,
+        ResolvedAgentCapabilities, ResourceMetadata, ResourceSecurity,
     };
 
     fn resolved() -> ResolvedMcp {
@@ -863,7 +914,7 @@ mod tests {
     }
 
     fn plugin_binding() -> PluginMcpRuntimeBinding {
-        PluginMcpRuntimeBinding {
+        let mut binding = PluginMcpRuntimeBinding {
             provider_ref: format!("plugin-binding:{}", "b".repeat(64)),
             resource_id: "plugin-mcp-1".to_string(),
             plugin_id: "plugin-1".to_string(),
@@ -872,7 +923,7 @@ mod tests {
             artifact_sha256: "a".repeat(64),
             normalized_manifest_sha256: "b".repeat(64),
             component_key: "runner".to_string(),
-            component_content_sha256: "c".repeat(64),
+            component_content_sha256: String::new(),
             declared_execution_host: PluginExecutionHost::Cloud,
             installation_device_id: None,
             permission_snapshot: vec!["process.spawn".to_string()],
@@ -889,7 +940,36 @@ mod tests {
             tool_blocklist: Vec::new(),
             required: true,
             allow_writes: false,
-        }
+        };
+        binding.component_content_sha256 = plugin_bundle(&binding).bundle_sha256;
+        binding
+    }
+
+    fn plugin_bundle(binding: &PluginMcpRuntimeBinding) -> PluginMcpCloudRuntimeBundle {
+        let mut bundle = PluginMcpCloudRuntimeBundle {
+            plugin_id: binding.plugin_id.clone(),
+            release_id: binding.release_id.clone(),
+            version: binding.version.clone(),
+            artifact_ref: "https://plugins.example.com/plugin-1.zip".to_string(),
+            artifact_sha256: binding.artifact_sha256.clone(),
+            normalized_manifest_sha256: binding.normalized_manifest_sha256.clone(),
+            component: PluginComponentDescriptor {
+                component_key: binding.component_key.clone(),
+                kind: PluginComponentKind::McpServer,
+                display_name: "Runner".to_string(),
+                execution_host: PluginExecutionHost::Cloud,
+                runtime_kind: "stdio".to_string(),
+                entrypoint: None,
+                required: true,
+                permissions: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+            runtime: binding.runtime.clone(),
+            bundle_sha256: String::new(),
+        };
+        bundle.bundle_sha256 =
+            chatos_plugin_management_sdk::plugin_mcp_cloud_runtime_bundle_sha256(&bundle).unwrap();
+        bundle
     }
 
     fn plugin_route(binding: &PluginMcpRuntimeBinding) -> ResolvedMcpRoute {
@@ -939,8 +1019,9 @@ mod tests {
         )
         .unwrap();
         let binding = plugin_binding();
+        let bundle = plugin_bundle(&binding);
         assert!(provider
-            .prepare_plugin_binding(&binding, &plugin_route(&binding), &BTreeMap::new())
+            .prepare_plugin_binding(&binding, &plugin_route(&binding), &BTreeMap::new(), &bundle,)
             .is_ok());
 
         let mut missing_permission = binding.clone();
@@ -950,6 +1031,7 @@ mod tests {
                 &missing_permission,
                 &plugin_route(&missing_permission),
                 &BTreeMap::new(),
+                &bundle,
             )
             .is_err());
 
@@ -961,11 +1043,14 @@ mod tests {
             "API_TOKEN".to_string(),
             "${credential:api_token}".to_string(),
         );
+        unresolved_secret.component_content_sha256 =
+            plugin_bundle(&unresolved_secret).bundle_sha256;
         assert!(provider
             .prepare_plugin_binding(
                 &unresolved_secret,
                 &plugin_route(&unresolved_secret),
                 &BTreeMap::new(),
+                &plugin_bundle(&unresolved_secret),
             )
             .is_err());
         unresolved_secret
@@ -976,8 +1061,53 @@ mod tests {
                 &unresolved_secret,
                 &plugin_route(&unresolved_secret),
                 &BTreeMap::from([("API_TOKEN".to_string(), "secret".to_string())]),
+                &plugin_bundle(&unresolved_secret),
             )
             .is_ok());
+    }
+
+    #[test]
+    fn plugin_package_relative_command_and_cwd_bind_the_immutable_artifact() {
+        let provider = CloudStdioProvider::new(
+            "http://127.0.0.1:8095",
+            Duration::from_secs(5),
+            Some("sandbox-secret".to_string()),
+            1024 * 1024,
+        )
+        .unwrap();
+        let mut binding = plugin_binding();
+        binding.runtime = PluginMcpServer::Stdio {
+            component_key: binding.component_key.clone(),
+            command: "./bin/server".to_string(),
+            args: vec!["--stdio".to_string()],
+            env: BTreeMap::new(),
+            cwd: Some(PluginPathRef::new("./bin")),
+        };
+        let bundle = plugin_bundle(&binding);
+        binding.component_content_sha256 = bundle.bundle_sha256.clone();
+        let prepared = provider
+            .prepare_plugin_binding(&binding, &plugin_route(&binding), &BTreeMap::new(), &bundle)
+            .expect("package-relative Plugin binding");
+        assert_eq!(prepared.command, "./bin/server");
+        assert_eq!(prepared.cwd.as_deref(), Some("./bin"));
+        assert_eq!(
+            prepared
+                .plugin_artifact
+                .as_ref()
+                .map(|artifact| artifact.bundle_sha256.as_str()),
+            Some(bundle.bundle_sha256.as_str())
+        );
+
+        let mut unsafe_bundle = bundle;
+        unsafe_bundle.artifact_ref = "http://127.0.0.1/plugin.zip".to_string();
+        assert!(provider
+            .prepare_plugin_binding(
+                &binding,
+                &plugin_route(&binding),
+                &BTreeMap::new(),
+                &unsafe_bundle,
+            )
+            .is_err());
     }
 
     #[tokio::test]

@@ -6,12 +6,12 @@ use std::fs;
 use std::io::{Cursor, Write};
 
 use chatos_plugin_management_sdk::{
-    parse_plugin_manifest, plugin_component_descriptors, PluginManifestSource, PluginReleaseRecord,
-    PluginReleaseSignature,
+    build_plugin_mcp_cloud_runtime_bundle, parse_plugin_manifest, plugin_component_descriptors,
+    PluginManifestSource, PluginReleaseRecord, PluginReleaseSignature,
 };
 use chatos_plugin_package::{
     build_cloud_component_bundles, load_verified_plugin_package_directory,
-    verify_plugin_archive_bytes, PluginPackageLimits,
+    verify_plugin_archive_bytes, verify_plugin_mcp_cloud_artifact_bytes, PluginPackageLimits,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -28,6 +28,14 @@ fn manifest_raw() -> String {
         "description": "Package verifier fixture",
         "author": {"name": "ChatOS"},
         "skills": ["./skills/demo"],
+        "mcpServers": {
+            "runner": {
+                "type": "stdio",
+                "command": "./bin/server",
+                "args": [],
+                "cwd": "./bin"
+            }
+        },
         "commands": [{
             "componentKey": "review",
             "source": "./commands/review.md",
@@ -41,7 +49,7 @@ fn manifest_raw() -> String {
             "category": "Developer Tools"
         },
         "dependencies": {},
-        "permissions": []
+        "permissions": [{"permission": "process.spawn", "components": ["runner"]}]
     })
     .to_string()
 }
@@ -52,6 +60,7 @@ fn package_files(skill_text: &str) -> BTreeMap<String, Vec<u8>> {
             ".chatos-plugin/plugin.json".to_string(),
             manifest_raw().into_bytes(),
         ),
+        ("bin/server".to_string(), b"#!/bin/sh\nexit 0\n".to_vec()),
         (
             "commands/review.md".to_string(),
             b"Review the smallest correct change.".to_vec(),
@@ -73,6 +82,38 @@ fn package_files(skill_text: &str) -> BTreeMap<String, Vec<u8>> {
             skill_text.as_bytes().to_vec(),
         ),
     ])
+}
+
+#[test]
+fn cloud_mcp_artifact_is_bound_to_the_runtime_bundle_and_file_checksums() {
+    let files = with_checksums(package_files("---\nname: demo\n---\nInstructions"));
+    let bytes = normal_archive(&files);
+    let release = release(sha256(bytes.as_slice()));
+    let bundle = build_plugin_mcp_cloud_runtime_bundle(&release, "runner")
+        .expect("cloud MCP runtime Bundle");
+    let package = verify_plugin_mcp_cloud_artifact_bytes(
+        bytes.as_slice(),
+        &bundle,
+        PluginPackageLimits::default(),
+    )
+    .expect("verified cloud MCP artifact");
+    assert_eq!(
+        package.file_sha256["bin/server"],
+        sha256(&files["bin/server"])
+    );
+
+    let mut drifted = bundle.clone();
+    let chatos_plugin_management_sdk::PluginMcpServer::Stdio { command, .. } = &mut drifted.runtime
+    else {
+        unreachable!();
+    };
+    *command = "./bin/other".to_string();
+    assert!(verify_plugin_mcp_cloud_artifact_bytes(
+        bytes.as_slice(),
+        &drifted,
+        PluginPackageLimits::default(),
+    )
+    .is_err());
 }
 
 fn with_checksums(mut files: BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Vec<u8>> {

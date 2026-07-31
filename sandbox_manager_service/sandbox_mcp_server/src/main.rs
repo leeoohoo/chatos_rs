@@ -3,6 +3,7 @@
 
 mod agent_relay;
 mod auth;
+mod cloud_plugin_artifact;
 mod cloud_stdio;
 mod command_sandbox;
 mod config;

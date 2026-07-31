@@ -10,14 +10,17 @@ use std::time::Duration;
 use chatos_mcp_runtime::{
     invalidate_stdio_session, jsonrpc_stdio_call_with_timeout, McpStdioServer,
 };
+use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
+use crate::cloud_plugin_artifact::CloudPluginArtifactStore;
 use crate::config::ServerConfig;
 
 const WRAPPER_MODE: &str = "--internal-cloud-stdio-wrapper";
+const PLUGIN_WRAPPER_MODE: &str = "--internal-plugin-stdio-wrapper";
 const WRAPPER_SPEC_PATH_ENV: &str = "CHATOS_CLOUD_STDIO_LAUNCH_SPEC_PATH";
 const MAX_WRAPPER_SPEC_BYTES: u64 = 512 * 1024;
 const MAX_COMMAND_BYTES: usize = 256;
@@ -43,6 +46,10 @@ pub(crate) struct CloudStdioCallRequest {
     pub(crate) env: BTreeMap<String, String>,
     #[serde(default)]
     pub(crate) cwd: Option<String>,
+    #[serde(default)]
+    pub(crate) plugin_artifact: Option<PluginMcpCloudRuntimeBundle>,
+    #[serde(default)]
+    pub(crate) plugin_workspace_write: bool,
     pub(crate) method: String,
     #[serde(default)]
     pub(crate) params: Value,
@@ -68,6 +75,7 @@ pub(crate) struct CloudStdioCloseResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CloudStdioLaunchSpec {
+    binding_identity: Option<String>,
     command: String,
     args: Vec<String>,
     env: BTreeMap<String, String>,
@@ -77,14 +85,32 @@ struct CloudStdioLaunchSpec {
     temp: PathBuf,
 }
 
+#[derive(Serialize)]
+struct CloudStdioBindingFingerprint<'a> {
+    command: &'a str,
+    args: &'a [String],
+    env: &'a BTreeMap<String, String>,
+    cwd: Option<&'a str>,
+    plugin_artifact: Option<&'a PluginMcpCloudRuntimeBundle>,
+    plugin_workspace_write: bool,
+}
+
+struct ActiveBinding {
+    key: String,
+    fingerprint: String,
+    config: McpStdioServer,
+}
+
 #[derive(Clone)]
 pub(crate) struct CloudStdioService {
     config: ServerConfig,
+    artifacts: CloudPluginArtifactStore,
     bindings: Arc<Mutex<HashMap<String, RegisteredBinding>>>,
 }
 
 #[derive(Clone)]
 struct RegisteredBinding {
+    request_fingerprint: String,
     fingerprint: String,
     config: McpStdioServer,
     expires_at_unix: i64,
@@ -93,8 +119,10 @@ struct RegisteredBinding {
 
 impl CloudStdioService {
     pub(crate) fn new(config: ServerConfig) -> Self {
+        let artifacts = CloudPluginArtifactStore::new(config.state_dir.as_path());
         Self {
             config,
+            artifacts,
             bindings: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -105,22 +133,35 @@ impl CloudStdioService {
     ) -> Result<CloudStdioCallResponse, String> {
         validate_method(request.method.as_str(), &request.params)?;
         validate_expiry(request.expires_at_unix)?;
-        let prepared = self.prepare_binding(&request)?;
-        let inserted = self.register_binding(&prepared).await?;
-        if inserted {
-            self.schedule_expiry(
-                prepared.key.clone(),
-                prepared.fingerprint.clone(),
-                request.expires_at_unix,
-            );
-        }
+        let request_fingerprint = binding_request_fingerprint(&request)?;
+        let active = if let Some(active) = self
+            .active_binding(&request, request_fingerprint.as_str())
+            .await?
+        {
+            active
+        } else {
+            let prepared = self.prepare_binding(&request, request_fingerprint).await?;
+            let inserted = self.register_binding(&prepared).await?;
+            if inserted {
+                self.schedule_expiry(
+                    prepared.key.clone(),
+                    prepared.fingerprint.clone(),
+                    request.expires_at_unix,
+                );
+            }
+            ActiveBinding {
+                key: prepared.key,
+                fingerprint: prepared.fingerprint,
+                config: prepared.config,
+            }
+        };
         let timeout = Duration::from_millis(
             request
                 .timeout_ms
                 .clamp(MIN_CALL_TIMEOUT_MS, MAX_CALL_TIMEOUT_MS),
         );
         let result = jsonrpc_stdio_call_with_timeout(
-            &prepared.config,
+            &active.config,
             request.method.as_str(),
             request.params,
             Some(request.runtime_session_id.as_str()),
@@ -130,11 +171,8 @@ impl CloudStdioService {
         match result {
             Ok(result) => Ok(CloudStdioCallResponse { result }),
             Err(error) => {
-                self.remove_binding_if_matches(
-                    prepared.key.as_str(),
-                    prepared.fingerprint.as_str(),
-                )
-                .await;
+                self.remove_binding_if_matches(active.key.as_str(), active.fingerprint.as_str())
+                    .await;
                 Err(format!("cloud stdio MCP invocation failed: {error}"))
             }
         }
@@ -157,27 +195,91 @@ impl CloudStdioService {
         Ok(CloudStdioCloseResponse { closed: false })
     }
 
-    fn prepare_binding(&self, request: &CloudStdioCallRequest) -> Result<PreparedBinding, String> {
+    async fn prepare_binding(
+        &self,
+        request: &CloudStdioCallRequest,
+        request_fingerprint: String,
+    ) -> Result<PreparedBinding, String> {
         let key = binding_key(
             request.runtime_session_id.as_str(),
             request.resource_id.as_str(),
         )?;
-        validate_command(request.command.as_str(), request.args.as_slice())?;
         validate_arguments(request.args.as_slice())?;
         validate_environment(&request.env)?;
         let workspace = canonical_directory(self.config.workspace.as_path(), "workspace")?;
-        let cwd = resolve_workspace_cwd(workspace.as_path(), request.cwd.as_deref())?;
         let runtime_key = hex::encode(Sha256::digest(key.as_bytes()));
         let runtime_root = self.config.state_dir.join("cloud-stdio").join(runtime_key);
         let home = runtime_root.join("home");
+        let cache = runtime_root.join("cache");
         let temp = runtime_root.join("tmp");
-        std::fs::create_dir_all(home.as_path())
-            .map_err(|error| format!("create cloud stdio HOME failed: {error}"))?;
-        std::fs::create_dir_all(temp.as_path())
-            .map_err(|error| format!("create cloud stdio temp directory failed: {error}"))?;
+        for (label, path) in [("HOME", &home), ("cache", &cache), ("temp", &temp)] {
+            std::fs::create_dir_all(path.as_path())
+                .map_err(|error| format!("create cloud stdio {label} directory failed: {error}"))?;
+        }
+        let wrapper = std::env::current_exe()
+            .map_err(|error| format!("resolve sandbox Agent executable failed: {error}"))?;
+        let (binding_identity, command, args, cwd) = if let Some(bundle) =
+            request.plugin_artifact.as_ref()
+        {
+            if !request.command.contains('/') {
+                return Err("Plugin artifact mount requires a package-relative command".to_string());
+            }
+            let artifact = self
+                .artifacts
+                .materialize(bundle, request.command.as_str(), request.cwd.as_deref())
+                .await?;
+            let mut args = vec![
+                PLUGIN_WRAPPER_MODE.to_string(),
+                "--sandbox-id".to_string(),
+                deterministic_sandbox_id(key.as_str(), bundle.bundle_sha256.as_str()),
+                "--plugin-root".to_string(),
+                artifact.plugin_root.to_string_lossy().into_owned(),
+                "--state-root".to_string(),
+                home.to_string_lossy().into_owned(),
+                "--cache-root".to_string(),
+                cache.to_string_lossy().into_owned(),
+                "--temp-root".to_string(),
+                temp.to_string_lossy().into_owned(),
+                "--package-index".to_string(),
+                artifact.package_index.to_string_lossy().into_owned(),
+                "--cwd".to_string(),
+                artifact.cwd.to_string_lossy().into_owned(),
+            ];
+            if request.plugin_workspace_write {
+                args.push("--workspace-root".to_string());
+                args.push(workspace.to_string_lossy().into_owned());
+            }
+            for name in request.env.keys() {
+                args.push("--env".to_string());
+                args.push(name.clone());
+            }
+            args.push("--".to_string());
+            args.push(artifact.command.to_string_lossy().into_owned());
+            args.extend(request.args.clone());
+            (
+                Some(bundle.bundle_sha256.clone()),
+                wrapper.to_string_lossy().into_owned(),
+                args,
+                workspace.clone(),
+            )
+        } else {
+            if request.plugin_workspace_write {
+                return Err(
+                    "Plugin workspace write binding requires an immutable artifact".to_string(),
+                );
+            }
+            validate_command(request.command.as_str(), request.args.as_slice())?;
+            (
+                None,
+                request.command.trim().to_string(),
+                request.args.clone(),
+                resolve_workspace_cwd(workspace.as_path(), request.cwd.as_deref())?,
+            )
+        };
         let launch = CloudStdioLaunchSpec {
-            command: request.command.trim().to_string(),
-            args: request.args.clone(),
+            binding_identity,
+            command,
+            args,
             env: request.env.clone(),
             cwd,
             workspace: workspace.clone(),
@@ -187,8 +289,6 @@ impl CloudStdioService {
         let launch_bytes = serde_json::to_vec(&launch)
             .map_err(|error| format!("serialize cloud stdio launch spec failed: {error}"))?;
         let fingerprint = hex::encode(Sha256::digest(launch_bytes.as_slice()));
-        let wrapper = std::env::current_exe()
-            .map_err(|error| format!("resolve sandbox Agent executable failed: {error}"))?;
         let launch_spec_path = runtime_root.join("launch.json");
         let config = McpStdioServer::new(
             format!("cloud-stdio-{}", request.resource_id.trim()),
@@ -203,6 +303,7 @@ impl CloudStdioService {
         .with_user_id(key.clone());
         Ok(PreparedBinding {
             key,
+            request_fingerprint,
             fingerprint,
             config,
             expires_at_unix: request.expires_at_unix,
@@ -214,7 +315,8 @@ impl CloudStdioService {
     async fn register_binding(&self, prepared: &PreparedBinding) -> Result<bool, String> {
         let mut bindings = self.bindings.lock().await;
         if let Some(existing) = bindings.get(prepared.key.as_str()) {
-            if existing.fingerprint != prepared.fingerprint
+            if existing.request_fingerprint != prepared.request_fingerprint
+                || existing.fingerprint != prepared.fingerprint
                 || existing.expires_at_unix != prepared.expires_at_unix
             {
                 return Err(
@@ -227,6 +329,7 @@ impl CloudStdioService {
         bindings.insert(
             prepared.key.clone(),
             RegisteredBinding {
+                request_fingerprint: prepared.request_fingerprint.clone(),
                 fingerprint: prepared.fingerprint.clone(),
                 config: prepared.config.clone(),
                 expires_at_unix: prepared.expires_at_unix,
@@ -234,6 +337,33 @@ impl CloudStdioService {
             },
         );
         Ok(true)
+    }
+
+    async fn active_binding(
+        &self,
+        request: &CloudStdioCallRequest,
+        request_fingerprint: &str,
+    ) -> Result<Option<ActiveBinding>, String> {
+        let key = binding_key(
+            request.runtime_session_id.as_str(),
+            request.resource_id.as_str(),
+        )?;
+        let bindings = self.bindings.lock().await;
+        let Some(binding) = bindings.get(key.as_str()) else {
+            return Ok(None);
+        };
+        if binding.request_fingerprint != request_fingerprint
+            || binding.expires_at_unix != request.expires_at_unix
+        {
+            return Err(
+                "cloud stdio MCP runtime binding changed during an active session".to_string(),
+            );
+        }
+        Ok(Some(ActiveBinding {
+            key,
+            fingerprint: binding.fingerprint.clone(),
+            config: binding.config.clone(),
+        }))
     }
 
     fn schedule_expiry(&self, key: String, fingerprint: String, expires_at_unix: i64) {
@@ -270,6 +400,7 @@ impl CloudStdioService {
 
 struct PreparedBinding {
     key: String,
+    request_fingerprint: String,
     fingerprint: String,
     config: McpStdioServer,
     expires_at_unix: i64,
@@ -298,7 +429,7 @@ pub(crate) fn run_internal_cloud_stdio_wrapper() -> Result<i32, String> {
         .map_err(|_| "cloud stdio wrapper launch spec is unavailable".to_string())?;
     let spec = serde_json::from_slice::<CloudStdioLaunchSpec>(bytes.as_slice())
         .map_err(|_| "cloud stdio wrapper launch spec is invalid".to_string())?;
-    validate_command(spec.command.as_str(), spec.args.as_slice())?;
+    validate_launch_command(&spec)?;
     validate_arguments(spec.args.as_slice())?;
     validate_environment(&spec.env)?;
     validate_launch_paths(&spec)?;
@@ -335,6 +466,34 @@ fn binding_key(runtime_session_id: &str, resource_id: &str) -> Result<String, St
     let runtime_session_id = validated_identity(runtime_session_id, "runtime_session_id")?;
     let resource_id = validated_identity(resource_id, "resource_id")?;
     Ok(format!("{runtime_session_id}:{resource_id}"))
+}
+
+fn binding_request_fingerprint(request: &CloudStdioCallRequest) -> Result<String, String> {
+    let payload = CloudStdioBindingFingerprint {
+        command: request.command.as_str(),
+        args: request.args.as_slice(),
+        env: &request.env,
+        cwd: request.cwd.as_deref(),
+        plugin_artifact: request.plugin_artifact.as_ref(),
+        plugin_workspace_write: request.plugin_workspace_write,
+    };
+    serde_json::to_vec(&payload)
+        .map(|bytes| hex::encode(Sha256::digest(bytes)))
+        .map_err(|error| format!("serialize cloud stdio MCP binding failed: {error}"))
+}
+
+fn deterministic_sandbox_id(binding_key: &str, bundle_sha256: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"chatos.cloud-plugin-stdio-sandbox.v1\n");
+    hasher.update(binding_key.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(bundle_sha256.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
 }
 
 fn validated_identity<'a>(value: &'a str, field: &str) -> Result<&'a str, String> {
@@ -374,6 +533,30 @@ fn validate_method(method: &str, params: &Value) -> Result<(), String> {
             .is_none_or(str::is_empty)
     {
         return Err("cloud stdio MCP tools/call.name is required".to_string());
+    }
+    Ok(())
+}
+
+fn validate_launch_command(spec: &CloudStdioLaunchSpec) -> Result<(), String> {
+    let Some(identity) = spec.binding_identity.as_deref() else {
+        return validate_command(spec.command.as_str(), spec.args.as_slice());
+    };
+    if identity.len() != 64
+        || !identity
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        || spec.args.first().map(String::as_str) != Some(PLUGIN_WRAPPER_MODE)
+    {
+        return Err("Plugin cloud stdio launch identity is invalid".to_string());
+    }
+    let expected = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| format!("resolve sandbox Agent executable failed: {error}"))?;
+    let command = Path::new(spec.command.as_str())
+        .canonicalize()
+        .map_err(|error| format!("resolve Plugin stdio wrapper failed: {error}"))?;
+    if command != expected {
+        return Err("Plugin cloud stdio wrapper identity changed".to_string());
     }
     Ok(())
 }
@@ -615,6 +798,8 @@ mod tests {
             args,
             env: BTreeMap::new(),
             cwd: None,
+            plugin_artifact: None,
+            plugin_workspace_write: false,
             method: "tools/list".to_string(),
             params: serde_json::json!({}),
             expires_at_unix: chrono::Utc::now().timestamp() + 60,
@@ -666,8 +851,13 @@ mod tests {
     #[tokio::test]
     async fn active_session_rejects_runtime_binding_drift_and_can_close() {
         let (service, _temp) = service();
+        let first_request = request("npx", vec!["-y".to_string()]);
         let first = service
-            .prepare_binding(&request("npx", vec!["-y".to_string()]))
+            .prepare_binding(
+                &first_request,
+                binding_request_fingerprint(&first_request).unwrap(),
+            )
+            .await
             .unwrap();
         assert!(service.register_binding(&first).await.unwrap());
         assert!(first.launch_spec_path.is_file());
@@ -682,8 +872,13 @@ mod tests {
         }
         assert!(!service.register_binding(&first).await.unwrap());
 
+        let changed_request = request("node", vec!["server.js".to_string()]);
         let changed = service
-            .prepare_binding(&request("node", vec!["server.js".to_string()]))
+            .prepare_binding(
+                &changed_request,
+                binding_request_fingerprint(&changed_request).unwrap(),
+            )
+            .await
             .unwrap();
         assert!(service.register_binding(&changed).await.is_err());
         let closed = service

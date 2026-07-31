@@ -100,11 +100,11 @@ impl PluginCloudProvider {
             match result {
                 Ok(PreparedPluginCloudRoute::Stdio { binding, tools }) => {
                     tool_snapshots.insert(route.resource_id.clone(), tools);
-                    stdio_bindings.insert(route.resource_id.clone(), binding);
+                    stdio_bindings.insert(route.resource_id.clone(), *binding);
                 }
                 Ok(PreparedPluginCloudRoute::Http { binding, tools }) => {
                     tool_snapshots.insert(route.resource_id.clone(), tools);
-                    http_bindings.insert(route.resource_id.clone(), binding);
+                    http_bindings.insert(route.resource_id.clone(), *binding);
                 }
                 Err(error) => make_route_unavailable(route, error.message.as_str()),
             }
@@ -199,7 +199,7 @@ impl PluginCloudProvider {
                 })?;
                 let binding = self
                     .cloud_stdio
-                    .prepare_plugin_binding(immutable, route, &credentials.environment)
+                    .prepare_plugin_binding(immutable, route, &credentials.environment, &bundle)
                     .map_err(ProviderCallError::provider_unavailable)?;
                 let tools = self
                     .cloud_stdio
@@ -215,7 +215,10 @@ impl PluginCloudProvider {
                     )
                     .await?;
                 validate_tool_snapshot(tools.as_slice())?;
-                Ok(PreparedPluginCloudRoute::Stdio { binding, tools })
+                Ok(PreparedPluginCloudRoute::Stdio {
+                    binding: Box::new(binding),
+                    tools,
+                })
             }
             PluginMcpServer::Http { .. } => {
                 if !credentials.environment.is_empty() {
@@ -234,7 +237,10 @@ impl PluginCloudProvider {
                     .list_tools_for_binding(&binding, request_id.as_str(), "Plugin Cloud HTTP MCP")
                     .await?;
                 validate_tool_snapshot(tools.as_slice())?;
-                Ok(PreparedPluginCloudRoute::Http { binding, tools })
+                Ok(PreparedPluginCloudRoute::Http {
+                    binding: Box::new(binding),
+                    tools,
+                })
             }
             PluginMcpServer::ConfigFile { .. } => Err(ProviderCallError::provider_unavailable(
                 "Plugin Cloud config-file MCP requires an explicit cloud artifact contract",
@@ -328,11 +334,11 @@ impl PluginCloudProvider {
 
 enum PreparedPluginCloudRoute {
     Stdio {
-        binding: CloudStdioProviderBinding,
+        binding: Box<CloudStdioProviderBinding>,
         tools: Vec<Value>,
     },
     Http {
-        binding: ExternalHttpProviderBinding,
+        binding: Box<ExternalHttpProviderBinding>,
         tools: Vec<Value>,
     },
 }
@@ -429,6 +435,7 @@ mod tests {
             plugin_id: "plugin-search".to_string(),
             release_id: "release-search-1".to_string(),
             version: "1.0.0".to_string(),
+            artifact_ref: "https://plugins.example.com/search-1.0.0.zip".to_string(),
             artifact_sha256: "a".repeat(64),
             normalized_manifest_sha256: "b".repeat(64),
             component: PluginComponentDescriptor {
