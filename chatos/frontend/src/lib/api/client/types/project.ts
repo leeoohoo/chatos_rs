@@ -136,11 +136,19 @@ export interface ProjectRequirementExecuteResponse {
   confirmationStatus?: string;
   has_started_runs?: boolean;
   hasStartedRuns?: boolean;
+  recovery_action?: RequirementExecutionRecoveryAction;
+  recoveryAction?: RequirementExecutionRecoveryAction;
+  recovery_reason?: string | null;
+  recoveryReason?: string | null;
+  replace_previous_batch?: boolean;
+  replacePreviousBatch?: boolean;
   execution_paused?: boolean;
   executionPaused?: boolean;
   next_action?: string;
   nextAction?: string;
 }
+
+export type RequirementExecutionRecoveryAction = 'none' | 'rerun' | 'regenerate';
 
 export interface ProjectRequirementExecutionPlanResponse {
   found?: boolean;
@@ -173,6 +181,12 @@ export interface ProjectRequirementExecutionPlanResponse {
   taskCount?: number;
   has_started_runs?: boolean;
   hasStartedRuns?: boolean;
+  recovery_action?: RequirementExecutionRecoveryAction;
+  recoveryAction?: RequirementExecutionRecoveryAction;
+  recovery_reason?: string | null;
+  recoveryReason?: string | null;
+  replace_previous_batch?: boolean;
+  replacePreviousBatch?: boolean;
   execution_paused?: boolean;
   executionPaused?: boolean;
   created_at?: string;
@@ -229,6 +243,21 @@ export interface ProjectRequirementStopResponse {
   conversationId?: string;
   execution_group_id?: string;
   executionGroupId?: string;
+  message_id?: string;
+  messageId?: string;
+  message?: SessionMessageResponse | null;
+  model_config_id?: string | null;
+  modelConfigId?: string | null;
+  include_prerequisite_dependents?: boolean;
+  includePrerequisiteDependents?: boolean;
+  planning_feedback?: string | null;
+  planningFeedback?: string | null;
+  planning_feedback_history?: string[] | null;
+  planningFeedbackHistory?: string[] | null;
+  confirmation_status?: string;
+  confirmationStatus?: string;
+  execution_paused?: boolean;
+  executionPaused?: boolean;
   cancelled_tasks?: unknown[];
   cancelledTasks?: unknown[];
   cancelled_planned_task_ids?: string[];
@@ -239,6 +268,18 @@ export interface ProjectRequirementStopResponse {
   resetWorkItemIds?: string[];
   reset_requirement_ids?: string[];
   resetRequirementIds?: string[];
+  discarded_tasks?: boolean;
+  discardedTasks?: boolean;
+  task_count?: number;
+  taskCount?: number;
+  has_started_runs?: boolean;
+  hasStartedRuns?: boolean;
+  recovery_action?: RequirementExecutionRecoveryAction;
+  recoveryAction?: RequirementExecutionRecoveryAction;
+  recovery_reason?: string | null;
+  recoveryReason?: string | null;
+  replace_previous_batch?: boolean;
+  replacePreviousBatch?: boolean;
 }
 
 export interface ProjectRunStateResponse {

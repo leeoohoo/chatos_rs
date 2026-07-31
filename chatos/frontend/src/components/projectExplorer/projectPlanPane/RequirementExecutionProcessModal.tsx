@@ -90,18 +90,10 @@ export const RequirementExecutionProcessModal: React.FC<{
   const pollingRef = useRef(false);
   const rerunningRef = useRef(false);
   const activeExecutionGroupIdRef = useRef(process.executionGroupId);
-  const stoppedExecutionGroupIdsRef = useRef(new Set<string>(
-    isStoppedExecutionStatus(process.serverStatus) ? [process.executionGroupId] : [],
-  ));
 
   useEffect(() => {
     const stopped = isStoppedExecutionStatus(process.serverStatus);
     activeExecutionGroupIdRef.current = process.executionGroupId;
-    if (stopped) {
-      stoppedExecutionGroupIdsRef.current.add(process.executionGroupId);
-    } else {
-      stoppedExecutionGroupIdsRef.current.delete(process.executionGroupId);
-    }
     setLiveProcess(process);
     setMessage(withProcessStatus(
       process.initialMessage || createFallbackMessage(process),
@@ -184,6 +176,7 @@ export const RequirementExecutionProcessModal: React.FC<{
     actuallyStarted,
     hasActiveRuns,
     phase,
+    recoveryAction: liveProcess.recoveryAction,
   });
   const graphCancellationSettling = isRequirementExecutionCancellationSettling({
     hasActiveRuns,
@@ -191,11 +184,9 @@ export const RequirementExecutionProcessModal: React.FC<{
   });
   const cancellationSettling = graphCancellationSettling || rerunCancellationSettling;
   const rerunBusy = rerunning || rerunCancellationSettling;
-  const canRegenerate = recoveryActions.canRegenerate && !planDiscarded;
+  const canRegenerate = recoveryActions.canRegenerate && !cancellationSettling;
   const canRevise = recoveryActions.canRevise;
   const canRerun = recoveryActions.canRerun
-    && allTasks.length > 0
-    && !planDiscarded
     && !cancellationSettling;
   const showRerunAction = canRerun || rerunBusy;
   const terminal = ['completed', 'failed', 'stopped'].includes(phase)
@@ -249,7 +240,6 @@ export const RequirementExecutionProcessModal: React.FC<{
       });
       if (
         activeExecutionGroupIdRef.current !== requestedExecutionGroupId
-        || stoppedExecutionGroupIdsRef.current.has(requestedExecutionGroupId)
       ) {
         return;
       }
@@ -260,7 +250,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     } catch (err) {
       if (
         activeExecutionGroupIdRef.current === requestedExecutionGroupId
-        && !stoppedExecutionGroupIdsRef.current.has(requestedExecutionGroupId)
         && !isPendingRequirementExecutionPlanError(err)
       ) {
         setSyncError(err instanceof Error ? err.message : '读取规划批次状态失败');
@@ -468,7 +457,7 @@ export const RequirementExecutionProcessModal: React.FC<{
     setMessage(withProcessStatus(message, stoppingProcess));
     onProcessChange(stoppingProcess);
     try {
-      await apiClient.stopProjectRequirementExecution(
+      const response = await apiClient.stopProjectRequirementExecution(
         liveProcess.projectId,
         liveProcess.requirement.id,
         {
@@ -478,8 +467,12 @@ export const RequirementExecutionProcessModal: React.FC<{
           ...(discardTasks ? { discard_tasks: true } : {}),
         },
       );
-      stoppedExecutionGroupIdsRef.current.add(liveProcess.executionGroupId);
-      const next = {
+      const next = buildRequirementExecutionProcess({
+        fallback: liveProcess,
+        projectId: liveProcess.projectId,
+        requirement: liveProcess.requirement,
+        response,
+      }) || {
         ...liveProcess,
         serverStatus: 'stopped',
         executionPaused: false,
@@ -531,9 +524,8 @@ export const RequirementExecutionProcessModal: React.FC<{
     setActionMessage(null);
     try {
       const replacePreviousBatch = shouldReplaceRequirementExecutionBatch({
-        phase,
         planDiscarded,
-        taskCount: allTasks.length,
+        replacePreviousBatch: liveProcess.replacePreviousBatch,
       });
       if (shouldStopRequirementExecutionBeforeReplacement({
         phase,
@@ -579,7 +571,6 @@ export const RequirementExecutionProcessModal: React.FC<{
       next.executionPaused = false;
       setFeedback('');
       activeExecutionGroupIdRef.current = next.executionGroupId;
-      stoppedExecutionGroupIdsRef.current.delete(next.executionGroupId);
       setLiveProcess(next);
       setMessage(withProcessStatus(next.initialMessage || createFallbackMessage(next), next));
       setPlanStopped(false);
@@ -640,7 +631,6 @@ export const RequirementExecutionProcessModal: React.FC<{
       setRerunConfirmOpen(false);
       setFeedback('');
       activeExecutionGroupIdRef.current = next.executionGroupId;
-      stoppedExecutionGroupIdsRef.current.delete(next.executionGroupId);
       setLiveProcess(next);
       setMessage(withProcessStatus(next.initialMessage || createFallbackMessage(next), next));
       setPlanStopped(false);

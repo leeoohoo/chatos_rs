@@ -106,15 +106,25 @@ beforeEach(() => {
     message_id: 'message-failed',
     status: 'failed',
     has_started_runs: false,
+    recovery_action: 'regenerate',
+    recovery_reason: 'failed_before_execution_started',
+    replace_previous_batch: true,
     planning_feedback_history: ['先补测试', '接口任务放在最后'],
   });
-  mocks.stopProjectRequirementExecution.mockResolvedValue({ status: 'stopped' });
+  mocks.stopProjectRequirementExecution.mockResolvedValue({
+    status: 'stopped',
+    recovery_action: 'regenerate',
+    recovery_reason: 'stopped_without_task_graph',
+    replace_previous_batch: true,
+  });
   mocks.executeProjectRequirement.mockResolvedValue({
     conversation_id: 'conversation-1',
     execution_group_id: 'execution-group-replacement',
     message_id: 'message-replacement',
     status: 'planning',
     has_started_runs: false,
+    recovery_action: 'none',
+    replace_previous_batch: true,
   });
 });
 
@@ -134,6 +144,9 @@ describe('failed requirement execution planning recovery', () => {
           planningFeedbackHistory: ['先补测试', '接口任务放在最后'],
           serverStatus: 'failed',
           hasStartedRuns: false,
+          recoveryAction: 'regenerate',
+          recoveryReason: 'failed_before_execution_started',
+          replacePreviousBatch: true,
         }}
         onClose={vi.fn()}
         onProcessChange={mocks.onProcessChange}

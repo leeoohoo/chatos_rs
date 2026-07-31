@@ -4,8 +4,9 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use chatos_project_execution::{
-    read_planning_feedback_history, ExecutionPlanIdentity, ExecutionPlane, STATUS_PLANNING_STARTED,
-    STATUS_STOPPED,
+    read_planning_feedback_history, requirement_execution_recovery_state,
+    requirement_execution_status_is_stopped_terminal, ExecutionPlanIdentity, ExecutionPlane,
+    STATUS_PLANNING_STARTED, STATUS_STOPPED,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -84,6 +85,9 @@ pub(in crate::local_runtime::api::task_runs) async fn get_requirement_execution_
                 "requirement_id": requirement_id,
                 "conversation_id": identity.conversation_id,
                 "execution_group_id": identity.execution_group_id,
+                "recovery_action": "none",
+                "recovery_reason": "source_missing",
+                "replace_previous_batch": false,
             })));
         };
         validate_source(
@@ -158,6 +162,9 @@ pub(in crate::local_runtime::api::task_runs) async fn get_requirement_execution_
         "execution_plane": ExecutionPlane::LocalConnector.as_str(),
         "project_id": project_id,
         "requirement_id": requirement_id,
+        "recovery_action": "none",
+        "recovery_reason": "source_missing",
+        "replace_previous_batch": false,
     })))
 }
 
@@ -242,10 +249,8 @@ fn message_status(message: &LocalMessageRecord) -> String {
 }
 
 fn message_status_is_stop_locked(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "stopping" | "stopped" | "cancelled" | "canceled"
-    )
+    status.trim().eq_ignore_ascii_case("stopping")
+        || requirement_execution_status_is_stopped_terminal(status)
 }
 
 fn task_runner_metadata_has_stop_marker(task_runner: Option<&Value>) -> bool {
@@ -284,6 +289,15 @@ fn build_response(
         .and_then(|value| value.get("execution_paused"))
         .and_then(Value::as_bool)
         .unwrap_or_else(|| status == "paused");
+    let task_count = tasks.len();
+    let has_started_runs = tasks.iter().any(|task| task.last_run_id.is_some());
+    let recovery = requirement_execution_recovery_state(
+        status.as_str(),
+        task_count,
+        has_started_runs,
+        true,
+        false,
+    );
     json!({
         "found": true,
         "execution_plane": ExecutionPlane::LocalConnector.as_str(),
@@ -304,8 +318,11 @@ fn build_response(
         "status": status,
         "confirmation_status": confirmation_status,
         "execution_paused": execution_paused,
-        "task_count": tasks.len(),
-        "has_started_runs": tasks.iter().any(|task| task.last_run_id.is_some()),
+        "task_count": task_count,
+        "has_started_runs": has_started_runs,
+        "recovery_action": recovery.action,
+        "recovery_reason": recovery.reason,
+        "replace_previous_batch": recovery.replace_previous_batch,
         "created_at": message.created_at,
     })
 }

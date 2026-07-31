@@ -5,6 +5,8 @@ import type {
   ProjectRequirementExecuteResponse,
   ProjectRequirementExecutionPlanResponse,
   ProjectRequirementResponse,
+  ProjectRequirementStopResponse,
+  RequirementExecutionRecoveryAction,
 } from '../../../lib/api/client/types';
 import { ApiRequestError } from '../../../lib/api/client/shared';
 import { normalizeRawMessages } from '../../../lib/domain/messages';
@@ -29,10 +31,16 @@ export interface RequirementExecutionProcess {
   hasStartedRuns?: boolean;
   executionPaused?: boolean;
   tasksDiscarded?: boolean;
+  recoveryAction?: RequirementExecutionRecoveryAction | null;
+  recoveryReason?: string | null;
+  replacePreviousBatch?: boolean;
   initialMessage?: Message | null;
 }
 
-type ExecutionResponse = ProjectRequirementExecuteResponse | ProjectRequirementExecutionPlanResponse;
+type ExecutionResponse =
+  | ProjectRequirementExecuteResponse
+  | ProjectRequirementExecutionPlanResponse
+  | ProjectRequirementStopResponse;
 
 const readTextList = (value: unknown): string[] => (
   Array.isArray(value)
@@ -66,17 +74,22 @@ export const isRequirementExecutionRerunCancellationSettlingError = (error: unkn
 };
 
 export const shouldReplaceRequirementExecutionBatch = ({
-  phase,
   planDiscarded,
-  taskCount,
+  replacePreviousBatch,
 }: {
-  phase: RequirementExecutionProcessPhase;
   planDiscarded: boolean;
-  taskCount: number;
+  replacePreviousBatch?: boolean;
 }): boolean => (
   !planDiscarded
-  && !(phase === 'stopped' && taskCount === 0)
+  && Boolean(replacePreviousBatch)
 );
+
+const readRecoveryAction = (value: unknown): RequirementExecutionRecoveryAction | null => {
+  const action = readText(value).trim().toLowerCase();
+  return action === 'none' || action === 'rerun' || action === 'regenerate'
+    ? action
+    : null;
+};
 
 export const shouldStopRequirementExecutionBeforeReplacement = ({
   phase,
@@ -176,10 +189,16 @@ export const buildRequirementExecutionProcess = ({
     planningFeedbackHistory.push(latestPlanningFeedback);
   }
   const responseExecutionPaused = response.execution_paused ?? response.executionPaused;
+  const responseTasksDiscarded = 'discarded_tasks' in response || 'discardedTasks' in response
+    ? response.discarded_tasks ?? response.discardedTasks
+    : undefined;
   const metadataExecutionPaused = normalizedMessage
     ?.metadata
     ?.task_runner_async
     ?.execution_paused;
+  const recoveryAction = readRecoveryAction(response.recovery_action)
+    || readRecoveryAction(response.recoveryAction)
+    || null;
   return {
     requirement,
     projectId,
@@ -224,7 +243,16 @@ export const buildRequirementExecutionProcess = ({
       : typeof metadataExecutionPaused === 'boolean'
         ? metadataExecutionPaused
         : fallback?.executionPaused ?? false,
-    tasksDiscarded: fallback?.tasksDiscarded ?? false,
+    tasksDiscarded: typeof responseTasksDiscarded === 'boolean'
+      ? responseTasksDiscarded
+      : fallback?.tasksDiscarded ?? false,
+    recoveryAction,
+    recoveryReason: readText(response.recovery_reason)
+      || readText(response.recoveryReason)
+      || null,
+    replacePreviousBatch: response.replace_previous_batch
+      ?? response.replacePreviousBatch
+      ?? false,
     initialMessage: normalizedMessage || fallback?.initialMessage || null,
   };
 };

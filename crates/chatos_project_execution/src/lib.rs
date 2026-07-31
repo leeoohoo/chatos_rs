@@ -16,6 +16,91 @@ pub const STATUS_STOPPING: &str = "stopping";
 pub const STATUS_STOPPED: &str = "stopped";
 pub const NEXT_ACTION_PREVIEW_AND_CONFIRM: &str = "preview_and_confirm";
 
+pub const RECOVERY_ACTION_NONE: &str = "none";
+pub const RECOVERY_ACTION_RERUN: &str = "rerun";
+pub const RECOVERY_ACTION_REGENERATE: &str = "regenerate";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequirementExecutionRecoveryState {
+    pub action: &'static str,
+    pub reason: &'static str,
+    pub replace_previous_batch: bool,
+}
+
+pub fn requirement_execution_status_is_stopped_terminal(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        STATUS_STOPPED | "cancelled" | "canceled"
+    )
+}
+
+pub fn requirement_execution_status_is_stopping(status: &str) -> bool {
+    status.trim().eq_ignore_ascii_case(STATUS_STOPPING)
+}
+
+pub fn requirement_execution_recovery_state(
+    status: &str,
+    task_count: usize,
+    has_started_runs: bool,
+    source_available: bool,
+    discarded_tasks: bool,
+) -> RequirementExecutionRecoveryState {
+    if !source_available {
+        return RequirementExecutionRecoveryState {
+            action: RECOVERY_ACTION_NONE,
+            reason: "source_missing",
+            replace_previous_batch: false,
+        };
+    }
+
+    let replace_previous_batch = true;
+    let normalized = status.trim().to_ascii_lowercase();
+    if requirement_execution_status_is_stopping(normalized.as_str()) {
+        return RequirementExecutionRecoveryState {
+            action: RECOVERY_ACTION_NONE,
+            reason: "cancellation_settling",
+            replace_previous_batch,
+        };
+    }
+
+    if requirement_execution_status_is_stopped_terminal(normalized.as_str()) {
+        if discarded_tasks {
+            return RequirementExecutionRecoveryState {
+                action: RECOVERY_ACTION_REGENERATE,
+                reason: "stopped_after_task_discard",
+                replace_previous_batch,
+            };
+        }
+        return if task_count > 0 {
+            RequirementExecutionRecoveryState {
+                action: RECOVERY_ACTION_RERUN,
+                reason: "stopped_with_task_graph",
+                replace_previous_batch,
+            }
+        } else {
+            RequirementExecutionRecoveryState {
+                action: RECOVERY_ACTION_REGENERATE,
+                reason: "stopped_without_task_graph",
+                replace_previous_batch,
+            }
+        };
+    }
+
+    if normalized == "failed" && !has_started_runs {
+        return RequirementExecutionRecoveryState {
+            action: RECOVERY_ACTION_REGENERATE,
+            reason: "failed_before_execution_started",
+            replace_previous_batch,
+        };
+    }
+
+    RequirementExecutionRecoveryState {
+        action: RECOVERY_ACTION_NONE,
+        reason: "not_recoverable_in_current_state",
+        replace_previous_batch,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionPlane {
@@ -1097,6 +1182,30 @@ mod tests {
         );
         assert!(execution_task_status_blocks_confirmation("blocked"));
         assert!(execution_task_status_is_success("succeeded"));
+    }
+
+    #[test]
+    fn requirement_execution_recovery_state_is_server_owned() {
+        let rerun = requirement_execution_recovery_state(STATUS_STOPPED, 3, true, true, false);
+        assert_eq!(rerun.action, RECOVERY_ACTION_RERUN);
+        assert_eq!(rerun.reason, "stopped_with_task_graph");
+        assert!(rerun.replace_previous_batch);
+
+        let regenerate =
+            requirement_execution_recovery_state(STATUS_STOPPED, 0, false, true, false);
+        assert_eq!(regenerate.action, RECOVERY_ACTION_REGENERATE);
+        assert_eq!(regenerate.reason, "stopped_without_task_graph");
+        assert!(regenerate.replace_previous_batch);
+
+        let discarded = requirement_execution_recovery_state(STATUS_STOPPED, 3, true, true, true);
+        assert_eq!(discarded.action, RECOVERY_ACTION_REGENERATE);
+        assert_eq!(discarded.reason, "stopped_after_task_discard");
+        assert!(discarded.replace_previous_batch);
+
+        let settling = requirement_execution_recovery_state(STATUS_STOPPING, 3, true, true, false);
+        assert_eq!(settling.action, RECOVERY_ACTION_NONE);
+        assert_eq!(settling.reason, "cancellation_settling");
+        assert!(settling.replace_previous_batch);
     }
 
     #[test]

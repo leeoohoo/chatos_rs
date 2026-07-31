@@ -4,7 +4,8 @@
 use axum::extract::{Path, State};
 use axum::Json;
 use chatos_project_execution::{
-    collect_requirement_execution_scope, ExecutionPlanIdentity, ExecutionPlane, STATUS_STOPPED,
+    collect_requirement_execution_scope, requirement_execution_recovery_state,
+    ExecutionPlanIdentity, ExecutionPlane, STATUS_STOPPED,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -12,6 +13,7 @@ use std::collections::BTreeSet;
 use crate::local_runtime::project_management::{
     UpdateLocalRequirementInput, UpdateLocalWorkItemInput,
 };
+use crate::local_runtime::task_board::LocalTaskBoardTaskRecord;
 use crate::local_runtime::task_runner::LocalTaskRunRecord;
 use crate::LocalRuntime;
 
@@ -128,7 +130,7 @@ pub(in crate::local_runtime::api::task_runs) async fn stop_requirement(
     let planned_tasks = database
         .list_local_project_execution_tasks(owner.owner_user_id.as_str(), project_id.as_str())
         .await?;
-    for task in planned_tasks.into_iter().filter(|task| {
+    let belongs_to_current_plan = |task: &LocalTaskBoardTaskRecord| {
         let belongs_to_plan =
             if let Some((execution_group_id, conversation_id)) = precise_plan.as_ref() {
                 task.execution_group_id.as_deref() == Some(execution_group_id.as_str())
@@ -138,7 +140,18 @@ pub(in crate::local_runtime::api::task_runs) async fn stop_requirement(
                     .as_deref()
                     .is_some_and(|id| requirement_scope.contains(id))
             };
-        belongs_to_plan && matches!(task.status.as_str(), "todo" | "doing")
+        belongs_to_plan
+    };
+    let planned_task_count = planned_tasks
+        .iter()
+        .filter(|task| belongs_to_current_plan(task))
+        .count();
+    let planned_has_started_runs = planned_tasks
+        .iter()
+        .filter(|task| belongs_to_current_plan(task))
+        .any(|task| task.last_run_id.is_some());
+    for task in planned_tasks.into_iter().filter(|task| {
+        belongs_to_current_plan(task) && matches!(task.status.as_str(), "todo" | "doing")
     }) {
         if let Some(project_work_item_id) = task.project_work_item_id.as_deref() {
             reset_work_item_ids.insert(project_work_item_id.to_string());
@@ -226,6 +239,14 @@ pub(in crate::local_runtime::api::task_runs) async fn stop_requirement(
             )
             .await?;
     }
+    let recovery = requirement_execution_recovery_state(
+        STATUS_STOPPED,
+        planned_task_count,
+        planned_has_started_runs,
+        precise_plan.is_some(),
+        payload.discard_tasks,
+    );
+
     Ok(Json(json!({
         "success": true,
         "status": STATUS_STOPPED,
@@ -240,6 +261,11 @@ pub(in crate::local_runtime::api::task_runs) async fn stop_requirement(
         "reset_work_item_ids": reset_work_item_ids,
         "reset_requirement_ids": reset_requirement_ids,
         "discarded_tasks": payload.discard_tasks,
+        "task_count": planned_task_count,
+        "has_started_runs": planned_has_started_runs,
+        "recovery_action": recovery.action,
+        "recovery_reason": recovery.reason,
+        "replace_previous_batch": recovery.replace_previous_batch,
         "cleanup": cleanup,
     })))
 }

@@ -70,19 +70,16 @@ describe('requirement execution process phase', () => {
 
   it('starts a fresh plan after the previous stopped batch was discarded', () => {
     expect(shouldReplaceRequirementExecutionBatch({
-      phase: 'stopped',
       planDiscarded: true,
-      taskCount: 3,
+      replacePreviousBatch: true,
     })).toBe(false);
     expect(shouldReplaceRequirementExecutionBatch({
-      phase: 'stopped',
       planDiscarded: false,
-      taskCount: 0,
+      replacePreviousBatch: false,
     })).toBe(false);
     expect(shouldReplaceRequirementExecutionBatch({
-      phase: 'stopped',
       planDiscarded: false,
-      taskCount: 3,
+      replacePreviousBatch: true,
     })).toBe(true);
   });
 
@@ -159,36 +156,42 @@ describe('requirement execution process phase', () => {
       actuallyStarted: true,
       hasActiveRuns: false,
       phase: 'stopped',
+      recoveryAction: 'rerun',
     })).toEqual({ canRegenerate: false, canRevise: true, canRerun: true });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: true,
       phase: 'stopped',
+      recoveryAction: 'rerun',
     })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: false,
       phase: 'failed',
+      recoveryAction: 'none',
     })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: false,
       hasActiveRuns: false,
       phase: 'failed',
+      recoveryAction: 'regenerate',
     })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: true,
       phase: 'running',
+      recoveryAction: 'none',
     })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: false,
       phase: 'completed',
+      recoveryAction: 'none',
     })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
   });
 
@@ -216,6 +219,9 @@ describe('requirement execution process phase', () => {
         status: 'awaiting_confirmation',
         has_started_runs: false,
         execution_paused: true,
+        recovery_action: 'none',
+        recovery_reason: 'not_recoverable_in_current_state',
+        replace_previous_batch: true,
         planning_feedback: '再拆分接口',
         planning_feedback_history: ['先补测试', '再拆分接口'],
       },
@@ -229,7 +235,26 @@ describe('requirement execution process phase', () => {
       planningFeedbackHistory: ['先补测试', '再拆分接口'],
       hasStartedRuns: false,
       executionPaused: true,
+      recoveryAction: 'none',
+      recoveryReason: 'not_recoverable_in_current_state',
+      replacePreviousBatch: true,
     });
+  });
+
+  it('uses backend recovery action instead of empty graph size for stopped batches', () => {
+    expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: true,
+      hasActiveRuns: false,
+      phase: 'stopped',
+      recoveryAction: 'regenerate',
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
+
+    expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: true,
+      hasActiveRuns: false,
+      phase: 'stopped',
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
   });
 
   it('appends a new legacy feedback value to the previous process history', () => {

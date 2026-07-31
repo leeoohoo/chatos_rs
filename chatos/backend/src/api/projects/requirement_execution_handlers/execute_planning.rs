@@ -9,7 +9,7 @@ use chatos_project_execution::{
     build_requirement_execution_user_message, executing_requirement_ids,
     format_planning_feedback_history, read_planning_feedback_history, select_pending_work_items,
     sort_work_items_for_planning, ExecutionPlanIdentity, ExecutionPlane,
-    NEXT_ACTION_PREVIEW_AND_CONFIRM, STATUS_PLANNING_STARTED,
+    NEXT_ACTION_PREVIEW_AND_CONFIRM, RECOVERY_ACTION_NONE, STATUS_PLANNING_STARTED,
 };
 use serde_json::{json, Value};
 use tracing::warn;
@@ -344,6 +344,9 @@ pub(super) async fn execute_requirement_inner(
         "planning_feedback_history": planning_feedback_history,
         "confirmation_status": STATUS_PLANNING_STARTED,
         "has_started_runs": false,
+        "recovery_action": RECOVERY_ACTION_NONE,
+        "recovery_reason": "not_recoverable_in_current_state",
+        "replace_previous_batch": true,
         "conversation_id": session.id,
         "message_id": execution_group_id.clone(),
         "message": message,

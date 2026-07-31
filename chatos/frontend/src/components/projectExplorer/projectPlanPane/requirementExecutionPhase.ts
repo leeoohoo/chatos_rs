@@ -2,7 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { Message } from '../../../types';
-import type { MessageTaskRunnerTask } from '../../../lib/api/client/types';
+import type {
+  MessageTaskRunnerTask,
+  RequirementExecutionRecoveryAction,
+} from '../../../lib/api/client/types';
 import type {
   ProjectExecutionConfirmationState,
 } from '../../messageTasks/projectExecutionConfirmation';
@@ -143,6 +146,9 @@ export const createFallbackMessage = (process: RequirementExecutionProcess): Mes
       contact_id: process.contactId || undefined,
       execution_group_id: process.executionGroupId,
       execution_plane: process.executionPlane || undefined,
+      recovery_action: process.recoveryAction || undefined,
+      recovery_reason: process.recoveryReason || undefined,
+      replace_previous_batch: process.replacePreviousBatch,
     },
     task_runner_async: {
       mode: 'project_requirement_execution',
@@ -172,6 +178,9 @@ export const withProcessStatus = (
       execution_group_id: process.executionGroupId,
       execution_plane: process.executionPlane || undefined,
       contact_id: process.contactId || undefined,
+      recovery_action: process.recoveryAction || undefined,
+      recovery_reason: process.recoveryReason || undefined,
+      replace_previous_batch: process.replacePreviousBatch,
     },
     task_runner_async: {
       ...message.metadata?.task_runner_async,
@@ -421,15 +430,17 @@ export const resolveRequirementExecutionRecoveryActions = ({
   actuallyStarted,
   hasActiveRuns,
   phase,
+  recoveryAction,
 }: {
   actuallyStarted: boolean;
   hasActiveRuns: boolean;
   phase: RequirementExecutionProcessPhase;
+  recoveryAction?: RequirementExecutionRecoveryAction | null;
 }): { canRegenerate: boolean; canRevise: boolean; canRerun: boolean } => ({
-  canRegenerate: phase === 'failed' && !actuallyStarted && !hasActiveRuns,
+  canRegenerate: recoveryAction === 'regenerate' && !hasActiveRuns,
   canRevise: !hasActiveRuns
     && (!actuallyStarted || ['completed', 'failed', 'stopped'].includes(phase)),
-  canRerun: phase === 'stopped' && !hasActiveRuns,
+  canRerun: recoveryAction === 'rerun' && phase === 'stopped' && !hasActiveRuns,
 });
 
 export const isRequirementExecutionCancellationSettling = ({

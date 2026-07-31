@@ -10,8 +10,8 @@ use chatos_project_execution::{
     format_planning_feedback_history, missing_project_task_ids, read_planning_feedback_history,
     select_pending_work_items, sort_work_items_for_planning, topological_work_item_order,
     validate_requirement_prerequisites, ExecutionPlanIdentity, ExecutionPlane, RequirementPlanItem,
-    WorkItemPlanItem, NEXT_ACTION_PREVIEW_AND_CONFIRM, STATUS_PLANNING, STATUS_PLANNING_STARTED,
-    STATUS_STOPPED, STATUS_STOPPING,
+    WorkItemPlanItem, NEXT_ACTION_PREVIEW_AND_CONFIRM, RECOVERY_ACTION_NONE, STATUS_PLANNING,
+    STATUS_PLANNING_STARTED, STATUS_STOPPED, STATUS_STOPPING,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -431,6 +431,9 @@ pub(in crate::local_runtime::api::task_runs) async fn execute_requirement(
         "planning_feedback_history": planning_feedback_history,
         "confirmation_status": STATUS_PLANNING_STARTED,
         "has_started_runs": false,
+        "recovery_action": RECOVERY_ACTION_NONE,
+        "recovery_reason": "not_recoverable_in_current_state",
+        "replace_previous_batch": true,
         "planner_agent_key": "project_requirement_execution_planner_agent",
         "plan_mode_enabled": false,
     })))

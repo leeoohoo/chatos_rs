@@ -11,7 +11,8 @@ use chatos_project_execution::{
     build_requirement_execution_planner_prompt, build_requirement_execution_user_message,
 };
 use chatos_project_execution::{
-    ExecutionPlanIdentity, ExecutionPlane, STATUS_STOPPED, STATUS_STOPPING,
+    requirement_execution_recovery_state, ExecutionPlanIdentity, ExecutionPlane, STATUS_STOPPED,
+    STATUS_STOPPING,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -616,6 +617,16 @@ async fn stop_requirement_execution_inner(
         }
     }
 
+    let stopped_task_count = links.len();
+    let stopped_has_started_runs = links.iter().any(|link| link.task_runner_run_id.is_some());
+    let recovery = requirement_execution_recovery_state(
+        STATUS_STOPPED,
+        stopped_task_count,
+        stopped_has_started_runs,
+        precise_plan.is_some(),
+        discard_tasks,
+    );
+
     Ok(json!({
         "success": true,
         "status": STATUS_STOPPED,
@@ -630,6 +641,11 @@ async fn stop_requirement_execution_inner(
         "reset_work_item_ids": work_item_ids,
         "reset_requirement_ids": reset_requirement_ids,
         "discarded_tasks": discard_tasks,
+        "task_count": stopped_task_count,
+        "has_started_runs": stopped_has_started_runs,
+        "recovery_action": recovery.action,
+        "recovery_reason": recovery.reason,
+        "replace_previous_batch": recovery.replace_previous_batch,
         "cleanup": cleanup,
     }))
 }
