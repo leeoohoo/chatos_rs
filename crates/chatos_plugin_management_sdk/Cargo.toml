@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chatos_service_runtime = { path = "../chatos_service_runtime" }
 chrono = "0.4"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
