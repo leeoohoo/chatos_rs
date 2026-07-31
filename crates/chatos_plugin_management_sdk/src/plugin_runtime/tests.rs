@@ -1,12 +1,31 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
+
 use super::{
     PluginArtifactCreateRequest, PluginArtifactReadMode, PluginArtifactReadRequest,
     PluginArtifactUpdateRequest, PluginUiBridgeMethod, PluginUiBridgeRequest,
-    UpdateUserPluginPreferenceResponse, UserPluginPreferenceRecord,
-    PLUGIN_UI_BRIDGE_REQUEST_MESSAGE_TYPE_V1,
+    ResolvedPluginMcpCloudCredentials, UpdateUserPluginPreferenceResponse,
+    UserPluginPreferenceRecord, PLUGIN_UI_BRIDGE_REQUEST_MESSAGE_TYPE_V1,
 };
+
+#[test]
+fn resolved_cloud_credentials_debug_output_is_redacted() {
+    let resolved = ResolvedPluginMcpCloudCredentials {
+        credential_snapshot_sha256: "a".repeat(64),
+        headers: BTreeMap::from([(
+            "authorization".to_string(),
+            "Bearer top-secret-token".to_string(),
+        )]),
+        environment: BTreeMap::from([("API_TOKEN".to_string(), "top-secret-token".to_string())]),
+        oauth_connection_id: Some("oauth-1".to_string()),
+    };
+    let debug = format!("{resolved:?}");
+    assert!(!debug.contains("top-secret-token"));
+    assert!(debug.contains("header_count"));
+    assert!(debug.contains("environment_count"));
+}
 
 #[test]
 fn preference_update_response_preserves_the_authoritative_disable_transition() {

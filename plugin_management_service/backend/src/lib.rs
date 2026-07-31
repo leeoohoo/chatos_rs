@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod auth;
+mod cloud_secrets;
 pub mod config;
 pub mod models;
 pub mod seed;

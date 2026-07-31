@@ -12,6 +12,7 @@ pub(super) const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
 pub(super) const PLUGIN_INSTALL_MANAGE_SCOPE: &str = "plugin.install.manage";
 pub(super) const PLUGIN_OAUTH_MANAGE_SCOPE: &str = "plugin.oauth.manage";
 pub(super) const PLUGIN_CLOUD_READ_SCOPE: &str = "plugin.cloud.read";
+pub(super) const PLUGIN_CLOUD_CREDENTIALS_RESOLVE_SCOPE: &str = "plugin.cloud.credentials.resolve";
 
 pub(super) fn require_local_connector_internal_request(
     state: &AppState,

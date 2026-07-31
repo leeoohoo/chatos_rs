@@ -220,6 +220,33 @@ impl AppStore {
         )
         .await?;
 
+        create_unique_index(&self.plugin_cloud_credentials, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_cloud_credentials,
+            doc! {
+                "owner_user_id": 1,
+                "plugin_id": 1,
+                "release_id": 1,
+                "component_key": 1,
+                "secret_name": 1,
+            },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_cloud_oauth_connections, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_cloud_oauth_connections,
+            doc! {
+                "owner_user_id": 1,
+                "plugin_id": 1,
+                "release_id": 1,
+                "component_key": 1,
+                "provider": 1,
+                "resource": 1,
+            },
+        )
+        .await?;
+
         create_unique_index(&self.plugin_oauth_connections, doc! { "id": 1 }).await?;
         create_unique_index(
             &self.plugin_oauth_connections,

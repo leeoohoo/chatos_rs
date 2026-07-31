@@ -772,6 +772,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "urlencoding",
+ "zeroize",
 ]
 
 [[package]]
@@ -3385,6 +3386,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "plugin_management_service_backend"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "axum",
  "base64 0.22.1",
  "chatos_agent",
@@ -3398,6 +3400,7 @@ dependencies = [
  "futures-util",
  "hex",
  "mongodb",
+ "rand 0.10.2",
  "reqwest",
  "ring",
  "semver 1.0.28",
@@ -3409,6 +3412,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

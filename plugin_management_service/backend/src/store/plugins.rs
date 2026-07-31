@@ -658,6 +658,176 @@ impl AppStore {
             .map_err(|err| err.to_string())
     }
 
+    pub async fn list_plugin_cloud_credentials(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+    ) -> Result<Vec<StoredPluginCloudCredential>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "secret_name": 1 })
+            .build();
+        self.plugin_cloud_credentials
+            .find(
+                doc! {
+                    "owner_user_id": owner_user_id,
+                    "plugin_id": plugin_id,
+                    "release_id": release_id,
+                    "component_key": component_key,
+                },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn get_plugin_cloud_credential(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+        secret_name: &str,
+    ) -> Result<Option<StoredPluginCloudCredential>, String> {
+        self.plugin_cloud_credentials
+            .find_one(
+                doc! {
+                    "owner_user_id": owner_user_id,
+                    "plugin_id": plugin_id,
+                    "release_id": release_id,
+                    "component_key": component_key,
+                    "secret_name": secret_name,
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_plugin_cloud_credential(
+        &self,
+        record: &StoredPluginCloudCredential,
+    ) -> Result<(), String> {
+        self.plugin_cloud_credentials
+            .replace_one(doc! { "id": &record.metadata.id }, record, upsert_options())
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_plugin_cloud_credential(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+        secret_name: &str,
+    ) -> Result<bool, String> {
+        self.plugin_cloud_credentials
+            .delete_one(
+                doc! {
+                    "owner_user_id": owner_user_id,
+                    "plugin_id": plugin_id,
+                    "release_id": release_id,
+                    "component_key": component_key,
+                    "secret_name": secret_name,
+                },
+                None,
+            )
+            .await
+            .map(|result| result.deleted_count == 1)
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_plugin_cloud_oauth_connections(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        release_id: &str,
+    ) -> Result<Vec<StoredPluginCloudOAuthConnection>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "component_key": 1, "provider": 1, "resource": 1 })
+            .build();
+        self.plugin_cloud_oauth_connections
+            .find(
+                doc! {
+                    "owner_user_id": owner_user_id,
+                    "plugin_id": plugin_id,
+                    "release_id": release_id,
+                },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn get_plugin_cloud_oauth_connection(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+        provider: &str,
+        resource: &str,
+    ) -> Result<Option<StoredPluginCloudOAuthConnection>, String> {
+        self.plugin_cloud_oauth_connections
+            .find_one(
+                doc! {
+                    "owner_user_id": owner_user_id,
+                    "plugin_id": plugin_id,
+                    "release_id": release_id,
+                    "component_key": component_key,
+                    "provider": provider,
+                    "resource": resource,
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_plugin_cloud_oauth_connection(
+        &self,
+        record: &StoredPluginCloudOAuthConnection,
+    ) -> Result<(), String> {
+        self.plugin_cloud_oauth_connections
+            .replace_one(
+                doc! { "id": &record.connection.id },
+                record,
+                upsert_options(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_plugin_cloud_oauth_connection(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        connection_id: &str,
+    ) -> Result<bool, String> {
+        self.plugin_cloud_oauth_connections
+            .delete_one(
+                doc! {
+                    "owner_user_id": owner_user_id,
+                    "plugin_id": plugin_id,
+                    "id": connection_id,
+                },
+                None,
+            )
+            .await
+            .map(|result| result.deleted_count == 1)
+            .map_err(|err| err.to_string())
+    }
+
     pub async fn get_plugin_oauth_connection(
         &self,
         owner_user_id: &str,

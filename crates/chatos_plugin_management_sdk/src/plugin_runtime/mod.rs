@@ -642,6 +642,92 @@ pub struct PluginMcpCloudRuntimeBundle {
     pub bundle_sha256: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCloudCredentialMetadata {
+    pub id: String,
+    pub owner_user_id: String,
+    pub plugin_id: String,
+    pub release_id: String,
+    pub component_key: String,
+    pub secret_name: String,
+    pub revision: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginCloudOAuthConnectionRecord {
+    pub id: String,
+    pub owner_user_id: String,
+    pub plugin_id: String,
+    pub release_id: String,
+    pub component_key: String,
+    pub provider: String,
+    pub resource: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub connected: bool,
+    #[serde(default)]
+    pub needs_auth: bool,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub account_display: Option<String>,
+    pub revision: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvePluginMcpCloudCredentialsRequest {
+    pub owner_user_id: String,
+    pub expected_component_content_sha256: String,
+    #[serde(default)]
+    pub permission_snapshot: Vec<String>,
+    #[serde(default)]
+    pub auth_connection_ids: Vec<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedPluginMcpCloudCredentials {
+    pub credential_snapshot_sha256: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+    #[serde(default)]
+    pub oauth_connection_id: Option<String>,
+}
+
+impl std::fmt::Debug for ResolvedPluginMcpCloudCredentials {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ResolvedPluginMcpCloudCredentials")
+            .field(
+                "credential_snapshot_sha256",
+                &self.credential_snapshot_sha256,
+            )
+            .field("header_count", &self.headers.len())
+            .field("environment_count", &self.environment.len())
+            .field("oauth_connection_id", &self.oauth_connection_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for ResolvedPluginMcpCloudCredentials {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+
+        for value in self.headers.values_mut() {
+            value.zeroize();
+        }
+        for value in self.environment.values_mut() {
+            value.zeroize();
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct PluginMcpCloudRuntimeBundleHashInput<'a> {
     purpose: &'static str,

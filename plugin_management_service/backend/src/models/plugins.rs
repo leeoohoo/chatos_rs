@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    PluginAvailabilityStatus, PluginCatalogDocument, PluginCatalogRecord, PluginComponentStatus,
+    PluginAvailabilityStatus, PluginCatalogDocument, PluginCatalogRecord,
+    PluginCloudCredentialMetadata, PluginCloudOAuthConnectionRecord, PluginComponentStatus,
     PluginInstallStatus, PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifestSource,
     PluginPublisher, PluginReleaseSignature, PluginRequirementStatus, SigningKeyRef,
 };
@@ -33,6 +34,10 @@ pub const PLUGIN_AUDIT_REVOKE_RELEASE: &str = "release.revoke";
 pub const PLUGIN_AUDIT_SYNC_INSTALLATION: &str = "installation.sync";
 pub const PLUGIN_AUDIT_UPDATE_PREFERENCE: &str = "preference.update";
 pub const PLUGIN_AUDIT_SYNC_OAUTH: &str = "oauth.sync";
+pub const PLUGIN_AUDIT_UPSERT_CLOUD_CREDENTIAL: &str = "cloud_credential.upsert";
+pub const PLUGIN_AUDIT_DELETE_CLOUD_CREDENTIAL: &str = "cloud_credential.delete";
+pub const PLUGIN_AUDIT_UPSERT_CLOUD_OAUTH: &str = "cloud_oauth.upsert";
+pub const PLUGIN_AUDIT_DELETE_CLOUD_OAUTH: &str = "cloud_oauth.delete";
 
 pub const PLUGIN_PUBLISHER_STATUS_PENDING: &str = "pending";
 pub const PLUGIN_PUBLISHER_STATUS_APPROVED: &str = "approved";
@@ -66,6 +71,46 @@ pub struct PluginInstalledQuery {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PluginOAuthQuery {
     pub device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginCloudCredentialQuery {
+    pub release_id: String,
+    pub component_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpsertPluginCloudCredentialPayload {
+    pub value: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpsertPluginCloudOAuthPayload {
+    pub provider: String,
+    pub resource: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub access_token: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub account_display: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudCredential {
+    #[serde(flatten)]
+    pub metadata: PluginCloudCredentialMetadata,
+    pub encrypted_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudOAuthConnection {
+    #[serde(flatten)]
+    pub connection: PluginCloudOAuthConnectionRecord,
+    pub encrypted_access_token: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -36,6 +36,8 @@ pub struct AppStore {
     plugin_preferences: Collection<UserPluginPreferenceRecord>,
     plugin_component_snapshots: Collection<PluginComponentSnapshot>,
     plugin_cloud_component_bundles: Collection<PluginCloudComponentBundle>,
+    plugin_cloud_credentials: Collection<StoredPluginCloudCredential>,
+    plugin_cloud_oauth_connections: Collection<StoredPluginCloudOAuthConnection>,
     plugin_oauth_connections: Collection<PluginOAuthConnectionRecord>,
     plugin_audit_logs: Collection<PluginAuditLogRecord>,
 }
@@ -64,6 +66,8 @@ impl AppStore {
             plugin_preferences: db.collection("plugin_user_preferences"),
             plugin_component_snapshots: db.collection("plugin_component_snapshots"),
             plugin_cloud_component_bundles: db.collection("plugin_cloud_component_bundles"),
+            plugin_cloud_credentials: db.collection("plugin_cloud_credentials"),
+            plugin_cloud_oauth_connections: db.collection("plugin_cloud_oauth_connections"),
             plugin_oauth_connections: db.collection("plugin_oauth_connections"),
             plugin_audit_logs: db.collection("plugin_audit_logs"),
         }

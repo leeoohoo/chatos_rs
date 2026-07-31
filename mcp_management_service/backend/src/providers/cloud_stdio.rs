@@ -216,6 +216,7 @@ impl CloudStdioProvider {
         &self,
         immutable: &PluginMcpRuntimeBinding,
         route: &ResolvedMcpRoute,
+        resolved_environment: &BTreeMap<String, String>,
     ) -> Result<CloudStdioProviderBinding, String> {
         if route.provider_kind != McpProviderKind::PluginCloud
             || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
@@ -244,9 +245,23 @@ impl CloudStdioProvider {
                     .to_string(),
             );
         }
-        if !env.is_empty() {
+        let configured_names = env.keys().collect::<std::collections::BTreeSet<_>>();
+        let resolved_names = resolved_environment
+            .keys()
+            .collect::<std::collections::BTreeSet<_>>();
+        if configured_names != resolved_names {
             return Err(
-                "Plugin stdio environment requires a configured cloud credential resolver"
+                "Plugin stdio resolved environment does not match the immutable templates"
+                    .to_string(),
+            );
+        }
+        if !env.is_empty()
+            && !immutable.permission_snapshot.iter().any(|permission| {
+                permission == "credential.use" || permission.starts_with("credential.use:")
+            })
+        {
+            return Err(
+                "Plugin stdio credentials require credential.use in the immutable permission snapshot"
                     .to_string(),
             );
         }
@@ -258,6 +273,7 @@ impl CloudStdioProvider {
         }
         validate_command(command, args.as_slice())?;
         validate_arguments(args.as_slice())?;
+        validate_environment(resolved_environment)?;
         let allowed_tool_names =
             configured_tool_names(immutable.tool_allowlist.as_slice(), "tool_allowlist")?;
         let blocked_tool_names =
@@ -269,7 +285,7 @@ impl CloudStdioProvider {
             provider_ref: immutable.provider_ref.clone(),
             command: command.trim().to_string(),
             args: args.clone(),
-            env: BTreeMap::new(),
+            env: resolved_environment.clone(),
             cwd: None,
             allow_writes: route.allow_writes,
             allowed_tool_names,
@@ -914,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn plugin_stdio_binding_is_permission_bound_and_rejects_unresolved_cloud_secrets() {
+    fn plugin_stdio_binding_is_permission_bound_and_requires_exact_resolved_secrets() {
         let provider = CloudStdioProvider::new(
             "http://127.0.0.1:8095",
             Duration::from_secs(5),
@@ -924,13 +940,17 @@ mod tests {
         .unwrap();
         let binding = plugin_binding();
         assert!(provider
-            .prepare_plugin_binding(&binding, &plugin_route(&binding))
+            .prepare_plugin_binding(&binding, &plugin_route(&binding), &BTreeMap::new())
             .is_ok());
 
         let mut missing_permission = binding.clone();
         missing_permission.permission_snapshot.clear();
         assert!(provider
-            .prepare_plugin_binding(&missing_permission, &plugin_route(&missing_permission))
+            .prepare_plugin_binding(
+                &missing_permission,
+                &plugin_route(&missing_permission),
+                &BTreeMap::new(),
+            )
             .is_err());
 
         let mut unresolved_secret = binding.clone();
@@ -942,8 +962,22 @@ mod tests {
             "${credential:api_token}".to_string(),
         );
         assert!(provider
-            .prepare_plugin_binding(&unresolved_secret, &plugin_route(&unresolved_secret))
+            .prepare_plugin_binding(
+                &unresolved_secret,
+                &plugin_route(&unresolved_secret),
+                &BTreeMap::new(),
+            )
             .is_err());
+        unresolved_secret
+            .permission_snapshot
+            .push("credential.use:api_token".to_string());
+        assert!(provider
+            .prepare_plugin_binding(
+                &unresolved_secret,
+                &plugin_route(&unresolved_secret),
+                &BTreeMap::from([("API_TOKEN".to_string(), "secret".to_string())]),
+            )
+            .is_ok());
     }
 
     #[tokio::test]

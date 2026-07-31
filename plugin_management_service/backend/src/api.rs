@@ -35,6 +35,7 @@ mod mcps;
 mod plugin_audit;
 mod plugin_catalog_sync;
 mod plugin_cloud_bundles;
+mod plugin_cloud_credentials;
 mod plugin_install_sources;
 mod plugin_installations;
 mod plugin_marketplaces;
@@ -85,6 +86,12 @@ pub use plugin_catalog_sync::start_plugin_catalog_sync_loop;
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
 use plugin_cloud_bundles::{
     get_plugin_cloud_component_bundle_internal, get_plugin_mcp_cloud_runtime_bundle_internal,
+};
+use plugin_cloud_credentials::{
+    delete_plugin_cloud_credential, delete_plugin_cloud_oauth_connection,
+    list_plugin_cloud_credentials, list_plugin_cloud_oauth_connections,
+    resolve_plugin_mcp_cloud_credentials_internal, upsert_plugin_cloud_credential,
+    upsert_plugin_cloud_oauth_connection,
 };
 use plugin_install_sources::{
     get_plugin_install_source_internal, list_plugin_install_sources_internal,
@@ -284,6 +291,27 @@ pub fn build_router(state: AppState) -> Router {
             get(list_plugin_oauth_connections),
         )
         .route(
+            "/api/plugins/{plugin_id}/cloud-credentials",
+            get(list_plugin_cloud_credentials),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-credentials/{component_key}/{secret_name}",
+            axum::routing::put(upsert_plugin_cloud_credential)
+                .delete(delete_plugin_cloud_credential),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/cloud-oauth",
+            get(list_plugin_cloud_oauth_connections),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-oauth/{component_key}",
+            axum::routing::put(upsert_plugin_cloud_oauth_connection),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/cloud-oauth/{connection_id}",
+            axum::routing::delete(delete_plugin_cloud_oauth_connection),
+        )
+        .route(
             "/api/plugin-marketplaces",
             get(list_plugin_marketplaces).post(create_plugin_marketplace),
         )
@@ -354,6 +382,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-components/{component_key}",
             get(get_plugin_mcp_cloud_runtime_bundle_internal),
+        )
+        .route(
+            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-components/{component_key}/credentials",
+            post(resolve_plugin_mcp_cloud_credentials_internal),
         )
         .route(
             "/api/internal/local-connector/mcps",

@@ -10,7 +10,7 @@ use chatos_mcp_management_sdk::{
 };
 use chatos_plugin_management_sdk::{
     plugin_mcp_cloud_runtime_bundle_sha256, PluginExecutionHost, PluginManagementClient,
-    PluginMcpCloudRuntimeBundle, PluginMcpServer,
+    PluginMcpCloudRuntimeBundle, PluginMcpServer, ResolvePluginMcpCloudCredentialsRequest,
 };
 use serde_json::Value;
 
@@ -151,8 +151,47 @@ impl PluginCloudProvider {
                 ))
             })?;
         validate_runtime_bundle(immutable, &bundle)?;
+        let credentials = plugin_management
+            .resolve_plugin_mcp_cloud_credentials_for_service(
+                immutable.plugin_id.as_str(),
+                immutable.release_id.as_str(),
+                immutable.component_key.as_str(),
+                &ResolvePluginMcpCloudCredentialsRequest {
+                    owner_user_id: owner_user_id.to_string(),
+                    expected_component_content_sha256: immutable.component_content_sha256.clone(),
+                    permission_snapshot: immutable.permission_snapshot.clone(),
+                    auth_connection_ids: immutable.auth_connection_ids.clone(),
+                },
+            )
+            .await
+            .map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "resolve Plugin cloud credentials failed: {error}"
+                ))
+            })?;
+        if credentials.credential_snapshot_sha256.len() != 64
+            || !credentials
+                .credential_snapshot_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            || credentials.oauth_connection_id.as_ref().is_some_and(|id| {
+                !immutable
+                    .auth_connection_ids
+                    .iter()
+                    .any(|authorized| authorized == id)
+            })
+        {
+            return Err(ProviderCallError::invalid_response(
+                "Plugin cloud credential response is not bound to the immutable Session",
+            ));
+        }
         match &immutable.runtime {
             PluginMcpServer::Stdio { .. } => {
+                if !credentials.headers.is_empty() || credentials.oauth_connection_id.is_some() {
+                    return Err(ProviderCallError::invalid_response(
+                        "Plugin stdio credential response contains HTTP-only values",
+                    ));
+                }
                 let target = target.ok_or_else(|| {
                     ProviderCallError::provider_unavailable(
                         "Plugin Cloud stdio requires a bound sandbox target",
@@ -160,7 +199,7 @@ impl PluginCloudProvider {
                 })?;
                 let binding = self
                     .cloud_stdio
-                    .prepare_plugin_binding(immutable, route)
+                    .prepare_plugin_binding(immutable, route, &credentials.environment)
                     .map_err(ProviderCallError::provider_unavailable)?;
                 let tools = self
                     .cloud_stdio
@@ -179,9 +218,14 @@ impl PluginCloudProvider {
                 Ok(PreparedPluginCloudRoute::Stdio { binding, tools })
             }
             PluginMcpServer::Http { .. } => {
+                if !credentials.environment.is_empty() {
+                    return Err(ProviderCallError::invalid_response(
+                        "Plugin HTTP credential response contains stdio-only values",
+                    ));
+                }
                 let binding = self
                     .external_http
-                    .prepare_plugin_binding(immutable, route)
+                    .prepare_plugin_binding(immutable, route, &credentials.headers)
                     .await
                     .map_err(ProviderCallError::provider_unavailable)?;
                 let request_id = format!("{runtime_session_id}.{}.tools-list", route.resource_id);

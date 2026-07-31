@@ -115,6 +115,7 @@ impl ExternalHttpProvider {
         &self,
         immutable: &PluginMcpRuntimeBinding,
         route: &ResolvedMcpRoute,
+        resolved_headers: &std::collections::BTreeMap<String, String>,
     ) -> Result<ExternalHttpProviderBinding, String> {
         if route.provider_kind != McpProviderKind::PluginCloud
             || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
@@ -132,12 +133,12 @@ impl ExternalHttpProvider {
         else {
             return Err("Plugin MCP runtime is not HTTP".to_string());
         };
-        if oauth_resource.is_some() {
-            return Err(
-                "Plugin HTTP OAuth requires a configured cloud credential resolver".to_string(),
-            );
-        }
-        validate_plugin_literal_headers(headers)?;
+        validate_plugin_resolved_headers(
+            headers,
+            resolved_headers,
+            oauth_resource.is_some(),
+            immutable.permission_snapshot.as_slice(),
+        )?;
         let endpoint = validate_endpoint(url)?;
         let host = endpoint
             .host_str()
@@ -153,7 +154,7 @@ impl ExternalHttpProvider {
                 "Plugin HTTP MCP requires {permission} in its immutable permission snapshot"
             ));
         }
-        let effective_headers = headers
+        let effective_headers = resolved_headers
             .iter()
             .filter(|(name, _)| {
                 !matches!(
@@ -456,13 +457,21 @@ impl ExternalHttpProvider {
     }
 }
 
-fn validate_plugin_literal_headers(
-    headers: &std::collections::BTreeMap<String, String>,
+fn validate_plugin_resolved_headers(
+    templates: &std::collections::BTreeMap<String, String>,
+    resolved: &std::collections::BTreeMap<String, String>,
+    oauth_enabled: bool,
+    permissions: &[String],
 ) -> Result<(), String> {
-    for (name, value) in headers {
+    let mut expected = std::collections::BTreeSet::new();
+    let mut uses_credentials = false;
+    for (name, template) in templates {
         let normalized = name.trim().to_ascii_lowercase();
-        if value.contains("${credential:")
-            || !matches!(
+        HeaderName::from_bytes(normalized.as_bytes())
+            .map_err(|_| format!("Plugin HTTP header is invalid: {normalized}"))?;
+        let uses_template_credential = template.contains("${credential:");
+        if !uses_template_credential
+            && !matches!(
                 normalized.as_str(),
                 "accept"
                     | "accept-language"
@@ -473,9 +482,38 @@ fn validate_plugin_literal_headers(
             )
         {
             return Err(format!(
-                "Plugin HTTP header {normalized} requires a configured cloud credential resolver"
+                "Plugin HTTP custom header must use a credential template: {normalized}"
             ));
         }
+        uses_credentials |= uses_template_credential;
+        expected.insert(normalized);
+    }
+    if oauth_enabled {
+        if expected.contains("authorization") {
+            return Err(
+                "Plugin HTTP MCP cannot combine OAuth with an Authorization template".to_string(),
+            );
+        }
+        expected.insert("authorization".to_string());
+    }
+    let actual = resolved
+        .keys()
+        .map(|name| name.trim().to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected != actual {
+        return Err(
+            "Plugin HTTP resolved headers do not match the immutable templates".to_string(),
+        );
+    }
+    if uses_credentials
+        && !permissions.iter().any(|permission| {
+            permission == "credential.use" || permission.starts_with("credential.use:")
+        })
+    {
+        return Err(
+            "Plugin HTTP credentials require credential.use in the immutable permission snapshot"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -764,28 +802,59 @@ mod tests {
     }
 
     #[test]
-    fn plugin_http_headers_fail_closed_without_cloud_credential_resolution() {
-        assert!(
-            validate_plugin_literal_headers(&std::collections::BTreeMap::from([(
+    fn plugin_http_headers_require_exact_cloud_credential_resolution() {
+        assert!(validate_plugin_resolved_headers(
+            &std::collections::BTreeMap::from([(
                 "x-plugin-client".to_string(),
                 "chatos".to_string(),
-            )]))
-            .is_ok()
-        );
-        assert!(
-            validate_plugin_literal_headers(&std::collections::BTreeMap::from([(
+            )]),
+            &std::collections::BTreeMap::from([(
+                "x-plugin-client".to_string(),
+                "chatos".to_string(),
+            )]),
+            false,
+            &[],
+        )
+        .is_ok());
+        assert!(validate_plugin_resolved_headers(
+            &std::collections::BTreeMap::from([(
                 "authorization".to_string(),
                 "Bearer ${credential:access_token}".to_string(),
-            )]))
-            .is_err()
-        );
-        assert!(
-            validate_plugin_literal_headers(&std::collections::BTreeMap::from([(
+            )]),
+            &std::collections::BTreeMap::from([(
+                "authorization".to_string(),
+                "Bearer secret".to_string(),
+            )]),
+            false,
+            &[],
+        )
+        .is_err());
+        assert!(validate_plugin_resolved_headers(
+            &std::collections::BTreeMap::from([(
+                "authorization".to_string(),
+                "Bearer ${credential:access_token}".to_string(),
+            )]),
+            &std::collections::BTreeMap::from([(
+                "authorization".to_string(),
+                "Bearer secret".to_string(),
+            )]),
+            false,
+            &["credential.use:access_token".to_string()],
+        )
+        .is_ok());
+        assert!(validate_plugin_resolved_headers(
+            &std::collections::BTreeMap::from([(
                 "x-custom-auth".to_string(),
                 "static-secret".to_string(),
-            )]))
-            .is_err()
-        );
+            )]),
+            &std::collections::BTreeMap::from([(
+                "x-custom-auth".to_string(),
+                "static-secret".to_string(),
+            )]),
+            false,
+            &[],
+        )
+        .is_err());
     }
 
     #[test]

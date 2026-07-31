@@ -149,7 +149,7 @@ pub(super) async fn resolve_plugin_binding(
             }
         }
     }
-    let auth_connection_ids = match installation.as_ref() {
+    let mut auth_connection_ids = match installation.as_ref() {
         Some(installation) => state
             .store
             .list_plugin_oauth_connections(
@@ -167,6 +167,32 @@ pub(super) async fn resolve_plugin_binding(
             .collect(),
         None => Vec::new(),
     };
+    if let Some(release) = release.as_ref() {
+        auth_connection_ids.extend(
+            state
+                .store
+                .list_plugin_cloud_oauth_connections(
+                    owner_user_id,
+                    catalog.id.as_str(),
+                    release.id.as_str(),
+                )
+                .await
+                .map_err(ApiError::internal)?
+                .into_iter()
+                .filter(|record| {
+                    record.connection.connected
+                        && !record.connection.needs_auth
+                        && record.connection.expires_at.as_deref().is_none_or(|value| {
+                            chrono::DateTime::parse_from_rfc3339(value).is_ok_and(|expiry| {
+                                expiry.timestamp() > chrono::Utc::now().timestamp()
+                            })
+                        })
+                })
+                .map(|record| record.connection.id),
+        );
+    }
+    auth_connection_ids.sort();
+    auth_connection_ids.dedup();
     let portable_uses_local = portable_uses_local(runtime_provider, binding.agent_key.as_str());
     Ok(Some(resolve_plugin_records(
         catalog,

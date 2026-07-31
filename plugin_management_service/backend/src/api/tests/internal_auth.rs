@@ -246,6 +246,7 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             cors_origins: vec!["http://127.0.0.1:39261".to_string()],
             internal_api_secret: internal_api_secret.map(ToOwned::to_owned),
             internal_api_secrets: HashMap::new(),
+            cloud_credential_encryption_secret: "test-cloud-credential-secret".to_string(),
             require_signed_internal_requests: false,
             local_connector_check_ttl: Duration::from_secs(60),
             local_connector_max_tool_snapshot_bytes: 512 * 1024,
@@ -258,6 +259,10 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             seed_system_resources: false,
         },
         store,
+        cloud_secret_cipher: crate::cloud_secrets::CloudSecretCipher::new(
+            "test-cloud-credential-secret",
+        )
+        .expect("create cloud secret cipher"),
         user_service_http: chatos_service_runtime::build_http_client(
             chatos_service_runtime::HttpClientTimeouts::new(Duration::from_secs(1)),
         )

@@ -23,6 +23,7 @@ pub struct AppConfig {
     pub cors_origins: Vec<String>,
     pub internal_api_secret: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
+    pub cloud_credential_encryption_secret: String,
     pub require_signed_internal_requests: bool,
     pub local_connector_check_ttl: Duration,
     pub local_connector_max_tool_snapshot_bytes: usize,
@@ -55,6 +56,11 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(5_000)
                 .max(300);
+        let internal_api_secret = normalized_env("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET");
+        let cloud_credential_encryption_secret =
+            normalized_env("PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET").unwrap_or_else(
+                || "change_me_plugin_management_cloud_credential_encryption_secret".to_string(),
+            );
         let config = Self {
             host,
             port,
@@ -86,8 +92,9 @@ impl AppConfig {
                         "http://localhost:39261".to_string(),
                     ]
                 }),
-            internal_api_secret: normalized_env("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"),
+            internal_api_secret,
             internal_api_secrets: caller_internal_api_secrets(),
+            cloud_credential_encryption_secret,
             require_signed_internal_requests: read_bool_env(
                 "PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS",
                 is_production_environment(),
@@ -147,6 +154,14 @@ impl AppConfig {
                 &["change_me_plugin_management_internal_secret"],
             )?;
         }
+        validate_production_secret(
+            "PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET",
+            Some(config.cloud_credential_encryption_secret.as_str()),
+            &[
+                "change_me_plugin_management_internal_secret",
+                "change_me_plugin_management_cloud_credential_encryption_secret",
+            ],
+        )?;
         for (caller_service, secret) in &config.internal_api_secrets {
             validate_production_secret(
                 format!("plugin management secret for {caller_service}").as_str(),

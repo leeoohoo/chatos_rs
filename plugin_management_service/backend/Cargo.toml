@@ -7,6 +7,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aes-gcm = "0.11"
 axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
@@ -20,6 +21,7 @@ chatos_service_runtime = { path = "../../crates/chatos_service_runtime", feature
 futures-util = "0.3"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+rand = "0.10"
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -31,3 +33,4 @@ tower-http = { version = "0.7", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+zeroize = "1"
