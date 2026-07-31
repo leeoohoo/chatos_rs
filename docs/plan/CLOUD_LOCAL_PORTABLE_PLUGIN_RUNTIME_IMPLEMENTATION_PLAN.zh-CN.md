@@ -21,7 +21,7 @@
 - `plugins/ponytail` 已包含 Skill、4 个 Command、Cloud/Local 各 3 个 Agent Profile、MIT attribution、SPDX SBOM 和精确 checksums，不包含 Hook、MCP、Node runtime 或权限申请；
 - Plugin Management 启动 seed 会把 Ponytail 写入现有 `chatos-bundled`，物化 11 个 Bundle/快照、切换 publication ready、绑定 Cloud/Local Run Agent，并为首次 seed System Admin 创建启用偏好；
 - 本地真实接口已验证：插件目录返回 `bundled-plugin-ponytail`，ChatOS 普通任务能力接口返回 Portable Ponytail、4 个 Command、3 个 Cloud Agent Profile，且 `requires_device=false`；
-- 10 份已确认过期的根目录实施计划已归档到 `docs/plan/`；`CODEX_PLUGIN_1_TO_1_PARITY_IMPLEMENTATION_PLAN.zh-CN.md` 仍是现行总计划，因此保留在根目录并更新归档链接。
+- 10 份已确认过期的根目录实施计划已归档到 `docs/plan/`；`CODEX_PLUGIN_1_TO_1_PARITY_IMPLEMENTATION_PLAN.zh-CN.md` 当时仍是现行总计划，后续也已作为历史设计文档归档到 `docs/plan/`。
 
 2026-07-30 最终自动化门禁结果：
 

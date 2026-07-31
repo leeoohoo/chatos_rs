@@ -5,7 +5,7 @@
 > 适用范围：Plugin Management Service、Local Connector Client、Local Connector Service、Task Runner、ChatOS  
 > 说明：本方案取代 `docs/plans/TASK_RUNNER_SKILLS_MANAGEMENT_PLAN.zh-CN.md` 中“在 Task Runner 云端保存和执行 Skill 内容”的方向；旧文档保留作历史参考。
 > 退役说明（2026-07-28）：ChatOS legacy `/api/skills*`、`chatos_skills*` Git import/install/cache 服务和 Agent/Agent Builder 外部 Skill/Plugin 选择链已经删除。历史 `memory_skills`/`memory_skill_plugins` records 仅保留只读数据合同和查询供一次性迁移，数据库启动不再创建或维护旧 collection/index，生产 API 与运行时不再读取。下文将其描述为现役能力或后续事项的内容均为历史记录。
-> 退役说明（2026-07-28）：Task Runner 独立 Skill 选择的新写入路径已经删除。用户现在只通过 Plugin Picker 选择 Plugin；Plugin 内部仍可用 `selected_plugins[].selected_skill_ids` 固定其 Skill 组件。旧任务中的顶层 `TaskMcpConfig.selected_skill_ids` 仅用于反序列化、只读展示和系统 required Skill，不再允许用户创建或修改。下文关于 `selectable_skills`、`list_available_skills`、顶层 `selected_skill_ids` 和独立 Skills 页面进入 Task Runner 选择器的描述均为历史实现，不应恢复；当前权威方案见仓库根目录 `CODEX_PLUGIN_1_TO_1_PARITY_IMPLEMENTATION_PLAN.zh-CN.md`。
+> 退役说明（2026-07-28）：Task Runner 独立 Skill 选择的新写入路径已经删除。用户现在只通过 Plugin Picker 选择 Plugin；Plugin 内部仍可用 `selected_plugins[].selected_skill_ids` 固定其 Skill 组件。旧任务中的顶层 `TaskMcpConfig.selected_skill_ids` 仅用于反序列化、只读展示和系统 required Skill，不再允许用户创建或修改。下文关于 `selectable_skills`、`list_available_skills`、顶层 `selected_skill_ids` 和独立 Skills 页面进入 Task Runner 选择器的描述均为历史实现，不应恢复；对应后续方案见 `docs/plan/CODEX_PLUGIN_1_TO_1_PARITY_IMPLEMENTATION_PLAN.zh-CN.md`。
 
 ## 1. 结论先行
 

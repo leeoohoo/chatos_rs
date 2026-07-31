@@ -2,7 +2,7 @@
 
 ## 1. 执行基线
 
-- 统一需求：`CLOUD_CLIENT_UNIFIED_COMPLEX_E2E_REQUIREMENT.md`
+- 统一需求：`docs/plan/CLOUD_CLIENT_UNIFIED_COMPLEX_E2E_REQUIREMENT.md`
 - 执行批次：`20260720-0411`
 - 云端项目：`FocusFlow-cloud-e2e-20260720-0411`
 - 客户端项目：`FocusFlow-local-e2e-20260720-0411`
@@ -13,7 +13,7 @@
 
 ## 2. 共同前置检查
 
-- [x] P01 统一复杂需求已写入根目录，业务规则和验收口径固定。
+- [x] P01 统一复杂需求文档已归档到 `docs/plan/`，业务规则和验收口径固定。
 - [x] P02 云端入口返回 HTTP 200，关键服务已恢复。
 - [x] P03 最新 macOS DMG 生成并通过 `hdiutil verify`。
 - [x] P04 Release、App 和 DMG 内 Core SHA-256 一致：`6dcfe48a...c557`。
