@@ -87,6 +87,31 @@ pub async fn jsonrpc_http_call(
     timeout: Option<Duration>,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
+    jsonrpc_http_call_with_id(url, headers, method, params, timeout, id.as_str()).await
+}
+
+pub async fn jsonrpc_http_tool_call_cancellable(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    params: Value,
+    timeout: Option<Duration>,
+) -> Result<Value, String> {
+    let id = Uuid::new_v4().to_string();
+    let mut cancellation_guard = HttpCancellationGuard::new(url, headers, id.as_str(), timeout);
+    let result =
+        jsonrpc_http_call_with_id(url, headers, "tools/call", params, timeout, id.as_str()).await;
+    cancellation_guard.disarm();
+    result
+}
+
+async fn jsonrpc_http_call_with_id(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    method: &str,
+    params: Value,
+    timeout: Option<Duration>,
+    id: &str,
+) -> Result<Value, String> {
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
     let client = mcp_http_client()?;
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
@@ -138,6 +163,102 @@ pub async fn jsonrpc_http_call(
         ));
     }
     Ok(value.get("result").cloned().unwrap_or(value))
+}
+
+struct HttpCancellationGuard {
+    url: String,
+    headers: Option<HashMap<String, String>>,
+    request_id: String,
+    timeout: Duration,
+    armed: bool,
+}
+
+impl HttpCancellationGuard {
+    fn new(
+        url: &str,
+        headers: Option<&HashMap<String, String>>,
+        request_id: &str,
+        timeout: Option<Duration>,
+    ) -> Self {
+        Self {
+            url: url.to_string(),
+            headers: headers.cloned(),
+            request_id: request_id.to_string(),
+            timeout: timeout
+                .unwrap_or(DEFAULT_MCP_RPC_TIMEOUT)
+                .min(Duration::from_secs(5)),
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for HttpCancellationGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let url = self.url.clone();
+        let headers = self.headers.clone();
+        let request_id = self.request_id.clone();
+        let timeout = self.timeout;
+        runtime.spawn(async move {
+            if let Err(error) = send_http_cancel_notification(
+                url.as_str(),
+                headers.as_ref(),
+                request_id.as_str(),
+                timeout,
+            )
+            .await
+            {
+                tracing::debug!(
+                    request_id = request_id.as_str(),
+                    error = error.as_str(),
+                    "MCP cancellation notification was not acknowledged"
+                );
+            }
+        });
+    }
+}
+
+async fn send_http_cancel_notification(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    request_id: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let payload = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {
+            "requestId": request_id,
+            "reason": "agent runtime aborted the tool call"
+        }
+    });
+    let client = mcp_http_client()?;
+    let mut request = client.post(url).timeout(timeout).json(&payload);
+    if let Some(headers) = headers {
+        for (key, value) in prepare_http_headers(headers)? {
+            request = request.header(key.as_str(), value.as_str());
+        }
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("send MCP cancellation notification failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "MCP cancellation notification returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    Ok(())
 }
 
 fn mcp_http_client() -> Result<reqwest::Client, String> {
@@ -342,8 +463,90 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use serde_json::json;
+    use tokio::sync::mpsc;
 
     use super::*;
+
+    #[tokio::test]
+    async fn dropping_http_tool_call_sends_cancel_with_the_same_request_id_and_headers() {
+        #[derive(Clone)]
+        struct Capture(mpsc::UnboundedSender<(Value, Option<String>)>);
+
+        async fn mcp(
+            axum::extract::State(capture): axum::extract::State<Capture>,
+            headers: axum::http::HeaderMap,
+            axum::Json(request): axum::Json<Value>,
+        ) -> axum::Json<Value> {
+            capture
+                .0
+                .send((
+                    request.clone(),
+                    headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .map(ToOwned::to_owned),
+                ))
+                .unwrap();
+            if request.get("method").and_then(Value::as_str) == Some("tools/call") {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "id": request.get("id").cloned().unwrap_or(Value::Null),
+                "result": {}
+            }))
+        }
+
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new()
+                    .route("/mcp", axum::routing::post(mcp))
+                    .with_state(Capture(sender)),
+            )
+            .await
+            .unwrap();
+        });
+        let headers = HashMap::from([(
+            "Authorization".to_string(),
+            "Bearer runtime-token".to_string(),
+        )]);
+        let call = tokio::spawn(async move {
+            jsonrpc_http_tool_call_cancellable(
+                format!("http://{address}/mcp").as_str(),
+                Some(&headers),
+                json!({"name": "demo", "arguments": {}}),
+                Some(Duration::from_secs(30)),
+            )
+            .await
+        });
+        let (tool_call, tool_authorization) =
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        let request_id = tool_call.get("id").cloned().unwrap();
+        assert_eq!(tool_authorization.as_deref(), Some("Bearer runtime-token"));
+        call.abort();
+        let (cancel, cancel_authorization) =
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            cancel.get("method").and_then(Value::as_str),
+            Some("notifications/cancelled")
+        );
+        assert_eq!(cancel.pointer("/params/requestId"), Some(&request_id));
+        assert_eq!(
+            cancel_authorization.as_deref(),
+            Some("Bearer runtime-token")
+        );
+        server.abort();
+    }
 
     #[test]
     fn http_response_body_limit_accepts_boundary_size() {

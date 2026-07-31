@@ -731,6 +731,7 @@ name = "chatos_mcp_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64 0.22.1",
  "chatos_service_runtime",
  "hex",

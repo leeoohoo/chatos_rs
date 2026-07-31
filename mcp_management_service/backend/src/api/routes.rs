@@ -27,5 +27,9 @@ pub(super) async fn resolve_routes(
             "project context revision is required",
         ));
     }
-    Ok(Json(state.routing.resolve(request)))
+    let mut response = state.routing.resolve(request);
+    for route in &mut response.routes {
+        route.cancel_supported &= state.providers.supports_cancellation(route);
+    }
+    Ok(Json(response))
 }

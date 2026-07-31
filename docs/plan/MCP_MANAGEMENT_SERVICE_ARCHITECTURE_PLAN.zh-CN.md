@@ -750,6 +750,8 @@ result_too_large
 - Provider 未确认取消时返回 cancel_requested。
 - 断线后无法确认 mutation 状态时返回 unknown_execution_state。
 
+2.0.10 当前实现已经完成单次调用级取消主链路：Agent Runtime 为每个 HTTP `tools/call` 固定 JSON-RPC request id，调用 Future 因 Agent abort 被丢弃时使用同一 Runtime Bearer 向同一 `/mcp` 发送 `notifications/cancelled`。MCP Management 将外部 request id 映射为内部 `invocation_id`，并把 Session、caller、resource、工具、mutation 风险和取消能力写入 MongoDB 共享调用表；Provider 完成与取消请求通过原子状态转换竞争，多实例从共享状态轮询取消，不依赖请求落到原实例。网关随后按不可变 Route 向 Internal Service、Local Connector、Cloud Sandbox 或 External HTTP MCP 传播内部 invocation id；Cloud stdio、Sandbox Images 和 Embedded 等当前没有真实逐调用取消合同的 Route 会明确物化为 `cancel_supported=false`。Provider 明确确认时记录 `cancelled`，只读调用未确认时保持 `cancel_requested`，可能已开始的 mutation 无法确认时记录并返回 `unknown_execution_state`。内部调用方也可以通过 `POST /api/internal/runtime/invocations/{id}/cancel` 请求同一共享取消状态，且 caller_service 必须与调用记录一致。
+
 ---
 
 ## 16. 安全模型
@@ -800,6 +802,7 @@ Project Context owner 必须与 Runtime Grant owner 一致。
 
 - Runtime Session 使用签名 Grant。
 - Runtime Session Snapshot 已固定存入 MongoDB 共享集合，服务实例只保留可校验的本地重建缓存；每次读取仍确认共享记录存在，因此其他实例的显式关闭会立即生效。
+- Active Runtime Invocation 已固定存入 MongoDB 共享集合，并以 `session_id + JSON-RPC request id` 唯一定位仍在执行的调用；TTL 跟随 Runtime Session，到期自动清理。取消请求和 Provider 完成通过 Mongo 原子状态转换决定先后顺序，任一实例接收取消后，承载原调用的实例都能观察到共享 cancel marker。
 - Snapshot 使用独立服务 Secret 经 SHA-256 派生 AES-256-GCM Key，Session ID 作为附加认证数据；External HTTP Header、固定 DNS 地址、Cloud stdio command/args/env/cwd 等私有 Binding 不以明文落库。
 - 所有 MCP Management 副本必须使用同一个 Session 加密 Secret；轮换 Secret 会按 fail closed 语义使旧的短期 Session 失效，不做历史 Session 数据迁移。
 - MongoDB `expires_at` TTL 索引负责最终清理，调用入口同时按 `expires_at_unix` 即时拒绝过期 Session，不依赖 TTL Monitor 的扫描周期。

@@ -6,7 +6,8 @@ use std::time::Duration;
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, WorkspaceProviderKind};
 use chatos_mcp_service::{
-    builtin_kind_header_value, LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER, METHOD_TOOLS_CALL,
+    builtin_kind_header_value, LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+    METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL,
 };
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::redirect::Policy;
@@ -15,7 +16,10 @@ use serde_json::{json, Value};
 use crate::runtime::RuntimeSessionSnapshot;
 
 use super::project_service::decode_jsonrpc_response;
-use super::{ProviderCallError, ProviderCallOutcome};
+use super::{
+    decode_cancel_notification_response, ProviderCallError, ProviderCallOutcome,
+    ProviderCancelOutcome,
+};
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
@@ -220,6 +224,143 @@ impl LocalConnectorProvider {
             result,
             response_bytes: bytes.len(),
         })
+    }
+
+    pub(super) async fn cancel_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        let request = self.cancellation_request(snapshot, route)?;
+        let response = request
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "method": METHOD_NOTIFICATIONS_CANCELLED,
+                "params": {
+                    "requestId": invocation_id,
+                    "reason": "MCP Management runtime cancelled the invocation"
+                }
+            }))
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "Local Connector cancellation request failed: {error}"
+                ))
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "Local Connector cancellation response could not be read: {error}"
+                ))
+            })?;
+        decode_cancel_notification_response(status, bytes.as_slice(), "Local Connector Provider")
+    }
+
+    fn cancellation_request(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+    ) -> Result<reqwest::RequestBuilder, ProviderCallError> {
+        let secret = self.internal_secret.as_deref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Local Connector Provider internal secret is not configured",
+            )
+        })?;
+        if !self.supports(route) {
+            return Err(ProviderCallError::provider_unavailable(
+                "Local Connector Provider does not support this route",
+            ));
+        }
+        if snapshot.project_context.workspace_provider != WorkspaceProviderKind::LocalConnector {
+            return Err(ProviderCallError::provider_unavailable(
+                "runtime session is not pinned to a Local Connector workspace",
+            ));
+        }
+        let workspace = snapshot.project_context.workspace.as_ref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Local Connector route is missing its workspace snapshot",
+            )
+        })?;
+        let device_id = workspace
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "Local Connector route is missing its device id",
+                )
+            })?;
+        let workspace_id = workspace.workspace_id.trim();
+        if workspace_id.is_empty() {
+            return Err(ProviderCallError::provider_unavailable(
+                "Local Connector route is missing its workspace id",
+            ));
+        }
+        let expected_provider_ref = format!("device:{device_id}/workspace:{workspace_id}");
+        if route.provider_ref.as_deref() != Some(expected_provider_ref.as_str()) {
+            return Err(ProviderCallError::provider_unavailable(
+                "Local Connector route does not match the runtime workspace snapshot",
+            ));
+        }
+        let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "Local Connector route is not a registered System MCP",
+                )
+            })?;
+        let enabled_builtin_kinds = builtin_kind_header_value([descriptor.key.as_str()]);
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            CALLER_SERVICE,
+            TOKEN_AUDIENCE,
+            MCP_RELAY_SCOPE,
+            60,
+        )
+        .map_err(ProviderCallError::provider_unavailable)?;
+        let mut url = reqwest::Url::parse(
+            format!(
+                "{}/api/local-connectors/relay/{}/mcp",
+                self.base_url,
+                urlencoding::encode(device_id)
+            )
+            .as_str(),
+        )
+        .map_err(|error| {
+            ProviderCallError::provider_unavailable(format!(
+                "build Local Connector Provider URL failed: {error}"
+            ))
+        })?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("workspace_id", workspace_id);
+            if let Some(relative_root) = workspace
+                .relative_root
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                validate_relative_root(relative_root)?;
+                query.append_pair("cwd", relative_root);
+            }
+        }
+        Ok(self
+            .http
+            .post(url)
+            .header("x-local-connector-caller", CALLER_SERVICE)
+            .header("x-local-connector-internal-token", token)
+            .header(
+                "x-local-connector-owner-user-id",
+                snapshot.owner_user_id.as_str(),
+            )
+            .header(
+                LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+                enabled_builtin_kinds,
+            ))
     }
 }
 

@@ -50,8 +50,8 @@ pub use executor::McpExecutor;
 pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
 pub use rpc::{
-    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_stdio_call,
-    jsonrpc_stdio_call_with_timeout, list_tools_http, list_tools_stdio,
+    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_tool_call_cancellable,
+    jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout, list_tools_http, list_tools_stdio,
 };
 pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
 pub use task_types::TaskUpdatePatch;

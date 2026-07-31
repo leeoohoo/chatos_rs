@@ -6,7 +6,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
-use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, METHOD_TOOLS_CALL};
+use chatos_mcp_service::{
+    MCP_ERROR_AUTH_REQUIRED, METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL,
+};
 use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
@@ -16,7 +18,10 @@ use serde_json::{json, Value};
 use crate::runtime::{ExternalHttpProviderBinding, RuntimeSessionSnapshot};
 
 use super::project_service::decode_jsonrpc_response;
-use super::{ProviderCallError, ProviderCallOutcome};
+use super::{
+    decode_cancel_notification_response, ProviderCallError, ProviderCallOutcome,
+    ProviderCancelOutcome,
+};
 
 const JSON_CONTENT_TYPE: &str = "application/json";
 const MAX_CONFIGURED_HEADERS: usize = 64;
@@ -221,6 +226,59 @@ impl ExternalHttpProvider {
             result,
             response_bytes: bytes.len(),
         })
+    }
+
+    pub(super) async fn cancel_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        let binding = snapshot
+            .external_http_bindings
+            .get(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "External HTTP MCP runtime binding is missing",
+                )
+            })?;
+        if route.provider_kind != McpProviderKind::ExternalHttp
+            || route.provider_ref.as_deref() != Some(binding.provider_ref.as_str())
+        {
+            return Err(ProviderCallError::provider_unavailable(
+                "External HTTP MCP route does not match its runtime binding",
+            ));
+        }
+        let response = binding
+            .http
+            .post(binding.endpoint.clone())
+            .headers(binding.headers.clone())
+            .header(CONTENT_TYPE, JSON_CONTENT_TYPE)
+            .header(ACCEPT, JSON_CONTENT_TYPE)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "method": METHOD_NOTIFICATIONS_CANCELLED,
+                "params": {
+                    "requestId": invocation_id,
+                    "reason": "MCP Management runtime cancelled the invocation"
+                }
+            }))
+            .send()
+            .await
+            .map_err(|_| {
+                ProviderCallError::provider_unavailable(
+                    "External HTTP MCP cancellation request failed",
+                )
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "External HTTP MCP cancellation response could not be read: {error}"
+                ))
+            })?;
+        decode_cancel_notification_response(status, bytes.as_slice(), "External HTTP MCP")
     }
 }
 

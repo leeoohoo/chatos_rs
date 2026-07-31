@@ -61,6 +61,13 @@ pub struct ProviderRuntimeConfig {
     pub response_limit_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderCancelOutcome {
+    Cancelled,
+    CancelRequested,
+    NotSupported,
+}
+
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
@@ -234,6 +241,20 @@ impl ProviderDispatcher {
         self.cloud_sandbox.supports(route) || self.cloud_stdio.supports(route)
     }
 
+    pub fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
+        match route.provider_kind {
+            McpProviderKind::InternalService | McpProviderKind::Harness => {
+                self.project_service.supports(route)
+                    || self.task_runner.supports(route)
+                    || self.chatos.supports(route)
+            }
+            McpProviderKind::LocalConnector => self.local_connector.supports(route),
+            McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
+            McpProviderKind::ExternalHttp => self.external_http.supports(route),
+            _ => false,
+        }
+    }
+
     pub async fn validate_sandbox_target(
         &self,
         target: &SandboxExecutionTarget,
@@ -368,6 +389,59 @@ impl ProviderDispatcher {
         }
     }
 
+    pub async fn cancel_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        if !route.cancel_supported {
+            return Ok(ProviderCancelOutcome::NotSupported);
+        }
+        let cancellation = async {
+            match route.provider_kind {
+                McpProviderKind::InternalService | McpProviderKind::Harness
+                    if self.project_service.supports(route) =>
+                {
+                    self.project_service
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::InternalService if self.task_runner.supports(route) => {
+                    self.task_runner
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::InternalService if self.chatos.supports(route) => {
+                    self.chatos
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::LocalConnector if self.local_connector.supports(route) => {
+                    self.local_connector
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::CloudSandbox if self.cloud_sandbox.supports(route) => {
+                    self.cloud_sandbox
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::ExternalHttp if self.external_http.supports(route) => {
+                    self.external_http
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                _ => Ok(ProviderCancelOutcome::NotSupported),
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), cancellation)
+            .await
+            .map_err(|_| {
+                ProviderCallError::provider_unavailable("Provider cancellation request timed out")
+            })?
+    }
+
     pub async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
         if let Err(error) = self.chatos.close_session(snapshot).await {
             tracing::warn!(
@@ -377,5 +451,39 @@ impl ProviderDispatcher {
             );
         }
         self.cloud_stdio.close_session(snapshot).await;
+    }
+}
+
+pub(super) fn decode_cancel_notification_response(
+    status: reqwest::StatusCode,
+    bytes: &[u8],
+    provider_label: &str,
+) -> Result<ProviderCancelOutcome, ProviderCallError> {
+    if !status.is_success() {
+        return Err(ProviderCallError::provider_unavailable(format!(
+            "{provider_label} rejected cancellation with HTTP {}",
+            status.as_u16()
+        )));
+    }
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(ProviderCancelOutcome::CancelRequested);
+    }
+    let envelope = serde_json::from_slice::<Value>(bytes).map_err(|error| {
+        ProviderCallError::invalid_response(format!(
+            "{provider_label} returned invalid cancellation JSON: {error}"
+        ))
+    })?;
+    if envelope.pointer("/error/code").and_then(Value::as_i64)
+        == Some(i64::from(chatos_mcp_service::MCP_ERROR_METHOD_NOT_FOUND))
+    {
+        return Ok(ProviderCancelOutcome::NotSupported);
+    }
+    match envelope
+        .pointer("/result/status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
+        Some("cancelled" | "invocation_cancelled") => Ok(ProviderCancelOutcome::Cancelled),
+        _ => Ok(ProviderCancelOutcome::CancelRequested),
     }
 }

@@ -3,6 +3,7 @@
 
 mod catalog;
 mod health;
+mod invocations;
 mod mcp;
 mod routes;
 mod runtime_sessions;
@@ -31,6 +32,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/internal/runtime/sessions/{session_id}/close",
             post(runtime_sessions::close_runtime_session),
         )
+        .route(
+            "/api/internal/runtime/invocations/{invocation_id}/cancel",
+            post(invocations::cancel_runtime_invocation),
+        )
         .route("/mcp", post(mcp::mcp_entrypoint))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
@@ -44,10 +49,12 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
     use chatos_mcp_management_sdk::McpCatalogResponse;
+    use mongodb::bson::DateTime;
     use tower::ServiceExt;
 
     use super::*;
     use crate::config::AppConfig;
+    use crate::runtime::{RuntimeInvocationRecord, RuntimeInvocationStatus};
 
     async fn state() -> AppState {
         AppState::new(AppConfig::test()).await.unwrap()
@@ -84,5 +91,53 @@ mod tests {
             .unwrap();
         let response = build_router(state().await).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn internal_cancel_endpoint_is_scoped_to_the_invocation_owner_service() {
+        let state = state().await;
+        state
+            .runtime_invocations
+            .register(RuntimeInvocationRecord {
+                invocation_id: "invocation-api-test".to_string(),
+                session_id: "session-api-test".to_string(),
+                request_id_key: "\"request-api-test\"".to_string(),
+                caller_service: "task-runner".to_string(),
+                resource_id: "mcp-1".to_string(),
+                exposed_tool_name: "demo_read".to_string(),
+                mutation_may_have_started: false,
+                cancel_supported: true,
+                status: RuntimeInvocationStatus::Running,
+                created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+                expires_at: DateTime::from_millis(
+                    (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
+                ),
+                expires_at_unix: chrono::Utc::now().timestamp() + 60,
+            })
+            .await
+            .unwrap();
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-test-secret",
+            "task-runner",
+            "mcp-management-service",
+            "runtime.invocations.cancel",
+            60,
+        )
+        .unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/internal/runtime/invocations/invocation-api-test/cancel")
+            .header("x-mcp-management-caller-service", "task-runner")
+            .header("x-mcp-management-internal-token", token)
+            .body(Body::empty())
+            .unwrap();
+        let response = build_router(state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
+        assert_eq!(
+            body.get("status").and_then(serde_json::Value::as_str),
+            Some("cancel_requested")
+        );
     }
 }

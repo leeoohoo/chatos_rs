@@ -147,6 +147,9 @@ pub(super) async fn resolve_runtime_session(
         .providers
         .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
         .await;
+    for route in &mut route_response.routes {
+        route.cancel_supported &= state.providers.supports_cancellation(route);
+    }
     let tool_result = materialize_runtime_tools(&capabilities, route_response.routes.as_slice())
         .map_err(ApiError::conflict)?;
     let route_revision = runtime_route_revision(

@@ -7,7 +7,7 @@ use crate::providers::{
     ChatosProviderConfig, ProviderDispatcher, ProviderRuntimeConfig, TaskRunnerProviderConfig,
 };
 use crate::routing::RoutingEngine;
-use crate::runtime::{RuntimeGrantService, RuntimeSessionStore};
+use crate::runtime::{RuntimeGrantService, RuntimeInvocationStore, RuntimeSessionStore};
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 
 #[derive(Clone)]
@@ -19,6 +19,7 @@ pub struct AppState {
     pub providers: ProviderDispatcher,
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
+    pub runtime_invocations: RuntimeInvocationStore,
 }
 
 impl AppState {
@@ -75,6 +76,10 @@ impl AppState {
             }
             None => RuntimeSessionStore::memory(),
         };
+        let runtime_invocations = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => RuntimeInvocationStore::connect(database_url).await?,
+            None => RuntimeInvocationStore::memory(),
+        };
         Ok(Self {
             runtime_grants: RuntimeGrantService::new(
                 config.runtime_grant_secret.clone(),
@@ -86,6 +91,7 @@ impl AppState {
             project_context_client,
             providers,
             runtime_sessions,
+            runtime_invocations,
         })
     }
 }

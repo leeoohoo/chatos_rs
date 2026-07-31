@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
-use chatos_mcp_service::{METHOD_TOOLS_CALL, METHOD_TOOLS_LIST};
+use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST};
 use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::redirect::Policy;
@@ -15,7 +15,10 @@ use serde_json::{json, Value};
 use crate::runtime::RuntimeSessionSnapshot;
 
 use super::project_service::decode_jsonrpc_response;
-use super::{ProviderCallError, ProviderCallOutcome};
+use super::{
+    decode_cancel_notification_response, ProviderCallError, ProviderCallOutcome,
+    ProviderCancelOutcome,
+};
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "chatos";
@@ -328,6 +331,58 @@ impl ChatosProvider {
             result,
             response_bytes: bytes.len(),
         })
+    }
+
+    pub(super) async fn cancel_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        let secret = self.internal_secret.as_deref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "ChatOS Provider internal secret is not configured",
+            )
+        })?;
+        let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+            .filter(|_| self.supports(route))
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "ChatOS route is not a supported System MCP",
+                )
+            })?;
+        let endpoint = format!(
+            "{}/internal/mcp-management/mcp/{}",
+            self.base_url,
+            urlencoding::encode(descriptor.key.as_str())
+        );
+        let binding = ChatosRequestBinding::from(snapshot);
+        let response = self
+            .bound_request(&binding, endpoint, Duration::from_secs(5), secret)?
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "method": METHOD_NOTIFICATIONS_CANCELLED,
+                "params": {
+                    "requestId": invocation_id,
+                    "reason": "MCP Management runtime cancelled the invocation"
+                }
+            }))
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "ChatOS Provider cancellation request failed: {error}"
+                ))
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "ChatOS Provider cancellation response could not be read: {error}"
+                ))
+            })?;
+        decode_cancel_notification_response(status, bytes.as_slice(), "ChatOS Provider")
     }
 
     pub(super) async fn close_session(
