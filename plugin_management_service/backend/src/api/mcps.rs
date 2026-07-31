@@ -112,12 +112,15 @@ pub(super) async fn list_mcps(
     Extension(user): Extension<CurrentUser>,
     Query(query): Query<ListResourcesQuery>,
 ) -> Result<Json<ListResponse<McpRecord>>, ApiError> {
-    state
+    let mut response = state
         .store
         .list_mcps(&user, &query)
         .await
-        .map(Json)
-        .map_err(ApiError::internal)
+        .map_err(ApiError::internal)?;
+    for record in &mut response.items {
+        redact_mcp_runtime_secrets_for_user(record, &user);
+    }
+    Ok(Json(response))
 }
 
 pub(super) async fn create_mcp(
@@ -138,6 +141,8 @@ pub(super) async fn create_mcp(
         .runtime
         .ok_or_else(|| ApiError::bad_request("runtime is required"))?;
     validate_mcp_runtime(&runtime)?;
+    let security = payload.security.unwrap_or_default();
+    validate_mcp_security(&runtime, &security)?;
     validate_mcp_visibility_for_runtime(visibility.as_str(), &runtime)?;
     let now = now_rfc3339();
     let record = McpRecord {
@@ -153,7 +158,7 @@ pub(super) async fn create_mcp(
             .and_then(|value| normalized(Some(&value))),
         enabled: payload.enabled.unwrap_or(true),
         runtime,
-        security: payload.security.unwrap_or_default(),
+        security,
         metadata: payload.metadata.unwrap_or_default(),
         plugin_component: PluginComponentOwnership::default(),
         created_by: user.user_id.clone(),
@@ -166,7 +171,9 @@ pub(super) async fn create_mcp(
         .replace_mcp(&record)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(record))
+    let mut response = record;
+    redact_mcp_runtime_secrets_for_user(&mut response, &user);
+    Ok(Json(response))
 }
 
 pub(super) async fn get_mcp(
@@ -174,7 +181,7 @@ pub(super) async fn get_mcp(
     Extension(user): Extension<CurrentUser>,
     Path(mcp_id): Path<String>,
 ) -> Result<Json<McpRecord>, ApiError> {
-    let record = state
+    let mut record = state
         .store
         .get_mcp(mcp_id.as_str())
         .await
@@ -188,6 +195,7 @@ pub(super) async fn get_mcp(
         record.owner_user_id.as_str(),
         record.visibility.as_str(),
     )?;
+    redact_mcp_runtime_secrets_for_user(&mut record, &user);
     Ok(Json(record))
 }
 
@@ -392,6 +400,7 @@ pub(super) async fn update_mcp(
             .replace_mcp(&record)
             .await
             .map_err(ApiError::internal)?;
+        redact_mcp_runtime_secrets_for_user(&mut record, &user);
         return Ok(Json(record));
     }
     validate_client_managed_mcp_payload(&payload, &user)?;
@@ -432,6 +441,7 @@ pub(super) async fn update_mcp(
         record.metadata = metadata;
     }
     validate_mcp_visibility_for_runtime(record.visibility.as_str(), &record.runtime)?;
+    validate_mcp_security(&record.runtime, &record.security)?;
     record.updated_by = user.user_id.clone();
     record.updated_at = now_rfc3339();
     state
@@ -439,6 +449,7 @@ pub(super) async fn update_mcp(
         .replace_mcp(&record)
         .await
         .map_err(ApiError::internal)?;
+    redact_mcp_runtime_secrets_for_user(&mut record, &user);
     Ok(Json(record))
 }
 

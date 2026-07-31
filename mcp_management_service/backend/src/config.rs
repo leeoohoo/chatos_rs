@@ -38,6 +38,7 @@ pub struct AppConfig {
     pub sandbox_manager_request_timeout: Duration,
     pub embedded_work_dir: PathBuf,
     pub downstream_request_timeout: Duration,
+    pub external_http_request_timeout: Duration,
     pub provider_response_limit_bytes: usize,
     pub public_base_url: String,
     pub runtime_grant_secret: String,
@@ -123,6 +124,12 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(5_000)
                 .clamp(300, 60_000),
+        );
+        let external_http_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(60_000)
+                .clamp(1_000, 10 * 60 * 1_000),
         );
         let runtime_session_ttl = Duration::from_secs(
             env_text("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")
@@ -220,6 +227,7 @@ impl AppConfig {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| std::env::temp_dir().join("chatos-mcp-management")),
             downstream_request_timeout,
+            external_http_request_timeout,
             provider_response_limit_bytes,
             public_base_url,
             runtime_grant_secret,
@@ -295,6 +303,7 @@ impl AppConfig {
             sandbox_manager_request_timeout: Duration::from_secs(180),
             embedded_work_dir: std::env::temp_dir().join("chatos-mcp-management-test"),
             downstream_request_timeout: Duration::from_secs(5),
+            external_http_request_timeout: Duration::from_secs(60),
             provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),
             runtime_grant_secret: "a-long-runtime-grant-secret".to_string(),

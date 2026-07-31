@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::sync::Arc;
 
 use chatos_mcp_management_sdk::{
@@ -9,6 +10,40 @@ use chatos_mcp_management_sdk::{
     SandboxExecutionTarget,
 };
 use tokio::sync::RwLock;
+
+#[derive(Clone)]
+pub struct ExternalHttpProviderBinding {
+    pub provider_ref: String,
+    pub endpoint: reqwest::Url,
+    pub headers: reqwest::header::HeaderMap,
+    pub http: reqwest::Client,
+    pub allow_writes: bool,
+    pub allowed_tool_names: HashSet<String>,
+    pub blocked_tool_names: HashSet<String>,
+}
+
+impl ExternalHttpProviderBinding {
+    pub fn allows_tool(&self, tool_name: &str) -> bool {
+        let tool_name = tool_name.trim();
+        !tool_name.is_empty()
+            && (self.allowed_tool_names.is_empty() || self.allowed_tool_names.contains(tool_name))
+            && !self.blocked_tool_names.contains(tool_name)
+    }
+}
+
+impl fmt::Debug for ExternalHttpProviderBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExternalHttpProviderBinding")
+            .field("provider_ref", &self.provider_ref)
+            .field("endpoint", &"[redacted]")
+            .field("headers", &"[redacted]")
+            .field("allow_writes", &self.allow_writes)
+            .field("allowed_tool_names", &self.allowed_tool_names)
+            .field("blocked_tool_names", &self.blocked_tool_names)
+            .finish()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeSessionSnapshot {
@@ -30,6 +65,7 @@ pub struct RuntimeSessionSnapshot {
     pub route_revision: String,
     pub routes: Vec<ResolvedMcpRoute>,
     pub tools: Vec<RuntimeToolDescriptor>,
+    pub external_http_bindings: HashMap<String, ExternalHttpProviderBinding>,
     pub expires_at: String,
     pub expires_at_unix: i64,
 }

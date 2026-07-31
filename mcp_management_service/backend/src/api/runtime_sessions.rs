@@ -80,6 +80,10 @@ pub(super) async fn resolve_runtime_session(
         route_response.routes.as_mut_slice(),
         sandbox_target.as_ref(),
     );
+    let external_http_bindings = state
+        .providers
+        .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
+        .await;
     if route_response.routes.iter().any(|route| {
         route.provider_kind == McpProviderKind::CloudSandbox && state.providers.supports(route)
     }) {
@@ -101,6 +105,7 @@ pub(super) async fn resolve_runtime_session(
         .map_err(ApiError::conflict)?;
     let route_revision = runtime_route_revision(
         route_response.route_revision.as_str(),
+        capabilities.policy_revision.as_str(),
         route_response.routes.as_slice(),
         tool_result.tools.as_slice(),
     )
@@ -193,6 +198,7 @@ pub(super) async fn resolve_runtime_session(
         route_revision: route_revision.clone(),
         routes: route_response.routes,
         tools: tool_result.tools,
+        external_http_bindings,
         expires_at: grant.expires_at.clone(),
         expires_at_unix: grant.expires_at_unix,
     };

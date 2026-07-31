@@ -1,0 +1,554 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::time::Duration;
+
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, METHOD_TOOLS_CALL};
+use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
+use chatos_service_runtime::http_body::read_response_bytes_limited;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
+use reqwest::redirect::Policy;
+use serde_json::{json, Value};
+
+use crate::runtime::{ExternalHttpProviderBinding, RuntimeSessionSnapshot};
+
+use super::project_service::decode_jsonrpc_response;
+use super::{ProviderCallError, ProviderCallOutcome};
+
+const JSON_CONTENT_TYPE: &str = "application/json";
+const MAX_CONFIGURED_HEADERS: usize = 64;
+const MAX_CONFIGURED_HEADER_BYTES: usize = 32 * 1024;
+const MAX_TOOL_POLICY_ITEMS: usize = 512;
+const MAX_TOOL_NAME_BYTES: usize = 256;
+
+#[derive(Clone)]
+pub(super) struct ExternalHttpProvider {
+    request_timeout: Duration,
+    response_limit_bytes: usize,
+}
+
+impl ExternalHttpProvider {
+    pub(super) fn new(request_timeout: Duration, response_limit_bytes: usize) -> Self {
+        Self {
+            request_timeout,
+            response_limit_bytes,
+        }
+    }
+
+    pub(super) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
+        let expected_provider_ref = format!("mcp-resource:{}", route.resource_id);
+        route.provider_kind == McpProviderKind::ExternalHttp
+            && route.provider_ref.as_deref() == Some(expected_provider_ref.as_str())
+    }
+
+    pub(super) async fn prepare_routes(
+        &self,
+        capabilities: &ResolvedAgentCapabilities,
+        routes: &mut [ResolvedMcpRoute],
+    ) -> HashMap<String, ExternalHttpProviderBinding> {
+        let resources = capabilities
+            .mcps
+            .iter()
+            .map(|resolved| (resolved.resource.id.as_str(), resolved))
+            .collect::<HashMap<_, _>>();
+        let mut bindings = HashMap::new();
+        for route in routes
+            .iter_mut()
+            .filter(|route| route.provider_kind == McpProviderKind::ExternalHttp)
+        {
+            let binding = match resources.get(route.resource_id.as_str()) {
+                Some(resolved) => self.prepare_binding(resolved, route).await,
+                None => Err("capability resource is missing".to_string()),
+            };
+            match binding {
+                Ok(binding) => {
+                    bindings.insert(route.resource_id.clone(), binding);
+                }
+                Err(reason) => {
+                    route.provider_kind = McpProviderKind::Unavailable;
+                    route.provider_ref = None;
+                    route.allow_writes = false;
+                    route.cancel_supported = false;
+                    route.reason =
+                        format!("External HTTP MCP configuration is unavailable: {reason}");
+                }
+            }
+        }
+        bindings
+    }
+
+    async fn prepare_binding(
+        &self,
+        resolved: &ResolvedMcp,
+        route: &ResolvedMcpRoute,
+    ) -> Result<ExternalHttpProviderBinding, String> {
+        if resolved.resource.runtime.kind.trim() != "http" {
+            return Err("runtime kind is not http".to_string());
+        }
+        let provider_ref = format!("mcp-resource:{}", resolved.resource.id);
+        if route.provider_ref.as_deref() != Some(provider_ref.as_str()) {
+            return Err("route target does not match the configured resource".to_string());
+        }
+        let endpoint =
+            validate_endpoint(resolved.resource.runtime.url.as_deref().unwrap_or_default())?;
+        let host = endpoint
+            .host_str()
+            .ok_or_else(|| "endpoint has no host".to_string())?;
+        let port = endpoint
+            .port_or_known_default()
+            .ok_or_else(|| "endpoint has no usable port".to_string())?;
+        let addresses = tokio::time::timeout(
+            Duration::from_secs(10).min(self.request_timeout),
+            tokio::net::lookup_host((host, port)),
+        )
+        .await
+        .map_err(|_| "endpoint DNS resolution timed out".to_string())?
+        .map_err(|_| "endpoint DNS resolution failed".to_string())?
+        .collect::<Vec<_>>();
+        let mut addresses = addresses;
+        addresses.sort_unstable();
+        addresses.dedup();
+        if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+            return Err("endpoint must resolve only to public network addresses".to_string());
+        }
+        let headers = configured_headers(&resolved.resource.runtime.headers)?;
+        let allowed_tool_names = configured_tool_names(
+            resolved.resource.security.allowed_tool_names.as_slice(),
+            "allowed_tool_names",
+        )?;
+        let blocked_tool_names = configured_tool_names(
+            resolved.resource.security.blocked_tool_names.as_slice(),
+            "blocked_tool_names",
+        )?;
+        if !route.allow_writes && allowed_tool_names.is_empty() {
+            return Err(
+                "read-only endpoint requires an explicit allowed_tool_names policy".to_string(),
+            );
+        }
+        let http = reqwest::Client::builder()
+            .redirect(Policy::none())
+            .no_proxy()
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(10).min(self.request_timeout))
+            .timeout(self.request_timeout)
+            .resolve_to_addrs(host, addresses.as_slice())
+            .build()
+            .map_err(|_| "build endpoint client failed".to_string())?;
+        Ok(ExternalHttpProviderBinding {
+            provider_ref,
+            endpoint,
+            headers,
+            http,
+            allow_writes: route.allow_writes,
+            allowed_tool_names,
+            blocked_tool_names,
+        })
+    }
+
+    pub(super) async fn call_tool(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        original_tool_name: &str,
+        arguments: Value,
+        invocation_id: &str,
+    ) -> Result<ProviderCallOutcome, ProviderCallError> {
+        let binding = snapshot
+            .external_http_bindings
+            .get(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "External HTTP MCP runtime binding is missing",
+                )
+            })?;
+        if route.provider_kind != McpProviderKind::ExternalHttp
+            || route.provider_ref.as_deref() != Some(binding.provider_ref.as_str())
+            || route.allow_writes != binding.allow_writes
+        {
+            return Err(ProviderCallError::provider_unavailable(
+                "External HTTP MCP route does not match its runtime binding",
+            ));
+        }
+        if !binding.allows_tool(original_tool_name) {
+            return Err(ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: "tool is blocked by the External HTTP MCP policy".to_string(),
+            });
+        }
+        let response = binding
+            .http
+            .post(binding.endpoint.clone())
+            .headers(binding.headers.clone())
+            .header(CONTENT_TYPE, JSON_CONTENT_TYPE)
+            .header(ACCEPT, JSON_CONTENT_TYPE)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": invocation_id,
+                "method": METHOD_TOOLS_CALL,
+                "params": {
+                    "name": original_tool_name,
+                    "arguments": arguments,
+                }
+            }))
+            .send()
+            .await
+            .map_err(|_| {
+                ProviderCallError::provider_unavailable("External HTTP MCP request failed")
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|err| {
+                ProviderCallError::invalid_response(format!(
+                    "External HTTP MCP response could not be read: {err}"
+                ))
+            })?;
+        if !status.is_success() {
+            return Err(if matches!(status.as_u16(), 401 | 403) {
+                ProviderCallError {
+                    code: MCP_ERROR_AUTH_REQUIRED,
+                    message: "External HTTP MCP rejected its configured credentials".to_string(),
+                }
+            } else {
+                ProviderCallError::provider_unavailable(format!(
+                    "External HTTP MCP returned HTTP {}",
+                    status.as_u16()
+                ))
+            });
+        }
+        let result = decode_jsonrpc_response(bytes.as_slice(), invocation_id, "External HTTP MCP")?;
+        Ok(ProviderCallOutcome {
+            result,
+            response_bytes: bytes.len(),
+        })
+    }
+}
+
+fn validate_endpoint(value: &str) -> Result<reqwest::Url, String> {
+    let endpoint =
+        reqwest::Url::parse(value.trim()).map_err(|_| "endpoint URL is invalid".to_string())?;
+    if endpoint.scheme() != "https"
+        || endpoint.host_str().is_none()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || endpoint.fragment().is_some()
+    {
+        return Err("endpoint must use HTTPS without URL credentials or fragments".to_string());
+    }
+    Ok(endpoint)
+}
+
+fn configured_headers(
+    configured: &std::collections::BTreeMap<String, String>,
+) -> Result<HeaderMap, String> {
+    if configured.len() > MAX_CONFIGURED_HEADERS {
+        return Err(format!(
+            "headers exceed the supported {MAX_CONFIGURED_HEADERS} entries"
+        ));
+    }
+    let encoded_bytes = configured
+        .iter()
+        .map(|(name, value)| name.len().saturating_add(value.len()))
+        .sum::<usize>();
+    if encoded_bytes > MAX_CONFIGURED_HEADER_BYTES {
+        return Err(format!(
+            "headers exceed the supported {MAX_CONFIGURED_HEADER_BYTES} bytes"
+        ));
+    }
+    let mut headers = HeaderMap::new();
+    for (name, value) in configured {
+        let name = HeaderName::from_bytes(name.trim().as_bytes())
+            .map_err(|_| "headers contain an invalid name".to_string())?;
+        if header_is_managed_or_unsafe(&name) {
+            return Err(format!(
+                "header {} is managed by MCP Management and cannot be configured",
+                name.as_str()
+            ));
+        }
+        let mut value = HeaderValue::from_str(value)
+            .map_err(|_| "headers contain an invalid value".to_string())?;
+        value.set_sensitive(true);
+        headers.insert(name, value);
+    }
+    Ok(headers)
+}
+
+fn header_is_managed_or_unsafe(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "accept"
+            | "connection"
+            | "content-length"
+            | "content-type"
+            | "host"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+            | "x-local-connector-internal-scope"
+            | "x-local-connector-internal-secret"
+            | "x-local-connector-internal-token"
+            | "x-project-service-internal-scope"
+            | "x-project-service-internal-token"
+            | "x-project-service-sync-secret"
+            | "x-sandbox-client-key"
+            | "x-sandbox-internal-scope"
+            | "x-sandbox-internal-token"
+    )
+}
+
+fn configured_tool_names(values: &[String], field: &str) -> Result<HashSet<String>, String> {
+    if values.len() > MAX_TOOL_POLICY_ITEMS {
+        return Err(format!(
+            "{field} exceeds the supported {MAX_TOOL_POLICY_ITEMS} entries"
+        ));
+    }
+    let mut normalized = HashSet::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() || value.len() > MAX_TOOL_NAME_BYTES {
+            return Err(format!("{field} contains an invalid tool name"));
+        }
+        normalized.insert(value.to_string());
+    }
+    Ok(normalized)
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => is_public_ipv4(ip),
+        IpAddr::V6(ip) => is_public_ipv6(ip),
+    }
+}
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    !(ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_documentation()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || octets[0] == 0
+        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+        || octets[0] >= 240)
+}
+
+fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        return is_public_ipv4(mapped);
+    }
+    !(ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || (segments[0] & 0xfe00) == 0xfc00
+        || (segments[0] & 0xffc0) == 0xfe80
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::HeaderMap as AxumHeaderMap;
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use chatos_mcp_management_sdk::{
+        ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
+        WorkspaceProviderKind,
+    };
+
+    use super::*;
+
+    fn route() -> ResolvedMcpRoute {
+        ResolvedMcpRoute {
+            resource_id: "external-1".to_string(),
+            server_name: "demo".to_string(),
+            provider_kind: McpProviderKind::ExternalHttp,
+            provider_ref: Some("mcp-resource:external-1".to_string()),
+            tool_namespace: "demo".to_string(),
+            allow_writes: false,
+            retry_class: McpRetryClass::IdempotentRead,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        }
+    }
+
+    fn snapshot(binding: ExternalHttpProviderBinding) -> RuntimeSessionSnapshot {
+        RuntimeSessionSnapshot {
+            session_id: "session-1".to_string(),
+            caller_service: "task-runner".to_string(),
+            owner_user_id: "user-1".to_string(),
+            agent_key: "task_runner_run_phase".to_string(),
+            project_id: "project-1".to_string(),
+            run_id: Some("run-1".to_string()),
+            turn_id: None,
+            task_id: Some("task-1".to_string()),
+            source_session_id: None,
+            source_user_message_id: None,
+            default_model_config_id: None,
+            expected_project_task_ids: Vec::new(),
+            sandbox_target: None,
+            project_context: ProjectExecutionContext {
+                project_id: "project-1".to_string(),
+                owner_user_id: "user-1".to_string(),
+                execution_plane: ExecutionPlane::Cloud,
+                workspace_provider: WorkspaceProviderKind::Harness,
+                workspace: None,
+                sandbox_provider: SandboxProviderKind::None,
+                sandbox_pairing_id: None,
+                source_type: Some("cloud".to_string()),
+                revision: "project-revision".to_string(),
+            },
+            policy_revision: "policy-1".to_string(),
+            route_revision: "route-1".to_string(),
+            routes: vec![route()],
+            tools: Vec::new(),
+            external_http_bindings: HashMap::from([("external-1".to_string(), binding)]),
+            expires_at: "2099-01-01T00:00:00Z".to_string(),
+            expires_at_unix: i64::MAX,
+        }
+    }
+
+    #[test]
+    fn endpoint_requires_plain_https() {
+        assert!(validate_endpoint("https://mcp.example.com/rpc?tenant=one").is_ok());
+        assert!(validate_endpoint("http://mcp.example.com/rpc").is_err());
+        assert!(validate_endpoint("https://user@mcp.example.com/rpc").is_err());
+        assert!(validate_endpoint("https://mcp.example.com/rpc#fragment").is_err());
+    }
+
+    #[test]
+    fn private_and_special_network_addresses_are_rejected() {
+        for value in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "198.18.0.1",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+            "2001:db8::1",
+        ] {
+            assert!(!is_public_ip(value.parse().expect("test IP")), "{value}");
+        }
+        assert!(is_public_ip("8.8.8.8".parse().expect("public IPv4")));
+        assert!(is_public_ip(
+            "2606:4700:4700::1111".parse().expect("public IPv6")
+        ));
+    }
+
+    #[test]
+    fn managed_and_hop_by_hop_headers_are_rejected() {
+        assert!(configured_headers(&std::collections::BTreeMap::from([(
+            "authorization".to_string(),
+            "Bearer secret".to_string(),
+        )]))
+        .is_ok());
+        for name in [
+            "host",
+            "content-type",
+            "connection",
+            "x-project-service-sync-secret",
+        ] {
+            assert!(configured_headers(&std::collections::BTreeMap::from([(
+                name.to_string(),
+                "value".to_string(),
+            )]))
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn tool_policy_uses_allowlist_then_blocklist() {
+        let binding = ExternalHttpProviderBinding {
+            provider_ref: "mcp-resource:one".to_string(),
+            endpoint: reqwest::Url::parse("https://mcp.example.com").unwrap(),
+            headers: HeaderMap::new(),
+            http: reqwest::Client::new(),
+            allow_writes: false,
+            allowed_tool_names: HashSet::from(["search".to_string(), "delete".to_string()]),
+            blocked_tool_names: HashSet::from(["delete".to_string()]),
+        };
+        assert!(binding.allows_tool("search"));
+        assert!(!binding.allows_tool("delete"));
+        assert!(!binding.allows_tool("unknown"));
+    }
+
+    #[tokio::test]
+    async fn call_uses_private_binding_headers_and_original_tool_name() {
+        async fn handler(headers: AxumHeaderMap, Json(request): Json<Value>) -> Json<Value> {
+            assert_eq!(
+                headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok()),
+                Some("Bearer external-secret")
+            );
+            assert_eq!(
+                request.get("method").and_then(Value::as_str),
+                Some("tools/call")
+            );
+            assert_eq!(
+                request.pointer("/params/name").and_then(Value::as_str),
+                Some("search")
+            );
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": request.get("id").cloned().unwrap(),
+                "result": {"content": [{"type": "text", "text": "ok"}]}
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/mcp", post(handler)))
+                .await
+                .unwrap();
+        });
+        let binding = ExternalHttpProviderBinding {
+            provider_ref: "mcp-resource:external-1".to_string(),
+            endpoint: reqwest::Url::parse(format!("http://{address}/mcp").as_str()).unwrap(),
+            headers: configured_headers(&std::collections::BTreeMap::from([(
+                "authorization".to_string(),
+                "Bearer external-secret".to_string(),
+            )]))
+            .unwrap(),
+            http: reqwest::Client::builder()
+                .redirect(Policy::none())
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+            allow_writes: false,
+            allowed_tool_names: HashSet::from(["search".to_string()]),
+            blocked_tool_names: HashSet::new(),
+        };
+        let outcome = ExternalHttpProvider::new(Duration::from_secs(5), 64 * 1024)
+            .call_tool(
+                &snapshot(binding),
+                &route(),
+                "search",
+                json!({"query": "hello"}),
+                "invocation-1",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome
+                .result
+                .pointer("/content/0/text")
+                .and_then(Value::as_str),
+            Some("ok")
+        );
+        server.abort();
+    }
+}

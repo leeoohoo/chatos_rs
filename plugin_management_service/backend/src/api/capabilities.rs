@@ -35,7 +35,7 @@ pub(super) async fn resolve_agent_capabilities(
     } else {
         user.effective_owner_user_id().to_string()
     };
-    resolve_agent_capabilities_for_owner(
+    let mut response = resolve_agent_capabilities_for_owner(
         &state,
         query.agent_key,
         owner_user_id,
@@ -48,8 +48,11 @@ pub(super) async fn resolve_agent_capabilities(
         },
         normalized(query.device_id.as_deref()),
     )
-    .await
-    .map(Json)
+    .await?;
+    for resolved in &mut response.mcps {
+        redact_mcp_runtime_secrets_for_user(&mut resolved.resource, &user);
+    }
+    Ok(Json(response))
 }
 
 pub(super) async fn resolve_agent_capabilities_internal(

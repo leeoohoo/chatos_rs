@@ -4,6 +4,7 @@
 mod chatos;
 mod cloud_sandbox;
 mod embedded;
+mod external_http;
 mod local_connector;
 mod project_service;
 mod task_runner;
@@ -18,6 +19,7 @@ use crate::runtime::RuntimeSessionSnapshot;
 use chatos::ChatosProvider;
 use cloud_sandbox::CloudSandboxProvider;
 use embedded::EmbeddedProvider;
+use external_http::ExternalHttpProvider;
 use local_connector::LocalConnectorProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
@@ -36,6 +38,12 @@ pub struct ChatosProviderConfig {
     pub ask_user_request_timeout: Duration,
 }
 
+pub struct ProviderRuntimeConfig {
+    pub downstream_request_timeout: Duration,
+    pub external_http_request_timeout: Duration,
+    pub response_limit_bytes: usize,
+}
+
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
@@ -44,6 +52,7 @@ pub struct ProviderDispatcher {
     chatos: ChatosProvider,
     cloud_sandbox: CloudSandboxProvider,
     embedded: EmbeddedProvider,
+    external_http: ExternalHttpProvider,
 }
 
 impl ProviderDispatcher {
@@ -58,43 +67,56 @@ impl ProviderDispatcher {
         sandbox_manager_internal_secret: Option<String>,
         sandbox_manager_request_timeout: Duration,
         embedded_work_dir: std::path::PathBuf,
-        request_timeout: Duration,
-        response_limit_bytes: usize,
+        runtime: ProviderRuntimeConfig,
     ) -> Result<Self, String> {
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
                 local_connector_service_base_url,
-                request_timeout,
+                runtime.downstream_request_timeout,
                 local_connector_internal_secret,
-                response_limit_bytes,
+                runtime.response_limit_bytes,
             )?,
             project_service: ProjectServiceProvider::new(
                 project_service_base_url,
-                request_timeout,
+                runtime.downstream_request_timeout,
                 project_service_internal_secret,
-                response_limit_bytes,
+                runtime.response_limit_bytes,
             )?,
             task_runner: TaskRunnerProvider::new(
                 task_runner.base_url,
                 task_runner.request_timeout,
                 task_runner.ask_user_request_timeout,
                 task_runner.internal_secret,
-                response_limit_bytes,
+                runtime.response_limit_bytes,
             )?,
             chatos: ChatosProvider::new(
                 chatos.base_url,
                 chatos.ask_user_request_timeout,
                 chatos.internal_secret,
-                response_limit_bytes,
+                runtime.response_limit_bytes,
             )?,
             cloud_sandbox: CloudSandboxProvider::new(
                 sandbox_manager_service_base_url,
                 sandbox_manager_request_timeout,
                 sandbox_manager_internal_secret,
-                response_limit_bytes,
+                runtime.response_limit_bytes,
             )?,
-            embedded: EmbeddedProvider::new(embedded_work_dir, response_limit_bytes)?,
+            embedded: EmbeddedProvider::new(embedded_work_dir, runtime.response_limit_bytes)?,
+            external_http: ExternalHttpProvider::new(
+                runtime.external_http_request_timeout,
+                runtime.response_limit_bytes,
+            ),
         })
+    }
+
+    pub async fn prepare_external_http_routes(
+        &self,
+        capabilities: &chatos_plugin_management_sdk::ResolvedAgentCapabilities,
+        routes: &mut [ResolvedMcpRoute],
+    ) -> std::collections::HashMap<String, crate::runtime::ExternalHttpProviderBinding> {
+        self.external_http
+            .prepare_routes(capabilities, routes)
+            .await
     }
 
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
@@ -107,6 +129,7 @@ impl ProviderDispatcher {
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
+            McpProviderKind::ExternalHttp => self.external_http.supports(route),
             _ => false,
         }
     }
@@ -191,6 +214,17 @@ impl ProviderDispatcher {
             }
             McpProviderKind::Embedded if self.embedded.supports(route) => {
                 self.embedded
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::ExternalHttp if self.external_http.supports(route) => {
+                self.external_http
                     .call_tool(
                         snapshot,
                         route,

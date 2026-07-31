@@ -7,6 +7,24 @@ pub(super) fn required_text(value: Option<&str>, field: &str) -> Result<String, 
     normalized(value).ok_or_else(|| ApiError::bad_request(format!("{field} is required")))
 }
 
+pub(super) fn redact_mcp_runtime_secrets(record: &mut McpRecord) {
+    record.runtime.headers.clear();
+    record.runtime.env.clear();
+    record.runtime.args.clear();
+    if let Some(url) = record.runtime.url.as_deref() {
+        if let Ok(mut url) = reqwest::Url::parse(url) {
+            url.set_query(None);
+            record.runtime.url = Some(url.to_string());
+        }
+    }
+}
+
+pub(super) fn redact_mcp_runtime_secrets_for_user(record: &mut McpRecord, user: &CurrentUser) {
+    if !user.is_super_admin() && record.owner_user_id != user.effective_owner_user_id() {
+        redact_mcp_runtime_secrets(record);
+    }
+}
+
 pub(super) fn normalize_visibility(
     value: Option<&str>,
     user: &CurrentUser,
@@ -229,14 +247,24 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
             ));
         }
         RUNTIME_KIND_HTTP => {
-            if runtime
+            let url = runtime
                 .url
                 .as_deref()
                 .and_then(|value| normalized(Some(value)))
-                .is_none()
+                .ok_or_else(|| ApiError::bad_request("HTTP MCP requires url"))?;
+            let url = reqwest::Url::parse(url.as_str())
+                .map_err(|_| ApiError::bad_request("HTTP MCP url is invalid"))?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
             {
-                return Err(ApiError::bad_request("HTTP MCP requires url"));
+                return Err(ApiError::bad_request(
+                    "HTTP MCP url must use HTTPS without credentials or fragments",
+                ));
             }
+            validate_external_http_headers(&runtime.headers)?;
         }
         RUNTIME_KIND_STDIO_CLOUD => {
             if runtime
@@ -255,6 +283,86 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
             return Err(ApiError::bad_request(
                 "runtime.kind must be system, http, stdio_cloud, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
             ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_mcp_security(
+    runtime: &McpRuntime,
+    security: &ResourceSecurity,
+) -> Result<(), ApiError> {
+    for (field, values) in [
+        ("allowed_tool_names", security.allowed_tool_names.as_slice()),
+        ("blocked_tool_names", security.blocked_tool_names.as_slice()),
+    ] {
+        if values.len() > 512
+            || values
+                .iter()
+                .any(|value| value.trim().is_empty() || value.trim().len() > 256)
+        {
+            return Err(ApiError::bad_request(format!(
+                "MCP security {field} contains an invalid tool policy"
+            )));
+        }
+    }
+    if runtime.kind == RUNTIME_KIND_HTTP
+        && !security.allow_writes.unwrap_or(false)
+        && security.allowed_tool_names.is_empty()
+    {
+        return Err(ApiError::bad_request(
+            "read-only HTTP MCP requires allowed_tool_names",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_external_http_headers(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<(), ApiError> {
+    if headers.len() > 64
+        || headers
+            .iter()
+            .map(|(name, value)| name.len().saturating_add(value.len()))
+            .sum::<usize>()
+            > 32 * 1024
+    {
+        return Err(ApiError::bad_request(
+            "HTTP MCP headers exceed the supported limits",
+        ));
+    }
+    for (name, value) in headers {
+        let name = reqwest::header::HeaderName::from_bytes(name.trim().as_bytes())
+            .map_err(|_| ApiError::bad_request("HTTP MCP headers contain an invalid name"))?;
+        reqwest::header::HeaderValue::from_str(value)
+            .map_err(|_| ApiError::bad_request("HTTP MCP headers contain an invalid value"))?;
+        if matches!(
+            name.as_str(),
+            "accept"
+                | "connection"
+                | "content-length"
+                | "content-type"
+                | "host"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+                | "x-local-connector-internal-scope"
+                | "x-local-connector-internal-secret"
+                | "x-local-connector-internal-token"
+                | "x-project-service-internal-scope"
+                | "x-project-service-internal-token"
+                | "x-project-service-sync-secret"
+                | "x-sandbox-client-key"
+                | "x-sandbox-internal-scope"
+                | "x-sandbox-internal-token"
+        ) {
+            return Err(ApiError::bad_request(format!(
+                "HTTP MCP header {} is managed or unsafe",
+                name.as_str()
+            )));
         }
     }
     Ok(())

@@ -206,6 +206,96 @@ fn local_connector_mcp_requires_connector_reference() {
 }
 
 #[test]
+fn external_http_mcp_requires_plain_https_and_safe_headers() {
+    let valid = McpRuntime {
+        kind: RUNTIME_KIND_HTTP.to_string(),
+        url: Some("https://mcp.example.com/rpc?tenant=one".to_string()),
+        headers: std::collections::BTreeMap::from([(
+            "authorization".to_string(),
+            "Bearer secret".to_string(),
+        )]),
+        ..McpRuntime::default()
+    };
+    assert!(validate_mcp_runtime(&valid).is_ok());
+
+    for url in [
+        "http://mcp.example.com/rpc",
+        "https://user@mcp.example.com/rpc",
+        "https://mcp.example.com/rpc#fragment",
+    ] {
+        assert!(validate_mcp_runtime(&McpRuntime {
+            url: Some(url.to_string()),
+            ..valid.clone()
+        })
+        .is_err());
+    }
+    assert!(validate_mcp_runtime(&McpRuntime {
+        headers: std::collections::BTreeMap::from([(
+            "host".to_string(),
+            "internal.example".to_string(),
+        )]),
+        ..valid
+    })
+    .is_err());
+}
+
+#[test]
+fn read_only_external_http_mcp_requires_an_explicit_tool_allowlist() {
+    let runtime = McpRuntime {
+        kind: RUNTIME_KIND_HTTP.to_string(),
+        url: Some("https://mcp.example.com/rpc".to_string()),
+        ..McpRuntime::default()
+    };
+    assert!(validate_mcp_security(&runtime, &ResourceSecurity::default()).is_err());
+    assert!(validate_mcp_security(
+        &runtime,
+        &ResourceSecurity {
+            allowed_tool_names: vec!["search".to_string()],
+            ..ResourceSecurity::default()
+        }
+    )
+    .is_ok());
+    assert!(validate_mcp_security(
+        &runtime,
+        &ResourceSecurity {
+            allow_writes: Some(true),
+            ..ResourceSecurity::default()
+        }
+    )
+    .is_ok());
+}
+
+#[test]
+fn public_mcp_responses_redact_runtime_credentials() {
+    let mut record = local_connector_record();
+    record.owner_user_id = "user-2".to_string();
+    record.runtime.headers = std::collections::BTreeMap::from([(
+        "authorization".to_string(),
+        "Bearer secret".to_string(),
+    )]);
+    record.runtime.env =
+        std::collections::BTreeMap::from([("API_KEY".to_string(), "secret".to_string())]);
+    record.runtime.args = vec!["--token".to_string(), "secret".to_string()];
+    record.runtime.url = Some("https://mcp.example.com/rpc?token=secret".to_string());
+    redact_mcp_runtime_secrets_for_user(&mut record, &user(USER_ROLE_USER));
+    assert!(record.runtime.headers.is_empty());
+    assert!(record.runtime.env.is_empty());
+    assert!(record.runtime.args.is_empty());
+    assert_eq!(
+        record.runtime.url.as_deref(),
+        Some("https://mcp.example.com/rpc")
+    );
+
+    let mut owner_record = local_connector_record();
+    owner_record.runtime.headers = std::collections::BTreeMap::from([(
+        "authorization".to_string(),
+        "Bearer owner-secret".to_string(),
+    )]);
+    redact_mcp_runtime_secrets_for_user(&mut owner_record, &user(USER_ROLE_USER));
+    assert_eq!(owner_record.runtime.headers.len(), 1);
+}
+
+#[test]
 fn local_connector_user_mcp_does_not_require_workspace() {
     let runtime = McpRuntime {
         kind: RUNTIME_KIND_LOCAL_CONNECTOR_STDIO.to_string(),

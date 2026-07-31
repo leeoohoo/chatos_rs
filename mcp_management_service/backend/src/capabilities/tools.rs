@@ -37,9 +37,7 @@ pub fn materialize_runtime_tools(
             continue;
         };
         let source_tools = tool_snapshot(resolved)?;
-        if source_tools.is_empty() && resolved.binding.required {
-            missing_required_tool_schemas.push(resolved.resource.id.clone());
-        }
+        let exposed_before = tools.len();
         for definition in source_tools {
             let original_name = definition
                 .get("name")
@@ -52,7 +50,7 @@ pub fn materialize_runtime_tools(
                         resolved.resource.id
                     )
                 })?;
-            if !route_allows_system_tool(route, original_name) {
+            if !resource_allows_tool(resolved, route, original_name) {
                 continue;
             }
             let exposed_name = route.exposed_tool_name(original_name);
@@ -76,6 +74,9 @@ pub fn materialize_runtime_tools(
                 definition: exposed_definition,
             });
         }
+        if tools.len() == exposed_before && resolved.binding.required {
+            missing_required_tool_schemas.push(resolved.resource.id.clone());
+        }
     }
     tools.sort_by(|left, right| left.exposed_name.cmp(&right.exposed_name));
     missing_required_tool_schemas.sort();
@@ -84,6 +85,29 @@ pub fn materialize_runtime_tools(
         tools,
         missing_required_tool_schemas,
     })
+}
+
+fn resource_allows_tool(
+    resolved: &ResolvedMcp,
+    route: &ResolvedMcpRoute,
+    original_tool_name: &str,
+) -> bool {
+    if route.provider_kind == chatos_mcp_management_sdk::McpProviderKind::Unavailable {
+        return false;
+    }
+    let security = &resolved.resource.security;
+    let allowed_by_allowlist = security.allowed_tool_names.is_empty()
+        || security
+            .allowed_tool_names
+            .iter()
+            .any(|name| name.trim() == original_tool_name);
+    let blocked_by_blocklist = security
+        .blocked_tool_names
+        .iter()
+        .any(|name| name.trim() == original_tool_name);
+    allowed_by_allowlist
+        && !blocked_by_blocklist
+        && route_allows_system_tool(route, original_tool_name)
 }
 
 pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &str) -> bool {
@@ -104,12 +128,14 @@ pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &s
 
 pub fn runtime_route_revision(
     base_route_revision: &str,
+    policy_revision: &str,
     routes: &[ResolvedMcpRoute],
     tools: &[RuntimeToolDescriptor],
 ) -> Result<String, String> {
     let bytes = serde_json::to_vec(&(
-        "mcp-runtime-route-with-provider-and-tool-schema-v2",
+        "mcp-runtime-route-with-provider-policy-and-tool-schema-v3",
         base_route_revision,
+        policy_revision,
         routes,
         tools,
     ))
@@ -137,9 +163,8 @@ mod tests {
     };
     use serde_json::json;
 
-    #[test]
-    fn external_snapshot_tools_receive_stable_server_namespace() {
-        let resolved = ResolvedMcp {
+    fn resolved_external_mcp() -> ResolvedMcp {
+        ResolvedMcp {
             resource: McpRecord {
                 id: "external-1".to_string(),
                 owner_user_id: "user-1".to_string(),
@@ -188,8 +213,11 @@ mod tests {
                 "description": "Search",
                 "inputSchema": {"type": "object"}
             })],
-        };
-        let capabilities = ResolvedAgentCapabilities {
+        }
+    }
+
+    fn capabilities_with_mcp(resolved: ResolvedMcp) -> ResolvedAgentCapabilities {
+        ResolvedAgentCapabilities {
             agent_key: "task_runner_run_phase".to_string(),
             owner_user_id: "user-1".to_string(),
             policy_revision: "policy-1".to_string(),
@@ -199,8 +227,11 @@ mod tests {
             skills: Vec::new(),
             plugins: Vec::new(),
             local_connector_requirements: Vec::new(),
-        };
-        let routes = vec![ResolvedMcpRoute {
+        }
+    }
+
+    fn external_route() -> ResolvedMcpRoute {
+        ResolvedMcpRoute {
             resource_id: "external-1".to_string(),
             server_name: "demo".to_string(),
             provider_kind: McpProviderKind::ExternalHttp,
@@ -210,7 +241,13 @@ mod tests {
             retry_class: McpRetryClass::IdempotentRead,
             cancel_supported: true,
             reason: "test".to_string(),
-        }];
+        }
+    }
+
+    #[test]
+    fn external_snapshot_tools_receive_stable_server_namespace() {
+        let capabilities = capabilities_with_mcp(resolved_external_mcp());
+        let routes = vec![external_route()];
         let materialized = materialize_runtime_tools(&capabilities, &routes).unwrap();
         assert_eq!(materialized.tools[0].exposed_name, "demo_search");
         assert_eq!(
@@ -221,6 +258,42 @@ mod tests {
             Some("demo_search")
         );
         assert!(materialized.missing_required_tool_schemas.is_empty());
+    }
+
+    #[test]
+    fn external_snapshot_tools_honor_allowlist_and_blocklist() {
+        let mut resolved = resolved_external_mcp();
+        resolved.resource.security.allowed_tool_names =
+            vec!["search".to_string(), "delete".to_string()];
+        resolved.resource.security.blocked_tool_names = vec!["delete".to_string()];
+        resolved.tool_snapshot = vec![
+            json!({"name": "search", "inputSchema": {"type": "object"}}),
+            json!({"name": "delete", "inputSchema": {"type": "object"}}),
+            json!({"name": "unknown", "inputSchema": {"type": "object"}}),
+        ];
+        let capabilities = capabilities_with_mcp(resolved);
+        let materialized = materialize_runtime_tools(&capabilities, &[external_route()]).unwrap();
+        assert_eq!(
+            materialized
+                .tools
+                .iter()
+                .map(|tool| tool.original_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["search"]
+        );
+    }
+
+    #[test]
+    fn required_mcp_fails_when_policy_filters_every_tool() {
+        let mut resolved = resolved_external_mcp();
+        resolved.resource.security.blocked_tool_names = vec!["search".to_string()];
+        let capabilities = capabilities_with_mcp(resolved);
+        let materialized = materialize_runtime_tools(&capabilities, &[external_route()]).unwrap();
+        assert!(materialized.tools.is_empty());
+        assert_eq!(
+            materialized.missing_required_tool_schemas,
+            vec!["external-1"]
+        );
     }
 
     #[test]
@@ -245,8 +318,16 @@ mod tests {
             ..first[0].clone()
         }];
         assert_ne!(
-            runtime_route_revision("base-route", &[], &first).unwrap(),
-            runtime_route_revision("base-route", &[], &second).unwrap()
+            runtime_route_revision("base-route", "policy-1", &[], &first).unwrap(),
+            runtime_route_revision("base-route", "policy-1", &[], &second).unwrap()
+        );
+    }
+
+    #[test]
+    fn runtime_route_revision_binds_capability_policy_changes() {
+        assert_ne!(
+            runtime_route_revision("base-route", "policy-1", &[], &[]).unwrap(),
+            runtime_route_revision("base-route", "policy-2", &[], &[]).unwrap()
         );
     }
 
@@ -266,8 +347,8 @@ mod tests {
         let mut another = route.clone();
         another.provider_ref = Some("sandbox:sandbox-2/lease:lease-2".to_string());
         assert_ne!(
-            runtime_route_revision("base-route", &[route], &[]).unwrap(),
-            runtime_route_revision("base-route", &[another], &[]).unwrap()
+            runtime_route_revision("base-route", "policy-1", &[route], &[]).unwrap(),
+            runtime_route_revision("base-route", "policy-1", &[another], &[]).unwrap()
         );
     }
 

@@ -524,10 +524,13 @@ Agent
 ### 11.1 外部 HTTP MCP
 
 - URL 来自 Plugin Management 的资源记录。
-- MCP Management Service 执行 SSRF 校验。
-- 用户 Token/Secret 通过受限凭据引用解析，不写入 Session Token。
+- MCP Management Service 只接受无 URL 凭据、无 fragment 的 HTTPS endpoint，并在创建 Runtime Session 时解析 DNS、拒绝私网/loopback/link-local/保留地址，将通过校验的地址固定到该 Session 的专用无代理 Client；禁止重定向，避免 DNS rebinding 和代理绕过。
+- `runtime.headers` 只通过 Plugin Management 的签名内部 capabilities 接口进入服务端私有 Session Binding；非 owner、非 super-admin 的普通 MCP CRUD 和用户侧 capabilities 响应会清空 `runtime.headers`/`runtime.env`/`runtime.args` 并移除 URL query，同时保留 owner/admin 编辑既有配置的能力。凭据不进入 Runtime Token、公开 Route Snapshot 或调用日志；URL query、Header 值、工具参数和结果正文也不写日志。后续 Plugin OAuth 动态凭据应继续通过受限凭据引用解析到同一私有 Binding。
+- Host、Content-Type、Content-Length、hop-by-hop Header 和内部服务签名 Secret/Token Header 不能由外部 MCP 配置覆盖。
 - tools/list 可以短缓存。
-- tools/call 使用统一超时、大小限制和审计。
+- tools/list 和 tools/call 使用统一超时、大小限制、JSON-RPC id 校验和结构化审计；`allowed_tool_names`/`blocked_tool_names` 同时约束工具曝光和真实执行。
+- External HTTP route 为只读时必须配置显式 `allowed_tool_names`，避免无法判断语义的第三方工具在 `allow_writes=false` 下仍执行写操作；允许写入时可继续用 allowlist/blocklist 收窄工具集合。
+- Local Connector 的 loopback/局域网 MCP 不允许伪装成 External HTTP MCP，必须继续走 Local Connector Provider。
 
 ### 11.2 Cloud stdio MCP
 
@@ -936,6 +939,8 @@ Cloud Sandbox Runtime Session 只接收 `sandbox_id`、`lease_id`、`is_environm
 - Cloud stdio MCP through Sandbox。
 - Plugin cloud/local/portable MCP。
 - Skill executable、Command 和 Agent component 聚合。
+
+当前已完成 External HTTP MCP 主链路。MCP Management 从 Plugin Management 的签名内部 capabilities 响应读取完整远程 Runtime，在 Session 创建阶段生成不对外序列化的私有 Provider Binding；每个 Binding 固定 resource/provider_ref、HTTPS endpoint、DNS 公网解析结果、认证 Header、读写标记和工具白/黑名单。required 外部 MCP 的配置或网络目标不合法时 Session fail closed，optional 外部 MCP 则在该 Session 中标记 unavailable。真实 `tools/call` 使用原始工具名与独立 invocation id，禁止重定向和系统代理，限制超时及响应大小，并验证下游 JSON-RPC version、id、result/error。Plugin Management 的 MCP 工具探测也已改为同样的 HTTPS、公网 DNS 固定、无代理、无重定向策略，避免控制面检查接口成为 SSRF 绕路。Runtime `route_revision` 现在同时绑定 capability `policy_revision`，因此 URL、Header、安全策略或其他资源版本变化都会产生新的不可变 Session 快照，但不会把 Secret 内容写入 revision。Cloud stdio、Plugin OAuth 动态凭据解析和 Plugin cloud/local/portable 的完整执行链仍待后续阶段。
 
 ### Phase 6：调用方迁移
 

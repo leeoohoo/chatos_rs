@@ -3,7 +3,9 @@
 
 use crate::config::AppConfig;
 use crate::project_context::ProjectContextClient;
-use crate::providers::{ChatosProviderConfig, ProviderDispatcher, TaskRunnerProviderConfig};
+use crate::providers::{
+    ChatosProviderConfig, ProviderDispatcher, ProviderRuntimeConfig, TaskRunnerProviderConfig,
+};
 use crate::routing::RoutingEngine;
 use crate::runtime::{RuntimeGrantService, RuntimeSessionStore};
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
@@ -53,8 +55,11 @@ impl AppState {
             config.sandbox_manager_internal_api_secret.clone(),
             config.sandbox_manager_request_timeout,
             config.embedded_work_dir.clone(),
-            config.downstream_request_timeout,
-            config.provider_response_limit_bytes,
+            ProviderRuntimeConfig {
+                downstream_request_timeout: config.downstream_request_timeout,
+                external_http_request_timeout: config.external_http_request_timeout,
+                response_limit_bytes: config.provider_response_limit_bytes,
+            },
         )?;
         Ok(Self {
             runtime_grants: RuntimeGrantService::new(
