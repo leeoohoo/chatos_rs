@@ -161,6 +161,7 @@ impl PluginCloudProvider {
                     expected_component_content_sha256: immutable.component_content_sha256.clone(),
                     permission_snapshot: immutable.permission_snapshot.clone(),
                     auth_connection_ids: immutable.auth_connection_ids.clone(),
+                    minimum_valid_until_unix: Some(expires_at_unix),
                 },
             )
             .await

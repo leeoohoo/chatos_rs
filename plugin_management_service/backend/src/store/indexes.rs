@@ -247,6 +247,26 @@ impl AppStore {
         )
         .await?;
 
+        create_unique_index(
+            &self.plugin_cloud_oauth_authorizations,
+            doc! { "state_sha256": 1 },
+        )
+        .await?;
+        self.plugin_cloud_oauth_authorizations
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! { "expires_at": 1 })
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .expire_after(std::time::Duration::from_secs(0))
+                            .build(),
+                    )
+                    .build(),
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+
         create_unique_index(&self.plugin_oauth_connections, doc! { "id": 1 }).await?;
         create_unique_index(
             &self.plugin_oauth_connections,

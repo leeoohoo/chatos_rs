@@ -262,3 +262,28 @@ export interface PluginOAuthConnectionRecord {
   account_display?: string | null;
   updated_at: string;
 }
+
+export interface PluginCloudOAuthConnectionRecord {
+  id: string;
+  owner_user_id: string;
+  plugin_id: string;
+  release_id: string;
+  component_key: string;
+  provider: string;
+  resource: string;
+  scopes: string[];
+  connected: boolean;
+  needs_auth: boolean;
+  refreshable: boolean;
+  expires_at?: string | null;
+  account_display?: string | null;
+  revision: string;
+  updated_at: string;
+}
+
+export interface BeginPluginCloudOAuthAuthorizationResponse {
+  flow_id: string;
+  authorization_url: string;
+  callback_origin: string;
+  expires_at: string;
+}

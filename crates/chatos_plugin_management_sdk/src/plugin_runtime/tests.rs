@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use super::{
+    BeginPluginCloudOAuthAuthorizationRequest, BeginPluginCloudOAuthAuthorizationResponse,
     PluginArtifactCreateRequest, PluginArtifactReadMode, PluginArtifactReadRequest,
     PluginArtifactUpdateRequest, PluginUiBridgeMethod, PluginUiBridgeRequest,
     ResolvedPluginMcpCloudCredentials, UpdateUserPluginPreferenceResponse,
@@ -25,6 +26,34 @@ fn resolved_cloud_credentials_debug_output_is_redacted() {
     assert!(!debug.contains("top-secret-token"));
     assert!(debug.contains("header_count"));
     assert!(debug.contains("environment_count"));
+}
+
+#[test]
+fn cloud_oauth_authorization_debug_output_redacts_client_secret() {
+    let request = BeginPluginCloudOAuthAuthorizationRequest {
+        provider: "figma".to_string(),
+        scopes: vec!["files:read".to_string()],
+        authorization_server: None,
+        client_id: Some("client-1".to_string()),
+        client_secret: Some("top-secret-client-value".to_string()),
+        token_endpoint_auth_method: Some("client_secret_basic".to_string()),
+    };
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("top-secret-client-value"));
+    assert!(debug.contains("[redacted]"));
+}
+
+#[test]
+fn cloud_oauth_authorization_response_debug_output_redacts_state_url() {
+    let response = BeginPluginCloudOAuthAuthorizationResponse {
+        flow_id: "flow-1".to_string(),
+        authorization_url: "https://auth.example.com/authorize?state=top-secret-state".to_string(),
+        callback_origin: "https://plugins.example.com".to_string(),
+        expires_at: "2026-08-01T00:10:00Z".to_string(),
+    };
+    let debug = format!("{response:?}");
+    assert!(!debug.contains("top-secret-state"));
+    assert!(debug.contains("[redacted]"));
 }
 
 #[test]

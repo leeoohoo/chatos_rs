@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use mongodb::bson::DateTime as BsonDateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -38,6 +39,10 @@ pub const PLUGIN_AUDIT_UPSERT_CLOUD_CREDENTIAL: &str = "cloud_credential.upsert"
 pub const PLUGIN_AUDIT_DELETE_CLOUD_CREDENTIAL: &str = "cloud_credential.delete";
 pub const PLUGIN_AUDIT_UPSERT_CLOUD_OAUTH: &str = "cloud_oauth.upsert";
 pub const PLUGIN_AUDIT_DELETE_CLOUD_OAUTH: &str = "cloud_oauth.delete";
+pub const PLUGIN_AUDIT_BEGIN_CLOUD_OAUTH: &str = "cloud_oauth.begin";
+pub const PLUGIN_AUDIT_COMPLETE_CLOUD_OAUTH: &str = "cloud_oauth.complete";
+pub const PLUGIN_AUDIT_REFRESH_CLOUD_OAUTH: &str = "cloud_oauth.refresh";
+pub const PLUGIN_AUDIT_REAUTHORIZE_CLOUD_OAUTH: &str = "cloud_oauth.reauthorize";
 
 pub const PLUGIN_PUBLISHER_STATUS_PENDING: &str = "pending";
 pub const PLUGIN_PUBLISHER_STATUS_APPROVED: &str = "approved";
@@ -110,7 +115,51 @@ pub struct StoredPluginCloudCredential {
 pub struct StoredPluginCloudOAuthConnection {
     #[serde(flatten)]
     pub connection: PluginCloudOAuthConnectionRecord,
-    pub encrypted_access_token: String,
+    #[serde(default)]
+    pub encrypted_access_token: Option<String>,
+    #[serde(default)]
+    pub encrypted_refresh_token: Option<String>,
+    #[serde(default)]
+    pub oauth_client: Option<StoredPluginCloudOAuthClient>,
+    #[serde(default)]
+    pub refresh_lease_id: Option<String>,
+    #[serde(default)]
+    pub refresh_lease_expires_at: Option<BsonDateTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudOAuthClient {
+    pub authorization_server: String,
+    pub token_endpoint: String,
+    pub client_id: String,
+    pub token_endpoint_auth_method: String,
+    #[serde(default)]
+    pub encrypted_client_secret: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudOAuthAuthorizationSession {
+    pub id: String,
+    pub state_sha256: String,
+    pub owner_user_id: String,
+    pub plugin_id: String,
+    pub release_id: String,
+    pub component_key: String,
+    pub provider: String,
+    pub resource: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub authorization_server: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub client_id: String,
+    pub token_endpoint_auth_method: String,
+    #[serde(default)]
+    pub encrypted_client_secret: Option<String>,
+    pub encrypted_code_verifier: String,
+    pub redirect_uri: String,
+    pub created_at: String,
+    pub expires_at: BsonDateTime,
 }
 
 #[derive(Debug, Clone, Deserialize)]

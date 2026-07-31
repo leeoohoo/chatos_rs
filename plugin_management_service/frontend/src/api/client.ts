@@ -24,10 +24,12 @@ import type {
 } from '../types';
 import type {
   PluginAuditLogRecord,
+  BeginPluginCloudOAuthAuthorizationResponse,
   PluginCatalogListItem,
   PluginCatalogRecord,
   PluginCatalogSyncResponse,
   PluginInstallationRecord,
+  PluginCloudOAuthConnectionRecord,
   PluginMarketplaceRecord,
   PluginOAuthConnectionRecord,
   PluginPublisherRecord,
@@ -141,6 +143,10 @@ export const api = {
     ),
   listPluginMarketplaces: () =>
     request<ListResponse<PluginMarketplaceRecord>>('/api/plugin-marketplaces'),
+  listPluginCatalog: (params?: Record<string, QueryValue>) =>
+    request<ListResponse<PluginCatalogListItem>>(
+      withQuery('/api/plugins/catalog', params || {}),
+    ),
   createPluginMarketplace: (payload: unknown) =>
     request<PluginMarketplaceRecord>('/api/plugin-marketplaces', {
       method: 'POST',
@@ -189,6 +195,10 @@ export const api = {
     request<ListResponse<PluginReleaseRecord>>(
       `/api/admin/plugins/${encodeURIComponent(pluginId)}/releases`,
     ),
+  listVisiblePluginReleases: (pluginId: string) =>
+    request<ListResponse<PluginReleaseRecord>>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/releases`,
+    ),
   createPluginRelease: (pluginId: string, payload: unknown) =>
     request<PluginReleaseRecord>(
       `/api/admin/plugins/${encodeURIComponent(pluginId)}/releases`,
@@ -211,6 +221,31 @@ export const api = {
   listPluginOAuthConnections: (pluginId: string, params: Record<string, QueryValue>) =>
     request<ListResponse<PluginOAuthConnectionRecord>>(
       withQuery(`/api/plugins/${encodeURIComponent(pluginId)}/oauth`, params),
+    ),
+  listPluginCloudOAuthConnections: (
+    pluginId: string,
+    params: { release_id: string; component_key: string },
+  ) =>
+    request<ListResponse<PluginCloudOAuthConnectionRecord>>(
+      withQuery(`/api/plugins/${encodeURIComponent(pluginId)}/cloud-oauth`, params),
+    ),
+  beginPluginCloudOAuthAuthorization: (
+    pluginId: string,
+    releaseId: string,
+    componentKey: string,
+    payload: unknown,
+  ) =>
+    request<BeginPluginCloudOAuthAuthorizationResponse>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/releases/${encodeURIComponent(releaseId)}/cloud-oauth/${encodeURIComponent(componentKey)}/authorize`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    ),
+  deletePluginCloudOAuthConnection: (pluginId: string, connectionId: string) =>
+    request<void>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/cloud-oauth/${encodeURIComponent(connectionId)}`,
+      { method: 'DELETE' },
     ),
   listSystemAgents: () => request<SystemAgentRecord[]>('/api/system-agents'),
   createSystemAgent: (payload: unknown) =>

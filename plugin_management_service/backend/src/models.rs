@@ -10,7 +10,8 @@ mod plugins;
 pub use plugins::*;
 
 pub use chatos_plugin_management_sdk::{
-    AgentBindingRecord, BindingConditions,
+    AgentBindingRecord, BeginPluginCloudOAuthAuthorizationRequest,
+    BeginPluginCloudOAuthAuthorizationResponse, BindingConditions,
     LocalConnectorMcpStatusBatchRequest as LocalConnectorMcpStatusBatchPayload,
     LocalConnectorMcpStatusItem, LocalConnectorMcpStatusRequest as LocalConnectorMcpStatusPayload,
     LocalConnectorMcpSyncRequest as LocalConnectorMcpSyncPayload, LocalConnectorRef,

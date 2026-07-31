@@ -121,6 +121,14 @@ body {
   margin: 0;
 }
 
+.card-block {
+  margin: 16px 0;
+  padding: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

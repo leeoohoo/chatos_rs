@@ -671,11 +671,82 @@ pub struct PluginCloudOAuthConnectionRecord {
     #[serde(default)]
     pub needs_auth: bool,
     #[serde(default)]
+    pub refreshable: bool,
+    #[serde(default)]
     pub expires_at: Option<String>,
     #[serde(default)]
     pub account_display: Option<String>,
     pub revision: String,
     pub updated_at: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginPluginCloudOAuthAuthorizationRequest {
+    pub provider: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub authorization_server: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    #[serde(default)]
+    pub token_endpoint_auth_method: Option<String>,
+}
+
+impl std::fmt::Debug for BeginPluginCloudOAuthAuthorizationRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BeginPluginCloudOAuthAuthorizationRequest")
+            .field("provider", &self.provider)
+            .field("scopes", &self.scopes)
+            .field("authorization_server", &self.authorization_server)
+            .field(
+                "client_id",
+                &self.client_id.as_ref().map(|_| "[configured]"),
+            )
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "token_endpoint_auth_method",
+                &self.token_endpoint_auth_method,
+            )
+            .finish()
+    }
+}
+
+impl Drop for BeginPluginCloudOAuthAuthorizationRequest {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+
+        if let Some(value) = self.client_secret.as_mut() {
+            value.zeroize();
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeginPluginCloudOAuthAuthorizationResponse {
+    pub flow_id: String,
+    pub authorization_url: String,
+    pub callback_origin: String,
+    pub expires_at: String,
+}
+
+impl std::fmt::Debug for BeginPluginCloudOAuthAuthorizationResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BeginPluginCloudOAuthAuthorizationResponse")
+            .field("flow_id", &self.flow_id)
+            .field("authorization_url", &"[redacted]")
+            .field("callback_origin", &self.callback_origin)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -687,6 +758,8 @@ pub struct ResolvePluginMcpCloudCredentialsRequest {
     pub permission_snapshot: Vec<String>,
     #[serde(default)]
     pub auth_connection_ids: Vec<String>,
+    #[serde(default)]
+    pub minimum_valid_until_unix: Option<i64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

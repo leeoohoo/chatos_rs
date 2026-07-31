@@ -287,6 +287,7 @@ pub(super) async fn upsert_plugin_cloud_oauth_connection(
         scopes,
         connected: true,
         needs_auth: false,
+        refreshable: false,
         expires_at,
         account_display,
         revision: Uuid::new_v4().to_string(),
@@ -300,7 +301,11 @@ pub(super) async fn upsert_plugin_cloud_oauth_connection(
         .store
         .replace_plugin_cloud_oauth_connection(&StoredPluginCloudOAuthConnection {
             connection: connection.clone(),
-            encrypted_access_token,
+            encrypted_access_token: Some(encrypted_access_token),
+            encrypted_refresh_token: None,
+            oauth_client: None,
+            refresh_lease_id: None,
+            refresh_lease_expires_at: None,
         })
         .await
         .map_err(ApiError::internal)?;
@@ -375,6 +380,15 @@ pub(super) async fn resolve_plugin_mcp_cloud_credentials_internal(
     request.owner_user_id = required_text(Some(request.owner_user_id.as_str()), "owner_user_id")?;
     request.permission_snapshot = normalize_string_list(request.permission_snapshot);
     request.auth_connection_ids = normalize_string_list(request.auth_connection_ids);
+    let now = Utc::now().timestamp();
+    if request
+        .minimum_valid_until_unix
+        .is_some_and(|expires_at| expires_at <= now || expires_at > now.saturating_add(3 * 60 * 60))
+    {
+        return Err(ApiError::bad_request(
+            "Plugin cloud credential minimum validity is outside the supported runtime window",
+        ));
+    }
     let release = state
         .store
         .get_plugin_release(release_id.as_str())
@@ -521,16 +535,25 @@ pub(super) async fn resolve_plugin_mcp_cloud_credentials_internal(
                         "Plugin OAuth resource requires exactly one authorized cloud connection",
                     ));
                 };
-                validate_connection_expiry(&record.connection)?;
+                let record = super::plugin_cloud_oauth::refresh_cloud_oauth_connection_if_needed(
+                    &state,
+                    record.clone(),
+                    request.minimum_valid_until_unix,
+                )
+                .await?;
                 require_oauth_permissions(
                     record.connection.provider.as_str(),
                     record.connection.scopes.as_slice(),
                     expected_permissions.as_slice(),
                 )?;
+                let encrypted_access_token =
+                    record.encrypted_access_token.as_deref().ok_or_else(|| {
+                        ApiError::conflict("Plugin OAuth access token is unavailable")
+                    })?;
                 let token = state
                     .cloud_secret_cipher
                     .decrypt(
-                        record.encrypted_access_token.as_str(),
+                        encrypted_access_token,
                         oauth_aad(&record.connection).as_str(),
                     )
                     .map_err(ApiError::internal)?;
@@ -571,7 +594,7 @@ pub(super) async fn resolve_plugin_mcp_cloud_credentials_internal(
     Ok(response)
 }
 
-async fn require_visible_cloud_mcp_release(
+pub(super) async fn require_visible_cloud_mcp_release(
     state: &AppState,
     user: &CurrentUser,
     plugin_id: &str,
@@ -601,7 +624,10 @@ async fn require_visible_cloud_mcp_release(
     Ok((release, bundle))
 }
 
-fn permissions_for_release(release: &PluginReleaseRecord, component_key: &str) -> Vec<String> {
+pub(super) fn permissions_for_release(
+    release: &PluginReleaseRecord,
+    component_key: &str,
+) -> Vec<String> {
     let mut permissions = release
         .permissions
         .iter()
@@ -693,7 +719,7 @@ fn require_credential_permission(
     }
 }
 
-fn require_oauth_permissions(
+pub(super) fn require_oauth_permissions(
     provider: &str,
     scopes: &[String],
     permissions: &[String],
@@ -709,7 +735,7 @@ fn require_oauth_permissions(
     Ok(())
 }
 
-fn normalize_scopes(values: Vec<String>) -> Result<Vec<String>, ApiError> {
+pub(super) fn normalize_scopes(values: Vec<String>) -> Result<Vec<String>, ApiError> {
     let mut scopes = BTreeSet::new();
     for value in values {
         let value = validate_text(value.as_str(), "scope", 256)?;
@@ -748,7 +774,11 @@ fn validate_scope_segment(value: &str, field: &str) -> Result<String, ApiError> 
     Ok(value)
 }
 
-fn validate_identifier(value: &str, field: &str, max_bytes: usize) -> Result<String, ApiError> {
+pub(super) fn validate_identifier(
+    value: &str,
+    field: &str,
+    max_bytes: usize,
+) -> Result<String, ApiError> {
     let value = validate_text(value, field, max_bytes)?.to_ascii_lowercase();
     if !value.bytes().all(|byte| {
         byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
@@ -798,21 +828,6 @@ fn validate_future_expiry(value: Option<&str>) -> Result<Option<String>, ApiErro
     Ok(Some(parsed.to_rfc3339()))
 }
 
-fn validate_connection_expiry(
-    connection: &PluginCloudOAuthConnectionRecord,
-) -> Result<(), ApiError> {
-    if let Some(expires_at) = connection.expires_at.as_deref() {
-        let expires_at = DateTime::parse_from_rfc3339(expires_at)
-            .map_err(|_| ApiError::conflict("Plugin OAuth expiry is invalid"))?;
-        if expires_at.timestamp() <= Utc::now().timestamp() {
-            return Err(ApiError::conflict(
-                "Plugin OAuth access token is expired and requires reauthorization",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn normalize_header_name(value: &str) -> Result<String, ApiError> {
     let normalized = value.trim().to_ascii_lowercase();
     reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
@@ -847,7 +862,7 @@ fn credential_aad(metadata: &PluginCloudCredentialMetadata) -> String {
     )
 }
 
-fn oauth_aad(connection: &PluginCloudOAuthConnectionRecord) -> String {
+pub(super) fn oauth_aad(connection: &PluginCloudOAuthConnectionRecord) -> String {
     format!(
         "chatos.plugin.cloud-oauth.v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         connection.id,

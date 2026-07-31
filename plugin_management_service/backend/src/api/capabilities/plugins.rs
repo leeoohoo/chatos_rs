@@ -182,11 +182,12 @@ pub(super) async fn resolve_plugin_binding(
                 .filter(|record| {
                     record.connection.connected
                         && !record.connection.needs_auth
-                        && record.connection.expires_at.as_deref().is_none_or(|value| {
-                            chrono::DateTime::parse_from_rfc3339(value).is_ok_and(|expiry| {
-                                expiry.timestamp() > chrono::Utc::now().timestamp()
-                            })
-                        })
+                        && (record.connection.refreshable
+                            || record.connection.expires_at.as_deref().is_none_or(|value| {
+                                chrono::DateTime::parse_from_rfc3339(value).is_ok_and(|expiry| {
+                                    expiry.timestamp() > chrono::Utc::now().timestamp()
+                                })
+                            }))
                 })
                 .map(|record| record.connection.id),
         );

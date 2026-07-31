@@ -13,7 +13,7 @@ use axum::routing::{get, patch, post};
 use axum::{Extension, Json, Router};
 use serde_json::json;
 use tower_http::cors::CorsLayer;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 use uuid::Uuid;
 
@@ -36,6 +36,7 @@ mod plugin_audit;
 mod plugin_catalog_sync;
 mod plugin_cloud_bundles;
 mod plugin_cloud_credentials;
+mod plugin_cloud_oauth;
 mod plugin_install_sources;
 mod plugin_installations;
 mod plugin_marketplaces;
@@ -92,6 +93,9 @@ use plugin_cloud_credentials::{
     list_plugin_cloud_credentials, list_plugin_cloud_oauth_connections,
     resolve_plugin_mcp_cloud_credentials_internal, upsert_plugin_cloud_credential,
     upsert_plugin_cloud_oauth_connection,
+};
+use plugin_cloud_oauth::{
+    begin_plugin_cloud_oauth_authorization, complete_plugin_cloud_oauth_authorization,
 };
 use plugin_install_sources::{
     get_plugin_install_source_internal, list_plugin_install_sources_internal,
@@ -308,6 +312,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::put(upsert_plugin_cloud_oauth_connection),
         )
         .route(
+            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-oauth/{component_key}/authorize",
+            post(begin_plugin_cloud_oauth_authorization),
+        )
+        .route(
             "/api/plugins/{plugin_id}/cloud-oauth/{connection_id}",
             axum::routing::delete(delete_plugin_cloud_oauth_connection),
         )
@@ -439,12 +447,22 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/auth/login", post(login_handler))
+        .route(
+            "/api/plugins/cloud-oauth/callback",
+            get(complete_plugin_cloud_oauth_authorization),
+        )
         .merge(internal_api)
         .merge(protected_api)
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+                .make_span_with(|request: &Request<axum::body::Body>| {
+                    tracing::debug_span!(
+                        "http_request",
+                        method = %request.method(),
+                        path = %request.uri().path(),
+                    )
+                })
                 .on_request(DefaultOnRequest::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )

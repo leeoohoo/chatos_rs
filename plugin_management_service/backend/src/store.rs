@@ -38,6 +38,7 @@ pub struct AppStore {
     plugin_cloud_component_bundles: Collection<PluginCloudComponentBundle>,
     plugin_cloud_credentials: Collection<StoredPluginCloudCredential>,
     plugin_cloud_oauth_connections: Collection<StoredPluginCloudOAuthConnection>,
+    plugin_cloud_oauth_authorizations: Collection<StoredPluginCloudOAuthAuthorizationSession>,
     plugin_oauth_connections: Collection<PluginOAuthConnectionRecord>,
     plugin_audit_logs: Collection<PluginAuditLogRecord>,
 }
@@ -68,6 +69,7 @@ impl AppStore {
             plugin_cloud_component_bundles: db.collection("plugin_cloud_component_bundles"),
             plugin_cloud_credentials: db.collection("plugin_cloud_credentials"),
             plugin_cloud_oauth_connections: db.collection("plugin_cloud_oauth_connections"),
+            plugin_cloud_oauth_authorizations: db.collection("plugin_cloud_oauth_authorizations"),
             plugin_oauth_connections: db.collection("plugin_oauth_connections"),
             plugin_audit_logs: db.collection("plugin_audit_logs"),
         }
