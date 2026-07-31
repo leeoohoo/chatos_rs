@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod cloud_sandbox;
+mod embedded;
 mod local_connector;
 mod project_service;
 
@@ -13,6 +14,7 @@ use serde_json::Value;
 use crate::runtime::RuntimeSessionSnapshot;
 
 use cloud_sandbox::CloudSandboxProvider;
+use embedded::EmbeddedProvider;
 use local_connector::LocalConnectorProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
@@ -22,6 +24,7 @@ pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     project_service: ProjectServiceProvider,
     cloud_sandbox: CloudSandboxProvider,
+    embedded: EmbeddedProvider,
 }
 
 impl ProviderDispatcher {
@@ -33,6 +36,7 @@ impl ProviderDispatcher {
         sandbox_manager_service_base_url: impl Into<String>,
         sandbox_manager_internal_secret: Option<String>,
         sandbox_manager_request_timeout: Duration,
+        embedded_work_dir: std::path::PathBuf,
         request_timeout: Duration,
         response_limit_bytes: usize,
     ) -> Result<Self, String> {
@@ -55,6 +59,7 @@ impl ProviderDispatcher {
                 sandbox_manager_internal_secret,
                 response_limit_bytes,
             )?,
+            embedded: EmbeddedProvider::new(embedded_work_dir, response_limit_bytes)?,
         })
     }
 
@@ -65,6 +70,7 @@ impl ProviderDispatcher {
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
+            McpProviderKind::Embedded => self.embedded.supports(route),
             _ => false,
         }
     }
@@ -116,6 +122,17 @@ impl ProviderDispatcher {
             }
             McpProviderKind::CloudSandbox if self.cloud_sandbox.supports(route) => {
                 self.cloud_sandbox
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::Embedded if self.embedded.supports(route) => {
+                self.embedded
                     .call_tool(
                         snapshot,
                         route,

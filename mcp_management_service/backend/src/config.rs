@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chatos_service_runtime::{
@@ -29,6 +29,7 @@ pub struct AppConfig {
     pub sandbox_manager_service_base_url: String,
     pub sandbox_manager_internal_api_secret: Option<String>,
     pub sandbox_manager_request_timeout: Duration,
+    pub embedded_work_dir: PathBuf,
     pub downstream_request_timeout: Duration,
     pub provider_response_limit_bytes: usize,
     pub public_base_url: String,
@@ -155,6 +156,9 @@ impl AppConfig {
             ),
             sandbox_manager_internal_api_secret,
             sandbox_manager_request_timeout,
+            embedded_work_dir: env_text("MCP_MANAGEMENT_EMBEDDED_WORK_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::temp_dir().join("chatos-mcp-management")),
             downstream_request_timeout,
             provider_response_limit_bytes,
             public_base_url,
@@ -209,6 +213,7 @@ impl AppConfig {
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),
             sandbox_manager_internal_api_secret: Some("a-long-sandbox-manager-secret".to_string()),
             sandbox_manager_request_timeout: Duration::from_secs(180),
+            embedded_work_dir: std::env::temp_dir().join("chatos-mcp-management-test"),
             downstream_request_timeout: Duration::from_secs(5),
             provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),
