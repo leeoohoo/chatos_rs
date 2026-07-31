@@ -4,6 +4,17 @@
 use super::*;
 
 #[test]
+fn agent_tool_plane_defaults_to_managed_and_serializes_stably() {
+    assert_eq!(AgentToolPlane::default(), AgentToolPlane::Managed);
+    assert!(AgentToolPlane::Managed.supports_tools());
+    assert!(!AgentToolPlane::None.supports_tools());
+    assert_eq!(
+        serde_json::to_value(AgentToolPlane::None).expect("tool plane JSON"),
+        serde_json::json!("none")
+    );
+}
+
+#[test]
 fn system_agent_keys_match_registry_keys() {
     assert_eq!(SystemAgentKey::ALL.len(), 14);
     assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 56);

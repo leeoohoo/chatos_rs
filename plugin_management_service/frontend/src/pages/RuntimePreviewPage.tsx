@@ -177,10 +177,12 @@ export function RuntimePreviewPage({ user }: RuntimePreviewPageProps) {
               <Select
                 showSearch
                 optionFilterProp="label"
-                options={(agentsQuery.data || []).map((agent) => ({
-                  value: agent.agent_key,
-                  label: `${agentDisplayName(agent, t)} (${agent.agent_key})`,
-                }))}
+                options={(agentsQuery.data || [])
+                  .filter((agent) => agent.tool_plane === 'managed')
+                  .map((agent) => ({
+                    value: agent.agent_key,
+                    label: `${agentDisplayName(agent, t)} (${agent.agent_key})`,
+                  }))}
               />
             </Form.Item>
             <Form.Item name="owner_user_id" label={t('field.ownerUserId')}>

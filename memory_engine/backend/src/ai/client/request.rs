@@ -68,22 +68,15 @@ async fn request_chat_completions(
     effective_temperature: f64,
 ) -> Result<String, String> {
     let endpoint = build_chat_completions_endpoint(client.base_url.as_str());
-    let mut body = json!({
-        "model": client.model,
-        "temperature": effective_temperature,
-        "stream": true,
-        "messages": build_chat_messages(
-            system_prompt,
-            user_prompt,
-            base_url_disallows_system_messages(client.base_url.as_str()),
-        )
-    });
-    if let Some(requested_max_tokens) = requested_max_tokens {
-        body["max_tokens"] = json!(requested_max_tokens);
-    }
-    if client.disable_thinking {
-        body["thinking"] = json!({ "type": "disabled" });
-    }
+    let body = build_chat_completions_body(
+        client.model.as_str(),
+        system_prompt,
+        user_prompt,
+        requested_max_tokens,
+        effective_temperature,
+        base_url_disallows_system_messages(client.base_url.as_str()),
+        client.disable_thinking,
+    );
 
     send_stream_request(
         client,
@@ -104,6 +97,64 @@ async fn request_responses(
     effective_temperature: f64,
 ) -> Result<String, String> {
     let no_system_messages = base_url_disallows_system_messages(client.base_url.as_str());
+    let input_as_list = base_url_requires_responses_input_list(client.base_url.as_str());
+    let endpoint = build_responses_endpoint(client.base_url.as_str());
+    let body = build_responses_body(
+        client.model.as_str(),
+        system_prompt,
+        user_prompt,
+        requested_max_tokens,
+        effective_temperature,
+        no_system_messages,
+        input_as_list,
+        client.disable_thinking,
+    );
+
+    send_stream_request(
+        client,
+        api_key,
+        endpoint.as_str(),
+        &body,
+        StreamResponseKind::Responses,
+    )
+    .await
+}
+
+fn build_chat_completions_body(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    requested_max_tokens: Option<i64>,
+    effective_temperature: f64,
+    no_system_messages: bool,
+    disable_thinking: bool,
+) -> Value {
+    let mut body = json!({
+        "model": model,
+        "temperature": effective_temperature,
+        "stream": true,
+        "messages": build_chat_messages(system_prompt, user_prompt, no_system_messages),
+    });
+    if let Some(requested_max_tokens) = requested_max_tokens {
+        body["max_tokens"] = json!(requested_max_tokens);
+    }
+    if disable_thinking {
+        body["thinking"] = json!({ "type": "disabled" });
+    }
+    body
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_responses_body(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    requested_max_tokens: Option<i64>,
+    effective_temperature: f64,
+    no_system_messages: bool,
+    input_as_list: bool,
+    disable_thinking: bool,
+) -> Value {
     let wrapped_user_prompt = if no_system_messages && !system_prompt.trim().is_empty() {
         format!(
             "【系统上下文】\n{}\n\n{}",
@@ -113,10 +164,8 @@ async fn request_responses(
     } else {
         user_prompt.to_string()
     };
-    let input_as_list = base_url_requires_responses_input_list(client.base_url.as_str());
-    let endpoint = build_responses_endpoint(client.base_url.as_str());
     let mut body = json!({
-        "model": client.model,
+        "model": model,
         "temperature": effective_temperature,
         "stream": true,
         "input": build_responses_input(wrapped_user_prompt.as_str(), input_as_list),
@@ -127,18 +176,10 @@ async fn request_responses(
     if !no_system_messages && !system_prompt.trim().is_empty() {
         body["instructions"] = Value::String(system_prompt.to_string());
     }
-    if client.disable_thinking {
+    if disable_thinking {
         body["thinking"] = json!({ "type": "disabled" });
     }
-
-    send_stream_request(
-        client,
-        api_key,
-        endpoint.as_str(),
-        &body,
-        StreamResponseKind::Responses,
-    )
-    .await
+    body
 }
 
 async fn send_stream_request(
@@ -217,10 +258,7 @@ async fn read_streamed_text_response(
         let bytes = next_chunk.map_err(|err| format!("ai stream read failed: {err}"))?;
         buffer.extend_from_slice(&bytes);
 
-        loop {
-            let Some((index, delimiter_len)) = find_sse_event_delimiter(buffer.as_slice()) else {
-                break;
-            };
+        while let Some((index, delimiter_len)) = find_sse_event_delimiter(buffer.as_slice()) {
             let raw_event = decode_sse_event_bytes(buffer[..index].to_vec())?;
             buffer.drain(..index + delimiter_len);
             if process_sse_event(
@@ -278,6 +316,9 @@ fn find_sse_event_delimiter(buffer: &[u8]) -> Option<(usize, usize)> {
 fn bytes_trimmed_empty(buffer: &[u8]) -> bool {
     buffer.iter().all(|byte| byte.is_ascii_whitespace())
 }
+
+#[cfg(test)]
+mod tests;
 
 fn process_sse_event(
     raw_event: &str,
@@ -353,61 +394,4 @@ fn is_terminal_stream_event(value: &Value) -> bool {
         value.get("type").and_then(Value::as_str),
         Some("response.completed") | Some("response.failed")
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn byte_buffer_preserves_multibyte_text_split_across_chunks() {
-        let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你好世界\"}\n\n";
-        let bytes = event.as_bytes();
-        let split_inside_multibyte_char = event.find('好').expect("test fixture has char") + 1;
-
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(&bytes[..split_inside_multibyte_char]);
-        assert!(find_sse_event_delimiter(buffer.as_slice()).is_none());
-
-        buffer.extend_from_slice(&bytes[split_inside_multibyte_char..]);
-        let (index, delimiter_len) =
-            find_sse_event_delimiter(buffer.as_slice()).expect("complete event delimiter");
-        let raw_event = decode_sse_event_bytes(buffer[..index].to_vec()).expect("valid utf-8");
-        buffer.drain(..index + delimiter_len);
-
-        let mut output = String::new();
-        let mut saw_stream_text = false;
-        let terminal = process_sse_event(
-            raw_event.as_str(),
-            StreamResponseKind::Responses,
-            &mut output,
-            &mut saw_stream_text,
-        )
-        .expect("valid sse event");
-
-        assert!(!terminal);
-        assert_eq!(output, "你好世界");
-        assert!(buffer.is_empty());
-    }
-
-    #[test]
-    fn byte_buffer_accepts_crlf_event_delimiter() {
-        let event = b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\r\n\r\n";
-        let (index, delimiter_len) =
-            find_sse_event_delimiter(event.as_slice()).expect("crlf delimiter");
-        let raw_event = decode_sse_event_bytes(event[..index].to_vec()).expect("valid utf-8");
-
-        let mut output = String::new();
-        let mut saw_stream_text = false;
-        process_sse_event(
-            raw_event.as_str(),
-            StreamResponseKind::ChatCompletions,
-            &mut output,
-            &mut saw_stream_text,
-        )
-        .expect("valid sse event");
-
-        assert_eq!(delimiter_len, 4);
-        assert_eq!(output, "hello");
-    }
 }

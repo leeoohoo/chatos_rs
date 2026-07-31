@@ -200,7 +200,7 @@ fn provider_skills_for_builtin_mcp(kind: BuiltinMcpKind) -> Value {
 }
 
 async fn seed_agents(store: &AppStore) -> Result<(), String> {
-    for (agent_key, display_name, service_name, description, include_user_resources) in
+    for (agent_key, display_name, service_name, description, include_user_resources, tool_plane) in
         system_agent_specs()
     {
         if let Some(mut existing) = store.get_agent(agent_key).await? {
@@ -229,6 +229,10 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
                 existing.include_user_resources = include_user_resources;
                 changed = true;
             }
+            if existing.tool_plane != tool_plane {
+                existing.tool_plane = tool_plane;
+                changed = true;
+            }
             if changed {
                 existing.updated_at = now_rfc3339();
                 store.replace_agent(&existing).await?;
@@ -246,6 +250,7 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
             enabled: true,
             managed_by: "system".to_string(),
             include_user_resources,
+            tool_plane,
             plugin_component: PluginComponentOwnership::default(),
             created_at: now.clone(),
             updated_at: now,
@@ -255,7 +260,14 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
     Ok(())
 }
 
-fn system_agent_specs() -> Vec<(&'static str, &'static str, &'static str, &'static str, bool)> {
+fn system_agent_specs() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    bool,
+    AgentToolPlane,
+)> {
     chatos_agent::system_agent_catalog()
         .iter()
         .map(|descriptor| {
@@ -265,12 +277,21 @@ fn system_agent_specs() -> Vec<(&'static str, &'static str, &'static str, &'stat
                 descriptor.service_name,
                 descriptor.description,
                 descriptor.include_user_resources,
+                descriptor.tool_plane,
             )
         })
         .collect()
 }
 
 async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
+    for descriptor in chatos_agent::system_agent_catalog()
+        .iter()
+        .filter(|descriptor| descriptor.tool_plane == AgentToolPlane::None)
+    {
+        store
+            .delete_bindings_for_agent(descriptor.key.as_str())
+            .await?;
+    }
     for agent_key in ["chatos_conversation_agent", "chatos_planning_agent"] {
         seed_agent_mcp_binding(
             store,

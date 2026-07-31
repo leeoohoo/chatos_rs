@@ -25,6 +25,27 @@ pub const TASK_PROCESS_LOG_MCP_RESOURCE_ID: &str = "system_mcp_task_process_log"
 pub const SYSTEM_MCP_RUNTIME_KIND: &str = "system";
 pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentToolPlane {
+    #[default]
+    Managed,
+    None,
+}
+
+impl AgentToolPlane {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Managed => "managed",
+            Self::None => "none",
+        }
+    }
+
+    pub const fn supports_tools(self) -> bool {
+        matches!(self, Self::Managed)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemMcpKey {

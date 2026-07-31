@@ -3,6 +3,24 @@
 
 use super::*;
 
+fn agent(tool_plane: AgentToolPlane) -> SystemAgentRecord {
+    SystemAgentRecord {
+        id: "system_agent_test".to_string(),
+        agent_key: "test_agent".to_string(),
+        display_name: "Test Agent".to_string(),
+        service_name: "test-service".to_string(),
+        scope: "system_internal".to_string(),
+        description: None,
+        enabled: true,
+        managed_by: "system".to_string(),
+        include_user_resources: false,
+        tool_plane,
+        plugin_component: PluginComponentOwnership::default(),
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+    }
+}
+
 fn mcp(id: &str, visibility: &str) -> McpRecord {
     McpRecord {
         id: id.to_string(),
@@ -74,4 +92,16 @@ fn mcp_binding_sorting_keeps_bound_items_ahead_of_unbound_items() {
     );
 
     assert!(mcp_binding_sort_rank(&bound) < mcp_binding_sort_rank(&unbound));
+}
+
+#[test]
+fn agents_without_a_tool_plane_cannot_receive_runtime_bindings() {
+    let error = ensure_managed_tool_plane(&agent(AgentToolPlane::None))
+        .expect_err("tool-plane none must fail closed");
+
+    assert_eq!(error.status, StatusCode::CONFLICT);
+    assert!(error
+        .message
+        .contains("does not expose an Agent Tool Plane"));
+    assert!(ensure_managed_tool_plane(&agent(AgentToolPlane::Managed)).is_ok());
 }

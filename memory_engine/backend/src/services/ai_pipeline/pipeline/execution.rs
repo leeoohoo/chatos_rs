@@ -136,7 +136,7 @@ async fn merge_chunk_summaries(
 
         for (group_index, group) in groups.into_iter().enumerate() {
             if group.len() <= 1 {
-                next.extend(group.into_iter());
+                next.extend(group);
                 continue;
             }
 

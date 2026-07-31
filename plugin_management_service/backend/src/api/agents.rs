@@ -47,6 +47,7 @@ pub(super) async fn create_system_agent(
         enabled: payload.enabled.unwrap_or(true),
         managed_by: payload.managed_by.unwrap_or_else(|| "admin".to_string()),
         include_user_resources: false,
+        tool_plane: AgentToolPlane::Managed,
         plugin_component: PluginComponentOwnership::default(),
         created_at: now.clone(),
         updated_at: now,
@@ -115,12 +116,13 @@ pub(super) async fn update_agent_mcp_bindings(
     Json(payload): Json<UpdateAgentMcpBindingsRequest>,
 ) -> Result<Json<AgentMcpBindingsResponse>, ApiError> {
     ensure_super_admin(&user)?;
-    state
+    let agent = state
         .store
         .get_agent(agent_key.as_str())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    ensure_managed_tool_plane(&agent)?;
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
     for selection in payload.bindings {
@@ -200,12 +202,13 @@ pub(super) async fn update_agent_plugin_bindings(
     Json(payload): Json<UpdateAgentPluginBindingsRequest>,
 ) -> Result<Json<AgentPluginBindingsResponse>, ApiError> {
     ensure_super_admin(&user)?;
-    state
+    let agent = state
         .store
         .get_agent(agent_key.as_str())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    ensure_managed_tool_plane(&agent)?;
 
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
@@ -293,6 +296,7 @@ async fn build_agent_plugin_bindings_response(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    ensure_managed_tool_plane(&agent)?;
     let plugins = state
         .store
         .list_plugin_catalog(
@@ -368,6 +372,7 @@ pub(super) async fn build_agent_mcp_bindings_response(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    ensure_managed_tool_plane(&agent)?;
     let mcps = state
         .store
         .list_all_mcps_for_admin_catalog()
@@ -436,6 +441,16 @@ fn mcp_binding_sort_rank(item: &AgentMcpBindingView) -> (u8, u8) {
         _ => 2,
     };
     (bound_rank, visibility_rank)
+}
+
+pub(super) fn ensure_managed_tool_plane(agent: &SystemAgentRecord) -> Result<(), ApiError> {
+    if agent.tool_plane.supports_tools() {
+        return Ok(());
+    }
+    Err(ApiError::conflict(format!(
+        "System agent {} does not expose an Agent Tool Plane",
+        agent.agent_key
+    )))
 }
 
 #[cfg(test)]

@@ -105,6 +105,8 @@ impl SystemAgentDefinition for MemoryEngineAgent {
 
 #[cfg(test)]
 mod tests {
+    use chatos_plugin_management_sdk::AgentToolPlane;
+
     use super::*;
 
     #[test]
@@ -142,5 +144,8 @@ mod tests {
         assert!(agents
             .iter()
             .all(|agent| agent.message_source() == "memory_engine"));
+        assert!(agents
+            .iter()
+            .all(|agent| agent.descriptor().tool_plane == AgentToolPlane::None));
     }
 }

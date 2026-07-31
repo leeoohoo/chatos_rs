@@ -108,6 +108,16 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       },
       { title: t('table.service'), dataIndex: 'service_name', width: 190 },
       {
+        title: t('agent.toolPlane'),
+        dataIndex: 'tool_plane',
+        width: 125,
+        render: (toolPlane: SystemAgentRecord['tool_plane']) => (
+          <Tag color={toolPlane === 'managed' ? 'blue' : 'default'}>
+            {t(`agent.toolPlane.${toolPlane}`)}
+          </Tag>
+        ),
+      },
+      {
         title: t('table.status'),
         dataIndex: 'enabled',
         width: 110,
@@ -143,6 +153,8 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
           <Space>
             <Button
               icon={<SettingOutlined />}
+              disabled={record.tool_plane === 'none'}
+              title={record.tool_plane === 'none' ? t('agent.toolPlaneNoneNotice') : undefined}
               onClick={() => {
                 setSelectedAgentKey(record.agent_key);
                 setSearch('');

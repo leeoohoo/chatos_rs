@@ -10,7 +10,7 @@ mod plugins;
 pub use plugins::*;
 
 pub use chatos_plugin_management_sdk::{
-    AgentBindingRecord, BeginPluginCloudOAuthAuthorizationRequest,
+    AgentBindingRecord, AgentToolPlane, BeginPluginCloudOAuthAuthorizationRequest,
     BeginPluginCloudOAuthAuthorizationResponse, BindingConditions,
     LocalConnectorMcpStatusBatchRequest as LocalConnectorMcpStatusBatchPayload,
     LocalConnectorMcpStatusItem, LocalConnectorMcpStatusRequest as LocalConnectorMcpStatusPayload,
@@ -175,6 +175,8 @@ pub struct SystemAgentRecord {
     pub managed_by: String,
     #[serde(default)]
     pub include_user_resources: bool,
+    #[serde(default)]
+    pub tool_plane: AgentToolPlane,
     #[serde(flatten, default)]
     pub plugin_component: PluginComponentOwnership,
     pub created_at: String,

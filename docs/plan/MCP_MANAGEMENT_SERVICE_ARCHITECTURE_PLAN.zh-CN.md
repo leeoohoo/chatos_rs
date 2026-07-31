@@ -982,7 +982,9 @@ Notepad 已从不可执行的 Embedded 占位路由迁移为固定 `InternalServ
 
 Agent Builder 已补齐同一 ChatOS Internal Service Provider。调用只允许 ChatOS 三类运行 Agent，并要求 source session 与 Runtime Session 的 owner、Project 和 active 状态一致；创建 Agent 时 Store 强制写入绑定 owner，工具 Schema 不再暴露 `user_id`，更新 Agent 时入口与 Store 都验证目标 Agent owner，跨用户更新直接拒绝。该 MCP 保持按 Plugin Management 显式配置，不自动加入 Task Runner 默认工具集。
 
-Task Runner、ChatOS 与 Project Environment Agent 调用方均已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Project Environment Agent 的更新工具通过 Project Service 专用内部 MCP 端点执行，端点再次校验 Runtime Session 冻结的 owner、Agent、Project、run 和 session 身份；本次选择的依赖也绑定到持久化分析 run，网关执行不会丢失旧链路的服务规划校验。该 Agent 只能通过中央工具策略使用 Sandbox Images 的 `get_image_catalog` 与 `search_images`，模型不能直接调用 `create_image`，镜像创建仍由后续服务工作流负责。Gateway Session 在 Agent 完成或失败后显式关闭。部署默认仍保持 `shadow`；Memory Agent 调用方迁移和旧直连清理尚未开始。
+Task Runner、ChatOS 与 Project Environment Agent 调用方均已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Project Environment Agent 的更新工具通过 Project Service 专用内部 MCP 端点执行，端点再次校验 Runtime Session 冻结的 owner、Agent、Project、run 和 session 身份；本次选择的依赖也绑定到持久化分析 run，网关执行不会丢失旧链路的服务规划校验。该 Agent 只能通过中央工具策略使用 Sandbox Images 的 `get_image_catalog` 与 `search_images`，模型不能直接调用 `create_image`，镜像创建仍由后续服务工作流负责。Gateway Session 在 Agent 完成或失败后显式关闭。部署默认仍保持 `shadow`。
+
+Memory Engine 的五类 Agent 已完成调用链审计：summary、rollup、subject memory、memory rollup 和 thread repair 都只执行受管 Prompt 加纯文本模型生成，请求合同不包含 `tools`、`tool_choice`、functions 或 MCP executor，也没有隐藏的内部工具 Provider。因此它们不是尚未迁移的工具 Agent，而是明确的 `tool_plane=none` 纯生成流水线；不创建无意义的 MCP Runtime Session，也不增加 `off/shadow/gateway` 开关。共享 Agent Catalog、Plugin Management 记录和管理界面均暴露该状态，MCP/Plugin binding 写入与 Runtime capabilities resolve 会 fail closed，避免配置出“界面显示已绑定、运行时永远不会调用”的假工具能力。Memory Engine 普通数据存取、任务调度和模型请求继续使用现有 REST、数据库与 AI Provider 链路，因为它们不属于 Agent Tool Plane。
 
 ### Phase 5：External 与 Plugin Runtime
 
@@ -1016,6 +1018,8 @@ Session 创建失败时已 prepare 的普通/Plugin Cloud stdio、Plugin Local M
 - `gateway`：模型只看到 MCP Management 聚合 endpoint；Session 解析或调用失败直接失败，不静默回退。
 
 只有 Agent Tool Plane 使用该 endpoint；调用方的普通 REST、事件、队列和内部 SDK 链路不受此迁移影响。
+
+Memory Engine 五类 Agent 的 Phase 6 结论是“无需迁移”，不是保留旧直连工具链。它们在共享 Catalog 中固定为 `tool_plane=none`，网络请求测试固定验证只发送文本生成字段。未来若要让其中某个 Agent 调用工具，必须先把它改造成真实工具循环、将 Catalog 契约切换为 `managed`，并只接入 MCP Management 聚合 endpoint；不能在 Memory Engine 内新增直接 MCP 或内部微服务工具调用。
 
 ### Phase 7：删除重复路由
 

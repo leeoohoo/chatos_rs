@@ -144,7 +144,7 @@ fn legacy_chatos_plan_key_is_replaced_by_the_explicit_planning_role() {
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
     assert!(system_agent_specs()
         .iter()
-        .any(|(agent_key, _, _, _, _)| *agent_key == "chatos_planning_agent"));
+        .any(|(agent_key, _, _, _, _, _)| *agent_key == "chatos_planning_agent"));
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn all_chatos_runtime_agents_receive_the_cloud_notepad_binding() {
 fn system_agent_registry_contains_all_runtime_roles() {
     let keys = system_agent_specs()
         .into_iter()
-        .map(|(agent_key, _, _, _, _)| agent_key)
+        .map(|(agent_key, _, _, _, _, _)| agent_key)
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -178,6 +178,26 @@ fn system_agent_registry_contains_all_runtime_roles() {
             "task_runner_local_run_phase",
             "project_management_agent",
             "local_connector_command_approval_agent",
+            "memory_engine_summary_agent",
+            "memory_engine_rollup_agent",
+            "memory_engine_subject_memory_agent",
+            "memory_engine_memory_rollup_agent",
+            "memory_engine_thread_repair_agent",
+        ]
+    );
+}
+
+#[test]
+fn memory_generation_agents_are_registered_without_a_tool_plane() {
+    let no_tool_plane = system_agent_specs()
+        .into_iter()
+        .filter(|(_, _, _, _, _, tool_plane)| *tool_plane == AgentToolPlane::None)
+        .map(|(agent_key, _, _, _, _, _)| agent_key)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        no_tool_plane,
+        vec![
             "memory_engine_summary_agent",
             "memory_engine_rollup_agent",
             "memory_engine_subject_memory_agent",
