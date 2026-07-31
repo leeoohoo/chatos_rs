@@ -12,17 +12,17 @@ use serde_json::{json, Value};
 use crate::auth::SandboxAuthContext;
 use crate::error::ApiError;
 use crate::models::{
-    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCloseRequest,
-    CloudStdioMcpCloseResponse, CreateSandboxAccessClientRequest,
-    CreateSandboxAccessClientResponse, CreateSandboxEnvironmentLeaseRequest,
-    CreateSandboxLeaseRequest, CreateSandboxLeaseResponse, DeleteSandboxAccessClientResponse,
-    DestroySandboxResponse, HeartbeatRequest, HeartbeatResponse, InitializeSandboxImageRequest,
-    ListSandboxQuery, PoolStatusResponse, PrepareSandboxDependencyImagesRequest,
-    PrepareSandboxDependencyImagesResponse, ReleaseSandboxRequest, ReleaseSandboxResponse,
-    RotateSandboxAccessClientKeyResponse, SandboxAccessClientResponse,
-    SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
-    SandboxEnvironmentStopRequest, SandboxEventRecord, SandboxHealthResponse,
-    SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
+    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCancelRequest,
+    CloudStdioMcpCancelResponse, CloudStdioMcpCloseRequest, CloudStdioMcpCloseResponse,
+    CreateSandboxAccessClientRequest, CreateSandboxAccessClientResponse,
+    CreateSandboxEnvironmentLeaseRequest, CreateSandboxLeaseRequest, CreateSandboxLeaseResponse,
+    DeleteSandboxAccessClientResponse, DestroySandboxResponse, HeartbeatRequest, HeartbeatResponse,
+    InitializeSandboxImageRequest, ListSandboxQuery, PoolStatusResponse,
+    PrepareSandboxDependencyImagesRequest, PrepareSandboxDependencyImagesResponse,
+    ReleaseSandboxRequest, ReleaseSandboxResponse, RotateSandboxAccessClientKeyResponse,
+    SandboxAccessClientResponse, SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse,
+    SandboxEnvironmentLeaseResponse, SandboxEnvironmentStopRequest, SandboxEventRecord,
+    SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
     StartSandboxEnvironmentRequest, SystemConfigResponse, UpdatePoolConfigRequest,
     UpdateSandboxAccessClientRequest,
 };
@@ -351,6 +351,28 @@ pub async fn sandbox_environment_cloud_stdio_mcp_call(
     ))
 }
 
+pub async fn sandbox_environment_cloud_stdio_mcp_cancel(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCancelRequest>,
+) -> Result<Json<CloudStdioMcpCancelResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .environment_cloud_stdio_mcp_cancel(
+                &auth,
+                environment_id.as_str(),
+                header_text(&headers, "x-chatos-service-id").as_deref(),
+                binding.as_ref(),
+                input,
+            )
+            .await?,
+    ))
+}
+
 pub async fn sandbox_environment_cloud_stdio_mcp_close(
     Path(environment_id): Path<String>,
     State(state): State<AppState>,
@@ -441,6 +463,22 @@ pub async fn sandbox_cloud_stdio_mcp_call(
         state
             .manager
             .cloud_stdio_mcp_call(&auth, sandbox_id.as_str(), binding.as_ref(), input)
+            .await?,
+    ))
+}
+
+pub async fn sandbox_cloud_stdio_mcp_cancel(
+    Path(sandbox_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCancelRequest>,
+) -> Result<Json<CloudStdioMcpCancelResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .cloud_stdio_mcp_cancel(&auth, sandbox_id.as_str(), binding.as_ref(), input)
             .await?,
     ))
 }

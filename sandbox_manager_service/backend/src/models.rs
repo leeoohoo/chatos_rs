@@ -248,6 +248,8 @@ pub struct SandboxEnvironmentExecResponse {
 pub struct CloudStdioMcpCallRequest {
     pub runtime_session_id: String,
     pub resource_id: String,
+    #[serde(default)]
+    pub invocation_id: Option<String>,
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -273,6 +275,13 @@ pub struct CloudStdioMcpCloseRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCancelRequest {
+    pub runtime_session_id: String,
+    pub resource_id: String,
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CloudStdioMcpCallResponse {
     pub result: serde_json::Value,
 }
@@ -280,6 +289,11 @@ pub struct CloudStdioMcpCallResponse {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CloudStdioMcpCloseResponse {
     pub closed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCancelResponse {
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

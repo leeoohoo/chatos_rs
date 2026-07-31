@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use super::artifact_store::{PluginArtifactProducer, PluginArtifactStore, PluginUiArtifactGrant};
 use super::hook_loader::PluginHookWorkspaceWriteDecision;
-use super::mcp_adapter::{PluginMcpAdapter, PreparedPluginMcp};
+use super::mcp_adapter::{PluginMcpAdapter, PluginMcpInvocationCancelOutcome, PreparedPluginMcp};
 use super::protocol::*;
 use super::telemetry::{
     sanitize_error, PluginRuntimeTelemetryIdentity, PluginRuntimeTelemetryPhase,
@@ -373,6 +373,35 @@ impl PluginRuntimeHost {
         let adapter_session_id = required_body_text(&request.body, "adapter_session_id")?;
         let expected = ExactSessionIdentity::from_request(request)?;
         self.prune_expired_sessions();
+        if let Some(invocation_id) = request
+            .body
+            .get("invocation_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let session = self.load_exact_session(request, adapter_session_id.as_str())?;
+            let mcp = session.mcp.as_ref().ok_or_else(|| {
+                (
+                    409,
+                    "Plugin adapter session has no prepared MCP runtime".to_string(),
+                )
+            })?;
+            let outcome = mcp
+                .cancel_invocation(invocation_id)
+                .map_err(|error| (400, error.to_string()))?;
+            let status = match outcome {
+                PluginMcpInvocationCancelOutcome::Cancelled => "cancelled",
+                PluginMcpInvocationCancelOutcome::CancelRequested => "cancel_requested",
+                PluginMcpInvocationCancelOutcome::InvocationNotFound => "invocation_not_found",
+            };
+            return Ok(json!({
+                "run_id": session.run_id,
+                "adapter_session_id": adapter_session_id,
+                "invocation_id": invocation_id,
+                "status": status,
+            }));
+        }
         let removed = {
             let mut sessions = self.sessions()?;
             let Some(session) = sessions.get(adapter_session_id.as_str()) else {

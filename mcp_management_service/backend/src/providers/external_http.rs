@@ -425,6 +425,16 @@ impl ExternalHttpProvider {
                 "External HTTP MCP route does not match its runtime binding",
             ));
         }
+        self.cancel_bound_invocation(binding, invocation_id, "External HTTP MCP")
+            .await
+    }
+
+    pub(super) async fn cancel_bound_invocation(
+        &self,
+        binding: &ExternalHttpProviderBinding,
+        invocation_id: &str,
+        provider_label: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
         let response = binding
             .http
             .post(binding.endpoint.clone())
@@ -442,19 +452,19 @@ impl ExternalHttpProvider {
             .send()
             .await
             .map_err(|_| {
-                ProviderCallError::provider_unavailable(
-                    "External HTTP MCP cancellation request failed",
-                )
+                ProviderCallError::provider_unavailable(format!(
+                    "{provider_label} cancellation request failed"
+                ))
             })?;
         let status = response.status();
         let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
             .await
             .map_err(|error| {
                 ProviderCallError::invalid_response(format!(
-                    "External HTTP MCP cancellation response could not be read: {error}"
+                    "{provider_label} cancellation response could not be read: {error}"
                 ))
             })?;
-        decode_cancel_notification_response(status, bytes.as_slice(), "External HTTP MCP")
+        decode_cancel_notification_response(status, bytes.as_slice(), provider_label)
     }
 }
 
@@ -941,6 +951,59 @@ mod tests {
                 .and_then(Value::as_str),
             Some("ok")
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn bound_http_cancellation_forwards_the_exact_invocation_id_and_headers() {
+        async fn handler(headers: AxumHeaderMap, Json(request): Json<Value>) -> Json<Value> {
+            assert_eq!(
+                headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok()),
+                Some("Bearer plugin-secret")
+            );
+            assert_eq!(
+                request.get("method").and_then(Value::as_str),
+                Some(METHOD_NOTIFICATIONS_CANCELLED)
+            );
+            assert_eq!(
+                request.pointer("/params/requestId").and_then(Value::as_str),
+                Some("invocation-plugin-http")
+            );
+            Json(json!({"result": {"status": "cancelled"}}))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/mcp", post(handler)))
+                .await
+                .unwrap();
+        });
+        let binding = ExternalHttpProviderBinding {
+            provider_ref: "plugin-binding:test".to_string(),
+            endpoint: reqwest::Url::parse(format!("http://{address}/mcp").as_str()).unwrap(),
+            headers: configured_headers(&std::collections::BTreeMap::from([(
+                "authorization".to_string(),
+                "Bearer plugin-secret".to_string(),
+            )]))
+            .unwrap(),
+            http: reqwest::Client::builder()
+                .redirect(Policy::none())
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+            resolved_addresses: vec![address],
+            allow_writes: true,
+            allowed_tool_names: HashSet::new(),
+            blocked_tool_names: HashSet::new(),
+        };
+        let outcome = ExternalHttpProvider::new(Duration::from_secs(5), 64 * 1024)
+            .cancel_bound_invocation(&binding, "invocation-plugin-http", "Plugin Cloud HTTP MCP")
+            .await
+            .unwrap();
+        assert_eq!(outcome, ProviderCancelOutcome::Cancelled);
         server.abort();
     }
 }

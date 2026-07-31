@@ -82,6 +82,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::sandbox_environment_cloud_stdio_mcp_call),
         )
         .route(
+            "/api/sandbox-environments/{environment_id}/cloud-stdio-mcp/cancel",
+            post(handlers::sandbox_environment_cloud_stdio_mcp_cancel),
+        )
+        .route(
             "/api/sandbox-environments/{environment_id}/cloud-stdio-mcp/close",
             post(handlers::sandbox_environment_cloud_stdio_mcp_close),
         )
@@ -105,6 +109,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/call",
             post(handlers::sandbox_cloud_stdio_mcp_call),
+        )
+        .route(
+            "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/cancel",
+            post(handlers::sandbox_cloud_stdio_mcp_cancel),
         )
         .route(
             "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/close",

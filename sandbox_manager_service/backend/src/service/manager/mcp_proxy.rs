@@ -18,8 +18,9 @@ use serde_json::Value;
 use crate::auth::{SandboxAuthContext, SCOPE_MCP_CALL, SCOPE_MCP_TOOLS};
 use crate::error::ApiError;
 use crate::models::{
-    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCloseRequest,
-    CloudStdioMcpCloseResponse, SandboxLeaseRecord,
+    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCancelRequest,
+    CloudStdioMcpCancelResponse, CloudStdioMcpCloseRequest, CloudStdioMcpCloseResponse,
+    SandboxLeaseRecord,
 };
 
 use super::SandboxManager;
@@ -91,6 +92,26 @@ impl SandboxManager {
             agent_endpoint.as_str(),
             agent_token.as_str(),
             "/internal/cloud-stdio-mcp/close",
+            &input,
+        )
+        .await
+    }
+
+    pub async fn cloud_stdio_mcp_cancel(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+        binding: Option<&SandboxMcpRuntimeBinding>,
+        input: CloudStdioMcpCancelRequest,
+    ) -> Result<CloudStdioMcpCancelResponse, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        validate_cloud_stdio_runtime_binding(auth, &record, binding)?;
+        let agent_endpoint = self.agent_endpoint_for(&record).await?;
+        let agent_token = self.agent_token_for_record(&record);
+        cloud_stdio_agent_proxy(
+            agent_endpoint.as_str(),
+            agent_token.as_str(),
+            "/internal/cloud-stdio-mcp/cancel",
             &input,
         )
         .await

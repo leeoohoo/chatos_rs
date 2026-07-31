@@ -180,6 +180,7 @@ async fn build_app(config: ServerConfig) -> Result<Router, String> {
         .route("/health", get(health))
         .route("/mcp", post(mcp_entrypoint))
         .route("/internal/cloud-stdio-mcp/call", post(cloud_stdio_call))
+        .route("/internal/cloud-stdio-mcp/cancel", post(cloud_stdio_cancel))
         .route("/internal/cloud-stdio-mcp/close", post(cloud_stdio_close))
         .with_state(state))
 }
@@ -417,6 +418,21 @@ async fn cloud_stdio_close(
     state
         .cloud_stdio
         .close(request)
+        .await
+        .map(Json)
+        .map_err(|message| (StatusCode::BAD_REQUEST, Json(json!({"error": message}))))
+}
+
+async fn cloud_stdio_cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<cloud_stdio::CloudStdioCancelRequest>,
+) -> Result<Json<cloud_stdio::CloudStdioCancelResponse>, (StatusCode, Json<Value>)> {
+    authorize(state.config.auth_token.as_deref(), &headers)
+        .map_err(|message| (StatusCode::UNAUTHORIZED, Json(json!({"error": message}))))?;
+    state
+        .cloud_stdio
+        .cancel(request)
         .await
         .map(Json)
         .map_err(|message| (StatusCode::BAD_REQUEST, Json(json!({"error": message}))))

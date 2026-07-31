@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,7 +15,8 @@ use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
+use tokio_util::sync::CancellationToken;
 
 use crate::cloud_plugin_artifact::CloudPluginArtifactStore;
 use crate::config::ServerConfig;
@@ -30,15 +32,22 @@ const MAX_ARGUMENTS_BYTES: usize = 128 * 1024;
 const MAX_ENVIRONMENT_VARIABLES: usize = 128;
 const MAX_ENVIRONMENT_BYTES: usize = 64 * 1024;
 const MAX_IDENTITY_BYTES: usize = 256;
+const MAX_ACTIVE_INVOCATIONS: usize = 256;
 const MAX_SESSION_LIFETIME_SECONDS: i64 = 2 * 60 * 60 + 60;
 const MIN_CALL_TIMEOUT_MS: u64 = 1_000;
 const MAX_CALL_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
+const CANCELLATION_ACK_TIMEOUT: Duration = Duration::from_secs(4);
+const INVOCATION_RUNNING: u8 = 0;
+const INVOCATION_CANCELLED: u8 = 1;
+const INVOCATION_COMPLETED: u8 = 2;
 const SAFE_PATH: &str = "/usr/local/go/bin:/usr/local/dotnet:/opt/chatos/cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct CloudStdioCallRequest {
     pub(crate) runtime_session_id: String,
     pub(crate) resource_id: String,
+    #[serde(default)]
+    pub(crate) invocation_id: Option<String>,
     pub(crate) command: String,
     #[serde(default)]
     pub(crate) args: Vec<String>,
@@ -63,6 +72,13 @@ pub(crate) struct CloudStdioCloseRequest {
     pub(crate) resource_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct CloudStdioCancelRequest {
+    pub(crate) runtime_session_id: String,
+    pub(crate) resource_id: String,
+    pub(crate) invocation_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CloudStdioCallResponse {
     pub(crate) result: Value,
@@ -71,6 +87,11 @@ pub(crate) struct CloudStdioCallResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CloudStdioCloseResponse {
     pub(crate) closed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CloudStdioCancelResponse {
+    pub(crate) status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +127,7 @@ pub(crate) struct CloudStdioService {
     config: ServerConfig,
     artifacts: CloudPluginArtifactStore,
     bindings: Arc<Mutex<HashMap<String, RegisteredBinding>>>,
+    active_invocations: Arc<Mutex<HashMap<String, ActiveInvocation>>>,
 }
 
 #[derive(Clone)]
@@ -117,6 +139,39 @@ struct RegisteredBinding {
     launch_spec_path: PathBuf,
 }
 
+#[derive(Clone)]
+struct ActiveInvocation {
+    binding_key: String,
+    config: McpStdioServer,
+    cancellation: CancellationToken,
+    state: Arc<AtomicU8>,
+    state_changed: Arc<Notify>,
+}
+
+struct ActiveInvocationGuard {
+    active: ActiveInvocation,
+}
+
+impl Drop for ActiveInvocationGuard {
+    fn drop(&mut self) {
+        if self
+            .active
+            .state
+            .compare_exchange(
+                INVOCATION_RUNNING,
+                INVOCATION_CANCELLED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+        {
+            self.active.cancellation.cancel();
+            invalidate_stdio_session(&self.active.config);
+            self.active.state_changed.notify_one();
+        }
+    }
+}
+
 impl CloudStdioService {
     pub(crate) fn new(config: ServerConfig) -> Self {
         let artifacts = CloudPluginArtifactStore::new(config.state_dir.as_path());
@@ -124,6 +179,7 @@ impl CloudStdioService {
             config,
             artifacts,
             bindings: Arc::new(Mutex::new(HashMap::new())),
+            active_invocations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -160,14 +216,73 @@ impl CloudStdioService {
                 .timeout_ms
                 .clamp(MIN_CALL_TIMEOUT_MS, MAX_CALL_TIMEOUT_MS),
         );
-        let result = jsonrpc_stdio_call_with_timeout(
-            &active.config,
-            request.method.as_str(),
-            request.params,
-            Some(request.runtime_session_id.as_str()),
-            timeout,
-        )
-        .await;
+        let invocation = self
+            .register_invocation(&request, active.key.as_str(), &active.config)
+            .await?;
+        let result = if let Some(invocation) = invocation {
+            let guard = ActiveInvocationGuard {
+                active: invocation.clone(),
+            };
+            let result = {
+                let call = jsonrpc_stdio_call_with_timeout(
+                    &active.config,
+                    request.method.as_str(),
+                    request.params,
+                    Some(request.runtime_session_id.as_str()),
+                    timeout,
+                );
+                tokio::pin!(call);
+                tokio::select! {
+                    biased;
+                    _ = invocation.cancellation.cancelled() => None,
+                    result = &mut call => Some(result),
+                }
+            };
+            let result = match result {
+                None => {
+                    invalidate_stdio_session(&active.config);
+                    mark_invocation_state(&invocation, INVOCATION_CANCELLED);
+                    Err("cloud stdio MCP invocation was cancelled".to_string())
+                }
+                Some(result) => {
+                    let completed = invocation
+                        .state
+                        .compare_exchange(
+                            INVOCATION_RUNNING,
+                            INVOCATION_COMPLETED,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok();
+                    invocation.state_changed.notify_one();
+                    if completed {
+                        result
+                    } else {
+                        invalidate_stdio_session(&active.config);
+                        Err("cloud stdio MCP invocation was cancelled".to_string())
+                    }
+                }
+            };
+            self.remove_invocation_if_matches(
+                request
+                    .invocation_id
+                    .as_deref()
+                    .expect("registered tool invocation has an id"),
+                &invocation,
+            )
+            .await;
+            drop(guard);
+            result
+        } else {
+            jsonrpc_stdio_call_with_timeout(
+                &active.config,
+                request.method.as_str(),
+                request.params,
+                Some(request.runtime_session_id.as_str()),
+                timeout,
+            )
+            .await
+        };
         match result {
             Ok(result) => Ok(CloudStdioCallResponse { result }),
             Err(error) => {
@@ -186,6 +301,7 @@ impl CloudStdioService {
             request.runtime_session_id.as_str(),
             request.resource_id.as_str(),
         )?;
+        self.cancel_binding_invocations(key.as_str()).await;
         let binding = self.bindings.lock().await.remove(key.as_str());
         if let Some(binding) = binding {
             invalidate_stdio_session(&binding.config);
@@ -193,6 +309,109 @@ impl CloudStdioService {
             return Ok(CloudStdioCloseResponse { closed: true });
         }
         Ok(CloudStdioCloseResponse { closed: false })
+    }
+
+    pub(crate) async fn cancel(
+        &self,
+        request: CloudStdioCancelRequest,
+    ) -> Result<CloudStdioCancelResponse, String> {
+        let binding_key = binding_key(
+            request.runtime_session_id.as_str(),
+            request.resource_id.as_str(),
+        )?;
+        let invocation_id = validated_identity(request.invocation_id.as_str(), "invocation_id")?;
+        let active = {
+            let mut invocations = self.active_invocations.lock().await;
+            invocations.retain(|_, invocation| {
+                invocation.state.load(Ordering::SeqCst) == INVOCATION_RUNNING
+            });
+            invocations.get(invocation_id).cloned()
+        };
+        let Some(active) = active else {
+            return Ok(CloudStdioCancelResponse {
+                status: "invocation_not_found".to_string(),
+            });
+        };
+        if active.binding_key != binding_key {
+            return Err(
+                "cloud stdio MCP invocation does not match its runtime binding".to_string(),
+            );
+        }
+        active.cancellation.cancel();
+        invalidate_stdio_session(&active.config);
+        let status = wait_for_invocation_terminal(&active).await;
+        self.remove_invocation_if_matches(invocation_id, &active)
+            .await;
+        Ok(CloudStdioCancelResponse {
+            status: status.to_string(),
+        })
+    }
+
+    async fn register_invocation(
+        &self,
+        request: &CloudStdioCallRequest,
+        binding_key: &str,
+        config: &McpStdioServer,
+    ) -> Result<Option<ActiveInvocation>, String> {
+        if request.method.trim() != "tools/call" {
+            if request.invocation_id.is_some() {
+                return Err(
+                    "cloud stdio MCP invocation_id is only allowed for tools/call".to_string(),
+                );
+            }
+            return Ok(None);
+        }
+        let invocation_id = request
+            .invocation_id
+            .as_deref()
+            .ok_or_else(|| "cloud stdio MCP tools/call requires invocation_id".to_string())?;
+        let invocation_id = validated_identity(invocation_id, "invocation_id")?;
+        let active = ActiveInvocation {
+            binding_key: binding_key.to_string(),
+            config: config.clone(),
+            cancellation: CancellationToken::new(),
+            state: Arc::new(AtomicU8::new(INVOCATION_RUNNING)),
+            state_changed: Arc::new(Notify::new()),
+        };
+        let mut invocations = self.active_invocations.lock().await;
+        invocations
+            .retain(|_, invocation| invocation.state.load(Ordering::SeqCst) == INVOCATION_RUNNING);
+        if invocations.len() >= MAX_ACTIVE_INVOCATIONS {
+            return Err("cloud stdio MCP active invocation capacity was reached".to_string());
+        }
+        if invocations.contains_key(invocation_id) {
+            return Err("cloud stdio MCP invocation_id is already active".to_string());
+        }
+        invocations.insert(invocation_id.to_string(), active.clone());
+        Ok(Some(active))
+    }
+
+    async fn remove_invocation_if_matches(&self, invocation_id: &str, expected: &ActiveInvocation) {
+        let mut invocations = self.active_invocations.lock().await;
+        if invocations
+            .get(invocation_id)
+            .is_some_and(|current| Arc::ptr_eq(&current.state, &expected.state))
+        {
+            invocations.remove(invocation_id);
+        }
+    }
+
+    async fn cancel_binding_invocations(&self, binding_key: &str) {
+        let active = {
+            let mut invocations = self.active_invocations.lock().await;
+            let ids = invocations
+                .iter()
+                .filter(|(_, invocation)| invocation.binding_key == binding_key)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            ids.into_iter()
+                .filter_map(|id| invocations.remove(id.as_str()))
+                .collect::<Vec<_>>()
+        };
+        for invocation in active {
+            invocation.cancellation.cancel();
+            invalidate_stdio_session(&invocation.config);
+        }
     }
 
     async fn prepare_binding(
@@ -406,6 +625,31 @@ struct PreparedBinding {
     expires_at_unix: i64,
     launch_spec_path: PathBuf,
     launch_spec_bytes: Vec<u8>,
+}
+
+fn mark_invocation_state(invocation: &ActiveInvocation, state: u8) {
+    let _ = invocation.state.compare_exchange(
+        INVOCATION_RUNNING,
+        state,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+    invocation.state_changed.notify_one();
+}
+
+async fn wait_for_invocation_terminal(invocation: &ActiveInvocation) -> &'static str {
+    let wait = async {
+        loop {
+            match invocation.state.load(Ordering::SeqCst) {
+                INVOCATION_CANCELLED => return "cancelled",
+                INVOCATION_COMPLETED => return "already_completed",
+                _ => invocation.state_changed.notified().await,
+            }
+        }
+    };
+    tokio::time::timeout(CANCELLATION_ACK_TIMEOUT, wait)
+        .await
+        .unwrap_or("cancel_requested")
 }
 
 pub(crate) fn is_internal_cloud_stdio_wrapper() -> bool {
@@ -794,6 +1038,7 @@ mod tests {
         CloudStdioCallRequest {
             runtime_session_id: "mcp_session_1".to_string(),
             resource_id: "resource-1".to_string(),
+            invocation_id: None,
             command: command.to_string(),
             args,
             env: BTreeMap::new(),
@@ -890,5 +1135,65 @@ mod tests {
             .unwrap();
         assert!(closed.closed);
         assert!(!first.launch_spec_path.exists());
+    }
+
+    #[tokio::test]
+    async fn cancellation_is_scoped_to_the_exact_active_invocation() {
+        let (service, _temp) = service();
+        let mut call = request("node", vec!["server.js".to_string()]);
+        call.method = "tools/call".to_string();
+        call.params = serde_json::json!({"name": "slow", "arguments": {}});
+        call.invocation_id = Some("invocation-1".to_string());
+        let config =
+            McpStdioServer::new("test-cancel", "node").with_user_id("mcp_session_1:resource-1");
+        let active = service
+            .register_invocation(&call, "mcp_session_1:resource-1", &config)
+            .await
+            .unwrap()
+            .unwrap();
+        let watcher = active.clone();
+        let acknowledgement = tokio::spawn(async move {
+            watcher.cancellation.cancelled().await;
+            mark_invocation_state(&watcher, INVOCATION_CANCELLED);
+        });
+
+        let response = service
+            .cancel(CloudStdioCancelRequest {
+                runtime_session_id: "mcp_session_1".to_string(),
+                resource_id: "resource-1".to_string(),
+                invocation_id: "invocation-1".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.status, "cancelled");
+        acknowledgement.await.unwrap();
+
+        let missing = service
+            .cancel(CloudStdioCancelRequest {
+                runtime_session_id: "mcp_session_1".to_string(),
+                resource_id: "resource-1".to_string(),
+                invocation_id: "invocation-1".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(missing.status, "invocation_not_found");
+    }
+
+    #[tokio::test]
+    async fn tools_call_requires_a_bounded_invocation_id() {
+        let (service, _temp) = service();
+        let mut call = request("node", vec!["server.js".to_string()]);
+        call.method = "tools/call".to_string();
+        call.params = serde_json::json!({"name": "slow", "arguments": {}});
+        let config = McpStdioServer::new("test-cancel-id", "node");
+        assert!(service
+            .register_invocation(&call, "mcp_session_1:resource-1", &config)
+            .await
+            .is_err());
+        call.invocation_id = Some("bad invocation".to_string());
+        assert!(service
+            .register_invocation(&call, "mcp_session_1:resource-1", &config)
+            .await
+            .is_err());
     }
 }

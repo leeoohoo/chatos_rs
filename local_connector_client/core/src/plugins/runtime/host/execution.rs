@@ -330,6 +330,7 @@ impl PluginRuntimeHost {
                     .is_some_and(|mcp| mcp.operation() == operation) =>
             {
                 let tool_name = required_body_text(&request.body, "tool_name")?;
+                let invocation_id = required_body_text(&request.body, "invocation_id")?;
                 let arguments = request
                     .body
                     .get("arguments")
@@ -355,7 +356,7 @@ impl PluginRuntimeHost {
                 mcp.validate_active()
                     .map_err(|error| (409, error.to_string()))?;
                 let result = mcp
-                    .call_tool(tool_name.as_str(), arguments)
+                    .call_tool(invocation_id.as_str(), tool_name.as_str(), arguments)
                     .await
                     .map_err(|error| (502, error.to_string()))?;
                 let health = mcp.health_snapshot().map_err(internal_error)?;
@@ -366,6 +367,7 @@ impl PluginRuntimeHost {
                     "artifact_sha256": session.artifact_sha256,
                     "component_key": session.component_key,
                     "tool_name": tool_name,
+                    "invocation_id": invocation_id,
                     "result": result,
                     "mcp_health": health,
                     "adapter_session_id": adapter_session_id,

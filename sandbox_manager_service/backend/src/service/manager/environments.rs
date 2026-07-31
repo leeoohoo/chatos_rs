@@ -18,9 +18,10 @@ use crate::auth::{
 use crate::backend::{SandboxEnvironmentCreateSpec, SandboxExecResult};
 use crate::error::ApiError;
 use crate::models::{
-    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCloseRequest,
-    CloudStdioMcpCloseResponse, CreateSandboxEnvironmentLeaseRequest,
-    SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
+    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCancelRequest,
+    CloudStdioMcpCancelResponse, CloudStdioMcpCloseRequest, CloudStdioMcpCloseResponse,
+    CreateSandboxEnvironmentLeaseRequest, SandboxEnvironmentExecRequest,
+    SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
     SandboxEnvironmentServiceInput, SandboxEnvironmentServiceRecord, SandboxEnvironmentStopRequest,
     SandboxLeaseRecord, SandboxStatus, StartSandboxEnvironmentRequest,
 };
@@ -541,6 +542,27 @@ impl SandboxManager {
             endpoint,
             agent_token.as_str(),
             "/internal/cloud-stdio-mcp/close",
+            &input,
+        )
+        .await
+    }
+
+    pub async fn environment_cloud_stdio_mcp_cancel(
+        &self,
+        auth: &SandboxAuthContext,
+        environment_id: &str,
+        service_id: Option<&str>,
+        binding: Option<&super::mcp_proxy::SandboxMcpRuntimeBinding>,
+        input: CloudStdioMcpCancelRequest,
+    ) -> Result<CloudStdioMcpCancelResponse, ApiError> {
+        let record = self.require_environment(environment_id).await?;
+        super::mcp_proxy::validate_cloud_stdio_runtime_binding(auth, &record, binding)?;
+        let endpoint = cloud_stdio_environment_agent_endpoint(&record, service_id)?;
+        let agent_token = self.agent_token_for_record(&record);
+        super::mcp_proxy::cloud_stdio_agent_proxy(
+            endpoint,
+            agent_token.as_str(),
+            "/internal/cloud-stdio-mcp/cancel",
             &input,
         )
         .await

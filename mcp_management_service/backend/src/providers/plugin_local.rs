@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::runtime::{PluginLocalProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
 
-use super::{ProviderCallError, ProviderCallOutcome};
+use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
@@ -67,10 +67,19 @@ struct PluginExecuteResponse {
     version: String,
     artifact_sha256: String,
     component_key: String,
+    invocation_id: String,
     tool_name: String,
     adapter_session_id: String,
     operation: String,
     result: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginCancelResponse {
+    run_id: String,
+    adapter_session_id: String,
+    invocation_id: String,
+    status: String,
 }
 
 impl PluginLocalProvider {
@@ -146,6 +155,7 @@ impl PluginLocalProvider {
                 .await
             {
                 Ok(binding) => {
+                    route.cancel_supported = true;
                     tool_snapshots.insert(route.resource_id.clone(), binding.tools.clone());
                     bindings.insert(route.resource_id.clone(), binding);
                 }
@@ -276,7 +286,7 @@ impl PluginLocalProvider {
         route: &ResolvedMcpRoute,
         original_tool_name: &str,
         arguments: Value,
-        _invocation_id: &str,
+        invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
         let binding = snapshot
             .plugin_local_bindings
@@ -298,6 +308,7 @@ impl PluginLocalProvider {
             "artifact_sha256": binding.runtime.artifact_sha256,
             "component_key": binding.runtime.component_key,
             "adapter_session_id": binding.adapter_session_id,
+            "invocation_id": invocation_id,
             "operation": binding.operation,
             "tool_name": original_tool_name,
             "arguments": arguments,
@@ -322,6 +333,7 @@ impl PluginLocalProvider {
             || response.version != binding.runtime.version
             || response.artifact_sha256 != binding.runtime.artifact_sha256
             || response.component_key != binding.runtime.component_key
+            || response.invocation_id != invocation_id
             || response.tool_name != original_tool_name
             || response.adapter_session_id != binding.adapter_session_id
             || response.operation != binding.operation
@@ -334,6 +346,62 @@ impl PluginLocalProvider {
             result: response.result,
             response_bytes: bytes.len(),
         })
+    }
+
+    pub(super) async fn cancel_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        let binding = snapshot
+            .plugin_local_bindings
+            .get(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable("Plugin Local runtime binding is missing")
+            })?;
+        validate_bound_route(snapshot, route, binding)?;
+        let body = json!({
+            "run_id": binding.run_id,
+            "plugin_id": binding.runtime.plugin_id,
+            "release_id": binding.runtime.release_id,
+            "artifact_sha256": binding.runtime.artifact_sha256,
+            "component_key": binding.runtime.component_key,
+            "adapter_session_id": binding.adapter_session_id,
+            "invocation_id": invocation_id,
+        });
+        let bytes = self
+            .request(
+                snapshot.owner_user_id.as_str(),
+                binding.device_id.as_str(),
+                binding.workspace_id.as_str(),
+                "cancel",
+                body,
+            )
+            .await?;
+        let response =
+            serde_json::from_slice::<PluginCancelResponse>(bytes.as_slice()).map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "Plugin Local cancel returned invalid JSON: {error}"
+                ))
+            })?;
+        if response.run_id != binding.run_id
+            || response.adapter_session_id != binding.adapter_session_id
+            || response.invocation_id != invocation_id
+        {
+            return Err(ProviderCallError::invalid_response(
+                "Plugin Local cancel response does not match the immutable invocation binding",
+            ));
+        }
+        match response.status.trim() {
+            "cancelled" => Ok(ProviderCancelOutcome::Cancelled),
+            "cancel_requested" | "invocation_not_found" | "already_completed" => {
+                Ok(ProviderCancelOutcome::CancelRequested)
+            }
+            other => Err(ProviderCallError::invalid_response(format!(
+                "Plugin Local cancel returned invalid status: {other}"
+            ))),
+        }
     }
 
     pub(super) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
@@ -759,18 +827,29 @@ mod tests {
                         body.get("tool_name").and_then(Value::as_str),
                         Some("read_file")
                     );
+                    assert_eq!(
+                        body.get("invocation_id").and_then(Value::as_str),
+                        Some("invocation-1")
+                    );
                     Json(json!({
                         "plugin_id": "plugin-workspace",
                         "release_id": "release-workspace-1",
                         "version": "1.0.0",
                         "artifact_sha256": "a".repeat(64),
                         "component_key": "workspace",
+                        "invocation_id": "invocation-1",
                         "tool_name": "read_file",
                         "adapter_session_id": "adapter-1",
                         "operation": MCP_TOOL_CALL_OPERATION,
                         "result": {"content": [{"type": "text", "text": "hello"}]}
                     }))
                 }
+                "cancel" if body.get("invocation_id").is_some() => Json(json!({
+                    "run_id": "session-1",
+                    "adapter_session_id": "adapter-1",
+                    "invocation_id": body["invocation_id"],
+                    "status": "cancelled"
+                })),
                 "cancel" => Json(json!({"cancelled": true})),
                 _ => panic!("unexpected Plugin relay action"),
             }
@@ -823,7 +902,7 @@ mod tests {
             tool_snapshots[&immutable.resource_id][0]["name"],
             "read_file"
         );
-        assert!(!routes[0].cancel_supported);
+        assert!(routes[0].cancel_supported);
         let snapshot = RuntimeSessionSnapshot {
             session_id: "session-1".to_string(),
             caller_service: "task-runner".to_string(),
@@ -868,10 +947,17 @@ mod tests {
             outcome.result.pointer("/content/0/text"),
             Some(&json!("hello"))
         );
+        assert_eq!(
+            provider
+                .cancel_invocation(&snapshot, &routes[0], "invocation-1")
+                .await
+                .unwrap(),
+            ProviderCancelOutcome::Cancelled
+        );
         provider.close_session(&snapshot).await;
         assert_eq!(
             actions.lock().unwrap().as_slice(),
-            ["prepare", "execute", "cancel"]
+            ["prepare", "execute", "cancel", "cancel"]
         );
         server.abort();
     }

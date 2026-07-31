@@ -43,10 +43,13 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::sync::{mpsc, Notify, RwLock};
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::mcp_adapter::{PluginMcpInvoker, PreparedPluginMcpTransport};
+use super::mcp_adapter::{
+    PluginMcpInvocationCancelOutcome, PluginMcpInvoker, PreparedPluginMcpTransport,
+};
 use super::*;
 use crate::approval::{approve_pending_approval, list_pending_approvals};
 use crate::plugins::tests::fixtures::{ArchiveMutation, TestSigner, PLUGIN_ID};
@@ -2867,6 +2870,7 @@ impl PluginMcpInvoker for MockPluginMcpInvoker {
         transport: &PreparedPluginMcpTransport,
         method: &str,
         params: Value,
+        _invocation_cancellation: Option<CancellationToken>,
     ) -> Result<Value> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.transport_debug
@@ -2916,6 +2920,21 @@ impl PluginMcpInvoker for MockPluginMcpInvoker {
 
     fn cancel(&self, _transport: &PreparedPluginMcpTransport) {
         self.cancellations.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn cancel_invocation(
+        &self,
+        transport: &PreparedPluginMcpTransport,
+        cancellation: &CancellationToken,
+    ) -> PluginMcpInvocationCancelOutcome {
+        self.cancellations.fetch_add(1, Ordering::SeqCst);
+        cancellation.cancel();
+        match transport {
+            PreparedPluginMcpTransport::Stdio { .. } => PluginMcpInvocationCancelOutcome::Cancelled,
+            PreparedPluginMcpTransport::Http { .. } => {
+                PluginMcpInvocationCancelOutcome::CancelRequested
+            }
+        }
     }
 }
 
@@ -3027,6 +3046,7 @@ async fn plugin_stdio_mcp_prepares_filtered_tools_calls_and_cancels_exact_sessio
                 "component_key": "demo-stdio",
                 "adapter_session_id": session_id,
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-hidden",
                 "tool_name": "hidden",
                 "arguments": {},
             }),
@@ -3044,6 +3064,7 @@ async fn plugin_stdio_mcp_prepares_filtered_tools_calls_and_cancels_exact_sessio
                 "component_key": "demo-stdio",
                 "adapter_session_id": session_id,
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-echo",
                 "tool_name": "echo",
                 "arguments": {"value": "hello"},
             }),
@@ -3191,6 +3212,7 @@ async fn plugin_stdio_mcp_injects_vault_environment_without_persisting_secrets()
                 "component_key": "demo-stdio",
                 "adapter_session_id": body["adapter_session_id"],
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-secret-stdio",
                 "tool_name": "echo",
                 "arguments": {},
             }),
@@ -3319,6 +3341,7 @@ async fn plugin_stdio_mcp_cancel_terminates_real_process_tree() {
             "component_key": "demo-stdio",
             "adapter_session_id": body["adapter_session_id"],
             "operation": "mcp_tools_call",
+            "invocation_id": "invocation-stdio-descendant",
             "tool_name": "echo",
             "arguments": {},
         }),
@@ -3471,6 +3494,7 @@ async fn plugin_stdio_mcp_seatbelt_enforces_read_only_root_runtime_dirs_and_netw
                 "component_key": "demo-stdio",
                 "adapter_session_id": body["adapter_session_id"],
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-stdio-lifecycle",
                 "tool_name": "echo",
                 "arguments": {},
             }),
@@ -3564,6 +3588,7 @@ async fn plugin_http_mcp_requires_exact_domain_permission_and_invalidates_on_upd
                 "component_key": "demo-http",
                 "adapter_session_id": session_id,
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-stale-http",
                 "tool_name": "echo",
                 "arguments": {},
             }),
@@ -3707,7 +3732,7 @@ async fn stale_mcp_health_is_reprobed_and_fails_closed_before_tool_call() {
     invoker.fail_health_checks.store(true, Ordering::SeqCst);
 
     let error = prepared
-        .call_tool("echo", json!({}))
+        .call_tool("invocation-health", "echo", json!({}))
         .await
         .expect_err("stale failed health probe must block tool call");
     assert!(error.to_string().contains("health probe failed"));
@@ -3850,6 +3875,7 @@ async fn plugin_http_mcp_executes_real_tools_list_and_call_through_shared_runtim
                 "component_key": "mcp-config",
                 "adapter_session_id": body["adapter_session_id"],
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-config-http",
                 "tool_name": "echo",
                 "arguments": {"value": "real-http"},
             }),
@@ -3875,8 +3901,19 @@ async fn plugin_http_mcp_cancel_aborts_an_inflight_request() {
             let call_started = handler_call_started.clone();
             async move {
                 if request.get("method").and_then(Value::as_str) == Some("tools/call") {
-                    call_started.notify_one();
-                    return std::future::pending::<Json<Value>>().await;
+                    if request
+                        .pointer("/params/arguments/slow")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                    {
+                        call_started.notify_one();
+                        return std::future::pending::<Json<Value>>().await;
+                    }
+                    return Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": request.get("id").cloned().unwrap_or(Value::Null),
+                        "result": {"content": {"status": "fast"}}
+                    }));
                 }
                 Json(json!({
                     "jsonrpc": "2.0",
@@ -3936,8 +3973,9 @@ async fn plugin_http_mcp_cancel_aborts_an_inflight_request() {
             "component_key": "demo-http",
             "adapter_session_id": body["adapter_session_id"],
             "operation": "mcp_tools_call",
+            "invocation_id": "invocation-http-inflight",
             "tool_name": "echo",
-            "arguments": {},
+            "arguments": {"slow": true},
         }),
     );
     let execute_host = host.clone();
@@ -3955,12 +3993,13 @@ async fn plugin_http_mcp_cancel_aborts_an_inflight_request() {
                 "artifact_sha256": body["artifact_sha256"],
                 "component_key": "demo-http",
                 "adapter_session_id": body["adapter_session_id"],
+                "invocation_id": "invocation-http-inflight",
             }),
         ))
         .await;
     assert_eq!(
-        cancel.pointer("/body/cancelled").and_then(Value::as_bool),
-        Some(true)
+        cancel.pointer("/body/status").and_then(Value::as_str),
+        Some("cancel_requested")
     );
     let execute = tokio::time::timeout(std::time::Duration::from_secs(2), execute)
         .await
@@ -3968,6 +4007,28 @@ async fn plugin_http_mcp_cancel_aborts_an_inflight_request() {
         .expect("join cancelled Plugin MCP execute");
     assert_eq!(execute.get("status").and_then(Value::as_u64), Some(502));
     assert!(execute.to_string().contains("cancelled"));
+    let fast = host
+        .handle_execute(plugin_request(
+            "plugin_execute_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": body["release_id"],
+                "artifact_sha256": body["artifact_sha256"],
+                "component_key": "demo-http",
+                "adapter_session_id": body["adapter_session_id"],
+                "operation": "mcp_tools_call",
+                "invocation_id": "invocation-http-fast",
+                "tool_name": "echo",
+                "arguments": {},
+            }),
+        ))
+        .await;
+    assert_eq!(fast.get("status").and_then(Value::as_u64), Some(200));
+    assert_eq!(
+        fast.pointer("/body/result/content/status")
+            .and_then(Value::as_str),
+        Some("fast")
+    );
     server.abort();
 }
 
@@ -4118,6 +4179,7 @@ async fn plugin_http_mcp_injects_exact_vault_headers_without_exposing_secrets() 
                 "component_key": "demo-http",
                 "adapter_session_id": body["adapter_session_id"],
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-http-credential",
                 "tool_name": "echo",
                 "arguments": {},
             }),
@@ -4350,6 +4412,7 @@ async fn plugin_oauth_pkce_exchange_persists_tokens_locally_and_authorizes_mcp()
                 "component_key": "demo-http",
                 "adapter_session_id": body["adapter_session_id"],
                 "operation": "mcp_tools_call",
+                "invocation_id": "invocation-http-oauth",
                 "tool_name": "echo",
                 "arguments": {},
             }),

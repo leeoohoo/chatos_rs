@@ -21,7 +21,7 @@ use crate::runtime::{
 
 use super::cloud_stdio::CloudStdioProvider;
 use super::external_http::ExternalHttpProvider;
-use super::{ProviderCallError, ProviderCallOutcome};
+use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
 const MAX_PLUGIN_TOOLS: usize = 200;
 const MAX_PLUGIN_TOOL_SNAPSHOT_BYTES: usize = 512 * 1024;
@@ -99,10 +99,12 @@ impl PluginCloudProvider {
             };
             match result {
                 Ok(PreparedPluginCloudRoute::Stdio { binding, tools }) => {
+                    route.cancel_supported = true;
                     tool_snapshots.insert(route.resource_id.clone(), tools);
                     stdio_bindings.insert(route.resource_id.clone(), *binding);
                 }
                 Ok(PreparedPluginCloudRoute::Http { binding, tools }) => {
+                    route.cancel_supported = true;
                     tool_snapshots.insert(route.resource_id.clone(), tools);
                     http_bindings.insert(route.resource_id.clone(), *binding);
                 }
@@ -323,6 +325,7 @@ impl PluginCloudProvider {
                         binding,
                         original_tool_name,
                         arguments,
+                        invocation_id,
                     )
                     .await
             }
@@ -353,6 +356,57 @@ impl PluginCloudProvider {
                     .await
             }
             _ => unreachable!("validated Plugin Cloud transport"),
+        }
+    }
+
+    pub(super) async fn cancel_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        let immutable = snapshot
+            .plugin_mcp_bindings
+            .get(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "immutable Plugin MCP runtime binding is missing",
+                )
+            })?;
+        if !self.supports(route)
+            || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
+            || route.allow_writes != immutable.allow_writes
+        {
+            return Err(ProviderCallError::provider_unavailable(
+                "Plugin Cloud route does not match its immutable runtime binding",
+            ));
+        }
+        let stdio = snapshot
+            .cloud_stdio_bindings
+            .get(route.resource_id.as_str());
+        let http = snapshot
+            .external_http_bindings
+            .get(route.resource_id.as_str());
+        match (stdio, http) {
+            (Some(binding), None)
+                if binding.provider_ref == immutable.provider_ref
+                    && binding.allow_writes == immutable.allow_writes =>
+            {
+                self.cloud_stdio
+                    .cancel_bound_invocation(snapshot, route.resource_id.as_str(), invocation_id)
+                    .await
+            }
+            (None, Some(binding))
+                if binding.provider_ref == immutable.provider_ref
+                    && binding.allow_writes == immutable.allow_writes =>
+            {
+                self.external_http
+                    .cancel_bound_invocation(binding, invocation_id, "Plugin Cloud HTTP MCP")
+                    .await
+            }
+            _ => Err(ProviderCallError::provider_unavailable(
+                "Plugin Cloud runtime binding is missing, ambiguous, or drifted",
+            )),
         }
     }
 }

@@ -367,7 +367,10 @@ impl ProviderDispatcher {
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
+            McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
+            McpProviderKind::PluginLocal => self.plugin_local.supports(route),
+            McpProviderKind::PluginCloud => self.plugin_cloud.supports(route),
             _ => false,
         }
     }
@@ -566,8 +569,23 @@ impl ProviderDispatcher {
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
                 }
+                McpProviderKind::CloudStdio if self.cloud_stdio.supports(route) => {
+                    self.cloud_stdio
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
                 McpProviderKind::ExternalHttp if self.external_http.supports(route) => {
                     self.external_http
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::PluginLocal if self.plugin_local.supports(route) => {
+                    self.plugin_local
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::PluginCloud if self.plugin_cloud.supports(route) => {
+                    self.plugin_cloud
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
                 }

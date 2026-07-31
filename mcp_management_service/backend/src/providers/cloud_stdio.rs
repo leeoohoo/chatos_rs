@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 
 use crate::runtime::{CloudStdioProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
 
-use super::{ProviderCallError, ProviderCallOutcome};
+use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "sandbox-manager";
@@ -45,6 +45,8 @@ pub(super) struct CloudStdioProvider {
 struct CloudStdioCallRequest<'a> {
     runtime_session_id: &'a str,
     resource_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invocation_id: Option<&'a str>,
     command: &'a str,
     args: &'a [String],
     env: &'a BTreeMap<String, String>,
@@ -63,9 +65,21 @@ struct CloudStdioCloseRequest<'a> {
     resource_id: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+struct CloudStdioCancelRequest<'a> {
+    runtime_session_id: &'a str,
+    resource_id: &'a str,
+    invocation_id: &'a str,
+}
+
 #[derive(Debug, Deserialize)]
 struct CloudStdioCallResponse {
     result: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudStdioCancelResponse {
+    status: String,
 }
 
 impl CloudStdioProvider {
@@ -138,7 +152,7 @@ impl CloudStdioProvider {
                 .and_then(|resolved| prepare_binding(resolved, route));
             let binding = match binding {
                 Ok(binding) => {
-                    route.cancel_supported = false;
+                    route.cancel_supported = true;
                     binding
                 }
                 Err(reason) => {
@@ -183,6 +197,7 @@ impl CloudStdioProvider {
         let body = CloudStdioCallRequest {
             runtime_session_id: context.runtime_session_id,
             resource_id,
+            invocation_id: None,
             command: binding.command.as_str(),
             args: binding.args.as_slice(),
             env: &binding.env,
@@ -353,7 +368,7 @@ impl CloudStdioProvider {
         route: &ResolvedMcpRoute,
         original_tool_name: &str,
         arguments: Value,
-        _invocation_id: &str,
+        invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
         let binding = snapshot
             .cloud_stdio_bindings
@@ -389,6 +404,7 @@ impl CloudStdioProvider {
             binding,
             original_tool_name,
             arguments,
+            invocation_id,
         )
         .await
     }
@@ -400,6 +416,7 @@ impl CloudStdioProvider {
         binding: &CloudStdioProviderBinding,
         original_tool_name: &str,
         arguments: Value,
+        invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
         let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
@@ -415,6 +432,7 @@ impl CloudStdioProvider {
         let body = CloudStdioCallRequest {
             runtime_session_id: snapshot.session_id.as_str(),
             resource_id,
+            invocation_id: Some(invocation_id),
             command: binding.command.as_str(),
             args: binding.args.as_slice(),
             env: &binding.env,
@@ -456,6 +474,87 @@ impl CloudStdioProvider {
             result: response.result,
             response_bytes: bytes.len(),
         })
+    }
+
+    pub(super) async fn cancel_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        let binding = snapshot
+            .cloud_stdio_bindings
+            .get(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "Cloud stdio MCP runtime binding is missing",
+                )
+            })?;
+        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Cloud stdio MCP runtime session has no sandbox target",
+            )
+        })?;
+        if !self.supports(route)
+            || route.provider_ref.as_deref() != Some(binding.provider_ref.as_str())
+            || binding.provider_ref != target.provider_ref()
+            || route.allow_writes != binding.allow_writes
+        {
+            return Err(ProviderCallError::provider_unavailable(
+                "Cloud stdio MCP route does not match its immutable runtime binding",
+            ));
+        }
+        self.cancel_bound_invocation(snapshot, route.resource_id.as_str(), invocation_id)
+            .await
+    }
+
+    pub(super) async fn cancel_bound_invocation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        resource_id: &str,
+        invocation_id: &str,
+    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
+        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Cloud stdio MCP runtime session has no sandbox target",
+            )
+        })?;
+        let body = CloudStdioCancelRequest {
+            runtime_session_id: snapshot.session_id.as_str(),
+            resource_id,
+            invocation_id,
+        };
+        let context = CloudStdioRequestContext::from_snapshot(snapshot);
+        let response = self.request(target, &context, "cancel", &body).await?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "Cloud stdio MCP cancellation response could not be read: {error}"
+                ))
+            })?;
+        if !status.is_success() {
+            return Err(ProviderCallError::provider_unavailable(format!(
+                "Cloud stdio MCP cancellation returned HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let response = serde_json::from_slice::<CloudStdioCancelResponse>(bytes.as_slice())
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "Cloud stdio MCP cancellation returned invalid JSON: {error}"
+                ))
+            })?;
+        match response.status.trim() {
+            "cancelled" => Ok(ProviderCancelOutcome::Cancelled),
+            "cancel_requested" | "already_completed" | "invocation_not_found" => {
+                Ok(ProviderCancelOutcome::CancelRequested)
+            }
+            other => Err(ProviderCallError::invalid_response(format!(
+                "Cloud stdio MCP cancellation returned invalid status: {other}"
+            ))),
+        }
     }
 
     pub(super) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
@@ -1145,14 +1244,36 @@ mod tests {
                         }]
                     }
                 })),
-                Some("tools/call") => Json(json!({
-                    "result": {
-                        "content": [{"type": "text", "text": "ok"}],
-                        "called": request.pointer("/params/name")
-                    }
-                })),
+                Some("tools/call") => {
+                    assert_eq!(
+                        request.get("invocation_id").and_then(Value::as_str),
+                        Some("invocation-1")
+                    );
+                    Json(json!({
+                        "result": {
+                            "content": [{"type": "text", "text": "ok"}],
+                            "called": request.pointer("/params/name")
+                        }
+                    }))
+                }
                 other => panic!("unexpected method: {other:?}"),
             }
+        }
+
+        async fn cancel_handler(Json(request): Json<Value>) -> Json<Value> {
+            assert_eq!(
+                request.get("runtime_session_id").and_then(Value::as_str),
+                Some("mcp_session_1")
+            );
+            assert_eq!(
+                request.get("resource_id").and_then(Value::as_str),
+                Some("stdio-1")
+            );
+            assert_eq!(
+                request.get("invocation_id").and_then(Value::as_str),
+                Some("invocation-1")
+            );
+            Json(json!({"status": "cancelled"}))
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1160,10 +1281,15 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(
                 listener,
-                Router::new().route(
-                    "/api/sandboxes/sandbox-1/cloud-stdio-mcp/call",
-                    post(handler),
-                ),
+                Router::new()
+                    .route(
+                        "/api/sandboxes/sandbox-1/cloud-stdio-mcp/call",
+                        post(handler),
+                    )
+                    .route(
+                        "/api/sandboxes/sandbox-1/cloud-stdio-mcp/cancel",
+                        post(cancel_handler),
+                    ),
             )
             .await
             .unwrap();
@@ -1257,6 +1383,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(outcome.result["called"], "search");
+        assert_eq!(
+            provider
+                .cancel_invocation(&snapshot, &routes[0], "invocation-1")
+                .await
+                .unwrap(),
+            ProviderCancelOutcome::Cancelled
+        );
         server.abort();
     }
 }
