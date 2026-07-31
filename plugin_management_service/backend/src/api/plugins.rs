@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chatos_plugin_management_sdk::normalize_plugin_relative_path;
 
@@ -28,14 +28,46 @@ pub(super) async fn list_admin_plugins(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Query(query): Query<PluginCatalogQuery>,
-) -> Result<Json<ListResponse<PluginCatalogRecord>>, ApiError> {
+) -> Result<Json<ListResponse<PluginCatalogListItem>>, ApiError> {
     ensure_super_admin(&user)?;
-    state
+    let page = state
         .store
         .list_plugin_catalog(&query, None)
         .await
-        .map(Json)
-        .map_err(ApiError::internal)
+        .map_err(ApiError::internal)?;
+    let release_ids: Vec<String> = page
+        .items
+        .iter()
+        .map(|plugin| plugin.latest_release_id.trim())
+        .filter(|release_id| !release_id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    let releases_by_id: BTreeMap<String, PluginReleaseRecord> = state
+        .store
+        .list_plugin_releases_by_ids(&release_ids)
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .map(|release| (release.id.clone(), release))
+        .collect();
+    let items = page
+        .items
+        .into_iter()
+        .map(|catalog| {
+            let runtime_targets = releases_by_id
+                .get(catalog.latest_release_id.as_str())
+                .map(plugin_release_runtime_targets)
+                .unwrap_or_default();
+            PluginCatalogListItem {
+                catalog,
+                runtime_targets,
+            }
+        })
+        .collect();
+    Ok(Json(ListResponse {
+        items,
+        total: page.total,
+    }))
 }
 
 pub(super) async fn get_plugin_catalog_entry(
@@ -269,6 +301,36 @@ fn is_disabled_transition(previous_enabled: Option<bool>, enabled: bool) -> bool
     previous_enabled == Some(true) && !enabled
 }
 
+fn plugin_release_runtime_targets(release: &PluginReleaseRecord) -> Vec<String> {
+    plugin_execution_hosts_runtime_targets(
+        release
+            .components
+            .iter()
+            .map(|component| component.execution_host),
+    )
+}
+
+fn plugin_execution_hosts_runtime_targets(
+    hosts: impl IntoIterator<Item = PluginExecutionHost>,
+) -> Vec<String> {
+    let mut targets = BTreeSet::new();
+    for host in hosts {
+        match host {
+            PluginExecutionHost::Cloud => {
+                targets.insert(PLUGIN_RUNTIME_TARGET_CLOUD.to_string());
+            }
+            PluginExecutionHost::Local => {
+                targets.insert(PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string());
+            }
+            PluginExecutionHost::Portable => {
+                targets.insert(PLUGIN_RUNTIME_TARGET_CLOUD.to_string());
+                targets.insert(PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string());
+            }
+        }
+    }
+    targets.into_iter().collect()
+}
+
 fn normalize_catalog_payload(payload: &mut PluginCatalogPayload) -> Result<(), ApiError> {
     payload.marketplace_id =
         validate_plugin_identifier(payload.marketplace_id.as_str(), "marketplace_id")?;
@@ -399,6 +461,29 @@ mod tests {
         assert!(!is_disabled_transition(Some(false), false));
         assert!(!is_disabled_transition(None, false));
         assert!(!is_disabled_transition(Some(true), true));
+    }
+
+    #[test]
+    fn release_runtime_targets_expand_portable_to_cloud_and_client() {
+        assert_eq!(
+            plugin_execution_hosts_runtime_targets([
+                PluginExecutionHost::Portable,
+                PluginExecutionHost::Local,
+                PluginExecutionHost::Cloud,
+            ]),
+            vec![
+                PLUGIN_RUNTIME_TARGET_CLOUD.to_string(),
+                PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string(),
+            ],
+        );
+        assert_eq!(
+            plugin_execution_hosts_runtime_targets([PluginExecutionHost::Cloud]),
+            vec![PLUGIN_RUNTIME_TARGET_CLOUD.to_string()],
+        );
+        assert_eq!(
+            plugin_execution_hosts_runtime_targets([PluginExecutionHost::Local]),
+            vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()],
+        );
     }
 
     fn sample_payload() -> PluginCatalogPayload {

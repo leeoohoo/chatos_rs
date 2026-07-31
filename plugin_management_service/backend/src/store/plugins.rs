@@ -352,6 +352,36 @@ impl AppStore {
         Ok(release)
     }
 
+    pub async fn list_plugin_releases_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<PluginReleaseRecord>, String> {
+        let ids: Vec<String> = ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let releases: Vec<PluginReleaseRecord> = self
+            .plugin_releases
+            .find(doc! { "id": { "$in": ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut ready = Vec::with_capacity(releases.len());
+        for release in releases {
+            if self.plugin_release_is_ready(release.id.as_str()).await? {
+                ready.push(release);
+            }
+        }
+        Ok(ready)
+    }
+
     pub async fn get_plugin_release_any_state(
         &self,
         id: &str,

@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    PluginAvailabilityStatus, PluginCatalogDocument, PluginComponentStatus, PluginInstallStatus,
-    PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifestSource, PluginPublisher,
-    PluginReleaseSignature, PluginRequirementStatus, SigningKeyRef,
+    PluginAvailabilityStatus, PluginCatalogDocument, PluginCatalogRecord, PluginComponentStatus,
+    PluginInstallStatus, PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifestSource,
+    PluginPublisher, PluginReleaseSignature, PluginRequirementStatus, SigningKeyRef,
 };
 
 pub const PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY: &str = "official_registry";
@@ -42,6 +42,9 @@ pub const PLUGIN_PUBLISHER_STATUS_SUSPENDED: &str = "suspended";
 pub const PLUGIN_PUBLISHER_DECISION_APPROVE: &str = "approve";
 pub const PLUGIN_PUBLISHER_DECISION_REJECT: &str = "reject";
 pub const PLUGIN_PUBLISHER_DECISION_SUSPEND: &str = "suspend";
+
+pub const PLUGIN_RUNTIME_TARGET_CLOUD: &str = "cloud";
+pub const PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR: &str = "local_connector";
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PluginCatalogQuery {
@@ -162,6 +165,14 @@ pub struct PluginCatalogPayload {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub license: PluginLicenseMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCatalogListItem {
+    #[serde(flatten)]
+    pub catalog: PluginCatalogRecord,
+    #[serde(default)]
+    pub runtime_targets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

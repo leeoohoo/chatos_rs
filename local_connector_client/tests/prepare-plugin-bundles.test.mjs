@@ -208,19 +208,19 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
       true,
     );
     const chrome = index.plugins.find((plugin) => plugin.name === 'chrome');
-    assert.equal(chrome.release_id, 'bundled-release-chrome-1-4-0');
-    assert.equal(chrome.version, '1.4.0');
-    assert.equal(chrome.published_at, '2026-07-25T07:00:00Z');
+    assert.equal(chrome.release_id, 'bundled-release-chrome-1-5-0');
+    assert.equal(chrome.version, '1.5.0');
+    assert.equal(chrome.published_at, '2026-07-31T03:30:00Z');
     assert.equal(
       chrome.skills[0].bundle_hash,
-      '726cc47cd74273024422adfecc8770e023729464e8c74bcf9fc1bd04d1eef676',
+      'b3aad9d58f1a324a461c964c80d7009405ccbf1d29d58f1925bf51961f83947c',
     );
     assert.equal(
       fs.existsSync(path.join(
         output,
         'internal',
         'chrome',
-        '1.4.0',
+        '1.5.0',
         'skills',
         'control-chrome',
         'SKILL.md',

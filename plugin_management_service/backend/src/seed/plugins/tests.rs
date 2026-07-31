@@ -97,8 +97,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "chrome")
         .expect("Chrome spec");
-    assert_eq!(chrome.release_version, "1.4.0");
-    assert_eq!(chrome.artifact_revision, "chrome-1.4.0");
+    assert_eq!(chrome.release_version, "1.5.0");
+    assert_eq!(chrome.artifact_revision, "chrome-1.5.0");
     let computer_use = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "computer-use")
@@ -307,8 +307,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "chrome",
             (
-                "dfcc537cd752da9dedf21bb12ff98cf09d7b7e04d818393526e5e42a957204df",
-                "840ca2f841353ae6be6995eda720ce1639067ec95c64eec2e52e76972bcf5e12",
+                "901daf87ce441562b4ac01c8c06e2515d887fca6839bea6b256a08459b28e314",
+                "04898fd5970dfa23a83599279a2e6425eacf82b92b78bf83864e78c4b890c58c",
             ),
         ),
         (

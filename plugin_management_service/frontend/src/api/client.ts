@@ -24,6 +24,7 @@ import type {
 } from '../types';
 import type {
   PluginAuditLogRecord,
+  PluginCatalogListItem,
   PluginCatalogRecord,
   PluginCatalogSyncResponse,
   PluginInstallationRecord,
@@ -178,7 +179,7 @@ export const api = {
       },
     ),
   listAdminPlugins: (params?: Record<string, QueryValue>) =>
-    request<ListResponse<PluginCatalogRecord>>(withQuery('/api/admin/plugins', params || {})),
+    request<ListResponse<PluginCatalogListItem>>(withQuery('/api/admin/plugins', params || {})),
   createPluginCatalogEntry: (payload: unknown) =>
     request<PluginCatalogRecord>('/api/admin/plugins', {
       method: 'POST',

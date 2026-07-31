@@ -212,7 +212,7 @@ fn internal_skill_manifest(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/control-in-app-browser/1.8.0/skill.json"
         )),
         "internal_skill_chrome" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/skill.json"
+            "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.5.0/skill.json"
         )),
         "internal_skill_computer_use" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/computer-use/1.19.0/skill.json"
@@ -302,7 +302,7 @@ fn internal_skill_instructions(skill_id: &str) -> Option<&'static str> {
             "../../../../local_connector_client/skill_bundles/internal/control-in-app-browser/1.8.0/instructions.md"
         )),
         "internal_skill_chrome" => Some(include_str!(
-            "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.4.0/instructions.md"
+            "../../../../local_connector_client/skill_bundles/internal/control-chrome/1.5.0/instructions.md"
         )),
         "internal_skill_computer_use" => Some(include_str!(
             "../../../../local_connector_client/skill_bundles/internal/computer-use/1.19.0/instructions.md"

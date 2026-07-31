@@ -8,6 +8,8 @@ export type PluginMarketplaceSource =
   | 'local_directory';
 export type PluginVisibility = 'public' | 'private';
 export type PluginReleaseChannel = 'stable' | 'beta' | 'canary';
+export type PluginExecutionHost = 'cloud' | 'local' | 'portable';
+export type PluginRuntimeTarget = 'cloud' | 'local_connector';
 export type PluginPublisherStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 export type PluginInstallStatus =
   | 'not_installed'
@@ -164,6 +166,10 @@ export interface PluginCatalogRecord {
   updated_at: string;
 }
 
+export interface PluginCatalogListItem extends PluginCatalogRecord {
+  runtime_targets: PluginRuntimeTarget[];
+}
+
 export interface PluginPermissionRequirement {
   permission: string;
   required: boolean;
@@ -174,6 +180,7 @@ export interface PluginPermissionRequirement {
 export interface PluginComponentDescriptor {
   component_key: string;
   kind: PluginComponentKind;
+  execution_host: PluginExecutionHost;
   display_name: string;
   runtime_kind: string;
   entrypoint?: { path: string } | null;

@@ -11,13 +11,43 @@ import { api } from '../api/client';
 import { CompactId, DateTimeCell } from '../components/DisplayCells';
 import { EnabledTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
-import type { PluginCatalogRecord } from '../pluginTypes';
+import type { PluginCatalogListItem, PluginRuntimeTarget } from '../pluginTypes';
 import type { CurrentUser } from '../types';
 import { optionalText, parseJsonArray } from './formUtils';
 
 interface PluginCatalogAdminPageProps {
   user: CurrentUser;
   onOpenReleases: (pluginId: string) => void;
+}
+
+const RUNTIME_TARGET_ORDER: PluginRuntimeTarget[] = ['cloud', 'local_connector'];
+const RUNTIME_TARGET_COLORS: Record<PluginRuntimeTarget, string> = {
+  cloud: 'blue',
+  local_connector: 'purple',
+};
+
+function renderRuntimeTargets(
+  targets: PluginRuntimeTarget[] | undefined,
+  latestReleaseId: string,
+  t: (key: string, values?: Record<string, string | number>) => string,
+) {
+  if (!latestReleaseId) {
+    return <Tag>{t('pluginCatalog.runtime.unpublished')}</Tag>;
+  }
+  const targetSet = new Set(targets || []);
+  const orderedTargets = RUNTIME_TARGET_ORDER.filter((target) => targetSet.has(target));
+  if (orderedTargets.length === 0) {
+    return <Tag>{t('pluginCatalog.runtime.unknown')}</Tag>;
+  }
+  return (
+    <Space size={[4, 4]} wrap>
+      {orderedTargets.map((target) => (
+        <Tag key={target} color={RUNTIME_TARGET_COLORS[target]}>
+          {t(`pluginCatalog.runtime.${target}`)}
+        </Tag>
+      ))}
+    </Space>
+  );
 }
 
 export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAdminPageProps) {
@@ -80,7 +110,7 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
     },
     onError: (error) => message.error((error as Error).message),
   });
-  const columns = useMemo<ColumnsType<PluginCatalogRecord>>(
+  const columns = useMemo<ColumnsType<PluginCatalogListItem>>(
     () => [
       {
         title: t('table.name'),
@@ -111,6 +141,12 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
         ),
       },
       { title: t('pluginCatalog.category'), dataIndex: ['interface', 'category'], width: 150 },
+      {
+        title: t('pluginCatalog.runtimeTargets'),
+        dataIndex: 'runtime_targets',
+        width: 150,
+        render: (_, record) => renderRuntimeTargets(record.runtime_targets, record.latest_release_id, t),
+      },
       {
         title: t('pluginCatalog.license'),
         dataIndex: ['license', 'license_id'],

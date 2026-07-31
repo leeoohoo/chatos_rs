@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "bundle_id": "chatos.internal.chrome",
+  "skill_id": "internal_skill_chrome",
+  "name": "control-chrome",
+  "display_name": "连接并操作用户现有 Chrome",
+  "version": "1.5.0",
+  "publisher": "chatos",
+  "source_kind": "admin_created",
+  "entrypoint": {
+    "kind": "native_adapter",
+    "adapter": "chrome_existing_session"
+  },
+  "instructions_path": "instructions.md",
+  "requires_workspace": false,
+  "permissions": ["browser.chrome.control", "workspace.read", "workspace.write"],
+  "platforms": [
+    "linux-arm64",
+    "linux-x64",
+    "macos-arm64",
+    "macos-x64",
+    "windows-arm64",
+    "windows-x64"
+  ]
+}
