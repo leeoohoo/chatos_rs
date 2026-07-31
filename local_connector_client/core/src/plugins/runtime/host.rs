@@ -50,6 +50,8 @@ use crate::LocalState;
 const PLUGIN_SESSION_TTL_SECONDS: i64 = 2 * 60 * 60;
 const LOAD_SKILL_RESOURCE_OPERATION: &str = "load_skill_resource";
 const NATIVE_SKILL_TOOL_CALL_OPERATION: &str = "native_skill_tool_call";
+const COMMAND_INVOKE_OPERATION: &str = "command_invoke";
+const AGENT_APPLY_OPERATION: &str = "agent_apply";
 
 mod artifact_ui;
 mod execution;

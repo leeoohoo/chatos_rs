@@ -8,6 +8,7 @@ mod embedded;
 mod external_http;
 mod local_connector;
 mod plugin_cloud;
+mod plugin_components;
 mod plugin_local;
 mod project_service;
 mod sandbox_images;
@@ -33,6 +34,7 @@ pub(crate) use external_http::{
 };
 use local_connector::LocalConnectorProvider;
 use plugin_cloud::PluginCloudProvider;
+use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
@@ -76,6 +78,7 @@ pub enum ProviderCancelOutcome {
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     plugin_cloud: PluginCloudProvider,
+    plugin_components: PluginComponentProvider,
     plugin_local: PluginLocalProvider,
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
@@ -126,6 +129,12 @@ impl ProviderDispatcher {
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
+            plugin_components: PluginComponentProvider::new(
+                local_connector_service_base_url.clone(),
+                runtime.downstream_request_timeout,
+                local_connector_internal_secret.clone(),
+                runtime.response_limit_bytes,
+            )?,
             plugin_cloud: PluginCloudProvider::new(cloud_stdio.clone(), external_http.clone()),
             project_service: ProjectServiceProvider::new(
                 project_service_base_url,
@@ -167,6 +176,51 @@ impl ProviderDispatcher {
             embedded: EmbeddedProvider::new(embedded_work_dir, runtime.response_limit_bytes)?,
             external_http,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_plugin_tool_component_routes(
+        &self,
+        plugin_management: &chatos_plugin_management_sdk::PluginManagementClient,
+        immutable_bindings: &std::collections::HashMap<
+            String,
+            crate::runtime::PluginToolComponentRuntimeBinding,
+        >,
+        routes: &mut [ResolvedMcpRoute],
+        context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        expires_at_unix: i64,
+    ) -> (
+        std::collections::HashMap<String, crate::runtime::PluginLocalToolComponentBinding>,
+        std::collections::HashMap<String, crate::runtime::PluginCloudToolComponentBinding>,
+        std::collections::HashMap<String, Vec<Value>>,
+    ) {
+        self.plugin_components
+            .prepare_routes(
+                plugin_management,
+                immutable_bindings,
+                routes,
+                context,
+                runtime_session_id,
+                owner_user_id,
+                expires_at_unix,
+            )
+            .await
+    }
+
+    pub async fn close_prepared_plugin_tool_component_bindings(
+        &self,
+        owner_user_id: &str,
+        runtime_session_id: &str,
+        bindings: &std::collections::HashMap<
+            String,
+            crate::runtime::PluginLocalToolComponentBinding,
+        >,
+    ) {
+        self.plugin_components
+            .close_local_bindings(owner_user_id, runtime_session_id, bindings)
+            .await;
     }
 
     pub async fn prepare_external_http_routes(
@@ -348,8 +402,12 @@ impl ProviderDispatcher {
             McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
-            McpProviderKind::PluginLocal => self.plugin_local.supports(route),
-            McpProviderKind::PluginCloud => self.plugin_cloud.supports(route),
+            McpProviderKind::PluginLocal => {
+                self.plugin_local.supports(route) || self.plugin_components.supports(route)
+            }
+            McpProviderKind::PluginCloud => {
+                self.plugin_cloud.supports(route) || self.plugin_components.supports(route)
+            }
             _ => false,
         }
     }
@@ -510,6 +568,11 @@ impl ProviderDispatcher {
                     )
                     .await
             }
+            McpProviderKind::PluginLocal if self.plugin_components.supports(route) => {
+                self.plugin_components
+                    .call_tool(snapshot, route, original_tool_name, arguments)
+                    .await
+            }
             McpProviderKind::PluginCloud if self.plugin_cloud.supports(route) => {
                 self.plugin_cloud
                     .call_tool(
@@ -519,6 +582,11 @@ impl ProviderDispatcher {
                         arguments,
                         invocation_id,
                     )
+                    .await
+            }
+            McpProviderKind::PluginCloud if self.plugin_components.supports(route) => {
+                self.plugin_components
+                    .call_tool(snapshot, route, original_tool_name, arguments)
                     .await
             }
             McpProviderKind::Unavailable => Err(ProviderCallError::provider_unavailable(
@@ -609,6 +677,7 @@ impl ProviderDispatcher {
         }
         self.cloud_stdio.close_session(snapshot).await;
         self.plugin_local.close_session(snapshot).await;
+        self.plugin_components.close_session(snapshot).await;
     }
 }
 

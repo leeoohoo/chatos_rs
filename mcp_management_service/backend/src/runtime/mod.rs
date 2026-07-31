@@ -10,7 +10,10 @@ pub use grant::{IssuedRuntimeGrant, RuntimeGrantClaims, RuntimeGrantService};
 pub use invocation_store::{
     RuntimeInvocationRecord, RuntimeInvocationStatus, RuntimeInvocationStore,
 };
-pub use plugin_mcp::{PluginLocalProviderBinding, PluginMcpRuntimeBinding};
+pub use plugin_mcp::{
+    PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
+    PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+};
 pub use session_store::{
     CloudStdioProviderBinding, ExternalHttpProviderBinding, RuntimeSessionSnapshot,
     RuntimeSessionStore,

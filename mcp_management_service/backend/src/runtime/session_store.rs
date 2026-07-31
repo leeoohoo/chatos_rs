@@ -25,9 +25,12 @@ use tokio::sync::RwLock;
 use crate::providers::{
     build_pinned_external_http_client, external_http_header_is_managed_or_unsafe,
 };
-use crate::runtime::{PluginLocalProviderBinding, PluginMcpRuntimeBinding};
+use crate::runtime::{
+    PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
+    PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+};
 
-const SNAPSHOT_SCHEMA_VERSION: i32 = 2;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 3;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_HEADERS: usize = 64;
 const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
@@ -137,6 +140,9 @@ pub struct RuntimeSessionSnapshot {
     pub tools: Vec<RuntimeToolDescriptor>,
     pub plugin_mcp_bindings: HashMap<String, PluginMcpRuntimeBinding>,
     pub plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
+    pub plugin_tool_component_bindings: HashMap<String, PluginToolComponentRuntimeBinding>,
+    pub plugin_local_tool_component_bindings: HashMap<String, PluginLocalToolComponentBinding>,
+    pub plugin_cloud_tool_component_bindings: HashMap<String, PluginCloudToolComponentBinding>,
     pub external_http_bindings: HashMap<String, ExternalHttpProviderBinding>,
     pub cloud_stdio_bindings: HashMap<String, CloudStdioProviderBinding>,
     pub expires_at: String,
@@ -216,6 +222,9 @@ struct PersistedRuntimeSessionSnapshot {
     tools: Vec<RuntimeToolDescriptor>,
     plugin_mcp_bindings: HashMap<String, PluginMcpRuntimeBinding>,
     plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
+    plugin_tool_component_bindings: HashMap<String, PluginToolComponentRuntimeBinding>,
+    plugin_local_tool_component_bindings: HashMap<String, PluginLocalToolComponentBinding>,
+    plugin_cloud_tool_component_bindings: HashMap<String, PluginCloudToolComponentBinding>,
     external_http_bindings: HashMap<String, PersistedExternalHttpProviderBinding>,
     cloud_stdio_bindings: HashMap<String, CloudStdioProviderBinding>,
     expires_at: String,
@@ -568,6 +577,13 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             tools: snapshot.tools.clone(),
             plugin_mcp_bindings: snapshot.plugin_mcp_bindings.clone(),
             plugin_local_bindings: snapshot.plugin_local_bindings.clone(),
+            plugin_tool_component_bindings: snapshot.plugin_tool_component_bindings.clone(),
+            plugin_local_tool_component_bindings: snapshot
+                .plugin_local_tool_component_bindings
+                .clone(),
+            plugin_cloud_tool_component_bindings: snapshot
+                .plugin_cloud_tool_component_bindings
+                .clone(),
             external_http_bindings,
             cloud_stdio_bindings: snapshot.cloud_stdio_bindings.clone(),
             expires_at: snapshot.expires_at.clone(),
@@ -611,6 +627,9 @@ impl PersistedRuntimeSessionSnapshot {
             tools: self.tools,
             plugin_mcp_bindings: self.plugin_mcp_bindings,
             plugin_local_bindings: self.plugin_local_bindings,
+            plugin_tool_component_bindings: self.plugin_tool_component_bindings,
+            plugin_local_tool_component_bindings: self.plugin_local_tool_component_bindings,
+            plugin_cloud_tool_component_bindings: self.plugin_cloud_tool_component_bindings,
             external_http_bindings,
             cloud_stdio_bindings: self.cloud_stdio_bindings,
             expires_at: self.expires_at,
@@ -828,6 +847,9 @@ mod tests {
                     expires_at_unix,
                 },
             )]),
+            plugin_tool_component_bindings: Default::default(),
+            plugin_local_tool_component_bindings: Default::default(),
+            plugin_cloud_tool_component_bindings: Default::default(),
             external_http_bindings: HashMap::from([(
                 "external-1".to_string(),
                 ExternalHttpProviderBinding {

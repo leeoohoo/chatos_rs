@@ -106,9 +106,9 @@ pub(super) async fn get_plugin_cloud_component_bundle_internal(
     Path((plugin_id, release_id, component_key)): Path<(String, String, String)>,
 ) -> Result<Response, ApiError> {
     let caller = require_internal_caller_service(&headers)?;
-    if caller != "task-runner" {
+    if caller != "task-runner" && caller != "mcp-management-service" {
         return Err(ApiError::forbidden(
-            "Plugin cloud Bundles require task-runner caller",
+            "Plugin cloud Bundles require task-runner or mcp-management-service caller",
         ));
     }
     require_internal_api_secret(&state, &headers, caller, PLUGIN_CLOUD_READ_SCOPE)?;

@@ -17,7 +17,8 @@ use uuid::Uuid;
 
 use crate::auth::require_internal_request;
 use crate::capabilities::{
-    materialize_mcp_candidates, materialize_runtime_tools_with_plugins, runtime_route_revision,
+    materialize_mcp_candidates, materialize_runtime_tools_with_plugin_components,
+    runtime_route_revision,
 };
 use crate::error::ApiError;
 use crate::runtime::{RuntimeGrantClaims, RuntimeSessionSnapshot};
@@ -183,9 +184,26 @@ pub(super) async fn resolve_runtime_session(
             .await;
     cloud_stdio_bindings.extend(plugin_cloud_stdio_bindings);
     plugin_tool_snapshots.extend(plugin_cloud_tool_snapshots);
+    let (
+        plugin_local_tool_component_bindings,
+        plugin_cloud_tool_component_bindings,
+        plugin_component_tool_snapshots,
+    ) = state
+        .providers
+        .prepare_plugin_tool_component_routes(
+            &state.plugin_management_client,
+            &materialized.plugin_tool_component_bindings,
+            route_response.routes.as_mut_slice(),
+            &project_context,
+            session_id.as_str(),
+            request.owner_user_id.trim(),
+            expires_at_unix,
+        )
+        .await;
     let cleanup_owner_user_id = request.owner_user_id.trim().to_string();
     let cleanup_session_id = session_id.clone();
     let cleanup_plugin_local_bindings = plugin_local_bindings.clone();
+    let cleanup_plugin_local_tool_component_bindings = plugin_local_tool_component_bindings.clone();
     let cleanup_cloud_stdio_bindings = cloud_stdio_bindings.clone();
     let cleanup_sandbox_target = sandbox_target.clone();
     let cleanup_project_id = request.project_id.trim().to_string();
@@ -201,11 +219,13 @@ pub(super) async fn resolve_runtime_session(
         for route in &mut route_response.routes {
             route.cancel_supported &= state.providers.supports_cancellation(route);
         }
-        let tool_result = materialize_runtime_tools_with_plugins(
+        let tool_result = materialize_runtime_tools_with_plugin_components(
             &capabilities,
             route_response.routes.as_slice(),
             &materialized.plugin_bindings,
             &plugin_tool_snapshots,
+            &materialized.plugin_tool_component_bindings,
+            &plugin_component_tool_snapshots,
         )
         .map_err(ApiError::conflict)?;
         let route_revision = runtime_route_revision(
@@ -240,6 +260,13 @@ pub(super) async fn resolve_runtime_session(
         required_resource_ids.extend(
             materialized
                 .plugin_bindings
+                .values()
+                .filter(|binding| binding.required)
+                .map(|binding| binding.resource_id.clone()),
+        );
+        required_resource_ids.extend(
+            materialized
+                .plugin_tool_component_bindings
                 .values()
                 .filter(|binding| binding.required)
                 .map(|binding| binding.resource_id.clone()),
@@ -314,6 +341,9 @@ pub(super) async fn resolve_runtime_session(
             tools: tool_result.tools,
             plugin_mcp_bindings: materialized.plugin_bindings,
             plugin_local_bindings,
+            plugin_tool_component_bindings: materialized.plugin_tool_component_bindings,
+            plugin_local_tool_component_bindings,
+            plugin_cloud_tool_component_bindings,
             external_http_bindings,
             cloud_stdio_bindings,
             expires_at: grant.expires_at.clone(),
@@ -344,6 +374,16 @@ pub(super) async fn resolve_runtime_session(
                 cleanup_owner_user_id.as_str(),
                 cleanup_session_id.as_str(),
                 &cleanup_plugin_local_bindings,
+            )
+            .await;
+    }
+    if result.is_err() && !cleanup_plugin_local_tool_component_bindings.is_empty() {
+        state
+            .providers
+            .close_prepared_plugin_tool_component_bindings(
+                cleanup_owner_user_id.as_str(),
+                cleanup_session_id.as_str(),
+                &cleanup_plugin_local_tool_component_bindings,
             )
             .await;
     }

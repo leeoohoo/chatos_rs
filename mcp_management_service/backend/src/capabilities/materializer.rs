@@ -11,13 +11,18 @@ use chatos_plugin_management_sdk::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::runtime::PluginMcpRuntimeBinding;
+use crate::runtime::{PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+mod plugin_tool_components;
+
+use plugin_tool_components::materialize_plugin_tool_components;
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MaterializedAgentMcps {
     pub policy_revision: String,
     pub resources: Vec<McpRouteCandidate>,
     pub plugin_bindings: HashMap<String, PluginMcpRuntimeBinding>,
+    pub plugin_tool_component_bindings: HashMap<String, PluginToolComponentRuntimeBinding>,
     pub unavailable_required_resources: Vec<String>,
 }
 
@@ -62,6 +67,7 @@ pub fn materialize_mcp_candidates(
         })
         .collect::<Vec<_>>();
     let mut plugin_bindings = HashMap::new();
+    let mut plugin_tool_component_bindings = HashMap::new();
     let mut unavailable_required_resources = Vec::new();
     for plugin in capabilities
         .plugins
@@ -75,6 +81,12 @@ pub fn materialize_mcp_candidates(
             continue;
         }
         materialize_plugin_mcp_components(plugin, &mut resources, &mut plugin_bindings)?;
+        materialize_plugin_tool_components(
+            capabilities.agent_key.as_str(),
+            plugin,
+            &mut resources,
+            &mut plugin_tool_component_bindings,
+        )?;
     }
     unavailable_required_resources.sort();
     unavailable_required_resources.dedup();
@@ -82,6 +94,7 @@ pub fn materialize_mcp_candidates(
         policy_revision: capabilities.policy_revision.clone(),
         resources,
         plugin_bindings,
+        plugin_tool_component_bindings,
         unavailable_required_resources,
     })
 }
@@ -400,13 +413,13 @@ mod tests {
         }
     }
 
-    fn capabilities_with_plugin(plugin: ResolvedPlugin) -> ResolvedAgentCapabilities {
+    pub(super) fn capabilities_with_plugin(plugin: ResolvedPlugin) -> ResolvedAgentCapabilities {
         let mut capabilities = capabilities(Vec::new());
         capabilities.plugins = vec![plugin];
         capabilities
     }
 
-    fn resolved_plugin(required: bool) -> ResolvedPlugin {
+    pub(super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
         let manifest = parse_plugin_manifest(
             r#"{
                 "schemaVersion": 1,
@@ -697,6 +710,7 @@ mod tests {
         assert_eq!(binding.permission_snapshot, vec!["workspace.read"]);
         assert_eq!(binding.auth_connection_ids, vec!["oauth-workspace"]);
         assert_eq!(binding.runtime.component_key(), "workspace");
+        assert!(binding.provider_ref.starts_with("plugin-binding:"));
         assert_eq!(
             resource.provider_ref.as_deref(),
             Some(binding.provider_ref.as_str())

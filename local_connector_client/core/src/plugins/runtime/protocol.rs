@@ -84,6 +84,16 @@ pub(super) fn optional_body_text(
         .ok_or_else(|| (400, format!("{field} must be a non-empty string")))
 }
 
+pub(super) fn optional_body_bool(body: &Value, field: &str) -> Result<Option<bool>, (u16, String)> {
+    let Some(value) = body.get(field) else {
+        return Ok(None);
+    };
+    value
+        .as_bool()
+        .map(Some)
+        .ok_or_else(|| (400, format!("{field} must be a boolean")))
+}
+
 pub(super) fn required_sha256(body: &Value, field: &str) -> Result<String, (u16, String)> {
     let value = required_body_text(body, field)?;
     if value.len() != 64

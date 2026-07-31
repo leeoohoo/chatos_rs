@@ -2801,6 +2801,7 @@ dependencies = [
  "chatos_mcp_management_sdk",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_plugin_package",
  "chatos_service_runtime",
  "chrono",
  "hex",

@@ -14,6 +14,7 @@ chatos_mcp = { path = "../../mcp" }
 chatos_mcp_management_sdk = { path = "../../crates/chatos_mcp_management_sdk" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
+chatos_plugin_package = { path = "../../crates/chatos_plugin_package" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 hex = "0.4"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }

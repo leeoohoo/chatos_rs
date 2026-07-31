@@ -12,7 +12,7 @@ use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::runtime::PluginMcpRuntimeBinding;
+use crate::runtime::{PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaterializedRuntimeTools {
@@ -32,6 +32,24 @@ pub fn materialize_runtime_tools_with_plugins(
     routes: &[ResolvedMcpRoute],
     plugin_bindings: &HashMap<String, PluginMcpRuntimeBinding>,
     plugin_tool_snapshots: &HashMap<String, Vec<Value>>,
+) -> Result<MaterializedRuntimeTools, String> {
+    materialize_runtime_tools_with_plugin_components(
+        capabilities,
+        routes,
+        plugin_bindings,
+        plugin_tool_snapshots,
+        &HashMap::new(),
+        &HashMap::new(),
+    )
+}
+
+pub fn materialize_runtime_tools_with_plugin_components(
+    capabilities: &ResolvedAgentCapabilities,
+    routes: &[ResolvedMcpRoute],
+    plugin_bindings: &HashMap<String, PluginMcpRuntimeBinding>,
+    plugin_tool_snapshots: &HashMap<String, Vec<Value>>,
+    plugin_component_bindings: &HashMap<String, PluginToolComponentRuntimeBinding>,
+    plugin_component_tool_snapshots: &HashMap<String, Vec<Value>>,
 ) -> Result<MaterializedRuntimeTools, String> {
     let mut seen = HashSet::new();
     let mut tools = Vec::new();
@@ -125,6 +143,55 @@ pub fn materialize_runtime_tools_with_plugins(
                 let object = exposed_definition.as_object_mut().ok_or_else(|| {
                     format!(
                         "Plugin MCP {} tool snapshot contains a non-object tool definition",
+                        binding.resource_id
+                    )
+                })?;
+                object.insert("name".to_string(), Value::String(exposed_name.clone()));
+                tools.push(RuntimeToolDescriptor {
+                    exposed_name,
+                    original_name: original_name.to_string(),
+                    resource_id: binding.resource_id.clone(),
+                    definition: exposed_definition,
+                });
+            }
+        }
+        if tools.len() == exposed_before && binding.required {
+            missing_required_tool_schemas.push(binding.resource_id.clone());
+        }
+    }
+    let mut component_bindings = plugin_component_bindings.values().collect::<Vec<_>>();
+    component_bindings.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
+    for binding in component_bindings {
+        let route = routes
+            .iter()
+            .find(|route| route.resource_id == binding.resource_id);
+        let exposed_before = tools.len();
+        if let (Some(route), Some(source_tools)) = (
+            route.filter(|route| route.is_available()),
+            plugin_component_tool_snapshots.get(binding.resource_id.as_str()),
+        ) {
+            for definition in source_tools {
+                let original_name = definition
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "Plugin component {} tool snapshot contains a tool without a name",
+                            binding.resource_id
+                        )
+                    })?;
+                let exposed_name = route.exposed_tool_name(original_name);
+                if !seen.insert(exposed_name.clone()) {
+                    return Err(format!(
+                        "aggregated MCP tool name conflicts: {exposed_name}"
+                    ));
+                }
+                let mut exposed_definition = definition.clone();
+                let object = exposed_definition.as_object_mut().ok_or_else(|| {
+                    format!(
+                        "Plugin component {} tool snapshot contains a non-object tool definition",
                         binding.resource_id
                     )
                 })?;
@@ -239,8 +306,9 @@ mod tests {
     use super::*;
     use chatos_mcp_management_sdk::{McpProviderKind, McpRetryClass};
     use chatos_plugin_management_sdk::{
-        AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, PluginExecutionHost,
-        PluginMcpServer, ResolvedMcp, ResourceMetadata, ResourceSecurity,
+        AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, PluginComponentDescriptor,
+        PluginComponentKind, PluginExecutionHost, PluginMcpServer, ResolvedMcp, ResourceMetadata,
+        ResourceSecurity,
     };
     use serde_json::json;
 
@@ -401,6 +469,49 @@ mod tests {
         }
     }
 
+    fn plugin_component_binding() -> PluginToolComponentRuntimeBinding {
+        PluginToolComponentRuntimeBinding {
+            provider_ref: format!("plugin-tool-binding:{}", "c".repeat(64)),
+            resource_id: "plugin-component-review".to_string(),
+            plugin_id: "plugin-review".to_string(),
+            release_id: "release-review-1".to_string(),
+            version: "1.0.0".to_string(),
+            artifact_sha256: "a".repeat(64),
+            normalized_manifest_sha256: "b".repeat(64),
+            component: PluginComponentDescriptor {
+                component_key: "review".to_string(),
+                kind: PluginComponentKind::Command,
+                display_name: "Review".to_string(),
+                execution_host: PluginExecutionHost::Cloud,
+                runtime_kind: "command".to_string(),
+                entrypoint: None,
+                required: false,
+                permissions: Vec::new(),
+                metadata: Default::default(),
+            },
+            component_content_sha256: "c".repeat(64),
+            installation_device_id: None,
+            permission_snapshot: Vec::new(),
+            auth_connection_ids: Vec::new(),
+            required: true,
+            allow_writes: false,
+        }
+    }
+
+    fn plugin_component_route() -> ResolvedMcpRoute {
+        ResolvedMcpRoute {
+            resource_id: "plugin-component-review".to_string(),
+            server_name: "plugin_review_review".to_string(),
+            provider_kind: McpProviderKind::PluginCloud,
+            provider_ref: Some(format!("plugin-tool-binding:{}", "c".repeat(64))),
+            tool_namespace: "plugin_review_review".to_string(),
+            allow_writes: false,
+            retry_class: McpRetryClass::NoRetry,
+            cancel_supported: false,
+            reason: "test".to_string(),
+        }
+    }
+
     #[test]
     fn external_snapshot_tools_receive_stable_server_namespace() {
         let capabilities = capabilities_with_mcp(resolved_external_mcp());
@@ -484,6 +595,48 @@ mod tests {
             .iter()
             .any(|tool| tool.original_name == "write_file"));
         assert!(materialized.missing_required_tool_schemas.is_empty());
+    }
+
+    #[test]
+    fn plugin_component_tool_snapshot_is_namespaced_and_required() {
+        let binding = plugin_component_binding();
+        let bindings = HashMap::from([(binding.resource_id.clone(), binding)]);
+        let snapshots = HashMap::from([(
+            "plugin-component-review".to_string(),
+            vec![json!({
+                "name": "invoke",
+                "description": "Review",
+                "inputSchema": {"type": "object"}
+            })],
+        )]);
+        let materialized = materialize_runtime_tools_with_plugin_components(
+            &capabilities_with_mcp(resolved_external_mcp()),
+            &[external_route(), plugin_component_route()],
+            &HashMap::new(),
+            &HashMap::new(),
+            &bindings,
+            &snapshots,
+        )
+        .unwrap();
+        assert!(materialized
+            .tools
+            .iter()
+            .any(|tool| tool.exposed_name == "plugin_review_review_invoke"));
+        assert!(materialized.missing_required_tool_schemas.is_empty());
+
+        let unavailable = materialize_runtime_tools_with_plugin_components(
+            &capabilities_with_mcp(resolved_external_mcp()),
+            &[external_route()],
+            &HashMap::new(),
+            &HashMap::new(),
+            &bindings,
+            &snapshots,
+        )
+        .unwrap();
+        assert_eq!(
+            unavailable.missing_required_tool_schemas,
+            vec!["plugin-component-review"]
+        );
     }
 
     #[test]

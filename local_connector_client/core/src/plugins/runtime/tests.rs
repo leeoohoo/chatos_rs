@@ -553,6 +553,213 @@ async fn plugin_relay_prepares_signed_command_arguments_and_requires_local_confi
 }
 
 #[tokio::test]
+async fn command_catalog_prepare_defers_confirmation_until_exact_tool_invocation() {
+    let temp = TempDir::new().expect("temp directory");
+    let signer = TestSigner::new();
+    let package = signer.package_with_command(temp.path(), "1.0.0", true);
+    let installer = PluginInstaller::new(temp.path().join("plugins"));
+    let installed = installer
+        .install_archive(package.install_request())
+        .expect("install confirmation command Plugin");
+    let command_sha256 = hex::encode(Sha256::digest(
+        b"---\nname: review\n---\n\nReview the current change and report concrete findings.\n",
+    ));
+
+    let approval_unavailable = PluginRuntimeHost::new(
+        PluginSkillLoader::new(installer.clone()),
+        PluginMcpAdapter::new(installer.clone()),
+    )
+    .with_local_state(Arc::new(RwLock::new(LocalState::default())));
+    let catalog = approval_unavailable
+        .handle_prepare(plugin_request(
+            "plugin_prepare_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "review",
+                "content_sha256": command_sha256,
+                "permission_snapshot": ["workspace.read"],
+                "catalog_only": true,
+            }),
+        ))
+        .await;
+    assert_eq!(catalog.get("status").and_then(Value::as_u64), Some(200));
+    assert_eq!(
+        catalog.pointer("/body/operations"),
+        Some(&json!(["command_invoke"]))
+    );
+    assert_eq!(
+        catalog
+            .pointer("/body/commands/0/confirmation_approved")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        catalog
+            .pointer("/body/commands/0/arguments_present")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let unavailable_execute = approval_unavailable
+        .handle_execute(plugin_request(
+            "plugin_execute_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "review",
+                "adapter_session_id": catalog["body"]["adapter_session_id"],
+                "operation": "command_invoke",
+                "arguments": "src/lib.rs",
+            }),
+        ))
+        .await;
+    assert_eq!(
+        unavailable_execute.get("status").and_then(Value::as_u64),
+        Some(409)
+    );
+    assert!(unavailable_execute
+        .pointer("/body/error")
+        .and_then(Value::as_str)
+        .is_some_and(|error| error.contains("interactive approval is unavailable")));
+
+    let host = PluginRuntimeHost::new(
+        PluginSkillLoader::new(installer.clone()),
+        PluginMcpAdapter::new(installer.clone()),
+    )
+    .with_local_state(Arc::new(RwLock::new(LocalState::default())))
+    .with_approval_state_path(temp.path().join("invocation-approval-state.json"));
+    let catalog = host
+        .handle_prepare(plugin_request(
+            "plugin_prepare_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "review",
+                "content_sha256": command_sha256,
+                "permission_snapshot": ["workspace.read"],
+                "catalog_only": true,
+            }),
+        ))
+        .await;
+    assert_eq!(catalog.get("status").and_then(Value::as_u64), Some(200));
+    let execute_request = plugin_request(
+        "plugin_execute_request",
+        json!({
+            "plugin_id": PLUGIN_ID,
+            "release_id": installed.installed_version.release_id,
+            "artifact_sha256": installed.installed_version.artifact_sha256,
+            "component_key": "review",
+            "adapter_session_id": catalog["body"]["adapter_session_id"],
+            "operation": "command_invoke",
+            "arguments": "src/lib.rs",
+        }),
+    );
+    let execute_request_id = execute_request["request_id"]
+        .as_str()
+        .expect("execute request id")
+        .to_string();
+    let execute_task = tokio::spawn({
+        let host = host.clone();
+        async move { host.handle_execute(execute_request).await }
+    });
+    let pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(item) = list_pending_approvals()
+                .await
+                .into_iter()
+                .find(|item| item.request_id == execute_request_id)
+            {
+                break item;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Plugin Command invocation approval request");
+    assert_eq!(pending.source, "plugin_command");
+    assert!(pending.command.contains("src/lib.rs"));
+    assert!(approve_pending_approval(
+        pending.id.as_str(),
+        CommandExecutionApprovalDecision::Simple(SimpleCommandExecutionApprovalDecision::Accept),
+        None,
+        None,
+    )
+    .await
+    .expect("approve Plugin Command invocation"));
+    let executed = execute_task.await.expect("execute task");
+    assert_eq!(executed.get("status").and_then(Value::as_u64), Some(200));
+    assert_eq!(
+        executed
+            .pointer("/body/result/command/confirmation_approved")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        executed
+            .pointer("/body/result/command/arguments_present")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        executed
+            .pointer("/body/result/command/arguments_sha256")
+            .and_then(Value::as_str),
+        Some(hex::encode(Sha256::digest(b"src/lib.rs")).as_str())
+    );
+    assert!(executed.pointer("/body/result/command/arguments").is_none());
+
+    let drift_host = PluginRuntimeHost::new(
+        PluginSkillLoader::new(installer.clone()),
+        PluginMcpAdapter::new(installer.clone()),
+    )
+    .with_local_state(Arc::new(RwLock::new(LocalState::default())));
+    let drift_catalog = drift_host
+        .handle_prepare(plugin_request(
+            "plugin_prepare_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "review",
+                "content_sha256": command_sha256,
+                "permission_snapshot": ["workspace.read"],
+                "catalog_only": true,
+            }),
+        ))
+        .await;
+    assert_eq!(
+        drift_catalog.get("status").and_then(Value::as_u64),
+        Some(200)
+    );
+    let updated = signer.package_with_command(temp.path(), "1.1.0", true);
+    installer
+        .install_archive(updated.install_request())
+        .expect("update confirmation command Plugin");
+    let drifted = drift_host
+        .handle_execute(plugin_request(
+            "plugin_execute_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "review",
+                "adapter_session_id": drift_catalog["body"]["adapter_session_id"],
+                "operation": "command_invoke",
+                "arguments": "src/lib.rs",
+            }),
+        ))
+        .await;
+    assert_eq!(drifted.get("status").and_then(Value::as_u64), Some(409));
+    assert!(drifted
+        .pointer("/body/error")
+        .and_then(Value::as_str)
+        .is_some_and(|error| error.contains("immutable Release")));
+}
+
+#[tokio::test]
 async fn plugin_relay_prepares_exact_signed_agent_profile() {
     let temp = TempDir::new().expect("temp directory");
     let package = TestSigner::new().package_with_agent(temp.path(), "1.0.0");
@@ -615,6 +822,67 @@ async fn plugin_relay_prepares_exact_signed_agent_profile() {
         .pointer("/body/session_sha256")
         .and_then(Value::as_str)
         .is_some_and(|digest| digest.len() == 64));
+
+    let catalog = host
+        .handle_prepare(plugin_request(
+            "plugin_prepare_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "reviewer",
+                "content_sha256": agent_sha256,
+                "permission_snapshot": ["workspace.read"],
+                "catalog_only": true,
+            }),
+        ))
+        .await;
+    assert_eq!(catalog.get("status").and_then(Value::as_u64), Some(200));
+    assert_eq!(
+        catalog.pointer("/body/operations"),
+        Some(&json!(["agent_apply"]))
+    );
+    let applied = host
+        .handle_execute(plugin_request(
+            "plugin_execute_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "reviewer",
+                "adapter_session_id": catalog["body"]["adapter_session_id"],
+                "operation": "agent_apply",
+                "arguments": {},
+            }),
+        ))
+        .await;
+    assert_eq!(applied.get("status").and_then(Value::as_u64), Some(200));
+    assert_eq!(
+        applied
+            .pointer("/body/result/agent/snapshot_sha256")
+            .and_then(Value::as_str),
+        catalog
+            .pointer("/body/agents/0/snapshot_sha256")
+            .and_then(Value::as_str)
+    );
+    let rejected_arguments = host
+        .handle_execute(plugin_request(
+            "plugin_execute_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "reviewer",
+                "adapter_session_id": catalog["body"]["adapter_session_id"],
+                "operation": "agent_apply",
+                "arguments": {"unexpected": true},
+            }),
+        ))
+        .await;
+    assert_eq!(
+        rejected_arguments.get("status").and_then(Value::as_u64),
+        Some(400)
+    );
 }
 
 #[tokio::test]

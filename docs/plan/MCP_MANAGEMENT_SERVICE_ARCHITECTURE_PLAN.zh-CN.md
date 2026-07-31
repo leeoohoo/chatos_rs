@@ -3,12 +3,12 @@
 ## 0. 文档状态
 
 - 状态：2.0.10 目标架构
-- 日期：2026-07-31
+- 日期：2026-08-01
 - 新服务名：mcp_management_service
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时、响应大小限制和共享单次调用取消状态；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools 和 Sandbox Images Provider；Phase 5 已完成 External HTTP、普通 Cloud stdio、release-managed Plugin Local MCP、Plugin Cloud HTTP/PATH stdio、Plugin Cloud ConfigFile transport、Plugin Cloud Credential Resolver、immutable Plugin artifact mount、Plugin Cloud OAuth 浏览器授权和 refresh token 自动续期，以及普通/Plugin stdio、Plugin HTTP、Plugin Local 的 invocation-scoped cancellation。Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时、响应大小限制和共享单次调用取消状态；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools 和 Sandbox Images Provider；Phase 5 已完成 External HTTP、普通 Cloud stdio、release-managed Plugin Local MCP、Plugin Cloud HTTP/PATH stdio、Plugin Cloud ConfigFile transport、Plugin Cloud Credential Resolver、immutable Plugin artifact mount、Plugin Cloud OAuth 浏览器授权和 refresh token 自动续期、Plugin native executable Skill、Command `invoke` 与 Agent Profile `apply` 聚合，以及普通/Plugin stdio、Plugin HTTP、Plugin Local MCP 的 invocation-scoped cancellation。组件工具使用独立 immutable Provider Binding；本地 Command/Agent 目录准备不会触发审批，Command 只在真实调用时按精确参数和 snapshot 审批，云端需要交互确认的 Command 失败关闭。Runtime Session Snapshot schema 已提升为 v3，不迁移历史 Session。Task Runner 与 ChatOS 已具备 `shadow` 观测和显式 `gateway` canary 模式，所有部署默认仍为 `shadow`。Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -991,7 +991,11 @@ Task Runner 与 ChatOS 调用方均已接入 Runtime Session 解析：`shadow` �
 - Plugin cloud/local/portable MCP。
 - Skill executable、Command 和 Agent component 聚合。
 
-当前已完成 External HTTP MCP、普通 `stdio_cloud` MCP、release-managed Plugin Local MCP，以及 Plugin Cloud HTTP/PATH stdio、ConfigFile、云端凭据解析、OAuth 浏览器授权/自动续期、immutable package artifact mount 和 Plugin invocation-scoped cancellation 主链路。External HTTP 的私有 Binding 固定 resource/provider_ref、HTTPS endpoint、DNS 公网解析结果、认证 Header、读写标记和工具白/黑名单，并以无代理、无重定向、响应限额和 JSON-RPC 校验执行。Cloud stdio 的私有 Binding 固定 command/args/env/cwd、sandbox target、读写标记、工具策略及可选 Plugin artifact Bundle；MCP Management 不 spawn、不下载 Plugin artifact，而是通过 Sandbox Manager 的专用内部接口把不可变配置送到绑定 lease 的 Sandbox Agent。Agent 对 package-relative Plugin stdio 完成公网 DNS 固定下载、整包/逐文件/Manifest/runtime identity 校验、只读原子物化和离线 Plugin wrapper 启动；PATH stdio 继续使用清空 Host 环境的受控 wrapper。ConfigFile 在发布阶段从已验证 artifact 解析并冻结实际子 Server，HTTP/stdio 随后复用相同 Provider 安全边界，运行时不重新猜测 transport。两类 stdio runtime 都由 Session TTL、显式 close、调用失败和精确 invocation cancel 清理进程树约束。Plugin Local 固定 immutable Release/component/permission/auth reference，经 Local Connector 的现有 PluginMcpAdapter 完成本地安装校验、凭据解析、sandbox、实时 `tools/list`、真实 `tools/call` 和不关闭 prepared Session 的单调用取消。Plugin Cloud 则由 Plugin Management 发布专用 immutable runtime Bundle，在 Session prepare 时通过独立权限解析加密保存的 Credential Vault 等价 Secret 或 OAuth Token，并在 access token 到期前通过跨实例 refresh lease 完成 rotation；HTTP 走固定公网代理，stdio 走 Sandbox Manager，二者按实际冻结 transport 上报取消能力。Session 创建失败时已 prepare 的普通/Plugin Cloud stdio 和 Plugin Local runtime 都会主动清理。四类 Provider 的 live Schema 都参与聚合工具快照和 `route_revision`；required 配置、目标、凭据、artifact、准备或 Schema 探测失败时 Session fail closed，optional 资源标记 unavailable。`shadow` 调用方解析完成后会显式关闭观测 Session，默认部署模式仍保持 `shadow`。Skill executable/Command/Agent component 聚合仍待后续阶段。
+当前已完成 External HTTP MCP、普通 `stdio_cloud` MCP、release-managed Plugin Local MCP，以及 Plugin Cloud HTTP/PATH stdio、ConfigFile、云端凭据解析、OAuth 浏览器授权/自动续期、immutable package artifact mount 和 Plugin invocation-scoped cancellation 主链路。External HTTP 的私有 Binding 固定 resource/provider_ref、HTTPS endpoint、DNS 公网解析结果、认证 Header、读写标记和工具白/黑名单，并以无代理、无重定向、响应限额和 JSON-RPC 校验执行。Cloud stdio 的私有 Binding 固定 command/args/env/cwd、sandbox target、读写标记、工具策略及可选 Plugin artifact Bundle；MCP Management 不 spawn、不下载 Plugin artifact，而是通过 Sandbox Manager 的专用内部接口把不可变配置送到绑定 lease 的 Sandbox Agent。Agent 对 package-relative Plugin stdio 完成公网 DNS 固定下载、整包/逐文件/Manifest/runtime identity 校验、只读原子物化和离线 Plugin wrapper 启动；PATH stdio 继续使用清空 Host 环境的受控 wrapper。ConfigFile 在发布阶段从已验证 artifact 解析并冻结实际子 Server，HTTP/stdio 随后复用相同 Provider 安全边界，运行时不重新猜测 transport。两类 stdio runtime 都由 Session TTL、显式 close、调用失败和精确 invocation cancel 清理进程树约束。Plugin Local 固定 immutable Release/component/permission/auth reference，经 Local Connector 的现有 PluginMcpAdapter 完成本地安装校验、凭据解析、sandbox、实时 `tools/list`、真实 `tools/call` 和不关闭 prepared Session 的单调用取消。Plugin Cloud 则由 Plugin Management 发布专用 immutable runtime Bundle，在 Session prepare 时通过独立权限解析加密保存的 Credential Vault 等价 Secret 或 OAuth Token，并在 access token 到期前通过跨实例 refresh lease 完成 rotation；HTTP 走固定公网代理，stdio 走 Sandbox Manager，二者按实际冻结 transport 上报取消能力。
+
+Plugin 组件工具聚合也已完成。只有 `native_adapter` Skill 才发布本地真实工具，纯文本 Skill 不伪装成工具；Command 发布单个 `invoke`，Agent Profile 发布单个 `apply`。组件使用独立 `plugin-tool-binding:`，不会与 Plugin MCP 的 `plugin-binding:` 路由混用。Local Connector 对 Command/Agent 支持 `catalog_only=true`，因此 Runtime Session prepare 与 `shadow` 观测不会弹出审批；需要确认的 Command 只在真实 `tools/call` 时审批，并在审批前后重新加载 active immutable Release、校验参数 presence/SHA-256 和完整 snapshot。Agent `apply` 不接受运行参数。Cloud/Portable-cloud Command 与 Agent 使用 Plugin Management 发布的 immutable `PluginCloudComponentBundle`；Bundle identity、Manifest hash、正文 hash 和 component snapshot 任一漂移均失败关闭，声明需要交互确认的 Command 不会在无审批能力的云路径静默执行。组件路由当前明确 `cancel_supported=false`，不影响已有 Plugin MCP cancellation。
+
+Session 创建失败时已 prepare 的普通/Plugin Cloud stdio、Plugin Local MCP 和 Plugin Local tool component runtime 都会主动清理。所有 live Schema 都参与聚合工具快照和 `route_revision`；required 配置、目标、凭据、artifact、准备或 Schema 探测失败时 Session fail closed，optional 资源标记 unavailable。Runtime Session Snapshot schema 已提升为 v3；按 2.0.10 决策不迁移旧 Session 数据。`shadow` 调用方解析完成后会显式关闭观测 Session，默认部署模式仍保持 `shadow`。
 
 ### Phase 6：调用方迁移
 
@@ -1094,6 +1098,8 @@ MCP Management Phase 0/1
 - required + offline 但有合法 route：按 Provider 健康策略决定阻断。
 - resource.disabled 不进入 Session。
 - 可用 Plugin MCP component 生成稳定 synthetic resource id 和 Release 绑定的私有 provider binding。
+- native executable Skill、目标 Agent 匹配的 Command/Agent component 生成独立稳定 resource id 和 Release 绑定的 `plugin-tool-binding:`。
+- 纯文本 Skill、目标 Agent 不匹配的 Command/Agent 不进入工具目录。
 - Plugin Release/component snapshot 不匹配时 fail closed。
 - 配置更新导致 policy_revision 和 route_revision 变化。
 
@@ -1116,6 +1122,9 @@ MCP Management Phase 0/1
 8. Runtime Session 过期后调用被拒绝。
 9. 取消命令传播到本地进程。
 10. Project owner 不一致时路由解析失败。
+11. Local Command 的 catalog prepare 不触发审批，真实 `invoke` 才审批并绑定参数 SHA-256。
+12. Native Skill live tool snapshot 或 Cloud Command/Agent Bundle 漂移时 Session/调用失败关闭。
+13. Agent Profile 只发布 `apply` 且拒绝非空参数。
 
 ---
 
