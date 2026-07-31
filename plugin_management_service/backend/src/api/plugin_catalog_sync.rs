@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use chatos_plugin_management_sdk::{
     normalized_plugin_catalog_sha256, verify_plugin_catalog_document, verify_plugin_catalog_update,
-    PluginCatalogDocument, PluginReleaseRecord, SigningKeyRef, PLUGIN_SIGNING_KEY_USAGE_CATALOG,
+    PluginCatalogDocument, PluginMcpCloudRuntimeBundle, PluginReleaseRecord, SigningKeyRef,
+    PLUGIN_SIGNING_KEY_USAGE_CATALOG,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures_util::StreamExt;
@@ -260,6 +261,7 @@ async fn sync_plugin_marketplace_inner(
     validate_catalog_against_store(state, &document, unchanged).await?;
 
     let mut staged_cloud_bundles = Vec::new();
+    let mut staged_mcp_runtime_bundles = Vec::new();
     for release in &document.releases {
         let bundles =
             super::plugin_cloud_bundles::stage_release_cloud_bundles(state, release).await?;
@@ -287,39 +289,15 @@ async fn sync_plugin_marketplace_inner(
                 )));
             }
         }
-        for component in release.components.iter().filter(|component| {
-            component.kind == PluginComponentKind::McpServer
-                && component.execution_host != PluginExecutionHost::Local
-        }) {
-            let bundle = chatos_plugin_management_sdk::build_plugin_mcp_cloud_runtime_bundle(
+        let mcp_runtime_bundles =
+            super::plugin_cloud_bundles::stage_release_cloud_mcp_runtime_bundles(
+                state,
                 release,
-                component.component_key.as_str(),
+                Some(document.component_snapshots.as_slice()),
             )
-            .map_err(ApiError::conflict)?;
-            let snapshot = document
-                .component_snapshots
-                .iter()
-                .find(|snapshot| {
-                    snapshot.plugin_id == bundle.plugin_id
-                        && snapshot.release_id == bundle.release_id
-                        && snapshot.component.component_key == bundle.component.component_key
-                })
-                .ok_or_else(|| {
-                    ApiError::conflict(format!(
-                        "Catalog is missing cloud MCP runtime snapshot {}/{}/{}",
-                        bundle.plugin_id, bundle.release_id, bundle.component.component_key
-                    ))
-                })?;
-            if snapshot.component != bundle.component
-                || snapshot.content_sha256 != bundle.bundle_sha256
-            {
-                return Err(ApiError::conflict(format!(
-                    "Catalog cloud MCP snapshot does not match immutable runtime Bundle {}/{}/{}",
-                    bundle.plugin_id, bundle.release_id, bundle.component.component_key
-                )));
-            }
-        }
+            .await?;
         staged_cloud_bundles.extend(bundles);
+        staged_mcp_runtime_bundles.extend(mcp_runtime_bundles);
     }
 
     let synced_at = now_rfc3339();
@@ -350,6 +328,7 @@ async fn sync_plugin_marketplace_inner(
         &marketplace,
         &document,
         staged_cloud_bundles.as_slice(),
+        staged_mcp_runtime_bundles.as_slice(),
     )
     .await?;
 
@@ -783,6 +762,7 @@ async fn materialize_catalog(
     marketplace: &PluginMarketplaceRecord,
     document: &PluginCatalogDocument,
     cloud_bundles: &[PluginCloudComponentBundle],
+    mcp_runtime_bundles: &[PluginMcpCloudRuntimeBundle],
 ) -> Result<(), ApiError> {
     let mut staged_release_ids = Vec::new();
     for release in &document.releases {
@@ -839,6 +819,11 @@ async fn materialize_catalog(
     state
         .store
         .insert_plugin_cloud_component_bundles(cloud_bundles)
+        .await
+        .map_err(ApiError::internal)?;
+    state
+        .store
+        .insert_plugin_mcp_cloud_runtime_bundles(mcp_runtime_bundles)
         .await
         .map_err(ApiError::internal)?;
     for release_id in staged_release_ids {

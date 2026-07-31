@@ -4,8 +4,7 @@
 use std::collections::BTreeMap;
 
 use chatos_plugin_management_sdk::{
-    build_plugin_mcp_cloud_runtime_bundle, parse_plugin_manifest, plugin_component_descriptors,
-    verify_plugin_release_signature, PluginComponentKind, PluginExecutionHost,
+    parse_plugin_manifest, plugin_component_descriptors, verify_plugin_release_signature,
     PluginReleaseVerificationContext,
 };
 use semver::Version;
@@ -135,6 +134,10 @@ pub(super) async fn create_plugin_release(
     };
     let cloud_bundles =
         super::plugin_cloud_bundles::stage_release_cloud_bundles(&state, &release).await?;
+    let mcp_runtime_bundles = super::plugin_cloud_bundles::stage_release_cloud_mcp_runtime_bundles(
+        &state, &release, None,
+    )
+    .await?;
     let mut component_snapshots = cloud_bundles
         .iter()
         .map(|bundle| {
@@ -154,18 +157,12 @@ pub(super) async fn create_plugin_release(
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    for component in release.components.iter().filter(|component| {
-        component.kind == PluginComponentKind::McpServer
-            && component.execution_host != PluginExecutionHost::Local
-    }) {
-        let bundle =
-            build_plugin_mcp_cloud_runtime_bundle(&release, component.component_key.as_str())
-                .map_err(ApiError::conflict)?;
+    for bundle in &mcp_runtime_bundles {
         component_snapshots.push(PluginComponentSnapshot {
             plugin_id: release.plugin_id.clone(),
             release_id: release.id.clone(),
-            component: component.clone(),
-            content_sha256: bundle.bundle_sha256,
+            component: bundle.component.clone(),
+            content_sha256: bundle.bundle_sha256.clone(),
         });
     }
     state
@@ -176,6 +173,11 @@ pub(super) async fn create_plugin_release(
     state
         .store
         .insert_plugin_cloud_component_bundles(cloud_bundles.as_slice())
+        .await
+        .map_err(ApiError::internal)?;
+    state
+        .store
+        .insert_plugin_mcp_cloud_runtime_bundles(mcp_runtime_bundles.as_slice())
         .await
         .map_err(ApiError::internal)?;
     state

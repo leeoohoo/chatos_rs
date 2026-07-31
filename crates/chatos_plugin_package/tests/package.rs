@@ -10,8 +10,10 @@ use chatos_plugin_management_sdk::{
     PluginManifestSource, PluginReleaseRecord, PluginReleaseSignature,
 };
 use chatos_plugin_package::{
-    build_cloud_component_bundles, load_verified_plugin_package_directory,
-    verify_plugin_archive_bytes, verify_plugin_mcp_cloud_artifact_bytes, PluginPackageLimits,
+    build_cloud_component_bundles, build_plugin_mcp_cloud_runtime_bundles_from_package,
+    load_verified_plugin_package_directory, verify_plugin_archive_bytes,
+    verify_plugin_mcp_cloud_artifact_bytes, verify_plugin_mcp_cloud_package, PluginPackageLimits,
+    VerifiedPluginPackage,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -114,6 +116,93 @@ fn cloud_mcp_artifact_is_bound_to_the_runtime_bundle_and_file_checksums() {
         PluginPackageLimits::default(),
     )
     .is_err());
+}
+
+#[test]
+fn config_file_runtime_candidates_are_frozen_from_the_verified_artifact() {
+    let manifest_raw = json!({
+        "schemaVersion": 2,
+        "execution": {"defaultHost": "cloud", "componentHosts": {}},
+        "name": "config-package-demo",
+        "version": "1.0.0",
+        "description": "Config runtime fixture",
+        "author": {"name": "ChatOS"},
+        "mcpServers": "./.mcp.json",
+        "interface": {
+            "displayName": "Config Package Demo",
+            "shortDescription": "Config package demo",
+            "longDescription": "Config runtime fixture.",
+            "developerName": "ChatOS",
+            "category": "Developer Tools"
+        },
+        "dependencies": {},
+        "permissions": [
+            {"permission": "process.spawn", "components": ["mcp-config"]},
+            {"permission": "network.domain:api.example.com", "components": ["mcp-config"]}
+        ]
+    })
+    .to_string();
+    let manifest =
+        parse_plugin_manifest(manifest_raw.as_str(), PluginManifestSource::Chatos).unwrap();
+    let release = PluginReleaseRecord {
+        id: "release-config-1".to_string(),
+        plugin_id: "plugin-config-1".to_string(),
+        version: manifest.version.clone(),
+        manifest_schema_version: manifest.schema_version,
+        normalized_manifest: manifest.clone(),
+        artifact_ref: "https://plugins.example.com/config-demo.zip".to_string(),
+        artifact_sha256: "a".repeat(64),
+        signature: PluginReleaseSignature {
+            key_id: "fixture-key".to_string(),
+            publisher_id: "publisher-1".to_string(),
+            marketplace_id: "marketplace-1".to_string(),
+            algorithm: "ed25519".to_string(),
+            signature_base64: "fixture".to_string(),
+            signed_at: "2026-07-30T00:00:00Z".to_string(),
+            manifest_sha256: "b".repeat(64),
+        },
+        sbom_ref: Some("./sbom.spdx.json".to_string()),
+        supported_platforms: manifest.dependencies.supported_platforms.clone(),
+        components: plugin_component_descriptors(&manifest),
+        dependencies: manifest.dependencies.clone(),
+        permissions: manifest.permissions.clone(),
+        release_channel: "stable".to_string(),
+        published_at: "2026-07-30T00:00:00Z".to_string(),
+        revoked_at: None,
+    };
+    let config = serde_json::to_vec(&json!({
+        "mcpServers": {
+            "api": {"url": "https://api.example.com/mcp"},
+            "runner": {"command": "./bin/server", "args": ["--stdio"]}
+        }
+    }))
+    .unwrap();
+    let package = VerifiedPluginPackage {
+        manifest,
+        manifest_source: PluginManifestSource::Chatos,
+        artifact_sha256: release.artifact_sha256.clone(),
+        file_sha256: BTreeMap::from([(".mcp.json".to_string(), sha256(config.as_slice()))]),
+        files: BTreeMap::from([(".mcp.json".to_string(), config)]),
+        unpacked_bytes: 1,
+    };
+    let bundles =
+        build_plugin_mcp_cloud_runtime_bundles_from_package(&release, "mcp-config", &package)
+            .unwrap();
+    assert_eq!(
+        bundles
+            .iter()
+            .map(|bundle| bundle.server_key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api", "runner"]
+    );
+    assert!(bundles
+        .iter()
+        .all(|bundle| verify_plugin_mcp_cloud_package(&package, bundle).is_ok()));
+    assert_ne!(bundles[0].bundle_sha256, bundles[1].bundle_sha256);
+
+    let mut drifted = bundles[0].clone();
+    drifted.server_key = "runner".to_string();
+    assert!(verify_plugin_mcp_cloud_package(&package, &drifted).is_err());
 }
 
 fn with_checksums(mut files: BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Vec<u8>> {

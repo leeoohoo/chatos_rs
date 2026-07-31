@@ -25,6 +25,7 @@ import { useI18n } from '../i18n/I18nProvider';
 import type {
   PluginCloudOAuthConnectionRecord,
   PluginComponentDescriptor,
+  PluginMcpCloudRuntimeMetadata,
   PluginReleaseRecord,
 } from '../pluginTypes';
 
@@ -80,15 +81,23 @@ function oauthScopesByProvider(
   );
 }
 
-function oauthComponents(release: PluginReleaseRecord | undefined): PluginComponentDescriptor[] {
+function oauthComponents(
+  release: PluginReleaseRecord | undefined,
+  runtimes: PluginMcpCloudRuntimeMetadata[],
+): PluginComponentDescriptor[] {
   if (!release) {
     return [];
   }
+  const oauthRuntimeKeys = new Set(
+    runtimes
+      .filter((runtime) => runtime.transport === 'http' && Boolean(runtime.oauth_resource))
+      .map((runtime) => runtime.component_key),
+  );
   return release.components.filter(
     (component) =>
       component.kind === 'mcp_server' &&
-      component.runtime_kind === 'http' &&
       component.execution_host !== 'local' &&
+      oauthRuntimeKeys.has(component.component_key) &&
       oauthScopesByProvider(release, component.component_key).size > 0,
   );
 }
@@ -123,7 +132,15 @@ export function PluginCloudOAuthPage() {
     enabled: Boolean(pluginId),
   });
   const selectedRelease = releasesQuery.data?.items.find((release) => release.id === releaseId);
-  const components = useMemo(() => oauthComponents(selectedRelease), [selectedRelease]);
+  const runtimesQuery = useQuery({
+    queryKey: ['plugin-cloud-mcp-runtimes', pluginId, releaseId],
+    queryFn: () => api.listPluginMcpCloudRuntimes(pluginId || '', releaseId || ''),
+    enabled: Boolean(pluginId && releaseId),
+  });
+  const components = useMemo(
+    () => oauthComponents(selectedRelease, runtimesQuery.data?.items || []),
+    [runtimesQuery.data, selectedRelease],
+  );
   const scopeGroups = useMemo(
     () => oauthScopesByProvider(selectedRelease, componentKey),
     [selectedRelease, componentKey],

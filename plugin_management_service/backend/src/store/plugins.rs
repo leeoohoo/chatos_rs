@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 
 impl AppStore {
     pub async fn delete_plugin_bindings_for_agent(&self, agent_key: &str) -> Result<(), String> {
@@ -547,6 +548,74 @@ impl AppStore {
                 continue;
             }
             self.plugin_cloud_component_bundles
+                .insert_one(record, None)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub async fn get_plugin_mcp_cloud_runtime_bundle(
+        &self,
+        plugin_id: &str,
+        release_id: &str,
+        component_key: &str,
+    ) -> Result<Option<PluginMcpCloudRuntimeBundle>, String> {
+        self.plugin_mcp_cloud_runtime_bundles
+            .find_one(
+                doc! {
+                    "plugin_id": plugin_id,
+                    "release_id": release_id,
+                    "component.component_key": component_key,
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_plugin_mcp_cloud_runtime_bundles(
+        &self,
+        plugin_id: &str,
+        release_id: &str,
+    ) -> Result<Vec<PluginMcpCloudRuntimeBundle>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "component.component_key": 1 })
+            .build();
+        self.plugin_mcp_cloud_runtime_bundles
+            .find(
+                doc! { "plugin_id": plugin_id, "release_id": release_id },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn insert_plugin_mcp_cloud_runtime_bundles(
+        &self,
+        records: &[PluginMcpCloudRuntimeBundle],
+    ) -> Result<(), String> {
+        for record in records {
+            if let Some(existing) = self
+                .get_plugin_mcp_cloud_runtime_bundle(
+                    record.plugin_id.as_str(),
+                    record.release_id.as_str(),
+                    record.component.component_key.as_str(),
+                )
+                .await?
+            {
+                if existing != *record {
+                    return Err(format!(
+                        "immutable Plugin MCP cloud runtime Bundle conflict: {}/{}/{}",
+                        record.plugin_id, record.release_id, record.component.component_key
+                    ));
+                }
+                continue;
+            }
+            self.plugin_mcp_cloud_runtime_bundles
                 .insert_one(record, None)
                 .await
                 .map_err(|err| err.to_string())?;

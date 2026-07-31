@@ -639,7 +639,33 @@ pub struct PluginMcpCloudRuntimeBundle {
     pub artifact_sha256: String,
     pub normalized_manifest_sha256: String,
     pub component: PluginComponentDescriptor,
+    /// Runtime declared directly by the signed Plugin Manifest. Config-file
+    /// components keep the immutable config path here.
     pub runtime: PluginMcpServer,
+    /// Concrete runtime frozen from the verified artifact. Inline runtimes are
+    /// identical to `runtime`; config-file runtimes resolve to stdio or HTTP.
+    pub resolved_runtime: PluginMcpServer,
+    pub server_key: String,
+    pub bundle_sha256: String,
+}
+
+impl PluginMcpCloudRuntimeBundle {
+    pub fn effective_runtime(&self) -> &PluginMcpServer {
+        &self.resolved_runtime
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginMcpCloudRuntimeMetadata {
+    pub plugin_id: String,
+    pub release_id: String,
+    pub component_key: String,
+    pub server_key: String,
+    pub transport: String,
+    #[serde(default)]
+    pub secret_names: Vec<String>,
+    #[serde(default)]
+    pub oauth_resource: Option<String>,
     pub bundle_sha256: String,
 }
 
@@ -813,6 +839,8 @@ struct PluginMcpCloudRuntimeBundleHashInput<'a> {
     normalized_manifest_sha256: &'a str,
     component: &'a PluginComponentDescriptor,
     runtime: &'a PluginMcpServer,
+    resolved_runtime: &'a PluginMcpServer,
+    server_key: &'a str,
 }
 
 pub fn build_plugin_mcp_cloud_runtime_bundle(
@@ -839,6 +867,57 @@ pub fn build_plugin_mcp_cloud_runtime_bundle(
         .find(|runtime| runtime.component_key() == component_key)
         .cloned()
         .ok_or_else(|| format!("Plugin MCP runtime is missing: {component_key}"))?;
+    if matches!(runtime, PluginMcpServer::ConfigFile { .. }) {
+        return Err(format!(
+            "Plugin MCP config-file runtime requires verified artifact resolution: {component_key}"
+        ));
+    }
+    let server_key = runtime.component_key().to_string();
+    build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
+        release,
+        component_key,
+        runtime.clone(),
+        server_key.as_str(),
+    )
+}
+
+pub fn build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
+    release: &PluginReleaseRecord,
+    component_key: &str,
+    resolved_runtime: PluginMcpServer,
+    server_key: &str,
+) -> Result<PluginMcpCloudRuntimeBundle, String> {
+    let component = release
+        .components
+        .iter()
+        .find(|component| component.component_key == component_key)
+        .cloned()
+        .ok_or_else(|| format!("Plugin MCP component is missing: {component_key}"))?;
+    if component.kind != PluginComponentKind::McpServer
+        || component.execution_host == PluginExecutionHost::Local
+    {
+        return Err(format!(
+            "Plugin component is not a cloud-capable MCP Server: {component_key}"
+        ));
+    }
+    let runtime = release
+        .normalized_manifest
+        .mcp_servers
+        .iter()
+        .find(|runtime| runtime.component_key() == component_key)
+        .cloned()
+        .ok_or_else(|| format!("Plugin MCP runtime is missing: {component_key}"))?;
+    let server_key = server_key.trim();
+    if server_key.is_empty()
+        || resolved_runtime.component_key() != server_key
+        || matches!(resolved_runtime, PluginMcpServer::ConfigFile { .. })
+        || (!matches!(runtime, PluginMcpServer::ConfigFile { .. })
+            && (runtime != resolved_runtime || runtime.component_key() != server_key))
+    {
+        return Err(format!(
+            "resolved Plugin MCP runtime does not match the declared component: {component_key}"
+        ));
+    }
     let normalized_manifest_sha256 =
         normalized_plugin_manifest_sha256(&release.normalized_manifest)
             .map_err(|error| format!("hash normalized Plugin Manifest failed: {error}"))?;
@@ -851,6 +930,8 @@ pub fn build_plugin_mcp_cloud_runtime_bundle(
         normalized_manifest_sha256.as_str(),
         &component,
         &runtime,
+        &resolved_runtime,
+        server_key,
     )?;
     Ok(PluginMcpCloudRuntimeBundle {
         plugin_id: release.plugin_id.clone(),
@@ -861,6 +942,8 @@ pub fn build_plugin_mcp_cloud_runtime_bundle(
         normalized_manifest_sha256,
         component,
         runtime,
+        resolved_runtime,
+        server_key: server_key.to_string(),
         bundle_sha256,
     })
 }
@@ -877,6 +960,8 @@ pub fn plugin_mcp_cloud_runtime_bundle_sha256(
         bundle.normalized_manifest_sha256.as_str(),
         &bundle.component,
         &bundle.runtime,
+        &bundle.resolved_runtime,
+        bundle.server_key.as_str(),
     )
 }
 
@@ -889,9 +974,11 @@ fn plugin_mcp_cloud_runtime_bundle_sha256_parts(
     normalized_manifest_sha256: &str,
     component: &PluginComponentDescriptor,
     runtime: &PluginMcpServer,
+    resolved_runtime: &PluginMcpServer,
+    server_key: &str,
 ) -> Result<String, String> {
     let payload = PluginMcpCloudRuntimeBundleHashInput {
-        purpose: "chatos.plugin.cloud-mcp-runtime-bundle.v1",
+        purpose: "chatos.plugin.cloud-mcp-runtime-bundle.v2",
         plugin_id,
         release_id,
         version,
@@ -900,6 +987,8 @@ fn plugin_mcp_cloud_runtime_bundle_sha256_parts(
         normalized_manifest_sha256,
         component,
         runtime,
+        resolved_runtime,
+        server_key,
     };
     serde_json::to_vec(&payload)
         .map(|bytes| hex::encode(Sha256::digest(bytes)))

@@ -129,23 +129,21 @@ pub(super) async fn resolve_plugin_binding(
         None => HashSet::new(),
     };
     if let Some(release) = release.as_ref() {
-        for component in release.components.iter().filter(|component| {
-            component.kind == PluginComponentKind::McpServer
-                && component.execution_host != PluginExecutionHost::Local
-        }) {
-            let Ok(bundle) = chatos_plugin_management_sdk::build_plugin_mcp_cloud_runtime_bundle(
-                release,
-                component.component_key.as_str(),
-            ) else {
-                continue;
-            };
+        let runtime_bundles = state
+            .store
+            .list_plugin_mcp_cloud_runtime_bundles(catalog.id.as_str(), release.id.as_str())
+            .await
+            .map_err(ApiError::internal)?;
+        for bundle in runtime_bundles {
             if component_snapshots.iter().any(|snapshot| {
                 snapshot.plugin_id == bundle.plugin_id
                     && snapshot.release_id == bundle.release_id
                     && snapshot.component == bundle.component
                     && snapshot.content_sha256 == bundle.bundle_sha256
+                    && chatos_plugin_management_sdk::plugin_mcp_cloud_runtime_bundle_sha256(&bundle)
+                        .is_ok_and(|sha256| sha256 == bundle.bundle_sha256)
             }) {
-                cloud_bundle_keys.insert(component.component_key.clone());
+                cloud_bundle_keys.insert(bundle.component.component_key.clone());
             }
         }
     }

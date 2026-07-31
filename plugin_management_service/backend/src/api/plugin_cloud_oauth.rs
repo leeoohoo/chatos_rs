@@ -148,7 +148,7 @@ pub(super) async fn begin_plugin_cloud_oauth_authorization(
         oauth_resource: Some(resource),
         headers,
         ..
-    } = &bundle.runtime
+    } = bundle.effective_runtime()
     else {
         return Err(ApiError::bad_request(
             "Plugin cloud OAuth requires an HTTP MCP runtime with oauth_resource",

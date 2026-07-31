@@ -239,7 +239,7 @@ impl CloudStdioProvider {
             env,
             cwd,
             ..
-        } = &immutable.runtime
+        } = runtime_bundle.effective_runtime()
         else {
             return Err("Plugin MCP runtime is not stdio".to_string());
         };
@@ -965,6 +965,8 @@ mod tests {
                 metadata: BTreeMap::new(),
             },
             runtime: binding.runtime.clone(),
+            resolved_runtime: binding.runtime.clone(),
+            server_key: binding.runtime.component_key().to_string(),
             bundle_sha256: String::new(),
         };
         bundle.bundle_sha256 =

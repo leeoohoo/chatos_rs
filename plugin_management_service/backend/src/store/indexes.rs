@@ -220,6 +220,17 @@ impl AppStore {
         )
         .await?;
 
+        create_unique_index(
+            &self.plugin_mcp_cloud_runtime_bundles,
+            doc! { "plugin_id": 1, "release_id": 1, "component.component_key": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_mcp_cloud_runtime_bundles,
+            doc! { "release_id": 1, "component.execution_host": 1 },
+        )
+        .await?;
+
         create_unique_index(&self.plugin_cloud_credentials, doc! { "id": 1 }).await?;
         create_unique_index(
             &self.plugin_cloud_credentials,

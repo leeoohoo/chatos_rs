@@ -31,6 +31,7 @@ import type {
   PluginInstallationRecord,
   PluginCloudOAuthConnectionRecord,
   PluginMarketplaceRecord,
+  PluginMcpCloudRuntimeMetadata,
   PluginOAuthConnectionRecord,
   PluginPublisherRecord,
   PluginReleaseRecord,
@@ -198,6 +199,10 @@ export const api = {
   listVisiblePluginReleases: (pluginId: string) =>
     request<ListResponse<PluginReleaseRecord>>(
       `/api/plugins/${encodeURIComponent(pluginId)}/releases`,
+    ),
+  listPluginMcpCloudRuntimes: (pluginId: string, releaseId: string) =>
+    request<ListResponse<PluginMcpCloudRuntimeMetadata>>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/releases/${encodeURIComponent(releaseId)}/cloud-mcp-runtimes`,
     ),
   createPluginRelease: (pluginId: string, payload: unknown) =>
     request<PluginReleaseRecord>(

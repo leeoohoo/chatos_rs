@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chatos_plugin_management_sdk::{
-    build_plugin_mcp_cloud_runtime_bundle, PluginMcpCloudRuntimeBundle, PluginMcpServer,
+    plugin_mcp_cloud_runtime_bundle_sha256, PluginMcpCloudRuntimeBundle, PluginMcpServer,
 };
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
@@ -74,7 +74,7 @@ pub(super) async fn upsert_plugin_cloud_credential(
         component_key.as_str(),
     )
     .await?;
-    let referenced = runtime_secret_names(&bundle.runtime)?;
+    let referenced = runtime_secret_names(bundle.effective_runtime())?;
     if !referenced.contains(secret_name.as_str()) {
         return Err(ApiError::bad_request(
             "Plugin cloud credential is not referenced by the immutable MCP runtime",
@@ -247,7 +247,7 @@ pub(super) async fn upsert_plugin_cloud_oauth_connection(
         oauth_resource: Some(expected_resource),
         headers,
         ..
-    } = &bundle.runtime
+    } = bundle.effective_runtime()
     else {
         return Err(ApiError::bad_request(
             "Plugin cloud OAuth requires an HTTP MCP runtime with oauth_resource",
@@ -400,9 +400,23 @@ pub(super) async fn resolve_plugin_mcp_cloud_credentials_internal(
             "Plugin Release is revoked or does not match the credential request",
         ));
     }
-    let bundle = build_plugin_mcp_cloud_runtime_bundle(&release, component_key.as_str())
-        .map_err(ApiError::conflict)?;
-    if bundle.bundle_sha256 != request.expected_component_content_sha256 {
+    let bundle = state
+        .store
+        .get_plugin_mcp_cloud_runtime_bundle(
+            plugin_id.as_str(),
+            release_id.as_str(),
+            component_key.as_str(),
+        )
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("Plugin MCP cloud runtime Bundle is unavailable"))?;
+    if bundle.plugin_id != plugin_id
+        || bundle.release_id != release_id
+        || bundle.component.component_key != component_key
+        || plugin_mcp_cloud_runtime_bundle_sha256(&bundle).map_err(ApiError::internal)?
+            != bundle.bundle_sha256
+        || bundle.bundle_sha256 != request.expected_component_content_sha256
+    {
         return Err(ApiError::conflict(
             "Plugin cloud credential request does not match the immutable component snapshot",
         ));
@@ -428,7 +442,7 @@ pub(super) async fn resolve_plugin_mcp_cloud_credentials_internal(
         .map(|record| (record.metadata.secret_name.as_str(), record))
         .collect::<HashMap<_, _>>();
     let mut resolved_secrets = HashMap::new();
-    for name in runtime_secret_names(&bundle.runtime)? {
+    for name in runtime_secret_names(bundle.effective_runtime())? {
         let record = by_name.get(name.as_str()).ok_or_else(|| {
             ApiError::conflict(format!("Plugin cloud credential is missing: {name}"))
         })?;
@@ -442,7 +456,7 @@ pub(super) async fn resolve_plugin_mcp_cloud_credentials_internal(
         resolved_secrets.insert(name, value);
     }
     let mut oauth_record = None;
-    let (headers, environment) = match &bundle.runtime {
+    let (headers, environment) = match bundle.effective_runtime() {
         PluginMcpServer::Stdio { env, .. } => {
             if !resolved_secrets.is_empty() {
                 require_credential_permission(&bundle, expected_permissions.as_slice())?;
@@ -619,8 +633,31 @@ pub(super) async fn require_visible_cloud_mcp_release(
             "Plugin Release is revoked or does not match the Plugin",
         ));
     }
-    let bundle = build_plugin_mcp_cloud_runtime_bundle(&release, component_key)
-        .map_err(ApiError::conflict)?;
+    let bundle = state
+        .store
+        .get_plugin_mcp_cloud_runtime_bundle(plugin_id, release_id, component_key)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("Plugin MCP cloud runtime Bundle is unavailable"))?;
+    let snapshot = state
+        .store
+        .list_plugin_component_snapshots(plugin_id, release_id)
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|snapshot| snapshot.component.component_key == component_key)
+        .ok_or_else(|| ApiError::conflict("Plugin MCP component snapshot is unavailable"))?;
+    if bundle.plugin_id != plugin_id
+        || bundle.release_id != release_id
+        || bundle.component != snapshot.component
+        || bundle.bundle_sha256 != snapshot.content_sha256
+        || plugin_mcp_cloud_runtime_bundle_sha256(&bundle).map_err(ApiError::internal)?
+            != bundle.bundle_sha256
+    {
+        return Err(ApiError::conflict(
+            "Plugin MCP cloud runtime Bundle failed immutable identity validation",
+        ));
+    }
     Ok((release, bundle))
 }
 
@@ -654,7 +691,9 @@ pub(super) fn permissions_for_release(
     permissions
 }
 
-fn runtime_secret_names(runtime: &PluginMcpServer) -> Result<BTreeSet<String>, ApiError> {
+pub(super) fn runtime_secret_names(
+    runtime: &PluginMcpServer,
+) -> Result<BTreeSet<String>, ApiError> {
     let values = match runtime {
         PluginMcpServer::Stdio { env, .. } => env.values().collect::<Vec<_>>(),
         PluginMcpServer::Http { headers, .. } => headers.values().collect::<Vec<_>>(),

@@ -115,6 +115,7 @@ impl ExternalHttpProvider {
         &self,
         immutable: &PluginMcpRuntimeBinding,
         route: &ResolvedMcpRoute,
+        resolved_runtime: &PluginMcpServer,
         resolved_headers: &std::collections::BTreeMap<String, String>,
     ) -> Result<ExternalHttpProviderBinding, String> {
         if route.provider_kind != McpProviderKind::PluginCloud
@@ -129,7 +130,7 @@ impl ExternalHttpProvider {
             headers,
             oauth_resource,
             ..
-        } = &immutable.runtime
+        } = resolved_runtime
         else {
             return Err("Plugin MCP runtime is not HTTP".to_string());
         };

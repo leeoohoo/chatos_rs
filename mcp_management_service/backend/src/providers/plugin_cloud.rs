@@ -186,7 +186,7 @@ impl PluginCloudProvider {
                 "Plugin cloud credential response is not bound to the immutable Session",
             ));
         }
-        match &immutable.runtime {
+        match bundle.effective_runtime() {
             PluginMcpServer::Stdio { .. } => {
                 if !credentials.headers.is_empty() || credentials.oauth_connection_id.is_some() {
                     return Err(ProviderCallError::invalid_response(
@@ -229,7 +229,12 @@ impl PluginCloudProvider {
                 }
                 let binding = self
                     .external_http
-                    .prepare_plugin_binding(immutable, route, &credentials.headers)
+                    .prepare_plugin_binding(
+                        immutable,
+                        route,
+                        bundle.effective_runtime(),
+                        &credentials.headers,
+                    )
                     .await
                     .map_err(ProviderCallError::provider_unavailable)?;
                 let request_id = format!("{runtime_session_id}.{}.tools-list", route.resource_id);
@@ -243,8 +248,8 @@ impl PluginCloudProvider {
                     tools,
                 })
             }
-            PluginMcpServer::ConfigFile { .. } => Err(ProviderCallError::provider_unavailable(
-                "Plugin Cloud config-file MCP requires an explicit cloud artifact contract",
+            PluginMcpServer::ConfigFile { .. } => Err(ProviderCallError::invalid_response(
+                "resolved Plugin Cloud config-file runtime is still a config file",
             )),
         }
     }
@@ -273,8 +278,29 @@ impl PluginCloudProvider {
                 "Plugin Cloud route does not match its immutable runtime binding",
             ));
         }
-        match &immutable.runtime {
-            PluginMcpServer::Stdio { .. } => {
+        let transport = match &immutable.runtime {
+            PluginMcpServer::Stdio { .. } => "stdio",
+            PluginMcpServer::Http { .. } => "http",
+            PluginMcpServer::ConfigFile { .. } => {
+                let has_stdio = snapshot
+                    .cloud_stdio_bindings
+                    .contains_key(route.resource_id.as_str());
+                let has_http = snapshot
+                    .external_http_bindings
+                    .contains_key(route.resource_id.as_str());
+                match (has_stdio, has_http) {
+                    (true, false) => "stdio",
+                    (false, true) => "http",
+                    _ => {
+                        return Err(ProviderCallError::provider_unavailable(
+                            "Plugin Cloud config-file runtime binding is missing or ambiguous",
+                        ))
+                    }
+                }
+            }
+        };
+        match transport {
+            "stdio" => {
                 let binding = snapshot
                     .cloud_stdio_bindings
                     .get(route.resource_id.as_str())
@@ -300,7 +326,7 @@ impl PluginCloudProvider {
                     )
                     .await
             }
-            PluginMcpServer::Http { .. } => {
+            "http" => {
                 let binding = snapshot
                     .external_http_bindings
                     .get(route.resource_id.as_str())
@@ -326,9 +352,7 @@ impl PluginCloudProvider {
                     )
                     .await
             }
-            PluginMcpServer::ConfigFile { .. } => Err(ProviderCallError::provider_unavailable(
-                "Plugin Cloud config-file MCP is not prepared",
-            )),
+            _ => unreachable!("validated Plugin Cloud transport"),
         }
     }
 }
@@ -360,6 +384,13 @@ fn validate_runtime_bundle(
         || bundle.component.component_key != immutable.component_key
         || bundle.component.execution_host != immutable.declared_execution_host
         || bundle.runtime != immutable.runtime
+        || bundle.server_key.trim().is_empty()
+        || bundle.resolved_runtime.component_key() != bundle.server_key
+        || matches!(bundle.resolved_runtime, PluginMcpServer::ConfigFile { .. })
+        || immutable
+            .server_key
+            .as_deref()
+            .is_some_and(|server_key| server_key != bundle.server_key)
     {
         return Err(ProviderCallError::invalid_response(
             "Plugin MCP cloud runtime Bundle does not match the immutable Session binding",
@@ -419,7 +450,7 @@ mod tests {
 
     use chatos_plugin_management_sdk::{
         plugin_mcp_cloud_runtime_bundle_sha256, PluginComponentDescriptor, PluginComponentKind,
-        PluginMcpServer,
+        PluginMcpServer, PluginPathRef,
     };
 
     use super::*;
@@ -451,6 +482,8 @@ mod tests {
                 metadata: BTreeMap::new(),
             },
             runtime: runtime.clone(),
+            resolved_runtime: runtime.clone(),
+            server_key: runtime.component_key().to_string(),
             bundle_sha256: String::new(),
         };
         bundle.bundle_sha256 = plugin_mcp_cloud_runtime_bundle_sha256(&bundle).unwrap();
@@ -490,5 +523,33 @@ mod tests {
         let mut forged = bundle;
         forged.bundle_sha256 = "d".repeat(64);
         assert!(validate_runtime_bundle(&binding, &forged).is_err());
+    }
+
+    #[test]
+    fn config_file_bundle_freezes_one_concrete_runtime() {
+        let (mut bundle, mut binding) = bundle_and_binding();
+        let declared = PluginMcpServer::ConfigFile {
+            component_key: "search".to_string(),
+            path: PluginPathRef::new("./.mcp.json"),
+        };
+        let resolved = PluginMcpServer::Http {
+            component_key: "remote-search".to_string(),
+            url: "https://search.example.com/mcp".to_string(),
+            headers: BTreeMap::new(),
+            oauth_resource: None,
+            connect_timeout_ms: None,
+        };
+        bundle.component.runtime_kind = "config_file".to_string();
+        bundle.component.entrypoint = Some(PluginPathRef::new("./.mcp.json"));
+        bundle.runtime = declared.clone();
+        bundle.resolved_runtime = resolved;
+        bundle.server_key = "remote-search".to_string();
+        bundle.bundle_sha256 = plugin_mcp_cloud_runtime_bundle_sha256(&bundle).unwrap();
+        binding.runtime = declared;
+        binding.component_content_sha256 = bundle.bundle_sha256.clone();
+
+        validate_runtime_bundle(&binding, &bundle).unwrap();
+        bundle.server_key = "other".to_string();
+        assert!(validate_runtime_bundle(&binding, &bundle).is_err());
     }
 }

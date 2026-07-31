@@ -87,6 +87,7 @@ pub use plugin_catalog_sync::start_plugin_catalog_sync_loop;
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
 use plugin_cloud_bundles::{
     get_plugin_cloud_component_bundle_internal, get_plugin_mcp_cloud_runtime_bundle_internal,
+    list_plugin_mcp_cloud_runtime_metadata,
 };
 use plugin_cloud_credentials::{
     delete_plugin_cloud_credential, delete_plugin_cloud_oauth_connection,
@@ -285,6 +286,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/plugins/{plugin_id}/releases",
             get(list_plugin_releases),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-runtimes",
+            get(list_plugin_mcp_cloud_runtime_metadata),
         )
         .route(
             "/api/plugins/{plugin_id}/preference",

@@ -218,6 +218,17 @@ export interface PluginReleaseRecord {
   revoked_at?: string | null;
 }
 
+export interface PluginMcpCloudRuntimeMetadata {
+  plugin_id: string;
+  release_id: string;
+  component_key: string;
+  server_key: string;
+  transport: 'stdio' | 'http';
+  secret_names: string[];
+  oauth_resource?: string | null;
+  bundle_sha256: string;
+}
+
 export interface PluginComponentStatusRecord {
   component_key: string;
   kind: PluginComponentKind;
