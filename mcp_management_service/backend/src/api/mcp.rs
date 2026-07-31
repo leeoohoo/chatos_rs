@@ -218,6 +218,10 @@ fn grant_matches_snapshot(
         && claims.run_id == snapshot.run_id
         && claims.turn_id == snapshot.turn_id
         && claims.task_id == snapshot.task_id
+        && claims.source_session_id == snapshot.source_session_id
+        && claims.source_user_message_id == snapshot.source_user_message_id
+        && claims.default_model_config_id == snapshot.default_model_config_id
+        && claims.expected_project_task_ids == snapshot.expected_project_task_ids
         && claims.policy_revision == snapshot.policy_revision
         && claims.route_revision == snapshot.route_revision
         && i64::try_from(claims.exp).ok() == Some(snapshot.expires_at_unix)
@@ -244,6 +248,10 @@ mod tests {
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
+            source_session_id: None,
+            source_user_message_id: None,
+            default_model_config_id: None,
+            expected_project_task_ids: Vec::new(),
             sandbox_target: None,
             project_context: ProjectExecutionContext {
                 project_id: "project-1".to_string(),
@@ -386,6 +394,10 @@ mod tests {
             run_id: snapshot.run_id.clone(),
             turn_id: snapshot.turn_id.clone(),
             task_id: snapshot.task_id.clone(),
+            source_session_id: snapshot.source_session_id.clone(),
+            source_user_message_id: snapshot.source_user_message_id.clone(),
+            default_model_config_id: snapshot.default_model_config_id.clone(),
+            expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
             policy_revision: snapshot.policy_revision.clone(),
             route_revision: snapshot.route_revision.clone(),
             allowed_resource_ids: vec!["mcp-1".to_string()],

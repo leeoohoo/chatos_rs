@@ -63,6 +63,7 @@ pub struct AppConfig {
     pub chatos_callback_secret: Option<String>,
     pub internal_api_secret: Option<String>,
     pub chatos_internal_api_secret: Option<String>,
+    pub mcp_management_internal_api_secret: Option<String>,
     pub local_connector_internal_api_secret: Option<String>,
     pub callback_timeout: Duration,
     pub admin_username: String,

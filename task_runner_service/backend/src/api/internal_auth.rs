@@ -11,6 +11,8 @@ pub(super) const CHATOS_EXECUTION_START_SCOPE: &str = "chatos.execution.start";
 pub(super) const EXECUTION_OPTIONS_READ_SCOPE: &str = "execution-options.read";
 pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
+pub(super) const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
+pub(super) const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
 
 #[derive(Debug)]
 pub(super) struct InternalAuthError {
@@ -77,6 +79,7 @@ fn caller_secret<'a>(config: &'a AppConfig, caller: &str) -> Option<&'a str> {
     let value = match caller {
         CHATOS_CALLER => config.chatos_internal_api_secret.as_deref(),
         PROJECT_SERVICE_CALLER => config.internal_api_secret.as_deref(),
+        MCP_MANAGEMENT_CALLER => config.mcp_management_internal_api_secret.as_deref(),
         _ => None,
     };
     value.map(str::trim).filter(|value| !value.is_empty())

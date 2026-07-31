@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management 和 Project Runtime Environment Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、Memory、Notepad、云端 Browser、Sandbox Images、External/Plugin Provider 和其余调用方切换仍待完成，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service 和 Task Process Log Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、Memory、Notepad、云端 Browser、Sandbox Images、External/Plugin Provider 和其余调用方切换仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -244,6 +244,10 @@ required  -> 进入 tools/list；Runtime Session 创建时必须能解析出合�
   "turn_id": null,
   "task_id": "task-1",
   "task_profile": "implementation",
+  "source_session_id": null,
+  "source_user_message_id": null,
+  "default_model_config_id": null,
+  "expected_project_task_ids": [],
   "requested_device_id": null,
   "requested_sandbox_provider": null
 }
@@ -898,7 +902,7 @@ cancel outcome
 - 实现 invocation audit、超时和结果限制。
 - 先接 InternalServiceProvider 和 EmbeddedProvider。
 
-当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id。当前已注册的 Internal Service Adapter 是 Project Management 与 Project Runtime Environment；Embedded Provider 已先接入无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 需要权威云端 Store，BrowserTools 需要受控 Browser Runtime，因此不在 MCP Management 主进程中临时创建本地替代实现。
+当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id。当前已注册的 Internal Service Adapter 是 Project Management、Project Runtime Environment、Task Runner Service 与 Task Process Log；Embedded Provider 已先接入无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 需要权威云端 Store，BrowserTools 需要受控 Browser Runtime，因此不在 MCP Management 主进程中临时创建本地替代实现。
 
 ### Phase 3：Workspace Router
 
@@ -924,7 +928,7 @@ Cloud Sandbox Runtime Session 只接收 `sandbox_id`、`lease_id`、`is_environm
 - Sandbox Images 接入。
 - ChatOS/Task Runner 删除这些 Agent 工具对应的直接客户端和 URL 拼接。
 
-当前 Project Management MCP 和 Project Runtime Environment MCP 已使用 `mcp-management-service` 专用内部身份真实调用，并校验 owner、Agent、Session 和 Project 绑定。Task Runner 已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Memory、Sandbox Images 以及旧直连清理尚未开始。
+当前 Project Management MCP、Project Runtime Environment MCP、Task Runner Service MCP 和 Task Process Log MCP 已使用 `mcp-management-service` 专用内部身份真实调用，不转发用户 Token。Task Runner 只开放 `/internal/mcp-management/mcp/{system_key}` 这个工具入口给该身份，不会把普通 Task Runner REST 纳入网关。Task Process Log 的 owner、Agent、MCP Session、Project、run 和 task 全部取自 Runtime Session Snapshot；Task Runner 会再次验证 run 属于 task、task 属于 owner 与 Project，并拒绝模型参数覆盖这些字段。Task Runner Service 根据绑定的 System Agent 身份收窄工具 Profile。Task Runner 调用方已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Memory、Sandbox Images 以及旧直连清理尚未开始。
 
 ### Phase 5：External 与 Plugin Runtime
 

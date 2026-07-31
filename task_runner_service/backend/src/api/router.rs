@@ -22,7 +22,7 @@ use super::external_mcp_configs::{
 use super::internal::get_user_execution_options;
 use super::mcp::{
     get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog, list_plugin_connectors,
-    list_task_capability_catalog, mcp_entrypoint, preview_mcp_prompt,
+    list_task_capability_catalog, mcp_entrypoint, mcp_management_entrypoint, preview_mcp_prompt,
 };
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -247,6 +247,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/internal/users/{owner_user_id}/execution-options",
             get(get_user_execution_options),
+        )
+        .route(
+            "/internal/mcp-management/mcp/{system_key}",
+            post(mcp_management_entrypoint),
         )
         .merge(chatos_internal::router())
         .merge(protected_api)

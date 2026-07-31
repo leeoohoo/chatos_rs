@@ -24,6 +24,9 @@ pub struct AppConfig {
     pub plugin_management_internal_api_secret: Option<String>,
     pub project_service_base_url: String,
     pub project_service_internal_api_secret: Option<String>,
+    pub task_runner_service_base_url: String,
+    pub task_runner_internal_api_secret: Option<String>,
+    pub task_runner_request_timeout: Duration,
     pub local_connector_service_base_url: String,
     pub local_connector_internal_api_secret: Option<String>,
     pub sandbox_manager_service_base_url: String,
@@ -74,6 +77,8 @@ impl AppConfig {
                 .or_else(|| env_text("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"));
         let project_service_internal_api_secret =
             env_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET");
+        let task_runner_internal_api_secret =
+            env_text("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET");
         let local_connector_internal_api_secret =
             env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET");
         let sandbox_manager_internal_api_secret =
@@ -87,6 +92,11 @@ impl AppConfig {
             "MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
             project_service_internal_api_secret.as_deref(),
             &["change_me_mcp_management_project_service_secret"],
+        )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
+            task_runner_internal_api_secret.as_deref(),
+            &["change_me_mcp_management_task_runner_secret"],
         )?;
         validate_production_secret(
             "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
@@ -112,6 +122,12 @@ impl AppConfig {
         );
         let sandbox_manager_request_timeout = Duration::from_millis(
             env_text("MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(180_000)
+                .clamp(1_000, 2 * 60 * 60 * 1_000),
+        );
+        let task_runner_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(180_000)
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
@@ -143,6 +159,14 @@ impl AppConfig {
                     .unwrap_or_else(|| "http://127.0.0.1:39210".to_string()),
             ),
             project_service_internal_api_secret,
+            task_runner_service_base_url: normalize_base_url(
+                env_text("MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL")
+                    .or_else(|| env_text("TASK_RUNNER_SERVICE_BASE_URL"))
+                    .or_else(|| env_text("TASK_RUNNER_BASE_URL"))
+                    .unwrap_or_else(|| "http://127.0.0.1:39090".to_string()),
+            ),
+            task_runner_internal_api_secret,
+            task_runner_request_timeout,
             local_connector_service_base_url: normalize_base_url(
                 env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL")
                     .or_else(|| env_text("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
@@ -182,6 +206,11 @@ impl AppConfig {
             self.project_service_base_url.as_str(),
         )
         .await;
+        self.task_runner_service_base_url = chatos_service_runtime::resolve_service_base_url(
+            "task-runner",
+            self.task_runner_service_base_url.as_str(),
+        )
+        .await;
         self.local_connector_service_base_url = chatos_service_runtime::resolve_service_base_url(
             "local-connector-service",
             self.local_connector_service_base_url.as_str(),
@@ -208,6 +237,9 @@ impl AppConfig {
             ),
             project_service_base_url: "http://127.0.0.1:39210".to_string(),
             project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
+            task_runner_service_base_url: "http://127.0.0.1:39090".to_string(),
+            task_runner_internal_api_secret: Some("a-long-task-runner-secret".to_string()),
+            task_runner_request_timeout: Duration::from_secs(180),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),

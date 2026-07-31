@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute, RuntimeSessionResponse,
     RuntimeSessionRoutesResponse, SandboxExecutionTarget, SandboxProviderKind,
@@ -103,6 +104,17 @@ pub(super) async fn resolve_runtime_session(
         tool_result.tools.as_slice(),
     )
     .map_err(ApiError::internal)?;
+    let expected_project_task_ids = normalized_unique_items(
+        request.expected_project_task_ids.clone(),
+        "expected_project_task_ids",
+        200,
+    )?;
+    validate_task_runner_provider_context(
+        agent_key,
+        &request,
+        expected_project_task_ids.as_slice(),
+        route_response.routes.as_slice(),
+    )?;
     let mut unavailable_required_mcps = route_response.unavailable_required_mcps;
     unavailable_required_mcps.extend(tool_result.missing_required_tool_schemas);
     let required_resource_ids = capabilities
@@ -145,6 +157,10 @@ pub(super) async fn resolve_runtime_session(
         run_id: normalized(request.run_id.clone()),
         turn_id: normalized(request.turn_id.clone()),
         task_id: normalized(request.task_id.clone()),
+        source_session_id: normalized(request.source_session_id.clone()),
+        source_user_message_id: normalized(request.source_user_message_id.clone()),
+        default_model_config_id: normalized(request.default_model_config_id.clone()),
+        expected_project_task_ids: expected_project_task_ids.clone(),
         policy_revision: capabilities.policy_revision.clone(),
         route_revision: route_revision.clone(),
         allowed_resource_ids,
@@ -166,6 +182,10 @@ pub(super) async fn resolve_runtime_session(
         run_id: normalized(request.run_id),
         turn_id: normalized(request.turn_id),
         task_id: normalized(request.task_id),
+        source_session_id: normalized(request.source_session_id),
+        source_user_message_id: normalized(request.source_user_message_id),
+        default_model_config_id: normalized(request.default_model_config_id),
+        expected_project_task_ids,
         sandbox_target,
         project_context,
         policy_revision: capabilities.policy_revision.clone(),
@@ -225,6 +245,109 @@ fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(),
     ] {
         if value.trim().is_empty() {
             return Err(ApiError::bad_request(format!("{field} is required")));
+        }
+    }
+    Ok(())
+}
+
+fn normalized_unique_items(
+    values: Vec<String>,
+    field: &str,
+    max_items: usize,
+) -> Result<Vec<String>, ApiError> {
+    let mut values = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    if values.len() > max_items {
+        return Err(ApiError::bad_request(format!(
+            "{field} exceeds {max_items} items"
+        )));
+    }
+    if values.iter().any(|value| value.len() > 256) {
+        return Err(ApiError::bad_request(format!(
+            "{field} contains an item longer than 256 bytes"
+        )));
+    }
+    let encoded_bytes = values
+        .iter()
+        .map(String::len)
+        .sum::<usize>()
+        .saturating_add(values.len().saturating_sub(1));
+    if encoded_bytes > 12 * 1024 {
+        return Err(ApiError::bad_request(format!(
+            "{field} exceeds 12288 encoded bytes"
+        )));
+    }
+    Ok(values)
+}
+
+fn validate_task_runner_provider_context(
+    agent_key: SystemAgentKey,
+    request: &CreateRuntimeSessionRequest,
+    expected_project_task_ids: &[String],
+    routes: &[ResolvedMcpRoute],
+) -> Result<(), ApiError> {
+    let has_route = |system_key| {
+        let resource_id = chatos_mcp::system_mcp_descriptor(system_key).resource_id;
+        routes.iter().any(|route| route.resource_id == resource_id)
+    };
+    if has_route(SystemMcpKey::TaskRunnerService) {
+        if !matches!(
+            agent_key,
+            SystemAgentKey::ChatosConversationAgent
+                | SystemAgentKey::ChatosPlanningAgent
+                | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+        ) {
+            return Err(ApiError::conflict(
+                "Task Runner Service MCP is only valid for ChatOS task planning Agents",
+            ));
+        }
+        for (field, value) in [
+            ("source_session_id", request.source_session_id.as_deref()),
+            (
+                "source_user_message_id",
+                request.source_user_message_id.as_deref(),
+            ),
+        ] {
+            if value.map(str::trim).is_none_or(|value| value.is_empty()) {
+                return Err(ApiError::conflict(format!(
+                    "Task Runner Service MCP requires {field}"
+                )));
+            }
+        }
+        if agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            && expected_project_task_ids.is_empty()
+        {
+            return Err(ApiError::conflict(
+                "project requirement execution planner requires expected_project_task_ids",
+            ));
+        }
+    }
+    if has_route(SystemMcpKey::TaskProcessLog) {
+        if !matches!(
+            agent_key,
+            SystemAgentKey::TaskRunnerPlanPhase
+                | SystemAgentKey::TaskRunnerLocalPlanPhase
+                | SystemAgentKey::TaskRunnerRunPhase
+                | SystemAgentKey::TaskRunnerLocalRunPhase
+        ) {
+            return Err(ApiError::conflict(
+                "Task Process Log MCP is only valid for Task Runner phase Agents",
+            ));
+        }
+        for (field, value) in [
+            ("run_id", request.run_id.as_deref()),
+            ("task_id", request.task_id.as_deref()),
+        ] {
+            if value.map(str::trim).is_none_or(|value| value.is_empty()) {
+                return Err(ApiError::conflict(format!(
+                    "Task Process Log MCP requires {field}"
+                )));
+            }
         }
     }
     Ok(())
@@ -369,6 +492,10 @@ mod tests {
             turn_id: None,
             task_id: Some("task-1".to_string()),
             task_profile: Some("implementation".to_string()),
+            source_session_id: None,
+            source_user_message_id: None,
+            default_model_config_id: None,
+            expected_project_task_ids: Vec::new(),
             requested_device_id: Some("device-1".to_string()),
             requested_sandbox_provider: None,
             sandbox_target: None,
@@ -425,6 +552,71 @@ mod tests {
             SystemAgentKey::TaskRunnerRunPhase
         );
         assert!(parse_agent_key("arbitrary-agent").is_err());
+    }
+
+    #[test]
+    fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
+        let route = system_route(SystemMcpKey::TaskProcessLog);
+        let request = request();
+        validate_task_runner_provider_context(
+            SystemAgentKey::TaskRunnerRunPhase,
+            &request,
+            &[],
+            std::slice::from_ref(&route),
+        )
+        .expect("bound Task Runner run should be accepted");
+
+        let mut missing_run = request.clone();
+        missing_run.run_id = None;
+        let error = validate_task_runner_provider_context(
+            SystemAgentKey::TaskRunnerRunPhase,
+            &missing_run,
+            &[],
+            std::slice::from_ref(&route),
+        )
+        .expect_err("run binding is required");
+        assert!(format!("{error:?}").contains("run_id"));
+
+        assert!(validate_task_runner_provider_context(
+            SystemAgentKey::ChatosConversationAgent,
+            &request,
+            &[],
+            &[route],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn task_runner_service_session_requires_chatos_source_scope() {
+        let route = system_route(SystemMcpKey::TaskRunnerService);
+        let mut request = request();
+        request.agent_key = SystemAgentKey::ChatosConversationAgent.as_str().to_string();
+        assert!(validate_task_runner_provider_context(
+            SystemAgentKey::ChatosConversationAgent,
+            &request,
+            &[],
+            std::slice::from_ref(&route),
+        )
+        .is_err());
+
+        request.source_session_id = Some("conversation-1".to_string());
+        request.source_user_message_id = Some("message-1".to_string());
+        validate_task_runner_provider_context(
+            SystemAgentKey::ChatosConversationAgent,
+            &request,
+            &[],
+            std::slice::from_ref(&route),
+        )
+        .expect("complete Chatos source binding should be accepted");
+
+        let error = validate_task_runner_provider_context(
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
+            &request,
+            &[],
+            &[route],
+        )
+        .expect_err("project execution scope is required");
+        assert!(format!("{error:?}").contains("expected_project_task_ids"));
     }
 
     #[test]
@@ -497,5 +689,20 @@ mod tests {
             routes[0].provider_ref.as_deref(),
             Some("sandbox:sandbox-1/lease:lease-1")
         );
+    }
+
+    fn system_route(key: SystemMcpKey) -> ResolvedMcpRoute {
+        let descriptor = chatos_mcp::system_mcp_descriptor(key);
+        ResolvedMcpRoute {
+            resource_id: descriptor.resource_id.to_string(),
+            server_name: descriptor.server_name.to_string(),
+            provider_kind: McpProviderKind::InternalService,
+            provider_ref: Some(descriptor.owner_service.to_string()),
+            tool_namespace: descriptor.server_name.to_string(),
+            allow_writes: descriptor.allow_writes,
+            retry_class: chatos_mcp_management_sdk::McpRetryClass::NoRetry,
+            cancel_supported: false,
+            reason: "test".to_string(),
+        }
     }
 }

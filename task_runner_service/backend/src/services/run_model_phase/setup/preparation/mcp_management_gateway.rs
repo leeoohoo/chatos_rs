@@ -74,6 +74,10 @@ pub(super) async fn resolve_mcp_management_gateway(
         turn_id: None,
         task_id: Some(task.id.clone()),
         task_profile: Some(task.task_profile.clone()),
+        source_session_id: task.source_session_id.clone(),
+        source_user_message_id: task.source_user_message_id.clone(),
+        default_model_config_id: task.default_model_config_id.clone(),
+        expected_project_task_ids: Vec::new(),
         requested_device_id: None,
         requested_sandbox_provider: sandbox_context.map(|_| SandboxProviderKind::Cloud),
         sandbox_target: sandbox_context.map(|context| SandboxExecutionTarget {

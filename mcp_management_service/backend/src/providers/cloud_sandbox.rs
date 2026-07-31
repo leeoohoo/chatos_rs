@@ -419,6 +419,10 @@ mod tests {
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
+            source_session_id: None,
+            source_user_message_id: None,
+            default_model_config_id: None,
+            expected_project_task_ids: Vec::new(),
             sandbox_target: Some(target.clone()),
             project_context: ProjectExecutionContext {
                 project_id: "project-1".to_string(),

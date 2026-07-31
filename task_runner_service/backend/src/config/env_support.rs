@@ -134,6 +134,8 @@ impl AppConfig {
             .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
             .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET"));
         let chatos_internal_api_secret = normalized_env("CHATOS_TASK_RUNNER_INTERNAL_API_SECRET");
+        let mcp_management_internal_api_secret =
+            normalized_env("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET");
         let local_connector_internal_api_secret =
             normalized_env("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
                 .or_else(|| normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET"))
@@ -188,6 +190,7 @@ impl AppConfig {
             chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
             internal_api_secret,
             chatos_internal_api_secret,
+            mcp_management_internal_api_secret,
             local_connector_internal_api_secret,
             callback_timeout: Duration::from_millis(callback_timeout_ms.max(1_000)),
             admin_username,
@@ -235,6 +238,11 @@ impl AppConfig {
             "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
             config.chatos_internal_api_secret.as_deref(),
             &["change_me_chatos_task_runner_internal_secret"],
+        )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
+            config.mcp_management_internal_api_secret.as_deref(),
+            &["change_me_mcp_management_task_runner_secret"],
         )?;
         if config.local_connector_internal_api_secret.is_some() {
             validate_production_secret(

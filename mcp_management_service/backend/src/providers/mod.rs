@@ -5,6 +5,7 @@ mod cloud_sandbox;
 mod embedded;
 mod local_connector;
 mod project_service;
+mod task_runner;
 
 use std::time::Duration;
 
@@ -18,11 +19,19 @@ use embedded::EmbeddedProvider;
 use local_connector::LocalConnectorProvider;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
+use task_runner::TaskRunnerProvider;
+
+pub struct TaskRunnerProviderConfig {
+    pub base_url: String,
+    pub internal_secret: Option<String>,
+    pub request_timeout: Duration,
+}
 
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     project_service: ProjectServiceProvider,
+    task_runner: TaskRunnerProvider,
     cloud_sandbox: CloudSandboxProvider,
     embedded: EmbeddedProvider,
 }
@@ -31,6 +40,7 @@ impl ProviderDispatcher {
     pub fn new(
         project_service_base_url: impl Into<String>,
         project_service_internal_secret: Option<String>,
+        task_runner: TaskRunnerProviderConfig,
         local_connector_service_base_url: impl Into<String>,
         local_connector_internal_secret: Option<String>,
         sandbox_manager_service_base_url: impl Into<String>,
@@ -53,6 +63,12 @@ impl ProviderDispatcher {
                 project_service_internal_secret,
                 response_limit_bytes,
             )?,
+            task_runner: TaskRunnerProvider::new(
+                task_runner.base_url,
+                task_runner.request_timeout,
+                task_runner.internal_secret,
+                response_limit_bytes,
+            )?,
             cloud_sandbox: CloudSandboxProvider::new(
                 sandbox_manager_service_base_url,
                 sandbox_manager_request_timeout,
@@ -66,7 +82,7 @@ impl ProviderDispatcher {
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
             McpProviderKind::InternalService | McpProviderKind::Harness => {
-                self.project_service.supports(route)
+                self.project_service.supports(route) || self.task_runner.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
@@ -100,6 +116,17 @@ impl ProviderDispatcher {
                 if self.project_service.supports(route) =>
             {
                 self.project_service
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::InternalService if self.task_runner.supports(route) => {
+                self.task_runner
                     .call_tool(
                         snapshot,
                         route,

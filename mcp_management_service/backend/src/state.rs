@@ -3,7 +3,7 @@
 
 use crate::config::AppConfig;
 use crate::project_context::ProjectContextClient;
-use crate::providers::ProviderDispatcher;
+use crate::providers::{ProviderDispatcher, TaskRunnerProviderConfig};
 use crate::routing::RoutingEngine;
 use crate::runtime::{RuntimeGrantService, RuntimeSessionStore};
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
@@ -36,6 +36,11 @@ impl AppState {
         let providers = ProviderDispatcher::new(
             config.project_service_base_url.clone(),
             config.project_service_internal_api_secret.clone(),
+            TaskRunnerProviderConfig {
+                base_url: config.task_runner_service_base_url.clone(),
+                internal_secret: config.task_runner_internal_api_secret.clone(),
+                request_timeout: config.task_runner_request_timeout,
+            },
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),
             config.sandbox_manager_service_base_url.clone(),

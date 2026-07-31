@@ -658,6 +658,7 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),

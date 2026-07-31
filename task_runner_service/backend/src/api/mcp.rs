@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
 
+use super::internal_auth::{
+    require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
+};
+
 const PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES: usize = 1024 * 1024;
 const PLUGIN_SELECTION_HEADER_LIMIT_BYTES: usize = 16 * 1024;
 const PLUGIN_SELECTION_MAX_ITEMS: usize = 50;
@@ -318,6 +322,324 @@ pub(super) async fn mcp_entrypoint(
     )
 }
 
+#[derive(Debug, Clone)]
+struct McpManagementBinding {
+    owner_user_id: String,
+    agent_key: chatos_plugin_management_sdk::SystemAgentKey,
+    session_id: String,
+    project_id: String,
+    run_id: Option<String>,
+    turn_id: Option<String>,
+    task_id: Option<String>,
+    source_session_id: Option<String>,
+    source_user_message_id: Option<String>,
+    default_model_config_id: Option<String>,
+    expected_project_task_ids: std::collections::BTreeSet<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundTaskProcessLogArgs {
+    #[serde(default)]
+    operation: crate::models::TaskProcessLogOperation,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    heading: Option<String>,
+}
+
+pub(super) async fn mcp_management_entrypoint(
+    Path(system_key): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<JsonRpcRequest>,
+) -> Json<JsonRpcResponse> {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if let Err(error) = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[MCP_MANAGEMENT_CALLER],
+        MCP_TOOLS_CALL_SCOPE,
+    ) {
+        return Json(task_runner_mcp_error(id, -32001, error.message));
+    }
+    let binding = match mcp_management_binding_from_headers(&headers) {
+        Ok(binding) => binding,
+        Err(message) => return Json(task_runner_mcp_error(id, -32602, message)),
+    };
+    let system_key = match system_key.parse::<chatos_plugin_management_sdk::SystemMcpKey>() {
+        Ok(system_key) => system_key,
+        Err(message) => return Json(task_runner_mcp_error(id, -32602, message)),
+    };
+    if request.method != chatos_mcp_service::METHOD_TOOLS_CALL {
+        return Json(task_runner_mcp_error(
+            id,
+            -32601,
+            "Task Runner internal MCP Provider only accepts tools/call",
+        ));
+    }
+    let response = match system_key {
+        chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService => {
+            dispatch_bound_task_runner_tool(&state, request, &binding).await
+        }
+        chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog => {
+            dispatch_bound_task_process_log(&state, request, &binding).await
+        }
+        _ => task_runner_mcp_error(
+            id,
+            -32602,
+            "Task Runner internal MCP Provider does not own this System MCP",
+        ),
+    };
+    Json(response)
+}
+
+async fn dispatch_bound_task_runner_tool(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
+    if !matches!(
+        binding.agent_key,
+        SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosPlanningAgent
+            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+    ) {
+        return task_runner_mcp_error(
+            request.id.unwrap_or(Value::Null),
+            -32001,
+            "configured Agent is not allowed to use Task Runner Service MCP",
+        );
+    }
+    let current_user = CurrentUser {
+        id: format!("mcp-management:{}", binding.session_id),
+        username: format!("mcp-management-{}", binding.agent_key.as_str()),
+        display_name: format!("MCP Management {}", binding.agent_key.as_str()),
+        role: crate::models::UserRole::Agent,
+        owner_user_id: Some(binding.owner_user_id.clone()),
+        owner_username: None,
+        owner_display_name: None,
+    };
+    let is_requirement_planner =
+        binding.agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent;
+    let is_chatos_plan = binding.agent_key == SystemAgentKey::ChatosPlanningAgent;
+    let request_context = McpRequestContext {
+        project_id: Some(binding.project_id.clone()),
+        source_session_id: binding.source_session_id.clone(),
+        source_turn_id: binding.turn_id.clone(),
+        source_user_message_id: binding.source_user_message_id.clone(),
+        default_model_config_id: binding.default_model_config_id.clone(),
+        workspace_dir: None,
+        remote_server_config: None,
+        tool_profile: Some(
+            if is_requirement_planner {
+                "project_requirement_execution_planner"
+            } else {
+                "chatos_async_planner"
+            }
+            .to_string(),
+        ),
+        task_profile: is_chatos_plan.then(|| crate::models::TASK_PROFILE_CHATOS_PLAN.to_string()),
+        builtin_prompt_locale: None,
+        chatos_plan_mode: is_chatos_plan,
+        expected_project_task_ids: binding.expected_project_task_ids.clone(),
+        plugin_config_override: None,
+    };
+    state
+        .task_runner_mcp_service
+        .handle_jsonrpc(request, current_user, request_context)
+        .await
+}
+
+async fn dispatch_bound_task_process_log(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
+    let id = request.id.unwrap_or(Value::Null);
+    if !matches!(
+        binding.agent_key,
+        SystemAgentKey::TaskRunnerPlanPhase
+            | SystemAgentKey::TaskRunnerLocalPlanPhase
+            | SystemAgentKey::TaskRunnerRunPhase
+            | SystemAgentKey::TaskRunnerLocalRunPhase
+    ) {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "configured Agent is not allowed to use Task Process Log MCP",
+        );
+    }
+    let Some(task_id) = binding.task_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Task Process Log requires bound task_id");
+    };
+    let Some(run_id) = binding.run_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Task Process Log requires bound run_id");
+    };
+    let name = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if name != Some("record_process") {
+        return task_runner_mcp_error(id, -32602, "Task Process Log tool was not found");
+    }
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let input = match serde_json::from_value::<BoundTaskProcessLogArgs>(arguments) {
+        Ok(input) => input,
+        Err(error) => {
+            return task_runner_mcp_error(
+                id,
+                -32602,
+                format!("invalid Task Process Log arguments: {error}"),
+            )
+        }
+    };
+    let run = match state.run_service.get_run(run_id).await {
+        Ok(Some(run)) => run,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner run was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if run.task_id != task_id {
+        return task_runner_mcp_error(id, -32001, "bound run does not belong to bound task");
+    }
+    if run.status != crate::models::TaskRunStatus::Running {
+        return task_runner_mcp_error(id, -32001, "bound Task Runner run is no longer active");
+    }
+    let task = match state.task_service.get_task(task_id).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner task was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if !task_matches_mcp_management_binding(&task, binding) {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "bound task does not match MCP Management owner and project scope",
+        );
+    }
+    let updated = match state
+        .task_service
+        .record_task_process(
+            task_id,
+            crate::models::RecordTaskProcessRequest {
+                operation: input.operation,
+                content: input.content,
+                heading: input.heading,
+            },
+        )
+        .await
+    {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner task was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    JsonRpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: Some(task_runner_mcp_text_result(json!({
+            "recorded": true,
+            "task_id": updated.id,
+            "run_id": run_id,
+            "process_log_chars": updated
+                .process_log
+                .as_deref()
+                .map(|value| value.chars().count())
+                .unwrap_or_default(),
+            "updated_at": updated.updated_at,
+        }))),
+        error: None,
+    }
+}
+
+fn mcp_management_binding_from_headers(
+    headers: &HeaderMap,
+) -> Result<McpManagementBinding, String> {
+    let required =
+        |key: &'static str| header_text(headers, key).ok_or_else(|| format!("{key} is required"));
+    let owner_user_id = required("x-mcp-management-owner-user-id")?;
+    let agent_key_text = required("x-mcp-management-agent-key")?;
+    let agent_key = chatos_plugin_management_sdk::SystemAgentKey::ALL
+        .into_iter()
+        .find(|key| key.as_str() == agent_key_text)
+        .ok_or_else(|| "x-mcp-management-agent-key is not a registered System Agent".to_string())?;
+    Ok(McpManagementBinding {
+        owner_user_id,
+        agent_key,
+        session_id: required("x-mcp-management-session-id")?,
+        project_id: required("x-mcp-management-project-id")?,
+        run_id: header_text(headers, "x-mcp-management-run-id"),
+        turn_id: header_text(headers, "x-mcp-management-turn-id"),
+        task_id: header_text(headers, "x-mcp-management-task-id"),
+        source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
+        source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
+        default_model_config_id: header_text(headers, "x-mcp-management-default-model-config-id"),
+        expected_project_task_ids: header_csv_set(
+            headers,
+            "x-mcp-management-expected-project-task-ids",
+        ),
+    })
+}
+
+fn task_matches_mcp_management_binding(
+    task: &crate::models::TaskRecord,
+    binding: &McpManagementBinding,
+) -> bool {
+    let owner_user_id = task
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            task.creator_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
+    owner_user_id == Some(binding.owner_user_id.as_str())
+        && task.project_id.trim() == binding.project_id
+        && binding.run_id.as_deref().is_some_and(|run_id| {
+            task.last_run_id
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|last_run_id| last_run_id == run_id)
+        })
+}
+
+fn task_runner_mcp_text_result(payload: Value) -> Value {
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
+    json!({
+        "content": [{"type": "text", "text": text}],
+        "_structured_result": payload,
+    })
+}
+
+fn task_runner_mcp_error(id: Value, code: i32, message: impl Into<String>) -> JsonRpcResponse {
+    JsonRpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: None,
+        error: Some(crate::mcp_server::JsonRpcError {
+            code,
+            message: message.into(),
+        }),
+    }
+}
+
 async fn downstream_access_token_from_headers(
     config: &crate::config::AppConfig,
     headers: &HeaderMap,
@@ -605,6 +927,92 @@ fn header_bool(headers: &HeaderMap, key: &'static str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-mcp-management-owner-user-id",
+            " user-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-agent-key",
+            " task_runner_run_phase ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-session-id",
+            " session-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-project-id",
+            " project-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-run-id",
+            " run-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-task-id",
+            " task-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-source-session-id",
+            " source-session-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-source-user-message-id",
+            " message-1 ".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-mcp-management-expected-project-task-ids",
+            " project-task-b,project-task-a,project-task-a "
+                .parse()
+                .expect("valid header"),
+        );
+
+        let binding = mcp_management_binding_from_headers(&headers).expect("valid binding");
+        assert_eq!(binding.owner_user_id, "user-1");
+        assert_eq!(binding.agent_key.as_str(), "task_runner_run_phase");
+        assert_eq!(binding.session_id, "session-1");
+        assert_eq!(binding.project_id, "project-1");
+        assert_eq!(binding.run_id.as_deref(), Some("run-1"));
+        assert_eq!(binding.task_id.as_deref(), Some("task-1"));
+        assert_eq!(
+            binding.source_session_id.as_deref(),
+            Some("source-session-1")
+        );
+        assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
+        assert_eq!(
+            binding.expected_project_task_ids,
+            std::collections::BTreeSet::from([
+                "project-task-a".to_string(),
+                "project-task-b".to_string(),
+            ])
+        );
+
+        headers.insert(
+            "x-mcp-management-agent-key",
+            "arbitrary-agent".parse().expect("valid header"),
+        );
+        assert!(mcp_management_binding_from_headers(&headers)
+            .expect_err("unknown agent must fail")
+            .contains("registered System Agent"));
+    }
+
+    #[test]
+    fn task_process_log_arguments_cannot_override_bound_identity() {
+        let error = serde_json::from_value::<BoundTaskProcessLogArgs>(json!({
+            "operation": "append",
+            "content": "verified",
+            "heading": null,
+            "task_id": "another-task",
+            "run_id": "another-run",
+            "owner_user_id": "another-user"
+        }))
+        .expect_err("identity override fields must be rejected");
+
+        assert!(error.to_string().contains("unknown field"));
+    }
 
     #[test]
     fn request_context_reads_inherited_model_header() {
