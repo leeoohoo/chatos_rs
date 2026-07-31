@@ -241,7 +241,7 @@ describe('requirement execution process phase', () => {
     });
   });
 
-  it('uses backend recovery action instead of empty graph size for stopped batches', () => {
+  it('normalizes stale stopped zero-task recovery payloads into regenerate', () => {
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: false,
@@ -255,6 +255,32 @@ describe('requirement execution process phase', () => {
       phase: 'stopped',
       recoveryAction: 'none',
     })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+
+    const process = buildRequirementExecutionProcess({
+      projectId: 'project-1',
+      requirement: { id: 'requirement-1', title: 'Requirement 1' },
+      response: {
+        found: true,
+        execution_plane: 'cloud',
+        conversation_id: 'conversation-1',
+        execution_group_id: 'execution-group-stopped',
+        message_id: 'message-stopped',
+        status: 'stopped',
+        task_count: 0,
+        has_started_runs: false,
+        recovery_action: 'none',
+        recovery_reason: 'not_recoverable_in_current_state',
+        replace_previous_batch: true,
+      },
+    });
+
+    expect(process).toMatchObject({
+      serverStatus: 'stopped',
+      taskCount: 0,
+      hasStartedRuns: false,
+      recoveryAction: 'regenerate',
+      replacePreviousBatch: true,
+    });
   });
 
   it('appends a new legacy feedback value to the previous process history', () => {

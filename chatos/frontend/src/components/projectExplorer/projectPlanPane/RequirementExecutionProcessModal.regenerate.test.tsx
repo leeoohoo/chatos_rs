@@ -181,4 +181,58 @@ describe('failed requirement execution planning recovery', () => {
       hasStartedRuns: false,
     }));
   });
+
+  it('shows regenerate for a reopened stopped zero-task plan with stale recovery metadata', async () => {
+    const user = userEvent.setup();
+    mocks.getProjectRequirementExecutionPlan.mockResolvedValue({
+      found: true,
+      conversation_id: 'conversation-1',
+      execution_group_id: 'execution-group-stopped',
+      message_id: 'message-stopped',
+      status: 'stopped',
+      task_count: 0,
+      has_started_runs: false,
+      recovery_action: 'none',
+      recovery_reason: 'not_recoverable_in_current_state',
+      replace_previous_batch: true,
+    });
+    render(
+      <RequirementExecutionProcessModal
+        process={{
+          requirement: { id: 'requirement-1', title: 'Requirement 1' },
+          projectId: 'project-1',
+          conversationId: 'conversation-1',
+          executionGroupId: 'execution-group-stopped',
+          messageId: 'message-stopped',
+          contactId: 'contact-1',
+          selectedModelId: 'model-1',
+          serverStatus: 'stopped',
+          hasStartedRuns: false,
+          recoveryAction: 'none',
+          recoveryReason: 'not_recoverable_in_current_state',
+          replacePreviousBatch: true,
+        }}
+        onClose={vi.fn()}
+        onProcessChange={mocks.onProcessChange}
+      />,
+    );
+
+    const regenerateButton = await screen.findByRole('button', {
+      name: '重新生成执行流程',
+    });
+    await user.click(regenerateButton);
+
+    expect(mocks.stopProjectRequirementExecution).not.toHaveBeenCalled();
+    expect(mocks.executeProjectRequirement).toHaveBeenCalledWith(
+      'project-1',
+      'requirement-1',
+      {
+        contact_id: 'contact-1',
+        model_config_id: 'model-1',
+        include_prerequisite_dependents: false,
+        replaces_execution_group_id: 'execution-group-stopped',
+        replaces_conversation_id: 'conversation-1',
+      },
+    );
+  });
 });
