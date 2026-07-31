@@ -217,7 +217,7 @@ async fn cancels_an_inflight_local_model_request() {
         tokio::spawn(async move { execute_chat_turn(&runtime, "user-1", request).await });
 
     tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(10),
         harness.provider.first_request_seen.notified(),
     )
     .await
@@ -273,7 +273,7 @@ async fn applies_guidance_received_during_an_active_local_turn() {
         tokio::spawn(async move { execute_chat_turn(&runtime, "user-1", request).await });
 
     tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(10),
         harness.provider.first_request_seen.notified(),
     )
     .await

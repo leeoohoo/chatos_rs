@@ -224,10 +224,8 @@ pub(crate) fn disable_chrome_integration() -> Result<ChromeIntegrationStatus> {
     let platform = chrome_host_platform();
     let manifest_paths = chrome_native_host_manifest_paths();
     for path in &manifest_paths {
-        if path.exists() {
-            if !registration_owned_by_chatos(path.as_path())? {
-                bail!("refusing to remove a Chrome Native Messaging manifest not owned by ChatOS");
-            }
+        if path.exists() && !registration_owned_by_chatos(path.as_path())? {
+            bail!("refusing to remove a Chrome Native Messaging manifest not owned by ChatOS");
         }
     }
     if platform == ChromeHostPlatform::Windows {
