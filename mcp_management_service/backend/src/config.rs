@@ -31,6 +31,7 @@ pub struct AppConfig {
     pub chatos_service_base_url: String,
     pub chatos_internal_api_secret: Option<String>,
     pub chatos_ask_user_request_timeout: Duration,
+    pub chatos_browser_request_timeout: Duration,
     pub local_connector_service_base_url: String,
     pub local_connector_internal_api_secret: Option<String>,
     pub sandbox_manager_service_base_url: String,
@@ -175,6 +176,12 @@ impl AppConfig {
                     7 * 24 * 60 * 60 * 1_000,
                 ),
         );
+        let chatos_browser_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(120_000)
+                .clamp(30_000, 10 * 60 * 1_000),
+        );
         let provider_response_limit_bytes =
             env_text("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")
                 .and_then(|value| value.parse::<usize>().ok())
@@ -218,6 +225,7 @@ impl AppConfig {
             ),
             chatos_internal_api_secret,
             chatos_ask_user_request_timeout,
+            chatos_browser_request_timeout,
             local_connector_service_base_url: normalize_base_url(
                 env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL")
                     .or_else(|| env_text("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
@@ -305,6 +313,7 @@ impl AppConfig {
             chatos_service_base_url: "http://127.0.0.1:3997".to_string(),
             chatos_internal_api_secret: Some("a-long-chatos-secret".to_string()),
             chatos_ask_user_request_timeout: Duration::from_secs(86_700),
+            chatos_browser_request_timeout: Duration::from_secs(120),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),

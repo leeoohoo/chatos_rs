@@ -17,6 +17,7 @@ use chatos_mcp::{
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
     MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS, MCP_ERROR_METHOD_NOT_FOUND, METHOD_TOOLS_CALL,
+    METHOD_TOOLS_LIST,
 };
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
@@ -29,18 +30,28 @@ use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
 use crate::services::shared_builtin_notepad::ChatosNotepadStore;
+use crate::services::shared_cloud_browser_runtime::{
+    call_cloud_browser_tool, close_cloud_browser_runtime, probe_cloud_browser_tools,
+    CloudBrowserRuntimeBinding,
+};
 use crate::services::{chatos_agents, chatos_sessions};
 
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 const CHATOS_TOKEN_AUDIENCE: &str = "chatos";
 const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
+const CLOUD_BROWSER_SESSION_CLOSE_METHOD: &str = "browser/session/close";
 const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
 pub fn router() -> Router {
-    Router::new().route(
-        "/internal/mcp-management/mcp/{system_key}",
-        post(mcp_management_entrypoint),
-    )
+    Router::new()
+        .route(
+            "/internal/mcp-management/mcp/{system_key}",
+            post(mcp_management_entrypoint),
+        )
+        .route(
+            "/internal/mcp-management/mcp/browser_tools/sessions/{session_id}/close",
+            post(close_bound_cloud_browser_session),
+        )
 }
 
 #[derive(Debug, Clone)]
@@ -73,16 +84,20 @@ async fn mcp_management_entrypoint(
         Ok(system_key) => system_key,
         Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
     };
+    if system_key == SystemMcpKey::BrowserTools && request.method == METHOD_TOOLS_LIST {
+        return Json(dispatch_bound_browser_tools_list(request, &binding).await);
+    }
     if request.method != METHOD_TOOLS_CALL {
         return Json(jsonrpc_error(
             id,
             MCP_ERROR_METHOD_NOT_FOUND,
-            "ChatOS internal MCP Provider only accepts tools/call",
+            "ChatOS internal MCP Provider only accepts tools/call, plus tools/list for Browser Tools",
         ));
     }
     let response = match system_key {
         SystemMcpKey::AgentBuilder => dispatch_bound_agent_builder(request, &binding).await,
         SystemMcpKey::AskUser => dispatch_bound_ask_user(request, &binding).await,
+        SystemMcpKey::BrowserTools => dispatch_bound_browser_tools(request, &binding).await,
         SystemMcpKey::Notepad => dispatch_bound_notepad(request, &binding).await,
         SystemMcpKey::MemorySkillReader
         | SystemMcpKey::MemoryCommandReader
@@ -96,6 +111,135 @@ async fn mcp_management_entrypoint(
         ),
     };
     Json(response)
+}
+
+async fn close_bound_cloud_browser_session(
+    Path(session_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<JsonRpcRequest>,
+) -> Json<JsonRpcResponse> {
+    let id = request.id.unwrap_or(Value::Null);
+    if let Err(message) = require_mcp_management_request(&headers) {
+        return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
+    }
+    let binding = match mcp_management_binding_from_headers(&headers) {
+        Ok(binding) => binding,
+        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
+    };
+    if request.method != CLOUD_BROWSER_SESSION_CLOSE_METHOD {
+        return Json(jsonrpc_error(
+            id,
+            MCP_ERROR_METHOD_NOT_FOUND,
+            "cloud Browser Runtime close endpoint only accepts browser/session/close",
+        ));
+    }
+    if session_id.trim() != binding.session_id {
+        return Json(jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "cloud Browser Runtime close path does not match the bound Runtime Session",
+        ));
+    }
+    if !is_browser_agent(binding.agent_key) {
+        return Json(jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "configured Agent is not allowed to close ChatOS Browser Tools MCP",
+        ));
+    }
+    let browser_binding = match cloud_browser_binding(&binding) {
+        Ok(binding) => binding,
+        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
+    };
+    match close_cloud_browser_runtime(&browser_binding).await {
+        Ok(closed) => Json(jsonrpc_ok(id, serde_json::json!({"closed": closed}))),
+        Err(error) => Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, error)),
+    }
+}
+
+async fn dispatch_bound_browser_tools(
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    let browser_binding = match resolve_bound_cloud_browser(binding).await {
+        Ok(binding) => binding,
+        Err((code, message)) => return jsonrpc_error(id, code, message),
+    };
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "Browser Tools tool name is required",
+        );
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Err(message) = reject_browser_identity_overrides(&arguments) {
+        return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message);
+    }
+    match call_cloud_browser_tool(browser_binding, name, arguments).await {
+        Ok(result) => jsonrpc_ok(id, result),
+        Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    }
+}
+
+async fn dispatch_bound_browser_tools_list(
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    let browser_binding = match resolve_bound_cloud_browser(binding).await {
+        Ok(binding) => binding,
+        Err((code, message)) => return jsonrpc_error(id, code, message),
+    };
+    match probe_cloud_browser_tools(&browser_binding) {
+        Ok(tools) => jsonrpc_ok(id, serde_json::json!({"tools": tools})),
+        Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    }
+}
+
+async fn resolve_bound_cloud_browser(
+    binding: &McpManagementBinding,
+) -> Result<CloudBrowserRuntimeBinding, (i32, String)> {
+    if !is_browser_agent(binding.agent_key) {
+        return Err((
+            MCP_ERROR_AUTH_REQUIRED,
+            "configured Agent is not allowed to use ChatOS Browser Tools MCP".to_string(),
+        ));
+    }
+    let conversation_id = binding.source_session_id.as_deref().ok_or_else(|| {
+        (
+            MCP_ERROR_INVALID_PARAMS,
+            "ChatOS Browser Tools requires bound source_session_id".to_string(),
+        )
+    })?;
+    let session = chatos_sessions::get_session_by_id(conversation_id)
+        .await
+        .map_err(|error| (MCP_ERROR_INTERNAL, error))?
+        .ok_or_else(|| {
+            (
+                MCP_ERROR_INTERNAL,
+                "bound ChatOS session was not found".to_string(),
+            )
+        })?;
+    if !session_matches_binding(&session, binding) {
+        return Err((
+            MCP_ERROR_AUTH_REQUIRED,
+            "bound ChatOS session does not match MCP Management owner, project, or active scope"
+                .to_string(),
+        ));
+    }
+    cloud_browser_binding(binding).map_err(|message| (MCP_ERROR_INVALID_PARAMS, message))
 }
 
 async fn dispatch_bound_agent_builder(
@@ -581,6 +725,19 @@ fn is_chatos_agent(agent_key: SystemAgentKey) -> bool {
     )
 }
 
+fn is_browser_agent(agent_key: SystemAgentKey) -> bool {
+    matches!(
+        agent_key,
+        SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosPlanningAgent
+            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            | SystemAgentKey::TaskRunnerPlanPhase
+            | SystemAgentKey::TaskRunnerLocalPlanPhase
+            | SystemAgentKey::TaskRunnerRunPhase
+            | SystemAgentKey::TaskRunnerLocalRunPhase
+    )
+}
+
 fn is_notepad_agent(agent_key: SystemAgentKey) -> bool {
     matches!(
         agent_key,
@@ -592,6 +749,49 @@ fn is_notepad_agent(agent_key: SystemAgentKey) -> bool {
             | SystemAgentKey::TaskRunnerRunPhase
             | SystemAgentKey::TaskRunnerLocalRunPhase
     )
+}
+
+fn cloud_browser_binding(
+    binding: &McpManagementBinding,
+) -> Result<CloudBrowserRuntimeBinding, String> {
+    let source_session_id = binding
+        .source_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "cloud Browser Runtime requires bound source_session_id".to_string())?;
+    Ok(CloudBrowserRuntimeBinding {
+        runtime_session_id: binding.session_id.clone(),
+        owner_user_id: binding.owner_user_id.clone(),
+        agent_key: binding.agent_key,
+        project_id: binding.project_id.clone(),
+        source_session_id: source_session_id.to_string(),
+        expires_at_unix: binding.session_expires_at_unix,
+    })
+}
+
+fn reject_browser_identity_overrides(arguments: &Value) -> Result<(), String> {
+    let Some(arguments) = arguments.as_object() else {
+        return Ok(());
+    };
+    if [
+        "owner_user_id",
+        "user_id",
+        "runtime_session_id",
+        "session_id",
+        "source_session_id",
+        "conversation_id",
+        "project_id",
+    ]
+    .into_iter()
+    .any(|key| arguments.contains_key(key))
+    {
+        return Err(
+            "Browser Runtime identity is bound by MCP Management and cannot be supplied by tool arguments"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn reject_notepad_identity_overrides(arguments: &Value) -> Result<(), String> {
@@ -798,6 +998,36 @@ mod tests {
             "role_definition": "unsafe"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn browser_tool_arguments_cannot_override_the_bound_runtime_identity() {
+        assert!(reject_browser_identity_overrides(&json!({
+            "url": "https://example.com"
+        }))
+        .is_ok());
+        for key in [
+            "owner_user_id",
+            "user_id",
+            "runtime_session_id",
+            "session_id",
+            "source_session_id",
+            "conversation_id",
+            "project_id",
+        ] {
+            assert!(reject_browser_identity_overrides(&json!({(key): "attacker"})).is_err());
+        }
+    }
+
+    #[test]
+    fn browser_runtime_binding_comes_only_from_management_headers() {
+        let binding = binding();
+        let browser = cloud_browser_binding(&binding).expect("browser binding");
+        assert_eq!(browser.runtime_session_id, "mcp-session-1");
+        assert_eq!(browser.owner_user_id, "user-1");
+        assert_eq!(browser.project_id, "project-1");
+        assert_eq!(browser.source_session_id, "conversation-1");
+        assert_eq!(browser.agent_key, SystemAgentKey::ChatosConversationAgent);
     }
 
     fn binding() -> McpManagementBinding {

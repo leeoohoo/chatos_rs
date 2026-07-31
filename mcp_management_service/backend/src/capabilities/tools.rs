@@ -36,7 +36,7 @@ pub fn materialize_runtime_tools(
         else {
             continue;
         };
-        let source_tools = tool_snapshot(resolved)?;
+        let source_tools = tool_snapshot(resolved, route)?;
         let exposed_before = tools.len();
         for definition in source_tools {
             let original_name = definition
@@ -143,10 +143,16 @@ pub fn runtime_route_revision(
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
-fn tool_snapshot(resolved: &ResolvedMcp) -> Result<Vec<Value>, String> {
+fn tool_snapshot(resolved: &ResolvedMcp, route: &ResolvedMcpRoute) -> Result<Vec<Value>, String> {
     let Some(descriptor) = system_mcp_descriptor_for_record(&resolved.resource) else {
         return Ok(resolved.tool_snapshot.clone());
     };
+    if descriptor.key == SystemMcpKey::BrowserTools
+        && route.provider_kind == chatos_mcp_management_sdk::McpProviderKind::InternalService
+        && route.provider_ref.as_deref() == Some("chatos")
+    {
+        return Ok(resolved.tool_snapshot.clone());
+    }
     match system_mcp_tool_catalog(descriptor.key)? {
         SystemMcpToolCatalog::Static(tools) => Ok(tools),
         SystemMcpToolCatalog::Dynamic => Ok(resolved.tool_snapshot.clone()),
@@ -244,6 +250,38 @@ mod tests {
         }
     }
 
+    fn resolved_cloud_browser_mcp() -> ResolvedMcp {
+        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::BrowserTools);
+        let mut resolved = resolved_external_mcp();
+        resolved.resource.id = descriptor.resource_id.to_string();
+        resolved.resource.name = descriptor.server_name.to_string();
+        resolved.resource.runtime.kind = "system".to_string();
+        resolved.resource.runtime.system_key = Some(descriptor.key.as_str().to_string());
+        resolved.resource.runtime.server_name = Some(descriptor.server_name.to_string());
+        resolved.binding.resource_id = descriptor.resource_id.to_string();
+        resolved.tool_snapshot = vec![json!({
+            "name": "browser_navigate",
+            "description": "Navigate",
+            "inputSchema": {"type": "object"}
+        })];
+        resolved
+    }
+
+    fn cloud_browser_route() -> ResolvedMcpRoute {
+        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::BrowserTools);
+        ResolvedMcpRoute {
+            resource_id: descriptor.resource_id.to_string(),
+            server_name: descriptor.server_name.to_string(),
+            provider_kind: McpProviderKind::InternalService,
+            provider_ref: Some("chatos".to_string()),
+            tool_namespace: descriptor.server_name.to_string(),
+            allow_writes: true,
+            retry_class: McpRetryClass::NoRetry,
+            cancel_supported: false,
+            reason: "test".to_string(),
+        }
+    }
+
     #[test]
     fn external_snapshot_tools_receive_stable_server_namespace() {
         let capabilities = capabilities_with_mcp(resolved_external_mcp());
@@ -281,6 +319,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["search"]
         );
+    }
+
+    #[test]
+    fn cloud_browser_uses_the_live_chatos_tool_snapshot() {
+        let capabilities = capabilities_with_mcp(resolved_cloud_browser_mcp());
+        let materialized =
+            materialize_runtime_tools(&capabilities, &[cloud_browser_route()]).unwrap();
+        assert_eq!(materialized.tools.len(), 1);
+        assert_eq!(materialized.tools[0].original_name, "browser_navigate");
+        assert!(materialized
+            .tools
+            .iter()
+            .all(|tool| tool.original_name != "browser_route_add"));
+        assert!(materialized
+            .tools
+            .iter()
+            .all(|tool| tool.original_name != "browser_cdp_command"));
     }
 
     #[test]

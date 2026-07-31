@@ -142,7 +142,14 @@ impl RoutingEngine {
                     "local project browser tools are routed through Local Connector",
                 )
             }
-            SystemMcpKey::BrowserTools | SystemMcpKey::WebTools => available_route(
+            SystemMcpKey::BrowserTools => available_route(
+                resource,
+                McpProviderKind::InternalService,
+                Some("chatos".to_string()),
+                "cloud browser tools are owned by the ChatOS Browser Runtime",
+                allow_writes,
+            ),
+            SystemMcpKey::WebTools => available_route(
                 resource,
                 McpProviderKind::Embedded,
                 Some("mcp-management-service".to_string()),
@@ -676,6 +683,52 @@ mod tests {
             McpProviderKind::CloudSandbox
         );
         assert_eq!(result.routes[0].retry_class, McpRetryClass::NoRetry);
+    }
+
+    #[test]
+    fn browser_tools_are_pinned_to_local_connector_for_local_projects() {
+        let result = resolve_one(
+            context(WorkspaceProviderKind::LocalConnector),
+            system_resource(
+                "builtin_browser_tools",
+                "browser_tools",
+                "browser_tools",
+                true,
+                true,
+            ),
+        );
+        assert_eq!(
+            result.routes[0].provider_kind,
+            McpProviderKind::LocalConnector
+        );
+        assert_eq!(
+            result.routes[0].provider_ref.as_deref(),
+            Some("device:device-1/workspace:workspace-1")
+        );
+    }
+
+    #[test]
+    fn browser_tools_are_pinned_to_chatos_for_cloud_projects() {
+        for workspace_provider in [
+            WorkspaceProviderKind::Harness,
+            WorkspaceProviderKind::CloudSandbox,
+        ] {
+            let result = resolve_one(
+                context(workspace_provider),
+                system_resource(
+                    "builtin_browser_tools",
+                    "browser_tools",
+                    "browser_tools",
+                    true,
+                    true,
+                ),
+            );
+            assert_eq!(
+                result.routes[0].provider_kind,
+                McpProviderKind::InternalService
+            );
+            assert_eq!(result.routes[0].provider_ref.as_deref(), Some("chatos"));
+        }
     }
 
     #[test]

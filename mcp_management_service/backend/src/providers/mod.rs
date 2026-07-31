@@ -14,6 +14,7 @@ mod task_runner;
 use std::time::Duration;
 
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxExecutionTarget};
+use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
 use crate::runtime::RuntimeSessionSnapshot;
@@ -46,6 +47,7 @@ pub struct ChatosProviderConfig {
     pub internal_secret: Option<String>,
     pub request_timeout: Duration,
     pub ask_user_request_timeout: Duration,
+    pub browser_request_timeout: Duration,
 }
 
 pub struct ProviderRuntimeConfig {
@@ -108,6 +110,7 @@ impl ProviderDispatcher {
                 chatos.base_url,
                 chatos.request_timeout,
                 chatos.ask_user_request_timeout,
+                chatos.browser_request_timeout,
                 chatos.internal_secret,
                 runtime.response_limit_bytes,
             )?,
@@ -147,6 +150,30 @@ impl ProviderDispatcher {
     ) -> std::collections::HashMap<String, crate::runtime::ExternalHttpProviderBinding> {
         self.external_http
             .prepare_routes(capabilities, routes)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_chatos_routes(
+        &self,
+        routes: &mut [ResolvedMcpRoute],
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        agent_key: SystemAgentKey,
+        project_id: &str,
+        source_session_id: Option<&str>,
+        expires_at_unix: i64,
+    ) -> std::collections::HashMap<String, Vec<Value>> {
+        self.chatos
+            .prepare_routes(
+                routes,
+                runtime_session_id,
+                owner_user_id,
+                agent_key,
+                project_id,
+                source_session_id,
+                expires_at_unix,
+            )
             .await
     }
 
@@ -338,6 +365,13 @@ impl ProviderDispatcher {
     }
 
     pub async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
+        if let Err(error) = self.chatos.close_session(snapshot).await {
+            tracing::warn!(
+                session_id = snapshot.session_id.as_str(),
+                error_code = error.code,
+                "failed to close ChatOS MCP Provider session state"
+            );
+        }
         self.cloud_stdio.close_session(snapshot).await;
     }
 }

@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder 和 Sandbox Images Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、云端 Browser、其余 External/Plugin Provider、Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时和响应大小限制，并已接入首个无状态 Embedded WebTools Provider；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools 和 Sandbox Images Provider；Task Runner 已具备 `shadow` 观测和显式 `gateway` canary 模式，部署默认仍为 `shadow`。共享 Session Snapshot 存储、取消传播、其余 External/Plugin Provider、Memory Agent 调用方迁移和旧直连清理仍待完成，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -908,7 +908,7 @@ cancel outcome
 - 实现 invocation audit、超时和结果限制。
 - 先接 InternalServiceProvider 和 EmbeddedProvider。
 
-当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id，并允许 AskUser 这类长等待工具使用独立的逐工具超时，不放宽普通工具超时。当前已注册的 Internal Service Adapter 是 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、Task Runner AskUser Callback、ChatOS AskUser Callback、ChatOS Memory Readers、ChatOS Notepad 与 ChatOS Agent Builder；Embedded Provider 已先接入无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 固定使用 Runtime Session 绑定 owner 的 ChatOS 云端用户 Store，Agent Builder 固定使用同一 owner 的 ChatOS Agent Store；两者都不在 MCP Management 主进程或 Local Connector 创建第二份数据。BrowserTools 仍需要受控 Browser Runtime，因此不在 MCP Management 主进程中临时创建本地替代实现。
+当前已完成聚合 MCP JSON-RPC 主链路。`tools/list` 只返回 Runtime Session 的命名空间化工具快照，`tools/call` 必须命中同一快照并还原原始工具名；每次调用生成独立 invocation id，记录结构化元数据但不记录参数与结果正文；Provider Client 禁止 HTTP 重定向，统一限制请求超时、响应大小和 JSON-RPC id，并允许 AskUser 与 BrowserTools 使用独立的逐工具超时，不放宽普通工具超时。当前已注册的 Internal Service Adapter 是 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、Task Runner AskUser Callback、ChatOS AskUser Callback、ChatOS Memory Readers、ChatOS Notepad、ChatOS Agent Builder 与 ChatOS Cloud Browser；Embedded Provider 只承载无状态 WebTools，并复用共享 WebTools 实现与公共 URL 安全策略。Notepad 固定使用 Runtime Session 绑定 owner 的 ChatOS 云端用户 Store，Agent Builder 固定使用同一 owner 的 ChatOS Agent Store；两者都不在 MCP Management 主进程或 Local Connector 创建第二份数据。BrowserTools 同样不在 MCP Management 主进程创建替代实现，本地 Project 经 Local Connector，云端 Project 经 ChatOS 受控 Browser Runtime。
 
 ### Phase 3：Workspace Router
 
@@ -918,6 +918,8 @@ cancel outcome
 - 迁移 CodeMaintainerRead/Write、Git 和 Terminal。
 
 当前已完成三类 Workspace 真实路由：本地 Workspace 的 CodeMaintainerRead、CodeMaintainerWrite、TerminalController、BrowserTools 经 Local Connector Service 的 `/mcp` relay 到客户端；云端 Harness Workspace 的 CodeMaintainerRead/Write 经 Project Service 的 project-scoped Harness MCP；Cloud Sandbox 的 CodeMaintainerRead、CodeMaintainerWrite、TerminalController 经 Sandbox Manager 的标准 MCP proxy 到已创建的 Sandbox 或 Environment Service。
+
+BrowserTools 的路由已经固定为双执行端：`LocalConnector` Workspace 只允许经 Local Connector 调用本机受控浏览器；Harness 与 Cloud Sandbox Project 固定经 `InternalService/chatos` 调用云端 Browser Runtime。MCP Runtime Session 创建时会携带不可覆盖的 owner、Agent、Project、source session 与过期时间向 ChatOS 执行实时 `tools/list`，只固化云端 Runtime 实际注册的工具；该探测只验证 Browser backend 和 Schema，不启动浏览器进程。探测失败或没有可用工具时，optional BrowserTools 标记 unavailable，required BrowserTools 直接阻断 Session 创建，因此云端不会暴露仅限本地审批环境的 `browser_route_*` 或已禁用的 `browser_cdp_command`。ChatOS 云端 Browser Runtime 按 MCP Runtime Session 创建隔离状态，绑定 owner、Agent、Project 和 source session，拒绝模型参数覆盖身份；云端文件目录使用 owner/session 不透明路径隔离，Runtime Session 显式关闭时同步关闭浏览器会话。ChatOS 容器镜像固定安装 Node.js `24.4.1`、`agent-browser 0.31.2` 和 Debian 系统 Chromium，并通过 `AGENT_BROWSER_EXECUTABLE_PATH` 显式绑定浏览器可执行文件；MCP Management 使用独立 Browser 工具超时。
 
 Cloud Sandbox Runtime Session 只接收 `sandbox_id`、`lease_id`、`is_environment` 和可选 `service_id`，不接收任意 Provider URL。MCP Management 在签发 Session 前通过专用服务身份向 Sandbox Manager 校验 lease、owner、project、run 和 service 绑定，并把目标写入 `route_revision`；每次调用前再次验证 lease 状态。Sandbox Manager 对来自 MCP Management 的 proxy 请求重复校验同一绑定。Provider 故障或绑定漂移均直接失败，不切换到 Harness、本地 Connector 或其他 Sandbox。
 

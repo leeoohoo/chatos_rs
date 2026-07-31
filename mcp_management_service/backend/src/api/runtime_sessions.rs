@@ -116,6 +116,18 @@ pub(super) async fn resolve_runtime_session(
             .await
             .map_err(|error| ApiError::conflict(error.message))?;
     }
+    let chatos_tool_snapshots = state
+        .providers
+        .prepare_chatos_routes(
+            route_response.routes.as_mut_slice(),
+            session_id.as_str(),
+            request.owner_user_id.trim(),
+            agent_key,
+            request.project_id.trim(),
+            request.source_session_id.as_deref(),
+            expires_at_unix,
+        )
+        .await;
     let (cloud_stdio_bindings, cloud_stdio_tool_snapshots) = state
         .providers
         .prepare_cloud_stdio_routes(
@@ -129,6 +141,7 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
+    apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
     apply_live_tool_snapshots(&mut capabilities, cloud_stdio_tool_snapshots);
     let external_http_bindings = state
         .providers

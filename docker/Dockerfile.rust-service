@@ -68,10 +68,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && mkdir -p /out \
     && cp "$CARGO_TARGET_DIR/release/$BIN_NAME" /out/service
 
-FROM debian:bookworm-slim AS runtime-base
+FROM debian:bookworm-slim AS runtime-deps
 
 ARG BIN_NAME
 ARG DOCKER_CLI_VERSION
+ARG AGENT_BROWSER_VERSION=0.31.2
+ARG NODE_VERSION=24.4.1
 
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
@@ -88,6 +90,23 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
         openssh-client \
         ripgrep \
         tzdata \
+    && if [ "$BIN_NAME" = "chat_app_server_rs" ]; then \
+         apt-get install -y --no-install-recommends chromium xz-utils \
+         && node_arch="$(dpkg --print-architecture)" \
+         && case "$node_arch" in \
+              amd64) node_arch=x64 ;; \
+              arm64) node_arch=arm64 ;; \
+              *) echo "unsupported Node.js architecture: $node_arch" >&2; exit 1 ;; \
+            esac \
+         && node_archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+         && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}" -o "/tmp/${node_archive}" \
+         && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/node-shasums.txt \
+         && grep "  ${node_archive}$" /tmp/node-shasums.txt > /tmp/node-sha256.txt \
+         && (cd /tmp && sha256sum -c node-sha256.txt) \
+         && tar -xJf "/tmp/${node_archive}" -C /usr/local --strip-components=1 \
+         && rm -f "/tmp/${node_archive}" /tmp/node-shasums.txt /tmp/node-sha256.txt \
+         && npm install --global "agent-browser@${AGENT_BROWSER_VERSION}"; \
+       fi \
     && if [ "$BIN_NAME" = "sandbox_manager_service_backend" ]; then \
          docker_arch="$(dpkg --print-architecture)" \
          && curl -fsSL \
@@ -97,6 +116,11 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
          && rm -f /tmp/docker-ce-cli.deb; \
        fi \
     && rm -rf /var/lib/apt/lists/*
+
+ENV AGENT_BROWSER_BIN=/usr/local/bin/agent-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+
+FROM runtime-deps AS runtime-base
 
 COPY --from=builder /out/service /usr/local/bin/chatos-service
 COPY docker/entrypoint-rust-service.sh /usr/local/bin/chatos-rust-service-entrypoint
