@@ -27,7 +27,7 @@ pub use internal_headers::{headers_require_per_request_signing, prepare_http_hea
 
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};
-pub use stdio::{invalidate_stdio_session, jsonrpc_stdio_call};
+pub use stdio::{invalidate_stdio_session, jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout};
 #[derive(Clone)]
 struct ToolsListCacheEntry {
     expires_at: Instant,

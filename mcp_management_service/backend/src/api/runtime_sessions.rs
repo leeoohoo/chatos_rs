@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute, RuntimeSessionResponse,
-    RuntimeSessionRoutesResponse, SandboxExecutionTarget, SandboxProviderKind,
-    WorkspaceProviderKind,
+    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute,
+    RuntimeSessionResponse, RuntimeSessionRoutesResponse, SandboxExecutionTarget,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{ResolveAgentCapabilitiesRequest, SystemAgentKey};
 use uuid::Uuid;
@@ -52,7 +52,7 @@ pub(super) async fn resolve_runtime_session(
                 None,
             )
             .with_device_id(device_id);
-    let capabilities = state
+    let mut capabilities = state
         .plugin_management_client
         .resolve_for_service(&capability_request)
         .await
@@ -67,6 +67,11 @@ pub(super) async fn resolve_runtime_session(
     if !capabilities.agent_enabled {
         return Err(ApiError::conflict("configured Agent is disabled"));
     }
+    let session_id = format!("mcp_session_{}", Uuid::new_v4().simple());
+    let expires_at_unix = state
+        .runtime_grants
+        .next_expires_at_unix()
+        .map_err(ApiError::internal)?;
     let materialized = materialize_mcp_candidates(&capabilities);
     let mut route_response =
         state
@@ -80,15 +85,18 @@ pub(super) async fn resolve_runtime_session(
         route_response.routes.as_mut_slice(),
         sandbox_target.as_ref(),
     );
-    let external_http_bindings = state
-        .providers
-        .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
-        .await;
+    bind_cloud_stdio_routes(
+        route_response.routes.as_mut_slice(),
+        sandbox_target.as_ref(),
+    );
     if route_response.routes.iter().any(|route| {
-        route.provider_kind == McpProviderKind::CloudSandbox && state.providers.supports(route)
+        matches!(
+            route.provider_kind,
+            McpProviderKind::CloudSandbox | McpProviderKind::CloudStdio
+        ) && state.providers.supports(route)
     }) {
         let target = sandbox_target.as_ref().ok_or_else(|| {
-            ApiError::conflict("Cloud Sandbox route requires a bound sandbox target")
+            ApiError::conflict("Cloud sandbox-backed route requires a bound sandbox target")
         })?;
         state
             .providers
@@ -101,6 +109,24 @@ pub(super) async fn resolve_runtime_session(
             .await
             .map_err(|error| ApiError::conflict(error.message))?;
     }
+    let (cloud_stdio_bindings, cloud_stdio_tool_snapshots) = state
+        .providers
+        .prepare_cloud_stdio_routes(
+            &capabilities,
+            route_response.routes.as_mut_slice(),
+            sandbox_target.as_ref(),
+            session_id.as_str(),
+            request.owner_user_id.trim(),
+            request.project_id.trim(),
+            request.run_id.as_deref(),
+            expires_at_unix,
+        )
+        .await;
+    apply_live_tool_snapshots(&mut capabilities, cloud_stdio_tool_snapshots);
+    let external_http_bindings = state
+        .providers
+        .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
+        .await;
     let tool_result = materialize_runtime_tools(&capabilities, route_response.routes.as_slice())
         .map_err(ApiError::conflict)?;
     let route_revision = runtime_route_revision(
@@ -144,7 +170,6 @@ pub(super) async fn resolve_runtime_session(
             unavailable_required_mcps.join(", ")
         )));
     }
-    let session_id = format!("mcp_session_{}", Uuid::new_v4().simple());
     let mut allowed_resource_ids = route_response
         .routes
         .iter()
@@ -175,7 +200,7 @@ pub(super) async fn resolve_runtime_session(
     };
     let grant = state
         .runtime_grants
-        .issue(claims)
+        .issue_with_expires_at(claims, expires_at_unix)
         .map_err(ApiError::internal)?;
     let configured_mcp_count = route_response.routes.len();
     let exposed_tool_count = tool_result.tools.len();
@@ -199,6 +224,7 @@ pub(super) async fn resolve_runtime_session(
         routes: route_response.routes,
         tools: tool_result.tools,
         external_http_bindings,
+        cloud_stdio_bindings,
         expires_at: grant.expires_at.clone(),
         expires_at_unix: grant.expires_at_unix,
     };
@@ -234,6 +260,50 @@ pub(super) async fn runtime_session_routes(
         ));
     }
     Ok(Json(snapshot.routes_response()))
+}
+
+pub(super) async fn close_runtime_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+) -> Result<Json<CloseRuntimeSessionResponse>, ApiError> {
+    let caller_service =
+        require_internal_request(&state.config, &headers, "runtime.sessions.close")?;
+    let session_id = session_id.trim();
+    let snapshot = state
+        .runtime_sessions
+        .get(session_id)
+        .await
+        .ok_or_else(|| ApiError::not_found("runtime session was not found or has expired"))?;
+    if snapshot.caller_service != caller_service {
+        return Err(ApiError::forbidden(
+            "runtime session belongs to another caller service",
+        ));
+    }
+    let Some(snapshot) = state.runtime_sessions.remove(session_id).await else {
+        return Err(ApiError::not_found(
+            "runtime session was already closed or expired",
+        ));
+    };
+    state.providers.close_session(&snapshot).await;
+    Ok(Json(CloseRuntimeSessionResponse {
+        session_id: snapshot.session_id,
+        closed: true,
+    }))
+}
+
+fn apply_live_tool_snapshots(
+    capabilities: &mut chatos_plugin_management_sdk::ResolvedAgentCapabilities,
+    mut snapshots: HashMap<String, Vec<serde_json::Value>>,
+) {
+    for resolved in &mut capabilities.mcps {
+        if let Some(tools) = snapshots.remove(resolved.resource.id.as_str()) {
+            resolved.tool_snapshot = tools;
+            resolved.available = true;
+            resolved.status = "ready".to_string();
+            resolved.reason = None;
+        }
+    }
 }
 
 fn parse_agent_key(value: &str) -> Result<SystemAgentKey, ApiError> {
@@ -493,6 +563,26 @@ fn bind_cloud_sandbox_routes(
             route.provider_kind = McpProviderKind::Unavailable;
             route.provider_ref = None;
             route.reason = "Cloud Sandbox route requires a runtime sandbox lease".to_string();
+        }
+    }
+}
+
+fn bind_cloud_stdio_routes(
+    routes: &mut [ResolvedMcpRoute],
+    target: Option<&SandboxExecutionTarget>,
+) {
+    for route in routes
+        .iter_mut()
+        .filter(|route| route.provider_kind == McpProviderKind::CloudStdio)
+    {
+        if let Some(target) = target {
+            route.provider_ref = Some(target.provider_ref());
+        } else {
+            route.provider_kind = McpProviderKind::Unavailable;
+            route.provider_ref = None;
+            route.allow_writes = false;
+            route.cancel_supported = false;
+            route.reason = "Cloud stdio MCP requires a runtime sandbox lease".to_string();
         }
     }
 }

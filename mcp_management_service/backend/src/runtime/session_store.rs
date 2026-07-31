@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -45,6 +45,43 @@ impl fmt::Debug for ExternalHttpProviderBinding {
     }
 }
 
+#[derive(Clone)]
+pub struct CloudStdioProviderBinding {
+    pub provider_ref: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub cwd: Option<String>,
+    pub allow_writes: bool,
+    pub allowed_tool_names: HashSet<String>,
+    pub blocked_tool_names: HashSet<String>,
+}
+
+impl CloudStdioProviderBinding {
+    pub fn allows_tool(&self, tool_name: &str) -> bool {
+        let tool_name = tool_name.trim();
+        !tool_name.is_empty()
+            && (self.allowed_tool_names.is_empty() || self.allowed_tool_names.contains(tool_name))
+            && !self.blocked_tool_names.contains(tool_name)
+    }
+}
+
+impl fmt::Debug for CloudStdioProviderBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CloudStdioProviderBinding")
+            .field("provider_ref", &self.provider_ref)
+            .field("command", &"[redacted]")
+            .field("args", &"[redacted]")
+            .field("env", &"[redacted]")
+            .field("cwd", &"[redacted]")
+            .field("allow_writes", &self.allow_writes)
+            .field("allowed_tool_names", &self.allowed_tool_names)
+            .field("blocked_tool_names", &self.blocked_tool_names)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeSessionSnapshot {
     pub session_id: String,
@@ -66,6 +103,7 @@ pub struct RuntimeSessionSnapshot {
     pub routes: Vec<ResolvedMcpRoute>,
     pub tools: Vec<RuntimeToolDescriptor>,
     pub external_http_bindings: HashMap<String, ExternalHttpProviderBinding>,
+    pub cloud_stdio_bindings: HashMap<String, CloudStdioProviderBinding>,
     pub expires_at: String,
     pub expires_at_unix: i64,
 }
@@ -104,5 +142,9 @@ impl RuntimeSessionStore {
         let mut sessions = self.sessions.write().await;
         sessions.retain(|_, value| value.expires_at_unix > now);
         sessions.get(session_id).cloned()
+    }
+
+    pub async fn remove(&self, session_id: &str) -> Option<RuntimeSessionSnapshot> {
+        self.sessions.write().await.remove(session_id)
     }
 }

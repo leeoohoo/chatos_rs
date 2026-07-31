@@ -125,6 +125,16 @@ pub(super) async fn resolve_mcp_management_gateway(
         "ChatOS resolved MCP Management runtime session"
     );
     if mode == McpManagementExecutionMode::Shadow {
+        if let Err(err) = client
+            .close_runtime_session(session.session_id.as_str())
+            .await
+        {
+            warn!(
+                session_id = session.session_id.as_str(),
+                error = %err,
+                "close ChatOS MCP Management shadow session failed"
+            );
+        }
         return Ok(McpManagementGatewayResolution::Legacy);
     }
     Ok(McpManagementGatewayResolution::Gateway(Box::new(

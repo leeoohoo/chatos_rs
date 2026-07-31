@@ -18,8 +18,9 @@ use crate::auth::{
 use crate::backend::{SandboxEnvironmentCreateSpec, SandboxExecResult};
 use crate::error::ApiError;
 use crate::models::{
-    CreateSandboxEnvironmentLeaseRequest, SandboxEnvironmentExecRequest,
-    SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
+    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCloseRequest,
+    CloudStdioMcpCloseResponse, CreateSandboxEnvironmentLeaseRequest,
+    SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
     SandboxEnvironmentServiceInput, SandboxEnvironmentServiceRecord, SandboxEnvironmentStopRequest,
     SandboxLeaseRecord, SandboxStatus, StartSandboxEnvironmentRequest,
 };
@@ -503,6 +504,48 @@ impl SandboxManager {
         super::mcp_proxy::jsonrpc_agent_proxy(endpoint, Some(agent_token.as_str()), payload).await
     }
 
+    pub async fn environment_cloud_stdio_mcp_call(
+        &self,
+        auth: &SandboxAuthContext,
+        environment_id: &str,
+        service_id: Option<&str>,
+        binding: Option<&super::mcp_proxy::SandboxMcpRuntimeBinding>,
+        input: CloudStdioMcpCallRequest,
+    ) -> Result<CloudStdioMcpCallResponse, ApiError> {
+        let record = self.require_environment(environment_id).await?;
+        super::mcp_proxy::validate_cloud_stdio_runtime_binding(auth, &record, binding)?;
+        let endpoint = cloud_stdio_environment_agent_endpoint(&record, service_id)?;
+        let agent_token = self.agent_token_for_record(&record);
+        super::mcp_proxy::cloud_stdio_agent_proxy(
+            endpoint,
+            agent_token.as_str(),
+            "/internal/cloud-stdio-mcp/call",
+            &input,
+        )
+        .await
+    }
+
+    pub async fn environment_cloud_stdio_mcp_close(
+        &self,
+        auth: &SandboxAuthContext,
+        environment_id: &str,
+        service_id: Option<&str>,
+        binding: Option<&super::mcp_proxy::SandboxMcpRuntimeBinding>,
+        input: CloudStdioMcpCloseRequest,
+    ) -> Result<CloudStdioMcpCloseResponse, ApiError> {
+        let record = self.require_environment(environment_id).await?;
+        super::mcp_proxy::validate_cloud_stdio_runtime_binding(auth, &record, binding)?;
+        let endpoint = cloud_stdio_environment_agent_endpoint(&record, service_id)?;
+        let agent_token = self.agent_token_for_record(&record);
+        super::mcp_proxy::cloud_stdio_agent_proxy(
+            endpoint,
+            agent_token.as_str(),
+            "/internal/cloud-stdio-mcp/close",
+            &input,
+        )
+        .await
+    }
+
     async fn prepare_environment_services(
         &self,
         services: Vec<SandboxEnvironmentServiceInput>,
@@ -611,6 +654,29 @@ impl SandboxManager {
             effective_permissions,
         }
     }
+}
+
+fn cloud_stdio_environment_agent_endpoint<'a>(
+    record: &'a SandboxLeaseRecord,
+    service_id: Option<&str>,
+) -> Result<&'a str, ApiError> {
+    let service_id = service_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(record.execution_service_id.as_deref())
+        .ok_or_else(|| ApiError::bad_request("environment service_id is required"))?;
+    let service = record
+        .environment_services
+        .iter()
+        .find(|service| service.service_id == service_id)
+        .ok_or_else(|| {
+            ApiError::not_found(format!("environment service not found: {service_id}"))
+        })?;
+    ensure_mcp_target(service)?;
+    service
+        .agent_endpoint
+        .as_deref()
+        .ok_or_else(|| environment_backend_error("application MCP endpoint is unavailable"))
 }
 
 #[cfg(test)]

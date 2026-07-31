@@ -275,6 +275,12 @@ pub struct RuntimeSessionResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloseRuntimeSessionResponse {
+    pub session_id: String,
+    pub closed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeToolDescriptor {
     pub exposed_name: String,
     pub original_name: String,

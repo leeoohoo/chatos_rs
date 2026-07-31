@@ -8,7 +8,7 @@ use chatos_mcp::{
     system_mcp_descriptor_for_record, system_mcp_provider_skills, system_mcp_tool_catalog,
     SystemMcpToolCatalog,
 };
-use chatos_mcp_runtime::{extract_tools, list_tools_stdio, McpStdioServer};
+use chatos_mcp_runtime::extract_tools;
 use chatos_service_runtime::http_body::{
     read_response_bytes_limited, read_response_json_limited, JSON_BODY_LIMIT_BYTES,
 };
@@ -55,47 +55,10 @@ pub(crate) async fn live_mcp_descriptor(
                 ..LiveMcpDescriptor::default()
             }))
         }
-        RUNTIME_KIND_STDIO_CLOUD => {
-            let command = record
-                .runtime
-                .command
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| "stdio MCP is missing runtime.command".to_string())?;
-            let mut server = McpStdioServer::new(
-                record
-                    .runtime
-                    .server_name
-                    .as_deref()
-                    .unwrap_or(record.name.as_str()),
-                command,
-            )
-            .with_args(record.runtime.args.clone());
-            if let Some(cwd) = record
-                .runtime
-                .cwd
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                server = server.with_cwd(cwd);
-            }
-            if !record.runtime.env.is_empty() {
-                server = server.with_env(
-                    record
-                        .runtime
-                        .env
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect(),
-                );
-            }
-            Ok(Some(LiveMcpDescriptor {
-                tools: list_tools_stdio(&server).await?,
-                ..LiveMcpDescriptor::default()
-            }))
-        }
+        // Cloud stdio must never spawn inside Plugin Management. Its live
+        // tools/list probe is performed by MCP Management through the bound
+        // Sandbox Manager lease during runtime session materialization.
+        RUNTIME_KIND_STDIO_CLOUD => Ok(None),
         RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
         | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
         | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY => Ok(None),

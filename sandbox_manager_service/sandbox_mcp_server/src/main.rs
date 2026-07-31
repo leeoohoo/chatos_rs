@@ -3,6 +3,7 @@
 
 mod agent_relay;
 mod auth;
+mod cloud_stdio;
 mod command_sandbox;
 mod config;
 mod network_proxy;
@@ -51,6 +52,7 @@ struct AppState {
     started_at: String,
     tools: Vec<Value>,
     mcp_service: McpJsonRpcService,
+    cloud_stdio: cloud_stdio::CloudStdioService,
 }
 
 #[derive(Debug)]
@@ -80,6 +82,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .map_err(std::io::Error::other)?;
         return Ok(());
+    }
+    if cloud_stdio::is_internal_cloud_stdio_wrapper() {
+        let status =
+            cloud_stdio::run_internal_cloud_stdio_wrapper().map_err(std::io::Error::other)?;
+        std::process::exit(status);
     }
     if plugin_stdio_wrapper::is_internal_plugin_stdio_wrapper() {
         let status = plugin_stdio_wrapper::run_internal_plugin_stdio_wrapper()
@@ -171,6 +178,8 @@ async fn build_app(config: ServerConfig) -> Result<Router, String> {
     Ok(Router::new()
         .route("/health", get(health))
         .route("/mcp", post(mcp_entrypoint))
+        .route("/internal/cloud-stdio-mcp/call", post(cloud_stdio_call))
+        .route("/internal/cloud-stdio-mcp/close", post(cloud_stdio_close))
         .with_state(state))
 }
 
@@ -196,6 +205,7 @@ async fn build_state(config: ServerConfig) -> Result<AppState, String> {
         McpServerInfo::new("chatos-sandbox-mcp-server", VERSION),
         Arc::new(provider),
     );
+    let cloud_stdio = cloud_stdio::CloudStdioService::new(config.clone());
 
     Ok(AppState {
         config: config.clone(),
@@ -203,6 +213,7 @@ async fn build_state(config: ServerConfig) -> Result<AppState, String> {
         started_at: chrono::Utc::now().to_rfc3339(),
         tools,
         mcp_service,
+        cloud_stdio,
     })
 }
 
@@ -371,6 +382,43 @@ async fn mcp_entrypoint(
         return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
     }
     Json(state.mcp_service.handle(request).await)
+}
+
+async fn cloud_stdio_call(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<cloud_stdio::CloudStdioCallRequest>,
+) -> Result<Json<cloud_stdio::CloudStdioCallResponse>, (StatusCode, Json<Value>)> {
+    authorize(state.config.auth_token.as_deref(), &headers)
+        .map_err(|message| (StatusCode::UNAUTHORIZED, Json(json!({"error": message}))))?;
+    state
+        .cloud_stdio
+        .call(request)
+        .await
+        .map(Json)
+        .map_err(|message| {
+            let status = if message.starts_with("cloud stdio MCP invocation failed:") {
+                StatusCode::BAD_GATEWAY
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (status, Json(json!({"error": message})))
+        })
+}
+
+async fn cloud_stdio_close(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<cloud_stdio::CloudStdioCloseRequest>,
+) -> Result<Json<cloud_stdio::CloudStdioCloseResponse>, (StatusCode, Json<Value>)> {
+    authorize(state.config.auth_token.as_deref(), &headers)
+        .map_err(|message| (StatusCode::UNAUTHORIZED, Json(json!({"error": message}))))?;
+    state
+        .cloud_stdio
+        .close(request)
+        .await
+        .map(Json)
+        .map_err(|message| (StatusCode::BAD_REQUEST, Json(json!({"error": message}))))
 }
 
 fn probe_workspace_access(workspace: &Path, writes_required: bool) -> bool {

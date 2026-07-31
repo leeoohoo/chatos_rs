@@ -267,14 +267,15 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
             validate_external_http_headers(&runtime.headers)?;
         }
         RUNTIME_KIND_STDIO_CLOUD => {
-            if runtime
+            let command = runtime
                 .command
                 .as_deref()
                 .and_then(|value| normalized(Some(value)))
-                .is_none()
-            {
-                return Err(ApiError::bad_request("stdio MCP requires command"));
-            }
+                .ok_or_else(|| ApiError::bad_request("stdio MCP requires command"))?;
+            validate_cloud_stdio_command(command.as_str(), runtime.args.as_slice())?;
+            validate_cloud_stdio_arguments(runtime.args.as_slice())?;
+            validate_cloud_stdio_environment(&runtime.env)?;
+            validate_cloud_stdio_cwd(runtime.cwd.as_deref())?;
         }
         RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
         | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
@@ -284,6 +285,137 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
                 "runtime.kind must be system, http, stdio_cloud, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_cloud_stdio_command(command: &str, args: &[String]) -> Result<(), ApiError> {
+    if command.len() > 256
+        || command
+            .chars()
+            .any(|character| matches!(character, '/' | '\\' | '\0'))
+        || matches!(command, "." | "..")
+    {
+        return Err(ApiError::bad_request(
+            "stdio MCP command must be a PATH-resolved executable name",
+        ));
+    }
+    let shell = command.trim_end_matches(".exe").to_ascii_lowercase();
+    let is_shell = matches!(
+        shell.as_str(),
+        "sh" | "bash" | "dash" | "zsh" | "ksh" | "fish" | "cmd" | "powershell" | "pwsh"
+    );
+    let invokes_inline_command = args.iter().any(|arg| {
+        matches!(
+            arg.trim().to_ascii_lowercase().as_str(),
+            "-c" | "/c" | "-command" | "-encodedcommand"
+        )
+    });
+    if is_shell && invokes_inline_command {
+        return Err(ApiError::bad_request(
+            "stdio MCP shell inline command execution is forbidden",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_cloud_stdio_arguments(args: &[String]) -> Result<(), ApiError> {
+    if args.len() > 256
+        || args
+            .iter()
+            .any(|arg| arg.len() > 16 * 1024 || arg.contains('\0'))
+        || args.iter().map(String::len).sum::<usize>() > 128 * 1024
+    {
+        return Err(ApiError::bad_request(
+            "stdio MCP arguments exceed the supported limits",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_cloud_stdio_environment(
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<(), ApiError> {
+    if env.len() > 128
+        || env
+            .iter()
+            .map(|(name, value)| name.len().saturating_add(value.len()))
+            .sum::<usize>()
+            > 64 * 1024
+    {
+        return Err(ApiError::bad_request(
+            "stdio MCP environment exceeds the supported limits",
+        ));
+    }
+    for (name, value) in env {
+        let valid = !name.is_empty()
+            && name.len() <= 128
+            && name
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        let normalized = name.to_ascii_uppercase();
+        let controlled = matches!(
+            normalized.as_str(),
+            "PATH"
+                | "HOME"
+                | "SHELL"
+                | "TMPDIR"
+                | "TMP"
+                | "TEMP"
+                | "COMSPEC"
+                | "PATHEXT"
+                | "SYSTEMROOT"
+                | "WINDIR"
+                | "USERPROFILE"
+                | "APPDATA"
+                | "LOCALAPPDATA"
+                | "CHATOS_WORKSPACE"
+                | "CHATOS_SANDBOX_MCP_TOKEN"
+                | "CHATOS_AGENT_TOKEN"
+                | "NODE_OPTIONS"
+                | "PYTHONHOME"
+                | "PYTHONPATH"
+                | "RUBYOPT"
+                | "PERL5OPT"
+                | "BASH_ENV"
+                | "ENV"
+                | "PROMPT_COMMAND"
+        ) || normalized.starts_with("LD_")
+            || normalized.starts_with("DYLD_")
+            || normalized.starts_with("XDG_")
+            || normalized.starts_with("MCP_MANAGEMENT_")
+            || normalized.starts_with("SANDBOX_MANAGER_");
+        if !valid || controlled || value.contains('\0') {
+            return Err(ApiError::bad_request(
+                "stdio MCP environment contains an invalid or Host-controlled entry",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_cloud_stdio_cwd(cwd: Option<&str>) -> Result<(), ApiError> {
+    let Some(cwd) = cwd.and_then(|value| normalized(Some(value))) else {
+        return Ok(());
+    };
+    let path = std::path::Path::new(cwd.as_str());
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(ApiError::bad_request(
+            "stdio MCP cwd must remain relative to the sandbox workspace",
+        ));
     }
     Ok(())
 }
@@ -306,12 +438,14 @@ pub(super) fn validate_mcp_security(
             )));
         }
     }
-    if runtime.kind == RUNTIME_KIND_HTTP
-        && !security.allow_writes.unwrap_or(false)
+    if matches!(
+        runtime.kind.as_str(),
+        RUNTIME_KIND_HTTP | RUNTIME_KIND_STDIO_CLOUD
+    ) && !security.allow_writes.unwrap_or(false)
         && security.allowed_tool_names.is_empty()
     {
         return Err(ApiError::bad_request(
-            "read-only HTTP MCP requires allowed_tool_names",
+            "read-only remote MCP requires allowed_tool_names",
         ));
     }
     Ok(())

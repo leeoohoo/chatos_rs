@@ -27,6 +27,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/internal/runtime/sessions/{session_id}/routes",
             get(runtime_sessions::runtime_session_routes),
         )
+        .route(
+            "/api/internal/runtime/sessions/{session_id}/close",
+            post(runtime_sessions::close_runtime_session),
+        )
         .route("/mcp", post(mcp::mcp_entrypoint))
         .with_state(state)
         .layer(TraceLayer::new_for_http())

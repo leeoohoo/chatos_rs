@@ -7,8 +7,9 @@ use serde::Deserialize;
 
 use crate::config::McpManagementClientConfig;
 use crate::dto::{
-    CreateRuntimeSessionRequest, McpCatalogResponse, ResolveMcpRoutesRequest,
-    ResolveMcpRoutesResponse, RuntimeSessionResponse, RuntimeSessionRoutesResponse,
+    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpCatalogResponse,
+    ResolveMcpRoutesRequest, ResolveMcpRoutesResponse, RuntimeSessionResponse,
+    RuntimeSessionRoutesResponse,
 };
 use crate::error::McpManagementClientError;
 
@@ -20,6 +21,7 @@ const CATALOG_READ_SCOPE: &str = "catalog.read";
 const ROUTES_RESOLVE_SCOPE: &str = "routes.resolve";
 const RUNTIME_SESSIONS_RESOLVE_SCOPE: &str = "runtime.sessions.resolve";
 const RUNTIME_SESSIONS_READ_SCOPE: &str = "runtime.sessions.read";
+const RUNTIME_SESSIONS_CLOSE_SCOPE: &str = "runtime.sessions.close";
 
 #[derive(Clone)]
 pub struct McpManagementClient {
@@ -96,6 +98,22 @@ impl McpManagementClient {
         );
         let response = self
             .internal_request(Method::GET, url, RUNTIME_SESSIONS_READ_SCOPE)?
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn close_runtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<CloseRuntimeSessionResponse, McpManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/sessions/{}/close",
+            self.config.base_url,
+            urlencoding::encode(session_id.trim())
+        );
+        let response = self
+            .internal_request(Method::POST, url, RUNTIME_SESSIONS_CLOSE_SCOPE)?
             .send()
             .await?;
         parse_response(response).await

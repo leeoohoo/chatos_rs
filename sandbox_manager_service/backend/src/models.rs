@@ -244,6 +244,40 @@ pub struct SandboxEnvironmentExecResponse {
     pub stderr: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCallRequest {
+    pub runtime_session_id: String,
+    pub resource_id: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+    pub expires_at_unix: i64,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCloseRequest {
+    pub runtime_session_id: String,
+    pub resource_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCallResponse {
+    pub result: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCloseResponse {
+    pub closed: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxEventRecord {
     pub id: String,

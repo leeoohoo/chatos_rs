@@ -535,9 +535,12 @@ Agent
 ### 11.2 Cloud stdio MCP
 
 - 不能在 MCP Management Service 主进程直接 spawn 任意命令。
-- 必须通过 Cloud Sandbox/Runner 创建受控进程。
-- command、args、env 必须来自已审核配置或签名 Plugin Snapshot。
-- 运行句柄支持取消和 TTL。
+- 必须绑定本次 Runtime Session 的 Cloud Sandbox lease，经 `MCP Management -> Sandbox Manager -> Sandbox Agent` 创建受控进程；没有 sandbox target 的 `stdio_cloud` route 直接 unavailable，required 绑定会阻断 Session。
+- command、args、env、cwd 只从 Plugin Management 的签名 capabilities 进入 MCP Management 私有 Binding，不进入 Runtime Token、公开 Route Snapshot、模型参数或日志正文。Sandbox Manager 只允许 `mcp-management-service` 调用该内部代理，并再次校验 lease、owner、project、run 和 environment service。
+- Sandbox Agent 只接受 PATH 中的直接可执行文件名，拒绝绝对命令路径、越界 cwd、shell `-c`/`/c`/PowerShell inline command、Host 控制环境变量和超限配置。目标进程启动前清空 Agent 环境，只重新注入固定 PATH、隔离 HOME/TMP、workspace 标识和审核后的 env，避免把 Sandbox Agent Token 或服务 Secret 传给 MCP。
+- Runtime Session 创建时通过相同受控链路真实执行 `tools/list`，返回的 live Schema 参与工具曝光和 `route_revision`；Plugin Management 不再为 `stdio_cloud` 在自身服务进程直接 spawn。
+- stdio 进程按 `runtime_session_id + resource_id` 固定为持久会话，相同 Session 内配置漂移 fail closed。调用超时、进程错误、显式 Session close、Session TTL 到期或 Sandbox 销毁都会终止完整进程树。当前 route 明确标记 `cancel_supported=false`，逐 invocation 的协议级取消仍需后续补充，不能虚报取消能力。
+- 只读 Cloud stdio 与 External HTTP 一样必须配置显式 `allowed_tool_names`；allowlist/blocklist 同时约束 Schema 曝光和真实调用。
 
 ### 11.3 Local Connector MCP
 
@@ -940,7 +943,7 @@ Cloud Sandbox Runtime Session 只接收 `sandbox_id`、`lease_id`、`is_environm
 - Plugin cloud/local/portable MCP。
 - Skill executable、Command 和 Agent component 聚合。
 
-当前已完成 External HTTP MCP 主链路。MCP Management 从 Plugin Management 的签名内部 capabilities 响应读取完整远程 Runtime，在 Session 创建阶段生成不对外序列化的私有 Provider Binding；每个 Binding 固定 resource/provider_ref、HTTPS endpoint、DNS 公网解析结果、认证 Header、读写标记和工具白/黑名单。required 外部 MCP 的配置或网络目标不合法时 Session fail closed，optional 外部 MCP 则在该 Session 中标记 unavailable。真实 `tools/call` 使用原始工具名与独立 invocation id，禁止重定向和系统代理，限制超时及响应大小，并验证下游 JSON-RPC version、id、result/error。Plugin Management 的 MCP 工具探测也已改为同样的 HTTPS、公网 DNS 固定、无代理、无重定向策略，避免控制面检查接口成为 SSRF 绕路。Runtime `route_revision` 现在同时绑定 capability `policy_revision`，因此 URL、Header、安全策略或其他资源版本变化都会产生新的不可变 Session 快照，但不会把 Secret 内容写入 revision。Cloud stdio、Plugin OAuth 动态凭据解析和 Plugin cloud/local/portable 的完整执行链仍待后续阶段。
+当前已完成 External HTTP MCP 与普通 `stdio_cloud` MCP 主链路。External HTTP 的私有 Binding 固定 resource/provider_ref、HTTPS endpoint、DNS 公网解析结果、认证 Header、读写标记和工具白/黑名单，并以无代理、无重定向、响应限额和 JSON-RPC 校验执行。Cloud stdio 的私有 Binding 固定 command/args/env/cwd、sandbox target、读写标记和工具策略；MCP Management 不 spawn，而是通过 Sandbox Manager 的专用内部接口把配置送到绑定 lease 的 Sandbox Agent。Agent 使用清空 Host 环境的受控 wrapper 托管持久 stdio 进程，并用 Session TTL、显式 close 和调用失败清理进程树。Runtime Session 创建阶段会在 Sandbox 内真实 `tools/list`，live Schema 参与聚合工具快照和 `route_revision`；Plugin Management 已停止在自身进程探测 `stdio_cloud`。required 配置、lease、进程启动或 Schema 探测失败时 Session fail closed，optional 资源标记 unavailable。`shadow` 调用方解析完成后会显式关闭观测 Session，默认部署模式仍保持 `shadow`。Plugin OAuth 动态凭据解析和 release-managed Plugin cloud/local/portable 的完整执行链仍待后续阶段。
 
 ### Phase 6：调用方迁移
 

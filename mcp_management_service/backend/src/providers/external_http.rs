@@ -411,6 +411,7 @@ mod tests {
             routes: vec![route()],
             tools: Vec::new(),
             external_http_bindings: HashMap::from([("external-1".to_string(), binding)]),
+            cloud_stdio_bindings: Default::default(),
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             expires_at_unix: i64::MAX,
         }

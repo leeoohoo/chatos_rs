@@ -77,6 +77,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sandbox-environments/{environment_id}/mcp",
             post(handlers::sandbox_environment_mcp_proxy),
         )
+        .route(
+            "/api/sandbox-environments/{environment_id}/cloud-stdio-mcp/call",
+            post(handlers::sandbox_environment_cloud_stdio_mcp_call),
+        )
+        .route(
+            "/api/sandbox-environments/{environment_id}/cloud-stdio-mcp/close",
+            post(handlers::sandbox_environment_cloud_stdio_mcp_close),
+        )
         .route("/api/sandboxes", get(handlers::list_sandboxes))
         .route(
             "/api/sandboxes/{sandbox_id}",
@@ -93,6 +101,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/sandboxes/{sandbox_id}/mcp",
             post(handlers::sandbox_mcp_proxy),
+        )
+        .route(
+            "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/call",
+            post(handlers::sandbox_cloud_stdio_mcp_call),
+        )
+        .route(
+            "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/close",
+            post(handlers::sandbox_cloud_stdio_mcp_close),
         )
         .route(
             "/api/sandboxes/{sandbox_id}/release",

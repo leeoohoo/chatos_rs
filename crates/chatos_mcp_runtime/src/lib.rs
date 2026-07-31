@@ -51,7 +51,7 @@ pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_pr
 pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
 pub use rpc::{
     extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_stdio_call,
-    list_tools_http, list_tools_stdio,
+    jsonrpc_stdio_call_with_timeout, list_tools_http, list_tools_stdio,
 };
 pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
 pub use task_types::TaskUpdatePatch;

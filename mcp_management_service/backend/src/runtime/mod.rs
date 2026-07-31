@@ -5,4 +5,7 @@ mod grant;
 mod session_store;
 
 pub use grant::{IssuedRuntimeGrant, RuntimeGrantClaims, RuntimeGrantService};
-pub use session_store::{ExternalHttpProviderBinding, RuntimeSessionSnapshot, RuntimeSessionStore};
+pub use session_store::{
+    CloudStdioProviderBinding, ExternalHttpProviderBinding, RuntimeSessionSnapshot,
+    RuntimeSessionStore,
+};

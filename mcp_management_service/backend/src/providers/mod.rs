@@ -3,6 +3,7 @@
 
 mod chatos;
 mod cloud_sandbox;
+mod cloud_stdio;
 mod embedded;
 mod external_http;
 mod local_connector;
@@ -18,6 +19,7 @@ use crate::runtime::RuntimeSessionSnapshot;
 
 use chatos::ChatosProvider;
 use cloud_sandbox::CloudSandboxProvider;
+use cloud_stdio::CloudStdioProvider;
 use embedded::EmbeddedProvider;
 use external_http::ExternalHttpProvider;
 use local_connector::LocalConnectorProvider;
@@ -51,6 +53,7 @@ pub struct ProviderDispatcher {
     task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
     cloud_sandbox: CloudSandboxProvider,
+    cloud_stdio: CloudStdioProvider,
     embedded: EmbeddedProvider,
     external_http: ExternalHttpProvider,
 }
@@ -69,6 +72,7 @@ impl ProviderDispatcher {
         embedded_work_dir: std::path::PathBuf,
         runtime: ProviderRuntimeConfig,
     ) -> Result<Self, String> {
+        let sandbox_manager_service_base_url = sandbox_manager_service_base_url.into();
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
                 local_connector_service_base_url,
@@ -96,6 +100,12 @@ impl ProviderDispatcher {
                 runtime.response_limit_bytes,
             )?,
             cloud_sandbox: CloudSandboxProvider::new(
+                sandbox_manager_service_base_url.clone(),
+                sandbox_manager_request_timeout,
+                sandbox_manager_internal_secret.clone(),
+                runtime.response_limit_bytes,
+            )?,
+            cloud_stdio: CloudStdioProvider::new(
                 sandbox_manager_service_base_url,
                 sandbox_manager_request_timeout,
                 sandbox_manager_internal_secret,
@@ -119,6 +129,35 @@ impl ProviderDispatcher {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_cloud_stdio_routes(
+        &self,
+        capabilities: &chatos_plugin_management_sdk::ResolvedAgentCapabilities,
+        routes: &mut [ResolvedMcpRoute],
+        target: Option<&SandboxExecutionTarget>,
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: Option<&str>,
+        expires_at_unix: i64,
+    ) -> (
+        std::collections::HashMap<String, crate::runtime::CloudStdioProviderBinding>,
+        std::collections::HashMap<String, Vec<Value>>,
+    ) {
+        self.cloud_stdio
+            .prepare_routes(
+                capabilities,
+                routes,
+                target,
+                runtime_session_id,
+                owner_user_id,
+                project_id,
+                run_id,
+                expires_at_unix,
+            )
+            .await
+    }
+
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
             McpProviderKind::InternalService | McpProviderKind::Harness => {
@@ -128,6 +167,7 @@ impl ProviderDispatcher {
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
+            McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
             _ => false,
@@ -212,6 +252,17 @@ impl ProviderDispatcher {
                     )
                     .await
             }
+            McpProviderKind::CloudStdio if self.cloud_stdio.supports(route) => {
+                self.cloud_stdio
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
             McpProviderKind::Embedded if self.embedded.supports(route) => {
                 self.embedded
                     .call_tool(
@@ -242,5 +293,9 @@ impl ProviderDispatcher {
                 route.provider_kind.as_str()
             ))),
         }
+    }
+
+    pub async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
+        self.cloud_stdio.close_session(snapshot).await;
     }
 }

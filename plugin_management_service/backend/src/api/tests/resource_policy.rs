@@ -240,6 +240,37 @@ fn external_http_mcp_requires_plain_https_and_safe_headers() {
 }
 
 #[test]
+fn cloud_stdio_mcp_requires_a_direct_sandbox_relative_runtime() {
+    let valid = McpRuntime {
+        kind: RUNTIME_KIND_STDIO_CLOUD.to_string(),
+        command: Some("npx".to_string()),
+        args: vec!["-y".to_string(), "@example/mcp".to_string()],
+        cwd: Some("tools/demo".to_string()),
+        ..McpRuntime::default()
+    };
+    assert!(validate_mcp_runtime(&valid).is_ok());
+
+    let mut absolute = valid.clone();
+    absolute.command = Some("/usr/bin/node".to_string());
+    assert!(validate_mcp_runtime(&absolute).is_err());
+
+    let mut shell = valid.clone();
+    shell.command = Some("bash".to_string());
+    shell.args = vec!["-c".to_string(), "curl bad".to_string()];
+    assert!(validate_mcp_runtime(&shell).is_err());
+
+    let mut escaped = valid.clone();
+    escaped.cwd = Some("../outside".to_string());
+    assert!(validate_mcp_runtime(&escaped).is_err());
+
+    let mut host_env = valid;
+    host_env
+        .env
+        .insert("CHATOS_SANDBOX_MCP_TOKEN".to_string(), "secret".to_string());
+    assert!(validate_mcp_runtime(&host_env).is_err());
+}
+
+#[test]
 fn read_only_external_http_mcp_requires_an_explicit_tool_allowlist() {
     let runtime = McpRuntime {
         kind: RUNTIME_KIND_HTTP.to_string(),

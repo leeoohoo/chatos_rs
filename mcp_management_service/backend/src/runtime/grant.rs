@@ -54,9 +54,39 @@ impl RuntimeGrantService {
         }
     }
 
-    pub fn issue(&self, mut claims: RuntimeGrantClaims) -> Result<IssuedRuntimeGrant, String> {
+    pub fn issue(&self, claims: RuntimeGrantClaims) -> Result<IssuedRuntimeGrant, String> {
         let now = Utc::now().timestamp();
-        let expires_at_unix = now.saturating_add(self.ttl.as_secs() as i64);
+        let expires_at_unix = self.expires_at_unix_from(now)?;
+        self.issue_at(claims, now, expires_at_unix)
+    }
+
+    pub fn next_expires_at_unix(&self) -> Result<i64, String> {
+        self.expires_at_unix_from(Utc::now().timestamp())
+    }
+
+    pub fn issue_with_expires_at(
+        &self,
+        claims: RuntimeGrantClaims,
+        expires_at_unix: i64,
+    ) -> Result<IssuedRuntimeGrant, String> {
+        self.issue_at(claims, Utc::now().timestamp(), expires_at_unix)
+    }
+
+    fn expires_at_unix_from(&self, now: i64) -> Result<i64, String> {
+        let ttl_seconds = i64::try_from(self.ttl.as_secs())
+            .map_err(|_| "runtime grant TTL is invalid".to_string())?;
+        Ok(now.saturating_add(ttl_seconds))
+    }
+
+    fn issue_at(
+        &self,
+        mut claims: RuntimeGrantClaims,
+        now: i64,
+        expires_at_unix: i64,
+    ) -> Result<IssuedRuntimeGrant, String> {
+        if expires_at_unix <= now {
+            return Err("runtime grant expiry is invalid".to_string());
+        }
         claims.iss = RUNTIME_GRANT_ISSUER.to_string();
         claims.aud = RUNTIME_GRANT_AUDIENCE.to_string();
         claims.iat = usize::try_from(now).map_err(|_| "system clock is invalid".to_string())?;
