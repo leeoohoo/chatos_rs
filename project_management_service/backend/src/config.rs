@@ -181,7 +181,12 @@ impl AppConfig {
         };
 
         if config.require_signed_internal_requests {
-            for caller_service in ["chatos-backend", "task-runner", "project-service"] {
+            for caller_service in [
+                "chatos-backend",
+                "task-runner",
+                "project-service",
+                "mcp-management-service",
+            ] {
                 if !config.internal_api_secrets.contains_key(caller_service) {
                     return Err(format!(
                         "dedicated project service internal secret is required for {caller_service}"
@@ -244,6 +249,7 @@ impl AppConfig {
                     "change_me_chatos_project_service_secret",
                     "change_me_task_runner_project_service_secret",
                     "change_me_project_service_self_secret",
+                    "change_me_mcp_management_project_service_secret",
                 ],
             )?;
         }
@@ -269,6 +275,10 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "project-service",
             "PROJECT_SERVICE_SELF_INTERNAL_API_SECRET",
+        ),
+        (
+            "mcp-management-service",
+            "MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()

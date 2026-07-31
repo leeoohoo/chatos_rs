@@ -157,6 +157,7 @@ impl AppConfig {
                     "change_me_plugin_management_project_service_secret",
                     "change_me_plugin_management_local_connector_secret",
                     "change_me_plugin_management_memory_engine_secret",
+                    "change_me_plugin_management_mcp_management_secret",
                 ],
             )?;
         }
@@ -186,6 +187,10 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "memory-engine",
             "PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET",
+        ),
+        (
+            "mcp-management-service",
+            "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()

@@ -117,6 +117,7 @@ const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
     "project-service",
     "local-connector-service",
     "memory-engine",
+    "mcp-management-service",
 ];
 
 #[derive(Debug)]

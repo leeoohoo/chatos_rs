@@ -68,19 +68,12 @@ fn constant_time_eq(expected: &[u8], actual: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-    use std::net::{IpAddr, Ipv4Addr};
-
     use super::*;
 
     fn config(require_signed: bool) -> AppConfig {
-        AppConfig {
-            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port: 39280,
-            internal_api_secret: "a-long-test-secret".to_string(),
-            require_signed_internal_requests: require_signed,
-            allowed_internal_callers: BTreeSet::from(["task-runner".to_string()]),
-        }
+        let mut config = AppConfig::test();
+        config.require_signed_internal_requests = require_signed;
+        config
     }
 
     #[test]

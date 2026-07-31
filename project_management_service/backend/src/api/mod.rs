@@ -4,6 +4,7 @@
 mod access;
 mod dependencies;
 mod dependency_graph;
+mod execution_context;
 mod harness_git_access;
 mod harness_mcp;
 mod internal_auth;

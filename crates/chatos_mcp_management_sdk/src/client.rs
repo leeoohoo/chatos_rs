@@ -6,7 +6,10 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
 use crate::config::McpManagementClientConfig;
-use crate::dto::{McpCatalogResponse, ResolveMcpRoutesRequest, ResolveMcpRoutesResponse};
+use crate::dto::{
+    CreateRuntimeSessionRequest, McpCatalogResponse, ResolveMcpRoutesRequest,
+    ResolveMcpRoutesResponse, RuntimeSessionResponse, RuntimeSessionRoutesResponse,
+};
 use crate::error::McpManagementClientError;
 
 const INTERNAL_SECRET_HEADER: &str = "x-mcp-management-internal-secret";
@@ -15,6 +18,8 @@ const CALLER_SERVICE_HEADER: &str = "x-mcp-management-caller-service";
 const INTERNAL_TOKEN_AUDIENCE: &str = "mcp-management-service";
 const CATALOG_READ_SCOPE: &str = "catalog.read";
 const ROUTES_RESOLVE_SCOPE: &str = "routes.resolve";
+const RUNTIME_SESSIONS_RESOLVE_SCOPE: &str = "runtime.sessions.resolve";
+const RUNTIME_SESSIONS_READ_SCOPE: &str = "runtime.sessions.read";
 
 #[derive(Clone)]
 pub struct McpManagementClient {
@@ -53,6 +58,38 @@ impl McpManagementClient {
         let response = self
             .internal_request(Method::POST, url, ROUTES_RESOLVE_SCOPE)?
             .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn resolve_runtime_session(
+        &self,
+        request: &CreateRuntimeSessionRequest,
+    ) -> Result<RuntimeSessionResponse, McpManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/sessions/resolve",
+            self.config.base_url
+        );
+        let response = self
+            .internal_request(Method::POST, url, RUNTIME_SESSIONS_RESOLVE_SCOPE)?
+            .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn runtime_session_routes(
+        &self,
+        session_id: &str,
+    ) -> Result<RuntimeSessionRoutesResponse, McpManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/sessions/{}/routes",
+            self.config.base_url,
+            urlencoding::encode(session_id.trim())
+        );
+        let response = self
+            .internal_request(Method::GET, url, RUNTIME_SESSIONS_READ_SCOPE)?
             .send()
             .await?;
         parse_response(response).await

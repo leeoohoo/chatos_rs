@@ -19,6 +19,7 @@ use super::dependencies::{
 use super::dependency_graph::{
     get_project_dependency_graph, get_requirement_dependency_graph, get_work_item_dependency_graph,
 };
+use super::execution_context::resolve_project_execution_context;
 use super::harness_git_access::sync_get_project_harness_git_access;
 use super::harness_mcp::harness_project_mcp_entrypoint;
 use super::plan::get_project_plan;
@@ -211,6 +212,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/projects/{project_id}",
             get(sync_get_project),
+        )
+        .route(
+            "/api/internal/projects/{project_id}/execution-context",
+            get(resolve_project_execution_context),
         )
         .route(
             "/api/chatos-sync/projects/{project_id}/runtime-environment",

@@ -252,6 +252,7 @@ mod tests {
             available,
             status: "available".to_string(),
             reason: None,
+            tool_snapshot: Vec::new(),
         }
     }
 

@@ -476,6 +476,8 @@ pub struct ResolvedMcp {
     pub available: bool,
     pub status: String,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub tool_snapshot: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

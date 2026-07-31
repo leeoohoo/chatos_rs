@@ -4,12 +4,14 @@
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::time::Duration;
 
 use chatos_service_runtime::{
     env_bool_strict, env_text, is_production_environment, validate_production_secret,
 };
 
 const DEFAULT_INTERNAL_SECRET: &str = "change_me_mcp_management_internal_secret";
+const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -18,6 +20,14 @@ pub struct AppConfig {
     pub internal_api_secret: String,
     pub require_signed_internal_requests: bool,
     pub allowed_internal_callers: BTreeSet<String>,
+    pub plugin_management_service_base_url: String,
+    pub plugin_management_internal_api_secret: Option<String>,
+    pub project_service_base_url: String,
+    pub project_service_internal_api_secret: Option<String>,
+    pub downstream_request_timeout: Duration,
+    pub public_base_url: String,
+    pub runtime_grant_secret: String,
+    pub runtime_session_ttl: Duration,
 }
 
 impl AppConfig {
@@ -45,18 +55,110 @@ impl AppConfig {
         if allowed_internal_callers.is_empty() {
             return Err("MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS cannot be empty".to_string());
         }
+        let runtime_grant_secret = env_text("MCP_MANAGEMENT_RUNTIME_GRANT_SECRET")
+            .unwrap_or_else(|| DEFAULT_RUNTIME_GRANT_SECRET.to_string());
+        validate_production_secret(
+            "MCP_MANAGEMENT_RUNTIME_GRANT_SECRET",
+            Some(runtime_grant_secret.as_str()),
+            &[DEFAULT_RUNTIME_GRANT_SECRET],
+        )?;
+        let plugin_management_internal_api_secret =
+            env_text("PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET")
+                .or_else(|| env_text("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"));
+        let project_service_internal_api_secret =
+            env_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET");
+        validate_production_secret(
+            "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
+            plugin_management_internal_api_secret.as_deref(),
+            &["change_me_plugin_management_mcp_management_secret"],
+        )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
+            project_service_internal_api_secret.as_deref(),
+            &["change_me_mcp_management_project_service_secret"],
+        )?;
+        let downstream_request_timeout = Duration::from_millis(
+            env_text("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(5_000)
+                .clamp(300, 60_000),
+        );
+        let runtime_session_ttl = Duration::from_secs(
+            env_text("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(30 * 60)
+                .clamp(5 * 60, 2 * 60 * 60),
+        );
+        let public_base_url = normalize_base_url(
+            env_text("MCP_MANAGEMENT_PUBLIC_BASE_URL")
+                .unwrap_or_else(|| format!("http://127.0.0.1:{port}")),
+        );
         Ok(Self {
             host,
             port,
             internal_api_secret,
             require_signed_internal_requests,
             allowed_internal_callers,
+            plugin_management_service_base_url: normalize_base_url(
+                env_text("MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL")
+                    .or_else(|| env_text("PLUGIN_MANAGEMENT_SERVICE_BASE_URL"))
+                    .unwrap_or_else(|| "http://127.0.0.1:39260".to_string()),
+            ),
+            plugin_management_internal_api_secret,
+            project_service_base_url: normalize_base_url(
+                env_text("MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL")
+                    .or_else(|| env_text("PROJECT_SERVICE_BASE_URL"))
+                    .unwrap_or_else(|| "http://127.0.0.1:39210".to_string()),
+            ),
+            project_service_internal_api_secret,
+            downstream_request_timeout,
+            public_base_url,
+            runtime_grant_secret,
+            runtime_session_ttl,
         })
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
+
+    pub async fn resolve_service_urls(&mut self) {
+        self.plugin_management_service_base_url = chatos_service_runtime::resolve_service_base_url(
+            "plugin-management-service",
+            self.plugin_management_service_base_url.as_str(),
+        )
+        .await;
+        self.project_service_base_url = chatos_service_runtime::resolve_service_base_url(
+            "project-service",
+            self.project_service_base_url.as_str(),
+        )
+        .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test() -> Self {
+        Self {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 39280,
+            internal_api_secret: "a-long-test-secret".to_string(),
+            require_signed_internal_requests: true,
+            allowed_internal_callers: BTreeSet::from(["task-runner".to_string()]),
+            plugin_management_service_base_url: "http://127.0.0.1:39260".to_string(),
+            plugin_management_internal_api_secret: Some(
+                "a-long-plugin-management-secret".to_string(),
+            ),
+            project_service_base_url: "http://127.0.0.1:39210".to_string(),
+            project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
+            downstream_request_timeout: Duration::from_secs(5),
+            public_base_url: "http://127.0.0.1:39280".to_string(),
+            runtime_grant_secret: "a-long-runtime-grant-secret".to_string(),
+            runtime_session_ttl: Duration::from_secs(30 * 60),
+        }
+    }
+}
+
+fn normalize_base_url(value: String) -> String {
+    value.trim().trim_end_matches('/').to_string()
 }
 
 fn parse_callers(value: &str) -> BTreeSet<String> {

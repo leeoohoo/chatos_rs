@@ -3,7 +3,9 @@
 
 mod catalog;
 mod health;
+mod mcp;
 mod routes;
+mod runtime_sessions;
 
 use axum::middleware;
 use axum::routing::{get, post};
@@ -17,6 +19,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health::health))
         .route("/api/internal/catalog", get(catalog::catalog))
         .route("/api/internal/routes/resolve", post(routes::resolve_routes))
+        .route(
+            "/api/internal/runtime/sessions/resolve",
+            post(runtime_sessions::resolve_runtime_session),
+        )
+        .route(
+            "/api/internal/runtime/sessions/{session_id}/routes",
+            get(runtime_sessions::runtime_session_routes),
+        )
+        .route("/mcp", post(mcp::mcp_entrypoint))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(
@@ -26,9 +37,6 @@ pub fn build_router(state: AppState) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-    use std::net::{IpAddr, Ipv4Addr};
-
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
     use chatos_mcp_management_sdk::McpCatalogResponse;
@@ -38,13 +46,7 @@ mod tests {
     use crate::config::AppConfig;
 
     fn state() -> AppState {
-        AppState::new(AppConfig {
-            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port: 39280,
-            internal_api_secret: "a-long-test-secret".to_string(),
-            require_signed_internal_requests: true,
-            allowed_internal_callers: BTreeSet::from(["task-runner".to_string()]),
-        })
+        AppState::new(AppConfig::test()).unwrap()
     }
 
     #[tokio::test]

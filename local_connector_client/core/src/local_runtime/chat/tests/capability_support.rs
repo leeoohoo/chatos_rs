@@ -199,6 +199,7 @@ fn resolved_builtin(
         available: true,
         status: "available".to_string(),
         reason: None,
+        tool_snapshot: Vec::new(),
     }
 }
 
@@ -261,6 +262,7 @@ fn resolved_system_mcp(
         available: true,
         status: "available".to_string(),
         reason: None,
+        tool_snapshot: Vec::new(),
     }
 }
 

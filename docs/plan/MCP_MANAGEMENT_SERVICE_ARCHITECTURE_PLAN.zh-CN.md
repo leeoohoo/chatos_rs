@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 服务骨架、共享 SDK、System MCP Catalog API、Capability Materializer 和纯 Route Engine 已落地；Runtime Session、聚合 `/mcp` 和真实 Provider Adapter 尚未接通。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision` 和短期 Runtime Grant 已接通；Phase 2 已提供聚合 `/mcp` 的 `initialize`、`ping`、`tools/list` 以及 `tools/call` 的固定路由校验。真实 Provider Adapter、共享 Session Snapshot 存储、调用审计、取消、超时和结果限制仍待接通，调用方尚未切换，因此旧调用链继续保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -897,7 +897,7 @@ cancel outcome
 - required MCP 路由失败时阻断。
 - 生成 route_revision 和 Runtime Grant。
 
-当前已完成其中的纯 Capability Materializer：只按 `binding.enabled && resource.enabled` 物化 MCP，`available=false` 不会让已配置 MCP 消失。PluginManagementClient 实际调用、Project Context 内部接口、required 阻断和 Runtime Grant 留在下一步接通。
+当前已完成本阶段主链路：只按 `binding.enabled && resource.enabled` 物化 MCP，`available=false` 不会让已配置 MCP 消失；MCP Management 通过 Project Management 的 owner-scoped 内部接口获取权威 Context，通过专用 caller 身份调用 Plugin Management；required MCP 无合法路由或无可用工具 Schema 时 fail closed；Runtime Grant 绑定 caller、owner、Agent、Project、run/turn/task、policy revision、包含 Schema 快照的 route revision 和精确资源集合。当前 Session Snapshot 暂存进程内存，水平扩展前需迁移到 Redis/Mongo 等共享存储。
 
 验收：
 

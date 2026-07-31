@@ -17,9 +17,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     chatos_service_runtime::apply_config_center_env("mcp-management-service").await;
-    let config = AppConfig::from_env()?;
+    let mut config = AppConfig::from_env()?;
+    config.resolve_service_urls().await;
     let bind_addr = config.bind_addr();
-    let app = build_router(AppState::new(config.clone()));
+    let app = build_router(AppState::new(config.clone())?);
     let _runtime = chatos_service_runtime::register_current_service(
         "mcp-management-service",
         config.port,

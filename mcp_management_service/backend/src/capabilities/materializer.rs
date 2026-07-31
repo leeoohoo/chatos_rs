@@ -173,6 +173,7 @@ mod tests {
             available,
             status: if available { "ready" } else { "offline" }.to_string(),
             reason: None,
+            tool_snapshot: Vec::new(),
         }
     }
 

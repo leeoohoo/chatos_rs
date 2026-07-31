@@ -2,47 +2,64 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionPlane {
+    #[default]
     Cloud,
     Local,
 }
 
-impl Default for ExecutionPlane {
-    fn default() -> Self {
-        Self::Cloud
+impl ExecutionPlane {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cloud => "cloud",
+            Self::Local => "local",
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceProviderKind {
     LocalConnector,
     Harness,
     CloudSandbox,
     CloudStorage,
+    #[default]
     None,
 }
 
-impl Default for WorkspaceProviderKind {
-    fn default() -> Self {
-        Self::None
+impl WorkspaceProviderKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalConnector => "local_connector",
+            Self::Harness => "harness",
+            Self::CloudSandbox => "cloud_sandbox",
+            Self::CloudStorage => "cloud_storage",
+            Self::None => "none",
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxProviderKind {
     LocalConnector,
     Cloud,
+    #[default]
     None,
 }
 
-impl Default for SandboxProviderKind {
-    fn default() -> Self {
-        Self::None
+impl SandboxProviderKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalConnector => "local_connector",
+            Self::Cloud => "cloud",
+            Self::None => "none",
+        }
     }
 }
 
@@ -208,7 +225,30 @@ pub struct RuntimeSessionResponse {
     pub runtime_token: String,
     pub configured_mcp_count: usize,
     #[serde(default)]
+    pub exposed_tool_count: usize,
+    #[serde(default)]
     pub unavailable_required_mcps: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeToolDescriptor {
+    pub exposed_name: String,
+    pub original_name: String,
+    pub resource_id: String,
+    pub definition: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeSessionRoutesResponse {
+    pub session_id: String,
+    pub owner_user_id: String,
+    pub agent_key: String,
+    pub project_id: String,
+    pub policy_revision: String,
+    pub route_revision: String,
+    pub expires_at: String,
+    pub routes: Vec<ResolvedMcpRoute>,
+    pub tools: Vec<RuntimeToolDescriptor>,
 }
 
 #[cfg(test)]

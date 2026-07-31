@@ -219,6 +219,7 @@ mod tests {
             available,
             status: if available { "available" } else { "offline" }.to_string(),
             reason: (!available).then(|| "offline".to_string()),
+            tool_snapshot: Vec::new(),
         }
     }
 

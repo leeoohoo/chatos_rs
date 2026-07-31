@@ -163,6 +163,13 @@ async fn resolve_agent_capabilities_for_owner(
                     available,
                     reason.clone(),
                 );
+                let tool_snapshot = state
+                    .store
+                    .get_check(RESOURCE_KIND_MCP, resource.id.as_str())
+                    .await
+                    .map_err(ApiError::internal)?
+                    .map(|check| check.tool_snapshot)
+                    .unwrap_or_default();
                 if available || include_unavailable {
                     mcps.push(ResolvedMcp {
                         resource,
@@ -170,6 +177,7 @@ async fn resolve_agent_capabilities_for_owner(
                         available,
                         status,
                         reason,
+                        tool_snapshot,
                     });
                 }
             }
@@ -345,6 +353,13 @@ async fn resolve_agent_capabilities_for_owner(
                 available,
                 reason.clone(),
             );
+            let tool_snapshot = state
+                .store
+                .get_check(RESOURCE_KIND_MCP, resource.id.as_str())
+                .await
+                .map_err(ApiError::internal)?
+                .map(|check| check.tool_snapshot)
+                .unwrap_or_default();
             if available || include_unavailable {
                 mcps.push(ResolvedMcp {
                     resource,
@@ -352,6 +367,7 @@ async fn resolve_agent_capabilities_for_owner(
                     available,
                     status,
                     reason,
+                    tool_snapshot,
                 });
             }
         }
