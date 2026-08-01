@@ -153,7 +153,7 @@ smoke-repo:
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
 	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
-	@bash -n scripts/smoke-mcp-management-cloud.sh
+	@bash -n scripts/smoke-mcp-management-cloud.sh scripts/smoke-mcp-management-cloud-discovery.sh
 	@bash -n scripts/smoke-local-project-entry-config.sh
 	@docker compose -f docker/compose.yml config >/dev/null
 	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
