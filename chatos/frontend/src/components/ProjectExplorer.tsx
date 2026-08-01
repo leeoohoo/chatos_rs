@@ -5,6 +5,7 @@ import React from 'react';
 
 import { useI18n } from '../i18n/I18nProvider';
 import type { Project } from '../types';
+import { isCloudProjectSource } from '../lib/domain/projectSource';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
 import CloudProjectRuntimeEnvironmentPanel from './projectExplorer/CloudProjectRuntimeEnvironmentPanel';
@@ -23,7 +24,7 @@ interface ProjectExplorerProps {
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const { t } = useI18n();
-  const isCloudProject = project?.sourceType?.trim().toLowerCase() === 'cloud';
+  const cloudProjectSource = isCloudProjectSource(project);
   const allowedWorkspaceTabs = React.useMemo<WorkspaceTab[]>(
     () => ['files', 'team', 'plan', 'settings', 'sandbox'],
     [],
@@ -73,10 +74,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   });
   const workspaceTabs = React.useMemo(
     () => resolveVisibleWorkspaceTabs(
-      isCloudProject,
-      !isCloudProject && projectSettingsProps.sandboxEnabled === true,
+      cloudProjectSource,
+      !cloudProjectSource && projectSettingsProps.sandboxEnabled === true,
     ),
-    [isCloudProject, projectSettingsProps.sandboxEnabled],
+    [cloudProjectSource, projectSettingsProps.sandboxEnabled],
   );
 
   React.useEffect(() => {
@@ -106,7 +107,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
               client={client}
               projectId={project.id}
               projectRoot={project.rootPath}
-              readOnly={isCloudProject}
+              readOnly={cloudProjectSource}
               onRepositoryChanged={handleGitRepositoryChanged}
             />
           ) : null
@@ -130,6 +131,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
               projectId={project.id}
               projectName={project.name}
               projectSourceType={project.sourceType}
+              projectRootPath={project.rootPath}
             />
           </div>
         ) : workspaceTab === 'settings' ? (

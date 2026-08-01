@@ -5,6 +5,7 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 @config '../../tailwind.config.js';
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   /* 全局滚动性能优化 */
@@ -22,6 +23,7 @@
   }
 
   :root {
+    color-scheme: light;
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
@@ -45,6 +47,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
     --card: 222.2 84% 4.9%;
