@@ -929,7 +929,7 @@ cancel outcome
 - required MCP 路由失败时阻断。
 - 生成 route_revision 和 Runtime Grant。
 
-当前已完成本阶段主链路：只按 `binding.enabled && resource.enabled` 物化 MCP，`available=false` 不会让已配置 MCP 消失；MCP Management 通过 Project Management 的 owner-scoped 内部接口获取权威 Context，通过专用 caller 身份调用 Plugin Management；required MCP 无合法路由或无可用工具 Schema 时 fail closed；Runtime Grant 绑定 caller、owner、Agent、Project、run/turn/task、policy revision、包含 Schema 快照的 route revision 和精确资源集合。Runtime Session Snapshot 已迁移到 MongoDB 共享存储并使用 AES-256-GCM 加密私有 Binding，实例间可以读取和原子关闭同一 Session；数据库错误直接使 Session 创建或调用失败，不回退进程内存副本。
+当前已完成本阶段主链路：只按 `binding.enabled && resource.enabled` 物化 MCP，`available=false` 不会让已配置 MCP 消失；MCP Management 通过 Project Management 的 owner-scoped 内部接口获取权威 Context，通过专用 caller 身份调用 Plugin Management；required MCP 无合法路由或无可用工具 Schema 时 fail closed；Runtime Grant 绑定 caller、owner、Agent、Project、run/turn/task、policy revision、包含 Schema 快照的 route revision 和精确资源集合。Runtime Session 响应同时返回基于真实 `tools/list` 快照生成的 `effective_mcp_ids` 与本地化 `provider_skills_prompt`，调用方在 `gateway` 下不再自行直连 Plugin Management 重算 capability 或 Prompt。Runtime Session Snapshot 已迁移到 MongoDB 共享存储并使用 AES-256-GCM 加密私有 Binding，实例间可以读取和原子关闭同一 Session；数据库错误直接使 Session 创建或调用失败，不回退进程内存副本。
 
 验收：
 
@@ -1029,6 +1029,8 @@ Memory Engine 五类 Agent 的 Phase 6 结论是“无需迁移”，不是保�
 - 已删除 LocalConnectorSystemMcpAdapter；shadow 本地执行只保留显式 legacy provider builder，不再返回通用 Host/HTTP/Embedded 路由结果。
 - 已删除 ChatOS 独立 builtin MCP Factory 的服务构建职责；13 类 builtin 的构建、依赖缺失和 retired kind 错误策略统一由 `chatos_mcp` Factory 负责，ChatOS 只注入自身 Store、Hooks 和 Browser Vision Adapter。
 - Task Runner 显式 `gateway` 模式已不再加载旧 external/system HTTP MCP，也不再构建宿主 builtin Registry；local/Harness/Sandbox 工具路由只由 MCP Management Session 决定。`shadow`/`off` 继续构建 legacy runtime 作为观测对照。
+- Project Environment Agent 的宿主工具构建器已明确降级为 `build_legacy_project_environment_mcp_executor`，只允许 `shadow`/`off` 使用；`gateway` 只挂载 MCP Management endpoint。Project Service 保留的 `RuntimeEnvironmentPlan` 仅描述并持久化 Workspace/运行环境所在位置，作为权威 Project Execution Context 的业务输入，不负责构造 MCP Provider URL 或工具路由。
+- ChatOS 显式 `gateway` 模式不再先直连 Plugin Management 解析 capability；它直接使用 Runtime Session 返回的实际 MCP 集合和 Provider Skill Prompt。ChatOS 对 Task Runner、Project Management 的直连构建器已标记为 legacy，只允许 `shadow`/`off` 使用。
 - 删除其余服务 local/cloud workspace if/else。
 - 已删除共享 `SystemMcpHostAdapter`、`SystemMcpResolveContext` 和 `ResolvedSystemMcpBackend` 抽象。
 - `SystemMcpHost.supported_hosts` 已重命名为 `legacy_supported_hosts`，优先级路由 API 已删除；该字段只允许 shadow 旧执行器兼容使用。

@@ -60,38 +60,33 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         return response_for_project(state, environment).await;
     };
 
-    let routing = match resolve_runtime_environment_routing(
-        project,
-        &state.config,
-        user_access_token,
-    )
-    .await
-    {
-        RoutingDecision::Stop(stop) => {
-            apply_stop_decision(&mut environment, run_id, stop);
-            let environment = state
-                .store
-                .upsert_project_runtime_environment(&environment)
-                .await?;
-            if matches!(
-                environment.status,
-                ProjectRuntimeEnvironmentStatus::NotRunnable
-                    | ProjectRuntimeEnvironmentStatus::Disabled
-                    | ProjectRuntimeEnvironmentStatus::Failed
-            ) {
-                state
+    let environment_plan =
+        match resolve_runtime_environment_plan(project, &state.config, user_access_token).await {
+            RuntimeEnvironmentDecision::Stop(stop) => {
+                apply_stop_decision(&mut environment, run_id, stop);
+                let environment = state
                     .store
-                    .replace_project_runtime_environment_images(project.id.as_str(), &[])
+                    .upsert_project_runtime_environment(&environment)
                     .await?;
+                if matches!(
+                    environment.status,
+                    ProjectRuntimeEnvironmentStatus::NotRunnable
+                        | ProjectRuntimeEnvironmentStatus::Disabled
+                        | ProjectRuntimeEnvironmentStatus::Failed
+                ) {
+                    state
+                        .store
+                        .replace_project_runtime_environment_images(project.id.as_str(), &[])
+                        .await?;
+                }
+                return response_for_project(state, environment).await;
             }
-            return response_for_project(state, environment).await;
-        }
-        RoutingDecision::Ready(routing) => routing,
-    };
+            RuntimeEnvironmentDecision::Ready(plan) => plan,
+        };
 
     environment.status = ProjectRuntimeEnvironmentStatus::Analyzing;
-    environment.file_provider = routing.file_provider;
-    environment.sandbox_provider = routing.sandbox_provider;
+    environment.file_provider = environment_plan.file_provider;
+    environment.sandbox_provider = environment_plan.sandbox_provider;
     environment.analysis_summary = Some("正在分析项目技术栈和运行环境需求。".to_string());
     environment.not_runnable_reason = None;
     environment.last_agent_run_id = Some(run_id.clone());
@@ -163,7 +158,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     let agent_result = run_project_environment_agent(
         state,
         project,
-        routing,
+        environment_plan,
         model_runtime.prompt_vendor.as_deref(),
         &model_runtime.model_config,
         local_inspection.as_ref(),
@@ -253,7 +248,7 @@ async fn response_for_project(
 async fn run_project_environment_agent(
     state: &AppState,
     project: &ProjectRecord,
-    routing: RoutingPlan,
+    environment_plan: RuntimeEnvironmentPlan,
     prompt_vendor: Option<&str>,
     model_config: &ModelRuntimeConfig,
     local_inspection: Option<&LocalProjectInspection>,
@@ -276,26 +271,27 @@ async fn run_project_environment_agent(
     .await?;
     match mcp_resolution {
         ProjectEnvironmentMcpResolution::Legacy => {
-            let capability_policy = resolve_project_agent_capabilities(
+            let capability_policy = resolve_legacy_project_agent_capabilities(
                 state,
                 run_context.owner_user_id,
                 user_access_token,
             )
             .await?;
-            let executor = build_project_environment_mcp_executor(
+            let executor = build_legacy_project_environment_mcp_executor(
                 state,
                 project,
-                &routing,
+                &environment_plan,
                 user_access_token,
                 run_context.run_id,
                 &capability_policy,
                 run_context.selected_dependencies,
             )
             .await?;
-            ensure_agent_required_tools_available(&executor, &routing)?;
+            ensure_agent_required_tools_available(&executor, &environment_plan)?;
+            let provider_skills_prompt =
+                compose_legacy_provider_skills_prompt(&capability_policy, &environment_plan);
             execute_project_environment_agent(
                 project,
-                routing,
                 model_config,
                 local_inspection,
                 memory,
@@ -304,20 +300,20 @@ async fn run_project_environment_agent(
                 run_context.selected_dependencies,
                 agent_prompt,
                 executor,
-                Some(&capability_policy),
+                provider_skills_prompt,
             )
             .await
         }
         ProjectEnvironmentMcpResolution::Gateway(gateway) => {
+            let provider_skills_prompt = gateway.provider_skills_prompt();
             let result = async {
                 let executor = McpExecutor::builder()
                     .with_http_server(gateway.server().clone())
                     .build_initialized()
                     .await?;
-                ensure_agent_required_tools_available(&executor, &routing)?;
+                ensure_agent_required_tools_available(&executor, &environment_plan)?;
                 execute_project_environment_agent(
                     project,
-                    routing,
                     model_config,
                     local_inspection,
                     memory,
@@ -326,7 +322,7 @@ async fn run_project_environment_agent(
                     run_context.selected_dependencies,
                     agent_prompt,
                     executor,
-                    None,
+                    provider_skills_prompt,
                 )
                 .await
             }
@@ -339,7 +335,6 @@ async fn run_project_environment_agent(
 
 async fn execute_project_environment_agent(
     project: &ProjectRecord,
-    routing: RoutingPlan,
     model_config: &ModelRuntimeConfig,
     local_inspection: Option<&LocalProjectInspection>,
     memory: &ProjectAgentMemory,
@@ -348,7 +343,7 @@ async fn execute_project_environment_agent(
     selected_dependencies: &[String],
     agent_prompt: chatos_plugin_management_sdk::ResolvedAgentPrompt,
     executor: McpExecutor,
-    capability_policy: Option<&ResolvedAgentCapabilities>,
+    provider_skills_prompt: Option<String>,
 ) -> Result<(), String> {
     let mut prompt = build_project_environment_agent_prompt(
         project,
@@ -357,15 +352,9 @@ async fn execute_project_environment_agent(
         analysis_requirement,
         selected_dependencies,
     )?;
-    if let Some(capability_policy) = capability_policy {
-        let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(&routing);
-        if let Some(provider_skills_prompt) = capability_policy.compose_provider_skills_prompt(
-            effective_mcp_resource_ids.iter().map(String::as_str),
-            Some("zh-CN"),
-        ) {
-            prompt.push_str("\n\n");
-            prompt.push_str(provider_skills_prompt.trim());
-        }
+    if let Some(provider_skills_prompt) = provider_skills_prompt {
+        prompt.push_str("\n\n");
+        prompt.push_str(provider_skills_prompt.trim());
     }
     let metadata = json!({
         "agent": "project_management_environment_agent",
@@ -425,7 +414,7 @@ fn bind_selected_dependencies(detected_stack: &mut Value, selected_dependencies:
     );
 }
 
-async fn resolve_project_agent_capabilities(
+async fn resolve_legacy_project_agent_capabilities(
     state: &AppState,
     owner_user_id: &str,
     user_access_token: Option<&str>,
@@ -522,13 +511,13 @@ fn project_environment_agent_context(
     })
 }
 
-fn effective_project_environment_mcp_resource_ids(routing: &RoutingPlan) -> Vec<String> {
+fn effective_project_environment_mcp_resource_ids(plan: &RuntimeEnvironmentPlan) -> Vec<String> {
     let mut resource_ids = vec![
         PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string(),
         SANDBOX_IMAGES_MCP_RESOURCE_ID.to_string(),
     ];
     if matches!(
-        routing.file_provider,
+        plan.file_provider,
         RuntimeEnvironmentProvider::Harness | RuntimeEnvironmentProvider::LocalConnector
     ) {
         resource_ids.push(
@@ -539,6 +528,17 @@ fn effective_project_environment_mcp_resource_ids(routing: &RoutingPlan) -> Vec<
         );
     }
     resource_ids
+}
+
+fn compose_legacy_provider_skills_prompt(
+    capability_policy: &ResolvedAgentCapabilities,
+    plan: &RuntimeEnvironmentPlan,
+) -> Option<String> {
+    let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(plan);
+    capability_policy.compose_provider_skills_prompt(
+        effective_mcp_resource_ids.iter().map(String::as_str),
+        Some("zh-CN"),
+    )
 }
 
 fn apply_stop_decision(

@@ -34,7 +34,7 @@ use self::mcp_management_gateway::{
     resolve_project_environment_mcp, ProjectEnvironmentMcpResolution,
 };
 use self::mcp_servers::{
-    build_project_environment_mcp_executor, create_sandbox_image_from_plan,
+    build_legacy_project_environment_mcp_executor, create_sandbox_image_from_plan,
     ensure_agent_required_tools_available, get_local_project_compose_environment_status,
     get_sandbox_image_catalog, prepare_sandbox_dependency_images,
     restart_local_project_compose_environment, start_local_project_compose_environment,
@@ -42,7 +42,8 @@ use self::mcp_servers::{
 };
 use self::memory::{build_project_agent_memory, ProjectAgentMemory};
 use self::routing::{
-    resolve_runtime_environment_routing, RoutingDecision, RoutingPlan, StopDecision,
+    resolve_runtime_environment_plan, RuntimeEnvironmentDecision, RuntimeEnvironmentPlan,
+    StopDecision,
 };
 pub(crate) use self::tool_provider::{
     ensure_project_environment_agent_run, ProjectEnvironmentToolProvider,

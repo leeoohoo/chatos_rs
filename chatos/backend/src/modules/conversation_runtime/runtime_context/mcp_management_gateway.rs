@@ -19,7 +19,7 @@ const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
     chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum McpManagementExecutionMode {
+pub(super) enum McpManagementExecutionMode {
     Off,
     Shadow,
     Gateway,
@@ -39,8 +39,12 @@ impl McpManagementExecutionMode {
         }
     }
 
-    fn from_env() -> Self {
+    pub(super) fn from_env() -> Self {
         Self::from_value(std::env::var("CHATOS_MCP_MANAGEMENT_MODE").ok().as_deref())
+    }
+
+    pub(super) const fn uses_gateway(self) -> bool {
+        matches!(self, Self::Gateway)
     }
 }
 
@@ -54,17 +58,34 @@ pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) contact_agent_id: Option<&'a str>,
     pub(super) default_model_config_id: Option<&'a str>,
     pub(super) expected_project_task_ids: &'a [String],
+    pub(super) locale: Option<&'a str>,
 }
 
 pub(super) enum McpManagementGatewayResolution {
     Legacy,
-    Gateway(Box<McpHttpServer>),
+    Gateway(Box<McpManagementGateway>),
+}
+
+pub(super) struct McpManagementGateway {
+    server: McpHttpServer,
+    effective_mcp_ids: Vec<String>,
+    provider_skills_prompt: Option<String>,
+}
+
+impl McpManagementGateway {
+    pub(super) fn into_parts(self) -> (McpHttpServer, Vec<String>, Option<String>) {
+        (
+            self.server,
+            self.effective_mcp_ids,
+            self.provider_skills_prompt,
+        )
+    }
 }
 
 pub(super) async fn resolve_mcp_management_gateway(
     request: McpManagementGatewayRequest<'_>,
+    mode: McpManagementExecutionMode,
 ) -> Result<McpManagementGatewayResolution, String> {
-    let mode = McpManagementExecutionMode::from_env();
     if mode == McpManagementExecutionMode::Off {
         return Ok(McpManagementGatewayResolution::Legacy);
     }
@@ -93,6 +114,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         contact_agent_id: normalized(request.contact_agent_id),
         default_model_config_id: normalized(request.default_model_config_id),
         expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
+        locale: normalized(request.locale),
         requested_device_id: None,
         requested_sandbox_provider: None,
         sandbox_target: None,
@@ -139,8 +161,14 @@ pub(super) async fn resolve_mcp_management_gateway(
         }
         return Ok(McpManagementGatewayResolution::Legacy);
     }
+    let effective_mcp_ids = session.effective_mcp_ids.clone();
+    let provider_skills_prompt = session.provider_skills_prompt.clone();
     Ok(McpManagementGatewayResolution::Gateway(Box::new(
-        gateway_server(session)?,
+        McpManagementGateway {
+            server: gateway_server(session)?,
+            effective_mcp_ids,
+            provider_skills_prompt,
+        },
     )))
 }
 
@@ -232,6 +260,9 @@ mod tests {
             McpManagementExecutionMode::from_value(None),
             McpManagementExecutionMode::Off
         );
+        assert!(McpManagementExecutionMode::Gateway.uses_gateway());
+        assert!(!McpManagementExecutionMode::Shadow.uses_gateway());
+        assert!(!McpManagementExecutionMode::Off.uses_gateway());
     }
 
     #[test]
@@ -245,6 +276,8 @@ mod tests {
             runtime_token: "runtime-token".to_string(),
             configured_mcp_count: 1,
             exposed_tool_count: 1,
+            effective_mcp_ids: Vec::new(),
+            provider_skills_prompt: None,
             unavailable_required_mcps: Vec::new(),
         })
         .expect("gateway server");

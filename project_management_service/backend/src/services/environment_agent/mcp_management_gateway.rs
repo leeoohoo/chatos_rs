@@ -56,11 +56,16 @@ pub(super) struct ProjectEnvironmentMcpGateway {
     client: McpManagementClient,
     session_id: String,
     server: McpHttpServer,
+    provider_skills_prompt: Option<String>,
 }
 
 impl ProjectEnvironmentMcpGateway {
     pub(super) fn server(&self) -> &McpHttpServer {
         &self.server
+    }
+
+    pub(super) fn provider_skills_prompt(&self) -> Option<String> {
+        self.provider_skills_prompt.clone()
     }
 
     pub(super) async fn close(self, project_id: &str, run_id: &str) {
@@ -137,12 +142,14 @@ pub(super) async fn resolve_project_environment_mcp(
         }
         return Ok(ProjectEnvironmentMcpResolution::Legacy);
     }
+    let provider_skills_prompt = session.provider_skills_prompt.clone();
     let server = gateway_server(session.clone(), tool_timeout())?;
     Ok(ProjectEnvironmentMcpResolution::Gateway(Box::new(
         ProjectEnvironmentMcpGateway {
             client,
             session_id: session.session_id,
             server,
+            provider_skills_prompt,
         },
     )))
 }
@@ -166,6 +173,7 @@ fn runtime_session_request(
         contact_agent_id: None,
         default_model_config_id: Some(model_config_id.trim().to_string()),
         expected_project_task_ids: Vec::new(),
+        locale: Some("zh-CN".to_string()),
         requested_device_id: None,
         requested_sandbox_provider: None,
         sandbox_target: None,
@@ -236,6 +244,7 @@ mod tests {
         );
         assert_eq!(request.run_id.as_deref(), Some("run-1"));
         assert_eq!(request.default_model_config_id.as_deref(), Some("model-1"));
+        assert_eq!(request.locale.as_deref(), Some("zh-CN"));
         assert!(request.sandbox_target.is_none());
         assert!(request.requested_sandbox_provider.is_none());
     }
@@ -252,6 +261,8 @@ mod tests {
                 runtime_token: "runtime-token".to_string(),
                 configured_mcp_count: 3,
                 exposed_tool_count: 8,
+                effective_mcp_ids: Vec::new(),
+                provider_skills_prompt: None,
                 unavailable_required_mcps: Vec::new(),
             },
             Duration::from_secs(30),

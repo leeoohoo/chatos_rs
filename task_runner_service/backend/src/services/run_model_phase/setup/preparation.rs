@@ -63,7 +63,8 @@ pub(super) async fn prepare_model_execution(
             authoritative_policy,
         )
         .await?;
-    let gateway_mode_enabled = McpManagementExecutionMode::from_env().uses_gateway();
+    let mcp_management_mode = McpManagementExecutionMode::from_env();
+    let gateway_mode_enabled = mcp_management_mode.uses_gateway();
     let loaded_external_mcp = if gateway_mode_enabled {
         mcp_inputs::LoadedExternalMcpServers::default()
     } else {
@@ -148,8 +149,12 @@ pub(super) async fn prepare_model_execution(
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
     let mcp_management_gateway =
-        resolve_mcp_management_gateway(task, run, sandbox_context.as_ref()).await?;
+        resolve_mcp_management_gateway(task, run, sandbox_context.as_ref(), mcp_management_mode)
+            .await?;
     let using_mcp_management_gateway = mcp_management_gateway.is_some();
+    let gateway_provider_skills_prompt = mcp_management_gateway
+        .as_ref()
+        .and_then(|gateway| gateway.provider_skills_prompt.clone());
     let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
         crate::models::task_runner_agent_key_for(
             task.task_profile.as_str(),
@@ -165,35 +170,27 @@ pub(super) async fn prepare_model_execution(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),
     );
-    let provider_skills_prompt = capability_policy.and_then(|policy| {
-        let locale = if task.mcp_config.locale().is_english() {
-            "en-US"
-        } else {
-            "zh-CN"
-        };
-        let gateway_effective_mcp_ids = if using_mcp_management_gateway {
-            policy.effective_mcp_ids()
-        } else {
-            Vec::new()
-        };
-        let mut effective_mcp_identifiers = if using_mcp_management_gateway {
-            gateway_effective_mcp_ids
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-        } else {
-            loaded_external_mcp
+    let provider_skills_prompt = if using_mcp_management_gateway {
+        gateway_provider_skills_prompt
+    } else {
+        capability_policy.and_then(|policy| {
+            let locale = if task.mcp_config.locale().is_english() {
+                "en-US"
+            } else {
+                "zh-CN"
+            };
+            let mut effective_mcp_identifiers = loaded_external_mcp
                 .summaries
                 .iter()
                 .map(|summary| summary.id.as_str())
-                .collect::<Vec<_>>()
-        };
-        if !using_mcp_management_gateway && task_process_logging_enabled {
-            effective_mcp_identifiers
-                .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID);
-        }
-        policy.compose_provider_skills_prompt(effective_mcp_identifiers, locale)
-    });
+                .collect::<Vec<_>>();
+            if task_process_logging_enabled {
+                effective_mcp_identifiers
+                    .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID);
+            }
+            policy.compose_provider_skills_prompt(effective_mcp_identifiers, locale)
+        })
+    };
     prefixed_input_items.extend(mcp_provider_skills_prefixed_input_items(
         provider_skills_prompt,
     ));
@@ -235,7 +232,7 @@ pub(super) async fn prepare_model_execution(
     }
 
     let mut mcp_builder = if let Some(gateway) = mcp_management_gateway {
-        McpExecutorBuilder::new().with_http_server(gateway)
+        McpExecutorBuilder::new().with_http_server(gateway.into_server())
     } else {
         McpExecutorBuilder::new()
             .with_http_servers(system_http_servers)

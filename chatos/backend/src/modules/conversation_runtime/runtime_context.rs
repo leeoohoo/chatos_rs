@@ -26,13 +26,14 @@ use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use self::mcp_management_gateway::{
-    resolve_mcp_management_gateway, McpManagementGatewayRequest, McpManagementGatewayResolution,
+    resolve_mcp_management_gateway, McpManagementExecutionMode, McpManagementGatewayRequest,
+    McpManagementGatewayResolution,
 };
 use self::policy::{merge_optional_system_prompts, resolve_chatos_mcp_policy};
-use self::project_mcp::build_project_management_mcp_runtime;
+use self::project_mcp::build_legacy_project_management_mcp_runtime;
 use self::support::{is_concrete_project_id, normalize_optional_text};
 use self::task_runner::{
-    build_contact_task_runner_runtime, normalize_plugin_agent_selection,
+    build_legacy_contact_task_runner_runtime, normalize_plugin_agent_selection,
     normalize_plugin_command_invocations, normalize_selected_plugin_ids,
     ContactTaskRunnerRuntimeRequest,
 };
@@ -230,6 +231,7 @@ pub async fn resolve_runtime_context(
     let mut runtime_error = None;
     let mut capability_policy = None;
     let mut effective_mcp_resource_ids = Vec::new();
+    let mut gateway_provider_skills_prompt = None;
     let agent_profile =
         ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
     let normalized_selected_plugin_ids =
@@ -291,7 +293,9 @@ pub async fn resolve_runtime_context(
         runtime_error = Some("当前智能体运行需要先选择一个有效项目。".to_string());
     }
 
-    if runtime_error.is_none() {
+    let mcp_management_mode = McpManagementExecutionMode::from_env();
+    let gateway_mode_enabled = mcp_management_mode.uses_gateway();
+    if runtime_error.is_none() && !gateway_mode_enabled {
         let policy_result = resolve_chatos_mcp_policy(
             agent_profile,
             effective_user_id.as_deref(),
@@ -313,17 +317,25 @@ pub async fn resolve_runtime_context(
     }
 
     let mcp_management_gateway = if runtime_error.is_none() {
-        match resolve_mcp_management_gateway(McpManagementGatewayRequest {
-            owner_user_id: effective_user_id.as_deref(),
-            agent_profile,
-            project_id: task_runner_project_id,
-            source_session_id: Some(session_id),
-            turn_id: req.conversation_turn_id.as_deref(),
-            source_user_message_id: req.source_user_message_id.as_deref(),
-            contact_agent_id: contact_agent_id.as_deref(),
-            default_model_config_id: req.model_config_id.as_deref(),
-            expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
-        })
+        match resolve_mcp_management_gateway(
+            McpManagementGatewayRequest {
+                owner_user_id: effective_user_id.as_deref(),
+                agent_profile,
+                project_id: task_runner_project_id,
+                source_session_id: Some(session_id),
+                turn_id: req.conversation_turn_id.as_deref(),
+                source_user_message_id: req.source_user_message_id.as_deref(),
+                contact_agent_id: contact_agent_id.as_deref(),
+                default_model_config_id: req.model_config_id.as_deref(),
+                expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
+                locale: Some(if user_output_locale.is_english() {
+                    InternalContextLocale::ENGLISH_KEY
+                } else {
+                    InternalContextLocale::DEFAULT_KEY
+                }),
+            },
+            mcp_management_mode,
+        )
         .await
         {
             Ok(resolution) => resolution,
@@ -340,15 +352,15 @@ pub async fn resolve_runtime_context(
         &mcp_management_gateway,
         McpManagementGatewayResolution::Gateway(_)
     );
-    if let McpManagementGatewayResolution::Gateway(server) = mcp_management_gateway {
-        http_servers.push(*server);
-        if let Some(policy) = capability_policy.as_ref() {
-            effective_mcp_resource_ids = policy.effective_mcp_ids(std::iter::empty());
-        }
+    if let McpManagementGatewayResolution::Gateway(gateway) = mcp_management_gateway {
+        let (server, effective_mcp_ids, provider_skills_prompt) = gateway.into_parts();
+        http_servers.push(server);
+        effective_mcp_resource_ids = effective_mcp_ids;
+        gateway_provider_skills_prompt = provider_skills_prompt;
     }
 
     if runtime_error.is_none() && !using_mcp_management_gateway {
-        match build_contact_task_runner_runtime(ContactTaskRunnerRuntimeRequest {
+        match build_legacy_contact_task_runner_runtime(ContactTaskRunnerRuntimeRequest {
             effective_user_id: effective_user_id.as_deref(),
             contact_id: runtime_metadata.contact_id.as_deref(),
             contact_agent_id: contact_agent_id.as_deref(),
@@ -389,7 +401,7 @@ pub async fn resolve_runtime_context(
         match Config::try_get()
             .map_err(|err| err.to_string())
             .and_then(|cfg| {
-                build_project_management_mcp_runtime(
+                build_legacy_project_management_mcp_runtime(
                     cfg,
                     effective_user_id.as_deref(),
                     task_runner_project_id,
@@ -412,12 +424,16 @@ pub async fn resolve_runtime_context(
         } else {
             Some(InternalContextLocale::DEFAULT_KEY)
         };
-        let provider_skills_prompt = capability_policy.as_ref().and_then(|policy| {
-            policy.compose_provider_skills_prompt(
-                effective_mcp_resource_ids.iter().map(String::as_str),
-                locale,
-            )
-        });
+        let provider_skills_prompt = if using_mcp_management_gateway {
+            gateway_provider_skills_prompt
+        } else {
+            capability_policy.as_ref().and_then(|policy| {
+                policy.compose_provider_skills_prompt(
+                    effective_mcp_resource_ids.iter().map(String::as_str),
+                    locale,
+                )
+            })
+        };
         contact_system_prompt =
             merge_optional_system_prompts(contact_system_prompt, provider_skills_prompt);
     }

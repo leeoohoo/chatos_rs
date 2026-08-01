@@ -105,7 +105,8 @@ pub(super) struct ContactTaskRunnerRuntimeRequest<'a> {
     pub(super) agent_profile: ChatosAgentProfile,
 }
 
-pub(super) async fn build_contact_task_runner_runtime(
+/// Direct Task Runner MCP wiring retained only for `shadow`/`off` rollback.
+pub(super) async fn build_legacy_contact_task_runner_runtime(
     request: ContactTaskRunnerRuntimeRequest<'_>,
 ) -> Option<ContactTaskRunnerRuntime> {
     let ContactTaskRunnerRuntimeRequest {

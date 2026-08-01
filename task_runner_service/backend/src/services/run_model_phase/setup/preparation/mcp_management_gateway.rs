@@ -59,8 +59,8 @@ pub(super) async fn resolve_mcp_management_gateway(
     task: &TaskRecord,
     run: &TaskRunRecord,
     sandbox_context: Option<&SandboxRuntimeContext>,
-) -> Result<Option<McpHttpServer>, String> {
-    let mode = McpManagementExecutionMode::from_env();
+    mode: McpManagementExecutionMode,
+) -> Result<Option<ResolvedMcpManagementGateway>, String> {
     if mode == McpManagementExecutionMode::Off {
         return Ok(None);
     }
@@ -86,6 +86,11 @@ pub(super) async fn resolve_mcp_management_gateway(
         contact_agent_id: None,
         default_model_config_id: task.default_model_config_id.clone(),
         expected_project_task_ids: Vec::new(),
+        locale: Some(if task.mcp_config.locale().is_english() {
+            "en-US".to_string()
+        } else {
+            "zh-CN".to_string()
+        }),
         requested_device_id: None,
         requested_sandbox_provider: sandbox_context.map(|_| SandboxProviderKind::Cloud),
         sandbox_target: sandbox_context.map(|context| SandboxExecutionTarget {
@@ -152,7 +157,22 @@ pub(super) async fn resolve_mcp_management_gateway(
                 7 * 24 * 60 * 60 * 1_000,
             ),
     );
-    Ok(Some(gateway_server(session, timeout, ask_user_timeout)?))
+    let provider_skills_prompt = session.provider_skills_prompt.clone();
+    Ok(Some(ResolvedMcpManagementGateway {
+        server: gateway_server(session, timeout, ask_user_timeout)?,
+        provider_skills_prompt,
+    }))
+}
+
+pub(super) struct ResolvedMcpManagementGateway {
+    server: McpHttpServer,
+    pub(super) provider_skills_prompt: Option<String>,
+}
+
+impl ResolvedMcpManagementGateway {
+    pub(super) fn into_server(self) -> McpHttpServer {
+        self.server
+    }
 }
 
 fn gateway_server(
@@ -230,6 +250,8 @@ mod tests {
                 runtime_token: "runtime-token".to_string(),
                 configured_mcp_count: 1,
                 exposed_tool_count: 1,
+                effective_mcp_ids: Vec::new(),
+                provider_skills_prompt: None,
                 unavailable_required_mcps: Vec::new(),
             },
             Duration::from_secs(30),

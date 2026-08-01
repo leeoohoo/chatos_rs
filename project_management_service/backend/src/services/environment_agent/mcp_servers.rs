@@ -32,17 +32,19 @@ use crate::state::AppState;
 
 use super::routing::{
     find_enabled_local_sandbox_pairing, parse_local_connector_project_root, provider_label,
-    LocalConnectorProjectRef, RoutingPlan,
+    LocalConnectorProjectRef, RuntimeEnvironmentPlan,
 };
 use super::tool_provider::ProjectEnvironmentToolProvider;
 use super::{
     CLOUD_SANDBOX_IMAGE_MCP_PATH, LOCAL_CONNECTOR_ROOT_PREFIX, LOCAL_SANDBOX_IMAGE_MCP_PATH,
 };
 
-pub(super) async fn build_project_environment_mcp_executor(
+/// Compatibility executor used only by `shadow`/`off` while the rollback
+/// window remains open. Gateway execution must never add these Provider routes.
+pub(super) async fn build_legacy_project_environment_mcp_executor(
     state: &AppState,
     project: &ProjectRecord,
-    routing: &RoutingPlan,
+    plan: &RuntimeEnvironmentPlan,
     user_access_token: Option<&str>,
     run_id: &str,
     capability_policy: &ResolvedAgentCapabilities,
@@ -61,14 +63,14 @@ pub(super) async fn build_project_environment_mcp_executor(
     }
 
     if capability_allows_mcp(capability_policy, SANDBOX_IMAGES_MCP_RESOURCE_ID) {
-        let server = match routing.sandbox_provider {
+        let server = match plan.sandbox_provider {
             RuntimeEnvironmentProvider::LocalConnector => {
                 local_connector_sandbox_image_mcp_server(state, project, user_access_token, run_id)
                     .await?
             }
             RuntimeEnvironmentProvider::CloudSandboxManager => cloud_sandbox_image_mcp_server(
                 &state.config,
-                routing.sandbox_provider,
+                plan.sandbox_provider,
                 project.id.as_str(),
                 run_id,
             )?,
@@ -82,7 +84,7 @@ pub(super) async fn build_project_environment_mcp_executor(
     }
 
     if capability_allows_builtin(capability_policy, BuiltinMcpKind::CodeMaintainerRead) {
-        match routing.file_provider {
+        match plan.file_provider {
             RuntimeEnvironmentProvider::Harness => {
                 builder =
                     builder.with_http_server(harness_file_mcp_server(&state.config, project)?);
@@ -486,7 +488,7 @@ fn project_environment_builtin_server() -> McpBuiltinServer {
 
 pub(super) fn ensure_agent_required_tools_available(
     executor: &McpExecutor,
-    routing: &RoutingPlan,
+    plan: &RuntimeEnvironmentPlan,
 ) -> Result<(), String> {
     let tool_names = executor
         .available_tools()
@@ -506,7 +508,7 @@ pub(super) fn ensure_agent_required_tools_available(
     let has_image_search = tool_names
         .iter()
         .any(|name| name == "sandbox_images_search_images");
-    if routing.sandbox_provider != RuntimeEnvironmentProvider::None && !has_image_search {
+    if plan.sandbox_provider != RuntimeEnvironmentProvider::None && !has_image_search {
         return Err("sandbox image search tool is unavailable".to_string());
     }
     let has_file_reader = tool_names.iter().any(|name| {
@@ -518,7 +520,7 @@ pub(super) fn ensure_agent_required_tools_available(
     if !has_file_reader {
         return Err(format!(
             "项目文件 MCP 不可用，无法分析项目文件：{}",
-            provider_label(routing.file_provider)
+            provider_label(plan.file_provider)
         ));
     }
     Ok(())

@@ -21,7 +21,8 @@ const PROJECT_REQUIREMENT_PLANNER_PROJECT_MCP_READ_TOOLS: &[&str] = &[
     "get_project_dependency_graph",
 ];
 
-pub(super) fn build_project_management_mcp_runtime(
+/// Direct Project Service MCP wiring retained only for `shadow`/`off` rollback.
+pub(super) fn build_legacy_project_management_mcp_runtime(
     config: &Config,
     effective_user_id: Option<&str>,
     project_id: Option<&str>,

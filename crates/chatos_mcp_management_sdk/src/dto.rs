@@ -256,6 +256,8 @@ pub struct CreateRuntimeSessionRequest {
     pub default_model_config_id: Option<String>,
     #[serde(default)]
     pub expected_project_task_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
     pub requested_device_id: Option<String>,
     pub requested_sandbox_provider: Option<SandboxProviderKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -273,6 +275,10 @@ pub struct RuntimeSessionResponse {
     pub configured_mcp_count: usize,
     #[serde(default)]
     pub exposed_tool_count: usize,
+    #[serde(default)]
+    pub effective_mcp_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_skills_prompt: Option<String>,
     #[serde(default)]
     pub unavailable_required_mcps: Vec<String>,
 }
@@ -349,5 +355,21 @@ mod tests {
             service_id: None,
         };
         assert_eq!(target.provider_ref(), "sandbox:sandbox-1/lease:lease-1");
+    }
+
+    #[test]
+    fn legacy_runtime_session_response_defaults_management_prompt_metadata() {
+        let response: RuntimeSessionResponse = serde_json::from_value(serde_json::json!({
+            "session_id": "session-1",
+            "policy_revision": "policy-1",
+            "route_revision": "route-1",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "mcp_server_url": "http://mcp-management/mcp",
+            "runtime_token": "token",
+            "configured_mcp_count": 1
+        }))
+        .expect("legacy response");
+        assert!(response.effective_mcp_ids.is_empty());
+        assert!(response.provider_skills_prompt.is_none());
     }
 }

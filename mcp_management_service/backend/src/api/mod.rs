@@ -6,6 +6,7 @@ mod health;
 mod invocations;
 mod mcp;
 mod routes;
+mod runtime_session_metadata;
 mod runtime_sessions;
 
 use axum::middleware;

@@ -5,7 +5,7 @@ use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME;
 
 use super::policy::merge_optional_system_prompts;
-use super::project_mcp::build_project_management_mcp_runtime;
+use super::project_mcp::build_legacy_project_management_mcp_runtime;
 use crate::config::Config;
 
 fn test_config() -> Config {
@@ -75,7 +75,7 @@ fn normal_and_plan_modes_use_distinct_system_agent_keys() {
 
 #[test]
 fn project_planner_project_mcp_is_project_scoped_and_read_only() {
-    let server = build_project_management_mcp_runtime(
+    let server = build_legacy_project_management_mcp_runtime(
         &test_config(),
         Some("user-1"),
         Some("project-1"),
@@ -124,7 +124,7 @@ fn project_planner_project_mcp_is_project_scoped_and_read_only() {
 
 #[test]
 fn ordinary_project_agent_gets_project_scoped_write_tools() {
-    let server = build_project_management_mcp_runtime(
+    let server = build_legacy_project_management_mcp_runtime(
         &test_config(),
         Some("user-1"),
         Some("project-1"),
@@ -150,9 +150,13 @@ fn project_mcp_rejects_missing_or_public_project_scope() {
         Some(""),
         Some(crate::models::project::PUBLIC_PROJECT_ID),
     ] {
-        let error =
-            build_project_management_mcp_runtime(&test_config(), Some("user-1"), project_id, false)
-                .expect_err("project MCP must be bound to one concrete project");
+        let error = build_legacy_project_management_mcp_runtime(
+            &test_config(),
+            Some("user-1"),
+            project_id,
+            false,
+        )
+        .expect_err("project MCP must be bound to one concrete project");
         assert!(error.contains("concrete project_id"));
     }
 }
@@ -161,9 +165,13 @@ fn project_mcp_rejects_missing_or_public_project_scope() {
 fn project_planner_project_mcp_requires_sync_secret() {
     let mut config = test_config();
     config.project_service_sync_secret = None;
-    let err =
-        build_project_management_mcp_runtime(&config, Some("user-1"), Some("project-1"), true)
-            .expect_err("missing sync secret should fail");
+    let err = build_legacy_project_management_mcp_runtime(
+        &config,
+        Some("user-1"),
+        Some("project-1"),
+        true,
+    )
+    .expect_err("missing sync secret should fail");
 
     assert!(err.contains("PROJECT_SERVICE_SYNC_SECRET"));
 }

@@ -24,6 +24,8 @@ use crate::error::ApiError;
 use crate::runtime::{RuntimeGrantClaims, RuntimeSessionSnapshot};
 use crate::state::AppState;
 
+use super::runtime_session_metadata::resolve_runtime_session_prompt_metadata;
+
 pub(super) async fn resolve_runtime_session(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -319,6 +321,11 @@ pub(super) async fn resolve_runtime_session(
             .map_err(ApiError::internal)?;
         let configured_mcp_count = route_response.routes.len();
         let exposed_tool_count = tool_result.tools.len();
+        let prompt_metadata = resolve_runtime_session_prompt_metadata(
+            &capabilities,
+            tool_result.tools.as_slice(),
+            request.locale.as_deref(),
+        );
         let snapshot = RuntimeSessionSnapshot {
             session_id: session_id.clone(),
             caller_service,
@@ -363,6 +370,8 @@ pub(super) async fn resolve_runtime_session(
             runtime_token: grant.token,
             configured_mcp_count,
             exposed_tool_count,
+            effective_mcp_ids: prompt_metadata.effective_mcp_ids,
+            provider_skills_prompt: prompt_metadata.provider_skills_prompt,
             unavailable_required_mcps,
         }))
     }
@@ -960,6 +969,7 @@ mod tests {
             contact_agent_id: None,
             default_model_config_id: None,
             expected_project_task_ids: Vec::new(),
+            locale: None,
             requested_device_id: Some("device-1".to_string()),
             requested_sandbox_provider: None,
             sandbox_target: None,
