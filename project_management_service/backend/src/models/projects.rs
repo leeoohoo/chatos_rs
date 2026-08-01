@@ -67,10 +67,8 @@ impl DbStatus for ProjectExecutionPlane {
 
 impl ProjectSourceType {
     pub fn execution_plane(self) -> ProjectExecutionPlane {
-        match self {
-            Self::Cloud => ProjectExecutionPlane::Cloud,
-            Self::Local | Self::LocalConnector => ProjectExecutionPlane::LocalConnector,
-        }
+        let _ = self;
+        ProjectExecutionPlane::Cloud
     }
 }
 

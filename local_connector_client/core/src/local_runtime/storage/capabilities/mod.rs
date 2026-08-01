@@ -162,6 +162,7 @@ impl LocalDatabase {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) async fn get_capability_snapshot(
         &self,
         owner_user_id: &str,
@@ -240,6 +241,7 @@ fn validate_snapshot(capabilities: &ResolvedAgentCapabilities) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_snapshot_identity(
     capabilities: &ResolvedAgentCapabilities,
     owner_user_id: &str,

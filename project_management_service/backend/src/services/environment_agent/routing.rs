@@ -4,6 +4,10 @@
 use std::fs;
 use std::path::Path;
 
+pub(super) use chatos_project_execution::{
+    parse_local_connector_workspace_root as parse_local_connector_project_root,
+    LocalConnectorWorkspaceRef as LocalConnectorProjectRef,
+};
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
@@ -175,72 +179,6 @@ async fn choose_sandbox_provider(
     }
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct LocalConnectorProjectRef {
-    pub(super) device_id: String,
-    pub(super) workspace_id: String,
-    pub(super) relative_path: Option<String>,
-}
-
-pub(super) fn parse_local_connector_project_root(
-    project_root: &str,
-) -> Option<LocalConnectorProjectRef> {
-    let rest = project_root
-        .trim()
-        .strip_prefix(LOCAL_CONNECTOR_ROOT_PREFIX)?;
-    let mut parts = rest.splitn(3, '/');
-    let device_id = normalize_non_empty(parts.next())?;
-    let workspace_id = normalize_non_empty(parts.next())?;
-    let relative_path = match parts.next() {
-        Some(path) => Some(decode_local_connector_relative_path(path)?),
-        None => None,
-    };
-    Some(LocalConnectorProjectRef {
-        device_id,
-        workspace_id,
-        relative_path,
-    })
-}
-
-fn decode_local_connector_relative_path(path: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    for part in path.split('/').filter(|part| !part.trim().is_empty()) {
-        let decoded = urlencoding::decode(part).ok()?.into_owned();
-        parts.push(decoded);
-    }
-    let joined = parts.join("/");
-    normalize_local_relative_path(joined.as_str()).filter(|path| local_relative_path_is_safe(path))
-}
-
-fn normalize_local_relative_path(value: &str) -> Option<String> {
-    let value = value.trim().replace('\\', "/");
-    let value = value.trim_matches('/');
-    if value.is_empty() || value == "." {
-        return None;
-    }
-    let parts = value
-        .split('/')
-        .map(str::trim)
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("/"))
-    }
-}
-
-fn local_relative_path_is_safe(path: &str) -> bool {
-    let path = path.trim();
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.starts_with('\\')
-        && path.split('/').all(|part| {
-            let part = part.trim();
-            !part.is_empty() && part != "." && part != ".."
-        })
-}
-
 async fn has_enabled_local_sandbox_pairing(
     config: &AppConfig,
     user_access_token: Option<&str>,
@@ -387,13 +325,6 @@ fn truncate_detail(value: &str, max_chars: usize) -> String {
         output.push(ch);
     }
     output
-}
-
-fn normalize_non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 pub(super) fn provider_label(provider: RuntimeEnvironmentProvider) -> &'static str {

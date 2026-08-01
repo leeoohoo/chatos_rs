@@ -11,12 +11,6 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
-    if project.execution_plane == ProjectExecutionPlane::LocalConnector {
-        return Err(format!(
-            "local_runtime_required: project {} orchestration must run in the Local Connector client; cloud project agent execution is disabled",
-            project.id
-        ));
-    }
     let mut environment =
         ensure_runtime_environment_for_project(&state.store, project, None).await?;
     let run_id = run_id.to_string();

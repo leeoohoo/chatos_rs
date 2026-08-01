@@ -30,32 +30,8 @@ pub(super) async fn ensure_cloud_task_project_execution(
     if project_id.is_empty() || project_id == "0" || project_id == PUBLIC_PROJECT_ID {
         return Ok(());
     }
-    let project = get_project_from_project_service(config, project_id)
+    get_project_from_project_service(config, project_id)
         .await?
         .ok_or_else(|| format!("task project not found: {project_id}"))?;
-    if source_type_uses_local_runtime(project.source_type.as_deref()) {
-        return Err(format!(
-            "local_runtime_required: project {project_id} must run in the Local Connector client; cloud task model execution and local credential lookup are disabled"
-        ));
-    }
     Ok(())
-}
-
-fn source_type_uses_local_runtime(source_type: Option<&str>) -> bool {
-    source_type.map(str::trim).is_some_and(|value| {
-        value.eq_ignore_ascii_case("local") || value.eq_ignore_ascii_case("local_connector")
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::source_type_uses_local_runtime;
-
-    #[test]
-    fn local_project_sources_disable_cloud_model_resolution() {
-        assert!(source_type_uses_local_runtime(Some("local")));
-        assert!(source_type_uses_local_runtime(Some("LOCAL_CONNECTOR")));
-        assert!(!source_type_uses_local_runtime(Some("cloud")));
-        assert!(!source_type_uses_local_runtime(None));
-    }
 }

@@ -36,34 +36,6 @@ const requireDesktopProjectCreation = (): void => {
   }
 };
 
-const projectResponseUsesLocalRuntime = (project: ProjectResponse): boolean => {
-  const executionPlane = String(project.execution_plane || project.executionPlane || '').trim();
-  const sourceType = String(project.source_type || project.sourceType || '').trim();
-  const rootPath = String(project.root_path || project.rootPath || '').trim();
-  return executionPlane === 'local_connector'
-    || sourceType === 'local_connector'
-    || sourceType === 'local'
-    || rootPath.startsWith('local://connector/');
-};
-
-const cloudProjectCache = new WeakMap<object, ProjectResponse[]>();
-const DESKTOP_CLOUD_PROJECT_WAIT_MS = 800;
-
-const withinDesktopCloudWaitBudget = async (
-  pending: Promise<ProjectResponse[]>,
-  fallback: ProjectResponse[],
-): Promise<ProjectResponse[]> => new Promise((resolve) => {
-  let settled = false;
-  const finish = (projects: ProjectResponse[]) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    resolve(projects);
-  };
-  const timer = setTimeout(() => finish(fallback), DESKTOP_CLOUD_PROJECT_WAIT_MS);
-  void pending.then(finish);
-});
-
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
   createProject(data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
@@ -197,26 +169,7 @@ export interface WorkspaceProjectFacade {
 
 export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient> = {
   async listProjects(userId) {
-    if (!localRuntimeBridgeAvailable()) {
-      const cloudProjects = await workspaceApi.listProjects(this.getRequestFn(), userId);
-      return cloudProjects.filter((project) => !projectResponseUsesLocalRuntime(project));
-    }
-
-    const localProjects = await this.getLocalRuntimeClient().listProjects();
-    localProjects.forEach((project) => this.registerLocalProjectExecution(project.id));
-    const cachedCloudProjects = cloudProjectCache.get(this) || [];
-    const cloudRequest = workspaceApi.listProjects(this.getRequestFn(), userId)
-      .then((projects) => projects.filter((project) => !projectResponseUsesLocalRuntime(project)))
-      .then((projects) => {
-        cloudProjectCache.set(this, projects);
-        return projects;
-      })
-      .catch((error) => {
-        console.warn('Cloud projects are temporarily unavailable; keeping local projects visible.', error);
-        return cachedCloudProjects;
-      });
-    const cloudOnly = await withinDesktopCloudWaitBudget(cloudRequest, cachedCloudProjects);
-    return [...localProjects, ...cloudOnly];
+    return workspaceApi.listProjects(this.getRequestFn(), userId);
   },
   async createProject(data) {
     requireDesktopProjectCreation();

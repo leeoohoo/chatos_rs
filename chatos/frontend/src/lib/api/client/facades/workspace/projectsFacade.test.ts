@@ -11,7 +11,7 @@ describe('workspaceProjectFacade local project management routing', () => {
     vi.unstubAllGlobals();
   });
 
-  it('merges SQLite local projects with cloud-only projects on desktop', async () => {
+  it('uses the cloud project catalog as the only business source', async () => {
     vi.stubGlobal('window', {
       chatosLocalRuntime: { apiRequest: vi.fn() },
     });
@@ -29,74 +29,44 @@ describe('workspaceProjectFacade local project management routing', () => {
         root_path: 'harness://project/cloud-1',
       },
     ]);
-    const listProjects = vi.fn().mockResolvedValue([
-      {
-        id: 'local-1',
-        name: 'Local',
-        execution_plane: 'local_connector',
-        root_path: 'local://connector/device/workspace/apps',
-      },
-    ]);
-    const context = {
-      getRequestFn: () => cloudRequest,
-      getLocalRuntimeClient: () => ({ listProjects }),
-      registerLocalProjectExecution: vi.fn(),
-    };
+    const context = { getRequestFn: () => cloudRequest };
 
     const projects = await workspaceProjectFacade.listProjects.call(context as never, 'user-1');
 
-    expect(projects.map((project) => project.id)).toEqual(['local-1', 'cloud-1']);
-    expect(listProjects).toHaveBeenCalledTimes(1);
+    expect(projects.map((project) => project.id)).toEqual(['legacy-local', 'cloud-1']);
+    expect(cloudRequest).toHaveBeenCalledWith('/projects?user_id=user-1');
   });
 
-  it('keeps SQLite projects available when the cloud list is offline', async () => {
+  it('surfaces cloud project catalog failures instead of using stale SQLite data', async () => {
     vi.stubGlobal('window', {
       chatosLocalRuntime: { apiRequest: vi.fn() },
     });
-    const localProject = {
-      id: 'local-1',
-      name: 'Local',
-      execution_plane: 'local_connector',
-      root_path: 'local://connector/device/workspace/app',
-    };
-    const registerLocalProjectExecution = vi.fn();
     const context = {
       getRequestFn: () => vi.fn().mockRejectedValue(new Error('cloud offline')),
-      getLocalRuntimeClient: () => ({
-        listProjects: vi.fn().mockResolvedValue([localProject]),
-      }),
-      registerLocalProjectExecution,
     };
 
-    const projects = await workspaceProjectFacade.listProjects.call(context as never, 'user-1');
-
-    expect(projects).toEqual([localProject]);
-    expect(registerLocalProjectExecution).toHaveBeenCalledWith('local-1');
+    await expect(
+      workspaceProjectFacade.listProjects.call(context as never, 'user-1'),
+    ).rejects.toThrow('cloud offline');
   });
 
-  it('does not let a slow cloud list indefinitely block desktop local projects', async () => {
-    vi.useFakeTimers();
+  it('waits for the authoritative cloud project catalog', async () => {
     vi.stubGlobal('window', {
       chatosLocalRuntime: { apiRequest: vi.fn() },
     });
-    const localProject = {
-      id: 'local-fast',
-      name: 'Local Fast',
-      execution_plane: 'local_connector',
-      root_path: 'local://connector/device/workspace/app',
-    };
+    let resolveRequest: ((value: unknown) => void) | undefined;
+    const request = vi.fn().mockReturnValue(new Promise((resolve) => {
+      resolveRequest = resolve;
+    }));
     const context = {
-      getRequestFn: () => vi.fn().mockReturnValue(new Promise(() => {})),
-      getLocalRuntimeClient: () => ({
-        listProjects: vi.fn().mockResolvedValue([localProject]),
-      }),
-      registerLocalProjectExecution: vi.fn(),
+      getRequestFn: () => request,
     };
 
     const pending = workspaceProjectFacade.listProjects.call(context as never, 'user-1');
-    await vi.advanceTimersByTimeAsync(800);
+    const projects = [{ id: 'cloud-late', name: 'Cloud Late' }];
+    resolveRequest?.(projects);
 
-    await expect(pending).resolves.toEqual([localProject]);
+    await expect(pending).resolves.toEqual(projects);
   });
 
   it('allows browser clients to create cloud projects', async () => {

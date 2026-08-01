@@ -19,8 +19,6 @@ import type {
 } from './client/types';
 import {
   assertCloudSessionOperation,
-  isLocalRuntimeSessionId,
-  localRuntimeBridgeAvailable,
   LocalRuntimeClient,
 } from './localRuntime';
 import * as workspaceApi from './client/workspace';
@@ -64,29 +62,23 @@ class ApiClient {
   registerLocalProjectExecution(projectId: string): void {
     const normalizedProjectId = projectId.trim();
     if (normalizedProjectId) {
-      this.projectExecutionPlanes.set(normalizedProjectId, 'local_connector');
+      this.projectExecutionPlanes.set(normalizedProjectId, 'cloud');
     }
   }
 
   projectUsesLocalRuntime(projectId?: string | null): boolean {
-    const projectIdValue = String(projectId || '').trim();
-    return projectIdValue.length > 0
-      && this.projectExecutionPlanes.get(projectIdValue) === 'local_connector';
+    void projectId;
+    return false;
   }
 
   sessionScopeUsesLocalRuntime(projectId?: string | null): boolean {
-    if (!localRuntimeBridgeAvailable()) {
-      return false;
-    }
-    const projectIdValue = String(projectId || '').trim();
-    if (!projectIdValue || projectIdValue === '-1' || projectIdValue === '0') {
-      return true;
-    }
-    return this.projectExecutionPlanes.get(projectIdValue) !== 'cloud';
+    void projectId;
+    return false;
   }
 
   sessionUsesLocalRuntime(sessionId?: string | null): boolean {
-    return isLocalRuntimeSessionId(sessionId);
+    void sessionId;
+    return false;
   }
 
   assertCloudSessionOperation(sessionId: string | null | undefined, operation: string): void {
@@ -98,10 +90,7 @@ class ApiClient {
   }
 
   async prepareProjectRuntime(project: Project): Promise<void> {
-    if (this.registerProjectExecution(project) !== 'local_connector') {
-      return;
-    }
-    await this.localRuntime.prepareProject(project);
+    this.registerProjectExecution(project);
   }
 
   setAccessToken(token?: string | null): void {

@@ -11,12 +11,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::ClientConfig;
 use crate::connector::connect_loop;
-use crate::local_runtime::{
-    check_agent_prompt_updates, run_local_task_worker_loop, spawn_agent_prompt_update_checker,
-    sync_local_plugin_control_plane, sync_managed_memory_policy, sync_managed_runtime_config,
-    LocalAskUserPromptRegistry, LocalDatabase, LocalEnvironmentJobRegistry, LocalMemoryJobRegistry,
-    LocalTurnControlRegistry,
-};
+use crate::local_runtime::{sync_local_plugin_control_plane, LocalDatabase};
 use crate::model_configs::reconcile_local_model_configs;
 use crate::plugins::{
     PluginCredentialVault, PluginInstaller, PluginMcpAdapter, PluginOAuthBroker, PluginRuntimeHost,
@@ -37,13 +32,7 @@ pub(crate) struct LocalRuntime {
     pub(crate) state: Arc<RwLock<LocalState>>,
     pub(crate) http_client: reqwest::Client,
     pub(crate) database: Option<LocalDatabase>,
-    pub(crate) turn_control: LocalTurnControlRegistry,
-    pub(crate) memory_jobs: LocalMemoryJobRegistry,
-    pub(crate) ask_user_prompts: LocalAskUserPromptRegistry,
-    pub(crate) environment_jobs: LocalEnvironmentJobRegistry,
     pub(crate) connector_task: Arc<Mutex<Option<JoinHandle<()>>>>,
-    pub(crate) task_worker_task: Arc<Mutex<Option<JoinHandle<()>>>>,
-    pub(crate) agent_prompt_check_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub(crate) plugin_auto_update_lock: Arc<Mutex<()>>,
     pub(crate) sandbox_runtime: LocalSandboxRuntime,
     pub(crate) plugin_installer: PluginInstaller,
@@ -75,13 +64,7 @@ impl LocalRuntime {
             state,
             http_client,
             database: Some(database),
-            turn_control: LocalTurnControlRegistry::default(),
-            memory_jobs: LocalMemoryJobRegistry::default(),
-            ask_user_prompts: LocalAskUserPromptRegistry::default(),
-            environment_jobs: LocalEnvironmentJobRegistry::default(),
             connector_task: Arc::new(Mutex::new(None)),
-            task_worker_task: Arc::new(Mutex::new(None)),
-            agent_prompt_check_task: Arc::new(Mutex::new(None)),
             plugin_auto_update_lock: Arc::new(Mutex::new(())),
             sandbox_runtime: LocalSandboxRuntime::default(),
             plugin_installer,
@@ -142,14 +125,6 @@ impl LocalRuntime {
             return Ok(());
         };
         config.ensure_remote_urls_allowed()?;
-        {
-            let mut current = self.agent_prompt_check_task.lock().await;
-            if let Some(handle) = current.take() {
-                handle.abort();
-            }
-            *current = Some(spawn_agent_prompt_update_checker(self.clone()));
-        }
-
         let mut state = self.state.write().await;
         let previous_device_id = state.device_id.clone();
         let saved_workspaces = state.workspaces.clone();
@@ -234,33 +209,6 @@ impl LocalRuntime {
                 tracing_stdout(format!("keep cached Plugin capability snapshots: {err}").as_str())
             }
         }
-        match sync_managed_memory_policy(self).await {
-            Ok(bundle) => tracing_stdout(
-                format!(
-                    "synced managed Memory Policy revision {} ({})",
-                    bundle.revision, bundle.checksum
-                )
-                .as_str(),
-            ),
-            Err(err) => {
-                tracing_stdout(format!("keep cached managed Memory Policy: {err}").as_str())
-            }
-        }
-        match sync_managed_runtime_config(self).await {
-            Ok(bundle) => tracing_stdout(
-                format!(
-                    "synced managed runtime config revision {} ({})",
-                    bundle.revision, bundle.checksum
-                )
-                .as_str(),
-            ),
-            Err(err) => {
-                tracing_stdout(format!("keep cached managed runtime config: {err}").as_str())
-            }
-        }
-        if let Err(err) = check_agent_prompt_updates(self).await {
-            tracing_stdout(format!("check Agent Prompt updates failed: {err}").as_str());
-        }
         let config = {
             let state = self.state.read().await;
             ClientConfig::from_state(&state, self.state_path.clone())
@@ -330,19 +278,5 @@ impl LocalRuntime {
             }
         }));
         Ok(())
-    }
-
-    pub(crate) async fn start_local_task_worker(&self) {
-        let mut current = self.task_worker_task.lock().await;
-        if current.as_ref().is_some_and(|handle| !handle.is_finished()) {
-            return;
-        }
-        if let Some(handle) = current.take() {
-            handle.abort();
-        }
-        let runtime = self.clone();
-        *current = Some(tokio::spawn(async move {
-            run_local_task_worker_loop(runtime).await;
-        }));
     }
 }

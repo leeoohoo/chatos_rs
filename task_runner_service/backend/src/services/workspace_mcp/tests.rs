@@ -77,16 +77,6 @@ fn contact_async_task_adds_required_ask_user_at_runtime() {
 }
 
 #[test]
-fn local_connector_roots_are_rejected_by_cloud_routing() {
-    assert!(super::is_local_connector_project_root(
-        "local://connector/device-1/workspace-1/apps/web"
-    ));
-    assert!(!super::is_local_connector_project_root(
-        "harness://project/project-1"
-    ));
-}
-
-#[test]
 fn harness_code_task_removes_server_local_code_builtin_kinds() {
     let mut task = sample_task(
         TASK_PROFILE_DEFAULT,

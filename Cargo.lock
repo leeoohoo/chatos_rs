@@ -795,6 +795,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "urlencoding",
 ]
 
 [[package]]
@@ -3539,6 +3540,7 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
+ "chatos_project_execution",
  "chatos_service_runtime",
  "chrono",
  "futures-util",

@@ -32,6 +32,7 @@ import { useProjectsRealtime } from '../../lib/realtime/useProjectsRealtime';
 import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnectionsRealtime';
 import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
 import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
+import { useLocalProjectCreationSetting } from '../../hooks/useLocalProjectCreationSetting';
 import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 import type { ResourceSourceMode } from './CreateResourceModals';
 import { resolveWorkspaceResourceVisibility } from './resourceVisibility';
@@ -153,7 +154,13 @@ export const useSessionListController = ({
   const [taskRunnerSaving, setTaskRunnerSaving] = useState(false);
 
   const apiClient = useApiClient();
-  const allowLocalProjectCreation = localRuntimeBridgeAvailable();
+  const {
+    localProjectCreationEnabled,
+    localProjectCreationResolved,
+  } = useLocalProjectCreationSetting();
+  const allowLocalProjectCreation = localRuntimeBridgeAvailable()
+    && localProjectCreationResolved
+    && localProjectCreationEnabled;
   const { confirm, alert } = useDialogService();
 
   const {

@@ -64,7 +64,7 @@ impl Project {
             root_path,
             git_url,
             source_type: Some("local".to_string()),
-            execution_plane: Some("local_connector".to_string()),
+            execution_plane: Some("cloud".to_string()),
             cloud_import_source: Some("none".to_string()),
             import_status: Some("none".to_string()),
             source_git_url: None,

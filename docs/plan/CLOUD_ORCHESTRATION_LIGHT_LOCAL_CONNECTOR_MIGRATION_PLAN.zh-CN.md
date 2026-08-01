@@ -2,13 +2,15 @@
 
 ## 0. 文档状态
 
-- 状态：Proposal
+- 状态：2.0.10 实施中
 - 日期：2026-07-31
 - 目标版本：建议从下一小版本开始灰度
 - 替代方向：docs/plan/LOCAL_PROJECT_CLIENT_ORCHESTRATION_SQLITE_IMPLEMENTATION_PLAN.zh-CN.md
 - 历史参考点：commit 0e9823d0 的父版本
 
 本文档不删除旧的“本地项目客户端编排与 SQLite”方案，旧文档保留为历史实现说明；从本方案通过评审后，产品和架构方向以本文档为准。
+
+当前实施进度：MCP Management Tool Plane 已完成主链路；Local Connector 逻辑 Workspace 路径已抽成共享安全合同；Project Service 已把所有 Project source 固定映射到云端 execution plane；桌面前端新建 Local Workspace Project、Project 列表和真实运行判定已切到云端；客户端不再启动本地 Task Worker，也不再挂载 Chat、Session、Memory、Project Management、Task Board、Task Run 和 Environment Agent 业务 API，只保留 Workspace 文件/Git 与设备能力入口。旧实现代码会在引用清零后继续删除。
 
 ---
 

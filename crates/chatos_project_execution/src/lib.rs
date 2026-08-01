@@ -6,6 +6,14 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+mod local_connector_path;
+
+pub use local_connector_path::{
+    local_connector_relative_path_is_safe, local_connector_workspace_root,
+    normalize_local_connector_relative_path, parse_local_connector_workspace_root,
+    LocalConnectorWorkspaceRef, LOCAL_CONNECTOR_ROOT_PREFIX,
+};
+
 pub const STATUS_PLANNING: &str = "planning";
 pub const STATUS_PLANNING_STARTED: &str = "planning_started";
 pub const STATUS_AWAITING_CONFIRMATION: &str = "awaiting_confirmation";

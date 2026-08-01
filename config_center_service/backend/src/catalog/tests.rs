@@ -36,6 +36,25 @@ fn catalog_exposes_shared_and_task_runner_iteration_limits() {
 }
 
 #[test]
+fn catalog_exposes_local_project_creation_as_a_managed_ui_switch() {
+    let definitions = builtin_definitions();
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.key == "chatos.ui.local_project_creation_enabled")
+        .expect("local project creation UI definition");
+
+    assert_eq!(definition.scope, "service");
+    assert_eq!(definition.service_name.as_deref(), Some("chatos-backend"));
+    assert_eq!(definition.value_type, "boolean");
+    assert_eq!(definition.default_value, json!(false));
+    assert_eq!(definition.reload_mode, "hot_reload");
+    assert_eq!(
+        definition.env_aliases,
+        vec!["LOCAL_PROJECT_CREATION_ENABLED"]
+    );
+}
+
+#[test]
 fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
     let definitions = builtin_definitions();
     for key in [

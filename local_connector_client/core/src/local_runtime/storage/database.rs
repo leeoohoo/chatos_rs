@@ -7,12 +7,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-use super::LocalRuntimeDatabaseHealth;
-
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LocalRuntimeDatabaseHealth {
+    pub(crate) ready: bool,
+    pub(crate) path: String,
+    pub(crate) sqlite_version: String,
+    pub(crate) applied_migrations: i64,
+}
 
 pub(crate) fn embedded_migration_versions() -> Vec<i64> {
     MIGRATOR

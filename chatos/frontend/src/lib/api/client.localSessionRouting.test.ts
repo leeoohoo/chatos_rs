@@ -10,7 +10,7 @@ describe('desktop session execution-plane routing', () => {
     vi.unstubAllGlobals();
   });
 
-  it('keeps non-project and non-cloud sessions on the local runtime', () => {
+  it('keeps every business session on the cloud runtime', () => {
     vi.stubGlobal('window', {
       chatosLocalRuntime: {
         apiRequest: vi.fn(),
@@ -24,9 +24,9 @@ describe('desktop session execution-plane routing', () => {
       rootPath: '',
     } as never);
 
-    expect(client.sessionScopeUsesLocalRuntime('-1')).toBe(true);
-    expect(client.sessionScopeUsesLocalRuntime(null)).toBe(true);
-    expect(client.sessionScopeUsesLocalRuntime('local-project-not-yet-cached')).toBe(true);
+    expect(client.sessionScopeUsesLocalRuntime('-1')).toBe(false);
+    expect(client.sessionScopeUsesLocalRuntime(null)).toBe(false);
+    expect(client.sessionScopeUsesLocalRuntime('local-project-not-yet-cached')).toBe(false);
     expect(client.sessionScopeUsesLocalRuntime('cloud-project')).toBe(false);
   });
 

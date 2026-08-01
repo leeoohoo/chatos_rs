@@ -42,7 +42,7 @@ fn coerce(value: &Value, key: &str) -> Value {
                 .unwrap_or("zh-CN")
                 .to_string(),
         ),
-        "TERMINAL_UI_ENABLED" => Value::Bool(match value {
+        "TERMINAL_UI_ENABLED" | "LOCAL_PROJECT_CREATION_ENABLED" => Value::Bool(match value {
             Value::Bool(flag) => *flag,
             Value::Number(number) => number.as_i64().unwrap_or(1) != 0,
             Value::String(text) => {
@@ -88,6 +88,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         "INTERNAL_CONTEXT_LOCALE": "zh-CN",
         "UI_LOCALE": "zh-CN",
         "TERMINAL_UI_ENABLED": true,
+        "LOCAL_PROJECT_CREATION_ENABLED": false,
     }))
 }
 
@@ -109,6 +110,10 @@ pub async fn get_effective_user_settings(user_id: Option<String>) -> Result<Valu
                         "ATTACHMENT_TOTAL_MAX_BYTES",
                     ),
                     ("chatos.ui.terminal_enabled", "TERMINAL_UI_ENABLED"),
+                    (
+                        "chatos.ui.local_project_creation_enabled",
+                        "LOCAL_PROJECT_CREATION_ENABLED",
+                    ),
                     ("shared.logging.level", "LOG_LEVEL"),
                 ] {
                     if let Some(value) = snapshot.value(config_key) {
