@@ -208,6 +208,17 @@ fn memory_generation_agents_are_registered_without_a_tool_plane() {
 }
 
 #[test]
+fn local_command_approval_agent_is_registered_with_a_local_only_tool_plane() {
+    let (_, _, _, _, _, tool_plane) = system_agent_specs()
+        .into_iter()
+        .find(|(agent_key, _, _, _, _, _)| *agent_key == "local_connector_command_approval_agent")
+        .expect("local approval agent must be registered");
+
+    assert_eq!(tool_plane, AgentToolPlane::LocalOnly);
+    assert!(!tool_plane.uses_managed_gateway());
+}
+
+#[test]
 fn chatos_uses_the_task_runner_service_mcp_entry() {
     let descriptor = chatos_mcp::system_mcp_descriptor(
         chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,

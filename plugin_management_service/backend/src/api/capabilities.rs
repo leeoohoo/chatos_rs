@@ -12,8 +12,6 @@ use plugins::{
 };
 use revision::capability_policy_revision;
 
-use super::agents::ensure_managed_tool_plane;
-
 pub(super) async fn resolve_agent_capabilities(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -106,7 +104,7 @@ async fn resolve_agent_capabilities_for_owner(
     if !agent.enabled {
         return Err(ApiError::bad_request("System agent is disabled"));
     }
-    ensure_managed_tool_plane(&agent)?;
+    ensure_agent_supports_tools(&agent)?;
     if let Some(gate) = plugin_component_gate(
         state,
         &agent.plugin_component,
@@ -451,6 +449,16 @@ async fn resolve_agent_capabilities_for_owner(
         plugins,
         local_connector_requirements,
     })
+}
+
+fn ensure_agent_supports_tools(agent: &SystemAgentRecord) -> Result<(), ApiError> {
+    if agent.tool_plane.supports_tools() {
+        return Ok(());
+    }
+    Err(ApiError::conflict(format!(
+        "System agent {} does not expose an Agent Tool Plane",
+        agent.agent_key,
+    )))
 }
 
 fn binding_matches_runtime_context(

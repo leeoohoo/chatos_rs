@@ -286,7 +286,7 @@ fn system_agent_specs() -> Vec<(
 async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
     for descriptor in chatos_agent::system_agent_catalog()
         .iter()
-        .filter(|descriptor| descriptor.tool_plane == AgentToolPlane::None)
+        .filter(|descriptor| !descriptor.tool_plane.uses_managed_gateway())
     {
         store
             .delete_bindings_for_agent(descriptor.key.as_str())

@@ -19,7 +19,8 @@ use axum::http::{
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use chatos_plugin_management_sdk::{
-    ResolveAgentCapabilitiesRequest, SystemAgentKey, LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
+    ResolveAgentCapabilitiesRequest, SystemAgentKey, SystemMcpKey,
+    LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, SYSTEM_MCP_RUNTIME_KIND,
 };
 use chatos_service_runtime::http_body::{
     read_response_bytes_limited, DEFAULT_RESPONSE_BODY_LIMIT_BYTES,
@@ -274,8 +275,9 @@ async fn resolve_local_command_approval_capabilities(
     let code_maintainer_read = capabilities.mcps.iter().any(|item| {
         item.binding.required
             && item.available
-            && item.resource.runtime.kind == "builtin"
-            && item.resource.runtime.builtin_kind.as_deref() == Some("CodeMaintainerRead")
+            && item.resource.runtime.kind == SYSTEM_MCP_RUNTIME_KIND
+            && item.resource.runtime.system_key.as_deref()
+                == Some(SystemMcpKey::CodeMaintainerRead.as_str())
     });
     let approval_decision = capabilities
         .require_available_mcp(LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID)
@@ -287,7 +289,7 @@ async fn resolve_local_command_approval_capabilities(
     }
     let provider_skills_prompt = capabilities.compose_provider_skills_prompt(
         [
-            "CodeMaintainerRead",
+            SystemMcpKey::CodeMaintainerRead.as_str(),
             LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
         ],
         Some("zh-CN"),

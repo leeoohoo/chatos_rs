@@ -7,7 +7,15 @@ use super::*;
 fn agent_tool_plane_defaults_to_managed_and_serializes_stably() {
     assert_eq!(AgentToolPlane::default(), AgentToolPlane::Managed);
     assert!(AgentToolPlane::Managed.supports_tools());
+    assert!(AgentToolPlane::Managed.uses_managed_gateway());
+    assert!(AgentToolPlane::LocalOnly.supports_tools());
+    assert!(!AgentToolPlane::LocalOnly.uses_managed_gateway());
     assert!(!AgentToolPlane::None.supports_tools());
+    assert!(!AgentToolPlane::None.uses_managed_gateway());
+    assert_eq!(
+        serde_json::to_value(AgentToolPlane::LocalOnly).expect("local tool plane JSON"),
+        serde_json::json!("local_only")
+    );
     assert_eq!(
         serde_json::to_value(AgentToolPlane::None).expect("tool plane JSON"),
         serde_json::json!("none")

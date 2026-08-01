@@ -444,12 +444,12 @@ fn mcp_binding_sort_rank(item: &AgentMcpBindingView) -> (u8, u8) {
 }
 
 pub(super) fn ensure_managed_tool_plane(agent: &SystemAgentRecord) -> Result<(), ApiError> {
-    if agent.tool_plane.supports_tools() {
+    if agent.tool_plane.uses_managed_gateway() {
         return Ok(());
     }
     Err(ApiError::conflict(format!(
-        "System agent {} does not expose an Agent Tool Plane",
-        agent.agent_key
+        "System agent {} does not use the managed MCP Tool Plane",
+        agent.agent_key,
     )))
 }
 

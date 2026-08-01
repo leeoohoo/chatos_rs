@@ -30,6 +30,7 @@ pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
 pub enum AgentToolPlane {
     #[default]
     Managed,
+    LocalOnly,
     None,
 }
 
@@ -37,11 +38,16 @@ impl AgentToolPlane {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Managed => "managed",
+            Self::LocalOnly => "local_only",
             Self::None => "none",
         }
     }
 
     pub const fn supports_tools(self) -> bool {
+        matches!(self, Self::Managed | Self::LocalOnly)
+    }
+
+    pub const fn uses_managed_gateway(self) -> bool {
         matches!(self, Self::Managed)
     }
 }

@@ -2799,6 +2799,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "axum",
+ "chatos_agent",
  "chatos_mcp",
  "chatos_mcp_management_sdk",
  "chatos_mcp_service",

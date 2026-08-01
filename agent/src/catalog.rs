@@ -113,7 +113,7 @@ pub static LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR: AgentDescriptor =
         "local-connector-client",
         "Reviews local shell commands with read-only project tools and returns an approval decision.",
         false,
-        AgentToolPlane::Managed,
+        AgentToolPlane::LocalOnly,
     );
 
 pub static MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -270,5 +270,14 @@ mod tests {
             .iter()
             .filter(|descriptor| descriptor.service_name != "memory-engine")
             .all(|descriptor| descriptor.tool_plane.supports_tools()));
+    }
+
+    #[test]
+    fn local_command_approval_agent_never_uses_the_managed_gateway() {
+        let descriptor = agent_descriptor(SystemAgentKey::LocalConnectorCommandApprovalAgent);
+
+        assert_eq!(descriptor.tool_plane, AgentToolPlane::LocalOnly);
+        assert!(descriptor.tool_plane.supports_tools());
+        assert!(!descriptor.tool_plane.uses_managed_gateway());
     }
 }

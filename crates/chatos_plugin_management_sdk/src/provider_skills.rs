@@ -131,6 +131,7 @@ fn mcp_matches_identifier(mcp: &McpRecord, identifier: &str) -> bool {
     mcp.id == identifier
         || mcp.name == identifier
         || mcp.runtime.server_name.as_deref() == Some(identifier)
+        || mcp.runtime.system_key.as_deref() == Some(identifier)
         || mcp.runtime.builtin_kind.as_deref() == Some(identifier)
 }
 
@@ -304,5 +305,18 @@ mod tests {
 
         assert!(prompt.contains("Use used_server"));
         assert!(!prompt.contains("使用 used_server"));
+    }
+
+    #[test]
+    fn system_mcp_key_is_a_supported_provider_skill_identifier() {
+        let mut system_mcp = resolved_mcp("used", "used_server", true, true);
+        system_mcp.resource.runtime.system_key = Some("code_maintainer_read".to_string());
+        let capabilities = capabilities(vec![system_mcp]);
+
+        let prompt = capabilities
+            .compose_provider_skills_prompt(["code_maintainer_read"], Some("en-US"))
+            .expect("provider prompt");
+
+        assert!(prompt.contains("Use used_server"));
     }
 }

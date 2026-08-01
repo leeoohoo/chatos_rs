@@ -95,13 +95,16 @@ fn mcp_binding_sorting_keeps_bound_items_ahead_of_unbound_items() {
 }
 
 #[test]
-fn agents_without_a_tool_plane_cannot_receive_runtime_bindings() {
+fn only_managed_tool_plane_agents_can_receive_runtime_bindings() {
     let error = ensure_managed_tool_plane(&agent(AgentToolPlane::None))
         .expect_err("tool-plane none must fail closed");
 
     assert_eq!(error.status, StatusCode::CONFLICT);
     assert!(error
         .message
-        .contains("does not expose an Agent Tool Plane"));
+        .contains("does not use the managed MCP Tool Plane"));
+    let error = ensure_managed_tool_plane(&agent(AgentToolPlane::LocalOnly))
+        .expect_err("local-only tool plane must not accept managed bindings");
+    assert_eq!(error.status, StatusCode::CONFLICT);
     assert!(ensure_managed_tool_plane(&agent(AgentToolPlane::Managed)).is_ok());
 }

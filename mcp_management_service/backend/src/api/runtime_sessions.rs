@@ -488,10 +488,17 @@ fn apply_live_tool_snapshots(
 
 fn parse_agent_key(value: &str) -> Result<SystemAgentKey, ApiError> {
     let value = value.trim();
-    SystemAgentKey::ALL
+    let agent_key = SystemAgentKey::ALL
         .into_iter()
         .find(|key| key.as_str() == value)
-        .ok_or_else(|| ApiError::bad_request(format!("unknown system Agent key: {value}")))
+        .ok_or_else(|| ApiError::bad_request(format!("unknown system Agent key: {value}")))?;
+    let tool_plane = chatos_agent::agent_descriptor(agent_key).tool_plane;
+    if !tool_plane.uses_managed_gateway() {
+        return Err(ApiError::conflict(format!(
+            "system Agent {value} does not use the managed MCP Tool Plane"
+        )));
+    }
+    Ok(agent_key)
 }
 
 fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(), ApiError> {
@@ -1026,6 +1033,14 @@ mod tests {
             SystemAgentKey::TaskRunnerRunPhase
         );
         assert!(parse_agent_key("arbitrary-agent").is_err());
+    }
+
+    #[test]
+    fn local_only_agents_cannot_create_managed_runtime_sessions() {
+        let error = parse_agent_key("local_connector_command_approval_agent")
+            .expect_err("local-only Agent must never enter MCP Management");
+
+        assert!(format!("{error:?}").contains("does not use the managed MCP Tool Plane"));
     }
 
     #[test]
