@@ -102,8 +102,7 @@ export const useTaskPluginPicker = ({
   disabled: boolean;
   planMode: boolean;
 }) => {
-  const enabled = Boolean(conversationId)
-    && !client.sessionUsesLocalRuntime(conversationId);
+  const enabled = Boolean(conversationId);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

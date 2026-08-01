@@ -3,9 +3,7 @@
 
 import { useEffect } from 'react';
 
-import { isLocalRuntimeSessionId } from '../api/localRuntime';
-
-interface LocalReviewRepairPollingOptions {
+interface ReviewRepairPollingOptions {
   enabled: boolean;
   running: boolean;
   sessionId: string | null;
@@ -17,7 +15,7 @@ interface LocalReviewRepairPollingOptions {
   fallbackErrorMessage: string;
 }
 
-export const useLocalReviewRepairPolling = ({
+export const useReviewRepairPolling = ({
   enabled,
   running,
   sessionId,
@@ -25,9 +23,9 @@ export const useLocalReviewRepairPolling = ({
   onCompleted,
   onFailed,
   fallbackErrorMessage,
-}: LocalReviewRepairPollingOptions): void => {
+}: ReviewRepairPollingOptions): void => {
   useEffect(() => {
-    if (!enabled || !sessionId || !isLocalRuntimeSessionId(sessionId) || !running) {
+    if (!enabled || !sessionId || !running) {
       return undefined;
     }
     let cancelled = false;

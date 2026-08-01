@@ -5,23 +5,23 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { useLocalReviewRepairPolling } from './useLocalReviewRepairPolling';
+import { useReviewRepairPolling } from './useReviewRepairPolling';
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
 });
 
-describe('useLocalReviewRepairPolling', () => {
-  it('polls local review status and reports completion', async () => {
+describe('useReviewRepairPolling', () => {
+  it('polls cloud review status and reports completion', async () => {
     vi.useFakeTimers();
     const refreshStatus = vi.fn().mockResolvedValue({ running: false, pendingCount: 0 });
     const onCompleted = vi.fn();
 
-    renderHook(() => useLocalReviewRepairPolling({
+    renderHook(() => useReviewRepairPolling({
       enabled: true,
       running: true,
-      sessionId: 'lc_session_memory',
+      sessionId: 'cloud_session_memory',
       refreshStatus,
       onCompleted,
       onFailed: vi.fn(),
@@ -31,16 +31,16 @@ describe('useLocalReviewRepairPolling', () => {
       await vi.advanceTimersByTimeAsync(500);
     });
 
-    expect(refreshStatus).toHaveBeenCalledWith('lc_session_memory');
+    expect(refreshStatus).toHaveBeenCalledWith('cloud_session_memory');
     expect(onCompleted).toHaveBeenCalledTimes(1);
   });
 
-  it('does not poll cloud sessions', async () => {
+  it('does not poll when realtime fallback is disabled', async () => {
     vi.useFakeTimers();
     const refreshStatus = vi.fn();
 
-    renderHook(() => useLocalReviewRepairPolling({
-      enabled: true,
+    renderHook(() => useReviewRepairPolling({
+      enabled: false,
       running: true,
       sessionId: 'cloud_session_1',
       refreshStatus,

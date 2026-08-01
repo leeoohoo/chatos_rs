@@ -179,45 +179,24 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     return workspaceApi.createCloudProject(this.getRequestFn(), data);
   },
   async updateProject(id, data) {
-    if (this.projectUsesLocalRuntime(id)) {
-      return this.getLocalRuntimeClient().updateProject(id, data);
-    }
     return workspaceApi.updateProject(this.getRequestFn(), id, data);
   },
   async deleteProject(id) {
-    if (this.projectUsesLocalRuntime(id)) {
-      return this.getLocalRuntimeClient().deleteProject(id);
-    }
     return workspaceApi.deleteProject(this.getRequestFn(), id);
   },
   async getProject(id) {
-    if (this.projectUsesLocalRuntime(id)) {
-      return this.getLocalRuntimeClient().getProject(id);
-    }
     return workspaceApi.getProject(this.getRequestFn(), id);
   },
   async getProjectRuntimeEnvironment(projectId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getProjectRuntimeEnvironment(projectId);
-    }
     return workspaceApi.getProjectRuntimeEnvironment(this.getRequestFn(), projectId);
   },
   async updateProjectRuntimeEnvironmentSettings(projectId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().updateProjectRuntimeEnvironmentSettings(projectId, data);
-    }
     return workspaceApi.updateProjectRuntimeEnvironmentSettings(this.getRequestFn(), projectId, data);
   },
   async analyzeProjectRuntimeEnvironment(projectId, data = {}) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().analyzeProjectRuntimeEnvironment(projectId, data);
-    }
     return workspaceApi.analyzeProjectRuntimeEnvironment(this.getRequestFn(), projectId, data);
   },
   async generateProjectRuntimeEnvironmentImage(projectId, imageRecordId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().startProjectRuntimeEnvironment(projectId);
-    }
     return workspaceApi.generateProjectRuntimeEnvironmentImage(
       this.getRequestFn(),
       projectId,
@@ -225,25 +204,12 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async getProjectRuntimeEnvironmentProgress(projectId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getProjectRuntimeEnvironmentProgress(projectId);
-    }
     return workspaceApi.getProjectRuntimeEnvironmentProgress(this.getRequestFn(), projectId);
   },
   async getProjectPlan(projectId, options) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getProjectPlan(projectId, options);
-    }
     return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);
   },
   async listProjectRequirementWorkItems(projectId, requirementId, options) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().listProjectRequirementWorkItems(
-        projectId,
-        requirementId,
-        options,
-      );
-    }
     return workspaceApi.listProjectRequirementWorkItems(
       this.getRequestFn(),
       projectId,
@@ -252,12 +218,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async listProjectRequirementDocuments(projectId, requirementId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().listProjectRequirementDocuments(
-        projectId,
-        requirementId,
-      );
-    }
     return workspaceApi.listProjectRequirementDocuments(
       this.getRequestFn(),
       projectId,
@@ -265,23 +225,9 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async executeProjectRequirement(projectId, requirementId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().executeProjectRequirement(
-        projectId,
-        requirementId,
-        data,
-      );
-    }
     return workspaceApi.executeProjectRequirement(this.getRequestFn(), projectId, requirementId, data);
   },
   async getProjectRequirementExecutionPlan(projectId, requirementId, identity) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getProjectRequirementExecutionPlan(
-        projectId,
-        requirementId,
-        identity,
-      );
-    }
     return workspaceApi.getProjectRequirementExecutionPlan(
       this.getRequestFn(),
       projectId,
@@ -290,13 +236,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async confirmProjectRequirementExecution(projectId, requirementId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().confirmProjectRequirementExecution(
-        projectId,
-        requirementId,
-        data,
-      );
-    }
     return workspaceApi.confirmProjectRequirementExecution(
       this.getRequestFn(),
       projectId,
@@ -305,13 +244,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async pauseProjectRequirementExecution(projectId, requirementId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().pauseProjectRequirementExecution(
-        projectId,
-        requirementId,
-        data,
-      );
-    }
     return workspaceApi.pauseProjectRequirementExecution(
       this.getRequestFn(),
       projectId,
@@ -320,13 +252,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async resumeProjectRequirementExecution(projectId, requirementId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().resumeProjectRequirementExecution(
-        projectId,
-        requirementId,
-        data,
-      );
-    }
     return workspaceApi.resumeProjectRequirementExecution(
       this.getRequestFn(),
       projectId,
@@ -335,23 +260,9 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async stopProjectRequirementExecution(projectId, requirementId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().stopProjectRequirementExecution(
-        projectId,
-        requirementId,
-        data,
-      );
-    }
     return workspaceApi.stopProjectRequirementExecution(this.getRequestFn(), projectId, requirementId, data);
   },
   async rerunProjectRequirementExecution(projectId, requirementId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().rerunProjectRequirementExecution(
-        projectId,
-        requirementId,
-        data,
-      );
-    }
     return workspaceApi.rerunProjectRequirementExecution(
       this.getRequestFn(),
       projectId,
@@ -360,45 +271,24 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
     );
   },
   async analyzeProjectRun(projectId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().analyzeProjectRun(projectId);
-    }
     return workspaceApi.analyzeProjectRun(this.getRequestFn(), projectId);
   },
   async getProjectRunCatalog(projectId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getProjectRunCatalog(projectId);
-    }
     return workspaceApi.getProjectRunCatalog(this.getRequestFn(), projectId);
   },
   async getProjectRunState(projectId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getProjectRunState(projectId);
-    }
     return workspaceApi.getProjectRunState(this.getRequestFn(), projectId);
   },
   async getProjectRunEnvironment(projectId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().getProjectRunEnvironment(projectId);
-    }
     return workspaceApi.getProjectRunEnvironment(this.getRequestFn(), projectId);
   },
   async updateProjectRunEnvironment(projectId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().updateProjectRunEnvironment(projectId, data);
-    }
     return workspaceApi.updateProjectRunEnvironment(this.getRequestFn(), projectId, data);
   },
   async executeProjectRun(projectId, data) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().executeProjectRun(projectId, data);
-    }
     return workspaceApi.executeProjectRun(this.getRequestFn(), projectId, data);
   },
   async setProjectRunDefault(projectId, targetId) {
-    if (this.projectUsesLocalRuntime(projectId)) {
-      return this.getLocalRuntimeClient().setProjectRunDefault(projectId, targetId);
-    }
     return workspaceApi.setProjectRunDefault(this.getRequestFn(), projectId, targetId);
   },
   async listProjectContacts(projectId, paging) {
@@ -406,14 +296,12 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
       this.getRequestFn(),
       projectId,
       paging,
-      this.projectUsesLocalRuntime(projectId),
     );
   },
   async getProjectContactLock(projectId) {
     return workspaceApi.getProjectContactLock(
       this.getRequestFn(),
       projectId,
-      this.projectUsesLocalRuntime(projectId),
     );
   },
   async addProjectContact(projectId, data) {
@@ -421,7 +309,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
       this.getRequestFn(),
       projectId,
       data,
-      this.projectUsesLocalRuntime(projectId),
     );
   },
   async removeProjectContact(projectId, contactId) {
@@ -429,7 +316,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
       this.getRequestFn(),
       projectId,
       contactId,
-      this.projectUsesLocalRuntime(projectId),
     );
   },
 };

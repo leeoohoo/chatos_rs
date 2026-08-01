@@ -17,13 +17,8 @@ import type {
   ConversationMessagePayload,
   WebSocketTicketResponse,
 } from './client/types';
-import {
-  assertCloudSessionOperation,
-  LocalRuntimeClient,
-} from './localRuntime';
+import { LocalRuntimeClient } from './localRuntime';
 import * as workspaceApi from './client/workspace';
-import { resolveProjectExecutionPlane, type ProjectExecutionPlane } from '../domain/projectExecution';
-import type { Project } from '../../types';
 
 // Dev 环境默认直连后端，避免本地代理异常导致 /api 404。
 // 可通过 VITE_API_BASE_URL 显式覆盖（例如 https://your.domain/api）。
@@ -35,7 +30,6 @@ class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
   private readonly localRuntime = new LocalRuntimeClient();
-  private readonly projectExecutionPlanes = new Map<string, ProjectExecutionPlane>();
   private tokenRefreshListeners = new Set<(token: string) => void>();
   private readonly requestFn: workspaceApi.ApiRequestFn = (endpoint, options) => this.request(endpoint, options);
 
@@ -51,46 +45,8 @@ class ApiClient {
     return this.requestFn;
   }
 
-  registerProjectExecution(project: Project): ProjectExecutionPlane {
-    const plane = resolveProjectExecutionPlane(project);
-    if (project.id.trim()) {
-      this.projectExecutionPlanes.set(project.id.trim(), plane);
-    }
-    return plane;
-  }
-
-  registerLocalProjectExecution(projectId: string): void {
-    const normalizedProjectId = projectId.trim();
-    if (normalizedProjectId) {
-      this.projectExecutionPlanes.set(normalizedProjectId, 'cloud');
-    }
-  }
-
-  projectUsesLocalRuntime(projectId?: string | null): boolean {
-    void projectId;
-    return false;
-  }
-
-  sessionScopeUsesLocalRuntime(projectId?: string | null): boolean {
-    void projectId;
-    return false;
-  }
-
-  sessionUsesLocalRuntime(sessionId?: string | null): boolean {
-    void sessionId;
-    return false;
-  }
-
-  assertCloudSessionOperation(sessionId: string | null | undefined, operation: string): void {
-    assertCloudSessionOperation(sessionId, operation);
-  }
-
   getLocalRuntimeClient(): LocalRuntimeClient {
     return this.localRuntime;
-  }
-
-  async prepareProjectRuntime(project: Project): Promise<void> {
-    this.registerProjectExecution(project);
   }
 
   setAccessToken(token?: string | null): void {

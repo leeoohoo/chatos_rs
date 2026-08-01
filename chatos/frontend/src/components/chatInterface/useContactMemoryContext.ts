@@ -4,7 +4,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SessionSummariesListResponse } from '../../lib/api/client/types';
-import { isLocalRuntimeSessionId } from '../../lib/api/localRuntime';
 import {
   applyConversationSummaryItemsSnapshot,
   loadConversationSummaryItems,
@@ -50,10 +49,6 @@ interface MemoryApiClient {
   getContactAgentRecalls: (
     contactId: string,
     params?: { limit?: number; offset?: number },
-  ) => Promise<unknown[]>;
-  getConversationMemoryRecalls: (
-    sessionId: string,
-    params?: { limit?: number },
   ) => Promise<unknown[]>;
 }
 
@@ -233,7 +228,6 @@ export const useContactMemoryContext = ({
     }
 
     const normalizedContactId = currentContactId.trim();
-    const usesLocalMemory = isLocalRuntimeSessionId(sessionId);
     const loadKey = buildMemoryLoadKey(sessionId, currentContactId, currentProjectIdForMemory);
     const cached = memoryCacheRef.current.get(sessionId);
     const isStale = staleMemorySessionsRef.current.has(sessionId);
@@ -245,7 +239,7 @@ export const useContactMemoryContext = ({
       return;
     }
 
-    if (!normalizedContactId && !usesLocalMemory) {
+    if (!normalizedContactId) {
       await loadSessionMemorySummaries(sessionId, force);
       return;
     }
@@ -255,7 +249,7 @@ export const useContactMemoryContext = ({
       applyResult: ({ recallRows, selectedSessionSummaries }) => {
         const selectedAgentRecalls = normalizeAgentRecalls(
           Array.isArray(recallRows) ? recallRows : [],
-          usesLocalMemory ? 50 : 1,
+          50,
         );
         setSessionMemorySummaries(selectedSessionSummaries);
         setAgentRecalls(selectedAgentRecalls);
@@ -270,9 +264,7 @@ export const useContactMemoryContext = ({
       load: async () => {
         const [selectedSessionSummaries, recallRows] = await Promise.all([
           loadConversationSummaryItems(apiClient, sessionId, { force, limit: 100 }),
-          usesLocalMemory
-            ? apiClient.getConversationMemoryRecalls(sessionId)
-            : apiClient.getContactAgentRecalls(normalizedContactId, { limit: 50, offset: 0 }),
+          apiClient.getContactAgentRecalls(normalizedContactId, { limit: 50, offset: 0 }),
         ]);
         return {
           selectedSessionSummaries,

@@ -22,12 +22,6 @@ import {
   resolveAttachmentTotalMaxBytes,
 } from './sendMessage/attachments';
 import { createInternalId } from './sendMessage/internalId';
-import { applyLocalTurnResponse } from './sendMessage/localTurn';
-import {
-  applyCancelledLocalTurn,
-  isLocalTurnCancellationError,
-} from './sendMessage/localCancellation';
-import { startLocalRuntimeEventPolling } from './sendMessage/localEvents';
 import { createDraftUserMessage } from './sendMessage/messageFactory';
 import {
   buildChatRequestLogPayload,
@@ -341,8 +335,6 @@ export function createSendMessageHandler({
     if (!currentSessionId) {
       throw new Error('No active session');
     }
-    const usesLocalRuntime = client.sessionUsesLocalRuntime(currentSessionId);
-
     // 检查是否已经在发送消息，防止重复发送
     const chatState = sessionChatState[currentSessionId] || createDefaultSessionChatState();
     if (chatState.isLoading || chatState.isStreaming || chatState.isStopping) {
@@ -356,27 +348,20 @@ export function createSendMessageHandler({
 
       try {
         const userId = getUserIdParam();
-        if (usesLocalRuntime && attachments.length > 0) {
-          throw new Error('本地运行时暂不支持引导附件，附件不会上传到云端');
-        }
-        const attachmentTotalMaxBytes = usesLocalRuntime
-          ? resolveAttachmentTotalMaxBytes(undefined)
-          : await loadAttachmentTotalMaxBytes(client, userId);
-        const { previewAttachments, apiAttachments } = usesLocalRuntime
-          ? { previewAttachments: [], apiAttachments: [] }
-          : await prepareAttachmentsForStreaming(
-              attachments,
-              true,
-              {
-                dropImagesWhenUnsupported: false,
-                maxTotalBytes: attachmentTotalMaxBytes,
-                uploadAttachments: (files) => uploadAttachmentsToObjectStorage(
-                  client,
-                  currentSessionId,
-                  files,
-                ),
-              },
-            );
+        const attachmentTotalMaxBytes = await loadAttachmentTotalMaxBytes(client, userId);
+        const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
+          attachments,
+          true,
+          {
+            dropImagesWhenUnsupported: false,
+            maxTotalBytes: attachmentTotalMaxBytes,
+            uploadAttachments: (files) => uploadAttachmentsToObjectStorage(
+              client,
+              currentSessionId,
+              files,
+            ),
+          },
+        );
         assertPayloadWithinTransportBudget({
           conversation_id: currentSessionId,
           turn_id: activeTurnId,
@@ -497,26 +482,19 @@ export function createSendMessageHandler({
         reasoningEnabled,
       } = resolveModelCapabilities(selectedModelForRequest, sessionRuntime.reasoningEnabled);
       const userId = getUserIdParam();
-      if (usesLocalRuntime && attachments.length > 0) {
-        throw new Error('本地运行时暂不支持附件，附件不会上传到云端');
-      }
-      const attachmentTotalMaxBytes = usesLocalRuntime
-        ? resolveAttachmentTotalMaxBytes(undefined)
-        : await loadAttachmentTotalMaxBytes(client, userId);
-      const { previewAttachments, apiAttachments } = usesLocalRuntime
-        ? { previewAttachments: [], apiAttachments: [] }
-        : await prepareAttachmentsForStreaming(
-            attachments,
-            supportsImages,
-            {
-              maxTotalBytes: attachmentTotalMaxBytes,
-              uploadAttachments: (files) => uploadAttachmentsToObjectStorage(
-                client,
-                currentSessionId,
-                files,
-              ),
-            },
-          );
+      const attachmentTotalMaxBytes = await loadAttachmentTotalMaxBytes(client, userId);
+      const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
+        attachments,
+        supportsImages,
+        {
+          maxTotalBytes: attachmentTotalMaxBytes,
+          uploadAttachments: (files) => uploadAttachmentsToObjectStorage(
+            client,
+            currentSessionId,
+            files,
+          ),
+        },
+      );
 
       const normalizedPluginCommandInvocations = normalizePluginCommandInvocations(
         runtimeOptions.pluginCommandInvocations,
@@ -592,46 +570,6 @@ export function createSendMessageHandler({
       streamRuntimeOptions.systemPrompt = activeSystemContext?.content
         || chatConfig.systemPrompt
         || null;
-      if (usesLocalRuntime) {
-        set((state) => {
-          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
-          state.sessionChatState[currentSessionId] = {
-            ...prev,
-            streamingTransport: 'local',
-          };
-        });
-        const eventPolling = startLocalRuntimeEventPolling({
-          client,
-          set,
-          sessionId: currentSessionId,
-          turnId: conversationTurnId,
-        });
-        let commandResponse: Awaited<ReturnType<ApiClient['sendChatCommand']>>;
-        try {
-          commandResponse = await client.sendChatCommand(
-            currentSessionId,
-            content,
-            selectedModelForRequest,
-            userId,
-            [],
-            reasoningEnabled,
-            streamRuntimeOptions,
-          );
-        } finally {
-          await eventPolling.stop();
-        }
-        if (commandResponse?.accepted === false) {
-          throw new Error('本地聊天命令未被接受');
-        }
-        applyLocalTurnResponse({
-          set,
-          sessionId: currentSessionId,
-          optimisticUserMessageId: userMessage.id,
-          response: commandResponse,
-        });
-        debugLog('✅ 本地消息发送完成');
-        return;
-      }
       assertPayloadWithinTransportBudget({
         conversation_id: currentSessionId,
         content,
@@ -728,15 +666,6 @@ export function createSendMessageHandler({
 
       debugLog('✅ 消息发送完成');
     } catch (error) {
-      if (usesLocalRuntime && isLocalTurnCancellationError(error)) {
-        await applyCancelledLocalTurn({
-          client,
-          set,
-          sessionId: currentSessionId,
-        });
-        debugLog('✅ 本地运行已取消');
-        return;
-      }
       const readableError = rollbackFailedSendMessage({
         set,
         currentSessionId,

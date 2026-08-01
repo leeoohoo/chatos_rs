@@ -148,7 +148,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
     if (!normalizedProjectId) {
       return;
     }
-    client.registerProjectExecution(project);
     getOrCreateClientCacheState(client).detailCache.set(normalizedProjectId, {
       project,
       stale: false,
@@ -243,7 +242,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         });
         return null;
       }
-      client.registerProjectExecution(project);
       upsertProjectCaches(project);
       set((state: ChatStoreDraft) => {
         state.projects = upsertProject(state.projects, project);
@@ -421,7 +419,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         if (!project) {
           project = await loadProjectDetail(normalizedProjectId);
         }
-        await client.prepareProjectRuntime(project);
         const uid = getUserIdParam();
         set((state: ChatStoreDraft) => {
           state.projects = upsertProject(state.projects, project);

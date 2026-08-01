@@ -5,7 +5,6 @@ import React from 'react';
 import { MessageList } from '../MessageList';
 import type { ChatInterfaceProps, Message } from '../../types';
 import { useI18n } from '../../i18n/I18nProvider';
-import { LocalMemoryPolicyControls } from './LocalMemoryPolicyControls';
 import { MemoryTimelineList, type MemoryTimelineItem } from './MemoryTimelineList';
 
 interface SessionSummaryViewItem {
@@ -134,18 +133,12 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
           <div className="text-xs text-destructive">{memoryError}</div>
         ) : null}
 
-        <LocalMemoryPolicyControls sessionId={sessionId} />
-
         <div className="rounded-lg border border-border bg-background/80 p-3">
           <div className="text-xs font-semibold text-foreground">{t('memory.entries')}</div>
           <div className="mt-1 text-[11px] text-muted-foreground">
             {projectId ? `project_id: ${projectId}` : t('memory.projectIdNone')}
           </div>
-          <MemoryTimelineList
-            sessionId={sessionId}
-            items={memoryTimeline}
-            onRefresh={onRefresh}
-          />
+          <MemoryTimelineList items={memoryTimeline} />
         </div>
       </div>
     </div>

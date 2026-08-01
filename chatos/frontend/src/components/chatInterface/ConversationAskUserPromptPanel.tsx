@@ -14,7 +14,6 @@ import type {
   AskUserPromptStoredPrompt,
 } from '../../lib/api/client/types';
 import { useConversationAskUserPromptRealtime } from '../../lib/realtime/useConversationAskUserPromptRealtime';
-import { isLocalRuntimeSessionId } from '../../lib/api/localRuntime';
 
 interface ConversationAskUserPromptPanelProps {
   sessionId: string | null;
@@ -131,8 +130,6 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
   const [error, setError] = useState<string | null>(null);
   const initializedPromptIdRef = useRef<string | null>(null);
 
-  const localSession = isLocalRuntimeSessionId(sessionId);
-
   const loadPrompts = useCallback(async (silent = false) => {
     const normalizedSessionId = String(sessionId || '').trim();
     if (!normalizedSessionId) {
@@ -162,20 +159,10 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
     void loadPrompts();
   }, [loadPrompts]);
 
-  useEffect(() => {
-    if (!localSession || !sessionId) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      void loadPrompts(true);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [loadPrompts, localSession, sessionId]);
-
   useConversationAskUserPromptRealtime({
     sessionId,
     projectId,
-    enabled: Boolean(sessionId) && !localSession,
+    enabled: Boolean(sessionId),
     onEvent: async (event) => {
       const promptId = String(event.prompt_id || '').trim();
       const status = normalizePromptStatus(event.status);
