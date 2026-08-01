@@ -24,7 +24,8 @@ if ! curl -fsS --max-time 5 "$BASE_URL/health" >/dev/null; then
   exit 1
 fi
 
-discover_local_cloud_project() {
+discover_project_by_source() {
+  local source_type="$1"
   require_command docker
   local mongodb_container
   mongodb_container="$(
@@ -33,7 +34,7 @@ discover_local_cloud_project() {
   if [[ -z "$mongodb_container" ]]; then
     return 1
   fi
-  docker exec "$mongodb_container" mongosh \
+  docker exec -e MCP_SMOKE_PROJECT_SOURCE_TYPE="$source_type" "$mongodb_container" mongosh \
     -u "${MONGODB_USER:-admin}" \
     -p "${MONGODB_PASSWORD:-admin}" \
     --authenticationDatabase admin \
@@ -41,7 +42,7 @@ discover_local_cloud_project() {
     --eval '
       const project = db.getSiblingDB("project_management_service").projects.findOne(
         {
-          source_type: "cloud",
+          source_type: process.env.MCP_SMOKE_PROJECT_SOURCE_TYPE,
           status: "active",
           owner_user_id: {$type: "string"},
           id: {$type: "string"}
@@ -57,7 +58,7 @@ discover_local_cloud_project() {
 owner_user_id="${MCP_SMOKE_OWNER_USER_ID:-}"
 project_id="${MCP_SMOKE_PROJECT_ID:-}"
 if [[ -z "$owner_user_id" || -z "$project_id" ]]; then
-  selection="$(discover_local_cloud_project || true)"
+  selection="$(discover_project_by_source cloud || true)"
   if [[ -z "$selection" || "$selection" != *"|"* ]]; then
     echo "[ERROR] no active cloud project was found" >&2
     echo "[INFO] set MCP_SMOKE_OWNER_USER_ID and MCP_SMOKE_PROJECT_ID explicitly" >&2
@@ -76,6 +77,18 @@ export MCP_SMOKE_OWNER_USER_ID="$owner_user_id"
 export MCP_SMOKE_PROJECT_ID="$project_id"
 export MCP_MANAGEMENT_SMOKE_BASE_URL="$BASE_URL"
 
+local_owner_user_id="${MCP_SMOKE_LOCAL_OWNER_USER_ID:-}"
+local_project_id="${MCP_SMOKE_LOCAL_PROJECT_ID:-}"
+if [[ -z "$local_owner_user_id" || -z "$local_project_id" ]]; then
+  local_selection="$(discover_project_by_source local_connector || true)"
+  if [[ -n "$local_selection" && "$local_selection" == *"|"* ]]; then
+    local_owner_user_id="${local_selection%%|*}"
+    local_project_id="${local_selection#*|}"
+  fi
+fi
+export MCP_SMOKE_LOCAL_OWNER_USER_ID="$local_owner_user_id"
+export MCP_SMOKE_LOCAL_PROJECT_ID="$local_project_id"
+
 echo "[INFO] smoke MCP Management cloud runtime"
 
 node <<'NODE'
@@ -85,8 +98,18 @@ const baseUrl = process.env.MCP_MANAGEMENT_SMOKE_BASE_URL;
 const internalSecret =
   process.env.MCP_MANAGEMENT_INTERNAL_API_SECRET ||
   'change_me_mcp_management_internal_secret';
+const projectServiceBaseUrl = (
+  process.env.MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL ||
+  process.env.PROJECT_SERVICE_BASE_URL ||
+  'http://127.0.0.1:39210'
+).replace(/\/$/, '');
+const projectServiceSecret =
+  process.env.MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET ||
+  'change_me_mcp_management_project_service_secret';
 const ownerUserId = process.env.MCP_SMOKE_OWNER_USER_ID;
 const projectId = process.env.MCP_SMOKE_PROJECT_ID;
+const localOwnerUserId = process.env.MCP_SMOKE_LOCAL_OWNER_USER_ID;
+const localProjectId = process.env.MCP_SMOKE_LOCAL_PROJECT_ID;
 const primaryCaller = 'chatos';
 const otherCaller = 'task-runner';
 
@@ -96,26 +119,45 @@ function assert(condition, message) {
   }
 }
 
+function assertInternalRoute(routes, resourceId, providerRef, label) {
+  const route = routes.find((item) => item.resource_id === resourceId);
+  assert(route, `${label} MCP route is missing`);
+  assert(
+    route.provider_kind === 'internal_service' && route.provider_ref === providerRef,
+    `${label} MCP did not route to ${providerRef}`,
+  );
+  return route;
+}
+
 function encodedJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function issueInternalToken(caller, scope) {
+function issueSignedToken(caller, audience, scope, secret) {
   const now = Math.floor(Date.now() / 1000);
   const header = encodedJson({ alg: 'HS256', typ: 'JWT' });
   const payload = encodedJson({
     iss: caller,
     sub: caller,
-    aud: 'mcp-management-service',
+    aud: audience,
     scope,
     iat: now,
     exp: now + 60,
   });
   const signature = crypto
-    .createHmac('sha256', internalSecret)
+    .createHmac('sha256', secret)
     .update(`${header}.${payload}`)
     .digest('base64url');
   return `${header}.${payload}.${signature}`;
+}
+
+function issueInternalToken(caller, scope) {
+  return issueSignedToken(
+    caller,
+    'mcp-management-service',
+    scope,
+    internalSecret,
+  );
 }
 
 async function readJson(response) {
@@ -143,6 +185,98 @@ async function internalRequest(path, scope, options = {}, caller = primaryCaller
   return { response, body: await readJson(response) };
 }
 
+async function projectExecutionContext(project, owner) {
+  const caller = 'mcp-management-service';
+  const token = issueSignedToken(
+    caller,
+    'project-service',
+    'project.execution_context.read',
+    projectServiceSecret,
+  );
+  const response = await fetch(
+    `${projectServiceBaseUrl}/api/internal/projects/${encodeURIComponent(
+      project,
+    )}/execution-context?owner_user_id=${encodeURIComponent(owner)}`,
+    {
+      method: 'GET',
+      headers: {
+        'x-project-service-caller': caller,
+        'x-project-service-internal-token': token,
+        'x-project-service-sync-secret': projectServiceSecret,
+      },
+    },
+  );
+  return { response, body: await readJson(response) };
+}
+
+async function assertWorkspaceRoute(project, owner, expectedProvider) {
+  const contextResult = await projectExecutionContext(project, owner);
+  assert(
+    contextResult.response.ok,
+    `project execution context failed with status ${contextResult.response.status}`,
+  );
+  const context = contextResult.body;
+  assert(context.project_id === project, 'project execution context id drifted');
+  assert(context.owner_user_id === owner, 'project execution context owner drifted');
+  assert(
+    context.workspace_provider === expectedProvider,
+    `workspace provider drifted: expected ${expectedProvider}, received ${context.workspace_provider}`,
+  );
+  const resolved = await internalRequest('/api/internal/routes/resolve', 'routes.resolve', {
+    method: 'POST',
+    body: JSON.stringify({
+      context,
+      resources: [
+        {
+          resource_id: 'builtin_code_maintainer_read',
+          server_name: 'code_maintainer_read',
+          resource_kind: 'system',
+          system_key: 'code_maintainer_read',
+          execution_host: null,
+          provider_ref: null,
+          required: true,
+          allow_writes: false,
+        },
+      ],
+    }),
+  });
+  assert(resolved.response.ok, `workspace route resolve failed: ${resolved.response.status}`);
+  assert(
+    Array.isArray(resolved.body.routes) && resolved.body.routes.length === 1,
+    'workspace route resolve returned an unexpected route set',
+  );
+  const route = resolved.body.routes[0];
+  assert(
+    route.provider_kind === expectedProvider,
+    `workspace route used ${route.provider_kind} instead of ${expectedProvider}`,
+  );
+  assert(
+    !resolved.body.unavailable_required_mcps?.length,
+    'required workspace MCP was unavailable',
+  );
+  const serialized = JSON.stringify(resolved.body);
+  assert(
+    !serialized.includes('/Users/') &&
+      !serialized.includes('file://') &&
+      !/[A-Za-z]:\\\\/.test(serialized),
+    'workspace route preview exposed an absolute local path',
+  );
+  if (expectedProvider === 'harness') {
+    assert(
+      route.provider_ref === `project:${project}@${context.revision}`,
+      'Harness route is not pinned to the authoritative project revision',
+    );
+  } else if (expectedProvider === 'local_connector') {
+    assert(context.workspace?.device_id, 'local project context has no device id');
+    assert(context.workspace?.workspace_id, 'local project context has no workspace id');
+    assert(
+      route.provider_ref ===
+        `device:${context.workspace.device_id}/workspace:${context.workspace.workspace_id}`,
+      'Local Connector route is not pinned to the authoritative device and workspace',
+    );
+  }
+}
+
 async function mcpRequest(runtimeUrl, runtimeToken, request) {
   const response = await fetch(runtimeUrl, {
     method: 'POST',
@@ -153,6 +287,19 @@ async function mcpRequest(runtimeUrl, runtimeToken, request) {
     body: JSON.stringify(request),
   });
   return { response, body: await readJson(response) };
+}
+
+async function callMcpTool(runtimeUrl, runtimeToken, requestId, tool, args, label) {
+  const call = await mcpRequest(runtimeUrl, runtimeToken, {
+    jsonrpc: '2.0',
+    id: requestId,
+    method: 'tools/call',
+    params: { name: tool.name, arguments: args },
+  });
+  assert(call.response.ok, `${label} tools/call HTTP failed: ${call.response.status}`);
+  assert(!call.body.error, `${label} tools/call failed: ${JSON.stringify(call.body.error)}`);
+  assert(call.body.result, `${label} tools/call returned no result`);
+  console.log(`[OK] real MCP Management -> ${label} tools/call completed`);
 }
 
 function createSessionRequest(agentKey, owner = ownerUserId) {
@@ -203,6 +350,18 @@ async function main() {
   );
   console.log('[OK] project owner mismatch fails closed');
 
+  await assertWorkspaceRoute(projectId, ownerUserId, 'harness');
+  console.log('[OK] cloud project CodeMaintainerRead is pinned to Harness');
+
+  if (localOwnerUserId && localProjectId) {
+    await assertWorkspaceRoute(localProjectId, localOwnerUserId, 'local_connector');
+    console.log(
+      '[OK] local project CodeMaintainerRead is pinned to its Local Connector workspace',
+    );
+  } else {
+    console.log('[INFO] no active local project found; Local Connector route preview skipped');
+  }
+
   let session = null;
   let closed = false;
   try {
@@ -233,14 +392,23 @@ async function main() {
       routes.body.agent_key === 'chatos_planning_agent',
       'runtime route Agent identity drifted',
     );
-    const taskRunnerRoute = routes.body.routes.find(
-      (route) => route.resource_id === 'system_mcp_chatos_task_runner',
+    assertInternalRoute(
+      routes.body.routes,
+      'system_mcp_chatos_task_runner',
+      'task_runner_service',
+      'Task Runner',
     );
-    assert(taskRunnerRoute, 'Task Runner MCP route is missing');
-    assert(
-      taskRunnerRoute.provider_kind === 'internal_service' &&
-        taskRunnerRoute.provider_ref === 'task_runner_service',
-      'Task Runner MCP did not route to its owning internal service',
+    assertInternalRoute(
+      routes.body.routes,
+      'builtin_project_management',
+      'project_management_service',
+      'Project Management',
+    );
+    assertInternalRoute(
+      routes.body.routes,
+      'builtin_notepad',
+      'chatos',
+      'Notepad',
     );
     const serializedRoutes = JSON.stringify(routes.body);
     assert(
@@ -249,7 +417,17 @@ async function main() {
         !/[A-Za-z]:\\\\/.test(serializedRoutes),
       'runtime route snapshot exposed an absolute local path',
     );
-    console.log('[OK] immutable route snapshot preserves owner, Agent, project and provider');
+    console.log(
+      `[INFO] runtime routes: ${routes.body.routes
+        .map(
+          (route) =>
+            `${route.resource_id}=${route.provider_kind}:${route.provider_ref || 'none'}`,
+        )
+        .join(', ')}`,
+    );
+    console.log(
+      '[OK] immutable route snapshot preserves owner, Agent, project and service ownership',
+    );
 
     const wrongCallerRead = await internalRequest(
       `/api/internal/runtime/sessions/${encodeURIComponent(session.session_id)}/routes`,
@@ -274,6 +452,17 @@ async function main() {
     const tools = toolsList.body.result?.tools || [];
     const listTasksTool = tools.find((tool) => tool.name.endsWith('_list_tasks'));
     assert(listTasksTool, 'namespaced Task Runner list_tasks tool is missing');
+    const listRequirementsTool = tools.find((tool) =>
+      tool.name.endsWith('_list_requirements'),
+    );
+    assert(
+      listRequirementsTool,
+      'namespaced Project Management list_requirements tool is missing',
+    );
+    const listNotepadFoldersTool = tools.find((tool) =>
+      tool.name.endsWith('_list_folders'),
+    );
+    assert(listNotepadFoldersTool, 'namespaced Notepad list_folders tool is missing');
     console.log(`[OK] aggregated tools/list returned ${tools.length} namespaced tools`);
 
     const tamperedToken = `${session.runtime_token.slice(0, -1)}${
@@ -288,19 +477,30 @@ async function main() {
     assert(tampered.body?.error, 'tampered Runtime Token was unexpectedly accepted');
     console.log('[OK] tampered Runtime Token is rejected');
 
-    const toolCall = await mcpRequest(runtimeUrl, session.runtime_token, {
-      jsonrpc: '2.0',
-      id: 'smoke-tools-call',
-      method: 'tools/call',
-      params: {
-        name: listTasksTool.name,
-        arguments: { limit: 1, offset: 0 },
-      },
-    });
-    assert(toolCall.response.ok, `tools/call HTTP failed: ${toolCall.response.status}`);
-    assert(!toolCall.body.error, `tools/call failed: ${JSON.stringify(toolCall.body.error)}`);
-    assert(toolCall.body.result, 'tools/call returned no result');
-    console.log('[OK] real MCP Management -> Task Runner tools/call completed');
+    await callMcpTool(
+      runtimeUrl,
+      session.runtime_token,
+      'smoke-task-list-call',
+      listTasksTool,
+      { limit: 1, offset: 0 },
+      'Task Runner',
+    );
+    await callMcpTool(
+      runtimeUrl,
+      session.runtime_token,
+      'smoke-project-requirements-call',
+      listRequirementsTool,
+      { limit: 1, offset: 0 },
+      'Project Management',
+    );
+    await callMcpTool(
+      runtimeUrl,
+      session.runtime_token,
+      'smoke-notepad-folders-call',
+      listNotepadFoldersTool,
+      {},
+      'ChatOS Notepad',
+    );
 
     const wrongCallerClose = await internalRequest(
       `/api/internal/runtime/sessions/${encodeURIComponent(session.session_id)}/close`,
