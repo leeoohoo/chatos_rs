@@ -42,12 +42,16 @@ impl McpManagementExecutionMode {
         }
     }
 
-    fn from_env() -> Self {
+    pub(super) fn from_env() -> Self {
         Self::from_value(
             std::env::var("TASK_RUNNER_MCP_MANAGEMENT_MODE")
                 .ok()
                 .as_deref(),
         )
+    }
+
+    pub(super) const fn uses_gateway(self) -> bool {
+        matches!(self, Self::Gateway)
     }
 }
 
@@ -209,6 +213,9 @@ mod tests {
             McpManagementExecutionMode::from_value(None),
             McpManagementExecutionMode::Off
         );
+        assert!(McpManagementExecutionMode::Gateway.uses_gateway());
+        assert!(!McpManagementExecutionMode::Shadow.uses_gateway());
+        assert!(!McpManagementExecutionMode::Off.uses_gateway());
     }
 
     #[test]

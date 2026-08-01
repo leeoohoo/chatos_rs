@@ -1028,7 +1028,8 @@ Memory Engine 五类 Agent 的 Phase 6 结论是“无需迁移”，不是保�
 - 已删除 TaskRunnerSystemMcpAdapter；shadow 所需的 Project Runtime Environment 旧直连被隔离为显式 legacy builder，不再通过通用 Host Adapter 路由。
 - 已删除 LocalConnectorSystemMcpAdapter；shadow 本地执行只保留显式 legacy provider builder，不再返回通用 Host/HTTP/Embedded 路由结果。
 - 已删除 ChatOS 独立 builtin MCP Factory 的服务构建职责；13 类 builtin 的构建、依赖缺失和 retired kind 错误策略统一由 `chatos_mcp` Factory 负责，ChatOS 只注入自身 Store、Hooks 和 Browser Vision Adapter。
-- 删除各服务 local/cloud workspace if/else。
+- Task Runner 显式 `gateway` 模式已不再加载旧 external/system HTTP MCP，也不再构建宿主 builtin Registry；local/Harness/Sandbox 工具路由只由 MCP Management Session 决定。`shadow`/`off` 继续构建 legacy runtime 作为观测对照。
+- 删除其余服务 local/cloud workspace if/else。
 - 已删除共享 `SystemMcpHostAdapter`、`SystemMcpResolveContext` 和 `ResolvedSystemMcpBackend` 抽象。
 - `SystemMcpHost.supported_hosts` 已重命名为 `legacy_supported_hosts`，优先级路由 API 已删除；该字段只允许 shadow 旧执行器兼容使用。
 

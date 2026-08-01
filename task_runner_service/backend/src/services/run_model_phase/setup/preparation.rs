@@ -14,7 +14,7 @@ use mcp_inputs::{
     external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
     mcp_provider_skills_prefixed_input_items,
 };
-use mcp_management_gateway::resolve_mcp_management_gateway;
+use mcp_management_gateway::{resolve_mcp_management_gateway, McpManagementExecutionMode};
 
 pub(super) async fn prepare_model_execution(
     service: &RunService,
@@ -55,13 +55,6 @@ pub(super) async fn prepare_model_execution(
         .map(|context| context.effective_workspace_dir.as_str())
         .unwrap_or(effective_workspace_dir)
         .to_string();
-    let loaded_external_mcp = load_external_mcp_servers(
-        service,
-        task,
-        effective_workspace_dir.as_str(),
-        capability_policy,
-    )
-    .await?;
     let sandbox_context = service
         .prepare_sandbox_if_needed(
             task,
@@ -70,8 +63,23 @@ pub(super) async fn prepare_model_execution(
             authoritative_policy,
         )
         .await?;
-    let system_http_servers =
-        load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?;
+    let gateway_mode_enabled = McpManagementExecutionMode::from_env().uses_gateway();
+    let loaded_external_mcp = if gateway_mode_enabled {
+        mcp_inputs::LoadedExternalMcpServers::default()
+    } else {
+        load_external_mcp_servers(
+            service,
+            task,
+            effective_workspace_dir.as_str(),
+            capability_policy,
+        )
+        .await?
+    };
+    let system_http_servers = if gateway_mode_enabled {
+        Vec::new()
+    } else {
+        load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?
+    };
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -120,23 +128,28 @@ pub(super) async fn prepare_model_execution(
         runtime_config.builtin_prompt_mode = chatos_ai_runtime::TaskBuiltinMcpPromptMode::Effective;
     }
 
-    let task_service = TaskService::new(service.config.clone(), service.store.clone());
-    let (mut builtin_servers, mut builtin_registry) = build_mcp_builder_parts(
-        service,
-        task,
-        run,
-        effective_workspace_dir.as_str(),
-        task_process_logging_enabled,
-        task_service,
-        sandbox_context.as_ref(),
-        authoritative_policy,
-    )
-    .await?;
+    let (mut builtin_servers, mut builtin_registry) = if gateway_mode_enabled {
+        (Vec::new(), chatos_mcp_runtime::BuiltinToolRegistry::new())
+    } else {
+        let task_service = TaskService::new(service.config.clone(), service.store.clone());
+        build_mcp_builder_parts(
+            service,
+            task,
+            run,
+            effective_workspace_dir.as_str(),
+            task_process_logging_enabled,
+            task_service,
+            sandbox_context.as_ref(),
+            authoritative_policy,
+        )
+        .await?
+    };
     let prepared_plugin_runtime = service
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
     let mcp_management_gateway =
         resolve_mcp_management_gateway(task, run, sandbox_context.as_ref()).await?;
+    let using_mcp_management_gateway = mcp_management_gateway.is_some();
     let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
         crate::models::task_runner_agent_key_for(
             task.task_profile.as_str(),
@@ -158,12 +171,24 @@ pub(super) async fn prepare_model_execution(
         } else {
             "zh-CN"
         };
-        let mut effective_mcp_identifiers = loaded_external_mcp
-            .summaries
-            .iter()
-            .map(|summary| summary.id.as_str())
-            .collect::<Vec<_>>();
-        if task_process_logging_enabled {
+        let gateway_effective_mcp_ids = if using_mcp_management_gateway {
+            policy.effective_mcp_ids()
+        } else {
+            Vec::new()
+        };
+        let mut effective_mcp_identifiers = if using_mcp_management_gateway {
+            gateway_effective_mcp_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        } else {
+            loaded_external_mcp
+                .summaries
+                .iter()
+                .map(|summary| summary.id.as_str())
+                .collect::<Vec<_>>()
+        };
+        if !using_mcp_management_gateway && task_process_logging_enabled {
             effective_mcp_identifiers
                 .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID);
         }

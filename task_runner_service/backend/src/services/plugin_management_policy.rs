@@ -109,6 +109,10 @@ impl TaskRunnerCapabilityPolicy {
         })
     }
 
+    pub(crate) fn effective_mcp_ids(&self) -> Vec<String> {
+        self.capabilities.effective_mcp_ids(std::iter::empty())
+    }
+
     pub(crate) fn selectable_external_mcp_ids(&self) -> Vec<String> {
         self.selectable_external_mcps()
             .into_iter()

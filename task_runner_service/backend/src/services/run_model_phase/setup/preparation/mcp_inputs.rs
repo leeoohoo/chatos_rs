@@ -15,7 +15,7 @@ use chatos_mcp_runtime::{
 use super::legacy_system_mcp::load_legacy_system_mcp_server;
 use crate::models::ExternalMcpConfigRecord;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct LoadedExternalMcpServers {
     pub(super) http_servers: Vec<McpHttpServer>,
     pub(super) stdio_servers: Vec<McpStdioServer>,
