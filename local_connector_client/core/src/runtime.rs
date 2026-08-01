@@ -202,12 +202,12 @@ impl LocalRuntime {
         }
         match sync_local_plugin_control_plane(self).await {
             Ok(synced) if synced > 0 => tracing_stdout(
-                format!("synced {synced} local Plugin capability snapshots").as_str(),
+                format!("synced {synced} local approval Agent configuration").as_str(),
             ),
             Ok(_) => {}
-            Err(err) => {
-                tracing_stdout(format!("keep cached Plugin capability snapshots: {err}").as_str())
-            }
+            Err(err) => tracing_stdout(
+                format!("keep cached local approval Agent configuration: {err}").as_str(),
+            ),
         }
         let config = {
             let state = self.state.read().await;

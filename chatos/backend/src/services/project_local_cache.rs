@@ -4,14 +4,13 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use chatos_project_execution::LOCAL_CONNECTOR_ROOT_PREFIX;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const CHATOS_DIR_NAME: &str = ".chatos";
 const CACHE_DIR_NAME: &str = "cache";
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
-
 pub fn is_local_connector_project_root(project_root: &str) -> bool {
     let trimmed = project_root.trim();
     trimmed == "local://connector" || trimmed.starts_with(LOCAL_CONNECTOR_ROOT_PREFIX)

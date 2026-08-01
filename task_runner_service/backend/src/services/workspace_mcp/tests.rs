@@ -3,8 +3,7 @@
 
 use crate::models::{
     now_rfc3339, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskRecord, TaskScheduleConfig,
-    TaskStatus, TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC, TASK_PROFILE_CHATOS_PLAN,
-    TASK_PROFILE_DEFAULT,
+    TaskStatus, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
 
 use super::{
@@ -77,7 +76,7 @@ fn contact_async_task_adds_required_ask_user_at_runtime() {
 }
 
 #[test]
-fn harness_code_task_removes_server_local_code_builtin_kinds() {
+fn legacy_harness_endpoint_cannot_suppress_selected_capabilities() {
     let mut task = sample_task(
         TASK_PROFILE_DEFAULT,
         vec![
@@ -92,14 +91,14 @@ fn harness_code_task_removes_server_local_code_builtin_kinds() {
 
     let selected = runtime_selected_builtin_kinds(&task);
 
-    assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+    assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(selected.contains(&BuiltinMcpKind::WebTools));
 }
 
 #[test]
-fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
+fn legacy_harness_endpoint_cannot_change_plan_capabilities() {
     let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
     task.mcp_config.requires_execution = false;
     task.mcp_config
@@ -108,7 +107,7 @@ fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
 
     let selected = runtime_selected_builtin_kinds(&task);
 
-    assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
@@ -117,7 +116,7 @@ fn harness_code_plan_task_removes_fixed_server_local_code_builtin_kinds() {
 }
 
 #[test]
-fn authoritative_plan_with_harness_read_does_not_require_sandbox() {
+fn legacy_harness_endpoint_cannot_bypass_sandbox_requirement() {
     let mut task = sample_task(
         TASK_PROFILE_CHATOS_PLAN,
         vec!["CodeMaintainerRead".to_string(), "AskUser".to_string()],
@@ -127,10 +126,10 @@ fn authoritative_plan_with_harness_read_does_not_require_sandbox() {
         .ephemeral_http_servers
         .push(harness_code_server());
 
-    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
+    assert!(crate::services::sandbox_runtime::task_requires_sandbox(
         &task, true
     ));
-    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
+    assert!(crate::services::sandbox_runtime::task_requires_sandbox(
         &task, false
     ));
 }
@@ -219,13 +218,13 @@ fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRe
 fn harness_code_server() -> TaskEphemeralHttpMcpServer {
     let mut headers = std::collections::BTreeMap::new();
     headers.insert(
-        super::HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+        "x-chatos-harness-code-enabled-builtin-kinds".to_string(),
         "CodeMaintainerRead,CodeMaintainerWrite".to_string(),
     );
     TaskEphemeralHttpMcpServer {
         name: "harness_code".to_string(),
         url: "http://127.0.0.1:39210/api/chatos-sync/projects/project-1/harness/mcp".to_string(),
         headers,
-        auth_mode: Some(TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC.to_string()),
+        auth_mode: Some("project_service_sync".to_string()),
     }
 }

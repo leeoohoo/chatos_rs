@@ -6,6 +6,11 @@ pub(crate) mod api;
 mod capabilities;
 mod storage;
 
+use chatos_plugin_management_sdk::SystemAgentKey;
+
+pub(crate) const LOCAL_RUNTIME_AGENT_KEYS: [SystemAgentKey; 1] =
+    [SystemAgentKey::LocalConnectorCommandApprovalAgent];
+
 pub(crate) use agent_prompts::{
     agent_prompt_status, check_agent_prompt_updates, load_installed_agent_prompt_from_database,
     update_agent_prompt_bundle, LocalAgentPromptStatus,

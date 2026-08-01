@@ -6,6 +6,8 @@ use std::fs;
 use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, SystemAgentKey};
 use uuid::Uuid;
 
+use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
+
 use super::LocalDatabase;
 
 #[tokio::test]
@@ -26,7 +28,10 @@ async fn replaces_capability_snapshot_without_deleting_last_valid_payload() {
         .expect("replace snapshot");
 
     let stored = database
-        .get_capability_snapshot("user-1", "chatos_conversation_agent")
+        .get_capability_snapshot(
+            "user-1",
+            SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
+        )
         .await
         .expect("load snapshot")
         .expect("snapshot exists");
@@ -38,7 +43,9 @@ async fn replaces_capability_snapshot_without_deleting_last_valid_payload() {
 
 fn capabilities(revision: &str) -> ResolvedAgentCapabilities {
     ResolvedAgentCapabilities {
-        agent_key: "chatos_conversation_agent".to_string(),
+        agent_key: SystemAgentKey::LocalConnectorCommandApprovalAgent
+            .as_str()
+            .to_string(),
         owner_user_id: "user-1".to_string(),
         policy_revision: revision.to_string(),
         generated_at: "2026-07-15T00:00:00Z".to_string(),
@@ -51,7 +58,7 @@ fn capabilities(revision: &str) -> ResolvedAgentCapabilities {
 }
 
 fn complete_capabilities(revision: &str) -> Vec<ResolvedAgentCapabilities> {
-    SystemAgentKey::ALL
+    LOCAL_RUNTIME_AGENT_KEYS
         .into_iter()
         .map(|agent_key| ResolvedAgentCapabilities {
             agent_key: agent_key.as_str().to_string(),
@@ -91,7 +98,7 @@ async fn incomplete_snapshot_batch_cannot_delete_the_last_complete_plugin_config
             .count_capability_snapshots("user-1")
             .await
             .expect("count retained snapshots"),
-        SystemAgentKey::ALL.len() as i64
+        LOCAL_RUNTIME_AGENT_KEYS.len() as i64
     );
     assert!(database
         .capability_snapshots_match("user-1", &first)

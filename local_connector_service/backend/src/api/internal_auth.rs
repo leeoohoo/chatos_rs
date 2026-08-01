@@ -15,14 +15,12 @@ pub(super) const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 pub(super) const PLUGIN_UI_READ_SCOPE: &str = "plugin.ui.read";
 pub(super) const PLUGIN_ARTIFACT_READ_SCOPE: &str = "plugin.artifact.read";
 pub(super) const PLUGIN_ARTIFACT_WRITE_SCOPE: &str = "plugin.artifact.write";
-pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
 pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
 
 const CHATOS_CALLER: &str = "chatos-backend";
 const TASK_RUNNER_CALLER: &str = "task-runner";
 const PROJECT_SERVICE_CALLER: &str = "project-service";
-const MEMORY_ENGINE_CALLER: &str = "memory-engine";
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 
 pub(super) fn internal_service_user_from_request(
@@ -166,18 +164,13 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             scope: PLUGIN_ARTIFACT_WRITE_SCOPE,
             allowed_callers: &[CHATOS_CALLER],
         }),
-        (&Method::GET, ["api", "local-connectors", "model-runtime", _]) => Some(InternalAccess {
-            scope: MODEL_RUNTIME_READ_SCOPE,
-            allowed_callers: &[
-                CHATOS_CALLER,
-                TASK_RUNNER_CALLER,
-                PROJECT_SERVICE_CALLER,
-                MEMORY_ENGINE_CALLER,
-            ],
-        }),
         (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
             scope: SANDBOX_ROUTING_READ_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
+            allowed_callers: &[
+                TASK_RUNNER_CALLER,
+                PROJECT_SERVICE_CALLER,
+                MCP_MANAGEMENT_CALLER,
+            ],
         }),
         (
             &Method::POST,
@@ -189,6 +182,23 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
                 PROJECT_SERVICE_CALLER,
                 MCP_MANAGEMENT_CALLER,
             ],
+        }),
+        (&Method::GET, ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _]) => {
+            Some(InternalAccess {
+                scope: SANDBOX_SERVICE_SCOPE,
+                allowed_callers: &[
+                    TASK_RUNNER_CALLER,
+                    PROJECT_SERVICE_CALLER,
+                    MCP_MANAGEMENT_CALLER,
+                ],
+            })
+        }
+        (
+            &Method::POST,
+            ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _, "mcp"],
+        ) => Some(InternalAccess {
+            scope: SANDBOX_SERVICE_SCOPE,
+            allowed_callers: &[MCP_MANAGEMENT_CALLER],
         }),
         (_, ["api", "local-connectors", "sandbox-facade", _, ..]) => Some(InternalAccess {
             scope: SANDBOX_SERVICE_SCOPE,
@@ -218,6 +228,19 @@ pub(super) fn require_chatos_service_caller(user: &CurrentUser) -> Result<(), Ap
     }
     Err(ApiError::forbidden(
         "Plugin UI asset relay is restricted to ChatOS backend",
+    ))
+}
+
+pub(super) fn require_mcp_management_service_caller(user: &CurrentUser) -> Result<(), ApiError> {
+    let owner_user_id = user.owner_user_id.as_deref().unwrap_or_default();
+    if user.principal_type == "service"
+        && !owner_user_id.is_empty()
+        && user.user_id == format!("service:{MCP_MANAGEMENT_CALLER}:{owner_user_id}")
+    {
+        return Ok(());
+    }
+    Err(ApiError::forbidden(
+        "Local Sandbox MCP execution is restricted to MCP Management Service",
     ))
 }
 
@@ -289,7 +312,7 @@ mod tests {
             &config,
             &headers,
             &Method::GET,
-            "/api/local-connectors/model-runtime/model-1",
+            "/api/local-connectors/devices",
         )
         .is_err());
     }
@@ -390,6 +413,20 @@ mod tests {
         .expect("matching Sandbox image facade request")
         .expect("service user");
         assert_eq!(sandbox_user.owner_user_id.as_deref(), Some("user-1"));
+        for (method, path) in [
+            (
+                Method::GET,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1/mcp",
+            ),
+        ] {
+            internal_service_user_from_request(&config, &sandbox_headers, &method, path)
+                .expect("matching Local Sandbox runtime request")
+                .expect("service user");
+        }
         assert!(internal_service_user_from_request(
             &config,
             &sandbox_headers,
@@ -407,7 +444,6 @@ mod tests {
                 Method::POST,
                 "/api/local-connectors/relay/device-1/skills/execute",
             ),
-            (Method::GET, "/api/local-connectors/model-runtime/model-1"),
         ] {
             assert!(internal_service_user_from_request(&config, &headers, &method, path).is_err());
         }
@@ -642,9 +678,6 @@ mod tests {
             legacy_internal_api_secret: Some("legacy-local-connector-secret".to_string()),
             internal_api_secrets: HashMap::new(),
             require_signed_internal_requests: false,
-            memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
-            memory_engine_operator_token: None,
-            memory_engine_request_timeout: Duration::from_secs(1),
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),

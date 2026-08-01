@@ -267,7 +267,6 @@ mod tests {
             is_planning_task: true,
         };
         let prompt = build_requirement_execution_planner_prompt(
-            ExecutionPlane::Cloud,
             "project-1",
             &requirement,
             std::slice::from_ref(&requirement),
@@ -286,9 +285,9 @@ mod tests {
         assert!(prompt.contains("create_project_execution_tasks"));
         assert!(prompt.contains("project-task-1"));
         assert!(prompt.contains("model-selected"));
-        assert!(prompt.contains("execution_plane"));
-        assert!(prompt.contains("cloud"));
-        assert!(prompt.contains("严禁跨 execution_plane"));
+        assert!(!prompt.contains("execution_plane"));
+        assert!(!prompt.contains("local_connector"));
+        assert!(prompt.contains("运行路由由系统自动完成"));
     }
 
     #[test]

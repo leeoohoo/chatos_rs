@@ -10,9 +10,7 @@ use chatos_sandbox_contract::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::approval::{
-    ApprovalAiSettings, ApprovalMemorySettings, ApprovalMode, ProjectApprovalState,
-};
+use crate::approval::{ApprovalMode, ProjectApprovalState};
 use crate::model_configs::{LocalModelConfigDraft, LocalModelConfigPublic, LocalModelSettings};
 use crate::AuthUserState;
 
@@ -245,8 +243,6 @@ pub(super) struct ChromeNativeEventRequest {
 pub(super) struct UpdateApprovalSettingsRequest {
     pub(super) default_mode: Option<ApprovalMode>,
     pub(super) projects: Option<Vec<ProjectApprovalState>>,
-    pub(super) ai: Option<ApprovalAiSettings>,
-    pub(super) memory: Option<ApprovalMemorySettings>,
     #[serde(default)]
     pub(super) risk_acknowledged: bool,
 }
@@ -289,18 +285,6 @@ pub(super) struct PreviewLocalModelCatalogRequest {
 pub(super) struct UpdateLocalModelSettingsRequest {
     #[serde(default)]
     pub(super) model_request_max_retries: Option<usize>,
-    #[serde(default)]
-    pub(super) memory_summary_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(super) memory_summary_thinking_level: Option<String>,
-    #[serde(default)]
-    pub(super) project_management_agent_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(super) project_management_agent_thinking_level: Option<String>,
-    #[serde(default)]
-    pub(super) environment_initialization_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(super) environment_initialization_thinking_level: Option<String>,
     #[serde(default)]
     pub(super) command_approval_model_config_id: Option<String>,
     #[serde(default)]

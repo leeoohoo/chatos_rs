@@ -3,20 +3,16 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
-use serde::Deserialize;
+use anyhow::{anyhow, Result};
 use serde_json::json;
 use uuid::Uuid;
 
-use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest, COMMAND_APPROVAL_AGENT};
-use chatos_ai_runtime::{
-    MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
-    ModelRuntimeConfig, ToolExecutor,
-};
+use chatos_agent::{AgentExecutor, AgentTurnRequest, COMMAND_APPROVAL_AGENT};
+use chatos_ai_runtime::{ModelRuntimeConfig, ToolExecutor};
 use chatos_plugin_management_sdk::{
-    required_agent_prompt_vendor, AgentPromptVendor, SystemAgentKey,
+    required_agent_prompt_vendor, AgentPromptVendor, SystemAgentKey, SystemMcpKey,
+    LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, SYSTEM_MCP_RUNTIME_KIND,
 };
 
 use crate::local_runtime::{
@@ -24,11 +20,11 @@ use crate::local_runtime::{
 };
 use crate::mcp::tools::code_maintainer_service_for_root;
 use crate::workspace::paths::resolve_workspace_dir;
-use crate::{local_now_rfc3339, LocalState};
+use crate::LocalState;
 
 use super::decision_tool::APPROVAL_DECISION_TOOL;
 use super::fingerprint::normalized_command;
-use super::types::{ApprovalMemorySettings, CommandApprovalRequest};
+use super::types::CommandApprovalRequest;
 
 mod tool_executor;
 
@@ -41,14 +37,6 @@ pub(crate) enum AutoApprovalDecision {
     AskUser { reason: String },
 }
 
-#[derive(Clone)]
-struct ApprovalAgentMemory {
-    composer: MemoryContextComposer,
-    writer: MemoryEngineRecordWriter,
-    scope: MemoryScope,
-    conversation_id: String,
-}
-
 pub(crate) async fn run_auto_approval_agent(
     state: &LocalState,
     state_path: &Path,
@@ -57,11 +45,8 @@ pub(crate) async fn run_auto_approval_agent(
     risk_reason: Option<&str>,
 ) -> Result<AutoApprovalDecision> {
     let root = approval_project_root(state, request)?;
-    let (model_config, prompt_vendor, model_config_id) = approval_model_config(
-        state,
-        request.project_key.owner_user_id.as_str(),
-        root.as_path(),
-    )?;
+    let (model_config, prompt_vendor) =
+        approval_model_config(state, request.project_key.owner_user_id.as_str())?;
     let source_instance_id = state
         .auth
         .as_ref()
@@ -75,16 +60,12 @@ pub(crate) async fn run_auto_approval_agent(
         prompt_vendor,
     )
     .await?;
-    let capability_policy = resolve_local_approval_capability_policy(state).await?;
-    let decision = Arc::new(Mutex::new(None));
-    let memory = build_approval_agent_memory(
-        &state.approval.memory,
-        request,
-        root.as_path(),
-        state.auth.as_ref().map(|auth| auth.cloud_base_url.as_str()),
-        state.auth.as_ref().map(|auth| auth.access_token.as_str()),
+    let capability_policy = resolve_local_approval_capability_policy(
+        &database,
+        request.project_key.owner_user_id.as_str(),
     )
     .await?;
+    let decision = Arc::new(Mutex::new(None));
     let mut prompt = build_approval_prompt(request, root.as_path(), risk_level, risk_reason)?;
     let run_id = format!("approval-agent-{}", Uuid::new_v4());
     let code_service = code_maintainer_service_for_root(
@@ -110,43 +91,25 @@ pub(crate) async fn run_auto_approval_agent(
         prompt.push_str("\n\n");
         prompt.push_str(provider_skills_prompt);
     }
-    let conversation_id = memory
-        .as_ref()
-        .map(|memory| memory.conversation_id.clone())
-        .unwrap_or_else(|| format!("local_connector_command_approval:{}", request.request_id));
+    let conversation_id = format!("local_connector_command_approval:{}", request.request_id);
     let metadata = json!({
         "agent": "local_connector_command_approval_agent",
         "run_id": run_id,
         "request_id": request.request_id,
-        "workspace_id": request.project_key.workspace_id,
-        "project_id": request.project_key.project_id,
-        "project_root_relative_path": request.project_key.project_root_relative_path,
-        "project_anchor_relative_path": request.project_key.project_anchor_relative_path,
-        "model_config_id": model_config_id,
         "tool_plane": "local_only",
         "capability_policy_revision": capability_policy.policy_revision,
         "agent_prompt_bundle_version": installed_prompt.bundle_version,
         "agent_prompt_revision": installed_prompt.revision,
         "agent_prompt_checksum": installed_prompt.checksum,
     });
-    let agent_memory = memory.as_ref().map(|memory| {
-        AgentTurnMemory::new(
-            memory.composer.clone(),
-            memory.writer.clone(),
-            memory.scope.clone(),
-            memory.conversation_id.clone(),
-        )
-    });
     let retry_model_config = model_config.clone();
     let retry_conversation_id = conversation_id.clone();
     let retry_prompt_source = prompt.clone();
     let retry_executor = tool_executor.clone();
-    let retry_memory = agent_memory.clone();
     let retry_system_prompt = installed_prompt.content.clone();
     let retry_metadata_source = metadata.clone();
     let turn_request = AgentTurnRequest::new(model_config, conversation_id, run_id, prompt)
         .with_tool_executor_arc(tool_executor)
-        .with_memory(agent_memory)
         .with_max_iterations(max_iterations)
         .with_system_prompt(installed_prompt.content)
         .with_metadata(metadata);
@@ -177,7 +140,6 @@ pub(crate) async fn run_auto_approval_agent(
             retry_prompt,
         )
         .with_tool_executor_arc(retry_executor)
-        .with_memory(retry_memory)
         .with_max_iterations(max_iterations)
         .with_system_prompt(retry_system_prompt)
         .with_metadata(retry_metadata);
@@ -211,62 +173,62 @@ pub(crate) async fn run_auto_approval_agent(
     })
 }
 
-#[derive(Debug, Deserialize)]
 struct LocalApprovalCapabilityPolicy {
     policy_revision: String,
-    #[serde(default = "default_agent_max_iterations")]
     max_iterations: usize,
     code_maintainer_read: bool,
     approval_decision: bool,
-    #[serde(default)]
     provider_skills_prompt: Option<String>,
 }
 
-fn default_agent_max_iterations() -> usize {
-    chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS
-}
-
 async fn resolve_local_approval_capability_policy(
-    state: &LocalState,
+    database: &LocalDatabase,
+    owner_user_id: &str,
 ) -> Result<LocalApprovalCapabilityPolicy> {
-    let auth = state
-        .auth
-        .as_ref()
-        .ok_or_else(|| anyhow!("Local Connector login is required for command approval policy"))?;
-    let url = format!(
-        "{}/api/plugin-management/agent-capabilities/local-command-approval",
-        auth.cloud_base_url.trim().trim_end_matches('/')
-    );
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .context("build command approval policy client")?
-        .get(url)
-        .bearer_auth(auth.access_token.trim())
-        .send()
-        .await
-        .context("request command approval capability policy")?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        return Err(anyhow!(
-            "command approval capability policy was rejected: {status}: {detail}"
-        ));
-    }
-    let policy = response
-        .json::<LocalApprovalCapabilityPolicy>()
-        .await
-        .context("decode command approval capability policy")?;
-    if policy.policy_revision.trim().is_empty()
-        || policy.max_iterations == 0
-        || !policy.code_maintainer_read
-        || !policy.approval_decision
-    {
+    let capabilities = database
+        .get_capability_snapshot(
+            owner_user_id,
+            SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
+        )
+        .await?
+        .ok_or_else(|| anyhow!("local command approval capability snapshot is not installed"))?;
+    if !capabilities.agent_enabled || capabilities.policy_revision.trim().is_empty() {
         return Err(anyhow!(
             "command approval required local capabilities are unavailable"
         ));
     }
-    Ok(policy)
+    capabilities
+        .ensure_required_runtime_supported([], [])
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let code_maintainer_read = capabilities.mcps.iter().any(|item| {
+        item.binding.required
+            && item.available
+            && item.resource.runtime.kind == SYSTEM_MCP_RUNTIME_KIND
+            && item.resource.runtime.system_key.as_deref()
+                == Some(SystemMcpKey::CodeMaintainerRead.as_str())
+    });
+    let approval_decision = capabilities
+        .require_available_mcp(LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID)
+        .is_ok();
+    if !code_maintainer_read || !approval_decision {
+        return Err(anyhow!(
+            "command approval required local capabilities are unavailable"
+        ));
+    }
+    let provider_skills_prompt = capabilities.compose_provider_skills_prompt(
+        [
+            SystemMcpKey::CodeMaintainerRead.as_str(),
+            LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
+        ],
+        Some("zh-CN"),
+    );
+    Ok(LocalApprovalCapabilityPolicy {
+        policy_revision: capabilities.policy_revision,
+        max_iterations: chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS,
+        code_maintainer_read,
+        approval_decision,
+        provider_skills_prompt,
+    })
 }
 
 fn approval_project_root(state: &LocalState, request: &CommandApprovalRequest) -> Result<PathBuf> {
@@ -287,8 +249,7 @@ fn approval_project_root(state: &LocalState, request: &CommandApprovalRequest) -
 fn approval_model_config(
     state: &LocalState,
     owner_user_id: &str,
-    root: &Path,
-) -> Result<(ModelRuntimeConfig, AgentPromptVendor, String)> {
+) -> Result<(ModelRuntimeConfig, AgentPromptVendor)> {
     let model_config_id = state
         .model_configs
         .settings
@@ -344,167 +305,9 @@ fn approval_model_config(
         .with_temperature(runtime.temperature.or(Some(0.0)))
         .with_max_output_tokens(runtime.max_output_tokens.or(Some(1_200)))
         .with_thinking_level(thinking_level)
-        .with_max_transient_retries(Some(runtime.model_request_max_retries))
-        .with_request_cwd(Some(root.display().to_string())),
+        .with_max_transient_retries(Some(runtime.model_request_max_retries)),
         prompt_vendor,
-        model_config_id,
     ))
-}
-
-async fn build_approval_agent_memory(
-    settings: &ApprovalMemorySettings,
-    request: &CommandApprovalRequest,
-    project_root: &Path,
-    service_base_url: Option<&str>,
-    user_access_token: Option<&str>,
-) -> Result<Option<ApprovalAgentMemory>> {
-    let service_base_url = service_base_url
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("approval memory requires Local Connector Service base url"))?;
-    let user_access_token = user_access_token
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("approval memory requires current user access token"))?;
-    let base_url = local_connector_service_memory_engine_base_url(service_base_url);
-    let source_id = "local_connector_approval";
-    let timeout = Duration::from_millis(settings.timeout_ms.max(1_000));
-    ensure_approval_memory_source(base_url.as_str(), timeout, source_id, user_access_token).await?;
-    let client = memory_engine_sdk::MemoryEngineClient::new_direct(base_url, timeout, source_id)
-        .map_err(anyhow::Error::msg)?
-        .with_bearer_token(user_access_token.to_string());
-
-    let thread_id = approval_memory_thread_id(request);
-    let subject_id = approval_memory_subject_id(request);
-    client
-        .upsert_thread(
-            thread_id.as_str(),
-            &memory_engine_sdk::SdkUpsertThreadRequest {
-                tenant_id: request.project_key.owner_user_id.clone(),
-                subject_id: subject_id.clone(),
-                thread_type: "local_connector_command_approval_agent".to_string(),
-                external_thread_id: Some(request.project_key.workspace_id.clone()),
-                title: Some(format!(
-                    "Local command approval: {}",
-                    request.project_key.project_root_relative_path
-                )),
-                labels: Some(vec![
-                    "local_connector".to_string(),
-                    "command_approval".to_string(),
-                    format!("workspace:{}", request.project_key.workspace_id),
-                ]),
-                metadata: Some(json!({
-                    "owner_service": "local_connector_client",
-                    "agent": "local_connector_command_approval_agent",
-                    "workspace_id": request.project_key.workspace_id,
-                    "project_id": request.project_key.project_id,
-                    "project_root_relative_path": request.project_key.project_root_relative_path,
-                    "project_anchor_relative_path": request.project_key.project_anchor_relative_path,
-                    "project_root": project_root.display().to_string(),
-                    "updated_at": local_now_rfc3339(),
-                })),
-                status: Some("active".to_string()),
-                created_at: None,
-                updated_at: None,
-                archived_at: None,
-            },
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let composer = MemoryContextComposer::from_client(client.clone());
-    let writer = MemoryEngineRecordWriter::from_client(
-        client,
-        MemoryRecordScope::message_thread(
-            request.project_key.owner_user_id.clone(),
-            thread_id.clone(),
-        ),
-    );
-    Ok(Some(ApprovalAgentMemory {
-        composer,
-        writer,
-        scope: MemoryScope::thread(
-            request.project_key.owner_user_id.clone(),
-            source_id.to_string(),
-            thread_id.clone(),
-        )
-        .with_subject_id(subject_id),
-        conversation_id: thread_id,
-    }))
-}
-
-async fn ensure_approval_memory_source(
-    base_url: &str,
-    timeout: Duration,
-    source_id: &str,
-    user_access_token: &str,
-) -> Result<()> {
-    let client = memory_engine_sdk::MemoryEngineClient::new_platform(base_url.to_string(), timeout)
-        .map_err(anyhow::Error::msg)?
-        .with_bearer_token(user_access_token.to_string());
-    client
-        .upsert_source(
-            source_id,
-            &memory_engine_sdk::UpsertSourceRequest {
-                tenant_id: None,
-                source_type: "local_connector_approval_agent".to_string(),
-                name: "Local Connector Command Approval Agent".to_string(),
-                description: Some(
-                    "Command approval agent managed by local_connector_client.".to_string(),
-                ),
-                config: Some(json!({
-                    "platform_managed": true,
-                    "owner_service": "local_connector_client",
-                    "capabilities": [
-                        "threads",
-                        "records",
-                        "context_compose",
-                        "command_approval"
-                    ],
-                })),
-                sdk_enabled: Some(true),
-                status: Some("active".to_string()),
-            },
-        )
-        .await
-        .map(|_| ())
-        .map_err(anyhow::Error::msg)
-}
-
-fn local_connector_service_memory_engine_base_url(service_base_url: &str) -> String {
-    format!(
-        "{}/api/local-connectors/memory-engine",
-        service_base_url.trim_end_matches('/')
-    )
-}
-
-fn approval_memory_thread_id(request: &CommandApprovalRequest) -> String {
-    let payload = json!({
-        "device_id": request.project_key.device_id,
-        "workspace_id": request.project_key.workspace_id,
-        "project_id": request.project_key.project_id,
-        "project_root_relative_path": request.project_key.project_root_relative_path,
-        "project_anchor_relative_path": request.project_key.project_anchor_relative_path,
-    });
-    format!(
-        "local_connector_command_approval:{}",
-        stable_short_hash(payload.to_string().as_str())
-    )
-}
-
-fn approval_memory_subject_id(request: &CommandApprovalRequest) -> String {
-    format!(
-        "{}:{}",
-        request.project_key.workspace_id,
-        stable_short_hash(request.project_key.project_root_relative_path.as_str())
-    )
-}
-
-fn stable_short_hash(value: &str) -> String {
-    use sha2::{Digest, Sha256};
-
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    hex::encode(hasher.finalize()).chars().take(24).collect()
 }
 
 fn build_approval_prompt(
@@ -519,17 +322,12 @@ fn build_approval_prompt(
         .map(serde_json::to_string_pretty)
         .transpose()?
         .unwrap_or_else(|| "null".to_string());
+    let cwd = approval_cwd_for_prompt(request.cwd.as_str(), project_root);
     Ok(format!(
         r#"请审核下面这条本地 shell 命令是否可以执行。必要时先读取或搜索项目文件，再调用 `approval_decision` 给出最终结论。
 
 审批请求：
-- request_id: {request_id}
 - source: {source}
-- workspace_id: {workspace_id}
-- project_id: {project_id}
-- project_root_relative_path: {project_root_relative_path}
-- project_anchor_relative_path: {project_anchor_relative_path}
-- project_root: {project_root}
 - cwd: {cwd}
 - command: {command}
 - requested_permissions: {requested_permissions}
@@ -543,18 +341,8 @@ fn build_approval_prompt(
 - 命令是否包含破坏性删除、权限提升、远程脚本直接执行、生产基础设施操作等风险。
 - 如果命令只是常见的只读检查、测试、构建、格式化、依赖安装等，也要结合项目文件确认合理性。
 "#,
-        request_id = request.request_id,
         source = request.source,
-        workspace_id = request.project_key.workspace_id,
-        project_id = request.project_key.project_id.as_deref().unwrap_or(""),
-        project_root_relative_path = request.project_key.project_root_relative_path,
-        project_anchor_relative_path = request
-            .project_key
-            .project_anchor_relative_path
-            .as_deref()
-            .unwrap_or(""),
-        project_root = project_root.display(),
-        cwd = request.cwd,
+        cwd = cwd,
         command = normalized_command(request.command.as_str(), request.args.as_slice()),
         requested_permissions = requested_permissions,
         risk_level = risk_level,
@@ -562,12 +350,34 @@ fn build_approval_prompt(
     ))
 }
 
+fn approval_cwd_for_prompt(cwd: &str, project_root: &Path) -> String {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return ".".to_string();
+    }
+    let cwd_path = Path::new(cwd);
+    if !cwd_path.is_absolute() {
+        return cwd.to_string();
+    }
+    cwd_path
+        .strip_prefix(project_root)
+        .ok()
+        .map(|relative| {
+            if relative.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                relative.to_string_lossy().into_owned()
+            }
+        })
+        .unwrap_or_else(|| "<项目外路径>".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn approval_thread_id_is_stable_for_same_project_key() {
+    fn approval_prompt_does_not_expose_routing_identity_or_absolute_project_root() {
         let request = CommandApprovalRequest {
             request_id: "req-1".to_string(),
             project_key: super::super::types::ApprovalProjectKey {
@@ -581,41 +391,30 @@ mod tests {
             command: "cargo".to_string(),
             args: vec!["test".to_string()],
             redact_arguments_in_history: false,
-            cwd: ".".to_string(),
+            cwd: "/private/work/project/crates/core".to_string(),
             source: "test".to_string(),
             requested_permissions: None,
             session_id: Some("session-1".to_string()),
             action_audit: None,
         };
 
-        assert_eq!(
-            approval_memory_thread_id(&request),
-            approval_memory_thread_id(&request)
-        );
+        let prompt =
+            build_approval_prompt(&request, Path::new("/private/work/project"), "low", None)
+                .expect("approval prompt");
+
+        assert!(prompt.contains("cwd: crates/core"));
+        assert!(!prompt.contains("/private/work/project"));
+        assert!(!prompt.contains("workspace-1"));
+        assert!(!prompt.contains("project-1"));
+        assert!(!prompt.contains("device-1"));
     }
 
     #[test]
     fn model_config_requires_local_model_settings() {
-        let err =
-            approval_model_config(&LocalState::default(), "user-1", Path::new(".")).unwrap_err();
+        let err = approval_model_config(&LocalState::default(), "user-1").unwrap_err();
 
         assert!(err
             .to_string()
             .contains("command approval model is not configured"));
-    }
-
-    #[test]
-    fn local_capability_response_uses_global_agent_default() {
-        let policy = serde_json::from_value::<LocalApprovalCapabilityPolicy>(json!({
-            "policy_revision": "revision-1",
-            "code_maintainer_read": true,
-            "approval_decision": true
-        }))
-        .expect("decode local policy");
-
-        assert_eq!(
-            policy.max_iterations,
-            chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS
-        );
     }
 }

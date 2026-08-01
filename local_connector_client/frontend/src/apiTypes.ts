@@ -132,29 +132,9 @@ export interface ApprovalProjectKey {
   project_anchor_relative_path?: string | null;
 }
 
-export interface ApprovalAiSettings {
-  enabled: boolean;
-  base_url?: string | null;
-  api_key?: string | null;
-  has_api_key?: boolean;
-  model?: string | null;
-  provider: string;
-  supports_responses: boolean;
-  temperature?: number | null;
-  max_output_tokens?: number | null;
-  thinking_level?: string | null;
-  request_body_limit_bytes?: number | null;
-}
-
-export interface ApprovalMemorySettings {
-  source_id: string;
-  timeout_ms: number;
-}
-
 export interface ProjectApprovalState {
   project_key: ApprovalProjectKey;
   mode?: ApprovalMode | null;
-  ai_enabled: boolean;
   updated_at: string;
 }
 
@@ -261,8 +241,6 @@ export interface ApprovalSettings {
   projects: ProjectApprovalState[];
   whitelist: CommandWhitelistEntry[];
   history: ApprovalHistoryEntry[];
-  ai: ApprovalAiSettings;
-  memory: ApprovalMemorySettings;
 }
 
 export interface PendingApprovalsResponse {
@@ -295,12 +273,6 @@ export interface LocalModelConfig {
 
 export interface LocalModelSettings {
   model_request_max_retries?: number;
-  memory_summary_model_config_id?: string | null;
-  memory_summary_thinking_level?: string | null;
-  project_management_agent_model_config_id?: string | null;
-  project_management_agent_thinking_level?: string | null;
-  environment_initialization_model_config_id?: string | null;
-  environment_initialization_thinking_level?: string | null;
   command_approval_model_config_id?: string | null;
   command_approval_thinking_level?: string | null;
   updated_at?: string | null;

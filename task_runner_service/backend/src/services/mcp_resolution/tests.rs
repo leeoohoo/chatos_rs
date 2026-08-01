@@ -217,14 +217,14 @@ fn legacy_plan_profile_with_execution_uses_implementation_capabilities() {
 }
 
 #[test]
-fn requested_capabilities_are_recovered_from_legacy_host_headers() {
+fn legacy_host_headers_cannot_select_capabilities() {
     let config = TaskMcpConfig {
         enabled_builtin_kinds: Vec::new(),
         ephemeral_http_servers: vec![crate::models::TaskEphemeralHttpMcpServer {
             name: "local_connector".to_string(),
             url: "http://127.0.0.1:39230/mcp".to_string(),
             headers: std::collections::BTreeMap::from([(
-                LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string(),
+                "x-chatos-local-connector-enabled-builtin-kinds".to_string(),
                 "CodeMaintainerRead,TerminalController".to_string(),
             )]),
             auth_mode: None,
@@ -242,19 +242,8 @@ fn requested_capabilities_are_recovered_from_legacy_host_headers() {
         caller_requirements: &[],
     });
 
-    assert!(resolution
-        .requested_builtin_kinds
-        .contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(resolution
-        .requested_builtin_kinds
-        .contains(&BuiltinMcpKind::TerminalController));
-    assert_eq!(
-        hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::LocalConnector),
-        vec![
-            BuiltinMcpKind::CodeMaintainerRead,
-            BuiltinMcpKind::TerminalController,
-        ]
-    );
+    assert!(resolution.requested_builtin_kinds.is_empty());
+    assert!(hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::LocalConnector).is_empty());
     assert!(resolution.server_local_builtin_kinds.is_empty());
 }
 

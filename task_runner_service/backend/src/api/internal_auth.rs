@@ -12,6 +12,7 @@ pub(super) const EXECUTION_OPTIONS_READ_SCOPE: &str = "execution-options.read";
 pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
 pub(super) const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
+pub(super) const MCP_TOOLS_LIST_SCOPE: &str = "mcp.tools.list";
 pub(super) const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
 
 #[derive(Debug)]

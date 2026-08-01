@@ -770,7 +770,6 @@ pub fn build_requirement_execution_user_message(
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_requirement_execution_planner_prompt(
-    execution_plane: ExecutionPlane,
     project_id: &str,
     root_requirement: &RequirementPlanItem,
     requirement_items: &[RequirementPlanItem],
@@ -873,7 +872,6 @@ pub fn build_requirement_execution_planner_prompt(
         .collect::<Vec<_>>();
     let payload = json!({
         "mode": "project_requirement_execution_planning",
-        "execution_plane": execution_plane,
         "execution_contract": {
             "user_action": "execute_selected_project_tasks",
             "must_call_tool": "create_project_execution_tasks",
@@ -882,10 +880,6 @@ pub fn build_requirement_execution_planner_prompt(
             "selected_project_task_ids": selected_project_task_ids,
             "default_model_config_id": default_model_config_id,
             "model_binding_policy": "When default_model_config_id is present, bind it unchanged to every generated execution task.",
-            "execution_plane_policy": match execution_plane {
-                ExecutionPlane::Cloud => "Create cloud Task Runner tasks only. Never create local connector tasks.",
-                ExecutionPlane::LocalConnector => "Create Local Connector tasks only. Never call or create cloud Task Runner tasks.",
-            },
             "dependency_policy": "Only pending_prerequisite_project_task_ids are hard blockers. Connect terminal(previous) to entry(next), keep direct blockers only, and never add an edge already implied by another hard path. context_prerequisite_project_task_ids preserve the complete project relationship for explanation and context_refs, but context_refs must not block scheduling. satisfied_prerequisite_project_tasks are completed context and must never be regenerated or emitted as Task Runner dependencies.",
             "decomposition_policy": "Use project-task descriptions and technical documents to create concrete, independently verifiable execution tasks. Split only when it materially improves ownership, ordering, safety, or verification.",
             "planning_task_policy": "is_planning_task=true still requires at least one bound execution task; mark the generated task as planning when appropriate.",
@@ -908,7 +902,7 @@ pub fn build_requirement_execution_planner_prompt(
     });
     let payload = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
     Ok(format!(
-        "这是用户点击‘执行关联任务’产生的强制执行请求。先阅读每个项目任务及其需求技术文档，再生成可验证的执行任务图。你必须调用 create_project_execution_tasks，覆盖全部且仅覆盖 selected_project_tasks，并保持项目任务依赖。严禁跨 execution_plane 创建任务；本地项目只能创建本地任务，云端项目只能创建云端任务。已有描述或文档完整不代表任务已执行。若 user_planning_feedback 非空，必须把它作为本轮调整执行计划的最高优先级用户约束，在不破坏执行范围和安全边界的前提下重新拆分任务与依赖。\n\n{payload}"
+        "这是用户点击‘执行关联任务’产生的强制执行请求。先阅读每个项目任务及其需求技术文档，再生成可验证的执行任务图。你必须调用 create_project_execution_tasks，覆盖全部且仅覆盖 selected_project_tasks，并保持项目任务依赖。只提交工具 Schema 定义的业务字段，运行路由由系统自动完成。已有描述或文档完整不代表任务已执行。若 user_planning_feedback 非空，必须把它作为本轮调整执行计划的最高优先级用户约束，在不破坏执行范围和安全边界的前提下重新拆分任务与依赖。\n\n{payload}"
     ))
 }
 
@@ -1035,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_pins_the_execution_plane_and_exact_coverage() {
+    fn prompt_keeps_routing_program_owned_and_requires_exact_coverage() {
         let requirement = requirement("req-1", None, "approved");
         let task = WorkItemPlanItem {
             id: "task-1".to_string(),
@@ -1048,7 +1042,6 @@ mod tests {
             is_planning_task: false,
         };
         let prompt = build_requirement_execution_planner_prompt(
-            ExecutionPlane::LocalConnector,
             "project-1",
             &requirement,
             std::slice::from_ref(&requirement),
@@ -1062,8 +1055,9 @@ mod tests {
             Some("先补测试，再改实现"),
         )
         .expect("planner prompt");
-        assert!(prompt.contains("local_connector"));
-        assert!(prompt.contains("严禁跨 execution_plane"));
+        assert!(!prompt.contains("execution_plane"));
+        assert!(!prompt.contains("local_connector"));
+        assert!(prompt.contains("运行路由由系统自动完成"));
         assert!(prompt.contains("先补测试，再改实现"));
         assert!(prompt.contains("task-1"));
         assert!(prompt.contains("create_project_execution_tasks"));
@@ -1093,7 +1087,6 @@ mod tests {
             is_planning_task: false,
         };
         let prompt = build_requirement_execution_planner_prompt(
-            ExecutionPlane::Cloud,
             "project-1",
             &requirement,
             std::slice::from_ref(&requirement),

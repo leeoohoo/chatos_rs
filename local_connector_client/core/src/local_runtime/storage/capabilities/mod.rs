@@ -2,10 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::{Context, Result};
-use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, SystemAgentKey};
+use chatos_plugin_management_sdk::ResolvedAgentCapabilities;
 use std::collections::HashSet;
 
 use crate::local_now_rfc3339;
+use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
 
 use super::LocalDatabase;
 
@@ -71,7 +72,7 @@ impl LocalDatabase {
         .fetch_all(self.pool())
         .await
         .context("validate local capability snapshot set")?;
-        if rows.len() != SystemAgentKey::ALL.len()
+        if rows.len() != LOCAL_RUNTIME_AGENT_KEYS.len()
             || rows.iter().any(|(_, revision)| revision.trim().is_empty())
         {
             return Ok(false);
@@ -80,7 +81,7 @@ impl LocalDatabase {
             .iter()
             .map(|(agent_key, _)| agent_key.as_str())
             .collect::<HashSet<_>>();
-        let expected = SystemAgentKey::ALL
+        let expected = LOCAL_RUNTIME_AGENT_KEYS
             .into_iter()
             .map(|agent_key| agent_key.as_str())
             .collect::<HashSet<_>>();
@@ -162,7 +163,6 @@ impl LocalDatabase {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) async fn get_capability_snapshot(
         &self,
         owner_user_id: &str,
@@ -189,10 +189,10 @@ impl LocalDatabase {
 pub(crate) fn validate_complete_snapshot_set(
     snapshots: &[ResolvedAgentCapabilities],
 ) -> Result<&str> {
-    if snapshots.len() != SystemAgentKey::ALL.len() {
+    if snapshots.len() != LOCAL_RUNTIME_AGENT_KEYS.len() {
         return Err(anyhow::anyhow!(
-            "system Agent capability bundle is incomplete: expected {}, got {}",
-            SystemAgentKey::ALL.len(),
+            "local Agent capability bundle is incomplete: expected {}, got {}",
+            LOCAL_RUNTIME_AGENT_KEYS.len(),
             snapshots.len()
         ));
     }
@@ -201,7 +201,7 @@ pub(crate) fn validate_complete_snapshot_set(
         .map(|snapshot| snapshot.owner_user_id.trim())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("capability snapshot owner is required"))?;
-    let expected = SystemAgentKey::ALL
+    let expected = LOCAL_RUNTIME_AGENT_KEYS
         .into_iter()
         .map(|agent_key| agent_key.as_str())
         .collect::<HashSet<_>>();
@@ -210,13 +210,13 @@ pub(crate) fn validate_complete_snapshot_set(
         validate_snapshot(snapshot)?;
         if snapshot.owner_user_id != owner_user_id || !actual.insert(snapshot.agent_key.as_str()) {
             return Err(anyhow::anyhow!(
-                "system Agent capability bundle identity is inconsistent"
+                "local Agent capability bundle identity is inconsistent"
             ));
         }
     }
     if actual != expected {
         return Err(anyhow::anyhow!(
-            "system Agent capability bundle does not cover every configured Agent"
+            "local Agent capability bundle does not cover every local Agent"
         ));
     }
     Ok(owner_user_id)
@@ -229,19 +229,18 @@ fn validate_snapshot(capabilities: &ResolvedAgentCapabilities) -> Result<()> {
     {
         return Err(anyhow::anyhow!("capability snapshot identity is required"));
     }
-    if !SystemAgentKey::ALL
+    if !LOCAL_RUNTIME_AGENT_KEYS
         .into_iter()
         .any(|agent_key| agent_key.as_str() == capabilities.agent_key.as_str())
     {
         return Err(anyhow::anyhow!(
-            "capability snapshot contains an unknown system Agent: {}",
+            "capability snapshot contains a non-local Agent: {}",
             capabilities.agent_key
         ));
     }
     Ok(())
 }
 
-#[cfg(test)]
 fn validate_snapshot_identity(
     capabilities: &ResolvedAgentCapabilities,
     owner_user_id: &str,

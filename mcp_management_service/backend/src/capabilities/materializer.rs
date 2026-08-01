@@ -540,7 +540,7 @@ mod tests {
             release: Some(release.clone()),
             binding: AgentBindingRecord {
                 id: "binding-plugin-workspace".to_string(),
-                agent_key: SystemAgentKey::TaskRunnerLocalRunPhase.as_str().to_string(),
+                agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
                 binding_scope: "user_override".to_string(),
                 owner_user_id: Some("user-1".to_string()),
                 resource_kind: "plugin".to_string(),

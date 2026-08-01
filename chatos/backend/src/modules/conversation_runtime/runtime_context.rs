@@ -82,9 +82,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub plugin_agent_selection_for_snapshot: Option<TurnRuntimeSnapshotPluginAgentSelectionDto>,
     pub resolved_project_id: Option<String>,
     pub resolved_project_name: Option<String>,
-    pub resolved_project_source_type: Option<String>,
     pub resolved_project_root: Option<String>,
-    pub local_project_workspace_root: Option<String>,
     pub default_remote_connection_id: Option<String>,
     pub workspace_root: Option<String>,
     pub mcp_enabled: bool,
@@ -199,13 +197,8 @@ pub async fn resolve_runtime_context(
     .await;
     let resolved_project_id = resolved_project_runtime.project_id;
     let resolved_project_name = resolved_project_runtime.project_name;
-    let resolved_project_source_type = resolved_project_runtime.source_type;
-    let resolved_project_root = resolve_runtime_project_root(
-        effective_user_id.as_deref(),
-        resolved_project_runtime.project_root,
-    )
-    .await;
-    let local_project_workspace_root = resolved_project_root.local_workspace_root;
+    let resolved_project_root =
+        resolve_runtime_project_root(resolved_project_runtime.project_root).await;
     let resolved_project_root = resolved_project_root.logical_root;
 
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
@@ -349,9 +342,7 @@ pub async fn resolve_runtime_context(
         plugin_agent_selection_for_snapshot,
         resolved_project_id,
         resolved_project_name,
-        resolved_project_source_type,
         resolved_project_root,
-        local_project_workspace_root,
         default_remote_connection_id,
         workspace_root,
         mcp_enabled: true,

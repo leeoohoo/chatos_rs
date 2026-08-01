@@ -3,7 +3,9 @@
 
 #[cfg(test)]
 mod tests {
-    use super::{SandboxLeaseListItem, SandboxManagerAuth, SandboxManagerClient};
+    use super::{
+        SandboxLeaseListItem, SandboxManagerAuth, SandboxManagerAuthMode, SandboxManagerClient,
+    };
 
     #[test]
     fn terminal_sandbox_lease_statuses_do_not_require_cleanup() {
@@ -58,6 +60,8 @@ mod tests {
             "http://127.0.0.1:8095".to_string(),
             Some(SandboxManagerAuth {
                 client_key: "a-long-task-runner-sandbox-secret".to_string(),
+                mode: SandboxManagerAuthMode::Cloud,
+                owner_user_id: None,
             }),
         )
         .expect("client");

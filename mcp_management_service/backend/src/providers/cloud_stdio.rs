@@ -1313,6 +1313,8 @@ mod tests {
             local_connector_requirements: Vec::new(),
         };
         let target = SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
             sandbox_id: "sandbox-1".to_string(),
             lease_id: "lease-1".to_string(),
             is_environment: false,

@@ -38,15 +38,6 @@ pub(crate) async fn local_update_approval_settings(
     if let Some(projects) = req.projects {
         next.projects = projects;
     }
-    if let Some(mut ai) = req.ai {
-        if ai.api_key.is_none() {
-            ai.api_key = current.ai.api_key.clone();
-        }
-        next.ai = ai;
-    }
-    if let Some(memory) = req.memory {
-        next.memory = memory;
-    }
     if approval_settings_changed(&current, &next) {
         next.settings_revision = Some(format!("local-{}", local_now_rfc3339()));
     }
@@ -136,18 +127,7 @@ fn approval_decision_requires_risk_ack(decision: &CommandExecutionApprovalDecisi
 }
 
 fn approval_settings_payload(state: &crate::approval::ApprovalState) -> Value {
-    let mut value = json!(state);
-    if let Some(ai) = value.get_mut("ai").and_then(Value::as_object_mut) {
-        let has_api_key = state
-            .ai
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty());
-        ai.remove("api_key");
-        ai.insert("has_api_key".to_string(), Value::Bool(has_api_key));
-    }
-    value
+    json!(state)
 }
 
 fn approval_mode_requires_risk_ack(mode: ApprovalMode) -> bool {
@@ -184,10 +164,7 @@ fn approval_settings_changed(
     current: &crate::approval::ApprovalState,
     next: &crate::approval::ApprovalState,
 ) -> bool {
-    current.default_mode != next.default_mode
-        || current.projects != next.projects
-        || current.ai != next.ai
-        || current.memory != next.memory
+    current.default_mode != next.default_mode || current.projects != next.projects
 }
 
 pub(crate) async fn local_deny_pending_approval(
@@ -217,7 +194,6 @@ mod tests {
                 project_anchor_relative_path: None,
             },
             mode,
-            ai_enabled: false,
             updated_at: "2026-07-15T00:00:00Z".to_string(),
         }
     }
@@ -236,8 +212,6 @@ mod tests {
         let req = UpdateApprovalSettingsRequest {
             default_mode: Some(ApprovalMode::AutoApproval),
             projects: None,
-            ai: None,
-            memory: None,
             risk_acknowledged: false,
         };
 
@@ -260,8 +234,6 @@ mod tests {
         let req = UpdateApprovalSettingsRequest {
             default_mode: Some(ApprovalMode::FullControl),
             projects: None,
-            ai: None,
-            memory: None,
             risk_acknowledged: false,
         };
 

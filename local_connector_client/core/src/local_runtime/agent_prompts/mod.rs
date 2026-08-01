@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::config::ClientConfig;
 use crate::local_runtime::storage::LocalAgentPromptRecord;
+use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
 use crate::LocalRuntime;
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,8 +45,8 @@ pub(crate) async fn agent_prompt_status(runtime: &LocalRuntime) -> Result<LocalA
             .as_deref()
             .is_some_and(|source| state.source_instance_id == source)
     });
-    let expected_prompt_count = SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len();
-    let expected_capability_count = SystemAgentKey::ALL.len();
+    let expected_prompt_count = LOCAL_RUNTIME_AGENT_KEYS.len() * AgentPromptVendor::ALL.len();
+    let expected_capability_count = LOCAL_RUNTIME_AGENT_KEYS.len();
     let owner_user_id = current_owner_user_id(runtime).await;
     let (capability_count, capability_set_complete) = match owner_user_id.as_deref() {
         Some(owner_user_id) => {

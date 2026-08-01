@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
-use chatos_service_runtime::{
-    env_flag, is_production_environment, validate_production_secret,
-    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
-};
+use chatos_service_runtime::{env_flag, is_production_environment, validate_production_secret};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -26,9 +23,6 @@ pub struct AppConfig {
     pub legacy_internal_api_secret: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
-    pub memory_engine_base_url: String,
-    pub memory_engine_operator_token: Option<String>,
-    pub memory_engine_request_timeout: Duration,
     pub require_device_connect_signature: bool,
     pub allow_device_connect_query_token: bool,
     pub device_connect_signature_max_skew: Duration,
@@ -74,12 +68,6 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(2 * 60 * 60 * 1_000)
                 .max(10_000);
-        let memory_timeout_ms = std::env::var("LOCAL_CONNECTOR_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")
-            .ok()
-            .or_else(|| std::env::var("MEMORY_ENGINE_REQUEST_TIMEOUT_MS").ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(30_000)
-            .max(1_000);
         let signature_skew_seconds =
             normalized_env("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")
                 .and_then(|value| value.parse::<u64>().ok())
@@ -118,17 +106,6 @@ impl AppConfig {
                 "LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS",
                 is_production_environment(),
             ),
-            memory_engine_base_url: normalize_memory_engine_base_url(
-                normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_BASE_URL")
-                    .or_else(|| normalized_env("MEMORY_ENGINE_BASE_URL"))
-                    .unwrap_or_else(default_memory_engine_base_url),
-            ),
-            memory_engine_operator_token: normalized_env(
-                "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            )
-            .or_else(|| normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN"))
-            .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")),
-            memory_engine_request_timeout: Duration::from_millis(memory_timeout_ms),
             require_device_connect_signature: env_flag(
                 "LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE",
                 true,
@@ -160,7 +137,6 @@ impl AppConfig {
                 "chatos-backend",
                 "task-runner",
                 "project-service",
-                "memory-engine",
                 "mcp-management-service",
             ] {
                 if !config.internal_api_secrets.contains_key(caller) {
@@ -180,7 +156,6 @@ impl AppConfig {
                     "change_me_chatos_local_connector_secret",
                     "change_me_task_runner_local_connector_secret",
                     "change_me_project_service_local_connector_secret",
-                    "change_me_memory_engine_local_connector_secret",
                     "change_me_mcp_management_local_connector_secret",
                 ],
             )?;
@@ -195,22 +170,10 @@ impl AppConfig {
                     "change_me_chatos_local_connector_secret",
                     "change_me_task_runner_local_connector_secret",
                     "change_me_project_service_local_connector_secret",
-                    "change_me_memory_engine_local_connector_secret",
                     "change_me_mcp_management_local_connector_secret",
                 ],
             )?;
         }
-        if is_production_environment() || config.memory_engine_operator_token.is_some() {
-            validate_production_secret(
-                "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
-                config.memory_engine_operator_token.as_deref(),
-                &[
-                    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
-                    "change_me_local_connector_memory_engine_secret",
-                ],
-            )?;
-        }
-
         Ok(config)
     }
 
@@ -243,9 +206,6 @@ impl AppConfig {
             legacy_internal_api_secret: None,
             internal_api_secrets,
             require_signed_internal_requests: true,
-            memory_engine_base_url: "http://127.0.0.1.invalid/api/memory-engine/v1".to_string(),
-            memory_engine_operator_token: None,
-            memory_engine_request_timeout: Duration::from_secs(1),
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),
@@ -271,10 +231,6 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "project-service",
             "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        ),
-        (
-            "memory-engine",
-            "MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         ),
         (
             "mcp-management-service",
@@ -307,28 +263,4 @@ fn default_user_service_base_url() -> String {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(39190);
     format!("http://{host}:{port}")
-}
-
-fn default_memory_engine_base_url() -> String {
-    let host = normalized_env("MEMORY_ENGINE_HOST")
-        .map(|value| match value.as_str() {
-            "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
-            _ => value,
-        })
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-    let port = normalized_env("MEMORY_ENGINE_PORT")
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(7081);
-    format!("http://{host}:{port}/api/memory-engine/v1")
-}
-
-fn normalize_memory_engine_base_url(mut base_url: String) -> String {
-    while base_url.ends_with('/') {
-        base_url.pop();
-    }
-    if base_url.ends_with("/api/memory-engine/v1") || base_url.contains("/api/memory-engine/") {
-        base_url
-    } else {
-        format!("{base_url}/api/memory-engine/v1")
-    }
 }

@@ -134,11 +134,10 @@ pub(super) async fn prepare_model_execution(
         task_process_logging_enabled,
         prefixed_input_items,
     );
-    if let Some(context) = sandbox_context.as_ref() {
-        run_spec.current_input_items.insert(
-            0,
-            sandbox_run_fact_input_item(task.mcp_config.locale(), context.run_workspace.as_str()),
-        );
+    if sandbox_context.is_some() {
+        run_spec
+            .current_input_items
+            .insert(0, sandbox_run_fact_input_item(task.mcp_config.locale()));
     }
     let memory_scope = build_memory_scope(service, task, run);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
@@ -186,16 +185,13 @@ fn validate_command_target_agent(
     Ok(())
 }
 
-fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale, run_workspace: &str) -> Value {
-    let workspace = run_workspace.trim();
+fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale) -> Value {
     let content = if locale.is_english() {
-        format!(
-            "[Authoritative current-run project workspace]\nTask Runner has already acquired and health-checked the sandbox lease for this run. The TerminalController and CodeMaintainer tools exposed in this turn are already routed by the system to the authoritative current project workspace: `{workspace}`.\n\nA project runtime environment status of `pending` only limits application-service topology and Project Gateway targets; it does not disable this run-scoped project workspace or its terminal/file tools. Any historical memory claiming that `pending` forbids all terminal use is obsolete for this run. Reopen and continue child tasks that were blocked only because of that obsolete conclusion. Do not ask the user to initialize the project application environment merely to use the workspace tools already prepared for this run."
-        )
+        "[Authoritative current-run project workspace]\nTask Runner has already acquired and health-checked the sandbox lease for this run. The TerminalController and CodeMaintainer tools exposed in this turn are already bound by the program to the authoritative current project workspace. Provider, device, workspace, sandbox and lease routing are program-managed and must not be requested from the user or inferred by the model.\n\nA project runtime environment status of `pending` only limits application-service topology and Project Gateway targets; it does not disable this run-scoped project workspace or its terminal/file tools. Any historical memory claiming that `pending` forbids all terminal use is obsolete for this run. Reopen and continue child tasks that were blocked only because of that obsolete conclusion. Do not ask the user to initialize the project application environment merely to use the workspace tools already prepared for this run."
+            .to_string()
     } else {
-        format!(
-            "[当前运行的权威项目工作区]\nTask Runner 已为本次运行申请并完成沙箱租约健康检查。本轮暴露的 TerminalController 与 CodeMaintainer 工具已由系统路由到当前权威项目工作区：`{workspace}`。\n\n项目运行环境的 `pending` 仅限制应用服务拓扑与 Project Gateway 目标，不会禁用本次运行专属的项目工作区及其终端/文件工具。历史记忆中“`pending` 禁止使用所有终端”的结论对本次运行已经过期。仅因为该旧结论而阻塞的子任务应重新打开并继续执行。不得仅为使用本轮已经准备好的工作区工具，再次要求用户初始化项目应用环境。"
-        )
+        "[当前运行的权威项目工作区]\nTask Runner 已为本次运行申请并完成沙箱租约健康检查。本轮暴露的 TerminalController 与 CodeMaintainer 工具已由程序绑定到当前权威项目工作区。Provider、设备、Workspace、Sandbox 与租约路由均由程序管理，不得向用户索取，也不得由模型猜测。\n\n项目运行环境的 `pending` 仅限制应用服务拓扑与 Project Gateway 目标，不会禁用本次运行专属的项目工作区及其终端/文件工具。历史记忆中“`pending` 禁止使用所有终端”的结论对本次运行已经过期。仅因为该旧结论而阻塞的子任务应重新打开并继续执行。不得仅为使用本轮已经准备好的工作区工具，再次要求用户初始化项目应用环境。"
+            .to_string()
     };
     json!({
         "role": "system",
@@ -437,7 +433,7 @@ mod tests {
 
     #[test]
     fn sandbox_run_fact_overrides_stale_project_environment_memory() {
-        let item = sandbox_run_fact_input_item(BuiltinMcpPromptLocale::ZhCn, "/workspace");
+        let item = sandbox_run_fact_input_item(BuiltinMcpPromptLocale::ZhCn);
         let content = item["content"].as_str().expect("system content");
 
         assert_eq!(item["role"].as_str(), Some("system"));
@@ -445,7 +441,9 @@ mod tests {
         assert!(content.contains("`pending` 仅限制应用服务拓扑"));
         assert!(content.contains("历史记忆"));
         assert!(content.contains("重新打开并继续执行"));
-        assert!(content.contains("`/workspace`"));
+        assert!(content.contains("均由程序管理"));
+        assert!(!content.contains("/workspace"));
+        assert!(!content.contains("pairing"));
     }
 
     #[test]

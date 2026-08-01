@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::fs;
-use std::path::Path;
-
 pub(super) use chatos_project_execution::{
     parse_local_connector_workspace_root as parse_local_connector_project_root,
     LocalConnectorWorkspaceRef as LocalConnectorProjectRef,
@@ -21,8 +18,6 @@ use crate::models::{
     ProjectImportStatus, ProjectRecord, ProjectRuntimeEnvironmentStatus, ProjectSourceType,
     RuntimeEnvironmentProvider,
 };
-
-use super::LOCAL_CONNECTOR_ROOT_PREFIX;
 
 #[derive(Debug)]
 pub(super) enum RuntimeEnvironmentDecision {
@@ -121,39 +116,25 @@ async fn resolve_local_plan(
             "本地项目缺少根目录，无法读取项目文件。",
         ));
     };
-    let local_connector_ref = parse_local_connector_project_root(root_path);
-    if root_path.starts_with(LOCAL_CONNECTOR_ROOT_PREFIX) && local_connector_ref.is_none() {
+    let Some(local_connector_ref) = parse_local_connector_project_root(root_path) else {
         return RuntimeEnvironmentDecision::Stop(not_runnable(
-            "本地项目的 Local Connector 根目录格式不正确，无法读取项目文件。",
+            "本地项目必须使用 Local Connector 管理的逻辑 Workspace；服务器不会读取客户端绝对路径。",
         ));
-    }
-    if local_connector_ref.is_none() {
-        let path = Path::new(root_path);
-        if !path.exists() {
-            return RuntimeEnvironmentDecision::Stop(not_runnable(
-                "本地项目根目录不存在，无法读取项目文件。",
-            ));
-        }
-        if !path.is_dir() {
-            return RuntimeEnvironmentDecision::Stop(not_runnable(
-                "本地项目根目录不是目录，无法读取项目文件。",
-            ));
-        }
-        if directory_is_effectively_empty(path) {
-            return RuntimeEnvironmentDecision::Stop(not_runnable(
-                "本地项目根目录为空，暂无可分析的项目文件。",
-            ));
-        }
-    }
+    };
 
     let sandbox_provider = match choose_sandbox_provider(
         config,
         user_access_token,
-        local_connector_ref.as_ref(),
+        Some(&local_connector_ref),
     )
     .await
     {
-        Ok(provider) => provider,
+        Ok(Some(provider)) => provider,
+        Ok(None) => {
+            return RuntimeEnvironmentDecision::Stop(waiting_for_local_sandbox(
+                "等待该 Workspace 的 Local Connector Sandbox pairing 启用并上线；系统不会回退到 Cloud Sandbox。",
+            ));
+        }
         Err(err) => {
             return RuntimeEnvironmentDecision::Stop(failed_stop(
                 "检查本地沙箱可用性失败，无法确定运行环境镜像后端。",
@@ -171,11 +152,11 @@ async fn choose_sandbox_provider(
     config: &AppConfig,
     user_access_token: Option<&str>,
     project_ref: Option<&LocalConnectorProjectRef>,
-) -> Result<RuntimeEnvironmentProvider, String> {
+) -> Result<Option<RuntimeEnvironmentProvider>, String> {
     if has_enabled_local_sandbox_pairing(config, user_access_token, project_ref).await? {
-        Ok(RuntimeEnvironmentProvider::LocalConnector)
+        Ok(Some(RuntimeEnvironmentProvider::LocalConnector))
     } else {
-        Ok(RuntimeEnvironmentProvider::CloudSandboxManager)
+        Ok(None)
     }
 }
 
@@ -281,19 +262,7 @@ fn local_sandbox_pairing_is_ready(pairing: &LocalConnectorSandboxPairing) -> boo
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.eq_ignore_ascii_case("ready"))
-        .unwrap_or(true)
-}
-
-fn directory_is_effectively_empty(path: &Path) -> bool {
-    let Ok(mut entries) = fs::read_dir(path) else {
-        return false;
-    };
-    entries.all(|entry| {
-        entry
-            .ok()
-            .and_then(|entry| entry.file_name().into_string().ok())
-            .is_some_and(|name| matches!(name.as_str(), ".git" | ".DS_Store"))
-    })
+        .unwrap_or(false)
 }
 
 fn not_runnable(message: impl Into<String>) -> StopDecision {
@@ -302,6 +271,15 @@ fn not_runnable(message: impl Into<String>) -> StopDecision {
         status: ProjectRuntimeEnvironmentStatus::NotRunnable,
         summary: message.clone(),
         not_runnable_reason: Some(message),
+        last_error: None,
+    }
+}
+
+fn waiting_for_local_sandbox(message: impl Into<String>) -> StopDecision {
+    StopDecision {
+        status: ProjectRuntimeEnvironmentStatus::Pending,
+        summary: message.into(),
+        not_runnable_reason: None,
         last_error: None,
     }
 }
@@ -362,6 +340,21 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn local_sandbox_pairing_requires_explicit_ready_state() {
+        let mut pairing = LocalConnectorSandboxPairing {
+            id: Some("pairing-1".to_string()),
+            device_id: "device-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            enabled: true,
+            sandbox_readiness: None,
+            facade_base_url: None,
+        };
+        assert!(!local_sandbox_pairing_is_ready(&pairing));
+        pairing.sandbox_readiness = Some("ready".to_string());
+        assert!(local_sandbox_pairing_is_ready(&pairing));
     }
 
     fn cloud_project(harness_repo_identifier: Option<&str>) -> ProjectRecord {

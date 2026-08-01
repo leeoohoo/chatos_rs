@@ -83,9 +83,7 @@ fn runtime_context(
         plugin_agent_selection_for_snapshot: None,
         resolved_project_id: Some("project-1".to_string()),
         resolved_project_name: Some("Demo Project".to_string()),
-        resolved_project_source_type: Some("local".to_string()),
         resolved_project_root: Some("C:/project/demo".to_string()),
-        local_project_workspace_root: Some("C:/project/demo".to_string()),
         default_remote_connection_id: None,
         workspace_root: Some("C:/project/demo".to_string()),
         mcp_enabled: true,
@@ -169,15 +167,16 @@ fn initializes_stream_agent_with_resolved_profile() {
 fn project_context_prompt_contains_only_dynamic_project_facts() {
     let mut context = runtime_context(false);
     context.resolved_project_name = Some("CubeSandbox".to_string());
-    context.resolved_project_source_type = Some("cloud".to_string());
     context.resolved_project_root = None;
     context.workspace_root = None;
 
     let prompt = build_workspace_global_prompt(&context).expect("project context prompt");
 
     assert!(prompt.contains("当前项目名称：CubeSandbox"));
-    assert!(prompt.contains("当前项目 ID：project-1"));
-    assert!(prompt.contains("当前项目来源类型：cloud"));
+    assert!(prompt.contains("所有项目工具路由均已由程序绑定"));
+    assert!(!prompt.contains("project-1"));
+    assert!(!prompt.contains("cloud"));
+    assert!(!prompt.contains("C:/project"));
     assert!(!prompt.contains("Task Runner 是你自己的内部异步执行通道"));
 }
 
@@ -256,10 +255,7 @@ fn builds_shared_runtime_execution_contract_from_chat_context() {
     assert_eq!(options.prefixed_input_items.len(), 1);
     assert_eq!(options.shared_max_iterations, 42);
     assert_eq!(options.shared_model_config.max_output_tokens, Some(2048));
-    assert_eq!(
-        options.shared_model_config.request_cwd.as_deref(),
-        Some("C:/project/demo")
-    );
+    assert!(options.shared_model_config.request_cwd.is_none());
     assert!(options.shared_model_config.include_prompt_cache_retention);
     assert_eq!(
         options.persisted_user_message_content.as_deref(),

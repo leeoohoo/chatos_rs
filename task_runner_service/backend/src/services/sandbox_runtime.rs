@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use chatos_mcp_management_sdk::SandboxProviderKind;
 use chatos_mcp_runtime::BuiltinMcpKind;
 use chatos_sandbox_contract::{EffectivePermissionSnapshot, EffectiveSandboxPolicy};
 use serde::{Deserialize, Serialize};
@@ -39,12 +40,26 @@ use workspace::{
     sandbox_workspace_root,
 };
 
+fn task_owner_user_id(task: &TaskRecord) -> Option<&str> {
+    task.owner_user_id
+        .as_deref()
+        .and_then(normalized_text)
+        .or_else(|| task.creator_user_id.as_deref().and_then(normalized_text))
+        .or_else(|| normalized_text(task.subject_id.as_str()))
+}
+
+fn normalized_text(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
 struct SandboxTaskRoute {
     base_url: String,
     auth: Option<SandboxManagerAuth>,
     image_id: Option<String>,
     environment_plan: Option<SandboxEnvironmentPlan>,
     provider: String,
+    local_connector_pairing_id: Option<String>,
     policy: chatos_sandbox_contract::SandboxLeasePolicyRequest,
 }
 
@@ -96,12 +111,17 @@ pub(super) struct SandboxRuntimeContext {
     pub lease_id: String,
     pub sandbox_id: String,
     #[serde(default)]
+    pub owner_user_id: String,
+    #[serde(default)]
     pub is_environment: bool,
     #[serde(default)]
     pub service_id: Option<String>,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub local_connector_pairing_id: Option<String>,
     pub backend_id: Option<String>,
     pub agent_endpoint: Option<String>,
-    pub agent_token: String,
     pub mcp_url: String,
     #[serde(default)]
     pub manager_base_url: String,
@@ -113,12 +133,25 @@ pub(super) struct SandboxRuntimeContext {
 }
 
 impl SandboxRuntimeContext {
+    pub(super) fn provider_kind(&self) -> Result<SandboxProviderKind, String> {
+        match self.provider.trim().to_ascii_lowercase().as_str() {
+            "local_connector" => Ok(SandboxProviderKind::LocalConnector),
+            "cloud" | "cloud_sandbox_manager" => Ok(SandboxProviderKind::Cloud),
+            value => Err(format!(
+                "sandbox runtime context has an unsupported provider: {value}"
+            )),
+        }
+    }
+
     pub(super) fn to_metadata(&self) -> Value {
         json!({
             "lease_id": self.lease_id,
             "sandbox_id": self.sandbox_id,
+            "owner_user_id": self.owner_user_id,
             "is_environment": self.is_environment,
             "service_id": self.service_id,
+            "provider": self.provider,
+            "local_connector_pairing_id": self.local_connector_pairing_id,
             "backend_id": self.backend_id,
             "agent_endpoint": self.agent_endpoint,
             "mcp_url": self.mcp_url,
@@ -135,6 +168,9 @@ impl SandboxRuntimeContext {
         response: CreateSandboxLeaseResponse,
         workspace_root: &Path,
         manager_base_url: &str,
+        provider: &str,
+        local_connector_pairing_id: Option<String>,
+        owner_user_id: String,
     ) -> Result<Self, String> {
         let effective_policy = response
             .effective_policy
@@ -142,8 +178,10 @@ impl SandboxRuntimeContext {
         let effective_permissions = response
             .effective_permissions
             .ok_or_else(|| "sandbox response missing required effective_permissions".to_string())?;
-        let agent_endpoint = response
-            .agent_endpoint
+        let local_connector = provider.eq_ignore_ascii_case("local_connector");
+        let agent_endpoint = (!local_connector)
+            .then_some(response.agent_endpoint)
+            .flatten()
             .map(|value| value.trim().trim_end_matches('/').to_string())
             .filter(|value| !value.is_empty());
         let manager_base_url = manager_base_url.trim().trim_end_matches('/').to_string();
@@ -152,17 +190,25 @@ impl SandboxRuntimeContext {
         }
         let lease_id = response.lease_id;
         let sandbox_id = response.sandbox_id;
-        let agent_token = response
-            .agent_token
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| lease_id.clone());
+        let run_workspace = if local_connector {
+            format!("local-sandbox://{sandbox_id}/workspace")
+        } else {
+            response.run_workspace
+        };
+        let workspace_root = if local_connector {
+            "local-sandbox://workspace".to_string()
+        } else {
+            workspace_root.to_string_lossy().to_string()
+        };
         Ok(Self {
             lease_id,
             sandbox_id: sandbox_id.clone(),
+            owner_user_id,
             is_environment: response.is_environment,
             service_id: response.execution_service_id,
-            backend_id: response.backend_id,
-            agent_token,
+            provider: provider.to_string(),
+            local_connector_pairing_id,
+            backend_id: (!local_connector).then_some(response.backend_id).flatten(),
             mcp_url: if response.is_environment {
                 format!("{manager_base_url}/api/sandbox-environments/{sandbox_id}/mcp")
             } else {
@@ -170,8 +216,8 @@ impl SandboxRuntimeContext {
             },
             manager_base_url,
             agent_endpoint,
-            run_workspace: response.run_workspace,
-            workspace_root: workspace_root.to_string_lossy().to_string(),
+            run_workspace,
+            workspace_root,
             expires_at: response.expires_at,
             effective_policy,
             effective_permissions,

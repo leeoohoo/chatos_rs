@@ -63,7 +63,12 @@ impl LocalConnectorProvider {
     }
 
     pub(super) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        if self.internal_secret.is_none() || route.provider_kind != McpProviderKind::LocalConnector
+        if self.internal_secret.is_none()
+            || route.provider_kind != McpProviderKind::LocalConnector
+            || !route
+                .provider_ref
+                .as_deref()
+                .is_some_and(|value| value.starts_with("device:"))
         {
             return false;
         }

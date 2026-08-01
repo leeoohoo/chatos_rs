@@ -22,7 +22,7 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
     for image in &mut images {
         crate::services::runtime_environment::apply_program_managed_image_policy(image);
     }
-    if enforce_project_runtime_boundary(project.execution_plane, &mut environment, &mut images) {
+    if enforce_project_runtime_boundary(project, &mut environment, &mut images) {
         state
             .store
             .upsert_project_runtime_environment(&environment)

@@ -8,7 +8,6 @@ pub(crate) struct ResolvedProjectRuntime {
     pub(crate) project_id: Option<String>,
     pub(crate) project_name: Option<String>,
     pub(crate) project_root: Option<String>,
-    pub(crate) source_type: Option<String>,
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -90,6 +89,5 @@ pub(crate) async fn resolve_project_runtime_context(
         project_id: resolved_project_id,
         project_name: normalize_optional_string(Some(project.name)),
         project_root: resolved_project_root,
-        source_type: normalize_optional_string(project.source_type),
     }
 }

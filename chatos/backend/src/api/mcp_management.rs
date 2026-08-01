@@ -732,9 +732,7 @@ fn is_browser_agent(agent_key: SystemAgentKey) -> bool {
             | SystemAgentKey::ChatosPlanningAgent
             | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
             | SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerLocalPlanPhase
             | SystemAgentKey::TaskRunnerRunPhase
-            | SystemAgentKey::TaskRunnerLocalRunPhase
     )
 }
 
@@ -745,9 +743,7 @@ fn is_notepad_agent(agent_key: SystemAgentKey) -> bool {
             | SystemAgentKey::ChatosPlanningAgent
             | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
             | SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerLocalPlanPhase
             | SystemAgentKey::TaskRunnerRunPhase
-            | SystemAgentKey::TaskRunnerLocalRunPhase
     )
 }
 
@@ -961,9 +957,7 @@ mod tests {
             SystemAgentKey::ChatosPlanningAgent,
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
             SystemAgentKey::TaskRunnerPlanPhase,
-            SystemAgentKey::TaskRunnerLocalPlanPhase,
             SystemAgentKey::TaskRunnerRunPhase,
-            SystemAgentKey::TaskRunnerLocalRunPhase,
         ] {
             assert!(is_notepad_agent(agent_key));
         }

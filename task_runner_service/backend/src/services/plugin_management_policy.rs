@@ -539,12 +539,10 @@ fn validate_task_process_log_mcp_runtime(item: &ResolvedMcp) -> Result<(), Strin
 
 fn is_task_runner_planning_agent(agent_key: &str) -> bool {
     agent_key == SystemAgentKey::TaskRunnerPlanPhase.as_str()
-        || agent_key == SystemAgentKey::TaskRunnerLocalPlanPhase.as_str()
 }
 
 fn is_task_runner_execution_agent(agent_key: &str) -> bool {
     agent_key == SystemAgentKey::TaskRunnerRunPhase.as_str()
-        || agent_key == SystemAgentKey::TaskRunnerLocalRunPhase.as_str()
 }
 
 fn normalized_plugin_identifier(value: &str, field: &str) -> Result<String, String> {

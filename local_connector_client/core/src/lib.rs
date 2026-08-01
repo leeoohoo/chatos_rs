@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chatos_project_execution::LOCAL_CONNECTOR_ROOT_PREFIX;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
@@ -73,8 +74,6 @@ const MAX_LOCAL_MCP_READ_BYTES: u64 = 256 * 1024;
 const MAX_LOCAL_MCP_WRITE_BYTES: usize = 1024 * 1024;
 const MAX_LOCAL_MCP_SEARCH_RESULTS: usize = 500;
 const MAX_COMMAND_HISTORY_ENTRIES: usize = 1_000;
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
-
 pub async fn run_local_connector() -> Result<()> {
     let _process_lifetime = process_lifetime::attach_current_process_tree()
         .context("attach Local Connector Core to its process-tree job")?;

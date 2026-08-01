@@ -18,26 +18,19 @@ use axum::http::{
 };
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use chatos_plugin_management_sdk::{
-    ResolveAgentCapabilitiesRequest, SystemAgentKey, SystemMcpKey,
-    LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, SYSTEM_MCP_RUNTIME_KIND,
-};
 use chatos_service_runtime::http_body::{
     read_response_bytes_limited, DEFAULT_RESPONSE_BODY_LIMIT_BYTES,
 };
 use serde::Deserialize;
-use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
 mod auth_middleware;
 mod devices;
 mod internal_auth;
-mod managed_memory_policy;
 mod managed_requirements;
 mod managed_requirements_admin;
 mod managed_runtime_config;
-mod memory_engine_proxy;
 mod plugin_artifact_relay;
 mod plugin_management_capabilities;
 mod plugin_management_mcps;
@@ -58,7 +51,6 @@ use self::devices::{
     load_owned_device, revoke_device,
 };
 use self::internal_auth::require_chatos_service_caller;
-use self::managed_memory_policy::get_managed_memory_policy;
 use self::managed_requirements::get_managed_requirements;
 use self::managed_requirements_admin::{
     create_managed_requirements_assignment, create_managed_requirements_policy,
@@ -66,7 +58,6 @@ use self::managed_requirements_admin::{
     list_managed_requirements_assignments, list_managed_requirements_policies,
     update_managed_requirements_assignment, update_managed_requirements_policy,
 };
-use self::memory_engine_proxy::memory_engine_proxy;
 use self::plugin_artifact_relay::PluginArtifactRelayState;
 #[cfg(feature = "test-support")]
 pub use self::plugin_artifact_relay::PluginArtifactRelayTestScope;
@@ -111,15 +102,6 @@ struct McpRelayQuery {
 #[derive(Debug, Deserialize)]
 struct SkillRelayQuery {
     workspace_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct LocalCommandApprovalCapabilitiesResponse {
-    policy_revision: String,
-    max_iterations: usize,
-    code_maintainer_read: bool,
-    approval_decision: bool,
-    provider_skills_prompt: Option<String>,
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -253,54 +235,6 @@ fn is_allowed_model_config_proxy_request(method: &Method, path: &str) -> bool {
         );
     }
     false
-}
-
-async fn resolve_local_command_approval_capabilities(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-) -> Result<Json<LocalCommandApprovalCapabilitiesResponse>, ApiError> {
-    let owner_user_id = user.effective_owner_user_id();
-    let request = ResolveAgentCapabilitiesRequest::new(
-        SystemAgentKey::LocalConnectorCommandApprovalAgent,
-        owner_user_id,
-    );
-    let capabilities = state
-        .plugin_management_client
-        .resolve_for_service(&request)
-        .await
-        .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
-    capabilities
-        .ensure_required_runtime_supported([], [])
-        .map_err(|err| ApiError::service_unavailable(err.to_string()))?;
-    let code_maintainer_read = capabilities.mcps.iter().any(|item| {
-        item.binding.required
-            && item.available
-            && item.resource.runtime.kind == SYSTEM_MCP_RUNTIME_KIND
-            && item.resource.runtime.system_key.as_deref()
-                == Some(SystemMcpKey::CodeMaintainerRead.as_str())
-    });
-    let approval_decision = capabilities
-        .require_available_mcp(LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID)
-        .is_ok();
-    if !code_maintainer_read || !approval_decision {
-        return Err(ApiError::service_unavailable(
-            "local command approval agent required capabilities are unavailable",
-        ));
-    }
-    let provider_skills_prompt = capabilities.compose_provider_skills_prompt(
-        [
-            SystemMcpKey::CodeMaintainerRead.as_str(),
-            LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
-        ],
-        Some("zh-CN"),
-    );
-    Ok(Json(LocalCommandApprovalCapabilitiesResponse {
-        policy_revision: capabilities.policy_revision,
-        max_iterations: chatos_agent::load_agent_max_iterations("local-connector-service").await,
-        code_maintainer_read,
-        approval_decision,
-        provider_skills_prompt,
-    }))
 }
 
 async fn mcp_relay(
@@ -634,17 +568,6 @@ async fn plugin_relay(
     Ok(relay_response_to_http(response))
 }
 
-async fn resolve_model_runtime(
-    State(_state): State<AppState>,
-    Extension(_user): Extension<CurrentUser>,
-    Path(_model_config_id): Path<String>,
-) -> Result<Response, ApiError> {
-    Err(ApiError::conflict(
-        "local_model_runtime_relay_disabled",
-        "Local model credentials are device-only; cloud services cannot request them from Local Connector",
-    ))
-}
-
 async fn sandbox_facade_root(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -700,6 +623,9 @@ async fn sandbox_facade_impl(
     .await?;
 
     let relay_path = normalize_relay_path(path.as_str());
+    if is_local_sandbox_mcp_path(relay_path.as_str()) {
+        internal_auth::require_mcp_management_service_caller(&user)?;
+    }
     let relay_timeout = if relay_path == "/api/local/sandbox/images/mcp"
         || relay_path.starts_with("/api/local/sandbox/environments/compose/")
     {
@@ -818,6 +744,8 @@ fn relay_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
                 "authorization"
                     | "cookie"
                     | "set-cookie"
+                    | "x-local-connector-caller"
+                    | "x-local-connector-internal-token"
                     | "x-local-connector-internal-secret"
                     | "x-local-connector-owner-user-id"
                     | "x-chatos-owner-user-id"
@@ -827,6 +755,11 @@ fn relay_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
             value.to_str().ok().map(|value| (key, value.to_string()))
         })
         .collect()
+}
+
+fn is_local_sandbox_mcp_path(path: &str) -> bool {
+    let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
+    matches!(parts.as_slice(), ["api", "sandboxes", _, "mcp"])
 }
 
 fn has_nonempty_header(headers: &HeaderMap, name: &str) -> bool {
@@ -872,7 +805,7 @@ fn is_plugin_hook_dispatch(action: &str, body: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_plugin_hook_dispatch;
+    use super::{is_local_sandbox_mcp_path, is_plugin_hook_dispatch};
     use serde_json::json;
 
     #[test]
@@ -889,5 +822,12 @@ mod tests {
             "prepare",
             &json!({"operation": "dispatch_hook_event"})
         ));
+    }
+
+    #[test]
+    fn only_concrete_sandbox_tool_calls_require_the_mcp_management_caller() {
+        assert!(is_local_sandbox_mcp_path("/api/sandboxes/sandbox-1/mcp"));
+        assert!(!is_local_sandbox_mcp_path("/api/sandboxes/leases"));
+        assert!(!is_local_sandbox_mcp_path("/api/local/sandbox/images/mcp"));
     }
 }

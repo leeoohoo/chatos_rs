@@ -24,7 +24,6 @@ pub(crate) use service::{
 #[cfg(test)]
 pub(crate) use types::ApprovalProjectKey;
 pub(crate) use types::{
-    ApprovalActionAudit, ApprovalActionAuditDetail, ApprovalAiSettings, ApprovalDecision,
-    ApprovalMemorySettings, ApprovalMode, ApprovalState, CommandApprovalRequest,
-    ProjectApprovalState,
+    ApprovalActionAudit, ApprovalActionAuditDetail, ApprovalDecision, ApprovalMode, ApprovalState,
+    CommandApprovalRequest, ProjectApprovalState,
 };

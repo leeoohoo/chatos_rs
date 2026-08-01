@@ -126,7 +126,6 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         }
     };
 
-    let local_inspection = inspect_local_project(project);
     let memory = match build_project_agent_memory(
         &state.config,
         owner_user_id,
@@ -155,7 +154,6 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         environment_plan,
         model_runtime.prompt_vendor.as_deref(),
         &model_runtime.model_config,
-        local_inspection.as_ref(),
         &memory,
         &ProjectEnvironmentAgentRunContext {
             run_id: run_id.as_str(),
@@ -244,7 +242,6 @@ async fn run_project_environment_agent(
     environment_plan: RuntimeEnvironmentPlan,
     prompt_vendor: Option<&str>,
     model_config: &ModelRuntimeConfig,
-    local_inspection: Option<&LocalProjectInspection>,
     memory: &ProjectAgentMemory,
     run_context: &ProjectEnvironmentAgentRunContext<'_>,
 ) -> Result<(), String> {
@@ -271,7 +268,6 @@ async fn run_project_environment_agent(
         execute_project_environment_agent(
             project,
             model_config,
-            local_inspection,
             memory,
             run_context.run_id,
             run_context.analysis_requirement,
@@ -290,7 +286,6 @@ async fn run_project_environment_agent(
 async fn execute_project_environment_agent(
     project: &ProjectRecord,
     model_config: &ModelRuntimeConfig,
-    local_inspection: Option<&LocalProjectInspection>,
     memory: &ProjectAgentMemory,
     run_id: &str,
     analysis_requirement: Option<&str>,
@@ -301,7 +296,6 @@ async fn execute_project_environment_agent(
 ) -> Result<(), String> {
     let mut prompt = build_project_environment_agent_prompt(
         project,
-        local_inspection,
         run_id,
         analysis_requirement,
         selected_dependencies,
@@ -370,7 +364,6 @@ fn bind_selected_dependencies(detected_stack: &mut Value, selected_dependencies:
 
 fn build_project_environment_agent_prompt(
     project: &ProjectRecord,
-    local_inspection: Option<&LocalProjectInspection>,
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
@@ -378,7 +371,6 @@ fn build_project_environment_agent_prompt(
     let context = project_environment_agent_context(
         project.id.as_str(),
         project.name.as_str(),
-        local_inspection,
         run_id,
         analysis_requirement,
         selected_dependencies,
@@ -390,7 +382,6 @@ fn build_project_environment_agent_prompt(
 fn project_environment_agent_context(
     project_id: &str,
     project_name: &str,
-    local_inspection: Option<&LocalProjectInspection>,
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
@@ -407,17 +398,6 @@ fn project_environment_agent_context(
                 .map(str::trim)
                 .filter(|value| !value.is_empty()),
             "selected_dependencies": selected_dependencies,
-        },
-        "pre_scan": {
-            "detected_stack": local_inspection
-                .map(|inspection| inspection.detected_stack.clone())
-                .unwrap_or_else(empty_object),
-            "required_services": local_inspection
-                .map(|inspection| inspection.required_services.clone())
-                .unwrap_or_else(empty_array),
-            "manifest_context": local_inspection
-                .map(|inspection| inspection.manifest_context.clone())
-                .unwrap_or_default(),
         },
     })
 }
@@ -447,7 +427,6 @@ mod tests {
         let context = project_environment_agent_context(
             "project-1",
             "Example",
-            None,
             "run-1",
             Some("Use Node.js 22 and expose port 3000"),
             &["PostgreSQL".to_string(), "Redis".to_string()],

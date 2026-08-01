@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 use crate::config::{api_url, ClientConfig};
+use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
 use crate::plugins::LocalPluginStatusSnapshot;
 use crate::skills::{fetch_user_skill_catalog, sync_skill_inventory, update_user_skill_preference};
 use crate::{tracing_stdout, LocalRuntime};
@@ -27,7 +28,8 @@ pub(crate) async fn sync_local_plugin_control_plane(runtime: &LocalRuntime) -> R
             format!("sync installed Plugin Skill preferences skipped: {error}").as_str(),
         ),
     }
-    sync_local_capability_snapshots(runtime).await
+    let status = crate::local_runtime::update_agent_prompt_bundle(runtime).await?;
+    Ok(status.capability_count.max(0) as usize)
 }
 
 async fn enable_available_installed_plugin_skills(runtime: &LocalRuntime) -> Result<usize> {
@@ -121,8 +123,8 @@ pub(crate) async fn fetch_all_capability_snapshots(
     runtime: &LocalRuntime,
 ) -> Result<Vec<ResolvedAgentCapabilities>> {
     let (config, owner_user_id) = configured_client(runtime).await?;
-    let mut snapshots = Vec::with_capacity(SystemAgentKey::ALL.len());
-    for agent_key in SystemAgentKey::ALL {
+    let mut snapshots = Vec::with_capacity(LOCAL_RUNTIME_AGENT_KEYS.len());
+    for agent_key in LOCAL_RUNTIME_AGENT_KEYS {
         snapshots.push(fetch_snapshot(runtime, &config, owner_user_id.as_str(), agent_key).await?);
     }
     Ok(snapshots)

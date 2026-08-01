@@ -102,18 +102,6 @@ impl RunService {
             .await;
             return;
         }
-        let routed_task =
-            task_with_runtime_mcp_routing_authoritative(&self.config, &self.store, task.clone())
-                .await;
-        let task = match routed_task {
-            Ok(task) => task,
-            Err(err) => {
-                self.finish_failed_before_execution(&task, &mut run, ".", err)
-                    .await;
-                return;
-            }
-        };
-
         let input = StartTaskRunRequest {
             model_config_id: Some(run.model_config_id.clone()),
             prompt_override: run

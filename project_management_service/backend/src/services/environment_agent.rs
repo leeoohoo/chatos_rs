@@ -14,7 +14,6 @@ use super::runtime_environment::{
 };
 
 mod agent_prompt;
-mod inspection;
 mod mcp_management_gateway;
 mod mcp_servers;
 mod memory;
@@ -25,7 +24,6 @@ mod tool_provider;
 pub use self::progress::get_project_runtime_environment_progress;
 
 use self::agent_prompt::resolve_project_environment_agent_prompt;
-use self::inspection::{inspect_local_project, LocalProjectInspection};
 use self::mcp_management_gateway::resolve_project_environment_mcp;
 use self::mcp_servers::{
     create_sandbox_image_from_plan, ensure_agent_required_tools_available,
@@ -41,8 +39,6 @@ use self::routing::{
 pub(crate) use self::tool_provider::{
     ensure_project_environment_agent_run, ProjectEnvironmentToolProvider,
 };
-
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
 const CLOUD_SANDBOX_IMAGE_MCP_PATH: &str = "/api/sandbox-images/mcp";
 const LOCAL_SANDBOX_IMAGE_MCP_PATH: &str = "/api/local/sandbox/images/mcp";
 const PROJECT_COMPOSE_FILE_PATH: &str = ".chatos/runtime-environment/docker-compose.chatos.yml";

@@ -28,7 +28,6 @@ flate2 = "1"
 futures-util = "0.3"
 hex = "0.4"
 hyper-util = { version = "0.1", features = ["http1", "server", "server-auto", "service", "tokio"] }
-memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 lopdf = "0.44"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

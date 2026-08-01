@@ -30,8 +30,8 @@ export function LocalDefaultModelSettings({
     <section className="panel">
       <div className="panelHeader">
         <div>
-          <h2>默认模型</h2>
-          <p>这些默认模型和凭据只用于本地项目，并保存在当前客户端。</p>
+          <h2>本机命令审批模型</h2>
+          <p>仅供本机命令审批 Agent 使用；其他 Agent 的模型与执行均由云端管理。</p>
         </div>
         <button className="primaryButton compact" disabled={disabled} onClick={onSave}>
           保存默认设置
@@ -56,42 +56,6 @@ export function LocalDefaultModelSettings({
         </label>
       </div>
       <div className="approvalFormGrid">
-        <DefaultModelPair
-          modelLabel="Memory 总结模型"
-          thinkingLabel="Memory Thinking"
-          modelId={settings.memory_summary_model_config_id}
-          thinkingLevel={settings.memory_summary_thinking_level}
-          models={enabledModels}
-          onChange={(modelId, thinkingLevel) => onChange({
-            ...settings,
-            memory_summary_model_config_id: modelId,
-            memory_summary_thinking_level: thinkingLevel,
-          })}
-        />
-        <DefaultModelPair
-          modelLabel="项目管理 Agent 模型"
-          thinkingLabel="Agent Thinking"
-          modelId={settings.project_management_agent_model_config_id}
-          thinkingLevel={settings.project_management_agent_thinking_level}
-          models={enabledModels}
-          onChange={(modelId, thinkingLevel) => onChange({
-            ...settings,
-            project_management_agent_model_config_id: modelId,
-            project_management_agent_thinking_level: thinkingLevel,
-          })}
-        />
-        <DefaultModelPair
-          modelLabel="环境初始化模型"
-          thinkingLabel="环境初始化 Thinking"
-          modelId={settings.environment_initialization_model_config_id}
-          thinkingLevel={settings.environment_initialization_thinking_level}
-          models={enabledModels}
-          onChange={(modelId, thinkingLevel) => onChange({
-            ...settings,
-            environment_initialization_model_config_id: modelId,
-            environment_initialization_thinking_level: thinkingLevel,
-          })}
-        />
         <DefaultModelPair
           modelLabel="命令审批模型"
           thinkingLabel="审批 Thinking"

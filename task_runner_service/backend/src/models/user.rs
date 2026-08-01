@@ -79,7 +79,7 @@ impl From<&UserRecord> for UserSummaryRecord {
             created_at: value.created_at.clone(),
             updated_at: value.updated_at.clone(),
             last_login_at: value.last_login_at.clone(),
-            principal_type: Some("task_runner_local_user".to_string()),
+            principal_type: Some("task_runner_service_user".to_string()),
             owner_user_id: None,
             owner_username: None,
             owner_display_name: None,

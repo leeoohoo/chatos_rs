@@ -2,15 +2,15 @@
 
 ## 0. 文档状态
 
-- 状态：2.0.10 实施中
-- 日期：2026-07-31
-- 目标版本：建议从下一小版本开始灰度
+- 状态：2.0.10 收口验证中
+- 日期：2026-08-01
+- 目标版本：2.0.10
 - 替代方向：docs/plan/LOCAL_PROJECT_CLIENT_ORCHESTRATION_SQLITE_IMPLEMENTATION_PLAN.zh-CN.md
 - 历史参考点：commit 0e9823d0 的父版本
 
 本文档不删除旧的“本地项目客户端编排与 SQLite”方案，旧文档保留为历史实现说明；从本方案通过评审后，产品和架构方向以本文档为准。
 
-当前实施进度：MCP Management Tool Plane 已完成主链路；Local Connector 逻辑 Workspace 路径已抽成共享安全合同；Project Service 已把所有 Project source 固定映射到云端 execution plane；桌面前端新建 Local Workspace Project、Project 列表和真实运行判定已切到云端；客户端不再启动本地 Task Worker，也不再挂载 Chat、Session、Memory、Project Management、Task Board、Task Run 和 Environment Agent 业务 API，只保留 Workspace 文件/Git 与设备能力入口。旧实现代码会在引用清零后继续删除。
+当前实施进度：云端业务编排和 MCP Management Tool Plane 主链路已完成。Project、Session、Message、Task、Memory、Agent 生命周期均由云端持有；ChatOS、Task Runner 与 Project Environment Agent 的模型只连接 MCP Management 聚合 endpoint。Local Connector 不再启动本地 Task Worker，也不再挂载 Chat、Session、Memory、Project Management、Task Board、Task Run 和 Environment Agent 业务 API，只保留 Workspace 文件/Git/代码导航、命令、本地 Skill/Plugin/MCP、Sandbox 和设备控制状态。旧审批 Memory Engine proxy、Memory Policy cache 与云端读取本地模型凭据入口已经删除。Local Command Approval Agent 完整留在设备侧，只读取本地已安装 capability snapshot、只调用本地只读代码工具与 `approval_decision`，不创建云端 MCP Runtime Session、不访问云端 Memory Engine。Task Runner 已停止生成 Harness/Local Connector ephemeral MCP endpoint；Provider、设备、Workspace 与 Sandbox 路由由程序根据权威 Project Execution Context 决定。配置中心参数 `chatos.ui.local_project_creation_enabled` 已控制云端界面是否展示新建本地 Workspace Project 入口。当前剩余工作是全量门禁和云端整体联调。
 
 ---
 
@@ -46,9 +46,9 @@
 
 ## 2. 当前架构判断
 
-### 2.1 当前是双执行平面
+### 2.1 改造前是双执行平面
 
-目前代码把项目的代码位置与 Agent 的执行位置绑定在了一起：
+改造前代码把项目的代码位置与 Agent 的执行位置绑定在了一起：
 
 - Cloud Project：业务数据和执行编排在云端。
 - Local Connector Project：业务数据和执行编排在客户端 SQLite 与 Local Runtime。
@@ -63,9 +63,9 @@
 - chatos/frontend/src/lib/api/localRuntime/ 提供前端本地业务 API。
 - projectsFacade.ts、sessionsFacade.ts、sendMessage.ts 等根据项目或 Session 类型切换云端与本地 API。
 
-### 2.2 当前的核心问题
+### 2.2 改造前的核心问题
 
-客户端已经不再只是 Connector，而成为了第二套 ChatOS Backend：
+改造前客户端已经不再只是 Connector，而成为了第二套 ChatOS Backend：
 
 - 同一套业务需要同时维护云端和客户端实现。
 - 前端到处存在 local/cloud 分流。
@@ -691,10 +691,11 @@ rg "local_runtime|lc_project_|lc_session_|local_runtime_required"
 
 | 区域 | 修改方向 |
 | --- | --- |
-| services/workspace_mcp.rs | 恢复 Local Connector Workspace MCP |
-| services/sandbox_runtime/routing.rs | 恢复 Local Connector Sandbox provider |
+| services/workspace_mcp.rs | 只解析任务能力选择，不保存或构造 Provider endpoint |
+| services/sandbox_runtime/routing.rs | 按权威 Project 状态创建本地或云端 Sandbox，禁止跨 Provider fallback |
 | services/model_runtime_resolver.rs | 不再阻断 Local Workspace Project |
-| Plugin/Skill policy | 按 execution_host 路由本地组件 |
+| MCP Management gateway | 模型只连接聚合 endpoint，由 Runtime Session 冻结真实 Provider |
+| Plugin/Skill policy | 只物化 Agent 的能力集合，真实 execution_host 由 MCP Management 路由 |
 | Run cancellation | 向 Connector 传播本地 execution cancel |
 
 ### 9.4 Project Management Service
@@ -901,7 +902,7 @@ run_id
 ### 13.2 服务集成测试
 
 - ChatOS Backend -> Local Connector Service -> fake Connector 文件读取。
-- Task Runner -> Workspace MCP -> Connector 终端执行。
+- Task Runner -> MCP Management -> Local Connector 终端执行。
 - Project Management Environment Agent -> Local Connector file MCP。
 - Task Runner -> Plugin prepare/execute/cancel。
 - Task Runner -> Local Sandbox create/execute/release。
@@ -959,6 +960,9 @@ run_id
 12. 升级过程不删除 Plugin/Skill、OAuth、凭据或 Sandbox 配置。
 13. Cloud Project 全链路无回归。
 14. 客户端重启后，云端历史和 Run 状态仍可恢复。
+15. Local Command Approval Agent 的模型循环、只读检查、人工审批、白名单、Session Approval 和审批历史完整保留在本机，且不调用云端 MCP 或 Memory Engine。
+16. Agent Prompt 和工具参数不承担 Provider、设备、Workspace、Sandbox、Plugin 或 MCP 路由选择；这些身份由程序冻结并注入。
+17. Runtime Session 与 Provider 调用按 owner、Agent、Project、run、turn、task 和来源消息隔离，任一绑定漂移都 fail closed。
 
 ---
 
@@ -966,7 +970,7 @@ run_id
 
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
-| Task Runner 的旧 Local Connector routing 已被删改 | 核心工具不可用 | 从 0e9823d0^ 选择性前移植并适配当前策略 |
+| Task Runner 残留旧 Workspace endpoint 预路由 | Provider 决策重复、Sandbox 判定错误 | 已删除 Harness/Connector ephemeral endpoint 生成；能力选择与 Provider 路由分别由 Plugin Management 和 MCP Management 负责 |
 | execution_plane 与 source_type 仍被混用 | 云端继续错误阻断 | 先完成模型语义和集中判定函数 |
 | 旧前端与新客户端混用 | 请求不存在的本地 API | 严格发布顺序、最低客户端版本和 Feature Flag |
 | Connector 断线时 mutation 状态不明 | 重复写文件或重复命令 | request_id、状态查询、只读自动重试 |
@@ -986,7 +990,7 @@ run_id
 2. 新建 Local Workspace Project 时显式 execution_plane=cloud。
 3. 前端 Project/Session/Message 统一走云端。
 4. 移除 ChatOS Backend 的本地项目阻断。
-5. 恢复 Task Runner Workspace MCP。
+5. Task Runner 只接入 MCP Management 聚合 endpoint，由网关路由 Workspace MCP。
 6. 验证文件读取、终端执行和云端消息持久化。
 
 第二批提交补齐生产能力：

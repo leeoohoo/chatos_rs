@@ -138,7 +138,6 @@ impl AppConfig {
                 "task-runner",
                 "project-service",
                 "user-service",
-                "local-connector-service",
             ] {
                 if !config.internal_api_secrets.contains_key(caller) {
                     return Err(format!(
@@ -163,7 +162,6 @@ impl AppConfig {
                     "change_me_task_runner_memory_engine_secret",
                     "change_me_project_service_memory_engine_secret",
                     "change_me_user_service_memory_engine_secret",
-                    "change_me_local_connector_memory_engine_secret",
                 ],
             )?;
         }
@@ -185,10 +183,6 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "user-service",
             "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-        ),
-        (
-            "local-connector-service",
-            "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()

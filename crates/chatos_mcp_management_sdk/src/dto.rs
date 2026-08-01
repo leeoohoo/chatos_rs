@@ -72,6 +72,9 @@ pub struct WorkspaceExecutionTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxExecutionTarget {
+    pub provider: SandboxProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing_id: Option<String>,
     pub sandbox_id: String,
     pub lease_id: String,
     #[serde(default)]
@@ -82,11 +85,19 @@ pub struct SandboxExecutionTarget {
 
 impl SandboxExecutionTarget {
     pub fn provider_ref(&self) -> String {
-        format!(
-            "sandbox:{}/lease:{}",
-            self.sandbox_id.trim(),
-            self.lease_id.trim()
-        )
+        match self.provider {
+            SandboxProviderKind::LocalConnector => format!(
+                "sandbox-pairing:{}/sandbox:{}/lease:{}",
+                self.pairing_id.as_deref().unwrap_or_default().trim(),
+                self.sandbox_id.trim(),
+                self.lease_id.trim()
+            ),
+            SandboxProviderKind::Cloud | SandboxProviderKind::None => format!(
+                "sandbox:{}/lease:{}",
+                self.sandbox_id.trim(),
+                self.lease_id.trim()
+            ),
+        }
     }
 }
 
@@ -349,12 +360,24 @@ mod tests {
     #[test]
     fn sandbox_execution_target_provider_ref_contains_only_opaque_ids() {
         let target = SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
             sandbox_id: "sandbox-1".to_string(),
             lease_id: "lease-1".to_string(),
             is_environment: false,
             service_id: None,
         };
         assert_eq!(target.provider_ref(), "sandbox:sandbox-1/lease:lease-1");
+
+        let local = SandboxExecutionTarget {
+            provider: SandboxProviderKind::LocalConnector,
+            pairing_id: Some("pairing-1".to_string()),
+            ..target
+        };
+        assert_eq!(
+            local.provider_ref(),
+            "sandbox-pairing:pairing-1/sandbox:sandbox-1/lease:lease-1"
+        );
     }
 
     #[test]

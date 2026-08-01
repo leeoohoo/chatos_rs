@@ -46,7 +46,7 @@ pub(in crate::api) async fn get_project_runtime_environment(
         .map_err(ApiError::bad_request)?;
     let mut environment_changed =
         replace_legacy_internal_routing_summary(&mut environment, images.as_slice());
-    if enforce_project_runtime_boundary(project.execution_plane, &mut environment, &mut images) {
+    if enforce_project_runtime_boundary(&project, &mut environment, &mut images) {
         environment_changed = true;
     }
     if refresh_project_runtime_compose_config(&project_id, &mut environment, images.as_slice())

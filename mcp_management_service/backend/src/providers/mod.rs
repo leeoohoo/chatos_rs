@@ -7,6 +7,7 @@ mod cloud_stdio;
 mod embedded;
 mod external_http;
 mod local_connector;
+mod local_sandbox;
 mod plugin_cloud;
 mod plugin_components;
 mod plugin_local;
@@ -33,6 +34,7 @@ pub(crate) use external_http::{
     header_is_managed_or_unsafe as external_http_header_is_managed_or_unsafe,
 };
 use local_connector::LocalConnectorProvider;
+use local_sandbox::LocalSandboxProvider;
 use plugin_cloud::PluginCloudProvider;
 use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
@@ -77,6 +79,7 @@ pub enum ProviderCancelOutcome {
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
+    local_sandbox: LocalSandboxProvider,
     plugin_cloud: PluginCloudProvider,
     plugin_components: PluginComponentProvider,
     plugin_local: PluginLocalProvider,
@@ -118,6 +121,12 @@ impl ProviderDispatcher {
         );
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
+                local_connector_service_base_url.clone(),
+                runtime.downstream_request_timeout,
+                local_connector_internal_secret.clone(),
+                runtime.response_limit_bytes,
+            )?,
+            local_sandbox: LocalSandboxProvider::new(
                 local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,
                 local_connector_internal_secret.clone(),
@@ -334,6 +343,42 @@ impl ProviderDispatcher {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_task_runner_routes(
+        &self,
+        routes: &mut [ResolvedMcpRoute],
+        runtime_session_id: &str,
+        owner_user_id: &str,
+        agent_key: SystemAgentKey,
+        project_id: &str,
+        run_id: Option<&str>,
+        turn_id: Option<&str>,
+        task_id: Option<&str>,
+        source_session_id: Option<&str>,
+        source_user_message_id: Option<&str>,
+        default_model_config_id: Option<&str>,
+        expected_project_task_ids: &[String],
+        expires_at_unix: i64,
+    ) -> std::collections::HashMap<String, Vec<Value>> {
+        self.task_runner
+            .prepare_routes(
+                routes,
+                runtime_session_id,
+                owner_user_id,
+                agent_key,
+                project_id,
+                run_id,
+                turn_id,
+                task_id,
+                source_session_id,
+                source_user_message_id,
+                default_model_config_id,
+                expected_project_task_ids,
+                expires_at_unix,
+            )
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare_cloud_stdio_routes(
         &self,
         capabilities: &chatos_plugin_management_sdk::ResolvedAgentCapabilities,
@@ -394,7 +439,9 @@ impl ProviderDispatcher {
                     || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => {
-                self.local_connector.supports(route) || self.sandbox_images.supports(route)
+                self.local_connector.supports(route)
+                    || self.local_sandbox.supports(route)
+                    || self.sandbox_images.supports(route)
             }
             McpProviderKind::CloudSandbox => {
                 self.cloud_sandbox.supports(route) || self.sandbox_images.supports(route)
@@ -413,7 +460,9 @@ impl ProviderDispatcher {
     }
 
     pub fn requires_sandbox_target(&self, route: &ResolvedMcpRoute) -> bool {
-        self.cloud_sandbox.supports(route) || self.cloud_stdio.supports(route)
+        self.cloud_sandbox.supports(route)
+            || self.local_sandbox.supports(route)
+            || self.cloud_stdio.supports(route)
     }
 
     pub fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
@@ -423,7 +472,9 @@ impl ProviderDispatcher {
                     || self.task_runner.supports(route)
                     || self.chatos.supports(route)
             }
-            McpProviderKind::LocalConnector => self.local_connector.supports(route),
+            McpProviderKind::LocalConnector => {
+                self.local_connector.supports(route) || self.local_sandbox.supports(route)
+            }
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
             McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
@@ -440,9 +491,28 @@ impl ProviderDispatcher {
         project_id: &str,
         run_id: Option<&str>,
     ) -> Result<(), ProviderCallError> {
-        self.cloud_sandbox
-            .validate_target(target, owner_user_id, project_id, run_id)
-            .await
+        match target.provider {
+            chatos_mcp_management_sdk::SandboxProviderKind::Cloud => {
+                self.cloud_sandbox
+                    .validate_target(target, owner_user_id, project_id, run_id)
+                    .await
+            }
+            chatos_mcp_management_sdk::SandboxProviderKind::LocalConnector => {
+                self.local_sandbox
+                    .validate_target(target, owner_user_id, project_id, run_id)
+                    .await
+            }
+            chatos_mcp_management_sdk::SandboxProviderKind::None => Err(
+                ProviderCallError::provider_unavailable("sandbox target provider is not resolved"),
+            ),
+        }
+    }
+
+    pub async fn resolve_local_sandbox_pairing(
+        &self,
+        context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+    ) -> Result<Option<String>, ProviderCallError> {
+        self.local_sandbox.resolve_active_pairing(context).await
     }
 
     pub async fn call_tool(
@@ -504,6 +574,17 @@ impl ProviderDispatcher {
             }
             McpProviderKind::LocalConnector if self.local_connector.supports(route) => {
                 self.local_connector
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
+                    .await
+            }
+            McpProviderKind::LocalConnector if self.local_sandbox.supports(route) => {
+                self.local_sandbox
                     .call_tool(
                         snapshot,
                         route,
@@ -629,6 +710,11 @@ impl ProviderDispatcher {
                 }
                 McpProviderKind::LocalConnector if self.local_connector.supports(route) => {
                     self.local_connector
+                        .cancel_invocation(snapshot, route, invocation_id)
+                        .await
+                }
+                McpProviderKind::LocalConnector if self.local_sandbox.supports(route) => {
+                    self.local_sandbox
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
                 }

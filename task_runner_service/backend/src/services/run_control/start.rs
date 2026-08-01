@@ -148,15 +148,6 @@ impl RunService {
         let mut runtime_task = task.clone();
         if let Some(policy) = capability_policy.as_ref() {
             policy.apply_to_task(&mut runtime_task)?;
-            runtime_task = task_with_runtime_mcp_routing_authoritative(
-                &self.config,
-                &self.store,
-                runtime_task,
-            )
-            .await?;
-        } else {
-            runtime_task =
-                task_with_runtime_mcp_routing(&self.config, &self.store, runtime_task).await?;
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;

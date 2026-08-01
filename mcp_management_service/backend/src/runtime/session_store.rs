@@ -805,6 +805,8 @@ mod tests {
             default_model_config_id: Some("model-1".to_string()),
             expected_project_task_ids: vec!["task-1".to_string()],
             sandbox_target: Some(SandboxExecutionTarget {
+                provider: SandboxProviderKind::Cloud,
+                pairing_id: None,
                 sandbox_id: "sandbox-1".to_string(),
                 lease_id: "lease-1".to_string(),
                 is_environment: false,

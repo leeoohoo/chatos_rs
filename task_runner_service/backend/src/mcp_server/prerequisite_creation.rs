@@ -88,7 +88,6 @@ impl TaskRunnerMcpService {
                 &existing_project_task_ids,
             )?;
             return Ok(json!({
-                "execution_plane": "cloud",
                 "awaiting_confirmation": true,
                 "idempotent_reused": true,
                 "created_tasks": existing.iter().map(|task| {
@@ -227,7 +226,6 @@ impl TaskRunnerMcpService {
         }
 
         Ok(json!({
-            "execution_plane": "cloud",
             "awaiting_confirmation": true,
             "created_tasks": created,
             "dependency_edges": result.get("dependency_edges").cloned().unwrap_or_else(|| json!([])),

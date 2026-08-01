@@ -353,11 +353,7 @@ impl ProjectEnvironmentToolProvider {
                 selected_service_kinds,
                 &mut image_records,
             )?;
-            enforce_project_runtime_boundary(
-                self.project.execution_plane,
-                &mut environment,
-                &mut image_records,
-            );
+            enforce_project_runtime_boundary(&self.project, &mut environment, &mut image_records);
         } else {
             environment.execution_service_id = None;
         }

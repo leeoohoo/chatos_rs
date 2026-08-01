@@ -37,11 +37,23 @@ pub(super) async fn resolve_runtime_session(
     let sandbox_target = normalize_sandbox_target(request.sandbox_target.clone())?;
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
     let contact_agent_id = normalized(request.contact_agent_id.clone());
-    let project_context = state
+    let expected_project_task_ids = normalized_unique_items(
+        request.expected_project_task_ids.clone(),
+        "expected_project_task_ids",
+        200,
+    )?;
+    let mut project_context = state
         .project_context_client
         .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
+    if project_context.sandbox_provider == SandboxProviderKind::LocalConnector {
+        project_context.sandbox_pairing_id = state
+            .providers
+            .resolve_local_sandbox_pairing(&project_context)
+            .await
+            .map_err(|error| ApiError::conflict(error.message))?;
+    }
     validate_context_overrides(&request, &project_context)?;
     let device_id = project_context
         .workspace
@@ -91,14 +103,14 @@ pub(super) async fn resolve_runtime_session(
         contact_agent_id.as_deref(),
         request.source_session_id.as_deref(),
     );
-    bind_cloud_sandbox_routes(
+    bind_runtime_sandbox_routes(
         route_response.routes.as_mut_slice(),
         sandbox_target.as_ref(),
     );
-    bind_cloud_stdio_routes(
-        route_response.routes.as_mut_slice(),
-        sandbox_target.as_ref(),
-    );
+    let cloud_sandbox_target = sandbox_target
+        .as_ref()
+        .filter(|target| target.provider == SandboxProviderKind::Cloud);
+    bind_cloud_stdio_routes(route_response.routes.as_mut_slice(), cloud_sandbox_target);
     bind_sandbox_image_routes(route_response.routes.as_mut_slice(), &project_context);
     let plugin_cloud_requires_sandbox = route_response.routes.iter().any(|route| {
         route.provider_kind == McpProviderKind::PluginCloud
@@ -144,12 +156,30 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
+    let task_runner_tool_snapshots = state
+        .providers
+        .prepare_task_runner_routes(
+            route_response.routes.as_mut_slice(),
+            session_id.as_str(),
+            request.owner_user_id.trim(),
+            agent_key,
+            request.project_id.trim(),
+            request.run_id.as_deref(),
+            request.turn_id.as_deref(),
+            request.task_id.as_deref(),
+            request.source_session_id.as_deref(),
+            request.source_user_message_id.as_deref(),
+            request.default_model_config_id.as_deref(),
+            expected_project_task_ids.as_slice(),
+            expires_at_unix,
+        )
+        .await;
     let (mut cloud_stdio_bindings, cloud_stdio_tool_snapshots) = state
         .providers
         .prepare_cloud_stdio_routes(
             &capabilities,
             route_response.routes.as_mut_slice(),
-            sandbox_target.as_ref(),
+            cloud_sandbox_target,
             session_id.as_str(),
             request.owner_user_id.trim(),
             request.project_id.trim(),
@@ -176,7 +206,7 @@ pub(super) async fn resolve_runtime_session(
                 &materialized.plugin_bindings,
                 route_response.routes.as_mut_slice(),
                 &project_context,
-                sandbox_target.as_ref(),
+                cloud_sandbox_target,
                 session_id.as_str(),
                 request.owner_user_id.trim(),
                 request.project_id.trim(),
@@ -207,11 +237,12 @@ pub(super) async fn resolve_runtime_session(
     let cleanup_plugin_local_bindings = plugin_local_bindings.clone();
     let cleanup_plugin_local_tool_component_bindings = plugin_local_tool_component_bindings.clone();
     let cleanup_cloud_stdio_bindings = cloud_stdio_bindings.clone();
-    let cleanup_sandbox_target = sandbox_target.clone();
+    let cleanup_sandbox_target = cloud_sandbox_target.cloned();
     let cleanup_project_id = request.project_id.trim().to_string();
     let cleanup_run_id = request.run_id.clone();
     let result = async {
         apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
+        apply_live_tool_snapshots(&mut capabilities, task_runner_tool_snapshots);
         apply_live_tool_snapshots(&mut capabilities, cloud_stdio_tool_snapshots);
         let mut external_http_bindings = state
             .providers
@@ -237,11 +268,6 @@ pub(super) async fn resolve_runtime_session(
             tool_result.tools.as_slice(),
         )
         .map_err(ApiError::internal)?;
-        let expected_project_task_ids = normalized_unique_items(
-            request.expected_project_task_ids.clone(),
-            "expected_project_task_ids",
-            200,
-        )?;
         validate_task_runner_provider_context(
             agent_key,
             &request,
@@ -604,10 +630,7 @@ fn validate_task_runner_provider_context(
     if has_route(SystemMcpKey::TaskProcessLog) {
         if !matches!(
             agent_key,
-            SystemAgentKey::TaskRunnerPlanPhase
-                | SystemAgentKey::TaskRunnerLocalPlanPhase
-                | SystemAgentKey::TaskRunnerRunPhase
-                | SystemAgentKey::TaskRunnerLocalRunPhase
+            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
         ) {
             return Err(ApiError::conflict(
                 "Task Process Log MCP is only valid for Task Runner phase Agents",
@@ -627,10 +650,7 @@ fn validate_task_runner_provider_context(
     if has_task_runner_ask_user_route {
         if !matches!(
             agent_key,
-            SystemAgentKey::TaskRunnerPlanPhase
-                | SystemAgentKey::TaskRunnerLocalPlanPhase
-                | SystemAgentKey::TaskRunnerRunPhase
-                | SystemAgentKey::TaskRunnerLocalRunPhase
+            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
         ) {
             return Err(ApiError::conflict(
                 "Task Runner Ask User MCP is only valid for Task Runner phase Agents",
@@ -683,10 +703,7 @@ fn bind_agent_callback_routes(routes: &mut [ResolvedMcpRoute], agent_key: System
         .filter(|route| route.resource_id == ask_user_resource_id)
     {
         match agent_key {
-            SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerLocalPlanPhase
-            | SystemAgentKey::TaskRunnerRunPhase
-            | SystemAgentKey::TaskRunnerLocalRunPhase => {
+            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase => {
                 route.provider_kind = McpProviderKind::InternalService;
                 route.provider_ref = Some("task-runner".to_string());
                 route.reason =
@@ -772,6 +789,7 @@ fn normalize_sandbox_target(
     };
     target.sandbox_id = target.sandbox_id.trim().to_string();
     target.lease_id = target.lease_id.trim().to_string();
+    target.pairing_id = normalized(target.pairing_id);
     target.service_id = normalized(target.service_id);
     if target.sandbox_id.is_empty() || target.lease_id.is_empty() {
         return Err(ApiError::bad_request(
@@ -788,21 +806,66 @@ fn normalize_sandbox_target(
             "sandbox service_id is only valid for an environment target",
         ));
     }
+    match target.provider {
+        SandboxProviderKind::LocalConnector => {
+            if target.pairing_id.is_none() {
+                return Err(ApiError::bad_request(
+                    "Local Connector sandbox target requires pairing_id",
+                ));
+            }
+            if target.is_environment {
+                return Err(ApiError::bad_request(
+                    "Local Connector sandbox target does not support cloud environment services",
+                ));
+            }
+        }
+        SandboxProviderKind::Cloud => {
+            if target.pairing_id.is_some() {
+                return Err(ApiError::bad_request(
+                    "cloud sandbox target cannot contain pairing_id",
+                ));
+            }
+        }
+        SandboxProviderKind::None => {
+            return Err(ApiError::bad_request(
+                "sandbox_target requires a resolved provider",
+            ));
+        }
+    }
     Ok(Some(target))
 }
 
-fn bind_cloud_sandbox_routes(
+fn bind_runtime_sandbox_routes(
     routes: &mut [ResolvedMcpRoute],
     target: Option<&SandboxExecutionTarget>,
 ) {
-    for route in routes.iter_mut().filter(|route| {
-        route.provider_kind == McpProviderKind::CloudSandbox
-            && route.resource_id
-                != chatos_mcp::system_mcp_descriptor(SystemMcpKey::SandboxImages).resource_id
-    }) {
+    let runtime_resource_ids = [
+        SystemMcpKey::CodeMaintainerRead,
+        SystemMcpKey::CodeMaintainerWrite,
+        SystemMcpKey::TerminalController,
+    ]
+    .map(|key| chatos_mcp::system_mcp_descriptor(key).resource_id);
+    for route in routes
+        .iter_mut()
+        .filter(|route| runtime_resource_ids.contains(&route.resource_id.as_str()))
+    {
         if let Some(target) = target {
+            route.provider_kind = match target.provider {
+                SandboxProviderKind::LocalConnector => McpProviderKind::LocalConnector,
+                SandboxProviderKind::Cloud => McpProviderKind::CloudSandbox,
+                SandboxProviderKind::None => McpProviderKind::Unavailable,
+            };
             route.provider_ref = Some(target.provider_ref());
-        } else {
+            route.reason = match target.provider {
+                SandboxProviderKind::LocalConnector => {
+                    "runtime workspace is pinned to the Local Connector sandbox lease".to_string()
+                }
+                SandboxProviderKind::Cloud => {
+                    "runtime workspace is pinned to the cloud Sandbox lease".to_string()
+                }
+                SandboxProviderKind::None => "sandbox target provider is unresolved".to_string(),
+            };
+        } else if route.provider_kind == McpProviderKind::CloudSandbox {
             route.provider_kind = McpProviderKind::Unavailable;
             route.provider_ref = None;
             route.reason = "Cloud Sandbox route requires a runtime sandbox lease".to_string();
@@ -923,13 +986,29 @@ fn validate_context_overrides(
             ));
         }
     }
-    if request.sandbox_target.is_some()
-        && context.sandbox_provider != SandboxProviderKind::Cloud
-        && context.workspace_provider != WorkspaceProviderKind::CloudSandbox
-    {
-        return Err(ApiError::conflict(
-            "sandbox target is not authorized by Project Context",
-        ));
+    if let Some(target) = request.sandbox_target.as_ref() {
+        if request.requested_sandbox_provider != Some(target.provider) {
+            return Err(ApiError::conflict(
+                "sandbox target provider does not match the program-resolved provider",
+            ));
+        }
+        let authorized = match target.provider {
+            SandboxProviderKind::LocalConnector => {
+                context.sandbox_provider == SandboxProviderKind::LocalConnector
+                    && context.sandbox_pairing_id.as_deref().map(str::trim)
+                        == target.pairing_id.as_deref().map(str::trim)
+            }
+            SandboxProviderKind::Cloud => {
+                context.sandbox_provider == SandboxProviderKind::Cloud
+                    || context.workspace_provider == WorkspaceProviderKind::CloudSandbox
+            }
+            SandboxProviderKind::None => false,
+        };
+        if !authorized {
+            return Err(ApiError::conflict(
+                "sandbox target is not authorized by Project Context",
+            ));
+        }
     }
     Ok(())
 }
@@ -1015,6 +1094,8 @@ mod tests {
         request.requested_device_id = None;
         request.requested_sandbox_provider = Some(SandboxProviderKind::Cloud);
         request.sandbox_target = Some(SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
             sandbox_id: "sandbox-1".to_string(),
             lease_id: "lease-1".to_string(),
             is_environment: false,
@@ -1024,6 +1105,50 @@ mod tests {
         context.workspace_provider = WorkspaceProviderKind::CloudSandbox;
         context.workspace = None;
         validate_context_overrides(&request, &context).unwrap();
+    }
+
+    #[test]
+    fn local_sandbox_target_requires_the_authoritative_pairing() {
+        let mut request = request();
+        request.requested_sandbox_provider = Some(SandboxProviderKind::LocalConnector);
+        request.sandbox_target = Some(SandboxExecutionTarget {
+            provider: SandboxProviderKind::LocalConnector,
+            pairing_id: Some("pairing-1".to_string()),
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        });
+        let mut context = context();
+        context.sandbox_provider = SandboxProviderKind::LocalConnector;
+        context.sandbox_pairing_id = Some("pairing-1".to_string());
+        validate_context_overrides(&request, &context).expect("the exact pairing must be accepted");
+
+        context.sandbox_pairing_id = Some("pairing-2".to_string());
+        assert!(validate_context_overrides(&request, &context).is_err());
+    }
+
+    #[test]
+    fn sandbox_target_provider_shape_fails_closed() {
+        let local_without_pairing = SandboxExecutionTarget {
+            provider: SandboxProviderKind::LocalConnector,
+            pairing_id: None,
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        };
+        assert!(normalize_sandbox_target(Some(local_without_pairing)).is_err());
+
+        let cloud_with_pairing = SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: Some("pairing-1".to_string()),
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        };
+        assert!(normalize_sandbox_target(Some(cloud_with_pairing)).is_err());
     }
 
     #[test]
@@ -1274,15 +1399,68 @@ mod tests {
             reason: "test".to_string(),
         }];
         let target = SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
             sandbox_id: "sandbox-1".to_string(),
             lease_id: "lease-1".to_string(),
             is_environment: false,
             service_id: None,
         };
-        bind_cloud_sandbox_routes(routes.as_mut_slice(), Some(&target));
+        bind_runtime_sandbox_routes(routes.as_mut_slice(), Some(&target));
         assert_eq!(
             routes[0].provider_ref.as_deref(),
             Some("sandbox:sandbox-1/lease:lease-1")
+        );
+    }
+
+    #[test]
+    fn local_runtime_sandbox_rebinds_only_workspace_tools_to_the_exact_lease() {
+        let mut routes = vec![
+            system_route(SystemMcpKey::CodeMaintainerRead),
+            system_route(SystemMcpKey::CodeMaintainerWrite),
+            system_route(SystemMcpKey::TerminalController),
+            system_route(SystemMcpKey::BrowserTools),
+        ];
+        for route in routes.iter_mut() {
+            route.provider_kind = McpProviderKind::LocalConnector;
+            route.provider_ref = Some("device:device-1/workspace:workspace-1".to_string());
+        }
+        let target = SandboxExecutionTarget {
+            provider: SandboxProviderKind::LocalConnector,
+            pairing_id: Some("pairing-1".to_string()),
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        };
+
+        bind_runtime_sandbox_routes(routes.as_mut_slice(), Some(&target));
+
+        for route in &routes[..3] {
+            assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
+            assert_eq!(
+                route.provider_ref.as_deref(),
+                Some("sandbox-pairing:pairing-1/sandbox:sandbox-1/lease:lease-1")
+            );
+        }
+        assert_eq!(
+            routes[3].provider_ref.as_deref(),
+            Some("device:device-1/workspace:workspace-1")
+        );
+    }
+
+    #[test]
+    fn local_workspace_routes_remain_device_bound_without_a_sandbox_target() {
+        let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
+        routes[0].provider_kind = McpProviderKind::LocalConnector;
+        routes[0].provider_ref = Some("device:device-1/workspace:workspace-1".to_string());
+
+        bind_runtime_sandbox_routes(routes.as_mut_slice(), None);
+
+        assert_eq!(routes[0].provider_kind, McpProviderKind::LocalConnector);
+        assert_eq!(
+            routes[0].provider_ref.as_deref(),
+            Some("device:device-1/workspace:workspace-1")
         );
     }
 
@@ -1292,7 +1470,7 @@ mod tests {
         let mut context = context();
         context.sandbox_provider = SandboxProviderKind::Cloud;
 
-        bind_cloud_sandbox_routes(routes.as_mut_slice(), None);
+        bind_runtime_sandbox_routes(routes.as_mut_slice(), None);
         bind_sandbox_image_routes(routes.as_mut_slice(), &context);
 
         assert_eq!(routes[0].provider_kind, McpProviderKind::CloudSandbox);
@@ -1340,13 +1518,15 @@ mod tests {
         routes[0].provider_ref =
             Some(crate::providers::sandbox_images_cloud_provider_ref().to_string());
         let target = SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
             sandbox_id: "sandbox-1".to_string(),
             lease_id: "lease-1".to_string(),
             is_environment: false,
             service_id: None,
         };
 
-        bind_cloud_sandbox_routes(routes.as_mut_slice(), Some(&target));
+        bind_runtime_sandbox_routes(routes.as_mut_slice(), Some(&target));
 
         assert_eq!(
             routes[0].provider_ref.as_deref(),

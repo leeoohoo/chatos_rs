@@ -8,6 +8,7 @@ use chatos_mcp_management_sdk::{
     ExecutionPlane, ProjectExecutionContext, SandboxProviderKind, WorkspaceExecutionTarget,
     WorkspaceProviderKind,
 };
+use chatos_project_execution::parse_local_connector_workspace_root;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -19,8 +20,6 @@ use crate::models::{
     ProjectRecord, ProjectRuntimeEnvironmentRecord, ProjectSourceType, RuntimeEnvironmentProvider,
 };
 use crate::state::AppState;
-
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct ExecutionContextQuery {
@@ -153,47 +152,12 @@ fn resolve_workspace_provider(
 
 fn parse_local_connector_workspace(root_path: &str) -> Option<WorkspaceExecutionTarget> {
     // Compatibility import only. New consumers read this normalized context and never parse roots.
-    let rest = root_path.trim().strip_prefix(LOCAL_CONNECTOR_ROOT_PREFIX)?;
-    let mut parts = rest.splitn(3, '/');
-    let device_id = required_segment(parts.next()?)?;
-    let workspace_id = required_segment(parts.next()?)?;
-    let relative_root = match parts.next() {
-        Some(value) if !value.trim_matches('/').is_empty() => Some(decode_relative_root(value)?),
-        Some(_) | None => None,
-    };
+    let workspace = parse_local_connector_workspace_root(root_path)?;
     Some(WorkspaceExecutionTarget {
-        device_id: Some(device_id),
-        workspace_id,
-        relative_root,
+        device_id: Some(workspace.device_id),
+        workspace_id: workspace.workspace_id,
+        relative_root: workspace.relative_path,
     })
-}
-
-fn required_segment(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()
-        && !matches!(value, "." | "..")
-        && !value
-            .chars()
-            .any(|value| value == '\\' || value.is_control()))
-    .then(|| value.to_string())
-}
-
-fn decode_relative_root(value: &str) -> Option<String> {
-    let mut segments = Vec::new();
-    for value in value.split('/').filter(|value| !value.trim().is_empty()) {
-        let decoded = urlencoding::decode(value).ok()?.into_owned();
-        let decoded = decoded.trim();
-        if decoded.is_empty()
-            || matches!(decoded, "." | "..")
-            || decoded
-                .chars()
-                .any(|value| matches!(value, '/' | '\\') || value.is_control())
-        {
-            return None;
-        }
-        segments.push(decoded.to_string());
-    }
-    (!segments.is_empty()).then(|| segments.join("/"))
 }
 
 fn execution_context_revision(

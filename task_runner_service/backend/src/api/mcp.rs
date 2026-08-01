@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use super::internal_auth::{
     require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
+    MCP_TOOLS_LIST_SCOPE,
 };
 
 const PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES: usize = 1024 * 1024;
@@ -348,11 +349,16 @@ pub(super) async fn mcp_management_entrypoint(
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = request.id.clone().unwrap_or(Value::Null);
+    let required_scope = if request.method == chatos_mcp_service::METHOD_TOOLS_LIST {
+        MCP_TOOLS_LIST_SCOPE
+    } else {
+        MCP_TOOLS_CALL_SCOPE
+    };
     if let Err(error) = require_task_runner_internal_request(
         &state.config,
         &headers,
         &[MCP_MANAGEMENT_CALLER],
-        MCP_TOOLS_CALL_SCOPE,
+        required_scope,
     ) {
         return Json(task_runner_mcp_error(id, -32001, error.message));
     }
@@ -364,6 +370,18 @@ pub(super) async fn mcp_management_entrypoint(
         Ok(system_key) => system_key,
         Err(message) => return Json(task_runner_mcp_error(id, -32602, message)),
     };
+    if request.method == chatos_mcp_service::METHOD_TOOLS_LIST {
+        return Json(match system_key {
+            chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService => {
+                dispatch_bound_task_runner_tool(&state, request, &binding).await
+            }
+            _ => task_runner_mcp_error(
+                id,
+                -32601,
+                "Task Runner internal MCP Provider only exposes dynamic tools/list for Task Runner Service MCP",
+            ),
+        });
+    }
     if request.method != chatos_mcp_service::METHOD_TOOLS_CALL {
         return Json(task_runner_mcp_error(
             id,
@@ -459,10 +477,7 @@ async fn dispatch_bound_task_process_log(
     let id = request.id.unwrap_or(Value::Null);
     if !matches!(
         binding.agent_key,
-        SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerLocalPlanPhase
-            | SystemAgentKey::TaskRunnerRunPhase
-            | SystemAgentKey::TaskRunnerLocalRunPhase
+        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
     ) {
         return task_runner_mcp_error(
             id,
@@ -574,10 +589,7 @@ async fn dispatch_bound_ask_user(
     let id = request.id.unwrap_or(Value::Null);
     if !matches!(
         binding.agent_key,
-        SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerLocalPlanPhase
-            | SystemAgentKey::TaskRunnerRunPhase
-            | SystemAgentKey::TaskRunnerLocalRunPhase
+        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
     ) {
         return task_runner_mcp_error(
             id,
@@ -731,15 +743,9 @@ fn task_matches_bound_agent(
         task.mcp_config.requires_execution,
     );
     if planning {
-        matches!(
-            agent_key,
-            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerLocalPlanPhase
-        )
+        agent_key == SystemAgentKey::TaskRunnerPlanPhase
     } else {
-        matches!(
-            agent_key,
-            SystemAgentKey::TaskRunnerRunPhase | SystemAgentKey::TaskRunnerLocalRunPhase
-        )
+        agent_key == SystemAgentKey::TaskRunnerRunPhase
     }
 }
 

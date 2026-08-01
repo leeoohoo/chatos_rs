@@ -7,7 +7,6 @@ use std::time::Duration;
 use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpManagementClient, McpManagementClientConfig,
     McpManagementRuntimeSessionHandle, RuntimeSessionResponse, SandboxExecutionTarget,
-    SandboxProviderKind,
 };
 use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::SystemMcpKey;
@@ -36,6 +35,9 @@ pub(super) async fn resolve_mcp_management_gateway(
     let config = McpManagementClientConfig::from_env("task-runner").await;
     let client = McpManagementClient::new(config)
         .map_err(|err| format!("initialize MCP Management client failed: {err}"))?;
+    let sandbox_provider = sandbox_context
+        .map(SandboxRuntimeContext::provider_kind)
+        .transpose()?;
     let request = CreateRuntimeSessionRequest {
         owner_user_id,
         agent_key: agent_key.as_str().to_string(),
@@ -55,8 +57,10 @@ pub(super) async fn resolve_mcp_management_gateway(
             "zh-CN".to_string()
         }),
         requested_device_id: None,
-        requested_sandbox_provider: sandbox_context.map(|_| SandboxProviderKind::Cloud),
+        requested_sandbox_provider: sandbox_provider,
         sandbox_target: sandbox_context.map(|context| SandboxExecutionTarget {
+            provider: sandbox_provider.expect("sandbox context provider was resolved"),
+            pairing_id: context.local_connector_pairing_id.clone(),
             sandbox_id: context.sandbox_id.clone(),
             lease_id: context.lease_id.clone(),
             is_environment: context.is_environment,

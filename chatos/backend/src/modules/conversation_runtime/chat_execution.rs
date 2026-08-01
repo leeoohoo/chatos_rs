@@ -21,7 +21,6 @@ use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::ai_settings::request_body_limit_bytes_from_settings;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::modules::conversation_runtime::task_board::{
     build_task_turn_follow_up_directive, build_task_turn_follow_up_message,
     build_task_turn_review_retry_guidance, parse_task_turn_review_outcome,
@@ -625,63 +624,23 @@ fn push_optional_system_prompt(items: &mut Vec<Value>, content: Option<&str>) {
 fn build_workspace_global_prompt(
     runtime_context: &ResolvedConversationRuntimeContext,
 ) -> Option<String> {
-    let workspace_root = normalize_prompt_text(runtime_context.workspace_root.as_deref());
-    let project_root = normalize_prompt_text(runtime_context.resolved_project_root.as_deref());
-    let project_id = normalize_prompt_text(runtime_context.resolved_project_id.as_deref())
-        .filter(|value| *value != PUBLIC_PROJECT_ID);
-    let project_name = normalize_prompt_text(runtime_context.resolved_project_name.as_deref());
-    let project_source =
-        normalize_prompt_text(runtime_context.resolved_project_source_type.as_deref());
-    if workspace_root.is_none()
-        && project_root.is_none()
-        && project_id.is_none()
-        && project_name.is_none()
-    {
-        return None;
-    }
+    let project_name = normalize_prompt_text(runtime_context.resolved_project_name.as_deref())?;
 
     let mut lines = if runtime_context.internal_context_locale.is_english() {
         vec!["[Current Project And Runtime Context]".to_string()]
     } else {
         vec!["[当前项目与运行上下文]".to_string()]
     };
-    if let Some(project_name) = project_name {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current project name: {project_name}")
-        } else {
-            format!("当前项目名称：{project_name}")
-        });
-    }
-    if let Some(project_id) = project_id {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current project id: {project_id}")
-        } else {
-            format!("当前项目 ID：{project_id}")
-        });
-    }
-    if let Some(project_source) = project_source {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current project source type: {project_source}")
-        } else {
-            format!("当前项目来源类型：{project_source}")
-        });
-    }
-    if let Some(workspace_root) = workspace_root {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current workspace root: {workspace_root}")
-        } else {
-            format!("当前工作目录：{workspace_root}")
-        });
-    }
-    if let Some(project_root) = project_root {
-        if Some(project_root) != normalize_prompt_text(runtime_context.workspace_root.as_deref()) {
-            lines.push(if runtime_context.internal_context_locale.is_english() {
-                format!("Current project root: {project_root}")
-            } else {
-                format!("当前项目目录：{project_root}")
-            });
-        }
-    }
+    lines.push(if runtime_context.internal_context_locale.is_english() {
+        format!("Current project name: {project_name}")
+    } else {
+        format!("当前项目名称：{project_name}")
+    });
+    lines.push(if runtime_context.internal_context_locale.is_english() {
+        "All project tool routing is already bound by the program. Do not ask for or infer provider, device, workspace, sandbox, lease, or connector identifiers.".to_string()
+    } else {
+        "所有项目工具路由均已由程序绑定。不得向用户索取或自行猜测 Provider、设备、Workspace、Sandbox、租约或 Connector 标识。".to_string()
+    });
     Some(lines.join("\n"))
 }
 
@@ -718,8 +677,6 @@ pub fn build_agent_chat_options(
     prefixed_input_items: Vec<Value>,
     input: ChatExecutionInput,
 ) -> ChatosAgentExecutionOptions {
-    let use_codex_gateway_mcp_passthrough =
-        effective_codex_gateway_mcp_passthrough(model_runtime, runtime_context);
     let mut shared_runtime_callbacks = shared_runtime_callbacks_from_chatos(&input.callbacks);
     if !model_runtime.effective_reasoning {
         shared_runtime_callbacks.on_thinking = None;
@@ -734,16 +691,11 @@ pub fn build_agent_chat_options(
         max_task_follow_up_rounds: task_follow_up_max_rounds_from_settings(effective_settings),
         task_turn: Arc::clone(&task_turn),
     }) as Arc<dyn RuntimeLifecycleHook>;
-    let request_cwd = if use_codex_gateway_mcp_passthrough {
-        runtime_context.local_project_workspace_root.clone()
-    } else {
-        None
-    };
     let shared_model_config = shared_model_runtime_config_from_resolved(model_runtime)
         .with_instructions(compose_agent_instructions(runtime_context, model_runtime))
         .with_max_output_tokens(input.max_tokens)
         .with_prompt_cache_key(Some(session_id.to_string()))
-        .with_request_cwd(request_cwd.clone())
+        .with_request_cwd(None)
         .with_prompt_cache_retention(true)
         .with_request_body_limit_bytes(Some(request_body_limit_bytes_from_settings(
             effective_settings,

@@ -205,7 +205,6 @@ pub(super) async fn execute_requirement_inner(
     )
     .await?;
     let planner_prompt = build_requirement_execution_planner_prompt(
-        ExecutionPlane::Cloud,
         project.id.as_str(),
         &root_requirement,
         &requirement_items,

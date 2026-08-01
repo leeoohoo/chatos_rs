@@ -175,20 +175,86 @@ pub fn replace_legacy_internal_routing_summary(
 }
 
 pub fn enforce_project_runtime_boundary(
-    execution_plane: ProjectExecutionPlane,
+    project: &ProjectRecord,
     environment: &mut ProjectRuntimeEnvironmentRecord,
     images: &mut Vec<ProjectRuntimeEnvironmentImageRecord>,
 ) -> bool {
     let mut changed = false;
-    if execution_plane == ProjectExecutionPlane::Cloud && environment.sandbox_enabled {
-        if environment.sandbox_provider != RuntimeEnvironmentProvider::CloudSandboxManager {
-            environment.sandbox_provider = RuntimeEnvironmentProvider::CloudSandboxManager;
+    if !environment.sandbox_enabled {
+        if environment.sandbox_provider != RuntimeEnvironmentProvider::None {
+            environment.sandbox_provider = RuntimeEnvironmentProvider::None;
             changed = true;
         }
-        if environment.file_provider != RuntimeEnvironmentProvider::Harness {
-            environment.file_provider = RuntimeEnvironmentProvider::Harness;
+        if environment.file_provider != RuntimeEnvironmentProvider::None {
+            environment.file_provider = RuntimeEnvironmentProvider::None;
             changed = true;
         }
+        if !images.is_empty() {
+            images.clear();
+            changed = true;
+        }
+        if environment.execution_service_id.take().is_some() {
+            changed = true;
+        }
+        if changed {
+            environment.updated_at = now_rfc3339();
+        }
+        return changed;
+    }
+
+    let desired_sandbox_provider = match project.source_type {
+        ProjectSourceType::Cloud => RuntimeEnvironmentProvider::CloudSandboxManager,
+        ProjectSourceType::Local | ProjectSourceType::LocalConnector => {
+            if chatos_project_execution::parse_local_connector_workspace_root(
+                project.root_path.as_deref().unwrap_or_default(),
+            )
+            .is_none()
+            {
+                environment.status = ProjectRuntimeEnvironmentStatus::NotRunnable;
+                environment.not_runnable_reason =
+                    Some("本地项目缺少有效的 Local Connector 逻辑 Workspace".to_string());
+                environment.analysis_summary = environment.not_runnable_reason.clone();
+                RuntimeEnvironmentProvider::None
+            } else if environment.sandbox_provider == RuntimeEnvironmentProvider::LocalConnector {
+                RuntimeEnvironmentProvider::LocalConnector
+            } else {
+                // A local project may only enter a local sandbox after an online pairing was
+                // resolved. Stale cloud state is discarded instead of becoming a fallback.
+                RuntimeEnvironmentProvider::None
+            }
+        }
+    };
+    let desired_file_provider = match project.source_type {
+        ProjectSourceType::Cloud => RuntimeEnvironmentProvider::Harness,
+        ProjectSourceType::Local | ProjectSourceType::LocalConnector
+            if desired_sandbox_provider == RuntimeEnvironmentProvider::LocalConnector =>
+        {
+            RuntimeEnvironmentProvider::LocalConnector
+        }
+        ProjectSourceType::Local | ProjectSourceType::LocalConnector => {
+            RuntimeEnvironmentProvider::None
+        }
+    };
+    if environment.sandbox_provider != desired_sandbox_provider {
+        environment.sandbox_provider = desired_sandbox_provider;
+        changed = true;
+    }
+    if environment.file_provider != desired_file_provider {
+        environment.file_provider = desired_file_provider;
+        changed = true;
+    }
+    if desired_sandbox_provider == RuntimeEnvironmentProvider::None {
+        if !images.is_empty() {
+            images.clear();
+            changed = true;
+        }
+        if environment.execution_service_id.take().is_some() {
+            changed = true;
+        }
+        if changed {
+            environment.updated_at = now_rfc3339();
+        }
+        return changed;
     }
 
     let legacy_target = images
@@ -205,10 +271,9 @@ pub fn enforce_project_runtime_boundary(
     let mut workspace_image_reset = false;
     for image in images.iter_mut() {
         let mut image_changed = apply_program_managed_image_policy(image);
-        let wrong_provider = execution_plane == ProjectExecutionPlane::Cloud
-            && image.image_provider != RuntimeEnvironmentProvider::CloudSandboxManager;
+        let wrong_provider = image.image_provider != desired_sandbox_provider;
         if wrong_provider {
-            image.image_provider = RuntimeEnvironmentProvider::CloudSandboxManager;
+            image.image_provider = desired_sandbox_provider;
             changed = true;
             image_changed = true;
         }
@@ -300,12 +365,18 @@ pub fn enforce_project_runtime_boundary(
             })
             .map(|record| record.name.as_str())
             .collect::<Vec<_>>();
+        let provider_label = match desired_sandbox_provider {
+            RuntimeEnvironmentProvider::LocalConnector => "本地",
+            RuntimeEnvironmentProvider::CloudSandboxManager => "云端",
+            RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => "目标",
+        };
         environment.analysis_summary = Some(if missing_variables.is_empty() {
-            "运行环境分析和服务计划已保留；原有 Local Connector 工作区镜像记录已作废，请生成云端工作区执行镜像。"
-                .to_string()
+            format!(
+                "运行环境分析和服务计划已保留；原有工作区镜像记录已作废，请生成{provider_label}工作区执行镜像。"
+            )
         } else {
             format!(
-                "运行环境分析和服务计划已保留；原有 Local Connector 工作区镜像记录已作废，请先生成云端工作区执行镜像。镜像生成后仍需补充运行参数：{}。",
+                "运行环境分析和服务计划已保留；原有工作区镜像记录已作废，请先生成{provider_label}工作区执行镜像。镜像生成后仍需补充运行参数：{}。",
                 missing_variables.join(", ")
             )
         });
