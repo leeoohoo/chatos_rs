@@ -121,6 +121,17 @@ fn all_chatos_runtime_agents_receive_the_cloud_notepad_binding() {
 }
 
 #[test]
+fn project_management_agent_exposes_program_routed_environment_tools() {
+    assert_eq!(
+        PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS,
+        &[
+            (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
+            (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
+        ]
+    );
+}
+
+#[test]
 fn system_agent_registry_contains_all_runtime_roles() {
     let keys = system_agent_specs()
         .into_iter()

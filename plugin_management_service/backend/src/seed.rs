@@ -43,6 +43,10 @@ const CHATOS_NOTEPAD_AGENT_KEYS: &[&str] = &[
     "chatos_planning_agent",
     "project_requirement_execution_planner_agent",
 ];
+const PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS: &[(&str, i64)] = &[
+    (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
+    (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
+];
 
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
     remove_retired_system_agents(store).await?;
@@ -468,18 +472,17 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         10,
     )
     .await?;
-    for (resource_id, priority) in [
-        (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
-        (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
-    ] {
-        seed_agent_mcp_binding_with_conditions(
+    // Capability selection only decides which tools this Agent owns. MCP Management
+    // resolves the actual Project Service, Local Connector, or cloud Sandbox provider
+    // from the authoritative Project Execution Context for each Runtime Session.
+    for (resource_id, priority) in PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS {
+        seed_agent_mcp_binding(
             store,
             admin_user_id,
             "project_management_agent",
             resource_id,
             true,
-            priority,
-            cloud_runtime_binding_conditions(),
+            *priority,
         )
         .await?;
     }

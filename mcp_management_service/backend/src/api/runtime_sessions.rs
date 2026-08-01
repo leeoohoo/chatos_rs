@@ -51,11 +51,17 @@ pub(super) async fn resolve_runtime_session(
         .await
         .map_err(ApiError::bad_gateway)?;
     if project_context.sandbox_provider == SandboxProviderKind::LocalConnector {
-        project_context.sandbox_pairing_id = state
+        let pairing_id = state
             .providers
             .resolve_local_sandbox_pairing(&project_context)
             .await
             .map_err(|error| ApiError::conflict(error.message))?;
+        if pairing_id.is_none() {
+            return Err(ApiError::conflict(
+                "Local Connector sandbox is configured, but the Project Context device/workspace has no active enabled and ready sandbox pairing",
+            ));
+        }
+        project_context.sandbox_pairing_id = pairing_id;
     }
     validate_context_overrides(&request, &project_context)?;
     let device_id = project_context
