@@ -162,9 +162,11 @@ pub(super) async fn prepare_model_execution(
         )
         .as_str(),
     );
-    builtin_servers.extend(prepared_plugin_runtime.builtin_servers.clone());
-    for provider in &prepared_plugin_runtime.providers {
-        builtin_registry.register_arc(provider.clone());
+    if !gateway_mode_enabled {
+        builtin_servers.extend(prepared_plugin_runtime.builtin_servers.clone());
+        for provider in &prepared_plugin_runtime.providers {
+            builtin_registry.register_arc(provider.clone());
+        }
     }
     let mut prefixed_input_items = external_mcp_prefixed_input_items(
         loaded_external_mcp.summaries.as_slice(),
