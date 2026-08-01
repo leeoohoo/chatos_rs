@@ -21,7 +21,6 @@ export const workspaceInitialState: WorkspaceSliceState = {
 
 export interface WorkspaceSliceActions {
   loadProjects: (options?: { force?: boolean; throwOnError?: boolean }) => Promise<Project[]>;
-  createProject: (name: string, rootPath: string, description?: string, gitUrl?: string) => Promise<Project>;
   createCloudProject: (input: {
     name: string;
     gitUrl?: string;

@@ -44,24 +44,17 @@ pub enum ProjectSourceType {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum ProjectExecutionPlane {
-    LocalConnector,
     #[default]
     Cloud,
 }
 
 impl DbStatus for ProjectExecutionPlane {
     fn as_str(&self) -> &'static str {
-        match self {
-            Self::LocalConnector => "local_connector",
-            Self::Cloud => "cloud",
-        }
+        "cloud"
     }
 
-    fn from_db(value: &str) -> Self {
-        match value.trim() {
-            "local_connector" => Self::LocalConnector,
-            _ => Self::Cloud,
-        }
+    fn from_db(_value: &str) -> Self {
+        Self::Cloud
     }
 }
 

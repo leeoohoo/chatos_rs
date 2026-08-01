@@ -46,14 +46,6 @@ describe('workspaceProjectFacade cloud orchestration', () => {
     expect(request).toHaveBeenCalledWith('/projects/cloud', { method: 'POST', body: form });
   });
 
-  it('keeps direct local workspace project creation desktop-only', async () => {
-    vi.stubGlobal('window', {});
-    await expect(workspaceProjectFacade.createProject.call(
-      { getRequestFn: () => vi.fn() } as never,
-      { name: 'Local', root_path: '/tmp/local' },
-    )).rejects.toThrow('项目只能在 Chat OS 桌面客户端中创建');
-  });
-
   it('routes project planning and environment operations through cloud APIs', async () => {
     const request = vi.fn().mockResolvedValue({});
     const context = { getRequestFn: () => request };

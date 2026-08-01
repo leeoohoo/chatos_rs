@@ -131,7 +131,7 @@
 4. 不让云端直接访问用户机器的监听端口。
 5. 不把本地绝对路径、Plugin 私钥、OAuth Token 或设备密钥上传云端。
 6. 不在第一阶段重写全部 Local Connector 协议。
-7. 不在第一阶段物理删除 runtime.sqlite3。
+7. 不自动删除旧 runtime.sqlite3；2.0.10 使用全新的 connector-state.sqlite3 保存最小控制状态。
 
 ### 3.3 明确的数据处理边界
 
@@ -295,7 +295,7 @@ root_path 是逻辑路由标识，不是用户机器绝对路径。
 - 旧本地项目切换后不再展示。
 - 用户从同一个 Workspace 重新创建一个云端 Project。
 - 可提供“重新连接此 Workspace”入口，但它创建的是全新的云端 Project，不导入历史。
-- 旧 runtime.sqlite3 第一版只停止业务读写，不自动删除。
+- 旧 runtime.sqlite3 停止全部读写且不自动删除；历史业务数据不迁移。
 
 如果云端数据库中存在 execution_plane=local_connector 的旧 Project，可以选择：
 
@@ -306,7 +306,7 @@ root_path 是逻辑路由标识，不是用户机器绝对路径。
 
 ### 6.4 本地控制状态
 
-Local Connector 仍需要少量持久化状态，可暂时继续使用现有 runtime.sqlite3 中的控制类表，随后再拆分为 connector_state.sqlite3。
+Local Connector 仍需要少量持久化状态。2.0.10 已拆分为 connector-state.sqlite3，并以全新最小 schema 启动，不迁移旧业务数据库。
 
 允许的控制状态包括：
 
@@ -526,7 +526,7 @@ local_connector_sandbox_routing_enabled
 
 - 新建 Local Workspace Project 后，Session、Message 和 Task 均可在云端数据库查询。
 - 刷新或更换客户端后，历史仍存在。
-- runtime.sqlite3 不产生新的业务记录。
+- 旧 runtime.sqlite3 不再被打开；connector-state.sqlite3 只产生控制类记录。
 
 预计：2～3 天。
 
@@ -650,8 +650,8 @@ rg "local_runtime|lc_project_|lc_session_|local_runtime_required"
 
 数据库处理：
 
-- 至少保留一个稳定版本窗口，不自动删除 runtime.sqlite3。
-- 后续可新建 connector_state.sqlite3，仅迁移仍需保留的控制状态。
+- 不自动删除旧 runtime.sqlite3，但运行时不再打开它。
+- connector-state.sqlite3 只创建 Agent Prompt、能力快照和本地 MCP manifest 等控制表。
 - 若产品允许用户重新配置 Plugin/MCP，也可以不做数据库迁移，但必须明确提示，不能误删安装包和凭据文件。
 - 业务表物理清理应作为独立、可审计的维护动作。
 
@@ -858,8 +858,8 @@ run_id
 
 ### 12.1 删除代码前
 
-- Feature Flag 可以把指定用户切回旧本地执行平面。
-- 客户端仍保留 Local Runtime 和旧 runtime.sqlite3。
+- 进入物理删除阶段后不再提供切回旧本地业务执行平面的 Feature Flag。
+- 客户端只保留 Local Connector 能力 Runtime；旧 runtime.sqlite3 留在磁盘但不再使用。
 - 新模式产生的云端 Session 不同步回本地；回滚期间它们仍保留在云端。
 - 真实 Workspace 不受回滚影响。
 
@@ -873,7 +873,7 @@ run_id
 ### 12.3 删除代码后
 
 - 回滚依赖上一版客户端二进制，而不是数据库逆向 migration。
-- 至少保留一个版本周期的旧 runtime.sqlite3。
+- 旧 runtime.sqlite3 不自动删除；如需回滚，由上一版客户端继续读取。
 - 不自动删除 Workspace、Plugin 包、凭据和 Sandbox 配置。
 
 ### 12.4 禁止的回滚方式
@@ -970,7 +970,7 @@ run_id
 | execution_plane 与 source_type 仍被混用 | 云端继续错误阻断 | 先完成模型语义和集中判定函数 |
 | 旧前端与新客户端混用 | 请求不存在的本地 API | 严格发布顺序、最低客户端版本和 Feature Flag |
 | Connector 断线时 mutation 状态不明 | 重复写文件或重复命令 | request_id、状态查询、只读自动重试 |
-| 本地数据库同时保存业务和控制状态 | 清理时误删 Plugin/MCP | 先做表所有权清单，后拆 connector_state.sqlite3 |
+| 旧本地数据库同时保存业务和控制状态 | 清理时误删 Plugin/MCP | 2.0.10 使用全新的 connector-state.sqlite3 最小 schema，旧库不迁移也不自动删除 |
 | 本地长命令取消不完整 | 云端显示取消但进程仍在 | 增加 process_id、kill tree 和取消确认 |
 | Plugin policy 正在并行修改 | 合并冲突或策略回退 | 不做大范围 revert，基于当前 policy 适配 |
 | 云端并发增加 | 成本和容量上升 | 提前压测 Chat、Task、Memory 和模型网关 |

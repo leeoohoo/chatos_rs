@@ -34,7 +34,6 @@ export const useSessionListStoreState = (storeToUse: SessionListStoreHook) => {
     projects: state.projects,
     currentProject: state.currentProject,
     loadProjects: state.loadProjects,
-    createProject: state.createProject,
     createCloudProject: state.createCloudProject,
     selectProject: state.selectProject,
     deleteProject: state.deleteProject,

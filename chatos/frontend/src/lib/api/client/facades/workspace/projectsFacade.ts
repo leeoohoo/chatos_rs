@@ -28,19 +28,11 @@ import type {
   UpdateProjectRuntimeEnvironmentSettingsPayload,
 } from '../../types';
 import type ApiClient from '../../../client';
-import { localRuntimeBridgeAvailable } from '../../../localRuntime';
-
-const requireDesktopProjectCreation = (): void => {
-  if (!localRuntimeBridgeAvailable()) {
-    throw new Error('项目只能在 Chat OS 桌面客户端中创建');
-  }
-};
 
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
-  createProject(data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
   createCloudProject(data: FormData): Promise<ProjectResponse>;
-  updateProject(id: string, data: { name?: string; root_path?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
+  updateProject(id: string, data: { name?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
   getProjectRuntimeEnvironment(projectId: string): Promise<ProjectRuntimeEnvironmentResponse>;
@@ -170,10 +162,6 @@ export interface WorkspaceProjectFacade {
 export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient> = {
   async listProjects(userId) {
     return workspaceApi.listProjects(this.getRequestFn(), userId);
-  },
-  async createProject(data) {
-    requireDesktopProjectCreation();
-    return workspaceApi.createProject(this.getRequestFn(), data);
   },
   async createCloudProject(data) {
     return workspaceApi.createCloudProject(this.getRequestFn(), data);

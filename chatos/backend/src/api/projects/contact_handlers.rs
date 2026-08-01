@@ -3,7 +3,7 @@
 
 use axum::{
     extract::{Path, Query},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     Json,
 };
 use serde_json::Value;
@@ -13,10 +13,7 @@ use crate::api::sessions::history_process_support::{
     reconcile_contact_async_user_status_for_display,
 };
 use crate::core::auth::AuthUser;
-use crate::core::project_access::{
-    ensure_owned_project, map_project_access_error, ProjectAccessError,
-};
-use crate::core::project_execution::request_is_local_connector_desktop;
+use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::validation::normalize_non_empty;
 use crate::models::memory_mapping_types::{MemoryContactDto, SyncProjectAgentLinkRequestDto};
 use crate::modules::conversation_runtime::messages as conversation_messages;
@@ -24,7 +21,7 @@ use crate::services::realtime::publish_project_members_updated;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::{chatos_memory_engine, chatos_memory_mappings, chatos_sessions};
 
-use super::contracts::{AddProjectContactRequest, LocalProjectRequestQuery, ProjectContactsQuery};
+use super::contracts::{AddProjectContactRequest, ProjectContactsQuery};
 use super::session_resolver::resolve_project_contact_session_id;
 
 fn value_has_items(value: Option<&Value>) -> bool {
@@ -163,36 +160,21 @@ fn project_contact_locked_response() -> (StatusCode, Json<Value>) {
     )
 }
 
-fn local_project_contact_fallback_allowed(headers: &HeaderMap, requested: bool) -> bool {
-    requested && request_is_local_connector_desktop(headers)
-}
-
 async fn project_contact_owner_user_id(
     project_id: &str,
     auth: &AuthUser,
-    headers: &HeaderMap,
-    local_runtime: bool,
 ) -> Result<String, (StatusCode, Json<Value>)> {
     match ensure_owned_project(project_id, auth).await {
         Ok(project) => Ok(project.user_id.unwrap_or_else(|| auth.user_id.clone())),
-        Err(ProjectAccessError::NotFound)
-            if local_project_contact_fallback_allowed(headers, local_runtime) =>
-        {
-            Ok(auth.user_id.clone())
-        }
         Err(err) => Err(map_project_access_error(err)),
     }
 }
 
 pub(super) async fn get_project_contact_lock(
     auth: AuthUser,
-    headers: HeaderMap,
     Path(id): Path<String>,
-    Query(query): Query<LocalProjectRequestQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(response) =
-        project_contact_owner_user_id(&id, &auth, &headers, query.local_runtime).await
-    {
+    if let Err(response) = project_contact_owner_user_id(&id, &auth).await {
         return response;
     }
 
@@ -215,15 +197,13 @@ pub(super) async fn get_project_contact_lock(
 
 pub(super) async fn list_project_contacts(
     auth: AuthUser,
-    headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<ProjectContactsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let project_user_id =
-        match project_contact_owner_user_id(&id, &auth, &headers, query.local_runtime).await {
-            Ok(user_id) => user_id,
-            Err(response) => return response,
-        };
+    let project_user_id = match project_contact_owner_user_id(&id, &auth).await {
+        Ok(user_id) => user_id,
+        Err(response) => return response,
+    };
 
     match chatos_memory_mappings::list_project_contacts_for_owner(
         project_user_id.as_str(),
@@ -262,16 +242,13 @@ pub(super) async fn list_project_contacts(
 
 pub(super) async fn add_project_contact(
     auth: AuthUser,
-    headers: HeaderMap,
     Path(id): Path<String>,
-    Query(query): Query<LocalProjectRequestQuery>,
     Json(req): Json<AddProjectContactRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let project_user_id =
-        match project_contact_owner_user_id(&id, &auth, &headers, query.local_runtime).await {
-            Ok(user_id) => user_id,
-            Err(response) => return response,
-        };
+    let project_user_id = match project_contact_owner_user_id(&id, &auth).await {
+        Ok(user_id) => user_id,
+        Err(response) => return response,
+    };
 
     let Some(contact_id) = normalize_non_empty(req.contact_id) else {
         return (
@@ -378,15 +355,12 @@ pub(super) async fn add_project_contact(
 
 pub(super) async fn remove_project_contact(
     auth: AuthUser,
-    headers: HeaderMap,
     Path((id, contact_id)): Path<(String, String)>,
-    Query(query): Query<LocalProjectRequestQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let project_user_id =
-        match project_contact_owner_user_id(&id, &auth, &headers, query.local_runtime).await {
-            Ok(user_id) => user_id,
-            Err(response) => return response,
-        };
+    let project_user_id = match project_contact_owner_user_id(&id, &auth).await {
+        Ok(user_id) => user_id,
+        Err(response) => return response,
+    };
 
     let linked_rows = match chatos_memory_mappings::list_project_contacts_for_owner(
         project_user_id.as_str(),
@@ -459,20 +433,7 @@ pub(super) async fn remove_project_contact(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::HeaderValue;
     use serde_json::json;
-
-    #[test]
-    fn local_project_contact_fallback_requires_desktop_and_explicit_local_route() {
-        let mut headers = HeaderMap::new();
-        assert!(!local_project_contact_fallback_allowed(&headers, true));
-        headers.insert(
-            "x-requested-with",
-            HeaderValue::from_static("local-connector-desktop"),
-        );
-        assert!(!local_project_contact_fallback_allowed(&headers, false));
-        assert!(local_project_contact_fallback_allowed(&headers, true));
-    }
 
     #[test]
     fn running_marker_detects_active_statuses() {

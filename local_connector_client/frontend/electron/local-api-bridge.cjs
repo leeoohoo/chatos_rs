@@ -7,7 +7,6 @@ const MAX_API_ENDPOINT_LENGTH = 4096;
 const MAX_API_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_API_RESPONSE_BODY_BYTES = 8 * 1024 * 1024;
 const DEFAULT_API_TIMEOUT_MS = 15_000;
-const LOCAL_CHAT_TIMEOUT_MS = 10 * 60 * 1000;
 const LOCAL_TOOLS_TIMEOUT_MS = 2 * 60 * 1000;
 const ALLOWED_API_METHODS = new Set(['GET', 'POST', 'DELETE', 'PUT', 'PATCH']);
 const FORWARDED_RENDERER_HEADERS = new Set(['accept', 'content-type']);
@@ -51,15 +50,6 @@ function normalizeApiRequestBody(body) {
 }
 
 function localApiTimeoutMs(endpoint) {
-  if (endpoint === '/api/local/runtime/chat/send') {
-    return LOCAL_CHAT_TIMEOUT_MS;
-  }
-  if (/^\/api\/local\/runtime\/sessions\/[^/]+\/review-repair(?:\?|$)/.test(endpoint)) {
-    return LOCAL_CHAT_TIMEOUT_MS;
-  }
-  if (/^\/api\/local\/runtime\/sessions\/[^/]+\/tools(?:\?|$)/.test(endpoint)) {
-    return LOCAL_TOOLS_TIMEOUT_MS;
-  }
   if (/^\/api\/local\/runtime\/browser\/sessions\/[^/]+\/command(?:\?|$)/.test(endpoint)) {
     return LOCAL_TOOLS_TIMEOUT_MS;
   }

@@ -77,7 +77,7 @@ impl LocalRuntime {
     pub(crate) fn local_database(&self) -> Result<&LocalDatabase> {
         self.database
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("local runtime database is unavailable"))
+            .ok_or_else(|| anyhow::anyhow!("local connector state database is unavailable"))
     }
 
     pub(crate) async fn reload_managed_requirements_for_current_identity(&self) -> Result<()> {

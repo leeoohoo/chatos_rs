@@ -39,7 +39,10 @@ impl LocalDatabase {
     pub(crate) async fn open(path: PathBuf) -> Result<Self> {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.with_context(|| {
-                format!("create local runtime database dir {}", parent.display())
+                format!(
+                    "create local connector state database dir {}",
+                    parent.display()
+                )
             })?;
         }
 
@@ -54,11 +57,11 @@ impl LocalDatabase {
             .max_connections(4)
             .connect_with(options)
             .await
-            .context("open local runtime SQLite database")?;
+            .context("open local connector state SQLite database")?;
         MIGRATOR
             .run(&pool)
             .await
-            .context("run local runtime SQLite migrations")?;
+            .context("run local connector state SQLite migrations")?;
 
         Ok(Self {
             pool,
@@ -105,5 +108,5 @@ pub(crate) fn database_path_for_state(state_path: &Path) -> PathBuf {
     state_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join("runtime.sqlite3")
+        .join("connector-state.sqlite3")
 }

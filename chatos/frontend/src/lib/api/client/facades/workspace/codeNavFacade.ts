@@ -11,7 +11,7 @@ import type ApiClient from '../../../client';
 import { parseLocalConnectorProjectRoot } from '../../../localRuntime';
 
 const localCodeNavUnavailable = {
-  provider: 'local_runtime',
+  provider: 'local_connector',
   language: 'unknown',
 };
 

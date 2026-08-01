@@ -21,8 +21,7 @@ use self::contact_handlers::{
     add_project_contact, get_project_contact_lock, list_project_contacts, remove_project_contact,
 };
 use self::crud_handlers::{
-    create_cloud_project, create_project, delete_project, get_project, list_projects,
-    update_project,
+    create_cloud_project, delete_project, get_project, list_projects, update_project,
 };
 use self::plan_handlers::{
     get_project_plan, list_requirement_documents, list_requirement_work_items,
@@ -44,7 +43,7 @@ use self::runtime_environment_handlers::{
 
 pub fn router() -> Router {
     Router::new()
-        .route("/api/projects", get(list_projects).post(create_project))
+        .route("/api/projects", get(list_projects))
         .route("/api/projects/cloud", post(create_cloud_project))
         .route(
             "/api/projects/{id}",
