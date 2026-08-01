@@ -2,13 +2,13 @@
 
 ## 0. 文档状态
 
-- 状态：2.0.10 目标架构
+- 状态：2.0.10 已完成
 - 日期：2026-08-01
 - 新服务名：mcp_management_service
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0～7 代码主链路已完成，正在进行全量门禁与云端整体联调。权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；聚合 `/mcp` 已支持初始化、工具发现与调用、固定路由校验、结构化 invocation 日志、Provider 超时、响应限额与取消。Local Connector、Harness、Cloud Sandbox、内部服务、External MCP 和 Plugin Runtime 均已纳入统一路由。Task Runner、ChatOS 与 Project Environment Agent 已删除 `off/shadow` 模式及旧直连 builder，其 Agent 工具只能通过 MCP Management 调用；Task Runner 也不再生成或保存 Harness/Local Connector ephemeral MCP endpoint，旧 endpoint header 不能选择能力、改变 Provider 或绕过 Sandbox 判定。五类 Memory Agent 固定为 `tool_plane=none`。Local Connector Command Approval Agent 是明确例外，模型循环、本地只读工具、`approval_decision`、人工审批、风险判断、白名单、Session Approval 和审批历史完整保留在设备侧。
+当前 2.0.10 实施状态：Phase 0～7、全量门禁与云端真实联调均已完成。权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；聚合 `/mcp` 已支持初始化、工具发现与调用、固定路由校验、结构化 invocation 日志、Provider 超时、响应限额与取消。Local Connector、Harness、Cloud Sandbox、内部服务、External MCP 和 Plugin Runtime 均已纳入统一路由。Task Runner、ChatOS 与 Project Environment Agent 已删除 `off/shadow` 模式及旧直连 builder，其 Agent 工具只能通过 MCP Management 调用；Task Runner 也不再生成或保存 Harness/Local Connector ephemeral MCP endpoint，旧 endpoint header 不能选择能力、改变 Provider 或绕过 Sandbox 判定。五类 Memory Agent 固定为 `tool_plane=none`。Local Connector Command Approval Agent 是明确例外，模型循环、本地只读工具、`approval_decision`、人工审批、风险判断、白名单、Session Approval 和审批历史完整保留在设备侧。仓库提供 `make smoke-cloud-mcp` 作为可重复的真实云端验收：它验证 Runtime Session 创建/关闭、不可变 Route、命名空间化工具发现、内部服务真实 `tools/call`、owner/caller 隔离、本地审批 Agent 云端拒绝、Token 防篡改和关闭后不可复用。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 

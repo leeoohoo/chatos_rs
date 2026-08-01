@@ -2,7 +2,7 @@
 
 ## 0. 文档状态
 
-- 状态：2.0.10 收口验证中
+- 状态：2.0.10 已完成
 - 日期：2026-08-01
 - 目标版本：2.0.10
 - 替代方向：docs/plan/LOCAL_PROJECT_CLIENT_ORCHESTRATION_SQLITE_IMPLEMENTATION_PLAN.zh-CN.md
@@ -10,7 +10,7 @@
 
 本文档不删除旧的“本地项目客户端编排与 SQLite”方案，旧文档保留为历史实现说明；从本方案通过评审后，产品和架构方向以本文档为准。
 
-当前实施进度：云端业务编排和 MCP Management Tool Plane 主链路已完成。Project、Session、Message、Task、Memory、Agent 生命周期均由云端持有；ChatOS、Task Runner 与 Project Environment Agent 的模型只连接 MCP Management 聚合 endpoint。Local Connector 不再启动本地 Task Worker，也不再挂载 Chat、Session、Memory、Project Management、Task Board、Task Run 和 Environment Agent 业务 API，只保留 Workspace 文件/Git/代码导航、命令、本地 Skill/Plugin/MCP、Sandbox 和设备控制状态。旧审批 Memory Engine proxy、Memory Policy cache 与云端读取本地模型凭据入口已经删除。Local Command Approval Agent 完整留在设备侧，只读取本地已安装 capability snapshot、只调用本地只读代码工具与 `approval_decision`，不创建云端 MCP Runtime Session、不访问云端 Memory Engine。Task Runner 已停止生成 Harness/Local Connector ephemeral MCP endpoint；Provider、设备、Workspace 与 Sandbox 路由由程序根据权威 Project Execution Context 决定。配置中心参数 `chatos.ui.local_project_creation_enabled` 已控制云端界面是否展示新建本地 Workspace Project 入口。当前剩余工作是全量门禁和云端整体联调。
+当前实施进度：2.0.10 目标模式已经完成。Project、Session、Message、Task、Memory、Agent 生命周期均由云端持有；ChatOS、Task Runner 与 Project Environment Agent 的模型只连接 MCP Management 聚合 endpoint。Local Connector 不再启动本地 Task Worker，也不再挂载 Chat、Session、Memory、Project Management、Task Board、Task Run 和 Environment Agent 业务 API，只保留 Workspace 文件/Git/代码导航、命令、本地 Skill/Plugin/MCP、Sandbox 和设备控制状态。旧审批 Memory Engine proxy、Memory Policy cache 与云端读取本地模型凭据入口已经删除。Local Command Approval Agent 完整留在设备侧，只读取本地已安装 capability snapshot、只调用本地只读代码工具与 `approval_decision`，不创建云端 MCP Runtime Session、不访问云端 Memory Engine。Task Runner 已停止生成 Harness/Local Connector ephemeral MCP endpoint；Provider、设备、Workspace 与 Sandbox 路由由程序根据权威 Project Execution Context 决定。配置中心参数 `chatos.ui.local_project_creation_enabled` 已控制云端界面是否展示新建本地 Workspace Project 入口。全量 `make verify`、仓库 smoke 和真实 `make smoke-cloud-mcp` 已通过；真实 smoke 会创建并关闭 Runtime Session，验证聚合 `tools/list`、`MCP Management -> Task Runner` 调用、owner/caller 隔离、本地审批 Agent 云端拒绝、Runtime Token 防篡改和 Session 关闭后不可复用。
 
 ---
 
