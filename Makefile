@@ -144,6 +144,7 @@ check-frontends:
 smoke-repo:
 	@bash scripts/check_api_surface.sh
 	@bash scripts/check_api_path_baseline.sh
+	@python3 scripts/check-agent-tool-plane-boundaries.py
 	@bash scripts/check-hotspot-line-budgets.sh
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
