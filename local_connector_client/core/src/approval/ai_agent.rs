@@ -33,7 +33,9 @@ use super::types::{ApprovalMemorySettings, CommandApprovalRequest};
 mod mcp_management_gateway;
 mod tool_executor;
 
-use self::mcp_management_gateway::{resolve_approval_mcp, ApprovalMcpResolution};
+use self::mcp_management_gateway::{
+    resolve_approval_mcp, ApprovalMcpResolution, McpManagementExecutionMode,
+};
 use self::tool_executor::ApprovalAgentToolExecutor;
 
 #[derive(Debug, Clone)]
@@ -77,21 +79,13 @@ pub(crate) async fn run_auto_approval_agent(
         prompt_vendor,
     )
     .await?;
-    let capability_policy = resolve_approval_capability_policy(state).await?;
-    let code_service = code_maintainer_service_for_root(
-        root.as_path(),
-        Some(request.project_key.workspace_id.clone()),
-        false,
-        true,
-        false,
-    )?;
-    let decision = Arc::new(Mutex::new(None));
-    let legacy_executor = ApprovalAgentToolExecutor {
-        code_service,
-        decision: decision.clone(),
-        allow_code_tools: capability_policy.code_maintainer_read,
-        allow_approval_decision: capability_policy.approval_decision,
+    let mcp_management_mode = McpManagementExecutionMode::from_env();
+    let legacy_capability_policy = if mcp_management_mode.uses_gateway() {
+        None
+    } else {
+        Some(resolve_legacy_approval_capability_policy(state).await?)
     };
+    let decision = Arc::new(Mutex::new(None));
     let memory = build_approval_agent_memory(
         &state.approval.memory,
         request,
@@ -101,15 +95,6 @@ pub(crate) async fn run_auto_approval_agent(
     )
     .await?;
     let mut prompt = build_approval_prompt(request, root.as_path(), risk_level, risk_reason)?;
-    if let Some(provider_skills_prompt) = capability_policy
-        .provider_skills_prompt
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        prompt.push_str("\n\n");
-        prompt.push_str(provider_skills_prompt);
-    }
     let run_id = format!("approval-agent-{}", Uuid::new_v4());
     let mcp_resolution = resolve_approval_mcp(
         state,
@@ -117,12 +102,57 @@ pub(crate) async fn run_auto_approval_agent(
         run_id.as_str(),
         model_config_id.as_str(),
         decision.clone(),
+        mcp_management_mode,
     )
     .await?;
-    let (tool_executor, mcp_gateway): (Arc<dyn ToolExecutor>, _) = match mcp_resolution {
-        ApprovalMcpResolution::Legacy => (Arc::new(legacy_executor), None),
-        ApprovalMcpResolution::Gateway(gateway) => (Arc::new(gateway.executor()), Some(gateway)),
+    let (tool_executor, mcp_gateway, max_iterations, provider_skills_prompt): (
+        Arc<dyn ToolExecutor>,
+        _,
+        usize,
+        Option<String>,
+    ) = match mcp_resolution {
+        ApprovalMcpResolution::Legacy => {
+            let capability_policy = legacy_capability_policy.ok_or_else(|| {
+                anyhow!("legacy command approval capability policy is unavailable")
+            })?;
+            let code_service = code_maintainer_service_for_root(
+                root.as_path(),
+                Some(request.project_key.workspace_id.clone()),
+                false,
+                true,
+                false,
+            )?;
+            let legacy_executor = ApprovalAgentToolExecutor {
+                code_service,
+                decision: decision.clone(),
+                allow_code_tools: capability_policy.code_maintainer_read,
+                allow_approval_decision: capability_policy.approval_decision,
+            };
+            (
+                Arc::new(legacy_executor),
+                None,
+                capability_policy.max_iterations,
+                capability_policy.provider_skills_prompt,
+            )
+        }
+        ApprovalMcpResolution::Gateway(gateway) => {
+            let provider_skills_prompt = gateway.provider_skills_prompt();
+            (
+                Arc::new(gateway.executor()),
+                Some(gateway),
+                chatos_agent::load_agent_max_iterations("local-connector-service").await,
+                provider_skills_prompt,
+            )
+        }
     };
+    if let Some(provider_skills_prompt) = provider_skills_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str("\n\n");
+        prompt.push_str(provider_skills_prompt);
+    }
     let conversation_id = memory
         .as_ref()
         .map(|memory| memory.conversation_id.clone())
@@ -157,7 +187,7 @@ pub(crate) async fn run_auto_approval_agent(
     let turn_request = AgentTurnRequest::new(model_config, conversation_id, run_id, prompt)
         .with_tool_executor_arc(tool_executor)
         .with_memory(agent_memory)
-        .with_max_iterations(capability_policy.max_iterations)
+        .with_max_iterations(max_iterations)
         .with_system_prompt(installed_prompt.content)
         .with_metadata(metadata);
     let mut execution_result = AgentExecutor::new()
@@ -188,7 +218,7 @@ pub(crate) async fn run_auto_approval_agent(
         )
         .with_tool_executor_arc(retry_executor)
         .with_memory(retry_memory)
-        .with_max_iterations(capability_policy.max_iterations)
+        .with_max_iterations(max_iterations)
         .with_system_prompt(retry_system_prompt)
         .with_metadata(retry_metadata);
         execution_result = AgentExecutor::new()
@@ -225,7 +255,7 @@ pub(crate) async fn run_auto_approval_agent(
 }
 
 #[derive(Debug, Deserialize)]
-struct ApprovalCapabilityPolicy {
+struct LegacyApprovalCapabilityPolicy {
     policy_revision: String,
     #[serde(default = "default_agent_max_iterations")]
     max_iterations: usize,
@@ -239,9 +269,9 @@ fn default_agent_max_iterations() -> usize {
     chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS
 }
 
-async fn resolve_approval_capability_policy(
+async fn resolve_legacy_approval_capability_policy(
     state: &LocalState,
-) -> Result<ApprovalCapabilityPolicy> {
+) -> Result<LegacyApprovalCapabilityPolicy> {
     let auth = state
         .auth
         .as_ref()
@@ -267,7 +297,7 @@ async fn resolve_approval_capability_policy(
         ));
     }
     let policy = response
-        .json::<ApprovalCapabilityPolicy>()
+        .json::<LegacyApprovalCapabilityPolicy>()
         .await
         .context("decode command approval capability policy")?;
     if policy.policy_revision.trim().is_empty()
@@ -619,7 +649,7 @@ mod tests {
 
     #[test]
     fn legacy_capability_response_uses_global_agent_default() {
-        let policy = serde_json::from_value::<ApprovalCapabilityPolicy>(json!({
+        let policy = serde_json::from_value::<LegacyApprovalCapabilityPolicy>(json!({
             "policy_revision": "revision-1",
             "code_maintainer_read": true,
             "approval_decision": true

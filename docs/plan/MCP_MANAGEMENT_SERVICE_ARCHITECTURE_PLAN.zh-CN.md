@@ -1031,6 +1031,7 @@ Memory Engine 五类 Agent 的 Phase 6 结论是“无需迁移”，不是保�
 - Task Runner 显式 `gateway` 模式已不再加载旧 external/system HTTP MCP，也不再构建宿主 builtin Registry；local/Harness/Sandbox 工具路由只由 MCP Management Session 决定。`shadow`/`off` 继续构建 legacy runtime 作为观测对照。
 - Project Environment Agent 的宿主工具构建器已明确降级为 `build_legacy_project_environment_mcp_executor`，只允许 `shadow`/`off` 使用；`gateway` 只挂载 MCP Management endpoint。Project Service 保留的 `RuntimeEnvironmentPlan` 仅描述并持久化 Workspace/运行环境所在位置，作为权威 Project Execution Context 的业务输入，不负责构造 MCP Provider URL 或工具路由。
 - ChatOS 显式 `gateway` 模式不再先直连 Plugin Management 解析 capability；它直接使用 Runtime Session 返回的实际 MCP 集合和 Provider Skill Prompt。ChatOS 对 Task Runner、Project Management 的直连构建器已标记为 legacy，只允许 `shadow`/`off` 使用。
+- Local Connector Command Approval Agent 显式 `gateway` 模式不再请求旧 capability endpoint，也不再提前创建本地 CodeMaintainer/approval legacy executor；工具与 Provider Skill Prompt 全部来自 Runtime Session。Agent 最大迭代数仍从普通配置系统读取，它不是 Tool Plane 路由。
 - 删除其余服务 local/cloud workspace if/else。
 - 已删除共享 `SystemMcpHostAdapter`、`SystemMcpResolveContext` 和 `ResolvedSystemMcpBackend` 抽象。
 - `SystemMcpHost.supported_hosts` 已重命名为 `legacy_supported_hosts`，优先级路由 API 已删除；该字段只允许 shadow 旧执行器兼容使用。

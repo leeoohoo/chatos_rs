@@ -26,6 +26,9 @@ fn execution_mode_defaults_to_shadow_and_gateway_is_explicit() {
         McpManagementExecutionMode::from_value(Some("off")),
         McpManagementExecutionMode::Off
     );
+    assert!(McpManagementExecutionMode::Gateway.uses_gateway());
+    assert!(!McpManagementExecutionMode::Shadow.uses_gateway());
+    assert!(!McpManagementExecutionMode::Off.uses_gateway());
 }
 
 #[test]

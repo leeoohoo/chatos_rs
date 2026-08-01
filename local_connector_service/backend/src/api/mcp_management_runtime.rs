@@ -243,7 +243,7 @@ fn command_approval_session_request(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
         expected_project_task_ids: Vec::new(),
-        locale: None,
+        locale: Some("zh-CN".to_string()),
         requested_device_id: Some(device_id.trim().to_string()),
         requested_sandbox_provider: None,
         sandbox_target: None,
@@ -293,6 +293,7 @@ mod tests {
         );
         assert_eq!(request.run_id.as_deref(), Some("approval-run-1"));
         assert_eq!(request.default_model_config_id.as_deref(), Some("model-1"));
+        assert_eq!(request.locale.as_deref(), Some("zh-CN"));
         assert_eq!(request.requested_device_id.as_deref(), Some("device-1"));
         assert!(request.requested_sandbox_provider.is_none());
         assert!(request.sandbox_target.is_none());

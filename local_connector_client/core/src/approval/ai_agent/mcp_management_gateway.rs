@@ -23,7 +23,7 @@ mod tool_executor;
 use self::tool_executor::ApprovalMcpGatewayToolExecutor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum McpManagementExecutionMode {
+pub(super) enum McpManagementExecutionMode {
     Off,
     Shadow,
     Gateway,
@@ -43,12 +43,16 @@ impl McpManagementExecutionMode {
         }
     }
 
-    fn from_env() -> Self {
+    pub(super) fn from_env() -> Self {
         Self::from_value(
             std::env::var("LOCAL_CONNECTOR_COMMAND_APPROVAL_MCP_MANAGEMENT_MODE")
                 .ok()
                 .as_deref(),
         )
+    }
+
+    pub(super) const fn uses_gateway(self) -> bool {
+        matches!(self, Self::Gateway)
     }
 }
 
@@ -60,11 +64,16 @@ pub(super) enum ApprovalMcpResolution {
 pub(super) struct ApprovalMcpGateway {
     executor: ApprovalMcpGatewayToolExecutor,
     close: ApprovalMcpSessionClose,
+    provider_skills_prompt: Option<String>,
 }
 
 impl ApprovalMcpGateway {
     pub(super) fn executor(&self) -> ApprovalMcpGatewayToolExecutor {
         self.executor.clone()
+    }
+
+    pub(super) fn provider_skills_prompt(&self) -> Option<String> {
+        self.provider_skills_prompt.clone()
     }
 
     pub(super) async fn close(self) {
@@ -134,8 +143,8 @@ pub(super) async fn resolve_approval_mcp(
     run_id: &str,
     model_config_id: &str,
     decision: Arc<Mutex<Option<ApprovalToolDecision>>>,
+    mode: McpManagementExecutionMode,
 ) -> Result<ApprovalMcpResolution> {
-    let mode = McpManagementExecutionMode::from_env();
     if mode == McpManagementExecutionMode::Off {
         return Ok(ApprovalMcpResolution::Legacy);
     }
@@ -258,8 +267,13 @@ pub(super) async fn resolve_approval_mcp(
             return Err(error);
         }
     };
+    let provider_skills_prompt = session.provider_skills_prompt;
     Ok(ApprovalMcpResolution::Gateway(Box::new(
-        ApprovalMcpGateway { executor, close },
+        ApprovalMcpGateway {
+            executor,
+            close,
+            provider_skills_prompt,
+        },
     )))
 }
 
