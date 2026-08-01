@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时、响应大小限制和共享单次调用取消状态；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools、Sandbox Images 和 Local Command Approval Provider；Phase 5 已完成 External HTTP、普通 Cloud stdio、release-managed Plugin Local MCP、Plugin Cloud HTTP/PATH stdio、Plugin Cloud ConfigFile transport、Plugin Cloud Credential Resolver、immutable Plugin artifact mount、Plugin Cloud OAuth 浏览器授权和 refresh token 自动续期、Plugin native executable Skill、Command `invoke` 与 Agent Profile `apply` 聚合，以及普通/Plugin stdio、Plugin HTTP、Plugin Local MCP 的 invocation-scoped cancellation。组件工具使用独立 immutable Provider Binding；本地 Command/Agent 目录准备不会触发审批，Command 只在真实调用时按精确参数和 snapshot 审批，云端需要交互确认的 Command 失败关闭。Runtime Session Snapshot schema 已提升为 v3，不迁移历史 Session。Task Runner、ChatOS、Project Environment Agent 和 Local Connector Command Approval Agent 均已具备 `shadow` 观测和显式 `gateway` canary 模式，所有部署默认仍为 `shadow`；五类 Memory Agent 已固定为 `tool_plane=none`。Phase 6 的调用方迁移与审计已完成。Phase 7 已删除 Task Runner 与 Local Connector 的通用 Host Adapter 路由抽象，将 `supported_hosts` 明确降级为只供 shadow 旧执行器使用的兼容 metadata，并把 ChatOS 独立 builtin Factory 收敛为 `chatos_mcp` 统一 Factory 加宿主依赖注入；剩余旧直连工具 builder 只为 shadow 回滚窗口保留。
+当前 2.0.10 实施状态：Phase 0～6 已完成。权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；聚合 `/mcp` 已支持初始化、工具发现与调用、固定路由校验、结构化 invocation 日志、Provider 超时、响应限额与取消。Local Connector、Harness、Cloud Sandbox、内部服务、External MCP 和 Plugin Runtime 均已纳入统一路由。Task Runner、ChatOS 与 Project Environment Agent 已删除 `off/shadow` 模式及旧直连 builder，其 Agent 工具只能通过 MCP Management 调用；五类 Memory Agent 固定为 `tool_plane=none`。Local Connector Command Approval Agent 是明确例外，模型循环、本地只读工具、`approval_decision`、人工审批、风险判断、白名单、Session Approval 和审批历史完整保留在设备侧。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -20,7 +20,7 @@
 
 1. Plugin Management 是 Agent 到 MCP 配置的权威入口。
 2. Agent 配置了某个已启用 MCP 后，运行时真实加载它，不再被各宿主的重复 allowlist 静默过滤。
-3. 所有 Agent 工具调用只连接一个聚合 MCP Server：MCP Management Service。
+3. 所有云端编排 Agent 的工具调用只连接一个聚合 MCP Server：MCP Management Service；本地命令审批 Agent 只调用本地工具。
 4. MCP Management Service 根据 Project、Run、Device、Sandbox 和组件执行策略选择真实 Provider。
 5. 本地 Workspace 的文件、Git、终端等调用通过 Local Connector Service。
 6. 云端 Workspace 的文件、Git、终端等调用通过 Harness 或 Cloud Sandbox。
@@ -512,7 +512,7 @@ Agent
 | SandboxImages | Local Sandbox facade | Sandbox Manager | Sandbox Router |
 | ProjectEnvironment | Project Management Service | Project Management Service | Internal Service |
 | ProjectRuntimeEnvironment | Project Management Service | Project Management Service | Internal Service |
-| LocalCommandApproval | Local Connector | 不可用 | Local Connector |
+| LocalCommandApproval | 本地审批 Agent 内部执行，不进入网关 | 不可用 | Local-only |
 | TaskProcessLog | Task Runner run scope | Task Runner run scope | Internal Service |
 
 这张表只是默认规则，真实实现必须由 Routing Policy Engine 中的显式策略表示，不能散落为各服务的 if/else。
@@ -982,9 +982,9 @@ Notepad 已从不可执行的 Embedded 占位路由迁移为固定 `InternalServ
 
 Agent Builder 已补齐同一 ChatOS Internal Service Provider。调用只允许 ChatOS 三类运行 Agent，并要求 source session 与 Runtime Session 的 owner、Project 和 active 状态一致；创建 Agent 时 Store 强制写入绑定 owner，工具 Schema 不再暴露 `user_id`，更新 Agent 时入口与 Store 都验证目标 Agent owner，跨用户更新直接拒绝。该 MCP 保持按 Plugin Management 显式配置，不自动加入 Task Runner 默认工具集。
 
-Task Runner、ChatOS 与 Project Environment Agent 调用方均已接入 Runtime Session 解析：`shadow` 模式只观测路由解析结果并继续使用旧工具链，`gateway` 模式只连接 MCP Management endpoint，调用失败时不回退旧 Provider。Project Environment Agent 的更新工具通过 Project Service 专用内部 MCP 端点执行，端点再次校验 Runtime Session 冻结的 owner、Agent、Project、run 和 session 身份；本次选择的依赖也绑定到持久化分析 run，网关执行不会丢失旧链路的服务规划校验。该 Agent 只能通过中央工具策略使用 Sandbox Images 的 `get_image_catalog` 与 `search_images`，模型不能直接调用 `create_image`，镜像创建仍由后续服务工作流负责。Gateway Session 在 Agent 完成或失败后显式关闭。部署默认仍保持 `shadow`。
+Task Runner、ChatOS 与 Project Environment Agent 调用方均强制解析 Runtime Session 并只连接 MCP Management endpoint；配置缺失、Session 解析失败、工具初始化或调用失败时直接失败，不回退旧 Provider。Project Environment Agent 的更新工具通过 Project Service 专用内部 MCP 端点执行，端点再次校验 Runtime Session 冻结的 owner、Agent、Project、run 和 session 身份；本次选择的依赖也绑定到持久化分析 run。该 Agent 只能通过中央工具策略使用 Sandbox Images 的 `get_image_catalog` 与 `search_images`，模型不能直接调用 `create_image`，镜像创建仍由后续服务工作流负责。Gateway Session 在 Agent 完成或失败后显式关闭。
 
-Local Connector Command Approval Agent 也已接入最后一个调用方宿主。模型循环仍在本机执行，但 `gateway` 模式下不再直接调用 `CodeMaintainerService` 或本地 `approval_decision` 执行器：Local Connector Service 使用当前登录用户、已启用的 Project `local_mcp` Binding、device、workspace、固定 Agent key、run 和本地模型配置创建 Runtime Session，客户端不能覆盖 owner 或 Agent 身份；无云端 `project_id` 的临时审批在 `shadow` 下保留旧链路，在 `gateway` 下失败关闭。聚合 MCP 的 CodeMaintainerRead 仍经 MCP Management 路由回 Local Connector，`approval_decision` 由 Local Connector Provider 做严格参数验证并返回结构化结果，客户端只拦截该成功结果写入本轮内存 decision sink，不建立跨进程全局审批状态。为避免 Docker 内网 MCP URL 暴露给桌面端，Local Connector Service 提供只转发固定 MCP Management `/mcp` 的 Runtime Grant facade；它不接受用户身份替代 Runtime Grant，也不代理普通 REST。Agent 成功、失败、缺失 decision 重试结束或 gateway 初始化失败后均显式关闭 Session。部署默认仍为 `shadow`，`gateway` 不回退旧执行器。
+Local Connector Command Approval Agent 是工具平面的明确例外，完整保留在本机。模型循环只装配本地 `CodeMaintainerService` 的只读项目工具和本地 `approval_decision`，风险判断、人工确认、白名单、Session Approval 与审批历史也都在设备侧完成；不会创建云端 MCP Runtime Session，不经过 MCP Management facade，也不调用任意云端 MCP 工具。Agent Prompt、能力策略和 Memory 仍可通过普通受认证 REST 获取，这些请求仅属于控制面和数据面，不改变本地工具执行边界。MCP Management 对 LocalCommandApproval 系统资源固定返回 unavailable，避免云端 Agent 或其他 Runtime Session 误用本地审批能力。
 
 Memory Engine 的五类 Agent 已完成调用链审计：summary、rollup、subject memory、memory rollup 和 thread repair 都只执行受管 Prompt 加纯文本模型生成，请求合同不包含 `tools`、`tool_choice`、functions 或 MCP executor，也没有隐藏的内部工具 Provider。因此它们不是尚未迁移的工具 Agent，而是明确的 `tool_plane=none` 纯生成流水线；不创建无意义的 MCP Runtime Session，也不增加 `off/shadow/gateway` 开关。共享 Agent Catalog、Plugin Management 记录和管理界面均暴露该状态，MCP/Plugin binding 写入与 Runtime capabilities resolve 会 fail closed，避免配置出“界面显示已绑定、运行时永远不会调用”的假工具能力。Memory Engine 普通数据存取、任务调度和模型请求继续使用现有 REST、数据库与 AI Provider 链路，因为它们不属于 Agent Tool Plane。
 
@@ -997,9 +997,9 @@ Memory Engine 的五类 Agent 已完成调用链审计：summary、rollup、subj
 
 当前已完成 External HTTP MCP、普通 `stdio_cloud` MCP、release-managed Plugin Local MCP，以及 Plugin Cloud HTTP/PATH stdio、ConfigFile、云端凭据解析、OAuth 浏览器授权/自动续期、immutable package artifact mount 和 Plugin invocation-scoped cancellation 主链路。External HTTP 的私有 Binding 固定 resource/provider_ref、HTTPS endpoint、DNS 公网解析结果、认证 Header、读写标记和工具白/黑名单，并以无代理、无重定向、响应限额和 JSON-RPC 校验执行。Cloud stdio 的私有 Binding 固定 command/args/env/cwd、sandbox target、读写标记、工具策略及可选 Plugin artifact Bundle；MCP Management 不 spawn、不下载 Plugin artifact，而是通过 Sandbox Manager 的专用内部接口把不可变配置送到绑定 lease 的 Sandbox Agent。Agent 对 package-relative Plugin stdio 完成公网 DNS 固定下载、整包/逐文件/Manifest/runtime identity 校验、只读原子物化和离线 Plugin wrapper 启动；PATH stdio 继续使用清空 Host 环境的受控 wrapper。ConfigFile 在发布阶段从已验证 artifact 解析并冻结实际子 Server，HTTP/stdio 随后复用相同 Provider 安全边界，运行时不重新猜测 transport。两类 stdio runtime 都由 Session TTL、显式 close、调用失败和精确 invocation cancel 清理进程树约束。Plugin Local 固定 immutable Release/component/permission/auth reference，经 Local Connector 的现有 PluginMcpAdapter 完成本地安装校验、凭据解析、sandbox、实时 `tools/list`、真实 `tools/call` 和不关闭 prepared Session 的单调用取消。Plugin Cloud 则由 Plugin Management 发布专用 immutable runtime Bundle，在 Session prepare 时通过独立权限解析加密保存的 Credential Vault 等价 Secret 或 OAuth Token，并在 access token 到期前通过跨实例 refresh lease 完成 rotation；HTTP 走固定公网代理，stdio 走 Sandbox Manager，二者按实际冻结 transport 上报取消能力。
 
-Plugin 组件工具聚合也已完成。只有 `native_adapter` Skill 才发布本地真实工具，纯文本 Skill 不伪装成工具；Command 发布单个 `invoke`，Agent Profile 发布单个 `apply`。组件使用独立 `plugin-tool-binding:`，不会与 Plugin MCP 的 `plugin-binding:` 路由混用。Local Connector 对 Command/Agent 支持 `catalog_only=true`，因此 Runtime Session prepare 与 `shadow` 观测不会弹出审批；需要确认的 Command 只在真实 `tools/call` 时审批，并在审批前后重新加载 active immutable Release、校验参数 presence/SHA-256 和完整 snapshot。Agent `apply` 不接受运行参数。Cloud/Portable-cloud Command 与 Agent 使用 Plugin Management 发布的 immutable `PluginCloudComponentBundle`；Bundle identity、Manifest hash、正文 hash 和 component snapshot 任一漂移均失败关闭，声明需要交互确认的 Command 不会在无审批能力的云路径静默执行。组件路由当前明确 `cancel_supported=false`，不影响已有 Plugin MCP cancellation。
+Plugin 组件工具聚合也已完成。只有 `native_adapter` Skill 才发布本地真实工具，纯文本 Skill 不伪装成工具；Command 发布单个 `invoke`，Agent Profile 发布单个 `apply`。组件使用独立 `plugin-tool-binding:`，不会与 Plugin MCP 的 `plugin-binding:` 路由混用。Local Connector 对 Command/Agent 支持 `catalog_only=true`，因此 Runtime Session prepare 不会弹出审批；需要确认的 Command 只在真实 `tools/call` 时审批，并在审批前后重新加载 active immutable Release、校验参数 presence/SHA-256 和完整 snapshot。Agent `apply` 不接受运行参数。Cloud/Portable-cloud Command 与 Agent 使用 Plugin Management 发布的 immutable `PluginCloudComponentBundle`；Bundle identity、Manifest hash、正文 hash 和 component snapshot 任一漂移均失败关闭，声明需要交互确认的 Command 不会在无审批能力的云路径静默执行。组件路由当前明确 `cancel_supported=false`，不影响已有 Plugin MCP cancellation。
 
-Session 创建失败时已 prepare 的普通/Plugin Cloud stdio、Plugin Local MCP 和 Plugin Local tool component runtime 都会主动清理。所有 live Schema 都参与聚合工具快照和 `route_revision`；required 配置、目标、凭据、artifact、准备或 Schema 探测失败时 Session fail closed，optional 资源标记 unavailable。Runtime Session Snapshot schema 已提升为 v3；按 2.0.10 决策不迁移旧 Session 数据。`shadow` 调用方解析完成后会显式关闭观测 Session，默认部署模式仍保持 `shadow`。
+Session 创建失败时已 prepare 的普通/Plugin Cloud stdio、Plugin Local MCP 和 Plugin Local tool component runtime 都会主动清理。所有 live Schema 都参与聚合工具快照和 `route_revision`；required 配置、目标、凭据、artifact、准备或 Schema 探测失败时 Session fail closed，optional 资源标记 unavailable。Runtime Session Snapshot schema 已提升为 v3；按 2.0.10 决策不迁移旧 Session 数据。
 
 ### Phase 6：调用方迁移
 
@@ -1013,11 +1013,7 @@ Session 创建失败时已 prepare 的普通/Plugin Cloud stdio、Plugin Local M
 
 每个调用方只配置一个 MCP Management endpoint。
 
-当前迁移开关包括 Task Runner 的 `TASK_RUNNER_MCP_MANAGEMENT_MODE`、ChatOS 的 `CHATOS_MCP_MANAGEMENT_MODE`、Project Environment Agent 的 `PROJECT_SERVICE_MCP_MANAGEMENT_MODE`，以及 Local Connector Command Approval Agent 的 `LOCAL_CONNECTOR_COMMAND_APPROVAL_MCP_MANAGEMENT_MODE`：
-
-- `off`：仅使用旧 MCP builder。
-- `shadow`：解析并记录 MCP Management Runtime Session，但工具调用仍走旧链路；2.0.10 部署默认值。
-- `gateway`：模型只看到 MCP Management 聚合 endpoint；Session 解析或调用失败直接失败，不静默回退。
+2.0.10 已删除所有云端调用方迁移模式开关。Task Runner、ChatOS 与 Project Environment Agent 的模型只看到 MCP Management 聚合 endpoint；Session 解析或调用失败直接失败，不静默回退。Local Connector Command Approval Agent 不创建 Runtime Session，只装配本地只读工具和本地审批决策工具。
 
 只有 Agent Tool Plane 使用该 endpoint；调用方的普通 REST、事件、队列和内部 SDK 链路不受此迁移影响。
 
@@ -1025,19 +1021,16 @@ Memory Engine 五类 Agent 的 Phase 6 结论是“无需迁移”，不是保�
 
 ### Phase 7：删除重复路由
 
-- 已删除 TaskRunnerSystemMcpAdapter；shadow 所需的 Project Runtime Environment 旧直连被隔离为显式 legacy builder，不再通过通用 Host Adapter 路由。
-- 已删除 LocalConnectorSystemMcpAdapter；shadow 本地执行只保留显式 legacy provider builder，不再返回通用 Host/HTTP/Embedded 路由结果。
+- 已删除 TaskRunnerSystemMcpAdapter、旧 external/system MCP loader、宿主 builtin Registry 执行链和 Project Runtime Environment 直连 builder。
+- 已删除 LocalConnectorSystemMcpAdapter；Command Approval Agent 则按本地安全边界保留专用 CodeMaintainer 只读/approval 本地执行器，并删除其云端 MCP Management facade。
 - 已删除 ChatOS 独立 builtin MCP Factory 的服务构建职责；13 类 builtin 的构建、依赖缺失和 retired kind 错误策略统一由 `chatos_mcp` Factory 负责，ChatOS 只注入自身 Store、Hooks 和 Browser Vision Adapter。
-- Task Runner 显式 `gateway` 模式已不再加载旧 external/system HTTP MCP，也不再构建宿主 builtin Registry；local/Harness/Sandbox 工具路由只由 MCP Management Session 决定。`shadow`/`off` 继续构建 legacy runtime 作为观测对照。
-- Task Runner 显式 `gateway` 模式也不再把预备 Plugin Runtime 返回的本地 Plugin MCP 或 native Skill provider 注册进模型执行器；Plugin 的 immutable Prompt 与 Hook 生命周期仍由 Task Runner 持有，但模型可调用的 Plugin 工具只由 MCP Management Session 暴露。
-- Project Environment Agent 的宿主工具构建器已明确降级为 `build_legacy_project_environment_mcp_executor`，只允许 `shadow`/`off` 使用；`gateway` 只挂载 MCP Management endpoint。Project Service 保留的 `RuntimeEnvironmentPlan` 仅描述并持久化 Workspace/运行环境所在位置，作为权威 Project Execution Context 的业务输入，不负责构造 MCP Provider URL 或工具路由。
-- ChatOS 显式 `gateway` 模式不再先直连 Plugin Management 解析 capability；它直接使用 Runtime Session 返回的实际 MCP 集合和 Provider Skill Prompt。ChatOS 对 Task Runner、Project Management 的直连构建器已标记为 legacy，只允许 `shadow`/`off` 使用。
-- Local Connector Command Approval Agent 显式 `gateway` 模式不再请求旧 capability endpoint，也不再提前创建本地 CodeMaintainer/approval legacy executor；工具与 Provider Skill Prompt 全部来自 Runtime Session。Agent 最大迭代数仍从普通配置系统读取，它不是 Tool Plane 路由。
+- Task Runner 不再把预备 Plugin Runtime 返回的本地 Plugin MCP 或 native Skill provider 注册进模型执行器；Plugin 的 immutable Prompt 与 Hook 生命周期仍由 Task Runner 持有，但模型可调用的 Plugin 工具只由 MCP Management Session 暴露。
+- Project Service 保留的 `RuntimeEnvironmentPlan` 仅描述并持久化 Workspace/运行环境所在位置，作为权威 Project Execution Context 的业务输入，不负责构造 MCP Provider URL 或工具路由。
+- ChatOS 直接使用 Runtime Session 返回的实际 MCP 集合和 Provider Skill Prompt，对 Task Runner、Project Management 的直连构建器已经删除。
+- Local Connector Command Approval Agent 继续通过普通受认证 REST 读取能力策略与 Provider Skill Prompt，但工具目录和执行器完全在本地构建；不创建 Runtime Session，MCP Management 对 LocalCommandApproval 固定返回 unavailable。
 - 删除其余服务 local/cloud workspace if/else。
 - 已删除共享 `SystemMcpHostAdapter`、`SystemMcpResolveContext` 和 `ResolvedSystemMcpBackend` 抽象。
-- `SystemMcpHost.supported_hosts` 已重命名为 `legacy_supported_hosts`，优先级路由 API 已删除；该字段只允许 shadow 旧执行器兼容使用。
-
-剩余两项需在默认模式从 `shadow` 切换到 `gateway`、回滚窗口关闭后删除，避免当前部署失去旧链路观测对照。
+- 旧调用方模式环境变量和部署默认值已删除。
 
 ---
 
@@ -1099,8 +1092,8 @@ MCP Management Phase 0/1
 - local_connector + CodeMaintainerRead -> LocalConnector。
 - harness + CodeMaintainerRead -> Harness。
 - cloud_sandbox + CodeMaintainerRead -> CloudSandbox。
-- local_connector + LocalCommandApproval -> LocalConnector。
-- harness + LocalCommandApproval -> unavailable。
+- local_connector + LocalCommandApproval -> unavailable（本地审批 Agent 不进入 MCP Management）。
+- harness/cloud_sandbox + LocalCommandApproval -> unavailable。
 - ProjectManagement 在所有项目类型 -> InternalService。
 - portable Plugin 固定 host 后不再切换。
 - required MCP 无路由 -> Session resolve 失败。
@@ -1144,7 +1137,7 @@ MCP Management Phase 0/1
 
 ## 23. 验收标准
 
-1. Agent Runtime 只连接一个聚合 MCP Server。
+1. 云端编排 Agent Runtime 只连接一个聚合 MCP Server；本地命令审批 Agent 只连接本地工具执行器。
 2. Plugin Management 中启用的 MCP 都进入 Runtime Session。
 3. 各 Agent 宿主不再维护独立 MCP 可用性 allowlist。
 4. Local/Cloud/Harness/Sandbox 路由集中在 MCP Management Service。

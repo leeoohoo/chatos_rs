@@ -57,7 +57,6 @@ mod tests {
         let client = SandboxManagerClient::new(
             "http://127.0.0.1:8095".to_string(),
             Some(SandboxManagerAuth {
-                client_id: "task-runner".to_string(),
                 client_key: "a-long-task-runner-sandbox-secret".to_string(),
             }),
         )

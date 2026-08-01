@@ -6,11 +6,7 @@ use crate::state::AppState;
 use crate::user_model_runtime_client::resolve_default_environment_initialization_model_runtime;
 use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest, PROJECT_ENVIRONMENT_AGENT};
 use chatos_ai_runtime::ModelRuntimeConfig;
-use chatos_mcp_runtime::{BuiltinMcpKind, McpExecutor};
-use chatos_plugin_management_sdk::{
-    ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities, SystemAgentKey,
-    PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
-};
+use chatos_mcp_runtime::McpExecutor;
 use serde_json::{json, Value};
 
 use super::runtime_environment::{
@@ -30,15 +26,12 @@ pub use self::progress::get_project_runtime_environment_progress;
 
 use self::agent_prompt::resolve_project_environment_agent_prompt;
 use self::inspection::{inspect_local_project, LocalProjectInspection};
-use self::mcp_management_gateway::{
-    resolve_project_environment_mcp, ProjectEnvironmentMcpResolution,
-};
+use self::mcp_management_gateway::resolve_project_environment_mcp;
 use self::mcp_servers::{
-    build_legacy_project_environment_mcp_executor, create_sandbox_image_from_plan,
-    ensure_agent_required_tools_available, get_local_project_compose_environment_status,
-    get_sandbox_image_catalog, prepare_sandbox_dependency_images,
-    restart_local_project_compose_environment, start_local_project_compose_environment,
-    stop_local_project_compose_environment,
+    create_sandbox_image_from_plan, ensure_agent_required_tools_available,
+    get_local_project_compose_environment_status, get_sandbox_image_catalog,
+    prepare_sandbox_dependency_images, restart_local_project_compose_environment,
+    start_local_project_compose_environment, stop_local_project_compose_environment,
 };
 use self::memory::{build_project_agent_memory, ProjectAgentMemory};
 use self::routing::{

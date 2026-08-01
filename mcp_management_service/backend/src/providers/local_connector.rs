@@ -77,7 +77,6 @@ impl LocalConnectorProvider {
                 | SystemMcpKey::CodeMaintainerWrite
                 | SystemMcpKey::TerminalController
                 | SystemMcpKey::BrowserTools
-                | SystemMcpKey::LocalCommandApproval
         )
     }
 
@@ -476,21 +475,6 @@ mod tests {
         }
     }
 
-    fn local_command_approval_route() -> ResolvedMcpRoute {
-        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::LocalCommandApproval);
-        ResolvedMcpRoute {
-            resource_id: descriptor.resource_id.to_string(),
-            server_name: descriptor.server_name.to_string(),
-            provider_kind: McpProviderKind::LocalConnector,
-            provider_ref: Some("device:device-1/workspace:workspace-1".to_string()),
-            tool_namespace: descriptor.server_name.to_string(),
-            allow_writes: false,
-            retry_class: McpRetryClass::NoRetry,
-            cancel_supported: true,
-            reason: "test".to_string(),
-        }
-    }
-
     async fn start_local_connector(
         secret: &'static str,
         mode: ResponseMode,
@@ -601,19 +585,6 @@ mod tests {
             })
         );
         server.abort();
-    }
-
-    #[test]
-    fn local_command_approval_is_a_supported_local_connector_route() {
-        let provider = LocalConnectorProvider::new(
-            "http://127.0.0.1:39230",
-            Duration::from_secs(5),
-            Some("a-long-local-connector-secret".to_string()),
-            1024 * 1024,
-        )
-        .unwrap();
-
-        assert!(provider.supports(&local_command_approval_route()));
     }
 
     #[tokio::test]

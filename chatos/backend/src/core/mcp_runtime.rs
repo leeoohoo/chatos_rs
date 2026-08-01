@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::services::mcp_loader::{
-    load_mcp_configs_for_user, McpBuiltinServer, McpHttpServer, McpStdioServer,
-};
+use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
 pub type McpServerBundle = (
     Vec<McpHttpServer>,
@@ -38,28 +36,6 @@ pub fn has_any_mcp_server(
     builtin_servers: &[McpBuiltinServer],
 ) -> bool {
     !(http_servers.is_empty() && stdio_servers.is_empty() && builtin_servers.is_empty())
-}
-
-pub async fn load_mcp_servers_by_selection(
-    user_id: Option<String>,
-    selection_configured: bool,
-    selected_ids: Vec<String>,
-    workspace_dir: Option<&str>,
-    project_id: Option<&str>,
-) -> McpServerBundle {
-    if selection_configured && selected_ids.is_empty() {
-        return empty_mcp_server_bundle();
-    }
-
-    let id_filter = if selected_ids.is_empty() {
-        None
-    } else {
-        Some(selected_ids)
-    };
-
-    load_mcp_configs_for_user(user_id, id_filter, workspace_dir, project_id)
-        .await
-        .unwrap_or_else(|_| empty_mcp_server_bundle())
 }
 
 #[cfg(test)]

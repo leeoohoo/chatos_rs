@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use chatos_agent::ManagedRuntimeConfigBundle;
 use chatos_config_sdk::ConfigClient;
-use chatos_mcp_management_sdk::{McpManagementClient, McpManagementClientConfig};
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use memory_engine_sdk::ManagedMemoryPolicyBundle;
 use tokio::sync::Mutex;
@@ -23,12 +22,10 @@ pub struct AppState {
     pub relay: ConnectorRelay,
     pub store: ConnectorStore,
     pub plugin_management_client: PluginManagementClient,
-    pub mcp_management_client: McpManagementClient,
     config_center_client: Option<ConfigClient>,
     task_runner_config_center_client: Option<ConfigClient>,
     user_service_http: reqwest::Client,
     memory_engine_http: reqwest::Client,
-    mcp_management_runtime_http: reqwest::Client,
     pub(crate) managed_requirements_signer: Option<Arc<ManagedRequirementsSigner>>,
     device_connect_nonces: Arc<Mutex<HashMap<String, i64>>>,
 }
@@ -41,10 +38,6 @@ impl AppState {
             PluginManagementClientConfig::from_env("local-connector-service").await,
         )
         .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
-        let mcp_management_client = McpManagementClient::new(
-            McpManagementClientConfig::from_env("local-connector-service").await,
-        )
-        .map_err(|err| format!("initialize MCP Management client failed: {err}"))?;
         let config_center_client =
             initialize_config_center_client("local-connector-service", "Local Connector").await;
         let task_runner_config_center_client =
@@ -56,10 +49,6 @@ impl AppState {
             config.memory_engine_request_timeout,
         ))
         .map_err(|err| format!("build Memory Engine client failed: {err}"))?;
-        let mcp_management_runtime_http = build_http_client(HttpClientTimeouts::new(
-            config.mcp_management_runtime_request_timeout,
-        ))
-        .map_err(|err| format!("build MCP Management runtime client failed: {err}"))?;
         if let Some(signer) = managed_requirements_signer.as_ref() {
             tracing::info!(
                 key_id = signer.key_id(),
@@ -72,12 +61,10 @@ impl AppState {
             relay: ConnectorRelay::default(),
             store,
             plugin_management_client,
-            mcp_management_client,
             config_center_client,
             task_runner_config_center_client,
             user_service_http,
             memory_engine_http,
-            mcp_management_runtime_http,
             managed_requirements_signer,
             device_connect_nonces: Arc::new(Mutex::new(HashMap::new())),
         })
@@ -89,10 +76,6 @@ impl AppState {
 
     pub(crate) fn memory_engine_http(&self) -> &reqwest::Client {
         &self.memory_engine_http
-    }
-
-    pub(crate) fn mcp_management_runtime_http(&self) -> &reqwest::Client {
-        &self.mcp_management_runtime_http
     }
 
     pub(crate) async fn managed_memory_policy_bundle(&self) -> ManagedMemoryPolicyBundle {

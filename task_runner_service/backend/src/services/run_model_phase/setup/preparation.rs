@@ -4,17 +4,11 @@
 use super::*;
 use crate::services::TaskRunnerCapabilityPolicy;
 
-mod legacy_system_mcp;
-mod mcp_builder;
 mod mcp_inputs;
 mod mcp_management_gateway;
 
-use mcp_builder::build_mcp_builder_parts;
-use mcp_inputs::{
-    external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
-    mcp_provider_skills_prefixed_input_items,
-};
-use mcp_management_gateway::{resolve_mcp_management_gateway, McpManagementExecutionMode};
+use mcp_inputs::mcp_provider_skills_prefixed_input_items;
+use mcp_management_gateway::resolve_mcp_management_gateway;
 
 pub(super) async fn prepare_model_execution(
     service: &RunService,
@@ -63,24 +57,6 @@ pub(super) async fn prepare_model_execution(
             authoritative_policy,
         )
         .await?;
-    let mcp_management_mode = McpManagementExecutionMode::from_env();
-    let gateway_mode_enabled = mcp_management_mode.uses_gateway();
-    let loaded_external_mcp = if gateway_mode_enabled {
-        mcp_inputs::LoadedExternalMcpServers::default()
-    } else {
-        load_external_mcp_servers(
-            service,
-            task,
-            effective_workspace_dir.as_str(),
-            capability_policy,
-        )
-        .await?
-    };
-    let system_http_servers = if gateway_mode_enabled {
-        Vec::new()
-    } else {
-        load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?
-    };
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -129,32 +105,12 @@ pub(super) async fn prepare_model_execution(
         runtime_config.builtin_prompt_mode = chatos_ai_runtime::TaskBuiltinMcpPromptMode::Effective;
     }
 
-    let (mut builtin_servers, mut builtin_registry) = if gateway_mode_enabled {
-        (Vec::new(), chatos_mcp_runtime::BuiltinToolRegistry::new())
-    } else {
-        let task_service = TaskService::new(service.config.clone(), service.store.clone());
-        build_mcp_builder_parts(
-            service,
-            task,
-            run,
-            effective_workspace_dir.as_str(),
-            task_process_logging_enabled,
-            task_service,
-            sandbox_context.as_ref(),
-            authoritative_policy,
-        )
-        .await?
-    };
     let prepared_plugin_runtime = service
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
     let mcp_management_gateway =
-        resolve_mcp_management_gateway(task, run, sandbox_context.as_ref(), mcp_management_mode)
-            .await?;
-    let using_mcp_management_gateway = mcp_management_gateway.is_some();
-    let gateway_provider_skills_prompt = mcp_management_gateway
-        .as_ref()
-        .and_then(|gateway| gateway.provider_skills_prompt.clone());
+        resolve_mcp_management_gateway(task, run, sandbox_context.as_ref()).await?;
+    let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
     let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
         crate::models::task_runner_agent_key_for(
             task.task_profile.as_str(),
@@ -162,40 +118,8 @@ pub(super) async fn prepare_model_execution(
         )
         .as_str(),
     );
-    if !gateway_mode_enabled {
-        builtin_servers.extend(prepared_plugin_runtime.builtin_servers.clone());
-        for provider in &prepared_plugin_runtime.providers {
-            builtin_registry.register_arc(provider.clone());
-        }
-    }
-    let mut prefixed_input_items = external_mcp_prefixed_input_items(
-        loaded_external_mcp.summaries.as_slice(),
-        task.mcp_config.locale(),
-    );
-    let provider_skills_prompt = if using_mcp_management_gateway {
-        gateway_provider_skills_prompt
-    } else {
-        capability_policy.and_then(|policy| {
-            let locale = if task.mcp_config.locale().is_english() {
-                "en-US"
-            } else {
-                "zh-CN"
-            };
-            let mut effective_mcp_identifiers = loaded_external_mcp
-                .summaries
-                .iter()
-                .map(|summary| summary.id.as_str())
-                .collect::<Vec<_>>();
-            if task_process_logging_enabled {
-                effective_mcp_identifiers
-                    .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID);
-            }
-            policy.compose_provider_skills_prompt(effective_mcp_identifiers, locale)
-        })
-    };
-    prefixed_input_items.extend(mcp_provider_skills_prefixed_input_items(
-        provider_skills_prompt,
-    ));
+    let mut prefixed_input_items =
+        mcp_provider_skills_prefixed_input_items(gateway_provider_skills_prompt);
     prefixed_input_items.extend(prepared_plugin_runtime.prompt_items.clone());
     let mut run_spec = build_run_spec(
         &agent,
@@ -219,30 +143,8 @@ pub(super) async fn prepare_model_execution(
     let memory_scope = build_memory_scope(service, task, run);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
-    if !loaded_external_mcp.summaries.is_empty() {
-        info!(
-            task_id = task.id.as_str(),
-            run_id = run.id.as_str(),
-            external_mcp_servers = %loaded_external_mcp
-                .summaries
-                .iter()
-                .map(|summary| format!("{}:{}:{}", summary.id, summary.name, summary.transport))
-                .collect::<Vec<_>>()
-                .join(","),
-            "task runner loaded external MCP servers"
-        );
-    }
-
-    let mut mcp_builder = if let Some(gateway) = mcp_management_gateway {
-        McpExecutorBuilder::new().with_http_server(gateway.into_server())
-    } else {
-        McpExecutorBuilder::new()
-            .with_http_servers(system_http_servers)
-            .with_http_servers(loaded_external_mcp.http_servers)
-            .with_stdio_servers(loaded_external_mcp.stdio_servers)
-            .with_builtin_servers(builtin_servers)
-            .with_builtin_registry(builtin_registry)
-    };
+    let mut mcp_builder =
+        McpExecutorBuilder::new().with_http_server(mcp_management_gateway.into_server());
     for allowed_tools in command_constraints.tool_allowlists {
         mcp_builder = mcp_builder.with_allowed_tool_names(allowed_tools);
     }
@@ -465,13 +367,6 @@ async fn persist_context_snapshot(
     }
 }
 
-fn is_chatos_plan_task(task: &TaskRecord) -> bool {
-    crate::models::uses_task_runner_planning_agent(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
@@ -536,80 +431,6 @@ mod tests {
         assert_eq!(bounded_plugin_max_iterations(600, Some(12)), 12);
         assert_eq!(bounded_plugin_max_iterations(8, Some(12)), 8);
         assert_eq!(bounded_plugin_max_iterations(600, None), 600);
-    }
-
-    #[tokio::test]
-    async fn chatos_plan_builtin_servers_include_project_management_provider() {
-        let config = test_config();
-        let service = test_run_service(config);
-        let mut task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
-        task.mcp_config.requires_execution = false;
-        let run = sample_run(&task);
-        let task_service = TaskService::new(service.config.clone(), service.store.clone());
-
-        let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
-                .await
-                .expect("build MCP builder parts");
-        let server = builtin_servers
-            .iter()
-            .find(|server| server.name == chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME)
-            .expect("project management builtin server");
-
-        assert_eq!(
-            server.kind.as_str(),
-            chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement.kind_name()
-        );
-        assert_eq!(server.user_id.as_deref(), Some("owner-1"));
-        assert_eq!(server.project_id.as_deref(), Some("project-1"));
-
-        let executor = chatos_mcp_runtime::McpExecutorBuilder::new()
-            .with_builtin_servers(builtin_servers)
-            .with_builtin_registry(builtin_registry)
-            .build_builtin_only()
-            .expect("builtin executor");
-        let tool_names = executor
-            .available_tools()
-            .into_iter()
-            .filter_map(|tool| {
-                tool.get("name")
-                    .and_then(|name| name.as_str())
-                    .map(str::to_string)
-            })
-            .collect::<Vec<_>>();
-        assert!(tool_names
-            .iter()
-            .any(|name| name == "project_management_service_create_requirement"));
-    }
-
-    #[tokio::test]
-    async fn default_task_does_not_include_project_management_builtin() {
-        let config = test_config();
-        let service = test_run_service(config);
-        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
-        let run = sample_run(&task);
-        let task_service = TaskService::new(service.config.clone(), service.store.clone());
-
-        let system_servers =
-            load_system_http_mcp_servers(&service, &task, &run, None).expect("system servers");
-        assert!(system_servers.is_empty());
-
-        let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
-                .await
-                .expect("build MCP builder parts");
-        assert!(builtin_servers
-            .iter()
-            .all(|server| server.name != chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME));
-        let executor = chatos_mcp_runtime::McpExecutorBuilder::new()
-            .with_builtin_servers(builtin_servers)
-            .with_builtin_registry(builtin_registry)
-            .build_builtin_only()
-            .expect("builtin executor");
-        assert!(executor.available_tools().into_iter().all(|tool| tool
-            .get("name")
-            .and_then(|name| name.as_str())
-            .is_none_or(|name| !name.starts_with("project_management_service_"))));
     }
 
     #[test]

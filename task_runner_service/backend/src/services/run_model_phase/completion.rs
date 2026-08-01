@@ -366,6 +366,7 @@ mod tests {
     use crate::ask_user_prompt_service::AskUserPromptService;
     use crate::config::{AppConfig, StoreMode};
     use crate::models::{CreateTaskRequest, TaskClosureState, TaskManagerScope};
+    use crate::services::TaskService;
     use crate::store::AppStore;
     use chatos_ai_runtime::AiTurnStatus;
     use serde_json::json;

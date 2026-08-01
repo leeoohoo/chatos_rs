@@ -6,9 +6,9 @@ use std::collections::HashSet;
 use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpBackend, SystemMcpDescriptor};
 use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
-    McpRecord as PluginMcpRecord, PluginCommandInvocation, PluginManagementClient,
-    ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin,
-    ResolvedSkill, RunPluginSnapshot, SystemAgentKey, TaskPluginConfig,
+    PluginCommandInvocation, PluginManagementClient, ResolveAgentCapabilitiesRequest,
+    ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin, ResolvedSkill, RunPluginSnapshot,
+    SystemAgentKey, TaskPluginConfig,
 };
 use serde::Serialize;
 
@@ -26,8 +26,6 @@ use plugin_selection::{
     validate_plugin_component_selection, validate_supported_plugin,
 };
 
-const LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND: &str = "local_connector_discovered";
-const CLOUD_EXTERNAL_RUNTIME_KINDS: [&str; 2] = ["http", "stdio_cloud"];
 const MAX_PLUGIN_COMMAND_INVOCATIONS: usize = 64;
 const MAX_PLUGIN_COMMAND_ARGUMENT_BYTES: usize = 16 * 1024;
 #[cfg(test)]
@@ -307,41 +305,6 @@ impl TaskRunnerCapabilityPolicy {
             .collect()
     }
 
-    pub(crate) fn effective_external_mcps<'a>(
-        &'a self,
-        task: &TaskRecord,
-    ) -> Result<Vec<&'a PluginMcpRecord>, String> {
-        let mut out = Vec::new();
-        for resource_id in &task.mcp_config.external_mcp_config_ids {
-            let item = self
-                .capabilities
-                .mcps
-                .iter()
-                .find(|item| item.resource.id == *resource_id)
-                .ok_or_else(|| format!("effective MCP resource is unavailable: {resource_id}"))?;
-            if !item.binding.enabled || !item.resource.enabled {
-                return Err(format!("effective MCP resource is disabled: {resource_id}"));
-            }
-            if plugin_builtin_kind(item).is_none() {
-                if plugin_task_process_log_mcp(item) {
-                    continue;
-                }
-                validate_cloud_external_mcp_runtime(item)?;
-                out.push(&item.resource);
-            }
-        }
-        Ok(out)
-    }
-
-    pub(crate) fn compose_provider_skills_prompt<'a>(
-        &self,
-        effective_mcp_identifiers: impl IntoIterator<Item = &'a str>,
-        locale: &str,
-    ) -> Option<String> {
-        self.capabilities
-            .compose_provider_skills_prompt(effective_mcp_identifiers, Some(locale))
-    }
-
     fn is_planning_agent(&self) -> bool {
         is_task_runner_planning_agent(self.capabilities.agent_key.as_str())
     }
@@ -555,44 +518,6 @@ fn is_task_runner_planning_agent(agent_key: &str) -> bool {
 fn is_task_runner_execution_agent(agent_key: &str) -> bool {
     agent_key == SystemAgentKey::TaskRunnerRunPhase.as_str()
         || agent_key == SystemAgentKey::TaskRunnerLocalRunPhase.as_str()
-}
-
-fn validate_cloud_external_mcp_runtime(item: &ResolvedMcp) -> Result<(), String> {
-    let runtime_kind = item.resource.runtime.kind.as_str();
-    if item.resource.source_kind == LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND
-        || runtime_kind.starts_with("local_connector_")
-        || item.resource.runtime.local_connector.is_some()
-    {
-        return Err(format!(
-            "Local Connector MCP is unavailable in cloud Task Runner: {}",
-            item.resource.id
-        ));
-    }
-    if let Some(descriptor) = plugin_system_mcp_descriptor(item) {
-        if descriptor.embedded_kind.is_some() {
-            return Err(format!(
-                "embedded system MCP cannot be loaded as an external MCP: {}",
-                descriptor.server_name
-            ));
-        }
-        if !matches!(
-            descriptor.backend,
-            SystemMcpBackend::ServiceHttp | SystemMcpBackend::ServiceDynamic
-        ) {
-            return Err(format!(
-                "system MCP {} has no Task Runner service backend",
-                descriptor.server_name
-            ));
-        }
-        return Ok(());
-    }
-    if !CLOUD_EXTERNAL_RUNTIME_KINDS.contains(&runtime_kind) {
-        return Err(format!(
-            "cloud Task Runner does not support MCP runtime kind {} for {}",
-            runtime_kind, item.resource.id
-        ));
-    }
-    Ok(())
 }
 
 fn normalized_plugin_identifier(value: &str, field: &str) -> Result<String, String> {

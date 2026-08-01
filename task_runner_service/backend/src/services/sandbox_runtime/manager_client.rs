@@ -272,7 +272,6 @@ pub(super) struct SandboxManagerClient {
 
 #[derive(Debug, Clone)]
 pub(super) struct SandboxManagerAuth {
-    pub(super) client_id: String,
     pub(super) client_key: String,
 }
 
@@ -732,10 +731,7 @@ impl SandboxManagerAuth {
             config.sandbox_manager_client_id.clone(),
             config.sandbox_manager_client_key.clone(),
         ) {
-            (Some(_client_id), Some(client_key)) => Some(Self {
-                client_id: "task-runner".to_string(),
-                client_key,
-            }),
+            (Some(_client_id), Some(client_key)) => Some(Self { client_key }),
             _ => None,
         }
     }

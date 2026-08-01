@@ -49,13 +49,16 @@ pub(super) async fn agent_status(auth: AuthUser, Query(query): Query<UserQuery>)
     let runtime_panel = load_agent_status_runtime_panel(user_id).await;
     Json(json!({
         "status": "ok",
-        "runtime": "agent_runtime",
+        "runtime": "mcp_management_runtime_session",
         "timestamp": crate::core::time::now_rfc3339(),
         "openai": {
             "configured": !cfg.openai_api_key.is_empty(),
             "base_url": cfg.openai_base_url.clone()
         },
         "servers": runtime_panel.servers,
+        "tool_catalog_owner": runtime_panel.owner,
+        "tool_catalog_service": runtime_panel.service,
+        "tool_catalog_runtime_scoped": runtime_panel.runtime_scoped,
         "builtin_mcp_prompt_debug": runtime_panel.builtin_mcp_prompt_debug,
     }))
 }

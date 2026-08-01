@@ -318,7 +318,6 @@ mod tests {
             root_path: root_path.map(ToOwned::to_owned),
             git_url: None,
             source_type: Some(source_type.to_string()),
-            execution_plane: None,
             cloud_import_source: None,
             import_status: None,
             source_git_url: None,

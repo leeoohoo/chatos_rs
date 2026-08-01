@@ -8,14 +8,6 @@ use crate::models::mcp_config::McpConfig;
 pub use chatos_mcp_runtime::BuiltinMcpKind;
 use chatos_mcp_runtime::{LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID};
 
-pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
-    chatos_mcp::system_mcp_descriptor_by_any(id).and_then(|descriptor| descriptor.embedded_kind)
-}
-
-pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
-    chatos_mcp_runtime::builtin_kind_by_command(command)
-}
-
 pub fn is_builtin_mcp_id(id: &str) -> bool {
     chatos_mcp::system_mcp_descriptor_by_resource_id(id)
         .is_some_and(|descriptor| descriptor.embedded_kind.is_some())
@@ -31,7 +23,7 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
         );
     }
     let descriptor = chatos_mcp::system_mcp_descriptor_by_resource_id(id)?;
-    if !descriptor.legacy_supports_host(chatos_mcp::SystemMcpHost::Chatos) {
+    if !descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::Chatos) {
         return None;
     }
     let kind = descriptor.embedded_kind?;
@@ -41,7 +33,9 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
 pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
     chatos_mcp::system_mcp_catalog()
         .iter()
-        .filter(|descriptor| descriptor.legacy_supports_host(chatos_mcp::SystemMcpHost::Chatos))
+        .filter(|descriptor| {
+            descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::Chatos)
+        })
         .filter_map(|descriptor| {
             let kind = descriptor.embedded_kind?;
             builtin_config(kind, descriptor.resource_id, kind.command()?)
@@ -83,29 +77,7 @@ fn builtin_config(kind: BuiltinMcpKind, id: &str, command: &str) -> Option<McpCo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chatos_mcp_runtime::{
-        BROWSER_TOOLS_COMMAND, BROWSER_TOOLS_MCP_ID, WEB_TOOLS_COMMAND, WEB_TOOLS_MCP_ID,
-    };
-
-    #[test]
-    fn web_and_browser_builtin_are_registered() {
-        assert_eq!(
-            builtin_kind_by_id(WEB_TOOLS_MCP_ID),
-            Some(BuiltinMcpKind::WebTools)
-        );
-        assert_eq!(
-            builtin_kind_by_command(WEB_TOOLS_COMMAND),
-            Some(BuiltinMcpKind::WebTools)
-        );
-        assert_eq!(
-            builtin_kind_by_id(BROWSER_TOOLS_MCP_ID),
-            Some(BuiltinMcpKind::BrowserTools)
-        );
-        assert_eq!(
-            builtin_kind_by_command(BROWSER_TOOLS_COMMAND),
-            Some(BuiltinMcpKind::BrowserTools)
-        );
-    }
+    use chatos_mcp_runtime::{BROWSER_TOOLS_MCP_ID, WEB_TOOLS_MCP_ID};
 
     #[test]
     fn builtin_mcp_config_list_contains_web_and_browser() {

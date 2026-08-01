@@ -15,10 +15,7 @@ use chatos_ai_runtime::{
     TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits,
     DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
-use chatos_mcp_runtime::{
-    builtin_servers_from_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
-    McpExecutorBuilder, McpHttpServer, McpStdioServer,
-};
+use chatos_mcp_runtime::{BuiltinMcpPromptLocale, McpExecutorBuilder};
 use memory_engine_sdk::ComposeContextPolicy;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -42,18 +39,9 @@ use super::stream_events::{
     append_pending_stream_event, flush_pending_stream_event, PendingRunStreamEvent,
 };
 use super::task_process_log::{
-    task_process_log_builtin_server, task_process_log_prefixed_input_items,
-    task_process_logging_enabled, TaskProcessLogBuiltinProvider,
-    TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
+    task_process_log_prefixed_input_items, task_process_logging_enabled,
 };
-use super::workspace_mcp::{
-    runtime_selected_builtin_kinds, runtime_selected_builtin_kinds_authoritative,
-    task_uses_harness_code,
-};
-use super::{
-    build_builtin_registry, summarized_report_content, DisabledBuiltinProvider, RunService,
-    TaskService,
-};
+use super::{summarized_report_content, RunService};
 
 mod callbacks;
 mod completion;

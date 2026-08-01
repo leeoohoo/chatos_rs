@@ -108,7 +108,6 @@ use self::batch_ops::{
     normalize_batch_task_ids, normalize_prerequisite_task_ids, normalize_tags, sanitize_id_list,
     summarize_batch_results,
 };
-use self::builtin_providers::{build_builtin_registry, DisabledBuiltinProvider};
 pub use self::chatos_callbacks::spawn_chatos_callback_reconciler;
 pub use self::chatos_message_tasks::{
     ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,

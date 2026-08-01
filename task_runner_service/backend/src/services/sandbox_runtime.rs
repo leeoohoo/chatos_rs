@@ -2,11 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
 
-use chatos_mcp_runtime::{BuiltinMcpKind, McpHttpServer};
+use chatos_mcp_runtime::BuiltinMcpKind;
 use chatos_sandbox_contract::{EffectivePermissionSnapshot, EffectiveSandboxPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -20,7 +18,6 @@ use super::workspace_mcp::{
 use super::*;
 
 pub(super) const SANDBOX_MCP_SERVER_NAME: &str = "sandbox";
-const SANDBOX_MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(135);
 mod manager_client;
 mod output;
 mod routing;
@@ -106,10 +103,6 @@ pub(super) struct SandboxRuntimeContext {
     pub agent_endpoint: Option<String>,
     pub agent_token: String,
     pub mcp_url: String,
-    #[serde(default, skip_serializing)]
-    pub manager_client_id: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub manager_client_key: Option<String>,
     #[serde(default)]
     pub manager_base_url: String,
     pub run_workspace: String,
@@ -138,50 +131,10 @@ impl SandboxRuntimeContext {
         })
     }
 
-    pub(super) fn to_mcp_server(&self, task: &TaskRecord, run: &TaskRunRecord) -> McpHttpServer {
-        let mut headers = HashMap::new();
-        headers.insert("X-Chatos-Sandbox-Id".to_string(), self.sandbox_id.clone());
-        headers.insert(
-            "X-Chatos-Sandbox-Lease-Id".to_string(),
-            self.lease_id.clone(),
-        );
-        if let Some(service_id) = self.service_id.as_deref() {
-            headers.insert("X-Chatos-Service-Id".to_string(), service_id.to_string());
-        }
-        if let (Some(client_id), Some(client_key)) = (
-            self.manager_client_id.as_deref(),
-            self.manager_client_key.as_deref(),
-        ) {
-            headers.insert("x-sandbox-caller".to_string(), client_id.to_string());
-            headers.insert("x-sandbox-client-key".to_string(), client_key.to_string());
-            headers.insert(
-                "x-sandbox-internal-scope".to_string(),
-                "sandbox.service".to_string(),
-            );
-        }
-        headers.insert("X-Task-Runner-Task-Id".to_string(), task.id.clone());
-        headers.insert("X-Task-Runner-Run-Id".to_string(), run.id.clone());
-        headers.insert(
-            "X-Task-Runner-Tenant-Id".to_string(),
-            task.tenant_id.clone(),
-        );
-        headers.insert("X-Task-Runner-User-Id".to_string(), task.subject_id.clone());
-        headers.insert(
-            "X-Task-Runner-Project-Id".to_string(),
-            task.project_id.clone(),
-        );
-        McpHttpServer::new(SANDBOX_MCP_SERVER_NAME, self.mcp_url.clone())
-            .with_headers(headers)
-            .with_timeout(SANDBOX_MCP_REQUEST_TIMEOUT)
-    }
-}
-
-impl SandboxRuntimeContext {
     fn from_response(
         response: CreateSandboxLeaseResponse,
         workspace_root: &Path,
         manager_base_url: &str,
-        manager_auth: Option<SandboxManagerAuth>,
     ) -> Result<Self, String> {
         let effective_policy = response
             .effective_policy
@@ -203,9 +156,6 @@ impl SandboxRuntimeContext {
             .agent_token
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| lease_id.clone());
-        let (manager_client_id, manager_client_key) = manager_auth
-            .map(|auth| (Some(auth.client_id), Some(auth.client_key)))
-            .unwrap_or((None, None));
         Ok(Self {
             lease_id,
             sandbox_id: sandbox_id.clone(),
@@ -218,8 +168,6 @@ impl SandboxRuntimeContext {
             } else {
                 format!("{manager_base_url}/api/sandboxes/{sandbox_id}/mcp")
             },
-            manager_client_id,
-            manager_client_key,
             manager_base_url,
             agent_endpoint,
             run_workspace: response.run_workspace,
@@ -246,15 +194,6 @@ pub(super) fn task_requires_sandbox(task: &TaskRecord, authoritative_policy: boo
             BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
         ) || (!task.mcp_config.requires_execution && kind == BuiltinMcpKind::CodeMaintainerRead)
     })
-}
-
-pub(super) fn sandbox_replaces_builtin_kind(kind: BuiltinMcpKind) -> bool {
-    matches!(
-        kind,
-        BuiltinMcpKind::CodeMaintainerRead
-            | BuiltinMcpKind::CodeMaintainerWrite
-            | BuiltinMcpKind::TerminalController
-    )
 }
 
 fn attach_sandbox_context_to_run(run: &mut TaskRunRecord, context: &SandboxRuntimeContext) {

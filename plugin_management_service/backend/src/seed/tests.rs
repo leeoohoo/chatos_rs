@@ -241,7 +241,7 @@ fn chatos_conversation_requires_task_runner_service_on_both_execution_planes() {
     assert!(chatos_mcp::system_mcp_descriptor(
         chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
     )
-    .legacy_supports_host(chatos_mcp::SystemMcpHost::LocalConnector));
+    .supports_implementation_host(chatos_mcp::SystemMcpHost::LocalConnector));
 }
 
 #[test]
@@ -252,8 +252,8 @@ fn task_process_log_is_a_seeded_task_runner_system_mcp() {
 
     assert_eq!(descriptor.resource_id, TASK_PROCESS_LOG_MCP_RESOURCE_ID);
     assert_eq!(descriptor.server_name, "task_run_process");
-    assert!(descriptor.legacy_supports_host(chatos_mcp::SystemMcpHost::TaskRunner));
-    assert!(descriptor.legacy_supports_host(chatos_mcp::SystemMcpHost::LocalConnector));
+    assert!(descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::TaskRunner));
+    assert!(descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::LocalConnector));
 
     let record = system_mcp_record(descriptor, "admin", "now").expect("system MCP record");
     assert_eq!(record.runtime.kind, RUNTIME_KIND_SYSTEM);

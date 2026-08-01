@@ -34,16 +34,16 @@ impl ToolExecutor for ApprovalAgentToolExecutor {
                     .list_tools()
                     .into_iter()
                     .filter_map(|tool| {
-                        let def = parse_tool_definition(&tool)?;
+                        let definition = parse_tool_definition(&tool)?;
                         matches!(
-                            def.name.as_str(),
+                            definition.name.as_str(),
                             "read_file_raw" | "read_file_range" | "list_dir" | "search_text"
                         )
                         .then(|| {
                             build_function_tool_schema(
-                                def.name.as_str(),
-                                def.description.as_str(),
-                                &def.parameters,
+                                definition.name.as_str(),
+                                definition.description.as_str(),
+                                &definition.parameters,
                             )
                         })
                     }),
@@ -76,7 +76,7 @@ impl ToolExecutor for ApprovalAgentToolExecutor {
                 chatos_ai_runtime::tool_call::clone_tool_call_arguments(tool_call),
             ) {
                 Ok(args) => args,
-                Err(err) => {
+                Err(error) => {
                     push_result(
                         &mut results,
                         ToolResult {
@@ -86,7 +86,7 @@ impl ToolExecutor for ApprovalAgentToolExecutor {
                             is_error: true,
                             is_stream: false,
                             conversation_turn_id: context.conversation_turn_id.clone(),
-                            content: format!("参数解析失败: {err}"),
+                            content: format!("参数解析失败: {error}"),
                             result: None,
                             fatal_error: false,
                             transient_model_input: None,
@@ -230,14 +230,14 @@ impl ApprovalAgentToolExecutor {
                     transient_model_input: None,
                 }
             }
-            Err(err) => ToolResult {
+            Err(error) => ToolResult {
                 tool_call_id: call_id,
                 name: name.to_string(),
                 success: false,
                 is_error: true,
                 is_stream: false,
                 conversation_turn_id: context.conversation_turn_id.clone(),
-                content: format!("工具执行失败: {err}"),
+                content: format!("工具执行失败: {error}"),
                 result: None,
                 fatal_error: false,
                 transient_model_input: None,

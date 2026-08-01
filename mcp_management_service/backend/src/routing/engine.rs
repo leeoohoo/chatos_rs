@@ -82,9 +82,10 @@ impl RoutingEngine {
             SystemMcpKey::TerminalController => {
                 self.resolve_command_workspace(context, resource, allow_writes)
             }
-            SystemMcpKey::LocalCommandApproval => {
-                self.resolve_local_command_approval(context, resource, allow_writes)
-            }
+            SystemMcpKey::LocalCommandApproval => unavailable_route(
+                resource,
+                "local command approval is local-only and is not exposed through MCP Management",
+            ),
             SystemMcpKey::SandboxImages => self.resolve_sandbox(context, resource, allow_writes),
             SystemMcpKey::ProjectEnvironment => {
                 let mut route = internal_service_route(
@@ -271,28 +272,6 @@ impl RoutingEngine {
                 unavailable_route(resource, "project has no sandbox provider")
             }
         }
-    }
-
-    fn resolve_local_command_approval(
-        &self,
-        context: &ProjectExecutionContext,
-        resource: &McpRouteCandidate,
-        allow_writes: bool,
-    ) -> ResolvedMcpRoute {
-        if context.workspace_provider != WorkspaceProviderKind::LocalConnector
-            && context.sandbox_provider != SandboxProviderKind::LocalConnector
-        {
-            return unavailable_route(
-                resource,
-                "local command approval is only valid for Local Connector execution",
-            );
-        }
-        local_connector_route(
-            context,
-            resource,
-            allow_writes,
-            "local command approval is bound to the selected Local Connector",
-        )
     }
 
     fn resolve_stdio(
@@ -742,22 +721,28 @@ mod tests {
     }
 
     #[test]
-    fn local_command_approval_is_unavailable_for_cloud_project() {
-        let result = resolve_one(
-            context(WorkspaceProviderKind::Harness),
-            system_resource(
-                "system_mcp_local_connector_approval",
-                "local_connector_approval",
-                "local_command_approval",
-                true,
-                true,
-            ),
-        );
-        assert_eq!(result.routes[0].provider_kind, McpProviderKind::Unavailable);
-        assert_eq!(
-            result.unavailable_required_mcps,
-            vec!["system_mcp_local_connector_approval"]
-        );
+    fn local_command_approval_is_never_exposed_through_mcp_management() {
+        for workspace_provider in [
+            WorkspaceProviderKind::LocalConnector,
+            WorkspaceProviderKind::Harness,
+            WorkspaceProviderKind::CloudSandbox,
+        ] {
+            let result = resolve_one(
+                context(workspace_provider),
+                system_resource(
+                    "system_mcp_local_connector_approval",
+                    "local_connector_approval",
+                    "local_command_approval",
+                    true,
+                    true,
+                ),
+            );
+            assert_eq!(result.routes[0].provider_kind, McpProviderKind::Unavailable);
+            assert_eq!(
+                result.unavailable_required_mcps,
+                vec!["system_mcp_local_connector_approval"]
+            );
+        }
     }
 
     #[test]

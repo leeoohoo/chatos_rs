@@ -157,7 +157,6 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         &model_runtime.model_config,
         local_inspection.as_ref(),
         &memory,
-        user_access_token,
         &ProjectEnvironmentAgentRunContext {
             run_id: run_id.as_str(),
             owner_user_id,
@@ -247,7 +246,6 @@ async fn run_project_environment_agent(
     model_config: &ModelRuntimeConfig,
     local_inspection: Option<&LocalProjectInspection>,
     memory: &ProjectAgentMemory,
-    user_access_token: Option<&str>,
     run_context: &ProjectEnvironmentAgentRunContext<'_>,
 ) -> Result<(), String> {
     let agent_prompt = resolve_project_environment_agent_prompt(
@@ -256,75 +254,37 @@ async fn run_project_environment_agent(
         model_config.provider.as_str(),
     )
     .await?;
-    let mcp_resolution = resolve_project_environment_mcp(
+    let gateway = resolve_project_environment_mcp(
         project,
         run_context.owner_user_id,
         run_context.run_id,
         run_context.model_config_id,
     )
     .await?;
-    match mcp_resolution {
-        ProjectEnvironmentMcpResolution::Legacy => {
-            let capability_policy = resolve_legacy_project_agent_capabilities(
-                state,
-                run_context.owner_user_id,
-                user_access_token,
-            )
+    let provider_skills_prompt = gateway.provider_skills_prompt();
+    let result = async {
+        let executor = McpExecutor::builder()
+            .with_http_server(gateway.server().clone())
+            .build_initialized()
             .await?;
-            let executor = build_legacy_project_environment_mcp_executor(
-                state,
-                project,
-                &environment_plan,
-                user_access_token,
-                run_context.run_id,
-                &capability_policy,
-                run_context.selected_dependencies,
-            )
-            .await?;
-            ensure_agent_required_tools_available(&executor, &environment_plan)?;
-            let provider_skills_prompt =
-                compose_legacy_provider_skills_prompt(&capability_policy, &environment_plan);
-            execute_project_environment_agent(
-                project,
-                model_config,
-                local_inspection,
-                memory,
-                run_context.run_id,
-                run_context.analysis_requirement,
-                run_context.selected_dependencies,
-                agent_prompt,
-                executor,
-                provider_skills_prompt,
-            )
-            .await
-        }
-        ProjectEnvironmentMcpResolution::Gateway(gateway) => {
-            let provider_skills_prompt = gateway.provider_skills_prompt();
-            let result = async {
-                let executor = McpExecutor::builder()
-                    .with_http_server(gateway.server().clone())
-                    .build_initialized()
-                    .await?;
-                ensure_agent_required_tools_available(&executor, &environment_plan)?;
-                execute_project_environment_agent(
-                    project,
-                    model_config,
-                    local_inspection,
-                    memory,
-                    run_context.run_id,
-                    run_context.analysis_requirement,
-                    run_context.selected_dependencies,
-                    agent_prompt,
-                    executor,
-                    provider_skills_prompt,
-                )
-                .await
-            }
-            .await;
-            gateway.close(project.id.as_str(), run_context.run_id).await;
-            result
-        }
+        ensure_agent_required_tools_available(&executor, &environment_plan)?;
+        execute_project_environment_agent(
+            project,
+            model_config,
+            local_inspection,
+            memory,
+            run_context.run_id,
+            run_context.analysis_requirement,
+            run_context.selected_dependencies,
+            agent_prompt,
+            executor,
+            provider_skills_prompt,
+        )
+        .await
     }
+    .await;
+    gateway.close(project.id.as_str(), run_context.run_id).await;
+    result
 }
 
 async fn execute_project_environment_agent(
@@ -408,49 +368,6 @@ fn bind_selected_dependencies(detected_stack: &mut Value, selected_dependencies:
     );
 }
 
-async fn resolve_legacy_project_agent_capabilities(
-    state: &AppState,
-    owner_user_id: &str,
-    user_access_token: Option<&str>,
-) -> Result<ResolvedAgentCapabilities, String> {
-    let request =
-        ResolveAgentCapabilitiesRequest::new(SystemAgentKey::ProjectManagementAgent, owner_user_id)
-            .with_runtime_context(None, None, Some("cloud".to_string()), None);
-    let capabilities = if let Some(access_token) = user_access_token
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        state
-            .plugin_management_client
-            .resolve_for_user(&request, access_token)
-            .await
-            .map_err(|err| err.to_string())?
-    } else {
-        state
-            .plugin_management_client
-            .resolve_for_service(&request)
-            .await
-            .map_err(|err| err.to_string())?
-    };
-    capabilities
-        .ensure_required_runtime_supported([], [])
-        .map_err(|err| err.to_string())?;
-    let code_read_resource_id = BuiltinMcpKind::CodeMaintainerRead
-        .config_id()
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| "system_builtin_code_maintainer_read".to_string());
-    for resource_id in [
-        code_read_resource_id.as_str(),
-        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
-        SANDBOX_IMAGES_MCP_RESOURCE_ID,
-    ] {
-        capabilities
-            .require_available_mcp(resource_id)
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(capabilities)
-}
-
 fn build_project_environment_agent_prompt(
     project: &ProjectRecord,
     local_inspection: Option<&LocalProjectInspection>,
@@ -503,36 +420,6 @@ fn project_environment_agent_context(
                 .unwrap_or_default(),
         },
     })
-}
-
-fn effective_project_environment_mcp_resource_ids(plan: &RuntimeEnvironmentPlan) -> Vec<String> {
-    let mut resource_ids = vec![
-        PROJECT_ENVIRONMENT_MCP_RESOURCE_ID.to_string(),
-        SANDBOX_IMAGES_MCP_RESOURCE_ID.to_string(),
-    ];
-    if matches!(
-        plan.file_provider,
-        RuntimeEnvironmentProvider::Harness | RuntimeEnvironmentProvider::LocalConnector
-    ) {
-        resource_ids.push(
-            BuiltinMcpKind::CodeMaintainerRead
-                .config_id()
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| "system_builtin_code_maintainer_read".to_string()),
-        );
-    }
-    resource_ids
-}
-
-fn compose_legacy_provider_skills_prompt(
-    capability_policy: &ResolvedAgentCapabilities,
-    plan: &RuntimeEnvironmentPlan,
-) -> Option<String> {
-    let effective_mcp_resource_ids = effective_project_environment_mcp_resource_ids(plan);
-    capability_policy.compose_provider_skills_prompt(
-        effective_mcp_resource_ids.iter().map(String::as_str),
-        Some("zh-CN"),
-    )
 }
 
 fn apply_stop_decision(

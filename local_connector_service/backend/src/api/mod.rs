@@ -36,7 +36,6 @@ mod managed_memory_policy;
 mod managed_requirements;
 mod managed_requirements_admin;
 mod managed_runtime_config;
-mod mcp_management_runtime;
 mod memory_engine_proxy;
 mod plugin_artifact_relay;
 mod plugin_management_capabilities;

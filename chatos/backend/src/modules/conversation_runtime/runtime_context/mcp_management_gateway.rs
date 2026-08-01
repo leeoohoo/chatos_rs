@@ -9,7 +9,7 @@ use chatos_mcp_management_sdk::{
     RuntimeSessionResponse,
 };
 use chatos_plugin_management_sdk::SystemMcpKey;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::services::mcp_loader::McpHttpServer;
 
@@ -17,36 +17,6 @@ const GATEWAY_SERVER_NAME: &str = "mcp_management";
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
     chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum McpManagementExecutionMode {
-    Off,
-    Shadow,
-    Gateway,
-}
-
-impl McpManagementExecutionMode {
-    fn from_value(value: Option<&str>) -> Self {
-        match value
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "shadow" | "observe" => Self::Shadow,
-            "gateway" | "enabled" | "on" | "true" | "1" => Self::Gateway,
-            _ => Self::Off,
-        }
-    }
-
-    pub(super) fn from_env() -> Self {
-        Self::from_value(std::env::var("CHATOS_MCP_MANAGEMENT_MODE").ok().as_deref())
-    }
-
-    pub(super) const fn uses_gateway(self) -> bool {
-        matches!(self, Self::Gateway)
-    }
-}
 
 pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) owner_user_id: Option<&'a str>,
@@ -59,11 +29,6 @@ pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) default_model_config_id: Option<&'a str>,
     pub(super) expected_project_task_ids: &'a [String],
     pub(super) locale: Option<&'a str>,
-}
-
-pub(super) enum McpManagementGatewayResolution {
-    Legacy,
-    Gateway(Box<McpManagementGateway>),
 }
 
 pub(super) struct McpManagementGateway {
@@ -84,11 +49,7 @@ impl McpManagementGateway {
 
 pub(super) async fn resolve_mcp_management_gateway(
     request: McpManagementGatewayRequest<'_>,
-    mode: McpManagementExecutionMode,
-) -> Result<McpManagementGatewayResolution, String> {
-    if mode == McpManagementExecutionMode::Off {
-        return Ok(McpManagementGatewayResolution::Legacy);
-    }
+) -> Result<McpManagementGateway, String> {
     let owner_user_id = required_text(request.owner_user_id, "owner_user_id")?;
     let project_id = required_text(request.project_id, "project_id")?;
     let source_session_id = required_text(request.source_session_id, "source_session_id")?;
@@ -119,24 +80,10 @@ pub(super) async fn resolve_mcp_management_gateway(
         requested_sandbox_provider: None,
         sandbox_target: None,
     };
-    let session = match client.resolve_runtime_session(&session_request).await {
-        Ok(session) => session,
-        Err(err) if mode == McpManagementExecutionMode::Shadow => {
-            warn!(
-                source_session_id,
-                turn_id,
-                agent_key = request.agent_profile.key().as_str(),
-                error = %err,
-                "MCP Management shadow session resolution failed; legacy execution remains active"
-            );
-            return Ok(McpManagementGatewayResolution::Legacy);
-        }
-        Err(err) => {
-            return Err(format!(
-                "resolve MCP Management runtime session failed: {err}"
-            ));
-        }
-    };
+    let session = client
+        .resolve_runtime_session(&session_request)
+        .await
+        .map_err(|err| format!("resolve MCP Management runtime session failed: {err}"))?;
     info!(
         source_session_id,
         turn_id,
@@ -145,31 +92,15 @@ pub(super) async fn resolve_mcp_management_gateway(
         route_revision = session.route_revision.as_str(),
         configured_mcp_count = session.configured_mcp_count,
         exposed_tool_count = session.exposed_tool_count,
-        execution_mode = ?mode,
         "ChatOS resolved MCP Management runtime session"
     );
-    if mode == McpManagementExecutionMode::Shadow {
-        if let Err(err) = client
-            .close_runtime_session(session.session_id.as_str())
-            .await
-        {
-            warn!(
-                session_id = session.session_id.as_str(),
-                error = %err,
-                "close ChatOS MCP Management shadow session failed"
-            );
-        }
-        return Ok(McpManagementGatewayResolution::Legacy);
-    }
     let effective_mcp_ids = session.effective_mcp_ids.clone();
     let provider_skills_prompt = session.provider_skills_prompt.clone();
-    Ok(McpManagementGatewayResolution::Gateway(Box::new(
-        McpManagementGateway {
-            server: gateway_server(session)?,
-            effective_mcp_ids,
-            provider_skills_prompt,
-        },
-    )))
+    Ok(McpManagementGateway {
+        server: gateway_server(session)?,
+        effective_mcp_ids,
+        provider_skills_prompt,
+    })
 }
 
 fn gateway_server(session: RuntimeSessionResponse) -> Result<McpHttpServer, String> {
@@ -241,29 +172,6 @@ fn normalized_unique(values: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn execution_mode_is_explicit_and_fail_closed() {
-        assert_eq!(
-            McpManagementExecutionMode::from_value(Some("shadow")),
-            McpManagementExecutionMode::Shadow
-        );
-        assert_eq!(
-            McpManagementExecutionMode::from_value(Some("gateway")),
-            McpManagementExecutionMode::Gateway
-        );
-        assert_eq!(
-            McpManagementExecutionMode::from_value(Some("unexpected")),
-            McpManagementExecutionMode::Off
-        );
-        assert_eq!(
-            McpManagementExecutionMode::from_value(None),
-            McpManagementExecutionMode::Off
-        );
-        assert!(McpManagementExecutionMode::Gateway.uses_gateway());
-        assert!(!McpManagementExecutionMode::Shadow.uses_gateway());
-        assert!(!McpManagementExecutionMode::Off.uses_gateway());
-    }
 
     #[test]
     fn gateway_server_uses_runtime_grant_and_preserves_aggregated_names() {

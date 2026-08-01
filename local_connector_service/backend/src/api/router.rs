@@ -11,10 +11,6 @@ use tracing::Level;
 use crate::state::AppState;
 
 use super::managed_runtime_config::get_managed_runtime_config;
-use super::mcp_management_runtime::{
-    close_command_approval_runtime_session, mcp_management_runtime_proxy,
-    resolve_command_approval_runtime_session,
-};
 use super::{
     connect_device, create_device, create_local_mcp, create_managed_requirements_assignment,
     create_managed_requirements_policy, create_project_binding, create_sandbox_pairing,
@@ -156,14 +152,6 @@ pub fn build_router(state: AppState) -> Router {
             get(resolve_local_command_approval_capabilities),
         )
         .route(
-            "/api/local-connectors/mcp-management/command-approval/sessions/resolve",
-            post(resolve_command_approval_runtime_session),
-        )
-        .route(
-            "/api/local-connectors/mcp-management/command-approval/sessions/{session_id}/close",
-            post(close_command_approval_runtime_session),
-        )
-        .route(
             "/api/plugin-management/agent-capabilities/{agent_key}",
             get(resolve_local_runtime_capabilities),
         )
@@ -248,10 +236,6 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/api/health", get(health_handler))
-        .route(
-            "/api/local-connectors/mcp-management/runtime/mcp",
-            post(mcp_management_runtime_proxy),
-        )
         .route("/api/auth/login", post(user_service_public_proxy))
         .route("/api/auth/register", post(user_service_public_proxy))
         .route(

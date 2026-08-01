@@ -277,7 +277,6 @@ impl RunService {
             response,
             workspace_root.as_path(),
             client.base_url.as_str(),
-            client.auth.clone(),
         ) {
             Ok(context) => context,
             Err(err) => {

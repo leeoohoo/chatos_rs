@@ -119,8 +119,6 @@ fn build_common_bootstrap_input(
         project_root: req.project_root.clone(),
         workspace_root: req.workspace_root.clone(),
         remote_connection_id: req.remote_connection_id.clone(),
-        plugin_device_id: req.plugin_device_id.clone(),
-        plugin_workspace_id: req.plugin_workspace_id.clone(),
         selected_plugin_ids: req.selected_plugin_ids.clone(),
         plugin_command_invocations: req.plugin_command_invocations.clone(),
         plugin_agent_selection: req.plugin_agent_selection.clone(),

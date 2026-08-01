@@ -190,7 +190,7 @@ fn write_validation_rejects_removed_builtins_but_accepts_configured_offline_reso
 #[test]
 fn policy_exposes_cloud_and_local_connector_mcps_exactly_as_configured() {
     let mut local = resolved_mcp("local-user", "local_connector_http", None, false, true);
-    local.resource.source_kind = LOCAL_CONNECTOR_DISCOVERED_SOURCE_KIND.to_string();
+    local.resource.source_kind = "local_connector_discovered".to_string();
     let cloud = resolved_mcp("cloud-http", "http", None, false, true);
     let policy = TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
@@ -237,20 +237,4 @@ fn unified_service_system_mcp_is_selected_as_a_task_runner_backend() {
         policy.selectable_external_mcp_ids(),
         vec![chatos_plugin_management_sdk::PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID.to_string()]
     );
-}
-
-#[test]
-fn user_created_cloud_mcp_is_allowed_and_local_connector_mcp_is_rejected() {
-    for runtime_kind in ["http", "stdio_cloud"] {
-        let mut item = resolved_mcp("user-cloud-mcp", runtime_kind, None, false, true);
-        item.resource.source_kind = "user_created".to_string();
-        item.resource.owner_kind = "user".to_string();
-        validate_cloud_external_mcp_runtime(&item)
-            .expect("user-created cloud MCP should remain cloud-runnable");
-    }
-
-    let local = resolved_mcp("local-mcp", "local_connector_stdio", None, false, true);
-    let err = validate_cloud_external_mcp_runtime(&local)
-        .expect_err("Local Connector MCP must be rejected by cloud policy");
-    assert!(err.contains("unavailable in cloud Task Runner"));
 }

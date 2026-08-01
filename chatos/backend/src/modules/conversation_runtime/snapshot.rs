@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::core::builtin_mcp_prompt::{
-    builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
     inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
     BuiltinMcpPromptBuildResult,
 };
@@ -179,37 +178,6 @@ pub fn inspect_builtin_mcp_prompt_for_runtime(
             locale,
         )
     }
-}
-
-pub fn build_builtin_mcp_debug_payload(
-    builtin_servers: &[crate::services::mcp_loader::McpBuiltinServer],
-    tool_metadata: &ToolMetadataMap,
-    unavailable_builtin_tools: &[Value],
-    builtin_mcp_system_prompt: Option<&str>,
-    locale: crate::core::internal_context_locale::InternalContextLocale,
-) -> Value {
-    let inspected = inspect_builtin_mcp_prompt_for_runtime(
-        builtin_servers,
-        tool_metadata,
-        unavailable_builtin_tools,
-        locale,
-    );
-
-    json!({
-        "prompt_source_path": builtin_mcp_prompt_source_path(locale),
-        "all_section_ids": builtin_mcp_prompt_section_ids(locale),
-        "selected_section_ids": inspected.selected_section_ids,
-        "omitted_section_ids": inspected.omitted_section_ids,
-        "requested_builtin_server_names": inspected.requested_builtin_server_names,
-        "active_builtin_server_names": inspected.active_builtin_server_names,
-        "omitted_builtin_server_names": inspected.omitted_builtin_server_names,
-        "runtime_limitations": inspected.runtime_limitations,
-        "composed_prompt": builtin_mcp_system_prompt
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .or(inspected.prompt),
-    })
 }
 
 async fn load_existing_actual_request_context(

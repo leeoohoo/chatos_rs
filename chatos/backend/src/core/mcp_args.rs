@@ -25,27 +25,6 @@ pub fn parse_args_json_array(args: &Option<Value>) -> Vec<String> {
     }
 }
 
-pub fn parse_args_json_array_or_whitespace(args: &Option<Value>) -> Vec<String> {
-    match args {
-        Some(Value::String(raw)) => {
-            if let Some(parsed) = serde_json::from_str::<Vec<Value>>(raw).ok().map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| value.as_str().map(|item| item.trim().to_string()))
-                    .filter(|item| !item.is_empty())
-                    .collect::<Vec<_>>()
-            }) {
-                return parsed;
-            }
-
-            raw.split_whitespace()
-                .map(|item| item.to_string())
-                .collect()
-        }
-        _ => parse_args_json_array(args),
-    }
-}
-
 pub fn parse_env(env: &Option<Value>) -> HashMap<String, String> {
     let mut map = HashMap::new();
 
@@ -84,7 +63,7 @@ fn value_to_env_string(value: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args_json_array, parse_args_json_array_or_whitespace, parse_env};
+    use super::{parse_args_json_array, parse_env};
     use serde_json::json;
 
     #[test]
@@ -94,15 +73,6 @@ mod tests {
 
         let args = Some(json!(["--help", "-v"]));
         assert_eq!(parse_args_json_array(&args), vec!["--help", "-v"]);
-    }
-
-    #[test]
-    fn parse_args_json_array_or_whitespace_supports_plain_string_fallback() {
-        let args = Some(json!("--help -v"));
-        assert_eq!(
-            parse_args_json_array_or_whitespace(&args),
-            vec!["--help", "-v"]
-        );
     }
 
     #[test]

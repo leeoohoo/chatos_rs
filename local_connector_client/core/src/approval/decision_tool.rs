@@ -52,18 +52,6 @@ pub(crate) fn approval_decision_tool_result(
     Ok((ApprovalToolDecision { decision, reason }, result))
 }
 
-pub(crate) fn approval_decision_from_tool_result(
-    result: &Value,
-) -> Result<ApprovalToolDecision, String> {
-    let candidate = result
-        .get("decision")
-        .is_some()
-        .then(|| result.clone())
-        .or_else(|| result.get("_structured_result").cloned())
-        .ok_or_else(|| "approval_decision result is missing structured data".to_string())?;
-    approval_decision_tool_result(candidate).map(|(decision, _)| decision)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,10 +68,7 @@ mod tests {
         assert_eq!(decision.decision, "approve");
         assert_eq!(decision.reason, "matches project scripts");
         assert_eq!(result["_structured_result"]["remember_allow"], true);
-        assert_eq!(
-            approval_decision_from_tool_result(&result).expect("decode result"),
-            decision
-        );
+        assert_eq!(result["_structured_result"]["decision"], "approve");
     }
 
     #[test]

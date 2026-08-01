@@ -14,7 +14,6 @@ use super::support::{contact_to_dto, normalize_non_empty};
 
 #[derive(Debug, Clone)]
 pub struct ContactTaskRunnerRuntimeConfig {
-    pub contact_id: String,
     pub base_url: String,
     pub agent_account_id: Option<String>,
 }
@@ -77,7 +76,6 @@ pub async fn get_contact_task_runner_runtime_config(
     }
 
     Ok(Some(ContactTaskRunnerRuntimeConfig {
-        contact_id: contact.id,
         base_url,
         agent_account_id,
     }))

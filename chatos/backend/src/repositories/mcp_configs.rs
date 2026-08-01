@@ -11,10 +11,7 @@ mod read_ops;
 mod write_ops;
 
 pub use self::app_links::{get_app_ids_for_mcp_config, set_app_ids_for_mcp_config};
-pub use self::read_ops::{
-    get_mcp_config_by_id, list_enabled_mcp_configs, list_enabled_mcp_configs_by_ids,
-    list_mcp_configs,
-};
+pub use self::read_ops::{get_mcp_config_by_id, list_mcp_configs};
 pub use self::write_ops::{create_mcp_config, delete_mcp_config, update_mcp_config};
 
 pub(super) fn normalize_doc(doc: &Document) -> Option<McpConfig> {

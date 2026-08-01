@@ -17,41 +17,6 @@ use crate::models::ProjectRecord;
 const GATEWAY_SERVER_NAME: &str = "mcp_management";
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum McpManagementExecutionMode {
-    Off,
-    Shadow,
-    Gateway,
-}
-
-impl McpManagementExecutionMode {
-    fn from_value(value: Option<&str>) -> Self {
-        match value
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "shadow" | "observe" => Self::Shadow,
-            "gateway" | "enabled" | "on" | "true" | "1" => Self::Gateway,
-            _ => Self::Off,
-        }
-    }
-
-    fn from_env() -> Self {
-        Self::from_value(
-            std::env::var("PROJECT_SERVICE_MCP_MANAGEMENT_MODE")
-                .ok()
-                .as_deref(),
-        )
-    }
-}
-
-pub(super) enum ProjectEnvironmentMcpResolution {
-    Legacy,
-    Gateway(Box<ProjectEnvironmentMcpGateway>),
-}
-
 pub(super) struct ProjectEnvironmentMcpGateway {
     client: McpManagementClient,
     session_id: String,
@@ -90,33 +55,16 @@ pub(super) async fn resolve_project_environment_mcp(
     owner_user_id: &str,
     run_id: &str,
     model_config_id: &str,
-) -> Result<ProjectEnvironmentMcpResolution, String> {
-    let mode = McpManagementExecutionMode::from_env();
-    if mode == McpManagementExecutionMode::Off {
-        return Ok(ProjectEnvironmentMcpResolution::Legacy);
-    }
+) -> Result<ProjectEnvironmentMcpGateway, String> {
     let config = McpManagementClientConfig::from_env("project-service").await;
     let client = McpManagementClient::new(config)
         .map_err(|error| format!("initialize MCP Management client failed: {error}"))?;
     let request =
         runtime_session_request(owner_user_id, project.id.as_str(), run_id, model_config_id);
-    let session = match client.resolve_runtime_session(&request).await {
-        Ok(session) => session,
-        Err(error) if mode == McpManagementExecutionMode::Shadow => {
-            warn!(
-                project_id = project.id.as_str(),
-                run_id,
-                error = %error,
-                "MCP Management shadow session resolution failed; legacy Project Environment execution remains active"
-            );
-            return Ok(ProjectEnvironmentMcpResolution::Legacy);
-        }
-        Err(error) => {
-            return Err(format!(
-                "resolve MCP Management runtime session failed: {error}"
-            ));
-        }
-    };
+    let session = client
+        .resolve_runtime_session(&request)
+        .await
+        .map_err(|error| format!("resolve MCP Management runtime session failed: {error}"))?;
     info!(
         project_id = project.id.as_str(),
         run_id,
@@ -124,34 +72,16 @@ pub(super) async fn resolve_project_environment_mcp(
         route_revision = session.route_revision.as_str(),
         configured_mcp_count = session.configured_mcp_count,
         exposed_tool_count = session.exposed_tool_count,
-        execution_mode = ?mode,
         "Project Environment Agent resolved MCP Management runtime session"
     );
-    if mode == McpManagementExecutionMode::Shadow {
-        if let Err(error) = client
-            .close_runtime_session(session.session_id.as_str())
-            .await
-        {
-            warn!(
-                project_id = project.id.as_str(),
-                run_id,
-                session_id = session.session_id.as_str(),
-                error = %error,
-                "close Project Environment MCP Management shadow session failed"
-            );
-        }
-        return Ok(ProjectEnvironmentMcpResolution::Legacy);
-    }
     let provider_skills_prompt = session.provider_skills_prompt.clone();
     let server = gateway_server(session.clone(), tool_timeout())?;
-    Ok(ProjectEnvironmentMcpResolution::Gateway(Box::new(
-        ProjectEnvironmentMcpGateway {
-            client,
-            session_id: session.session_id,
-            server,
-            provider_skills_prompt,
-        },
-    )))
+    Ok(ProjectEnvironmentMcpGateway {
+        client,
+        session_id: session.session_id,
+        server,
+        provider_skills_prompt,
+    })
 }
 
 fn runtime_session_request(
@@ -212,26 +142,6 @@ fn tool_timeout() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn execution_mode_is_explicit_and_fail_closed() {
-        assert_eq!(
-            McpManagementExecutionMode::from_value(Some("shadow")),
-            McpManagementExecutionMode::Shadow
-        );
-        assert_eq!(
-            McpManagementExecutionMode::from_value(Some("gateway")),
-            McpManagementExecutionMode::Gateway
-        );
-        assert_eq!(
-            McpManagementExecutionMode::from_value(Some("unexpected")),
-            McpManagementExecutionMode::Off
-        );
-        assert_eq!(
-            McpManagementExecutionMode::from_value(None),
-            McpManagementExecutionMode::Off
-        );
-    }
 
     #[test]
     fn runtime_session_is_bound_to_project_agent_run_and_model() {

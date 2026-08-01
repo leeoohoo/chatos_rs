@@ -29,7 +29,6 @@ pub struct AppConfig {
     pub memory_engine_base_url: String,
     pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout: Duration,
-    pub mcp_management_runtime_request_timeout: Duration,
     pub require_device_connect_signature: bool,
     pub allow_device_connect_query_token: bool,
     pub device_connect_signature_max_skew: Duration,
@@ -81,12 +80,6 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(30_000)
             .max(1_000);
-        let mcp_management_runtime_timeout_ms =
-            std::env::var("LOCAL_CONNECTOR_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(180_000)
-                .clamp(1_000, 2 * 60 * 60 * 1_000);
         let signature_skew_seconds =
             normalized_env("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")
                 .and_then(|value| value.parse::<u64>().ok())
@@ -136,9 +129,6 @@ impl AppConfig {
             .or_else(|| normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN"))
             .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")),
             memory_engine_request_timeout: Duration::from_millis(memory_timeout_ms),
-            mcp_management_runtime_request_timeout: Duration::from_millis(
-                mcp_management_runtime_timeout_ms,
-            ),
             require_device_connect_signature: env_flag(
                 "LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE",
                 true,
@@ -236,14 +226,6 @@ impl AppConfig {
         }
     }
 
-    pub fn mcp_management_runtime_facade_url(&self) -> String {
-        let path = "/api/local-connectors/mcp-management/runtime/mcp";
-        match self.public_base_url.as_deref() {
-            Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
-            None => path.to_string(),
-        }
-    }
-
     #[cfg(feature = "test-support")]
     pub fn for_plugin_artifact_relay_test(secret: &str) -> Self {
         let mut internal_api_secrets = HashMap::new();
@@ -264,7 +246,6 @@ impl AppConfig {
             memory_engine_base_url: "http://127.0.0.1.invalid/api/memory-engine/v1".to_string(),
             memory_engine_operator_token: None,
             memory_engine_request_timeout: Duration::from_secs(1),
-            mcp_management_runtime_request_timeout: Duration::from_secs(2),
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),

@@ -12,7 +12,6 @@ const PROJECT_SERVICE_DOCUMENTS_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 mod internal_auth;
 mod transport;
 
-pub(crate) use self::internal_auth::{insert_project_service_internal_headers, PROJECT_MCP_SCOPE};
 use self::internal_auth::{
     signed_project_service_request, PROJECT_HARNESS_SCOPE, PROJECT_READ_SCOPE, PROJECT_SYNC_SCOPE,
 };
@@ -28,7 +27,6 @@ pub struct ProjectServiceProjectRecord {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub source_type: Option<String>,
-    pub execution_plane: Option<String>,
     pub cloud_import_source: Option<String>,
     pub import_status: Option<String>,
     pub source_git_url: Option<String>,

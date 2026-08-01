@@ -182,14 +182,12 @@ LOCAL_CONNECTOR_PUBLIC_KEY
 LOCAL_CONNECTOR_WORKSPACE_ALIAS
 LOCAL_CONNECTOR_STATE_PATH
 LOCAL_CONNECTOR_CORE_API_PORT
-LOCAL_CONNECTOR_COMMAND_APPROVAL_MCP_MANAGEMENT_MODE
-LOCAL_CONNECTOR_COMMAND_APPROVAL_MCP_MANAGEMENT_TOOL_TIMEOUT_MS
 LOCAL_CONNECTOR_SANDBOX_DOCKER_IMAGE
 LOCAL_CONNECTOR_SANDBOX_IMAGE_BUILD_CONTEXT
 LOCAL_CONNECTOR_SANDBOX_IMAGE_DOCKERFILE
 ```
 
-Command Approval Agent 的 MCP Management 模式默认是 `shadow`。`off` 仅使用旧本地工具执行器；`shadow` 创建并立即关闭受管 Runtime Session，但仍执行旧工具链；显式设置为 `gateway` 后，模型工具只通过 Local Connector Service 暴露的 MCP Management facade 调用，Session 解析、工具初始化或调用失败都不会回退旧执行器。没有云端 `project_id` 绑定的临时本地审批在 `shadow` 下继续旧链路，在 `gateway` 下失败关闭。
+Command Approval Agent 完整保留在客户端本地：模型循环只使用本地只读项目工具和本地 `approval_decision`，风险判断、人工确认、白名单、Session Approval 与审批历史也都在设备侧完成。它不会创建云端 MCP Runtime Session，也不会调用云端 MCP 工具。Agent Prompt、能力策略和 Memory 可继续通过普通受认证 REST 获取，但这些控制面请求不会成为工具调用链。
 
 The local state file stores `device_id` and the local-only mapping from cloud `workspace_id` to an absolute local root. The cloud service only stores the alias and fingerprint.
 
