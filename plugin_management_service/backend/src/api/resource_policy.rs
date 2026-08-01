@@ -320,82 +320,22 @@ fn validate_cloud_stdio_command(command: &str, args: &[String]) -> Result<(), Ap
 }
 
 fn validate_cloud_stdio_arguments(args: &[String]) -> Result<(), ApiError> {
-    if args.len() > 256
-        || args
-            .iter()
-            .any(|arg| arg.len() > 16 * 1024 || arg.contains('\0'))
-        || args.iter().map(String::len).sum::<usize>() > 128 * 1024
-    {
-        return Err(ApiError::bad_request(
-            "stdio MCP arguments exceed the supported limits",
-        ));
-    }
-    Ok(())
+    chatos_mcp_runtime::validate_stdio_arguments(args)
+        .map_err(|_| ApiError::bad_request("stdio MCP arguments exceed the supported limits"))
 }
 
 fn validate_cloud_stdio_environment(
     env: &std::collections::BTreeMap<String, String>,
 ) -> Result<(), ApiError> {
-    if env.len() > 128
-        || env
-            .iter()
-            .map(|(name, value)| name.len().saturating_add(value.len()))
-            .sum::<usize>()
-            > 64 * 1024
-    {
-        return Err(ApiError::bad_request(
-            "stdio MCP environment exceeds the supported limits",
-        ));
-    }
-    for (name, value) in env {
-        let valid = !name.is_empty()
-            && name.len() <= 128
-            && name
-                .bytes()
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-        let normalized = name.to_ascii_uppercase();
-        let controlled = matches!(
-            normalized.as_str(),
-            "PATH"
-                | "HOME"
-                | "SHELL"
-                | "TMPDIR"
-                | "TMP"
-                | "TEMP"
-                | "COMSPEC"
-                | "PATHEXT"
-                | "SYSTEMROOT"
-                | "WINDIR"
-                | "USERPROFILE"
-                | "APPDATA"
-                | "LOCALAPPDATA"
-                | "CHATOS_WORKSPACE"
-                | "CHATOS_SANDBOX_MCP_TOKEN"
-                | "CHATOS_AGENT_TOKEN"
-                | "NODE_OPTIONS"
-                | "PYTHONHOME"
-                | "PYTHONPATH"
-                | "RUBYOPT"
-                | "PERL5OPT"
-                | "BASH_ENV"
-                | "ENV"
-                | "PROMPT_COMMAND"
-        ) || normalized.starts_with("LD_")
-            || normalized.starts_with("DYLD_")
-            || normalized.starts_with("XDG_")
-            || normalized.starts_with("MCP_MANAGEMENT_")
-            || normalized.starts_with("SANDBOX_MANAGER_");
-        if !valid || controlled || value.contains('\0') {
-            return Err(ApiError::bad_request(
-                "stdio MCP environment contains an invalid or Host-controlled entry",
-            ));
+    chatos_mcp_runtime::validate_stdio_environment(env).map_err(|error| match error {
+        chatos_mcp_runtime::StdioPolicyViolation::EnvironmentLimits => {
+            ApiError::bad_request("stdio MCP environment exceeds the supported limits")
         }
-    }
-    Ok(())
+        chatos_mcp_runtime::StdioPolicyViolation::EnvironmentEntry
+        | chatos_mcp_runtime::StdioPolicyViolation::Arguments => ApiError::bad_request(
+            "stdio MCP environment contains an invalid or Host-controlled entry",
+        ),
+    })
 }
 
 fn validate_cloud_stdio_cwd(cwd: Option<&str>) -> Result<(), ApiError> {

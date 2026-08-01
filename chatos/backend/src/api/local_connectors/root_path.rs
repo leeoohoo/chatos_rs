@@ -58,8 +58,17 @@ pub(crate) fn local_connector_root_path(
     workspace_id: &str,
     relative_path: Option<&str>,
 ) -> String {
-    chatos_project_execution::local_connector_workspace_root(device_id, workspace_id, relative_path)
-        .expect("Local Connector root parts must be validated before formatting")
+    match chatos_project_execution::local_connector_workspace_root(
+        device_id,
+        workspace_id,
+        relative_path,
+    ) {
+        Some(root_path) => root_path,
+        None => {
+            tracing::error!("validated Local Connector root parts could not be formatted");
+            "local://connector/invalid".to_string()
+        }
+    }
 }
 
 pub(crate) fn local_connector_display_path(root_path: &str) -> Option<String> {
@@ -85,5 +94,12 @@ mod tests {
             local_connector_display_path("local://connector/device-1/workspace-1").as_deref(),
             Some("/")
         );
+    }
+
+    #[test]
+    fn invalid_root_parts_fail_closed_to_an_unparseable_local_reference() {
+        let root = local_connector_root_path("", "workspace-1", None);
+        assert_eq!(root, "local://connector/invalid");
+        assert!(local_connector_display_path(root.as_str()).is_none());
     }
 }

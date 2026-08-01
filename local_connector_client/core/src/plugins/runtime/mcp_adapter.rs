@@ -33,6 +33,10 @@ use super::stdio_sandbox::{PluginStdioSandboxLauncher, PluginStdioSandboxRuntime
 use crate::plugins::{ActivePluginInstallation, PluginCredentialVault, PluginInstaller};
 
 mod preparation;
+mod validation;
+
+pub(super) use validation::load_verified_manifest;
+use validation::{validate_invocation_id, wait_for_invocation_cancellation};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_MCP_TOOLS: usize = 200;
@@ -533,26 +537,6 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
     }
 }
 
-async fn wait_for_invocation_cancellation(cancellation: Option<CancellationToken>) {
-    match cancellation {
-        Some(cancellation) => cancellation.cancelled().await,
-        None => std::future::pending::<()>().await,
-    }
-}
-
-fn validate_invocation_id(invocation_id: &str) -> Result<()> {
-    let invocation_id = invocation_id.trim();
-    if invocation_id.is_empty()
-        || invocation_id.len() > MAX_INVOCATION_ID_BYTES
-        || !invocation_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-    {
-        bail!("Plugin MCP invocation id is invalid");
-    }
-    Ok(())
-}
-
 struct ResolvedPluginStdioServer(McpStdioServer);
 
 impl ResolvedPluginStdioServer {
@@ -800,31 +784,4 @@ impl PluginMcpAdapter {
             active_invocations: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })
     }
-}
-
-pub(super) fn load_verified_manifest(
-    installation: &ActivePluginInstallation,
-) -> Result<chatos_plugin_management_sdk::PluginManifest> {
-    let relative_path = [".chatos-plugin/plugin.json", ".codex-plugin/plugin.json"]
-        .into_iter()
-        .find(|path| installation.version.package_file_sha256.contains_key(*path))
-        .context("installed Plugin has no checksummed Manifest")?;
-    let path = installation.installation_path.join(relative_path);
-    let metadata = fs::symlink_metadata(path.as_path())
-        .with_context(|| format!("read installed Plugin Manifest metadata: {relative_path}"))?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() > MAX_MANIFEST_BYTES
-    {
-        bail!("installed Plugin Manifest is unsafe or exceeds its size limit");
-    }
-    let raw = fs::read_to_string(path.as_path()).context("read installed Plugin Manifest")?;
-    let source = plugin_manifest_source_from_path(Path::new(relative_path))
-        .context("derive installed Plugin Manifest source")?;
-    let manifest = parse_plugin_manifest(raw.as_str(), source)
-        .context("parse installed normalized Plugin Manifest")?;
-    if normalized_plugin_manifest_sha256(&manifest)? != installation.version.manifest_sha256 {
-        bail!("installed Plugin Manifest does not match the active signed Release");
-    }
-    Ok(manifest)
 }
