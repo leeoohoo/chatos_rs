@@ -55,6 +55,49 @@ discover_project_by_source() {
     '
 }
 
+discover_local_project_with_sandbox() {
+  require_command docker
+  local mongodb_container
+  mongodb_container="$(
+    docker compose -f "$ROOT_DIR/docker/compose.yml" ps -q mongodb 2>/dev/null || true
+  )"
+  if [[ -z "$mongodb_container" ]]; then
+    return 1
+  fi
+  docker exec "$mongodb_container" mongosh \
+    -u "${MONGODB_USER:-admin}" \
+    -p "${MONGODB_PASSWORD:-admin}" \
+    --authenticationDatabase admin \
+    --quiet \
+    --eval '
+      const projectDb = db.getSiblingDB("project_management_service");
+      const environments = projectDb.project_runtime_environments.find(
+        {
+          sandbox_enabled: true,
+          file_provider: "local_connector",
+          sandbox_provider: "local_connector",
+          project_id: {$type: "string"}
+        },
+        {_id: 0, project_id: 1}
+      ).sort({updated_at: -1}).toArray();
+      for (const environment of environments) {
+        const project = projectDb.projects.findOne(
+          {
+            id: environment.project_id,
+            source_type: "local_connector",
+            status: "active",
+            owner_user_id: {$type: "string"}
+          },
+          {_id: 0, id: 1, owner_user_id: 1}
+        );
+        if (project) {
+          print(project.owner_user_id + "|" + project.id);
+          break;
+        }
+      }
+    '
+}
+
 local_project_has_live_sandbox() {
   local owner_user_id="$1"
   local project_id="$2"
@@ -150,7 +193,7 @@ export MCP_MANAGEMENT_SMOKE_BASE_URL="$BASE_URL"
 local_owner_user_id="${MCP_SMOKE_LOCAL_OWNER_USER_ID:-}"
 local_project_id="${MCP_SMOKE_LOCAL_PROJECT_ID:-}"
 if [[ -z "$local_owner_user_id" || -z "$local_project_id" ]]; then
-  local_selection="$(discover_project_by_source local_connector || true)"
+  local_selection="$(discover_local_project_with_sandbox || true)"
   if [[ -n "$local_selection" && "$local_selection" == *"|"* ]]; then
     local_owner_user_id="${local_selection%%|*}"
     local_project_id="${local_selection#*|}"
