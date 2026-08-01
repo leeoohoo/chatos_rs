@@ -32,6 +32,7 @@ impl AppState {
         state.purge_user_preferences_from_config_center().await?;
         state.migrate_agent_max_iterations_config().await?;
         state.migrate_task_runner_runtime_config().await?;
+        state.migrate_chatos_ui_config().await?;
         Ok(state)
     }
 

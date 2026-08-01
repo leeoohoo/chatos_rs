@@ -40,7 +40,7 @@ fn catalog_exposes_local_project_creation_as_a_managed_ui_switch() {
     let definitions = builtin_definitions();
     let definition = definitions
         .iter()
-        .find(|definition| definition.key == "chatos.ui.local_project_creation_enabled")
+        .find(|definition| definition.key == CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY)
         .expect("local project creation UI definition");
 
     assert_eq!(definition.scope, "service");

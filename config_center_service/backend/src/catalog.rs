@@ -32,6 +32,8 @@ pub const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_result_max_chars";
 pub const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_results_total_max_chars";
+pub const CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY: &str =
+    "chatos.ui.local_project_creation_enabled";
 
 pub fn default_task_runner_execution_environment_mode() -> &'static str {
     if cfg!(target_os = "linux") {
@@ -164,7 +166,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
-            "chatos.ui.local_project_creation_enabled",
+            CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY,
             "显示本地项目入口",
             "是否在 Chat OS 桌面端的新建项目界面显示 Local Connector 本地项目入口",
             "Chat OS / UI",

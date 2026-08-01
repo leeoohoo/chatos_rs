@@ -92,29 +92,8 @@ impl AppState {
         }
 
         let definitions = self.store.list_definitions().await?;
-        for active in self.store.list_active_releases().await? {
-            let Some(release) = self.store.get_release(active.release_id.as_str()).await? else {
-                continue;
-            };
-            if let Err(err) = self
-                .publish_consul(
-                    active.environment.as_str(),
-                    active.revision,
-                    &definitions,
-                    &release.values,
-                )
-                .await
-            {
-                if self.config.consul_required {
-                    return Err(err);
-                }
-                tracing::warn!(
-                    environment = active.environment.as_str(),
-                    error = err.as_str(),
-                    "failed to republish Consul after removing user preferences"
-                );
-            }
-        }
+        self.republish_active_releases_to_consul(&definitions, "remove user preferences")
+            .await?;
         Ok(())
     }
 
@@ -175,29 +154,8 @@ impl AppState {
             }
         }
 
-        for active in self.store.list_active_releases().await? {
-            let Some(release) = self.store.get_release(active.release_id.as_str()).await? else {
-                continue;
-            };
-            if let Err(err) = self
-                .publish_consul(
-                    active.environment.as_str(),
-                    active.revision,
-                    &definitions,
-                    &release.values,
-                )
-                .await
-            {
-                if self.config.consul_required {
-                    return Err(err);
-                }
-                tracing::warn!(
-                    environment = active.environment.as_str(),
-                    error = err.as_str(),
-                    "failed to republish Consul after consolidating Agent configuration"
-                );
-            }
-        }
+        self.republish_active_releases_to_consul(&definitions, "consolidate Agent configuration")
+            .await?;
 
         tracing::info!(
             key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
@@ -291,6 +249,92 @@ impl AppState {
             }
         }
 
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Task Runner runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            key = TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
+            fallback_key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
+            environment_mode_key = TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
+            "Task Runner runtime configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_chatos_ui_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let default_value = chatos_local_project_creation_default_value(&definitions)
+            .ok_or_else(|| {
+                format!(
+                    "missing ChatOS configuration definition for {CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY}"
+                )
+            })?;
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed = ensure_chatos_local_project_creation_value(
+                &mut release.values,
+                default_value.clone(),
+            );
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                release
+                    .values
+                    .get(CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY)
+                    .cloned()
+                    .unwrap_or_else(|| default_value.clone()),
+            );
+            if changed {
+                ensure_changed_key(
+                    &mut release.changed_keys,
+                    CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY,
+                );
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "chatos-backend" {
+                continue;
+            }
+            let fallback = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| default_value.clone());
+            let changed =
+                ensure_chatos_local_project_creation_value(&mut snapshot.values, fallback);
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(&definitions, "add ChatOS UI configuration")
+            .await?;
+
+        tracing::info!(
+            key = CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY,
+            "ChatOS local-project entry configuration is present in releases and snapshots"
+        );
+        Ok(())
+    }
+
+    async fn republish_active_releases_to_consul(
+        &self,
+        definitions: &[ConfigDefinitionRecord],
+        maintenance_action: &str,
+    ) -> Result<(), String> {
         for active in self.store.list_active_releases().await? {
             let Some(release) = self.store.get_release(active.release_id.as_str()).await? else {
                 continue;
@@ -299,7 +343,7 @@ impl AppState {
                 .publish_consul(
                     active.environment.as_str(),
                     active.revision,
-                    &definitions,
+                    definitions,
                     &release.values,
                 )
                 .await
@@ -309,18 +353,12 @@ impl AppState {
                 }
                 tracing::warn!(
                     environment = active.environment.as_str(),
+                    maintenance_action,
                     error = err.as_str(),
-                    "failed to republish Consul after adding Task Runner max-iterations configuration"
+                    "failed to republish Consul after configuration maintenance"
                 );
             }
         }
-
-        tracing::info!(
-            key = TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
-            fallback_key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
-            environment_mode_key = TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
-            "Task Runner runtime configuration is present in configuration center releases and snapshots"
-        );
         Ok(())
     }
 }

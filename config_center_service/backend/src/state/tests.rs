@@ -161,3 +161,78 @@ fn task_runner_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY.to_string()));
 }
+
+#[test]
+fn chatos_local_project_creation_backfill_uses_catalog_default() {
+    let definitions = builtin_definitions();
+    let default_value = chatos_local_project_creation_default_value(&definitions)
+        .expect("local project creation default");
+    let mut values = BTreeMap::new();
+
+    assert_eq!(default_value, json!(false));
+    assert!(ensure_chatos_local_project_creation_value(
+        &mut values,
+        default_value
+    ));
+    assert_eq!(
+        values.get(CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY),
+        Some(&json!(false))
+    );
+}
+
+#[test]
+fn chatos_local_project_creation_backfill_keeps_explicit_value() {
+    let mut values = BTreeMap::from([(
+        CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY.to_string(),
+        json!(true),
+    )]);
+
+    assert!(!ensure_chatos_local_project_creation_value(
+        &mut values,
+        json!(false)
+    ));
+    assert_eq!(
+        values.get(CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY),
+        Some(&json!(true))
+    );
+}
+
+#[test]
+fn chatos_snapshot_exposes_local_project_creation_value_and_legacy_env() {
+    let definitions = builtin_definitions();
+    for enabled in [false, true] {
+        let values = BTreeMap::from([(
+            CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY.to_string(),
+            json!(enabled),
+        )]);
+        let snapshot = build_snapshot("local", "chatos-backend", 1, &definitions, &values)
+            .expect("ChatOS snapshot");
+
+        assert_eq!(
+            snapshot
+                .values
+                .get(CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY),
+            Some(&json!(enabled))
+        );
+        assert_eq!(
+            snapshot.env.get("LOCAL_PROJECT_CREATION_ENABLED"),
+            Some(&enabled.to_string())
+        );
+    }
+}
+
+#[test]
+fn non_chatos_snapshot_does_not_gain_local_project_creation_value() {
+    let definitions = builtin_definitions();
+    let values = BTreeMap::from([(
+        CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY.to_string(),
+        json!(true),
+    )]);
+    let snapshot = build_snapshot("local", "task-runner", 1, &definitions, &values)
+        .expect("Task Runner snapshot");
+
+    assert!(!snapshot
+        .values
+        .contains_key(CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY));
+    assert!(!snapshot.env.contains_key("LOCAL_PROJECT_CREATION_ENABLED"));
+}

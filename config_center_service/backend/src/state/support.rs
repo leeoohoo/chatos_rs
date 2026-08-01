@@ -132,6 +132,33 @@ pub(super) fn ensure_changed_key(keys: &mut Vec<String>, key: &str) {
     }
 }
 
+pub(super) fn chatos_local_project_creation_default_value(
+    definitions: &[ConfigDefinitionRecord],
+) -> Option<Value> {
+    definitions
+        .iter()
+        .find(|definition| {
+            definition.key == CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY
+                && definition.scope == "service"
+                && definition.service_name.as_deref() == Some("chatos-backend")
+        })
+        .map(|definition| definition.default_value.clone())
+}
+
+pub(super) fn ensure_chatos_local_project_creation_value(
+    values: &mut BTreeMap<String, Value>,
+    fallback: Value,
+) -> bool {
+    if values.contains_key(CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY) {
+        return false;
+    }
+    values.insert(
+        CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY.to_string(),
+        fallback,
+    );
+    true
+}
+
 pub(super) fn system_user() -> CurrentUser {
     CurrentUser {
         user_id: "system".to_string(),
