@@ -4,8 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use chatos_ai_runtime::ToolExecutor;
 use chatos_mcp_runtime::{
@@ -13,13 +12,9 @@ use chatos_mcp_runtime::{
     ToolCallContext, ToolResult, ToolResultCallback,
 };
 
-use super::APPROVAL_DECISION_TOOL;
-
-#[derive(Debug, Clone)]
-pub(super) struct ApprovalToolDecision {
-    pub(super) decision: String,
-    pub(super) reason: String,
-}
+use super::super::decision_tool::{
+    approval_decision_tool_result, ApprovalToolDecision, APPROVAL_DECISION_TOOL,
+};
 
 #[derive(Clone)]
 pub(super) struct ApprovalAgentToolExecutor {
@@ -27,14 +22,6 @@ pub(super) struct ApprovalAgentToolExecutor {
     pub(super) decision: Arc<Mutex<Option<ApprovalToolDecision>>>,
     pub(super) allow_code_tools: bool,
     pub(super) allow_approval_decision: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApprovalDecisionToolArgs {
-    decision: String,
-    reason: String,
-    #[serde(default)]
-    remember_allow: bool,
 }
 
 #[async_trait]
@@ -140,10 +127,9 @@ impl ApprovalAgentToolExecutor {
         args: Value,
         context: &ToolCallContext,
     ) -> ToolResult {
-        let parsed = serde_json::from_value::<ApprovalDecisionToolArgs>(args);
-        let parsed = match parsed {
-            Ok(parsed) => parsed,
-            Err(err) => {
+        let (decision, result) = match approval_decision_tool_result(args) {
+            Ok(value) => value,
+            Err(error) => {
                 return ToolResult {
                     tool_call_id: call_id,
                     name: APPROVAL_DECISION_TOOL.to_string(),
@@ -151,45 +137,13 @@ impl ApprovalAgentToolExecutor {
                     is_error: true,
                     is_stream: false,
                     conversation_turn_id: context.conversation_turn_id.clone(),
-                    content: format!("approval_decision 参数无效: {err}"),
+                    content: error,
                     result: None,
                     fatal_error: false,
                     transient_model_input: None,
                 };
             }
         };
-        let decision = parsed.decision.trim().to_ascii_lowercase();
-        if !matches!(decision.as_str(), "approve" | "deny" | "ask_user") {
-            return ToolResult {
-                tool_call_id: call_id,
-                name: APPROVAL_DECISION_TOOL.to_string(),
-                success: false,
-                is_error: true,
-                is_stream: false,
-                conversation_turn_id: context.conversation_turn_id.clone(),
-                content: "approval_decision.decision must be approve, deny, or ask_user"
-                    .to_string(),
-                result: None,
-                fatal_error: false,
-                transient_model_input: None,
-            };
-        }
-        let reason = parsed.reason.trim().to_string();
-        if reason.is_empty() {
-            return ToolResult {
-                tool_call_id: call_id,
-                name: APPROVAL_DECISION_TOOL.to_string(),
-                success: false,
-                is_error: true,
-                is_stream: false,
-                conversation_turn_id: context.conversation_turn_id.clone(),
-                content: "approval_decision.reason is required".to_string(),
-                result: None,
-                fatal_error: false,
-                transient_model_input: None,
-            };
-        }
-        let remember_allow = decision == "approve" && parsed.remember_allow;
         if let Ok(mut guard) = self.decision.lock() {
             if guard.is_some() {
                 return ToolResult {
@@ -206,16 +160,22 @@ impl ApprovalAgentToolExecutor {
                     transient_model_input: None,
                 };
             }
-            *guard = Some(ApprovalToolDecision {
-                decision: decision.clone(),
-                reason: reason.clone(),
-            });
+            *guard = Some(decision);
+        } else {
+            return ToolResult {
+                tool_call_id: call_id,
+                name: APPROVAL_DECISION_TOOL.to_string(),
+                success: false,
+                is_error: true,
+                is_stream: false,
+                conversation_turn_id: context.conversation_turn_id.clone(),
+                content: "approval_decision state is unavailable".to_string(),
+                result: None,
+                fatal_error: false,
+                transient_model_input: None,
+            };
         }
-        let structured = json!({
-            "decision": decision,
-            "reason": reason,
-            "remember_allow": remember_allow,
-        });
+        let (content, structured) = to_text_and_structured_result(&result);
         ToolResult {
             tool_call_id: call_id,
             name: APPROVAL_DECISION_TOOL.to_string(),
@@ -223,8 +183,8 @@ impl ApprovalAgentToolExecutor {
             is_error: false,
             is_stream: false,
             conversation_turn_id: context.conversation_turn_id.clone(),
-            content: structured.to_string(),
-            result: Some(structured),
+            content,
+            result: structured,
             fatal_error: false,
             transient_model_input: None,
         }

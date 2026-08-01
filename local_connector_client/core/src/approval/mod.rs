@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod ai_agent;
+mod decision_tool;
 mod fingerprint;
 mod pending;
 mod risk;
@@ -10,6 +11,7 @@ mod types;
 mod whitelist;
 
 pub(crate) use ai_agent::{run_auto_approval_agent, AutoApprovalDecision};
+pub(crate) use decision_tool::approval_decision_tool_result;
 pub(crate) use pending::{
     approve_pending_approval, cancel_pending_approvals_for_session, deny_pending_approval,
     finish_in_progress_approval, list_in_progress_approvals, list_pending_approvals,

@@ -13,7 +13,7 @@ use uuid::Uuid;
 use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest, COMMAND_APPROVAL_AGENT};
 use chatos_ai_runtime::{
     MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
-    ModelRuntimeConfig,
+    ModelRuntimeConfig, ToolExecutor,
 };
 use chatos_plugin_management_sdk::{
     required_agent_prompt_vendor, AgentPromptVendor, SystemAgentKey,
@@ -26,13 +26,14 @@ use crate::mcp::tools::code_maintainer_service_for_root;
 use crate::workspace::paths::resolve_workspace_dir;
 use crate::{local_now_rfc3339, LocalState};
 
+use super::decision_tool::APPROVAL_DECISION_TOOL;
 use super::fingerprint::normalized_command;
 use super::types::{ApprovalMemorySettings, CommandApprovalRequest};
 
-const APPROVAL_DECISION_TOOL: &str = "approval_decision";
-
+mod mcp_management_gateway;
 mod tool_executor;
 
+use self::mcp_management_gateway::{resolve_approval_mcp, ApprovalMcpResolution};
 use self::tool_executor::ApprovalAgentToolExecutor;
 
 #[derive(Debug, Clone)]
@@ -58,7 +59,7 @@ pub(crate) async fn run_auto_approval_agent(
     risk_reason: Option<&str>,
 ) -> Result<AutoApprovalDecision> {
     let root = approval_project_root(state, request)?;
-    let (model_config, prompt_vendor) = approval_model_config(
+    let (model_config, prompt_vendor, model_config_id) = approval_model_config(
         state,
         request.project_key.owner_user_id.as_str(),
         root.as_path(),
@@ -85,7 +86,7 @@ pub(crate) async fn run_auto_approval_agent(
         false,
     )?;
     let decision = Arc::new(Mutex::new(None));
-    let executor = ApprovalAgentToolExecutor {
+    let legacy_executor = ApprovalAgentToolExecutor {
         code_service,
         decision: decision.clone(),
         allow_code_tools: capability_policy.code_maintainer_read,
@@ -99,11 +100,6 @@ pub(crate) async fn run_auto_approval_agent(
         state.auth.as_ref().map(|auth| auth.access_token.as_str()),
     )
     .await?;
-    let run_id = format!("approval-agent-{}", Uuid::new_v4());
-    let conversation_id = memory
-        .as_ref()
-        .map(|memory| memory.conversation_id.clone())
-        .unwrap_or_else(|| format!("local_connector_command_approval:{}", request.request_id));
     let mut prompt = build_approval_prompt(request, root.as_path(), risk_level, risk_reason)?;
     if let Some(provider_skills_prompt) = capability_policy
         .provider_skills_prompt
@@ -114,6 +110,23 @@ pub(crate) async fn run_auto_approval_agent(
         prompt.push_str("\n\n");
         prompt.push_str(provider_skills_prompt);
     }
+    let run_id = format!("approval-agent-{}", Uuid::new_v4());
+    let mcp_resolution = resolve_approval_mcp(
+        state,
+        request,
+        run_id.as_str(),
+        model_config_id.as_str(),
+        decision.clone(),
+    )
+    .await?;
+    let (tool_executor, mcp_gateway): (Arc<dyn ToolExecutor>, _) = match mcp_resolution {
+        ApprovalMcpResolution::Legacy => (Arc::new(legacy_executor), None),
+        ApprovalMcpResolution::Gateway(gateway) => (Arc::new(gateway.executor()), Some(gateway)),
+    };
+    let conversation_id = memory
+        .as_ref()
+        .map(|memory| memory.conversation_id.clone())
+        .unwrap_or_else(|| format!("local_connector_command_approval:{}", request.request_id));
     let metadata = json!({
         "agent": "local_connector_command_approval_agent",
         "run_id": run_id,
@@ -137,26 +150,28 @@ pub(crate) async fn run_auto_approval_agent(
     let retry_model_config = model_config.clone();
     let retry_conversation_id = conversation_id.clone();
     let retry_prompt_source = prompt.clone();
-    let retry_executor = executor.clone();
+    let retry_executor = tool_executor.clone();
     let retry_memory = agent_memory.clone();
     let retry_system_prompt = installed_prompt.content.clone();
     let retry_metadata_source = metadata.clone();
     let turn_request = AgentTurnRequest::new(model_config, conversation_id, run_id, prompt)
-        .with_tool_executor(executor)
+        .with_tool_executor_arc(tool_executor)
         .with_memory(agent_memory)
         .with_max_iterations(capability_policy.max_iterations)
         .with_system_prompt(installed_prompt.content)
         .with_metadata(metadata);
-    AgentExecutor::new()
+    let mut execution_result = AgentExecutor::new()
         .run(&COMMAND_APPROVAL_AGENT, turn_request)
         .await
-        .map_err(|error| anyhow!(error.message().to_string()))?;
+        .map(|_| ())
+        .map_err(|error| anyhow!(error.message().to_string()));
 
-    if decision
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
-        .is_none()
+    if execution_result.is_ok()
+        && decision
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .is_none()
     {
         let retry_run_id = format!("approval-agent-retry-{}", Uuid::new_v4());
         let retry_prompt = format!(
@@ -171,16 +186,22 @@ pub(crate) async fn run_auto_approval_agent(
             retry_run_id,
             retry_prompt,
         )
-        .with_tool_executor(retry_executor)
+        .with_tool_executor_arc(retry_executor)
         .with_memory(retry_memory)
         .with_max_iterations(capability_policy.max_iterations)
         .with_system_prompt(retry_system_prompt)
         .with_metadata(retry_metadata);
-        AgentExecutor::new()
+        execution_result = AgentExecutor::new()
             .run(&COMMAND_APPROVAL_AGENT, retry_request)
             .await
-            .map_err(|error| anyhow!(error.message().to_string()))?;
+            .map(|_| ())
+            .map_err(|error| anyhow!(error.message().to_string()));
     }
+
+    if let Some(gateway) = mcp_gateway {
+        gateway.close().await;
+    }
+    execution_result?;
 
     let decision = decision
         .lock()
@@ -280,7 +301,7 @@ fn approval_model_config(
     state: &LocalState,
     owner_user_id: &str,
     root: &Path,
-) -> Result<(ModelRuntimeConfig, AgentPromptVendor)> {
+) -> Result<(ModelRuntimeConfig, AgentPromptVendor, String)> {
     let model_config_id = state
         .model_configs
         .settings
@@ -339,6 +360,7 @@ fn approval_model_config(
         .with_max_transient_retries(Some(runtime.model_request_max_retries))
         .with_request_cwd(Some(root.display().to_string())),
         prompt_vendor,
+        model_config_id,
     ))
 }
 

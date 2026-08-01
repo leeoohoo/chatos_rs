@@ -645,6 +645,7 @@ mod tests {
             memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
             memory_engine_operator_token: None,
             memory_engine_request_timeout: Duration::from_secs(1),
+            mcp_management_runtime_request_timeout: Duration::from_secs(1),
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),

@@ -156,6 +156,7 @@ impl RuntimeSessionSnapshot {
             owner_user_id: self.owner_user_id.clone(),
             agent_key: self.agent_key.clone(),
             project_id: self.project_id.clone(),
+            run_id: self.run_id.clone(),
             policy_revision: self.policy_revision.clone(),
             route_revision: self.route_revision.clone(),
             expires_at: self.expires_at.clone(),

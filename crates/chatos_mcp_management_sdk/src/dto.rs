@@ -244,6 +244,7 @@ pub struct CreateRuntimeSessionRequest {
     pub owner_user_id: String,
     pub agent_key: String,
     pub project_id: String,
+    #[serde(default)]
     pub run_id: Option<String>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
@@ -296,6 +297,7 @@ pub struct RuntimeSessionRoutesResponse {
     pub owner_user_id: String,
     pub agent_key: String,
     pub project_id: String,
+    pub run_id: Option<String>,
     pub policy_revision: String,
     pub route_revision: String,
     pub expires_at: String,

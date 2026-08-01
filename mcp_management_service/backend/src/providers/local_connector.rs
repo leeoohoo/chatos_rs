@@ -24,6 +24,7 @@ use super::{
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
 const MCP_RELAY_SCOPE: &str = "relay.mcp";
+const LOCAL_CONNECTOR_PROJECT_ID_HEADER: &str = "x-local-connector-project-id";
 
 #[derive(Clone)]
 pub(super) struct LocalConnectorProvider {
@@ -76,6 +77,7 @@ impl LocalConnectorProvider {
                 | SystemMcpKey::CodeMaintainerWrite
                 | SystemMcpKey::TerminalController
                 | SystemMcpKey::BrowserTools
+                | SystemMcpKey::LocalCommandApproval
         )
     }
 
@@ -183,6 +185,10 @@ impl LocalConnectorProvider {
             .header(
                 "x-local-connector-owner-user-id",
                 snapshot.owner_user_id.as_str(),
+            )
+            .header(
+                LOCAL_CONNECTOR_PROJECT_ID_HEADER,
+                snapshot.project_id.as_str(),
             )
             .header(
                 LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
@@ -358,6 +364,10 @@ impl LocalConnectorProvider {
                 snapshot.owner_user_id.as_str(),
             )
             .header(
+                LOCAL_CONNECTOR_PROJECT_ID_HEADER,
+                snapshot.project_id.as_str(),
+            )
+            .header(
                 LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
                 enabled_builtin_kinds,
             ))
@@ -466,6 +476,21 @@ mod tests {
         }
     }
 
+    fn local_command_approval_route() -> ResolvedMcpRoute {
+        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::LocalCommandApproval);
+        ResolvedMcpRoute {
+            resource_id: descriptor.resource_id.to_string(),
+            server_name: descriptor.server_name.to_string(),
+            provider_kind: McpProviderKind::LocalConnector,
+            provider_ref: Some("device:device-1/workspace:workspace-1".to_string()),
+            tool_namespace: descriptor.server_name.to_string(),
+            allow_writes: false,
+            retry_class: McpRetryClass::NoRetry,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        }
+    }
+
     async fn start_local_connector(
         secret: &'static str,
         mode: ResponseMode,
@@ -487,6 +512,12 @@ mod tests {
                     .get("x-local-connector-owner-user-id")
                     .and_then(|value| value.to_str().ok()),
                 Some("user-1")
+            );
+            assert_eq!(
+                headers
+                    .get(LOCAL_CONNECTOR_PROJECT_ID_HEADER)
+                    .and_then(|value| value.to_str().ok()),
+                Some("project-1")
             );
             assert_eq!(
                 headers
@@ -570,6 +601,19 @@ mod tests {
             })
         );
         server.abort();
+    }
+
+    #[test]
+    fn local_command_approval_is_a_supported_local_connector_route() {
+        let provider = LocalConnectorProvider::new(
+            "http://127.0.0.1:39230",
+            Duration::from_secs(5),
+            Some("a-long-local-connector-secret".to_string()),
+            1024 * 1024,
+        )
+        .unwrap();
+
+        assert!(provider.supports(&local_command_approval_route()));
     }
 
     #[tokio::test]
