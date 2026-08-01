@@ -70,21 +70,8 @@ pub(crate) fn shared_stdio_server(server: ChatosStdioServer) -> chatos_mcp_runti
 pub(crate) fn shared_builtin_server(
     server: ChatosBuiltinServer,
 ) -> Option<chatos_mcp_runtime::McpBuiltinServer> {
-    let kind = shared_builtin_kind(server.kind)?;
-    Some(chatos_mcp_runtime::McpBuiltinServer {
-        name: server.name,
-        kind: kind.kind_name().to_string(),
-        workspace_dir: server.workspace_dir,
-        user_id: server.user_id,
-        project_id: server.project_id,
-        remote_connection_id: server.remote_connection_id,
-        contact_agent_id: server.contact_agent_id,
-        auto_create_task: server.auto_create_task,
-        allow_writes: server.allow_writes,
-        max_file_bytes: server.max_file_bytes,
-        max_write_bytes: server.max_write_bytes,
-        search_limit: server.search_limit,
-    })
+    shared_builtin_kind(server.kind)?;
+    Some(server.to_runtime_server())
 }
 
 pub(crate) fn shared_builtin_kind(

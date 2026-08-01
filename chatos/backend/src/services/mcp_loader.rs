@@ -53,6 +53,25 @@ pub struct McpBuiltinServer {
     pub search_limit: usize,
 }
 
+impl McpBuiltinServer {
+    pub(crate) fn to_runtime_server(&self) -> chatos_mcp_runtime::McpBuiltinServer {
+        chatos_mcp_runtime::McpBuiltinServer {
+            name: self.name.clone(),
+            kind: self.kind.kind_name().to_string(),
+            workspace_dir: self.workspace_dir.clone(),
+            user_id: self.user_id.clone(),
+            project_id: self.project_id.clone(),
+            remote_connection_id: self.remote_connection_id.clone(),
+            contact_agent_id: self.contact_agent_id.clone(),
+            auto_create_task: self.auto_create_task,
+            allow_writes: self.allow_writes,
+            max_file_bytes: self.max_file_bytes,
+            max_write_bytes: self.max_write_bytes,
+            search_limit: self.search_limit,
+        }
+    }
+}
+
 fn build_servers_from_configs(
     configs: Vec<McpConfig>,
     workspace_dir: Option<&str>,

@@ -59,8 +59,9 @@ pub use memory_readers::{
 };
 pub use notepad::{NotepadBuiltinService, NotepadOptions, NotepadStore, NotepadStoreRef};
 pub use provider::{
-    build_shared_builtin_provider, build_shared_builtin_registry,
-    build_shared_builtin_tool_service, SharedBuiltinProvider, SharedBuiltinToolService,
+    build_builtin_tool_service_with_dependencies, build_shared_builtin_provider,
+    build_shared_builtin_registry, build_shared_builtin_tool_service,
+    BuiltinToolServiceDependencies, SharedBuiltinProvider, SharedBuiltinToolService,
 };
 pub use remote_connection_controller::{
     RemoteConnectionControllerContext, RemoteConnectionControllerOptions,
