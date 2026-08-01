@@ -4,8 +4,8 @@
 mod builtins;
 mod context;
 mod executor;
+mod legacy_system_mcp;
 mod persistence;
-mod system_mcp_adapter;
 mod task_process_log;
 
 pub(crate) use executor::prepare_local_chat_tools;

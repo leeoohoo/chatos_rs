@@ -7,10 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chatos_ai_runtime::{McpRuntimeToolExecutor, ToolExecutor};
-use chatos_mcp::{
-    system_mcp_descriptor_by_embedded_kind, ResolvedSystemMcpBackend, SystemMcpHostAdapter,
-    SystemMcpResolveContext,
-};
+use chatos_mcp::system_mcp_descriptor_by_embedded_kind;
 use chatos_mcp_runtime::{McpExecutor, McpHttpServer, McpStdioServer};
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
@@ -21,7 +18,7 @@ use crate::mcp::manifest::{LocalMcpManifestRecord, LocalMcpTransport};
 use crate::LocalRuntime;
 
 use super::context::{resolve_local_chat_tool_context, LocalChatToolContext};
-use super::system_mcp_adapter::LocalConnectorSystemMcpAdapter;
+use super::legacy_system_mcp::build_legacy_local_system_mcp;
 
 pub(crate) struct PreparedLocalChatTools {
     pub(crate) executor: Option<Arc<dyn ToolExecutor>>,
@@ -79,7 +76,6 @@ pub(crate) async fn prepare_local_chat_tools(
 }
 
 async fn build_mcp_executor(context: LocalChatToolContext) -> Result<McpExecutor, String> {
-    let system_adapter = LocalConnectorSystemMcpAdapter::new(context.clone());
     let mut builder = McpExecutor::builder();
     for kind in context.builtin_kinds.iter().copied() {
         if kind == chatos_mcp_runtime::BuiltinMcpKind::TaskManager {
@@ -87,45 +83,14 @@ async fn build_mcp_executor(context: LocalChatToolContext) -> Result<McpExecutor
         }
         let descriptor = system_mcp_descriptor_by_embedded_kind(kind)
             .ok_or_else(|| format!("missing system MCP descriptor for {}", kind.kind_name()))?;
-        match system_adapter
-            .resolve(descriptor.key, &SystemMcpResolveContext::default())
-            .await?
-        {
-            ResolvedSystemMcpBackend::Embedded { server, provider } => {
-                builder = builder.with_builtin_server(server);
-                if let Some(provider) = provider {
-                    builder = builder.with_builtin_provider_arc(provider);
-                }
-            }
-            ResolvedSystemMcpBackend::Unavailable(reason) => return Err(reason),
-            ResolvedSystemMcpBackend::Http(_) => {
-                return Err(format!(
-                    "Local Connector expected an embedded system MCP: {}",
-                    descriptor.server_name
-                ));
-            }
-        }
+        let resolved = build_legacy_local_system_mcp(&context, descriptor.key).await?;
+        builder = builder.with_builtin_server(resolved.server);
+        builder = builder.with_builtin_provider_arc(resolved.provider);
     }
     for key in context.host_system_mcps.iter().copied() {
-        let descriptor = chatos_mcp::system_mcp_descriptor(key);
-        match system_adapter
-            .resolve(key, &SystemMcpResolveContext::default())
-            .await?
-        {
-            ResolvedSystemMcpBackend::Embedded { server, provider } => {
-                builder = builder.with_builtin_server(server);
-                if let Some(provider) = provider {
-                    builder = builder.with_builtin_provider_arc(provider);
-                }
-            }
-            ResolvedSystemMcpBackend::Unavailable(reason) => return Err(reason),
-            ResolvedSystemMcpBackend::Http(_) => {
-                return Err(format!(
-                    "Local Connector expected a local system MCP provider: {}",
-                    descriptor.server_name
-                ));
-            }
-        }
+        let resolved = build_legacy_local_system_mcp(&context, key).await?;
+        builder = builder.with_builtin_server(resolved.server);
+        builder = builder.with_builtin_provider_arc(resolved.provider);
     }
     for skill in &context.skills {
         if let (Some(server), Some(provider)) = (&skill.server, &skill.provider) {

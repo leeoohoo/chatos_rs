@@ -6,17 +6,14 @@ use crate::services::TaskRunnerCapabilityPolicy;
 
 use std::collections::BTreeSet;
 
-use chatos_mcp::{
-    system_mcp_descriptor_for_record, ResolvedSystemMcpBackend, SystemMcpHostAdapter,
-    SystemMcpResolveContext,
-};
+use chatos_mcp::system_mcp_descriptor_for_record;
 use chatos_mcp_runtime::{
     BuiltinMcpKind, McpToolNameAlias, BROWSER_TOOLS_SERVER_NAME, CODE_MAINTAINER_READ_SERVER_NAME,
     CODE_MAINTAINER_WRITE_SERVER_NAME, TERMINAL_CONTROLLER_SERVER_NAME,
 };
 
+use super::legacy_system_mcp::load_legacy_system_mcp_server;
 use crate::models::ExternalMcpConfigRecord;
-use crate::services::system_mcp_adapter::TaskRunnerSystemMcpAdapter;
 
 #[derive(Debug, Clone)]
 pub(super) struct LoadedExternalMcpServers {
@@ -157,32 +154,19 @@ async fn plugin_mcp_server_for_resource(
         .unwrap_or(resource.name.as_str())
         .to_string();
     if let Some(descriptor) = system_mcp_descriptor_for_record(resource) {
-        let context = SystemMcpResolveContext {
-            workspace_dir: Some(effective_workspace_dir.to_string()),
-            owner_user_id: normalized_task_owner_user_id(task),
-            project_id: Some(crate::models::normalize_project_id(Some(
-                task.project_id.clone(),
-            ))),
-            task_id: Some(task.id.clone()),
-            headers: resource.runtime.headers.clone(),
-            ..SystemMcpResolveContext::default()
-        };
-        return match TaskRunnerSystemMcpAdapter::new(&service.config)
-            .resolve(descriptor.key, &context)
-            .await?
-        {
-            ResolvedSystemMcpBackend::Http(server) => Ok(LoadedPluginMcpServer {
-                name: server_name,
-                transport: "http".to_string(),
-                http_server: Some(server),
-                stdio_server: None,
-            }),
-            ResolvedSystemMcpBackend::Unavailable(reason) => Err(reason),
-            ResolvedSystemMcpBackend::Embedded { .. } => Err(format!(
-                "embedded system MCP cannot be loaded as an external MCP: {}",
-                descriptor.server_name
-            )),
-        };
+        let server = load_legacy_system_mcp_server(
+            &service.config,
+            task,
+            resource,
+            descriptor,
+            normalized_task_owner_user_id(task),
+        )?;
+        return Ok(LoadedPluginMcpServer {
+            name: server_name,
+            transport: "http".to_string(),
+            http_server: Some(server),
+            stdio_server: None,
+        });
     }
     match resource.runtime.kind.as_str() {
         "http" => {

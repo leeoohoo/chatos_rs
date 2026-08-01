@@ -8,7 +8,7 @@
 - 关联方案：CLOUD_ORCHESTRATION_LIGHT_LOCAL_CONNECTOR_MIGRATION_PLAN.zh-CN.md
 - 复用基础：mcp/、chatos_mcp_runtime、chatos_mcp_service、chatos_plugin_management_sdk
 
-当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时、响应大小限制和共享单次调用取消状态；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools、Sandbox Images 和 Local Command Approval Provider；Phase 5 已完成 External HTTP、普通 Cloud stdio、release-managed Plugin Local MCP、Plugin Cloud HTTP/PATH stdio、Plugin Cloud ConfigFile transport、Plugin Cloud Credential Resolver、immutable Plugin artifact mount、Plugin Cloud OAuth 浏览器授权和 refresh token 自动续期、Plugin native executable Skill、Command `invoke` 与 Agent Profile `apply` 聚合，以及普通/Plugin stdio、Plugin HTTP、Plugin Local MCP 的 invocation-scoped cancellation。组件工具使用独立 immutable Provider Binding；本地 Command/Agent 目录准备不会触发审批，Command 只在真实调用时按精确参数和 snapshot 审批，云端需要交互确认的 Command 失败关闭。Runtime Session Snapshot schema 已提升为 v3，不迁移历史 Session。Task Runner、ChatOS、Project Environment Agent 和 Local Connector Command Approval Agent 均已具备 `shadow` 观测和显式 `gateway` canary 模式，所有部署默认仍为 `shadow`；五类 Memory Agent 已固定为 `tool_plane=none`。Phase 6 的调用方迁移与审计已完成，旧直连工具链只为 shadow 回滚窗口保留，待 Phase 7 删除。
+当前 2.0.10 实施状态：Phase 0 已完成；Phase 1 的权威 Project Execution Context、Plugin Management capability 聚合、required MCP 阻断、工具 Schema 快照、稳定 `route_revision`、短期 Runtime Grant 和共享加密 Session Snapshot 已接通；Phase 2 的聚合 `/mcp` 已支持 `initialize`、`ping`、`tools/list`、`tools/call`、固定路由校验、结构化 invocation 日志、Provider 超时、响应大小限制和共享单次调用取消状态；Phase 3 已接通 Local Connector、Harness 以及 Cloud Sandbox 的文件与终端 Provider；Phase 4 已接通 Project Management、Project Runtime Environment、Task Runner Service、Task Process Log、ChatOS Memory Readers、Notepad、Agent Builder、BrowserTools、Sandbox Images 和 Local Command Approval Provider；Phase 5 已完成 External HTTP、普通 Cloud stdio、release-managed Plugin Local MCP、Plugin Cloud HTTP/PATH stdio、Plugin Cloud ConfigFile transport、Plugin Cloud Credential Resolver、immutable Plugin artifact mount、Plugin Cloud OAuth 浏览器授权和 refresh token 自动续期、Plugin native executable Skill、Command `invoke` 与 Agent Profile `apply` 聚合，以及普通/Plugin stdio、Plugin HTTP、Plugin Local MCP 的 invocation-scoped cancellation。组件工具使用独立 immutable Provider Binding；本地 Command/Agent 目录准备不会触发审批，Command 只在真实调用时按精确参数和 snapshot 审批，云端需要交互确认的 Command 失败关闭。Runtime Session Snapshot schema 已提升为 v3，不迁移历史 Session。Task Runner、ChatOS、Project Environment Agent 和 Local Connector Command Approval Agent 均已具备 `shadow` 观测和显式 `gateway` canary 模式，所有部署默认仍为 `shadow`；五类 Memory Agent 已固定为 `tool_plane=none`。Phase 6 的调用方迁移与审计已完成。Phase 7 已删除 Task Runner 与 Local Connector 的通用 Host Adapter 路由抽象，并将 `supported_hosts` 明确降级为只供 shadow 旧执行器使用的兼容 metadata；剩余旧直连工具 builder 只为 shadow 回滚窗口保留。
 
 本文档定义一个新的 MCP Management Service。它同时承担 MCP 控制面聚合和 MCP 运行网关职责，使 ChatOS、Task Runner、Project Management、Memory Agent 等调用方不再各自判断 MCP 在哪里、以什么协议、通过哪个服务执行。
 
@@ -1025,11 +1025,14 @@ Memory Engine 五类 Agent 的 Phase 6 结论是“无需迁移”，不是保�
 
 ### Phase 7：删除重复路由
 
-- 删除 TaskRunnerSystemMcpAdapter。
-- 删除 LocalConnectorSystemMcpAdapter 中的业务路由职责。
+- 已删除 TaskRunnerSystemMcpAdapter；shadow 所需的 Project Runtime Environment 旧直连被隔离为显式 legacy builder，不再通过通用 Host Adapter 路由。
+- 已删除 LocalConnectorSystemMcpAdapter；shadow 本地执行只保留显式 legacy provider builder，不再返回通用 Host/HTTP/Embedded 路由结果。
 - 删除 ChatOS 独立 builtin MCP Factory。
 - 删除各服务 local/cloud workspace if/else。
-- SystemMcpHost.supported_hosts 降级为兼容字段或删除。
+- 已删除共享 `SystemMcpHostAdapter`、`SystemMcpResolveContext` 和 `ResolvedSystemMcpBackend` 抽象。
+- `SystemMcpHost.supported_hosts` 已重命名为 `legacy_supported_hosts`，优先级路由 API 已删除；该字段只允许 shadow 旧执行器兼容使用。
+
+剩余两项需在默认模式从 `shadow` 切换到 `gateway`、回滚窗口关闭后删除，避免当前部署失去旧链路观测对照。
 
 ---
 

@@ -92,7 +92,6 @@ mod sandbox_runtime;
 mod schedule_helpers;
 mod status_display;
 mod stream_events;
-mod system_mcp_adapter;
 mod task_dependencies;
 mod task_manager_lifecycle;
 mod task_memory;

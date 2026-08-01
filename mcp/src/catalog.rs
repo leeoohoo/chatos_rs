@@ -23,41 +23,19 @@ pub struct SystemMcpDescriptor {
     pub category: Option<&'static str>,
     pub owner_service: &'static str,
     pub backend: SystemMcpBackend,
-    pub supported_hosts: &'static [SystemMcpHost],
+    /// Compatibility metadata used only by legacy in-process MCP runtimes.
+    /// New runtime routing is owned by MCP Management Service.
+    pub legacy_supported_hosts: &'static [SystemMcpHost],
     pub embedded_kind: Option<BuiltinMcpKind>,
 }
 
 impl SystemMcpDescriptor {
-    pub fn supports_host(self, host: SystemMcpHost) -> bool {
-        self.supported_hosts.contains(&host)
+    pub fn legacy_supports_host(self, host: SystemMcpHost) -> bool {
+        self.legacy_supported_hosts.contains(&host)
     }
 
     pub const fn is_embedded(self) -> bool {
         matches!(self.backend, SystemMcpBackend::Embedded)
-    }
-
-    pub fn host_priority(self, host: SystemMcpHost) -> Option<u16> {
-        if !self.supports_host(host) {
-            return None;
-        }
-        if host == SystemMcpHost::LocalConnector {
-            return Some(match self.key {
-                SystemMcpKey::CodeMaintainerRead => 10,
-                SystemMcpKey::CodeMaintainerWrite => 20,
-                SystemMcpKey::TerminalController => 30,
-                SystemMcpKey::BrowserTools => 40,
-                SystemMcpKey::AskUser => 60,
-                SystemMcpKey::ProjectManagement => 70,
-                SystemMcpKey::TaskProcessLog => 75,
-                SystemMcpKey::TaskRunnerService => 80,
-                SystemMcpKey::LocalCommandApproval => 90,
-                _ => 1_000,
-            });
-        }
-        SYSTEM_MCP_CATALOG
-            .iter()
-            .position(|descriptor| descriptor.key == self.key)
-            .map(|index| (index as u16 + 1) * 10)
     }
 }
 
@@ -94,7 +72,7 @@ macro_rules! embedded_descriptor {
             category: Some("builtin"),
             owner_service: $owner,
             backend: SystemMcpBackend::Embedded,
-            supported_hosts: $hosts,
+            legacy_supported_hosts: $hosts,
             embedded_kind: Some(BuiltinMcpKind::$kind),
         }
     };
@@ -156,7 +134,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("builtin"),
         owner_service: "chatos",
         backend: SystemMcpBackend::ServiceHttp,
-        supported_hosts: CHATOS_TASK_HOSTS,
+        legacy_supported_hosts: CHATOS_TASK_HOSTS,
         embedded_kind: Some(BuiltinMcpKind::Notepad),
     },
     SystemMcpDescriptor {
@@ -170,7 +148,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("builtin"),
         owner_service: "chatos",
         backend: SystemMcpBackend::ServiceHttp,
-        supported_hosts: CHATOS_HOST,
+        legacy_supported_hosts: CHATOS_HOST,
         embedded_kind: Some(BuiltinMcpKind::AgentBuilder),
     },
     embedded_descriptor!(
@@ -217,7 +195,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("builtin"),
         owner_service: "chatos",
         backend: SystemMcpBackend::ServiceHttp,
-        supported_hosts: CHATOS_TASK_LOCAL_HOSTS,
+        legacy_supported_hosts: CHATOS_TASK_LOCAL_HOSTS,
         embedded_kind: Some(BuiltinMcpKind::BrowserTools),
     },
     embedded_descriptor!(
@@ -264,7 +242,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("project_environment"),
         owner_service: "sandbox_manager_service",
         backend: SystemMcpBackend::HostAdapter,
-        supported_hosts: PROJECT_AND_SANDBOX_HOSTS,
+        legacy_supported_hosts: PROJECT_AND_SANDBOX_HOSTS,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -279,7 +257,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("project_environment"),
         owner_service: "project_management_service",
         backend: SystemMcpBackend::HostAdapter,
-        supported_hosts: PROJECT_SERVICE_HOST,
+        legacy_supported_hosts: PROJECT_SERVICE_HOST,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -294,7 +272,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("task_runner"),
         owner_service: "project_management_service",
         backend: SystemMcpBackend::ServiceHttp,
-        supported_hosts: TASK_RUNNER_HOST,
+        legacy_supported_hosts: TASK_RUNNER_HOST,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -308,7 +286,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("local_connector"),
         owner_service: "local_connector_client",
         backend: SystemMcpBackend::HostAdapter,
-        supported_hosts: LOCAL_CONNECTOR_HOST,
+        legacy_supported_hosts: LOCAL_CONNECTOR_HOST,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -323,7 +301,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("task_runner"),
         owner_service: "task_runner_service",
         backend: SystemMcpBackend::RunScopedBuiltin,
-        supported_hosts: TASK_AND_LOCAL_HOSTS,
+        legacy_supported_hosts: TASK_AND_LOCAL_HOSTS,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -337,7 +315,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("chatos"),
         owner_service: "task_runner_service",
         backend: SystemMcpBackend::ServiceDynamic,
-        supported_hosts: CHATOS_AND_LOCAL_HOSTS,
+        legacy_supported_hosts: CHATOS_AND_LOCAL_HOSTS,
         embedded_kind: None,
     },
 ];
@@ -464,8 +442,8 @@ mod tests {
 
         assert_eq!(descriptor.key, SystemMcpKey::TaskProcessLog);
         assert_eq!(descriptor.backend, SystemMcpBackend::RunScopedBuiltin);
-        assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
-        assert!(descriptor.supports_host(SystemMcpHost::LocalConnector));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::LocalConnector));
     }
 
     #[test]
@@ -475,8 +453,8 @@ mod tests {
         assert_eq!(descriptor.owner_service, "chatos");
         assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::Notepad));
-        assert!(descriptor.supports_host(SystemMcpHost::Chatos));
-        assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::Chatos));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::TaskRunner));
     }
 
     #[test]
@@ -486,8 +464,8 @@ mod tests {
         assert_eq!(descriptor.owner_service, "chatos");
         assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::AgentBuilder));
-        assert!(descriptor.supports_host(SystemMcpHost::Chatos));
-        assert!(!descriptor.supports_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::Chatos));
+        assert!(!descriptor.legacy_supports_host(SystemMcpHost::TaskRunner));
     }
 
     #[test]
@@ -497,9 +475,9 @@ mod tests {
         assert_eq!(descriptor.owner_service, "chatos");
         assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::BrowserTools));
-        assert!(descriptor.supports_host(SystemMcpHost::Chatos));
-        assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
-        assert!(descriptor.supports_host(SystemMcpHost::LocalConnector));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::Chatos));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.legacy_supports_host(SystemMcpHost::LocalConnector));
     }
 
     #[test]

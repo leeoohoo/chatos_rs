@@ -34,7 +34,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 server.kind.kind_name()
             )
         })?;
-    if !descriptor.supports_host(chatos_mcp::SystemMcpHost::Chatos) {
+    if !descriptor.legacy_supports_host(chatos_mcp::SystemMcpHost::Chatos) {
         return Err(format!(
             "system MCP {} is not supported by ChatOS",
             descriptor.server_name

@@ -4,6 +4,7 @@
 use super::*;
 use crate::services::TaskRunnerCapabilityPolicy;
 
+mod legacy_system_mcp;
 mod mcp_builder;
 mod mcp_inputs;
 mod mcp_management_gateway;

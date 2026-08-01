@@ -6,7 +6,6 @@ mod catalog;
 mod contracts;
 mod definition;
 mod implementations;
-mod provider;
 mod skills;
 mod system_tool_catalog;
 mod task_types;
@@ -70,7 +69,6 @@ pub use chatos_plugin_management_sdk::{
 };
 pub use definition::{CatalogSystemMcpDefinition, SystemMcpDefinition};
 pub use implementations::{system_mcp_definition, system_mcp_definitions};
-pub use provider::{ResolvedSystemMcpBackend, SystemMcpHostAdapter, SystemMcpResolveContext};
 pub use skills::{system_mcp_provider_skills, SystemMcpProviderSkill};
 pub use system_tool_catalog::{
     local_command_approval_decision_tool_definition, task_process_log_tool_definitions,

@@ -31,7 +31,7 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
         );
     }
     let descriptor = chatos_mcp::system_mcp_descriptor_by_resource_id(id)?;
-    if !descriptor.supports_host(chatos_mcp::SystemMcpHost::Chatos) {
+    if !descriptor.legacy_supports_host(chatos_mcp::SystemMcpHost::Chatos) {
         return None;
     }
     let kind = descriptor.embedded_kind?;
@@ -41,7 +41,7 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
 pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
     chatos_mcp::system_mcp_catalog()
         .iter()
-        .filter(|descriptor| descriptor.supports_host(chatos_mcp::SystemMcpHost::Chatos))
+        .filter(|descriptor| descriptor.legacy_supports_host(chatos_mcp::SystemMcpHost::Chatos))
         .filter_map(|descriptor| {
             let kind = descriptor.embedded_kind?;
             builtin_config(kind, descriptor.resource_id, kind.command()?)
