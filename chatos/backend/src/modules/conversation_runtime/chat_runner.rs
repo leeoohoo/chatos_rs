@@ -229,6 +229,12 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
     );
 
     if let Some(runtime_error) = runtime_context.runtime_error.clone() {
+        close_mcp_management_runtime_session(
+            &mut runtime_context,
+            session_id,
+            resolved_turn_id.as_str(),
+        )
+        .await;
         let empty_chunk_sent = Arc::new(AtomicBool::new(false));
         let empty_streamed_content = Arc::new(Mutex::new(String::new()));
         finalize_chat_result(
@@ -251,6 +257,12 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
     if let Err(attachment_error) =
         validate_attachment_total_size(attachments.as_slice(), &effective_settings)
     {
+        close_mcp_management_runtime_session(
+            &mut runtime_context,
+            session_id,
+            resolved_turn_id.as_str(),
+        )
+        .await;
         let empty_chunk_sent = Arc::new(AtomicBool::new(false));
         let empty_streamed_content = Arc::new(Mutex::new(String::new()));
         finalize_chat_result(
@@ -272,13 +284,41 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
 
     let use_codex_gateway_mcp_passthrough =
         effective_codex_gateway_mcp_passthrough(model_runtime, &runtime_context);
-    let prepared_mcp = prepare_mcp_execution(
+    let prepared_mcp = match prepare_mcp_execution(
         session_id,
         resolved_turn_id.as_str(),
         &mut runtime_context,
         use_codex_gateway_mcp_passthrough,
     )
-    .await;
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            close_mcp_management_runtime_session(
+                &mut runtime_context,
+                session_id,
+                resolved_turn_id.as_str(),
+            )
+            .await;
+            let empty_chunk_sent = Arc::new(AtomicBool::new(false));
+            let empty_streamed_content = Arc::new(Mutex::new(String::new()));
+            finalize_chat_result(
+                &sink,
+                session_id,
+                resolved_turn_id.as_str(),
+                user_message_id.as_str(),
+                false,
+                &empty_chunk_sent,
+                &empty_streamed_content,
+                Err(error),
+                true,
+                || crate::utils::log_helpers::log_chat_cancelled(session_id),
+                crate::utils::log_helpers::log_chat_error,
+            )
+            .await;
+            return;
+        }
+    };
     let mut callback_bundle = build_chat_stream_callbacks(&sink, session_id, false);
     callback_bundle.callbacks.on_chunk = None;
     callback_bundle.callbacks.on_thinking = None;
@@ -348,6 +388,13 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
     )
     .await;
 
+    close_mcp_management_runtime_session(
+        &mut runtime_context,
+        session_id,
+        resolved_turn_id.as_str(),
+    )
+    .await;
+
     finalize_chat_result(
         &prepared.sink,
         session_id,
@@ -362,6 +409,26 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         crate::utils::log_helpers::log_chat_error,
     )
     .await;
+}
+
+async fn close_mcp_management_runtime_session(
+    runtime_context: &mut ResolvedConversationRuntimeContext,
+    source_session_id: &str,
+    turn_id: &str,
+) {
+    let Some(runtime_session) = runtime_context.mcp_management_runtime_session.take() else {
+        return;
+    };
+    let mcp_session_id = runtime_session.session_id().to_string();
+    if let Err(error) = runtime_session.close().await {
+        warn!(
+            source_session_id,
+            turn_id,
+            mcp_session_id,
+            error = %error,
+            "close ChatOS MCP Management runtime session failed"
+        );
+    }
 }
 
 pub async fn sync_execution_snapshot(

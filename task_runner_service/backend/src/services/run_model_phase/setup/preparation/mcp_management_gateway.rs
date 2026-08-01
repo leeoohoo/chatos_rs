@@ -6,11 +6,12 @@ use std::time::Duration;
 
 use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpManagementClient, McpManagementClientConfig,
-    RuntimeSessionResponse, SandboxExecutionTarget, SandboxProviderKind,
+    McpManagementRuntimeSessionHandle, RuntimeSessionResponse, SandboxExecutionTarget,
+    SandboxProviderKind,
 };
 use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::SystemMcpKey;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::models::{TaskRecord, TaskRunRecord};
 
@@ -93,20 +94,40 @@ pub(super) async fn resolve_mcp_management_gateway(
             ),
     );
     let provider_skills_prompt = session.provider_skills_prompt.clone();
+    let runtime_session =
+        McpManagementRuntimeSessionHandle::new(client, session.session_id.clone());
+    let server = match gateway_server(session, timeout, ask_user_timeout) {
+        Ok(server) => server,
+        Err(error) => {
+            let mcp_session_id = runtime_session.session_id().to_string();
+            if let Err(close_error) = runtime_session.close().await {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    mcp_session_id,
+                    error = %close_error,
+                    "close invalid Task Runner MCP Management runtime session failed"
+                );
+            }
+            return Err(error);
+        }
+    };
     Ok(ResolvedMcpManagementGateway {
-        server: gateway_server(session, timeout, ask_user_timeout)?,
+        server,
         provider_skills_prompt,
+        runtime_session,
     })
 }
 
 pub(super) struct ResolvedMcpManagementGateway {
     server: McpHttpServer,
     pub(super) provider_skills_prompt: Option<String>,
+    runtime_session: McpManagementRuntimeSessionHandle,
 }
 
 impl ResolvedMcpManagementGateway {
-    pub(super) fn into_server(self) -> McpHttpServer {
-        self.server
+    pub(super) fn into_parts(self) -> (McpHttpServer, McpManagementRuntimeSessionHandle) {
+        (self.server, self.runtime_session)
     }
 }
 

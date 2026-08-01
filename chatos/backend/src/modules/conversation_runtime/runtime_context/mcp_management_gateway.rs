@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpManagementClient, McpManagementClientConfig,
-    RuntimeSessionResponse,
+    McpManagementRuntimeSessionHandle, RuntimeSessionResponse,
 };
 use chatos_plugin_management_sdk::SystemMcpKey;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::services::mcp_loader::McpHttpServer;
 
@@ -35,14 +35,23 @@ pub(super) struct McpManagementGateway {
     server: McpHttpServer,
     effective_mcp_ids: Vec<String>,
     provider_skills_prompt: Option<String>,
+    runtime_session: McpManagementRuntimeSessionHandle,
 }
 
 impl McpManagementGateway {
-    pub(super) fn into_parts(self) -> (McpHttpServer, Vec<String>, Option<String>) {
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        McpHttpServer,
+        Vec<String>,
+        Option<String>,
+        McpManagementRuntimeSessionHandle,
+    ) {
         (
             self.server,
             self.effective_mcp_ids,
             self.provider_skills_prompt,
+            self.runtime_session,
         )
     }
 }
@@ -96,10 +105,29 @@ pub(super) async fn resolve_mcp_management_gateway(
     );
     let effective_mcp_ids = session.effective_mcp_ids.clone();
     let provider_skills_prompt = session.provider_skills_prompt.clone();
+    let runtime_session =
+        McpManagementRuntimeSessionHandle::new(client, session.session_id.clone());
+    let server = match gateway_server(session) {
+        Ok(server) => server,
+        Err(error) => {
+            let mcp_session_id = runtime_session.session_id().to_string();
+            if let Err(close_error) = runtime_session.close().await {
+                warn!(
+                    source_session_id,
+                    turn_id,
+                    mcp_session_id,
+                    error = %close_error,
+                    "close invalid ChatOS MCP Management runtime session failed"
+                );
+            }
+            return Err(error);
+        }
+    };
     Ok(McpManagementGateway {
-        server: gateway_server(session)?,
+        server,
         effective_mcp_ids,
         provider_skills_prompt,
+        runtime_session,
     })
 }
 

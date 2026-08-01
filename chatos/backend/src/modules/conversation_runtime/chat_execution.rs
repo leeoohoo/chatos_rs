@@ -541,7 +541,7 @@ pub async fn prepare_mcp_execution(
     turn_id: &str,
     runtime_context: &mut ResolvedConversationRuntimeContext,
     use_codex_gateway_mcp_passthrough: bool,
-) -> PreparedMcpExecution {
+) -> Result<PreparedMcpExecution, String> {
     let started_at = Instant::now();
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
     let http_server_count = http_servers.len();
@@ -550,11 +550,12 @@ pub async fn prepare_mcp_execution(
     let mut executor =
         AgentMcpToolExecute::new(http_servers, stdio_servers, builtin_servers.clone());
     if runtime_context.use_tools {
-        let _ = if use_codex_gateway_mcp_passthrough {
+        let init_result = if use_codex_gateway_mcp_passthrough {
             executor.init_builtin_only().await
         } else {
             executor.init().await
         };
+        init_result.map_err(|error| format!("initialize MCP Management tools failed: {error}"))?;
     }
 
     let unavailable_tools = executor.get_unavailable_tools();
@@ -590,12 +591,12 @@ pub async fn prepare_mcp_execution(
     }
     let tool_metadata = executor.tool_metadata().clone();
 
-    PreparedMcpExecution {
+    Ok(PreparedMcpExecution {
         executor,
         unavailable_tools,
         prefixed_input_items,
         tool_metadata,
-    }
+    })
 }
 
 pub fn effective_codex_gateway_mcp_passthrough(

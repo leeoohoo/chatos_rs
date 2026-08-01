@@ -6,7 +6,7 @@ pub mod config;
 pub mod dto;
 pub mod error;
 
-pub use client::McpManagementClient;
+pub use client::{McpManagementClient, McpManagementRuntimeSessionHandle};
 pub use config::McpManagementClientConfig;
 pub use dto::*;
 pub use error::McpManagementClientError;

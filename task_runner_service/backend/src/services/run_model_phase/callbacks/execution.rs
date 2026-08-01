@@ -12,6 +12,8 @@ impl RunService {
         model_config: &ModelConfigRecord,
         prepared_execution: PreparedModelExecution,
     ) -> TaskRunReport {
+        let mcp_management_runtime_session =
+            prepared_execution.mcp_management_runtime_session.clone();
         let max_iterations = prepared_execution
             .runtime_config
             .max_iterations
@@ -19,7 +21,7 @@ impl RunService {
         let runtime_settings = match self.effective_task_runner_runtime_settings().await {
             Ok(settings) => settings,
             Err(err) => {
-                return TaskRunReport::from_ai_report(
+                let report = TaskRunReport::from_ai_report(
                     task.id.clone(),
                     run.id.clone(),
                     Some(model_config.id.clone()),
@@ -27,6 +29,9 @@ impl RunService {
                         "failed to resolve Task Runner runtime settings: {err}"
                     )),
                 );
+                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
+                    .await;
+                return report;
             }
         };
         let review_policy = TaskExecutionReviewPolicy::new(
@@ -51,12 +56,15 @@ impl RunService {
         let execution_timeout = match self.effective_execution_timeout().await {
             Ok(timeout) => timeout,
             Err(err) => {
-                return TaskRunReport::from_ai_report(
+                let report = TaskRunReport::from_ai_report(
                     task.id.clone(),
                     run.id.clone(),
                     Some(model_config.id.clone()),
                     AiTurnReport::failed(format!("failed to resolve execution timeout: {err}")),
                 );
+                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
+                    .await;
+                return report;
             }
         };
         let mut run_spec = prepared_execution.run_spec;
@@ -151,6 +159,7 @@ impl RunService {
             report.content = Some(path_redactor.redact_text(content.as_str()));
             report.error = None;
         }
+        close_mcp_management_runtime_session(mcp_management_runtime_session, task, run).await;
         report
     }
 
@@ -220,6 +229,23 @@ impl RunService {
                 "failed to persist MCP runtime snapshot: {err}"
             );
         }
+    }
+}
+
+async fn close_mcp_management_runtime_session(
+    runtime_session: McpManagementRuntimeSessionHandle,
+    task: &TaskRecord,
+    run: &TaskRunRecord,
+) {
+    let mcp_session_id = runtime_session.session_id().to_string();
+    if let Err(error) = runtime_session.close().await {
+        warn!(
+            task_id = task.id.as_str(),
+            run_id = run.id.as_str(),
+            mcp_session_id,
+            error = %error,
+            "close Task Runner MCP Management runtime session failed"
+        );
     }
 }
 

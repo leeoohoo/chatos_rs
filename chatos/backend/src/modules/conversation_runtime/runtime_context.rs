@@ -15,6 +15,7 @@ mod workspace;
 use std::sync::{Arc, Mutex};
 
 use chatos_agent::ChatosAgentProfile;
+use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
 use chatos_plugin_management_sdk::{PluginAgentSelection, PluginCommandInvocation};
 use sha2::{Digest, Sha256};
 use tracing::warn;
@@ -89,6 +90,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub mcp_enabled: bool,
     pub enabled_mcp_ids_for_snapshot: Vec<String>,
     pub mcp_server_bundle: McpServerBundle,
+    pub mcp_management_runtime_session: Option<McpManagementRuntimeSessionHandle>,
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
     pub runtime_error: Option<String>,
@@ -217,6 +219,7 @@ pub async fn resolve_runtime_context(
     let mut runtime_error = None;
     let mut effective_mcp_resource_ids = Vec::new();
     let mut gateway_provider_skills_prompt = None;
+    let mut mcp_management_runtime_session = None;
     let agent_profile =
         ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
     let normalized_selected_plugin_ids =
@@ -305,10 +308,12 @@ pub async fn resolve_runtime_context(
     };
 
     if let Some(gateway) = mcp_management_gateway {
-        let (server, effective_mcp_ids, provider_skills_prompt) = gateway.into_parts();
+        let (server, effective_mcp_ids, provider_skills_prompt, runtime_session) =
+            gateway.into_parts();
         http_servers.push(server);
         effective_mcp_resource_ids = effective_mcp_ids;
         gateway_provider_skills_prompt = provider_skills_prompt;
+        mcp_management_runtime_session = Some(runtime_session);
     }
 
     if runtime_error.is_none() {
@@ -352,6 +357,7 @@ pub async fn resolve_runtime_context(
         mcp_enabled: true,
         enabled_mcp_ids_for_snapshot,
         mcp_server_bundle: (http_servers, stdio_servers, builtin_servers),
+        mcp_management_runtime_session,
         use_tools,
         memory_summary_prompt,
         runtime_error,

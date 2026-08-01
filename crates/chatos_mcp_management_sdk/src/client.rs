@@ -4,6 +4,7 @@
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use std::fmt;
 
 use crate::config::McpManagementClientConfig;
 use crate::dto::{
@@ -27,6 +28,40 @@ const RUNTIME_SESSIONS_CLOSE_SCOPE: &str = "runtime.sessions.close";
 pub struct McpManagementClient {
     http: reqwest::Client,
     config: McpManagementClientConfig,
+}
+
+#[derive(Clone)]
+pub struct McpManagementRuntimeSessionHandle {
+    client: McpManagementClient,
+    session_id: String,
+}
+
+impl fmt::Debug for McpManagementRuntimeSessionHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("McpManagementRuntimeSessionHandle")
+            .field("session_id", &self.session_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl McpManagementRuntimeSessionHandle {
+    pub fn new(client: McpManagementClient, session_id: impl Into<String>) -> Self {
+        Self {
+            client,
+            session_id: session_id.into(),
+        }
+    }
+
+    pub fn session_id(&self) -> &str {
+        self.session_id.as_str()
+    }
+
+    pub async fn close(self) -> Result<CloseRuntimeSessionResponse, McpManagementClientError> {
+        self.client
+            .close_runtime_session(self.session_id.as_str())
+            .await
+    }
 }
 
 impl McpManagementClient {

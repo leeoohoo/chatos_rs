@@ -143,8 +143,9 @@ pub(super) async fn prepare_model_execution(
     let memory_scope = build_memory_scope(service, task, run);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
-    let mut mcp_builder =
-        McpExecutorBuilder::new().with_http_server(mcp_management_gateway.into_server());
+    let (mcp_management_server, mcp_management_runtime_session) =
+        mcp_management_gateway.into_parts();
+    let mut mcp_builder = McpExecutorBuilder::new().with_http_server(mcp_management_server);
     for allowed_tools in command_constraints.tool_allowlists {
         mcp_builder = mcp_builder.with_allowed_tool_names(allowed_tools);
     }
@@ -157,6 +158,7 @@ pub(super) async fn prepare_model_execution(
         run_spec,
         runtime_config,
         mcp_builder,
+        mcp_management_runtime_session,
         tool_result_model_budget_limits,
         sandbox_context,
         harness_run_context,

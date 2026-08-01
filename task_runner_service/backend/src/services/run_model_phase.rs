@@ -15,6 +15,7 @@ use chatos_ai_runtime::{
     TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits,
     DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
+use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
 use chatos_mcp_runtime::{BuiltinMcpPromptLocale, McpExecutorBuilder};
 use memory_engine_sdk::ComposeContextPolicy;
 use serde_json::{json, Value};
@@ -52,6 +53,7 @@ pub(in crate::services) struct PreparedModelExecution {
     run_spec: TaskRunSpec,
     runtime_config: TaskRuntimeConfig,
     mcp_builder: McpExecutorBuilder,
+    mcp_management_runtime_session: McpManagementRuntimeSessionHandle,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
     harness_run_context: Option<HarnessRunContext>,
