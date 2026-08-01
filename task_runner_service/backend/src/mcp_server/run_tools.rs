@@ -9,7 +9,7 @@ use crate::models::{
     TaskMemoryRecordsOptions,
 };
 
-use super::support::ensure_task_startable_from_mcp;
+use super::support::{ensure_task_startable_from_mcp, value_for_agent_tool};
 use super::{
     decode_args, text_result, BatchTaskRunArgs, GetTaskMemoryContextArgs, ListRunsArgs,
     ListTaskMemoryRecordsArgs, McpRequestContext, RunIdArgs, StartTaskRunArgs, TaskIdArgs,
@@ -45,7 +45,7 @@ impl TaskRunnerMcpService {
                 let runs = self
                     .filter_runs_for_user_in_context(runs, current_user, request_context)
                     .await?;
-                Ok(text_result(json!(runs)))
+                Ok(text_result(value_for_agent_tool(json!(runs))))
             }
             "get_run" => {
                 let args: RunIdArgs = decode_args(args)?;
@@ -56,7 +56,7 @@ impl TaskRunnerMcpService {
                         request_context,
                     )
                     .await?;
-                Ok(text_result(json!(run)))
+                Ok(text_result(value_for_agent_tool(json!(run))))
             }
             "start_task_run" => {
                 let args: StartTaskRunArgs = decode_args(args)?;
@@ -80,7 +80,7 @@ impl TaskRunnerMcpService {
                         current_user,
                     )
                     .await?;
-                Ok(text_result(json!(run)))
+                Ok(text_result(value_for_agent_tool(json!(run))))
             }
             "batch_start_task_runs" => {
                 let args: BatchTaskRunArgs = decode_args(args)?;
@@ -105,7 +105,7 @@ impl TaskRunnerMcpService {
                         current_user,
                     )
                     .await?;
-                Ok(text_result(json!(result)))
+                Ok(text_result(value_for_agent_tool(json!(result))))
             }
             "get_task_memory_context" => {
                 let args: GetTaskMemoryContextArgs = decode_args(args)?;
@@ -129,7 +129,7 @@ impl TaskRunnerMcpService {
                     )
                     .await?
                     .ok_or_else(|| format!("task not found: {}", args.task_id))?;
-                Ok(text_result(json!(response)))
+                Ok(text_result(value_for_agent_tool(json!(response))))
             }
             "list_task_memory_records" => {
                 let args: ListTaskMemoryRecordsArgs = decode_args(args)?;
@@ -154,7 +154,7 @@ impl TaskRunnerMcpService {
                     )
                     .await?
                     .ok_or_else(|| format!("task not found: {}", args.task_id))?;
-                Ok(text_result(json!(response)))
+                Ok(text_result(value_for_agent_tool(json!(response))))
             }
             "summarize_task_memory" => {
                 let args: TaskIdArgs = decode_args(args)?;
@@ -169,7 +169,7 @@ impl TaskRunnerMcpService {
                     .summarize_task_memory(args.task_id.as_str())
                     .await?
                     .ok_or_else(|| format!("task not found: {}", args.task_id))?;
-                Ok(text_result(json!(response)))
+                Ok(text_result(value_for_agent_tool(json!(response))))
             }
             "cancel_run" => {
                 let args: RunIdArgs = decode_args(args)?;
@@ -184,7 +184,7 @@ impl TaskRunnerMcpService {
                     .cancel_run(args.run_id.as_str())
                     .await?
                     .ok_or_else(|| format!("run not found: {}", args.run_id))?;
-                Ok(text_result(json!(run)))
+                Ok(text_result(value_for_agent_tool(json!(run))))
             }
             "retry_run" => {
                 let args: RunIdArgs = decode_args(args)?;
@@ -208,7 +208,7 @@ impl TaskRunnerMcpService {
                     .retry_run_for_user(args.run_id.as_str(), current_user)
                     .await?
                     .ok_or_else(|| format!("run not found: {}", args.run_id))?;
-                Ok(text_result(json!(run)))
+                Ok(text_result(value_for_agent_tool(json!(run))))
             }
             "list_run_events" => {
                 let args: RunIdArgs = decode_args(args)?;
@@ -222,7 +222,7 @@ impl TaskRunnerMcpService {
                     .run_service
                     .list_run_events(args.run_id.as_str())
                     .await?;
-                Ok(text_result(json!(events)))
+                Ok(text_result(value_for_agent_tool(json!(events))))
             }
             other => Err(format!("unsupported run tool: {other}")),
         }

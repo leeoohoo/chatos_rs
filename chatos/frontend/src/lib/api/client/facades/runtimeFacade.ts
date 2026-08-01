@@ -71,8 +71,6 @@ export interface RuntimeFacade {
   ): Promise<AttachmentUploadsResponse>;
   getAgentTools(options?: {
     conversationId?: string | null;
-    mcpEnabled?: boolean;
-    enabledMcpIds?: string[];
     projectId?: string | null;
     projectRoot?: string | null;
     contactAgentId?: string | null;
@@ -181,10 +179,6 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async getAgentTools(options) {
     const query = buildQuery({
       conversation_id: options?.conversationId,
-      mcp_enabled: typeof options?.mcpEnabled === 'boolean' ? options.mcpEnabled : undefined,
-      enabled_mcp_ids: Array.isArray(options?.enabledMcpIds)
-        ? options.enabledMcpIds.join(',')
-        : undefined,
       project_id: options?.projectId,
       project_root: options?.projectRoot,
       contact_agent_id: options?.contactAgentId,

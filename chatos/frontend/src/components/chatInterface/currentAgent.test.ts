@@ -19,7 +19,6 @@ const createAgent = (id: string, name: string): AgentConfig => ({
   plugin_sources: [],
   runtime_plugins: [],
   runtime_skills: [],
-  mcp_policy: null,
   project_policy: null,
   createdAt: new Date('2026-04-23T00:00:00.000Z'),
   updatedAt: new Date('2026-04-23T00:00:00.000Z'),

@@ -62,13 +62,9 @@ export function RunDetailSummary({
   const agentLabel =
     agentKey === 'task_runner_plan_phase'
       ? t('runs.detail.cloudPlanningAgent')
-      : agentKey === 'task_runner_local_plan_phase'
-        ? t('runs.detail.localPlanningAgent')
-        : agentKey === 'task_runner_run_phase'
-          ? t('runs.detail.cloudExecutionAgent')
-          : agentKey === 'task_runner_local_run_phase'
-            ? t('runs.detail.localExecutionAgent')
-            : '-';
+      : agentKey === 'task_runner_run_phase'
+        ? t('runs.detail.cloudExecutionAgent')
+        : '-';
 
   return (
     <>

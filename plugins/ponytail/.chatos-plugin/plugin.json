@@ -5,7 +5,7 @@
     "componentHosts": {}
   },
   "name": "ponytail",
-  "version": "4.8.4-chatos.1",
+  "version": "4.8.4-chatos.2",
   "description": "Ponytail lazy senior developer guidance adapted for ChatOS cloud and local execution.",
   "author": {
     "name": "Dietrich Gebert",
@@ -46,7 +46,7 @@
     {
       "componentKey": "ponytail-lite-cloud",
       "source": "./agents/ponytail-lite-cloud.md",
-      "description": "Ponytail lite mode for cloud tasks.",
+      "description": "Ponytail lite mode for cloud-orchestrated tasks on any workspace.",
       "baseAgent": "task_runner_run_phase",
       "allowedTools": [],
       "maxIterations": 600
@@ -54,7 +54,7 @@
     {
       "componentKey": "ponytail-full-cloud",
       "source": "./agents/ponytail-full-cloud.md",
-      "description": "Ponytail full mode for cloud tasks.",
+      "description": "Ponytail full mode for cloud-orchestrated tasks on any workspace.",
       "baseAgent": "task_runner_run_phase",
       "allowedTools": [],
       "maxIterations": 600
@@ -62,32 +62,8 @@
     {
       "componentKey": "ponytail-ultra-cloud",
       "source": "./agents/ponytail-ultra-cloud.md",
-      "description": "Ponytail ultra mode for cloud tasks.",
+      "description": "Ponytail ultra mode for cloud-orchestrated tasks on any workspace.",
       "baseAgent": "task_runner_run_phase",
-      "allowedTools": [],
-      "maxIterations": 600
-    },
-    {
-      "componentKey": "ponytail-lite-local",
-      "source": "./agents/ponytail-lite-local.md",
-      "description": "Ponytail lite mode for local tasks.",
-      "baseAgent": "task_runner_local_run_phase",
-      "allowedTools": [],
-      "maxIterations": 600
-    },
-    {
-      "componentKey": "ponytail-full-local",
-      "source": "./agents/ponytail-full-local.md",
-      "description": "Ponytail full mode for local tasks.",
-      "baseAgent": "task_runner_local_run_phase",
-      "allowedTools": [],
-      "maxIterations": 600
-    },
-    {
-      "componentKey": "ponytail-ultra-local",
-      "source": "./agents/ponytail-ultra-local.md",
-      "description": "Ponytail ultra mode for local tasks.",
-      "baseAgent": "task_runner_local_run_phase",
       "allowedTools": [],
       "maxIterations": 600
     }

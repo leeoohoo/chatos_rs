@@ -9,7 +9,6 @@ import {createSendMessageHandler} from './actions/sendMessage';
 import { createStopMessageHandler } from './actions/stopMessage';
 import { createApplicationActions } from './actions/applications';
 import { createAiModelActions } from './actions/aiModels';
-import { createMcpActions } from './actions/mcp';
 import { createChatConfigActions } from './actions/chatConfig';
 import { createSessionActions } from './actions/sessions';
 import { createContactActions } from './actions/contacts';
@@ -87,9 +86,6 @@ export function createChatStoreWithBackend(customApiClient: ApiClient, config?: 
 
                     // 配置操作（拆分到独立模块）
                     ...createChatConfigActions({ set, get }),
-
-                    // MCP 管理（拆分到独立模块）
-                    ...createMcpActions({ set, get, client, getUserIdParam }),
 
                     // 应用管理（拆分到独立模块）
                     ...createApplicationActions({ set, get, client, getUserIdParam }),

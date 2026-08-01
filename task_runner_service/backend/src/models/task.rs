@@ -54,25 +54,13 @@ pub fn task_runner_agent_key_for(
 pub fn task_runner_agent_key_for_runtime(
     task_profile: &str,
     requires_execution: bool,
-    runtime_provider: Option<&str>,
+    _runtime_provider: Option<&str>,
 ) -> chatos_plugin_management_sdk::SystemAgentKey {
     if uses_task_runner_planning_agent(task_profile, requires_execution) {
-        if runtime_provider_is_local(runtime_provider) {
-            chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalPlanPhase
-        } else {
-            chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
-        }
-    } else if runtime_provider_is_local(runtime_provider) {
-        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalRunPhase
+        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
     } else {
         chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
     }
-}
-
-fn runtime_provider_is_local(runtime_provider: Option<&str>) -> bool {
-    runtime_provider.map(str::trim).is_some_and(|value| {
-        value.eq_ignore_ascii_case("local") || value.eq_ignore_ascii_case("local_connector")
-    })
 }
 
 #[cfg(test)]
@@ -96,11 +84,11 @@ mod task_runner_agent_routing_tests {
         );
         assert_eq!(
             task_runner_agent_key_for_runtime(TASK_PROFILE_DEFAULT, true, Some("local_connector")),
-            SystemAgentKey::TaskRunnerLocalRunPhase
+            SystemAgentKey::TaskRunnerRunPhase
         );
         assert_eq!(
             task_runner_agent_key_for_runtime(TASK_PROFILE_CHATOS_PLAN, false, Some("local")),
-            SystemAgentKey::TaskRunnerLocalPlanPhase
+            SystemAgentKey::TaskRunnerPlanPhase
         );
     }
 }

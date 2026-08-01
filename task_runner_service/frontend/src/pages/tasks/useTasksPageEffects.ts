@@ -3,19 +3,9 @@
 
 import { useEffect, type Dispatch, type SetStateAction } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { FormInstance } from 'antd';
 
 import { api } from '../../api/client';
-import type {
-  TaskMcpResolutionResponse,
-  TaskRecord,
-  TaskStatus,
-} from '../../types';
-import {
-  buildEditTaskFormValues,
-  completeEnabledBuiltinKindDependencies,
-  type TaskFormValues,
-} from './taskPageUtils';
+import type { TaskRecord, TaskStatus } from '../../types';
 
 type UseTasksPageEffectsParams = {
   visibleTasks?: TaskRecord[];
@@ -26,10 +16,6 @@ type UseTasksPageEffectsParams = {
   routeModelConfigId?: string;
   routeProjectId?: string;
   scheduledOnly: boolean;
-  drawerOpen: boolean;
-  editingTask: TaskRecord | null;
-  form: FormInstance<TaskFormValues>;
-  taskEditorMcpResolution?: TaskMcpResolutionResponse;
   subtasksParentTask: TaskRecord | null;
   setSelectedTaskIds: Dispatch<SetStateAction<string[]>>;
   setTaskPage: Dispatch<SetStateAction<number>>;
@@ -46,10 +32,6 @@ export function useTasksPageEffects({
   routeModelConfigId,
   routeProjectId,
   scheduledOnly,
-  drawerOpen,
-  editingTask,
-  form,
-  taskEditorMcpResolution,
   subtasksParentTask,
   setSelectedTaskIds,
   setTaskPage,
@@ -101,30 +83,5 @@ export function useTasksPageEffects({
     setDetailTaskPreview(null);
   }, [routeTaskId, setDetailTaskId, setDetailTaskPreview, visibleTasks]);
 
-  useEffect(() => {
-    const resolution = taskEditorMcpResolution;
-    if (!drawerOpen || !editingTask || !resolution) {
-      return;
-    }
-    const current = form.getFieldValue('enabledBuiltinKinds') || [];
-    const stored = buildEditTaskFormValues(editingTask).enabledBuiltinKinds || [];
-    if (!sameStringArray(current, stored)) {
-      return;
-    }
-    const requested = completeEnabledBuiltinKindDependencies(
-      resolution.requested_builtin_kinds,
-    );
-    if (!sameStringArray(current, requested)) {
-      form.setFieldsValue({ enabledBuiltinKinds: requested });
-    }
-  }, [drawerOpen, editingTask, form, taskEditorMcpResolution]);
-
   return { taskSubtasksQuery };
-}
-
-function sameStringArray(left: string[], right: string[]) {
-  if (left.length !== right.length) {
-    return false;
-  }
-  return left.every((value, index) => value === right[index]);
 }

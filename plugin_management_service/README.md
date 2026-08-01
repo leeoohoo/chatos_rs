@@ -88,9 +88,9 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 - `optional`：该 agent 可以按需调用。
 - `required`：该 agent 默认必须携带。
 
-项目来源仍通过运行上下文条件收口；Task Runner 的运行提供方则拆成独立系统 agent，让云端与本地任务在插件管理中分别维护 MCP / skills 能力边界。具体工具实现（云端服务、本机 Local Connector、或其他 host）由程序按 agent key 与运行平面解析，模型不需要知道底层连接方式。
+项目来源通过运行上下文条件收口。Task Runner Agent 始终在云端编排；同一个 Agent 配置下，MCP Management 根据 Project Execution Context 将文件、终端、浏览器和本地 Plugin 工具路由到 Local Connector，或将云端工具路由到 Harness/Sandbox。模型不需要知道底层连接方式。
 
-Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，但按运行平面使用独立的 Agent 身份、Prompt 与 MCP/skills 能力边界。云端纯规划任务进入 `task_runner_plan_phase`，云端工程执行任务进入 `task_runner_run_phase`；本地纯规划任务进入 `task_runner_local_plan_phase`，本地工程执行任务进入 `task_runner_local_run_phase`。
+Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，但使用两个稳定的云端 Agent 身份：纯规划任务进入 `task_runner_plan_phase`，工程执行任务进入 `task_runner_run_phase`。旧 `task_runner_local_plan_phase` 与 `task_runner_local_run_phase` 已退役，避免把“云端 Agent 操作本地项目”误建模成客户端 Agent。
 
 ## 当前系统 Agent
 
@@ -99,13 +99,11 @@ Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker�
 - `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
 - `chatos_planning_agent`：Chat OS 规划智能体。必需使用 `task_runner_service`，并将 Task Runner 切换到 `chatos_plan` profile。
 - `task_runner_plan_phase`：Task Runner 云端规划任务智能体。使用云端可用的只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
-- `task_runner_local_plan_phase`：Task Runner 本地规划任务智能体。使用 Local Connector 可执行的本地规划 MCP 配置，不复用云端规划能力。
 - `task_runner_run_phase`：Task Runner 云端执行任务智能体。负责云端代码修改、终端执行、测试、部署及工程验收。
-- `task_runner_local_run_phase`：Task Runner 本地执行任务智能体。负责 Local Connector 上的本地代码修改、终端执行、测试及工程验收，不复用云端执行能力。
 - `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、`project_environment`、`sandbox_images`。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 
-Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。Task Runner 根据 `task_profile=chatos_plan && requires_execution=false` 以及运行提供方路由到云端/本地规划 agent；其他任务进入云端/本地执行 agent。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
+Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。Task Runner 根据 `task_profile=chatos_plan && requires_execution=false` 选择规划 Agent，其他任务进入执行 Agent；项目工具的本地/云端执行位置由 MCP Management 路由。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
 
 ## 环境变量
 

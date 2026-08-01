@@ -5,13 +5,11 @@ import type {
   AgentConfig,
   AiModelConfig,
   AiModelProvider,
-  McpConfig,
   SystemContext,
 } from '../../types';
 import type {
   AiModelConfigResponse,
   AiModelProviderResponse,
-  McpConfigResponse,
   MemoryAgentResponse,
   SessionSummaryResponse,
   SystemContextResponse,
@@ -97,28 +95,6 @@ export const normalizeAiModelProvider = (provider: AiModelProviderResponse): AiM
   };
 };
 
-export const normalizeMcpConfig = (config: McpConfigResponse): McpConfig => {
-  const createdAt = config.created_at || config.createdAt;
-  const updatedAt = config.updated_at || config.updatedAt || createdAt;
-
-  return {
-    id: config.id,
-    name: config.name,
-    display_name: config.display_name ?? config.displayName ?? undefined,
-    command: config.command,
-    type: config.type,
-    args: config.args ?? null,
-    env: config.env ?? null,
-    cwd: config.cwd ?? null,
-    enabled: config.enabled === true,
-    readonly: config.readonly,
-    builtin: config.builtin,
-    config: config.config ?? undefined,
-    createdAt: toDate(createdAt),
-    updatedAt: toDate(updatedAt),
-  };
-};
-
 export const normalizeSystemContext = (context: SystemContextResponse): SystemContext => ({
   id: context.id,
   name: context.name,
@@ -145,7 +121,6 @@ export const normalizeAgent = (agent: MemoryAgentResponse): AgentConfig => ({
   skills: Array.isArray(agent.skills) ? agent.skills : [],
   skill_ids: Array.isArray(agent.skill_ids) ? agent.skill_ids : [],
   default_skill_ids: Array.isArray(agent.default_skill_ids) ? agent.default_skill_ids : [],
-  mcp_policy: agent.mcp_policy || null,
   project_policy: agent.project_policy || null,
   createdAt: toDate(agent.created_at),
   updatedAt: toDate(agent.updated_at || agent.created_at),

@@ -6,7 +6,6 @@ import type {
   AiModelConfig,
   Application,
   ChatConfig,
-  McpConfig,
   SystemContext,
 } from '../../../types';
 import type {
@@ -19,7 +18,6 @@ import type {
 
 export interface ConfigurationSliceState {
   chatConfig: ChatConfig;
-  mcpConfigs: McpConfig[];
   aiModelConfigs: AiModelConfig[];
   selectedModelId: string | null;
   agents: AgentConfig[];
@@ -35,9 +33,7 @@ export const configurationInitialState: ConfigurationSliceState = {
     model: 'gpt-4',
     temperature: 0.7,
     systemPrompt: '',
-    enableMcp: true,
   },
-  mcpConfigs: [],
   aiModelConfigs: [],
   selectedModelId: null,
   agents: [],
@@ -50,9 +46,6 @@ export const configurationInitialState: ConfigurationSliceState = {
 
 export interface ConfigurationSliceActions {
   updateChatConfig: (config: Partial<ChatConfig>) => Promise<void>;
-  loadMcpConfigs: (options?: { forceRefresh?: boolean }) => Promise<void>;
-  updateMcpConfig: (config: McpConfig) => Promise<McpConfig | null>;
-  deleteMcpConfig: (id: string) => Promise<void>;
   loadAiModelConfigs: (options?: { force?: boolean }) => Promise<void>;
   updateAiModelConfig: (
     config: AiModelConfig,
@@ -73,8 +66,6 @@ export interface ConfigurationSliceActions {
     skill_ids?: string[];
     skill_prompts?: string[];
     enabled?: boolean;
-    mcp_enabled?: boolean;
-    enabled_mcp_ids?: string[];
     project_id?: string;
     project_root?: string;
   }) => Promise<AgentConfig | null>;

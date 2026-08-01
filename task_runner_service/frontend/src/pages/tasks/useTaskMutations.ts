@@ -167,11 +167,6 @@ export function useTaskMutations({
     onError: (error: Error) => messageApi.error(error.message),
   });
 
-  const draftMcpPreviewMutation = useMutation({
-    mutationFn: api.previewMcpPrompt,
-    onError: (error: Error) => messageApi.error(error.message),
-  });
-
   return {
     createTaskMutation,
     updateTaskMutation,
@@ -181,6 +176,5 @@ export function useTaskMutations({
     batchDeleteTasksMutation,
     batchStartTaskRunsMutation,
     summarizeTaskMemoryMutation,
-    draftMcpPreviewMutation,
   };
 }

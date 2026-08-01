@@ -227,24 +227,6 @@ pub(in crate::api) async fn cancel_task(
     Ok(Json(redact_workspace_paths(&state, result)?))
 }
 
-pub(in crate::api) async fn update_task_mcp(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-    Extension(current_user): Extension<CurrentUser>,
-    Json(input): Json<UpdateTaskMcpRequest>,
-) -> Result<Json<TaskRecord>, ApiError> {
-    get_task_for_user(&state, &id, &current_user)
-        .await?
-        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
-    let task = state
-        .task_service
-        .update_task_mcp(&id, input, Some(&current_user))
-        .await
-        .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
-    Ok(Json(redact_workspace_paths(&state, task)?))
-}
-
 pub(in crate::api) async fn get_task_mcp_resolution(
     Path(id): Path<String>,
     State(state): State<AppState>,

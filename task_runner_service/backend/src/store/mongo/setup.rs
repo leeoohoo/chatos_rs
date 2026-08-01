@@ -20,8 +20,6 @@ impl MongoStore {
             model_configs: database.collection::<ModelConfigRecord>("model_configs"),
             runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
             remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
-            external_mcp_configs: database
-                .collection::<ExternalMcpConfigRecord>("external_mcp_configs"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
             ask_user_prompts: database.collection::<AskUserPromptRecord>("ask_user_prompts"),
@@ -130,25 +128,6 @@ impl MongoStore {
         self.ensure_index(&self.remote_servers, doc! { "task_id": 1 }, false)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "updated_at": -1 }, false)
-            .await?;
-
-        self.ensure_index(&self.external_mcp_configs, doc! { "id": 1 }, true)
-            .await?;
-        self.ensure_index(&self.external_mcp_configs, doc! { "enabled": 1 }, false)
-            .await?;
-        self.ensure_index(
-            &self.external_mcp_configs,
-            doc! { "creator_user_id": 1 },
-            false,
-        )
-        .await?;
-        self.ensure_index(
-            &self.external_mcp_configs,
-            doc! { "owner_user_id": 1 },
-            false,
-        )
-        .await?;
-        self.ensure_index(&self.external_mcp_configs, doc! { "updated_at": -1 }, false)
             .await?;
 
         self.ensure_index(&self.runs, doc! { "id": 1 }, true)

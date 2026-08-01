@@ -28,23 +28,6 @@ pub(crate) fn required_object_schema(properties: Value, required: &[&str]) -> Va
     })
 }
 
-pub(crate) fn set_tool_property_description(tool: &mut Value, path: &[&str], description: String) {
-    let mut current = tool;
-    for segment in path {
-        let Some(object) = current.as_object_mut() else {
-            return;
-        };
-        let Some(next) = object.get_mut(*segment) else {
-            return;
-        };
-        current = next;
-    }
-    let Some(object) = current.as_object_mut() else {
-        return;
-    };
-    object.insert("description".to_string(), Value::String(description));
-}
-
 pub(crate) fn remove_tool_schema_property(tool: &mut Value, path: &[&str], property_name: &str) {
     let mut current = tool;
     for segment in path {

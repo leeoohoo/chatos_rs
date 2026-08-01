@@ -28,9 +28,9 @@ fn runtime_materializes_every_configured_enabled_mcp() {
     assert_eq!(
         task.mcp_config.enabled_builtin_kinds,
         vec![
+            "AskUser".to_string(),
             "CodeMaintainerRead".to_string(),
-            "CodeMaintainerWrite".to_string(),
-            "AskUser".to_string()
+            "CodeMaintainerWrite".to_string()
         ]
     );
     assert_eq!(

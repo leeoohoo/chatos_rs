@@ -16,8 +16,6 @@ import type {
   AiModelConfigResponse,
   AiModelConfigUpdatePayload,
   ApplicationResponse,
-  McpConfigResponse,
-  McpConfigUpdatePayload,
   SystemContextCreatePayload,
   SystemContextDraftEvaluatePayload,
   SystemContextDraftEvaluateResponse,
@@ -29,111 +27,6 @@ import type {
   SystemContextUpdatePayload,
 } from './types';
 import type { ApiRequestFn } from './workspace';
-
-interface McpConfigCacheState {
-  data: McpConfigResponse[] | null;
-  inflight: Promise<McpConfigResponse[]> | null;
-}
-
-const mcpConfigCaches = new WeakMap<ApiRequestFn, McpConfigCacheState>();
-
-const getOrCreateMcpConfigCacheState = (request: ApiRequestFn): McpConfigCacheState => {
-  const existing = mcpConfigCaches.get(request);
-  if (existing) {
-    return existing;
-  }
-  const next: McpConfigCacheState = {
-    data: null,
-    inflight: null,
-  };
-  mcpConfigCaches.set(request, next);
-  return next;
-};
-
-export const invalidateMcpConfigCache = (request: ApiRequestFn): void => {
-  const cacheState = getOrCreateMcpConfigCacheState(request);
-  cacheState.data = null;
-  cacheState.inflight = null;
-};
-
-export const getMcpConfigs = (
-  request: ApiRequestFn,
-  userId?: string,
-  options?: { forceRefresh?: boolean },
-): Promise<McpConfigResponse[]> => {
-  const query = buildQuery({ user_id: userId });
-  debugLog('🔍 getMcpConfigs API调用:', { userId, query });
-  const cacheState = getOrCreateMcpConfigCacheState(request);
-  if (!options?.forceRefresh && Array.isArray(cacheState.data)) {
-    return Promise.resolve([...cacheState.data]);
-  }
-  if (!options?.forceRefresh && cacheState.inflight) {
-    return cacheState.inflight.then((rows) => [...rows]);
-  }
-
-  const inflight = request<McpConfigResponse[]>(`/mcp-configs${query}`)
-    .then((rows) => {
-      const normalized = Array.isArray(rows) ? rows : [];
-      cacheState.data = normalized;
-      return normalized;
-    })
-    .finally(() => {
-      if (cacheState.inflight === inflight) {
-        cacheState.inflight = null;
-      }
-    });
-
-  cacheState.inflight = inflight;
-  return inflight.then((rows) => [...rows]);
-};
-
-export const createMcpConfig = (
-  request: ApiRequestFn,
-  data: {
-    id: string;
-    name: string;
-    command: string;
-    type: 'http' | 'stdio';
-    args?: string[] | null;
-    env?: Record<string, string> | null;
-    cwd?: string | null;
-    enabled: boolean;
-    user_id?: string;
-  }
-): Promise<McpConfigResponse> => {
-  debugLog('🔍 API client createMcpConfig 调用:', data);
-  return request<McpConfigResponse>('/mcp-configs', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }).then((result) => {
-    invalidateMcpConfigCache(request);
-    return result;
-  });
-};
-
-export const updateMcpConfig = (
-  request: ApiRequestFn,
-  id: string,
-  data: McpConfigUpdatePayload,
-): Promise<McpConfigResponse> => {
-  debugLog('🔍 API client updateMcpConfig 调用:', { id, data });
-  return request<McpConfigResponse>(`/mcp-configs/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  }).then((result) => {
-    invalidateMcpConfigCache(request);
-    return result;
-  });
-};
-
-export const deleteMcpConfig = (request: ApiRequestFn, id: string): Promise<{ success?: boolean }> => {
-  return request<{ success?: boolean }>(`/mcp-configs/${id}`, {
-    method: 'DELETE',
-  }).then((result) => {
-    invalidateMcpConfigCache(request);
-    return result;
-  });
-};
 
 export const getAiModelConfigs = (request: ApiRequestFn): Promise<AiModelConfigResponse[]> => {
   debugLog('🔍 getAiModelConfigs API调用');

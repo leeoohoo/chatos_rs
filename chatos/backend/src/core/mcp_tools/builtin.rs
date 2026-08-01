@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use crate::builtin::remote_connection_controller::ChatosRemoteConnectionControllerStore;
 use crate::builtin::terminal_controller::ChatosTerminalControllerStore;
-use crate::services::builtin_mcp::BuiltinMcpKind;
-use crate::services::mcp_loader::McpBuiltinServer;
+use crate::services::mcp_loader::{BuiltinMcpKind, McpBuiltinServer};
 use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
 use crate::services::shared_builtin_browser_tools::ChatosBrowserVisionAdapter;

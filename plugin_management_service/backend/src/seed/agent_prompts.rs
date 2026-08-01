@@ -213,7 +213,7 @@ pub(super) async fn backfill_agent_prompt_versions(store: &AppStore) -> Result<(
     Ok(())
 }
 
-fn baseline_prompts() -> [(&'static str, &'static str); 14] {
+fn baseline_prompts() -> [(&'static str, &'static str); 12] {
     [
         (
             "chatos_conversation_agent",
@@ -234,15 +234,7 @@ fn baseline_prompts() -> [(&'static str, &'static str); 14] {
             include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
         ),
         (
-            "task_runner_local_plan_phase",
-            include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
-        ),
-        (
             "task_runner_run_phase",
-            include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
-        ),
-        (
-            "task_runner_local_run_phase",
             include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
         ),
         (
@@ -283,7 +275,7 @@ mod tests {
     #[test]
     fn baseline_catalog_covers_all_system_agents() {
         let prompts = baseline_prompts();
-        assert_eq!(prompts.len(), 14);
+        assert_eq!(prompts.len(), 12);
         assert!(prompts
             .iter()
             .all(|(_, content)| !content.trim().is_empty()));
@@ -297,9 +289,7 @@ mod tests {
             "chatos_planning_agent",
             "project_requirement_execution_planner_agent",
             "task_runner_plan_phase",
-            "task_runner_local_plan_phase",
             "task_runner_run_phase",
-            "task_runner_local_run_phase",
         ] {
             let content = prompts
                 .iter()
@@ -317,13 +307,12 @@ mod tests {
                 assert!(content.contains("逐项核对数量"));
                 assert!(content.contains("不得用重复需求、重复文档或重复任务凑数量"));
             }
-            if agent_key == "task_runner_plan_phase" || agent_key == "task_runner_local_plan_phase"
-            {
+            if agent_key == "task_runner_plan_phase" {
                 assert!(content.contains("不得执行工程实现"));
                 assert!(content.contains("不得创建、修改、移动或删除项目文件"));
                 assert!(content.contains("不得运行终端命令"));
             }
-            if agent_key == "task_runner_run_phase" || agent_key == "task_runner_local_run_phase" {
+            if agent_key == "task_runner_run_phase" {
                 assert!(content.contains("自动收集沙箱输出"));
                 assert!(content.contains("逐个复制"));
                 assert!(content.contains("及时收口任务"));

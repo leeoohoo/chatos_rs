@@ -7,7 +7,6 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  ExternalMcpConfigRecord,
   RemoteServerRecord,
   TaskProjectRecord,
   TaskRecord,
@@ -256,10 +255,6 @@ export function useTasksPageData({
     queryKey: ['remote-servers'],
     queryFn: api.listRemoteServers,
   });
-  const externalMcpConfigsQuery = useQuery({
-    queryKey: ['external-mcp-configs'],
-    queryFn: api.listExternalMcpConfigs,
-  });
   const pendingPromptTaskCountsQuery = useQuery({
     queryKey: ['prompt-task-counts', 'pending'],
     queryFn: () => api.listPromptTaskCounts({ status: 'pending' }),
@@ -303,11 +298,6 @@ export function useTasksPageData({
     queryKey: ['task-mcp-resolution', detailTaskId],
     queryFn: () => api.getTaskMcpResolution(detailTaskId!),
     enabled: Boolean(detailTaskId),
-  });
-  const taskEditorMcpResolutionQuery = useQuery({
-    queryKey: ['task-mcp-resolution', editingTaskId],
-    queryFn: () => api.getTaskMcpResolution(editingTaskId!),
-    enabled: Boolean(editingTaskId),
   });
   const visibleTaskLastRunIds = useMemo(
     () =>
@@ -427,13 +417,6 @@ export function useTasksPageData({
     });
     return map;
   }, [remoteServersQuery.data]);
-  const externalMcpConfigMap = useMemo(() => {
-    const map = new Map<string, ExternalMcpConfigRecord>();
-    (externalMcpConfigsQuery.data || []).forEach((config) => {
-      map.set(config.id, config);
-    });
-    return map;
-  }, [externalMcpConfigsQuery.data]);
   const selectedTask = useMemo(
     () => selectedTaskQuery.data || detailTaskPreview,
     [detailTaskPreview, selectedTaskQuery.data],
@@ -515,12 +498,10 @@ export function useTasksPageData({
     taskCapabilityCatalogQuery,
     taskPluginConnectorsQuery,
     remoteServersQuery,
-    externalMcpConfigsQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
     taskMcpResolutionQuery,
-    taskEditorMcpResolutionQuery,
     scheduleModeLabels,
     statusFilterOptions,
     taskStatusLabel,
@@ -533,7 +514,6 @@ export function useTasksPageData({
     prerequisiteTaskOptions,
     tagOptions,
     remoteServerMap,
-    externalMcpConfigMap,
     selectedTask,
     detailResultSummary,
     detailRemoteOperations,

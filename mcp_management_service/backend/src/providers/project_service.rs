@@ -405,7 +405,7 @@ mod tests {
             agent_key: "task_runner_run_phase".to_string(),
             project_id: "project-1".to_string(),
             run_id: Some("run-1".to_string()),
-            turn_id: None,
+            turn_id: Some("turn-1".to_string()),
             task_id: Some("task-1".to_string()),
             source_session_id: None,
             source_user_message_id: None,
@@ -504,7 +504,16 @@ mod tests {
                 "id": request.get("id").cloned().unwrap_or(Value::Null),
                 "result": {
                     "forwarded_name": request.pointer("/params/name"),
-                    "forwarded_arguments": request.pointer("/params/arguments")
+                    "forwarded_arguments": request.pointer("/params/arguments"),
+                    "identity_headers": {
+                        "owner_user_id": headers.get("x-mcp-management-owner-user-id").and_then(|value| value.to_str().ok()),
+                        "agent_key": headers.get("x-mcp-management-agent-key").and_then(|value| value.to_str().ok()),
+                        "session_id": headers.get("x-mcp-management-session-id").and_then(|value| value.to_str().ok()),
+                        "project_id": headers.get("x-mcp-management-project-id").and_then(|value| value.to_str().ok()),
+                        "run_id": headers.get("x-mcp-management-run-id").and_then(|value| value.to_str().ok()),
+                        "turn_id": headers.get("x-mcp-management-turn-id").and_then(|value| value.to_str().ok()),
+                        "task_id": headers.get("x-mcp-management-task-id").and_then(|value| value.to_str().ok())
+                    }
                 }
             }))
         }
@@ -556,7 +565,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_management_call_uses_signed_internal_identity_and_original_tool_name() {
+    async fn project_management_call_uses_frozen_snapshot_identity_and_original_tool_name() {
         const SECRET: &str = "a-long-project-service-secret";
         let (base_url, server) = start_project_service(SECRET).await;
         let provider = ProjectServiceProvider::new(
@@ -573,7 +582,16 @@ mod tests {
                 &snapshot(),
                 &route,
                 "list_requirements",
-                json!({"status": "draft"}),
+                json!({
+                    "status": "draft",
+                    "owner_user_id": "forged-owner",
+                    "agent_key": "forged-agent",
+                    "session_id": "forged-session",
+                    "project_id": "forged-project",
+                    "run_id": "forged-run",
+                    "turn_id": "forged-turn",
+                    "task_id": "forged-task"
+                }),
                 "invocation-1",
             )
             .await
@@ -582,7 +600,25 @@ mod tests {
             outcome.result,
             json!({
                 "forwarded_name": "list_requirements",
-                "forwarded_arguments": {"status": "draft"}
+                "forwarded_arguments": {
+                    "status": "draft",
+                    "owner_user_id": "forged-owner",
+                    "agent_key": "forged-agent",
+                    "session_id": "forged-session",
+                    "project_id": "forged-project",
+                    "run_id": "forged-run",
+                    "turn_id": "forged-turn",
+                    "task_id": "forged-task"
+                },
+                "identity_headers": {
+                    "owner_user_id": "user-1",
+                    "agent_key": "task_runner_run_phase",
+                    "session_id": "session-1",
+                    "project_id": "project-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "task_id": "task-1"
+                }
             })
         );
         assert!(outcome.response_bytes > 0);

@@ -23,8 +23,6 @@ export interface AgentManagerProps {
       skill_ids?: string[];
       skill_prompts?: string[];
       enabled?: boolean;
-      mcp_enabled?: boolean;
-      enabled_mcp_ids?: string[];
       project_id?: string;
       project_root?: string;
     }) => Promise<AgentConfig | null>;

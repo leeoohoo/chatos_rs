@@ -9,11 +9,10 @@ use serde_json::{json, Value};
 
 use crate::models::{
     AskUserPromptRecord, AskUserPromptStatus, CancelTaskRequest, CreateRemoteServerRequest,
-    CreateTaskRequest, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskScheduleConfig, TaskStatus, UpdateModelConfigRequest, UpdateTaskRequest,
+    CreateTaskRequest, TaskMcpConfig, TaskMcpRequestConfig, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskStatus, UpdateModelConfigRequest,
+    UpdateTaskRequest,
 };
-
-use super::support::normalize_mcp_builtin_kind_names;
 
 mod common;
 mod jsonrpc;
@@ -30,10 +29,10 @@ pub(super) use self::run::{
     GetTaskMemoryContextArgs, ListRunsArgs, ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs,
 };
 pub(super) use self::task::{
-    reject_ai_execution_service_selection, BatchTaskDeleteArgs, BatchTaskRunArgs,
-    BatchTaskStatusUpdateArgs, CancelTaskArgs, CreateProjectExecutionTasksArgs, CreateTaskArgs,
-    CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs, ListAvailablePluginsArgs,
-    ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
+    reject_ai_runtime_config, BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs,
+    CancelTaskArgs, CreateProjectExecutionTasksArgs, CreateTaskArgs,
+    CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs, ListTasksArgs,
+    SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
 };
 
 #[allow(dead_code)]

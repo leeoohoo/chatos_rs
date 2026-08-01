@@ -20,9 +20,6 @@ import {
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  ExternalMcpConfigRecord,
-  McpCatalogEntry,
-  RemoteServerRecord,
   SelectableTaskPlugin,
   TaskPluginConnectorsResponse,
   TaskProjectRuntimeEnvironmentResponse,
@@ -30,10 +27,6 @@ import type {
   TaskScheduleMode,
 } from '../../types';
 import {
-  CODE_MAINTAINER_READ_KIND,
-  CODE_MAINTAINER_WRITE_KIND,
-  PROJECT_MANAGEMENT_KIND,
-  completeEnabledBuiltinKindDependencies,
   scheduleModeDescriptionKeys,
   scheduleModeLabelKeys,
   taskProfileLabel,
@@ -59,9 +52,6 @@ type TaskEditorDrawerProps = {
   modelOptions: SelectOption[];
   projectOptions: SelectOption[];
   prerequisiteTaskOptions: SelectOption[];
-  mcpCatalogEntries?: McpCatalogEntry[];
-  remoteServers?: RemoteServerRecord[];
-  externalMcpConfigs?: ExternalMcpConfigRecord[];
   selectablePlugins?: SelectableTaskPlugin[];
   pluginConnectors?: TaskPluginConnectorsResponse;
   pluginConnectorsLoading?: boolean;
@@ -72,9 +62,6 @@ type TaskEditorDrawerProps = {
   runtimeEnvironmentUnavailable?: boolean;
   onClose: () => void;
   onSubmit: (values: TaskFormValues) => void;
-  onPreviewPrompt: () => void;
-  onManageServers: () => void;
-  onViewMcpCatalog: () => void;
 };
 
 export function TaskEditorDrawer({
@@ -86,9 +73,6 @@ export function TaskEditorDrawer({
   modelOptions,
   projectOptions,
   prerequisiteTaskOptions,
-  mcpCatalogEntries = [],
-  remoteServers = [],
-  externalMcpConfigs = [],
   selectablePlugins = [],
   pluginConnectors,
   pluginConnectorsLoading = false,
@@ -99,16 +83,10 @@ export function TaskEditorDrawer({
   runtimeEnvironmentUnavailable = false,
   onClose,
   onSubmit,
-  onPreviewPrompt,
-  onManageServers,
-  onViewMcpCatalog,
 }: TaskEditorDrawerProps) {
-  const mcpEnabled = Form.useWatch('mcpEnabled', form);
   const taskProfile = Form.useWatch('taskProfile', form);
   const selectedProjectId = Form.useWatch('projectId', form);
   const requiresExecution = Form.useWatch('requiresExecution', form);
-  const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
-  const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
   const pluginDeviceId = Form.useWatch('pluginDeviceId', form);
   const pluginWorkspaceId = Form.useWatch('pluginWorkspaceId', form);
@@ -160,86 +138,6 @@ export function TaskEditorDrawer({
         value,
       })),
     [t],
-  );
-  const mcpOptions = useMemo(
-    () =>
-      mcpCatalogEntries
-        .filter((entry) => entry.kind !== PROJECT_MANAGEMENT_KIND)
-        .map((entry) => ({
-          label: entry.kind,
-          value: entry.kind,
-          disabled: !entry.implemented,
-          description: entry.description,
-          useCases: entry.use_cases,
-          capabilities: entry.capabilities,
-          message: entry.message || undefined,
-        })),
-    [mcpCatalogEntries],
-  );
-  useEffect(() => {
-    if (!mcpCatalogEntries.length || !enabledBuiltinKinds.length) {
-      return;
-    }
-    const selectable = new Set(mcpOptions.map((option) => option.value));
-    const filtered = enabledBuiltinKinds.filter((kind) => selectable.has(kind));
-    if (filtered.length !== enabledBuiltinKinds.length) {
-      form.setFieldsValue({ enabledBuiltinKinds: filtered });
-    }
-  }, [enabledBuiltinKinds, form, mcpCatalogEntries.length, mcpOptions]);
-  const remoteControllerEntry = useMemo(
-    () =>
-      mcpCatalogEntries.find((entry) => entry.kind === 'RemoteConnectionController') ||
-      null,
-    [mcpCatalogEntries],
-  );
-  const enabledRemoteServerCount = useMemo(
-    () => remoteServers.filter((item) => item.enabled).length,
-    [remoteServers],
-  );
-  const remoteServerTotalCount = remoteServers.length;
-  const remoteControllerEffectiveSelected = Boolean(
-    mcpEnabled &&
-      (enabledBuiltinKinds.length === 0
-        ? remoteControllerEntry
-        : enabledBuiltinKinds.includes('RemoteConnectionController')),
-  );
-  const codeMaintainerWriteSelected = enabledBuiltinKinds.includes(
-    CODE_MAINTAINER_WRITE_KIND,
-  );
-  useEffect(() => {
-    const completed = completeEnabledBuiltinKindDependencies(enabledBuiltinKinds);
-    if (
-      completed.length !== enabledBuiltinKinds.length ||
-      completed.some((value, index) => value !== enabledBuiltinKinds[index])
-    ) {
-      form.setFieldsValue({ enabledBuiltinKinds: completed });
-    }
-  }, [enabledBuiltinKinds, form]);
-  const remoteServerMap = useMemo(() => {
-    const map = new Map<string, RemoteServerRecord>();
-    remoteServers.forEach((server) => {
-      map.set(server.id, server);
-    });
-    return map;
-  }, [remoteServers]);
-  const remoteServerOptions = useMemo(
-    () =>
-      remoteServers.map((server) => ({
-        label: `${server.name} (${server.host}:${server.port})${server.enabled ? '' : ' / disabled'}`,
-        value: server.id,
-        disabled: !server.enabled,
-      })),
-    [remoteServers],
-  );
-  const externalMcpConfigOptions = useMemo(
-    () =>
-      externalMcpConfigs
-        .filter((config) => config.enabled)
-        .map((config) => ({
-          label: `${config.name} (${config.transport})`,
-          value: config.id,
-        })),
-    [externalMcpConfigs],
   );
   const onlinePluginDevices = useMemo(
     () => (pluginConnectors?.devices || []).filter((device) => device.status === 'online'),
@@ -837,158 +735,12 @@ export function TaskEditorDrawer({
         <Typography.Title level={5} style={{ marginTop: 8 }}>
           {t('tasks.form.builtinMcp')}
         </Typography.Title>
-
-        <Space style={{ marginBottom: 12 }}>
-          <Button onClick={onPreviewPrompt}>{t('tasks.form.previewPrompt')}</Button>
-        </Space>
-
-        <Space size="middle" style={{ marginBottom: 16, width: '100%' }} align="start">
-          <Form.Item
-            name="mcpEnabled"
-            label={t('tasks.form.enable')}
-            valuePropName="checked"
-            style={{ marginBottom: 0 }}
-          >
-            <Switch />
-          </Form.Item>
-        </Space>
-
-        <Space size="middle" style={{ width: '100%' }} align="start">
-          <Form.Item name="builtinPromptMode" label={t('tasks.form.promptMode')} style={{ flex: 1 }}>
-            <Select
-              disabled={!mcpEnabled}
-              options={[
-                { label: 'effective', value: 'effective' },
-                { label: 'configured', value: 'configured' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="builtinPromptLocale" label={t('mcp.promptLanguage.label')} style={{ width: 180 }}>
-            <Select
-              disabled={!mcpEnabled}
-              options={[
-                { label: t('mcp.promptLanguage.zhCN'), value: 'zh-CN' },
-                { label: t('mcp.promptLanguage.enUS'), value: 'en-US' },
-              ]}
-            />
-          </Form.Item>
-        </Space>
-
-        <Form.Item name="enabledBuiltinKinds" label={t('tasks.form.enabledKinds')}>
-          <Checkbox.Group style={{ width: '100%' }}>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              {mcpOptions.map((option) => (
-                <Checkbox
-                  key={String(option.value)}
-                  value={String(option.value)}
-                  disabled={
-                    option.disabled ||
-                    !mcpEnabled ||
-                    (option.value === CODE_MAINTAINER_READ_KIND &&
-                      codeMaintainerWriteSelected)
-                  }
-                >
-                  <Space direction="vertical" size={2}>
-                    <Typography.Text>{option.label}</Typography.Text>
-                    {option.description ? (
-                      <Typography.Text type="secondary">{option.description}</Typography.Text>
-                    ) : null}
-                    {option.useCases.length || option.capabilities.length || option.message ? (
-                      <Typography.Text type="secondary">
-                        {[...option.useCases, ...option.capabilities].join(' / ')}
-                        {option.message ? ` / ${option.message}` : ''}
-                      </Typography.Text>
-                    ) : null}
-                  </Space>
-                </Checkbox>
-              ))}
-            </Space>
-          </Checkbox.Group>
-        </Form.Item>
-
-        {remoteControllerEffectiveSelected ? (
-          <Form.Item name="defaultRemoteServerId" label={t('tasks.form.defaultRemoteServer')}>
-            <Select
-              allowClear
-              disabled={!mcpEnabled}
-              options={remoteServerOptions}
-              placeholder={t('tasks.form.defaultRemoteServerPlaceholder')}
-            />
-          </Form.Item>
-        ) : null}
-
-        <Form.Item name="externalMcpConfigIds" label={t('tasks.form.externalMcpConfigs')}>
-          <Select
-            mode="multiple"
-            allowClear
-            disabled={!mcpEnabled}
-            options={externalMcpConfigOptions}
-            placeholder={t('tasks.form.externalMcpConfigsPlaceholder')}
-          />
-        </Form.Item>
-
-        <Typography.Text type="secondary">
-          {t('tasks.form.externalMcpConfigsHelp')}
-        </Typography.Text>
-
-        {mcpCatalogEntries.length ? (
-          <Space direction="vertical" size={4} style={{ width: '100%' }}>
-            {mcpCatalogEntries.map((entry) => (
-              <Typography.Text
-                key={entry.kind}
-                type={entry.implemented ? 'secondary' : 'warning'}
-              >
-                {entry.kind}: {t('tasks.mcpTools', { count: entry.available_tool_names.length })}
-                {entry.message ? `, ${entry.message}` : ''}
-              </Typography.Text>
-            ))}
-          </Space>
-        ) : null}
-
-        {remoteControllerEffectiveSelected ? (
-          <Space
-            direction="vertical"
-            size={4}
-            style={{
-              width: '100%',
-              padding: 12,
-              border: '1px solid #f0f0f0',
-              borderRadius: 6,
-              background: '#fafafa',
-            }}
-          >
-            <Space wrap>
-              <Tag color={enabledRemoteServerCount > 0 ? 'success' : 'warning'}>
-                RemoteConnectionController
-              </Tag>
-              <Typography.Text type="secondary">
-                {t('tasks.form.remoteServerCount', {
-                  enabled: enabledRemoteServerCount,
-                  total: remoteServerTotalCount,
-                })}
-              </Typography.Text>
-            </Space>
-            <Typography.Text type="secondary">
-              {defaultRemoteServerId
-                ? t('tasks.form.defaultRemoteServerBound', {
-                    server:
-                      remoteServerMap.get(defaultRemoteServerId)?.name ||
-                      defaultRemoteServerId,
-                  })
-                : enabledRemoteServerCount > 0
-                  ? t('tasks.form.defaultRemoteServerUnbound')
-                  : t('tasks.form.noRemoteServers')}
-            </Typography.Text>
-            <Space>
-              <Button size="small" onClick={onManageServers}>
-                {t('tasks.form.manageServers')}
-              </Button>
-              <Button size="small" onClick={onViewMcpCatalog}>
-                {t('tasks.form.viewMcpCatalog')}
-              </Button>
-            </Space>
-          </Space>
-        ) : null}
+        <Alert
+          type="info"
+          showIcon
+          message={t('tasks.form.mcpProgramManaged')}
+          description={t('tasks.form.mcpProgramManagedHelp')}
+        />
       </Form>
     </Drawer>
   );

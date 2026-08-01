@@ -170,20 +170,6 @@ impl FsPathPolicy {
         Ok(trimmed.to_string())
     }
 
-    pub(crate) fn default_workspace_dir(&self) -> Option<&Path> {
-        self.roots
-            .iter()
-            .find(|root| root.kind == FsAllowedRootKind::Workspace)
-            .map(|root| root.path.as_path())
-    }
-
-    pub(crate) fn default_public_dir(&self) -> Option<&Path> {
-        self.roots
-            .iter()
-            .find(|root| root.kind == FsAllowedRootKind::Public)
-            .map(|root| root.path.as_path())
-    }
-
     pub(crate) fn authorize_existing_path(
         &self,
         raw: &str,

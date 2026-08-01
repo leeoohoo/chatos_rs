@@ -144,9 +144,9 @@ fn portable_host_uses_runtime_project_provider_before_legacy_agent_name() {
     ));
     assert!(!portable_uses_local(
         Some("cloud_sandbox"),
-        "task_runner_local_run_phase"
+        "task_runner_run_phase"
     ));
-    assert!(portable_uses_local(None, "task_runner_local_run_phase"));
+    assert!(!portable_uses_local(None, "task_runner_run_phase"));
 }
 
 #[test]

@@ -33,6 +33,25 @@
 
 > Plugin Management 决定 Agent 拥有哪些 MCP；MCP Management Service 决定这些 MCP 在本次运行中由谁执行，并提供唯一调用入口。
 
+### 1.1 AI 零路由认知原则
+
+MCP 的管理与路由复杂度必须由程序自行处理，不能进入模型提示词、工具参数或模型决策：
+
+~~~text
+AI
+  -> 只能看到当前 Runtime Session 已暴露的命名空间化工具名与业务参数
+
+程序
+  -> Agent Binding + 权威 Project Context
+  -> Provider Route + Device/Sandbox/Workspace 选择
+  -> 冻结 Runtime Session Snapshot + 短期 Session Grant
+  -> 注入 owner/agent/session/project/run/turn/task/invocation 身份后调用 Provider
+~~~
+
+因此模型不得选择或提交 MCP resource id、Plugin release/component id、内部服务名、Provider kind、Local Connector device、Harness、Sandbox、execution plane、route revision、policy revision 或凭据。模型即使伪造同名业务参数，也不能覆盖程序从冻结 Snapshot 注入的传输身份。`tools/list`、`tools/call`、取消和返回值都必须绑定同一 Runtime Session 与 JSON-RPC/invocation id，任何 owner、Agent、Session、Project、Run、Turn、Task、来源消息、Contact Agent、Model、Project Task 集合、策略、路由、过期时间或资源集合漂移都 fail closed。
+
+本地 Command Approval Agent 是唯一明确的本地 Agent 工具边界：它继续在设备侧完成只读检查、风险判断、人工确认、白名单、Session Approval 和审批历史，不创建云端 MCP Runtime Session，也不调用云端 MCP 工具；该差异同样由程序固定，不能交给模型选择。
+
 ---
 
 ## 2. 服务边界
@@ -978,7 +997,7 @@ Sandbox Images 已接入同一聚合调用入口。Cloud Project 固定为 `sand
 
 Memory Skill/Command/Plugin Reader 的权威数据实际属于 ChatOS contact-agent runtime，而不是 Memory Engine 微服务，因此已把此前的 `memory-engine` 占位路由纠正为 ChatOS Provider。Runtime Session 会冻结 `contact_agent_id`，路由固定为 `chatos:memory:<contact_agent_id>`，该身份同时写入 Runtime Grant；ChatOS 内部 MCP Provider 再次验证 source session 的 owner、Project、active 状态以及 contact agent 的 owner。模型只能提交 `skill_ref`、`command_ref` 或 `plugin_ref`，不能覆盖 contact agent。Provider 故障或身份漂移直接失败，不回退 ChatOS 旧内嵌工具链。
 
-Notepad 已从不可执行的 Embedded 占位路由迁移为固定 `InternalService/chatos` 路由。本地与云端 Project 都使用 ChatOS 的 owner-scoped 云端 Notepad Store；MCP Management 只转发 Runtime Session 中冻结的 `owner_user_id`，ChatOS 拒绝工具参数中的 `owner_user_id`/`user_id` 覆盖。ChatOS 三类运行 Agent 和 Task Runner 四个 phase Agent 均可配置该 MCP，数据不按 Workspace 复制到 Local Connector 或 Task Runner 本地目录。
+Notepad 已从不可执行的 Embedded 占位路由迁移为固定 `InternalService/chatos` 路由。本地与云端 Project 都使用 ChatOS 的 owner-scoped 云端 Notepad Store；MCP Management 只转发 Runtime Session 中冻结的 `owner_user_id`，ChatOS 拒绝工具参数中的 `owner_user_id`/`user_id` 覆盖。ChatOS 三类运行 Agent 和 Task Runner 两个 phase Agent 均可配置该 MCP，数据不按 Workspace 复制到 Local Connector 或 Task Runner 本地目录。
 
 Agent Builder 已补齐同一 ChatOS Internal Service Provider。调用只允许 ChatOS 三类运行 Agent，并要求 source session 与 Runtime Session 的 owner、Project 和 active 状态一致；创建 Agent 时 Store 强制写入绑定 owner，工具 Schema 不再暴露 `user_id`，更新 Agent 时入口与 Store 都验证目标 Agent owner，跨用户更新直接拒绝。该 MCP 保持按 Plugin Management 显式配置，不自动加入 Task Runner 默认工具集。
 
@@ -1014,6 +1033,8 @@ Session 创建失败时已 prepare 的普通/Plugin Cloud stdio、Plugin Local M
 每个调用方只配置一个 MCP Management endpoint。
 
 2.0.10 已删除所有云端调用方迁移模式开关。Task Runner、ChatOS 与 Project Environment Agent 的模型只看到 MCP Management 聚合 endpoint；Session 解析或调用失败直接失败，不静默回退。Local Connector Command Approval Agent 不创建 Runtime Session，只装配本地只读工具和本地审批决策工具。
+
+Task Runner 不再按 Project 来源创建 `task_runner_local_plan_phase` / `task_runner_local_run_phase` 身份。所有 Task Runner 模型循环都由 `task_runner_plan_phase` 或 `task_runner_run_phase` 在云端编排；Project 是本地时，MCP Management 只把 Workspace、Browser 和必须本地执行的 Plugin/Skill 工具路由到 Local Connector。旧 local phase key 已从注册目录、Prompt 发布、默认 Binding、Plugin Manifest target/base Agent 和 Runtime Session 白名单中退役。真正运行在客户端的 Agent 仍只有 Local Connector Command Approval Agent，并继续严格 `local_only`。
 
 只有 Agent Tool Plane 使用该 endpoint；调用方的普通 REST、事件、队列和内部 SDK 链路不受此迁移影响。
 

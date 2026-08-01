@@ -167,7 +167,6 @@ export const zhCN: MessageDictionary = {
   'header.openApplications': '打开应用列表',
   'header.currentUser': '当前用户',
   'header.unnamedUser': '未设置昵称',
-  'header.mcpManager': 'MCP 服务管理',
   'header.agentManager': '智能体管理',
   'header.aiModelManager': 'AI 模型管理',
   'header.memoryModelSettings': 'Memory 总结模型',

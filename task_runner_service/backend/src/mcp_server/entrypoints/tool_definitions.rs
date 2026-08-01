@@ -133,23 +133,6 @@ impl TaskRunnerMcpService {
                 }
             }
         }
-        if current_user.is_admin() && tool_profile == McpToolProfile::Default {
-            return Ok(tools);
-        }
-        let owner_user_id = current_user
-            .effective_owner_user_id()
-            .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
-        if let Some(policy) = self
-            .task_service
-            .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
-            .await?
-        {
-            restrict_task_capability_selection_schemas(
-                &mut tools,
-                policy.selectable_builtin_kind_names().as_slice(),
-                policy.selectable_external_mcp_ids().as_slice(),
-            );
-        }
         Ok(tools
             .into_iter()
             .filter(|tool| {

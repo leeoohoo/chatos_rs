@@ -1,24 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type {
-  CreateExternalMcpConfigPayload,
-  ExternalMcpTransport,
-  McpServerToolProfileInfo,
-} from '../../types';
+import type { McpServerToolProfileInfo } from '../../types';
 import type { TranslateFn } from '../../i18n/I18nProvider';
-
-export type ExternalMcpConfigFormValues = {
-  name: string;
-  transport: ExternalMcpTransport;
-  command?: string;
-  argsText?: string;
-  url?: string;
-  headersText?: string;
-  envText?: string;
-  cwd?: string;
-  enabled?: boolean;
-};
 
 export const MCP_CARD_STYLE = {
   width: '100%',
@@ -33,40 +17,6 @@ export const TOOL_PROFILE_COLORS: Record<string, string> = {
   agent_default: 'blue',
   chatos_async_planner: 'geekblue',
 };
-
-export function buildExternalMcpConfigPayload(
-  values: ExternalMcpConfigFormValues,
-): CreateExternalMcpConfigPayload {
-  const transport = values.transport || 'stdio';
-  const command = values.command?.trim() || '';
-  const url = values.url?.trim() || '';
-  const cwd = values.cwd?.trim() || '';
-  const base = {
-    name: values.name?.trim() || '',
-    transport,
-    enabled: values.enabled ?? true,
-  };
-  if (transport === 'http') {
-    return {
-      ...base,
-      command: '',
-      args: [],
-      url,
-      headers: parseStringMapJson(values.headersText, 'Headers JSON'),
-      env: {},
-      cwd: '',
-    };
-  }
-  return {
-    ...base,
-    command,
-    args: parseLines(values.argsText),
-    url: '',
-    headers: {},
-    cwd,
-    env: parseStringMapJson(values.envText, 'Env JSON'),
-  };
-}
 
 export function profileLabel(
   profile: McpServerToolProfileInfo,
@@ -98,32 +48,4 @@ export function profileDescription(
     return t('mcpCatalog.profile.chatosAsyncPlannerDescription');
   }
   return profile.description;
-}
-
-function parseLines(value?: string): string[] {
-  return (value || '')
-    .split('\n')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parseStringMapJson(value: string | undefined, label: string): Record<string, string> {
-  const trimmed = (value || '').trim();
-  if (!trimmed) {
-    return {};
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    throw new Error(`${label} must be valid JSON`);
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-  return Object.fromEntries(
-    Object.entries(parsed as Record<string, unknown>)
-      .map(([key, item]) => [key.trim(), String(item).trim()])
-      .filter(([key]) => key.length > 0),
-  );
 }

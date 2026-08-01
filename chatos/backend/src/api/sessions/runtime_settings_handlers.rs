@@ -19,18 +19,6 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
         .filter(|item| !item.is_empty())
 }
 
-fn normalize_id_list(values: Vec<String>) -> Vec<String> {
-    let mut out = Vec::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() || out.iter().any(|item: &String| item == trimmed) {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    out
-}
-
 fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
     (
         err.status_code(),
@@ -140,12 +128,6 @@ pub(super) async fn update_session_runtime_settings(
     }
     if let Some(value) = req.plan_mode_enabled {
         next.plan_mode_enabled = value;
-    }
-    if let Some(value) = req.mcp_enabled {
-        next.mcp_enabled = value;
-    }
-    if let Some(value) = req.enabled_mcp_ids {
-        next.enabled_mcp_ids = normalize_id_list(value);
     }
     if let Some(value) = req.auto_create_task {
         next.auto_create_task = value;

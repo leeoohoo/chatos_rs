@@ -45,7 +45,6 @@ struct CreateAgentRequest {
     skills: Option<Vec<ChatosAgentSkillDto>>,
     skill_ids: Option<Vec<String>>,
     default_skill_ids: Option<Vec<String>>,
-    mcp_policy: Option<Value>,
     project_policy: Option<Value>,
     enabled: Option<bool>,
 }
@@ -60,7 +59,6 @@ struct UpdateAgentRequest {
     skills: Option<Vec<ChatosAgentSkillDto>>,
     skill_ids: Option<Vec<String>>,
     default_skill_ids: Option<Vec<String>>,
-    mcp_policy: Option<Value>,
     project_policy: Option<Value>,
     enabled: Option<bool>,
 }
@@ -77,8 +75,6 @@ struct AiCreateAgentRequest {
     skill_ids: Option<Vec<String>>,
     skill_prompts: Option<Vec<String>>,
     enabled: Option<bool>,
-    mcp_enabled: Option<bool>,
-    enabled_mcp_ids: Option<Vec<String>>,
     project_id: Option<String>,
     project_root: Option<String>,
 }
@@ -187,7 +183,6 @@ async fn create_agent(
         skills: req.skills,
         skill_ids: req.skill_ids,
         default_skill_ids: req.default_skill_ids,
-        mcp_policy: req.mcp_policy,
         project_policy: req.project_policy,
         enabled: req.enabled,
     };
@@ -218,7 +213,6 @@ async fn update_agent(
         skills: req.skills,
         skill_ids: req.skill_ids,
         default_skill_ids: req.default_skill_ids,
-        mcp_policy: req.mcp_policy,
         project_policy: req.project_policy,
         enabled: req.enabled,
     };
@@ -337,8 +331,6 @@ async fn ai_create(
             skill_ids: req.skill_ids,
             skill_prompts: req.skill_prompts,
             enabled: req.enabled,
-            mcp_enabled: req.mcp_enabled,
-            enabled_mcp_ids: req.enabled_mcp_ids,
             project_id: req.project_id,
             project_root: req.project_root,
         },

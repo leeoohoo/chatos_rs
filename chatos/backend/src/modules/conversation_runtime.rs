@@ -21,8 +21,6 @@ pub mod messages;
 pub mod review_repair;
 #[path = "conversation_runtime/runtime_context.rs"]
 pub mod runtime_context;
-#[path = "conversation_runtime/session_mcp_servers.rs"]
-pub mod session_mcp_servers;
 #[path = "conversation_runtime/session_scope.rs"]
 pub mod session_scope;
 #[path = "conversation_runtime/sessions.rs"]

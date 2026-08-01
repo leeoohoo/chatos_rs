@@ -17,14 +17,16 @@
 - 生产部署不得使用仓库内置开发密钥或默认管理员密码。
 - 安全约束必须同时存在于创建入口、能力解析和最终执行入口，不能只依赖前端隐藏。
 
-## 2. 已确认问题
+## 2. 已关闭问题（历史审计记录）
+
+以下内容记录整改前的风险形态，不代表当前实现。2.0.10 已删除 Task Runner `/api/external-mcp-configs` 与任务级 MCP 选择入口；Agent MCP 能力只从 Plugin Management Agent Binding 解析，并由 MCP Management 冻结路由与身份。
 
 ### P0：用户 MCP 云端执行绕过
 
-当前同时存在新旧两套 MCP 管理链路：
+整改前同时存在新旧两套 MCP 管理链路：
 
 1. Plugin Management 的 Local Connector MCP 会正确通过 Local Connector Service 中继到客户端执行。
-2. Task Runner 遗留 `/api/external-mcp-configs` 允许登录用户创建 `stdio/http` MCP，并在创建时直接执行连通性测试。
+2. Task Runner 曾存在 `/api/external-mcp-configs`，允许登录用户创建 `stdio/http` MCP，并在创建时直接执行连通性测试；该入口现已删除。
 3. Plugin Management 普通用户 CRUD 仍允许 `stdio_cloud/http` runtime。
 4. Task Runner 对 `stdio_cloud` 会直接构造 `McpStdioServer` 并在服务进程中运行。
 5. Task Runner 只对 `source_kind=local_connector_discovered` 校验 Local Connector runtime，`user_created` 会绕过该约束。

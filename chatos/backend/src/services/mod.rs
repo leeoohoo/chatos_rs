@@ -9,7 +9,6 @@ pub(crate) mod ai_common;
 pub mod ai_prompt_tool;
 pub mod ask_user_prompt_manager;
 pub mod auth_user_backfill;
-pub mod builtin_mcp;
 pub mod chatos_agents;
 pub mod chatos_memory_engine;
 pub mod chatos_memory_mappings;

@@ -112,17 +112,14 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
     let (release, snapshots, bundles, catalog) =
         bundled_ponytail_release().expect("bundled Ponytail Release");
 
-    assert_eq!(BUNDLED_MARKETPLACE_REVISION, "2026-07-30.1");
-    assert_eq!(
-        BUNDLED_PONYTAIL_AGENT_KEYS,
-        ["task_runner_run_phase", "task_runner_local_run_phase"]
-    );
+    assert_eq!(BUNDLED_MARKETPLACE_REVISION, "2026-08-01.1");
+    assert_eq!(BUNDLED_PONYTAIL_AGENT_KEYS, ["task_runner_run_phase"]);
     assert_eq!(release.plugin_id, BUNDLED_PONYTAIL_PLUGIN_ID);
     assert_eq!(release.version, BUNDLED_PONYTAIL_VERSION);
     assert_eq!(release.artifact_sha256, BUNDLED_PONYTAIL_ARTIFACT_SHA256);
     assert_eq!(
         release.signature.manifest_sha256,
-        "c1064afe7ff35eae42730d23efaa6b891f3f26ce797c5c83117e58c59e6159c8"
+        "c3a7ff8dde9806732bd088a859e5861da6b07ab23e588723924b4fbe5fcbb138"
     );
     verify_plugin_release_signature(
         PluginReleaseVerificationContext {
@@ -138,7 +135,7 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
     )
     .expect("bundled Ponytail Release signature");
 
-    assert_eq!(release.components.len(), 11);
+    assert_eq!(release.components.len(), 8);
     assert_eq!(snapshots.len(), release.components.len());
     assert_eq!(bundles.len(), release.components.len());
     assert!(release
@@ -167,7 +164,7 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
             .iter()
             .filter(|component| component.kind == PluginComponentKind::Agent)
             .count(),
-        6
+        3
     );
     assert!(bundles.iter().all(|bundle| {
         plugin_cloud_bundle_sha256(bundle).is_ok_and(|sha256| sha256 == bundle.bundle_sha256)

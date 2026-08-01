@@ -83,7 +83,7 @@ impl McpToolExecute {
 #[cfg(test)]
 mod tests {
     use super::McpToolExecute;
-    use crate::services::builtin_mcp::BuiltinMcpKind;
+    use crate::services::mcp_loader::BuiltinMcpKind;
     use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
     use crate::services::mcp_tool_execute_shared::test_support::{
         assert_parallel_policy_allows_read_only_safe_batch,

@@ -110,10 +110,6 @@ pub async fn delete_application(id: &str) -> Result<(), String> {
         let id = id.to_string();
         Box::pin(async move {
             mongo_delete_one_doc(db, "applications", doc! { "id": &id }).await?;
-            db.collection::<Document>("mcp_config_applications")
-                .delete_many(doc! { "application_id": &id }, None)
-                .await
-                .map_err(|e| e.to_string())?;
             db.collection::<Document>("system_context_applications")
                 .delete_many(doc! { "application_id": &id }, None)
                 .await

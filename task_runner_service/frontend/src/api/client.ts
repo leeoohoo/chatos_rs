@@ -7,7 +7,6 @@ import type {
   BatchTaskRunPayload,
   BatchTaskStatusUpdatePayload,
   CancelAskUserPromptPayload,
-  CreateExternalMcpConfigPayload,
   CreateModelConfigPayload,
   CreateTaskPayload,
   CreateUserPayload,
@@ -16,7 +15,6 @@ import type {
   LoginPayload,
   LoginResponse,
   SseTicketResponse,
-  ExternalMcpConfigRecord,
   McpCatalogEntry,
   McpPromptPreviewPayload,
   McpPromptPreviewResponse,
@@ -68,7 +66,6 @@ import type {
   AskUserPromptStatus,
   AskUserPromptTaskCountRecord,
   UpdateModelConfigPayload,
-  UpdateExternalMcpConfigPayload,
   UpdateRemoteServerPayload,
   UpdateRuntimeSettingsPayload,
   UpdateTaskPayload,
@@ -248,11 +245,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  updateTaskMcp: (id: string, payload: TaskRecord['mcp_config']) =>
-    request<TaskRecord>(`/api/tasks/${id}/mcp`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
   getTaskMcpResolution: (id: string) =>
     request<TaskMcpResolutionResponse>(`/api/tasks/${id}/mcp/resolution`),
   previewTaskMcpPrompt: (taskId: string) =>
@@ -310,24 +302,6 @@ export const api = {
   testRemoteServer: (id: string) =>
     request<RemoteServerTestResponse>(`/api/remote-servers/${id}/test`, {
       method: 'POST',
-    }),
-  listExternalMcpConfigs: () =>
-    request<ExternalMcpConfigRecord[]>('/api/external-mcp-configs'),
-  getExternalMcpConfig: (id: string) =>
-    request<ExternalMcpConfigRecord>(`/api/external-mcp-configs/${id}`),
-  createExternalMcpConfig: (payload: CreateExternalMcpConfigPayload) =>
-    request<ExternalMcpConfigRecord>('/api/external-mcp-configs', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateExternalMcpConfig: (id: string, payload: UpdateExternalMcpConfigPayload) =>
-    request<ExternalMcpConfigRecord>(`/api/external-mcp-configs/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-  deleteExternalMcpConfig: (id: string) =>
-    request<void>(`/api/external-mcp-configs/${id}`, {
-      method: 'DELETE',
     }),
   listRuns: (filters?: RunListFilters) =>
     request<TaskRunRecord[]>(

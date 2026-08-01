@@ -26,11 +26,6 @@ import type {
   ConversationMessageEnvelope,
   ConversationMessagePayload,
   ConversationMessagesEnvelope,
-  ConversationMcpServersResponse,
-  McpConfigCreatePayload,
-  McpConfigResourceResponse,
-  McpConfigResponse,
-  McpConfigUpdatePayload,
   MemoryAgentsQueryOptions,
   MemoryAgentResponse,
   MemoryAgentSessionResponse,
@@ -50,10 +45,6 @@ import type {
 import type ApiClient from '../../client';
 
 export interface ConfigFacade {
-  getMcpConfigs(userId?: string, options?: { forceRefresh?: boolean }): Promise<McpConfigResponse[]>;
-  createMcpConfig(data: McpConfigCreatePayload): Promise<McpConfigResponse>;
-  updateMcpConfig(id: string, data: McpConfigUpdatePayload): Promise<McpConfigResponse>;
-  deleteMcpConfig(id: string): Promise<{ success?: boolean }>;
   getAiModelConfigs(): Promise<AiModelConfigResponse[]>;
   getAiModelConfig(id: string, options?: { includeSecret?: boolean }): Promise<AiModelConfigResponse>;
   getAiModelProviders(): Promise<AiModelProviderResponse[]>;
@@ -98,16 +89,6 @@ export interface ConfigFacade {
   getMemoryAgentRuntimeContext(agentId: string): Promise<MemoryAgentRuntimeContextResponse>;
   getConversationDetails(conversationId: string): Promise<ConversationDetailsResponse>;
   getAssistant(conversationId: string): Promise<ConversationAssistantResponse>;
-  getMcpServers(conversationId?: string): Promise<ConversationMcpServersResponse>;
-  getMcpConfigResource(configId: string): Promise<McpConfigResourceResponse>;
-  getMcpConfigResourceByCommand(data: {
-    type: 'stdio' | 'http';
-    command: string;
-    args?: string[] | null;
-    env?: Record<string, string> | null;
-    cwd?: string | null;
-    alias?: string | null;
-  }): Promise<McpConfigResourceResponse>;
   saveMessage(conversationId: string, message: ConversationMessagePayload): Promise<ConversationMessageEnvelope>;
   getMessages(
     conversationId: string,
@@ -117,18 +98,6 @@ export interface ConfigFacade {
 }
 
 export const configFacade: ConfigFacade & ThisType<ApiClient> = {
-  async getMcpConfigs(userId, options) {
-    return configsApi.getMcpConfigs(this.getRequestFn(), userId, options);
-  },
-  async createMcpConfig(data) {
-    return configsApi.createMcpConfig(this.getRequestFn(), data);
-  },
-  async updateMcpConfig(id, data) {
-    return configsApi.updateMcpConfig(this.getRequestFn(), id, data);
-  },
-  async deleteMcpConfig(id) {
-    return configsApi.deleteMcpConfig(this.getRequestFn(), id);
-  },
   async getAiModelConfigs() {
     return configsApi.getAiModelConfigs(this.getRequestFn());
   },
@@ -248,15 +217,6 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
   },
   async getAssistant(conversationId) {
     return conversationApi.getAssistant(this.getRequestFn(), conversationId);
-  },
-  async getMcpServers(conversationId) {
-    return conversationApi.getMcpServers(this.getRequestFn(), conversationId);
-  },
-  async getMcpConfigResource(configId) {
-    return conversationApi.getMcpConfigResource(this.getRequestFn(), configId);
-  },
-  async getMcpConfigResourceByCommand(data) {
-    return conversationApi.getMcpConfigResourceByCommand(this.getRequestFn(), data);
   },
   async saveMessage(conversationId, message) {
     return conversationApi.saveMessage(this.getRequestFn(), conversationId, message);

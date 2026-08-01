@@ -11,33 +11,6 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
         .filter(|item| !item.is_empty())
 }
 
-fn normalize_id_list(values: Vec<String>) -> Vec<String> {
-    let mut out = Vec::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() || out.iter().any(|item: &String| item == trimmed) {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    out
-}
-
-fn list_from_bson(value: Option<&Bson>) -> Vec<String> {
-    match value {
-        Some(Bson::Array(items)) => normalize_id_list(
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(ToOwned::to_owned))
-                .collect(),
-        ),
-        Some(Bson::String(raw)) => serde_json::from_str::<Vec<String>>(raw)
-            .map(normalize_id_list)
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
-}
-
 fn doc_to_settings(doc: &Document) -> Option<SessionRuntimeSettings> {
     Some(SessionRuntimeSettings {
         session_id: doc.get_str("session_id").ok()?.to_string(),
@@ -58,8 +31,6 @@ fn doc_to_settings(doc: &Document) -> Option<SessionRuntimeSettings> {
         workspace_root: doc.get_str("workspace_root").ok().map(ToOwned::to_owned),
         reasoning_enabled: doc.get_bool("reasoning_enabled").unwrap_or(false),
         plan_mode_enabled: doc.get_bool("plan_mode_enabled").unwrap_or(false),
-        mcp_enabled: doc.get_bool("mcp_enabled").unwrap_or(true),
-        enabled_mcp_ids: list_from_bson(doc.get("enabled_mcp_ids")),
         auto_create_task: doc.get_bool("auto_create_task").unwrap_or(false),
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
@@ -96,7 +67,6 @@ pub async fn upsert_session_runtime_settings(
     next.selected_thinking_level = normalize_optional_text(next.selected_thinking_level);
     next.remote_connection_id = normalize_optional_text(next.remote_connection_id);
     next.workspace_root = normalize_optional_text(next.workspace_root);
-    next.enabled_mcp_ids = normalize_id_list(next.enabled_mcp_ids);
     if next.created_at.trim().is_empty() {
         next.created_at = now.clone();
     }
@@ -105,20 +75,11 @@ pub async fn upsert_session_runtime_settings(
     let mongo_settings = next.clone();
     with_db(|db| {
         Box::pin(async move {
-            let enabled_mcp_ids = Bson::Array(
-                mongo_settings
-                    .enabled_mcp_ids
-                    .iter()
-                    .map(|item| Bson::String(item.clone()))
-                    .collect(),
-            );
             let mut set_doc = doc! {
                 "session_id": &mongo_settings.session_id,
                 "user_id": &mongo_settings.user_id,
-                "mcp_enabled": mongo_settings.mcp_enabled,
                 "reasoning_enabled": mongo_settings.reasoning_enabled,
                 "plan_mode_enabled": mongo_settings.plan_mode_enabled,
-                "enabled_mcp_ids": enabled_mcp_ids,
                 "auto_create_task": mongo_settings.auto_create_task,
                 "updated_at": &mongo_settings.updated_at,
             };

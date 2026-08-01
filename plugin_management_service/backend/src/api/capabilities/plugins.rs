@@ -495,17 +495,13 @@ fn resolve_plugin_records(
 }
 
 fn portable_uses_local(runtime_provider: Option<&str>, agent_key: &str) -> bool {
-    match runtime_provider
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some("local_connector") => true,
-        Some(_) => false,
-        None => {
-            agent_key == "task_runner_local_plan_phase"
-                || agent_key == "task_runner_local_run_phase"
-        }
-    }
+    let _ = agent_key;
+    matches!(
+        runtime_provider
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        Some("local_connector")
+    )
 }
 
 fn resolve_components(

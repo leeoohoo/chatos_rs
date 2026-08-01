@@ -31,14 +31,13 @@ const BUNDLED_PUBLISHER_ID: &str = "chatos";
 const BUNDLED_KEY_ID: &str = "chatos-bundled-attestation-v1";
 const BUNDLED_SIGNING_SEED_CONTEXT: &[u8] = b"chatos-bundled-attestation-seed-v1";
 const PENDING_LICENSE_ID: &str = "LicenseRef-Pending-Redistribution-Review";
-const BUNDLED_MARKETPLACE_REVISION: &str = "2026-07-30.1";
+const BUNDLED_MARKETPLACE_REVISION: &str = "2026-08-01.1";
 pub(super) const BUNDLED_PONYTAIL_PLUGIN_ID: &str = "bundled-plugin-ponytail";
-pub(super) const BUNDLED_PONYTAIL_AGENT_KEYS: [&str; 2] =
-    ["task_runner_run_phase", "task_runner_local_run_phase"];
-const BUNDLED_PONYTAIL_VERSION: &str = "4.8.4-chatos.1";
-const BUNDLED_PONYTAIL_RELEASE_EPOCH: &str = "2026-07-30T00:00:00Z";
+pub(super) const BUNDLED_PONYTAIL_AGENT_KEYS: [&str; 1] = ["task_runner_run_phase"];
+const BUNDLED_PONYTAIL_VERSION: &str = "4.8.4-chatos.2";
+const BUNDLED_PONYTAIL_RELEASE_EPOCH: &str = "2026-08-01T00:00:00Z";
 const BUNDLED_PONYTAIL_ARTIFACT_SHA256: &str =
-    "3bd6748852f863788e725a1bfac49d491d5ba305c9808cf59afa0cea457a5e11";
+    "f79450f32f69fe2e23f145717e8dc381ecf42a9b72fd2cc1c8ec1194715820b1";
 
 pub(super) async fn seed_bundled_plugins(
     store: &AppStore,

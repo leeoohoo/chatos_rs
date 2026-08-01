@@ -12,8 +12,6 @@ describe('runtimeFacade cloud orchestration', () => {
 
     await runtimeFacade.getAgentTools.call(context as never, {
       conversationId: 'conv-123',
-      mcpEnabled: false,
-      enabledMcpIds: ['builtin_notepad', 'builtin_task_manager'],
       projectId: 'proj-1',
       projectRoot: '/tmp/workspace',
       contactAgentId: 'agent-9',

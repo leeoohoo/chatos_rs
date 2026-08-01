@@ -1044,6 +1044,12 @@ mod tests {
     }
 
     #[test]
+    fn retired_local_task_runner_agents_cannot_create_runtime_sessions() {
+        assert!(parse_agent_key("task_runner_local_plan_phase").is_err());
+        assert!(parse_agent_key("task_runner_local_run_phase").is_err());
+    }
+
+    #[test]
     fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
         let route = system_route(SystemMcpKey::TaskProcessLog);
         let request = request();

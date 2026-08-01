@@ -15,7 +15,6 @@ import {
   buildCreateTaskFormValues,
   buildEditTaskFormValues,
   buildTaskPayload,
-  completeEnabledBuiltinKindDependencies,
   type TaskFormValues,
   type RunTaskFormValues,
 } from './tasks/taskPageUtils';
@@ -44,7 +43,7 @@ import type {
 } from '../types';
 
 export function TasksPage() {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const DEFAULT_PAGE_SIZE = 8;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,7 +56,6 @@ export function TasksPage() {
   const [detailTaskPreview, setDetailTaskPreview] = useState<TaskRecord | null>(null);
   const [memoryTask, setMemoryTask] = useState<TaskRecord | null>(null);
   const [subtasksParentTask, setSubtasksParentTask] = useState<TaskRecord | null>(null);
-  const [draftMcpPreviewOpen, setDraftMcpPreviewOpen] = useState(false);
   const [mcpPreviewTask, setMcpPreviewTask] = useState<TaskRecord | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | TaskStatus>('all');
@@ -95,13 +93,10 @@ export function TasksPage() {
     taskCapabilityCatalogQuery,
     taskPluginConnectorsQuery,
     projectRuntimeEnvironmentQuery,
-    remoteServersQuery,
-    externalMcpConfigsQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
     taskMcpResolutionQuery,
-    taskEditorMcpResolutionQuery,
     scheduleModeLabels,
     statusFilterOptions,
     taskStatusLabel,
@@ -114,7 +109,6 @@ export function TasksPage() {
     prerequisiteTaskOptions,
     tagOptions,
     remoteServerMap,
-    externalMcpConfigMap,
     selectedTask,
     detailResultSummary,
     detailRemoteOperations,
@@ -159,10 +153,6 @@ export function TasksPage() {
     routeModelConfigId,
     routeProjectId,
     scheduledOnly,
-    drawerOpen,
-    editingTask,
-    form,
-    taskEditorMcpResolution: taskEditorMcpResolutionQuery.data,
     subtasksParentTask,
     setSelectedTaskIds,
     setTaskPage,
@@ -179,7 +169,6 @@ export function TasksPage() {
     batchDeleteTasksMutation,
     batchStartTaskRunsMutation,
     summarizeTaskMemoryMutation,
-    draftMcpPreviewMutation,
   } = useTaskMutations({
     t,
     messageApi,
@@ -200,7 +189,6 @@ export function TasksPage() {
     navigate,
     modelNameMap,
     projectNameMap,
-    externalMcpConfigMap,
     pendingPromptCountByTaskId,
     scheduleModeLabels,
     taskRowRemoteActivityByTaskId,
@@ -213,7 +201,6 @@ export function TasksPage() {
   });
   function closeTaskDrawer() {
     setDrawerOpen(false);
-    setDraftMcpPreviewOpen(false);
     setEditingTask(null);
     form.resetFields();
   }
@@ -247,13 +234,9 @@ export function TasksPage() {
     setMcpPreviewTask(null);
   }
 
-  function closeDraftMcpPreviewModal() {
-    setDraftMcpPreviewOpen(false);
-  }
-
   function openCreateDrawer() {
     setEditingTask(null);
-    form.setFieldsValue(buildCreateTaskFormValues(locale, routeProjectId));
+    form.setFieldsValue(buildCreateTaskFormValues(routeProjectId));
     setDrawerOpen(true);
   }
 
@@ -303,25 +286,6 @@ export function TasksPage() {
 
   function openTaskMcpPreviewModal(task: TaskRecord) {
     setMcpPreviewTask(task);
-  }
-
-  function openDraftMcpPreviewModal() {
-    const values = form.getFieldsValue([
-      'mcpEnabled',
-      'builtinPromptMode',
-      'builtinPromptLocale',
-      'enabledBuiltinKinds',
-      'defaultRemoteServerId',
-    ]) as Partial<TaskFormValues>;
-    setDraftMcpPreviewOpen(true);
-    draftMcpPreviewMutation.mutate({
-      enabled: values.mcpEnabled ?? true,
-      init_mode: 'full',
-      builtin_prompt_mode: values.builtinPromptMode ?? 'effective',
-      builtin_prompt_locale: values.builtinPromptLocale || locale,
-      enabled_builtin_kinds: completeEnabledBuiltinKindDependencies(values.enabledBuiltinKinds),
-      default_remote_server_id: values.defaultRemoteServerId,
-    });
   }
 
   function jumpToRunHistory(taskId: string, runId?: string) {
@@ -507,7 +471,6 @@ export function TasksPage() {
         projectNameMap={projectNameMap}
         taskSummaryMap={taskSummaryMap}
         remoteServerMap={remoteServerMap}
-        externalMcpConfigMap={externalMcpConfigMap}
         taskStatusLabel={taskStatusLabel}
         onClose={closeDetailDrawer}
         onEditTask={openEditDrawer}
@@ -545,26 +508,16 @@ export function TasksPage() {
         modelOptions={modelOptions}
         projectOptions={projectOptions}
         prerequisiteTaskOptions={prerequisiteTaskOptions}
-        mcpCatalogEntries={taskCapabilityCatalogQuery.data?.selectable_builtin_mcps}
         selectablePlugins={taskCapabilityCatalogQuery.data?.selectable_plugins}
         pluginConnectors={taskPluginConnectorsQuery.data}
         pluginConnectorsLoading={taskPluginConnectorsQuery.isLoading}
         pluginConnectorsUnavailable={taskPluginConnectorsQuery.isError}
         pluginCatalogLoading={taskCapabilityCatalogQuery.isLoading}
-        remoteServers={remoteServersQuery.data}
-        externalMcpConfigs={(externalMcpConfigsQuery.data || []).filter((config) =>
-          (taskCapabilityCatalogQuery.data?.selectable_external_mcps || []).some(
-            (item) => item.id === config.id,
-          ),
-        )}
         runtimeEnvironment={projectRuntimeEnvironmentQuery.data}
         runtimeEnvironmentLoading={projectRuntimeEnvironmentQuery.isLoading}
         runtimeEnvironmentUnavailable={projectRuntimeEnvironmentQuery.isError}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
-        onPreviewPrompt={openDraftMcpPreviewModal}
-        onManageServers={() => navigate('/servers')}
-        onViewMcpCatalog={() => navigate('/mcp')}
       />
 
       <TaskMcpPromptPreviewModal
@@ -576,15 +529,6 @@ export function TasksPage() {
         preview={taskMcpPromptPreviewQuery.data}
         loading={taskMcpPromptPreviewQuery.isLoading}
         onClose={closeTaskMcpPreviewModal}
-      />
-
-      <TaskMcpPromptPreviewModal
-        t={t}
-        title={t('tasks.preview.formTitle')}
-        open={draftMcpPreviewOpen}
-        preview={draftMcpPreviewMutation.data}
-        loading={draftMcpPreviewMutation.isPending}
-        onClose={closeDraftMcpPreviewModal}
       />
 
       <TaskMemoryDrawer

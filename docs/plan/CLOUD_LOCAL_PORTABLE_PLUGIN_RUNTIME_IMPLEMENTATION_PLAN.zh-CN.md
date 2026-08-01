@@ -58,6 +58,8 @@ Ponytail 4.8.4-chatos.1 的确定性结果：
 | `local` | 仅由 Local Connector 准备和执行 | 现有全部本地组件 |
 | `portable` | 根据当前任务执行平面选择云端或本地准备 | Skill、Command、Agent |
 
+执行位置不是 Agent/AI 参数。AI 只调用当前 Session 已暴露的工具；程序根据 Agent Binding、Project Context、`runtime_provider`、设备在线状态与沙箱策略确定本地或云端执行端，并把结果冻结进 Runtime Session。任何 MCP id、服务名、设备 id、execution plane 或路由 revision 都不进入模型选择空间。
+
 Plugin 自身不再只有一个运行位置。最终展示类型由所选组件推导：
 
 - 全部为 `cloud`：云端 Plugin；
@@ -647,7 +649,7 @@ Ponytail 使用 schema v2：
 }
 ```
 
-实际 Manifest 填入完整 Command 和 Agent contribution。Cloud Agent 的 `baseAgent=task_runner_run_phase`，Local Agent 的 `baseAgent=task_runner_local_run_phase`。前端只展示与当前执行平面兼容的三个模式。
+实际 Manifest 填入完整 Command 和 Agent contribution。所有 Task Runner Agent Profile 统一绑定云端 `baseAgent=task_runner_run_phase`；是否通过 Local Connector 准备 Portable 组件由程序根据 Project Context 与 `runtime_provider` 决定，不能由 Agent 名或模型选择。前端只展示与当前执行平面兼容的三个模式。
 
 ### 11.4 默认行为
 

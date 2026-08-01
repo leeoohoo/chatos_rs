@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | `cloud` | Task Runner Cloud Runtime | 否 | Skill、Command、Agent |
 | `local` | Local Connector Runtime | 是 | 现有本地组件 |
-| `portable` | 随当前 Task Runner Agent plane 选择云端或本地 | 仅本地执行时需要 | Skill、Command、Agent |
+| `portable` | 随当前项目工具执行位置选择云端或 Local Connector | 仅本地执行时需要 | Skill、Command、Agent |
 
 Plugin 展示类型由 Release 中的组件执行位置集合推导：单一位置显示 Cloud、Local 或 Portable；同时存在多个位置显示 Hybrid。
 
@@ -51,11 +51,13 @@ MongoDB 新增：
 
 ## 4. Run 路由与不可变快照
 
-Task Runner 根据当前 Agent plane 路由 Portable 组件：
+Task Runner 根据程序解析出的当前 Project execution plane 路由 Portable 组件：
 
-- Cloud Agent：Portable 走 Cloud Runtime；
-- Local Agent：Portable 走 Local Connector；
-- 路由不由“请求里是否碰巧带了 device_id”决定。
+- Cloud Project：Portable 走 Cloud Runtime；
+- Local Connector Project：Portable 走 Local Connector；
+- 路由不由 Agent 名、AI 输出或“请求里是否碰巧带了 device_id”决定。
+
+AI 只看到当前 Runtime Session 已暴露的工具名和业务参数。Plugin/Component identity、MCP resource id、设备、Workspace、执行位置、Provider 和 Route revision 都由 Agent Binding 与权威 Project Context 确定并冻结，不能进入模型选择空间。
 
 Cloud-only 或 Cloud-plane Portable Run 不创建 Relay。只有实际选择了 Local/Local-plane Portable 组件时才要求精确 `device_id`、`workspace_id`、active installation，并建立 Relay。Hybrid 中任一 prepare 失败会取消已准备 session 并整体失败，不会只保留云端部分。
 

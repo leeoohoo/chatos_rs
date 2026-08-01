@@ -111,7 +111,6 @@ async fn ensure_default_agent(
         skills: None,
         skill_ids: None,
         default_skill_ids: None,
-        mcp_policy: None,
         project_policy: None,
         enabled: Some(true),
     })
@@ -227,7 +226,6 @@ mod tests {
             skills: Vec::new(),
             skill_ids: Vec::new(),
             default_skill_ids: Vec::new(),
-            mcp_policy: None,
             project_policy: None,
             enabled: true,
             created_at: "2026-01-01T00:00:00Z".to_string(),

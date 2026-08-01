@@ -130,8 +130,7 @@ pub(in crate::api::projects) async fn resolve_or_create_execution_session(
             "project_root": project.root_path,
             "contact_id": contact.contact_id,
             "contact_agent_id": contact.agent_id,
-            "selected_model_id": selected_model_id,
-            "mcp_enabled": true
+            "selected_model_id": selected_model_id
         },
         "contact": {
             "contact_id": contact.contact_id,

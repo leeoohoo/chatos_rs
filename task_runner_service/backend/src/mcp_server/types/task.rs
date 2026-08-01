@@ -32,12 +32,6 @@ pub(in crate::mcp_server) struct TaskIdArgs {
 }
 
 #[derive(Debug, Deserialize)]
-pub(in crate::mcp_server) struct ListAvailablePluginsArgs {
-    #[serde(default)]
-    pub(in crate::mcp_server) device_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(in crate::mcp_server) struct CreateTaskArgs {
     pub(in crate::mcp_server) title: String,
     #[serde(default)]
@@ -58,6 +52,8 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
+    // Kept only to reject stale or handcrafted AI calls explicitly. MCP
+    // capabilities are materialized from the Agent binding by the service.
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
@@ -75,31 +71,23 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
 
 impl CreateTaskArgs {
     pub(in crate::mcp_server) fn into_request(self) -> Result<CreateTaskRequest, String> {
-        let mut mcp_config = self.mcp_config;
-        reject_ai_execution_service_selection(mcp_config.as_ref())?;
-        if let Some(enabled_builtin_kinds) = self.enabled_builtin_kinds {
-            let normalized = normalize_mcp_builtin_kind_names(enabled_builtin_kinds)?;
-            let config = mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
-            config.enabled = true;
-            config.enabled_builtin_kinds = normalized;
+        if self.enabled_builtin_kinds.is_some()
+            || self.external_mcp_config_ids.is_some()
+            || self.plugin_device_id.is_some()
+            || self.plugin_workspace_id.is_some()
+            || self.selected_plugins.is_some()
+            || self.mcp_config.is_some()
+        {
+            return Err(
+                "Tool capabilities and runtime routing are controlled by the program through Agent bindings and cannot be selected by AI"
+                    .to_string(),
+            );
         }
-        if let Some(external_mcp_config_ids) = self.external_mcp_config_ids {
-            let config = mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
-            config.enabled = true;
-            config.external_mcp_config_ids =
-                normalize_external_mcp_config_ids(external_mcp_config_ids);
-        }
-        if let Some(requires_execution) = self.requires_execution {
-            mcp_config
-                .get_or_insert_with(TaskMcpConfig::default)
-                .requires_execution = requires_execution;
-        }
-        let plugin_config = TaskPluginConfig {
-            device_id: normalize_optional_id(self.plugin_device_id),
-            workspace_id: normalize_optional_id(self.plugin_workspace_id),
-            selected_plugins: normalize_selected_plugins(self.selected_plugins.unwrap_or_default()),
-            command_invocations: Vec::new(),
-        };
+        let mcp_config = self
+            .requires_execution
+            .map(|requires_execution| TaskMcpRequestConfig {
+                requires_execution: Some(requires_execution),
+            });
         Ok(CreateTaskRequest {
             title: self.title,
             description: self.description,
@@ -114,34 +102,24 @@ impl CreateTaskArgs {
             tenant_id: None,
             subject_id: None,
             schedule: self.schedule,
-            plugin_config,
+            plugin_config: TaskPluginConfig::default(),
             mcp_config,
             prerequisite_task_ids: self.prerequisite_task_ids,
         })
     }
 }
 
-pub(in crate::mcp_server) fn reject_ai_execution_service_selection(
-    config: Option<&TaskMcpConfig>,
+pub(in crate::mcp_server) fn reject_ai_runtime_config(
+    mcp_config: Option<&TaskMcpRequestConfig>,
+    plugin_config: Option<&TaskPluginConfig>,
 ) -> Result<(), String> {
-    if config
-        .and_then(|config| config.execution_service_id.as_deref())
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-    {
+    if mcp_config.is_some() || plugin_config.is_some() {
         return Err(
-            "execution_service_id is controlled by the user or program and cannot be selected by AI"
+            "Tool capabilities and runtime routing are controlled by the program through Agent bindings and cannot be changed by AI"
                 .to_string(),
         );
     }
     Ok(())
-}
-
-pub(in crate::mcp_server) fn task_mcp_config_for_explicit_tool_selection() -> TaskMcpConfig {
-    TaskMcpConfig {
-        enabled_builtin_kinds: Vec::new(),
-        ..TaskMcpConfig::default()
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -210,6 +188,7 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     #[serde(default)]
     pub(in crate::mcp_server) is_planning_task: Option<bool>,
     #[serde(default)]
+    // Rejected if present; retained for explicit fail-closed compatibility.
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
@@ -230,49 +209,6 @@ pub(in crate::mcp_server) struct CreateTaskWithPrerequisitesItem {
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]
     pub(in crate::mcp_server) context_refs: Vec<String>,
-}
-
-pub(in crate::mcp_server) fn normalize_external_mcp_config_ids(values: Vec<String>) -> Vec<String> {
-    normalize_unique_ids(values)
-}
-
-fn normalize_selected_plugins(values: Vec<SelectedPluginRef>) -> Vec<SelectedPluginRef> {
-    let mut out = Vec::new();
-    for value in values {
-        let plugin_id = value.plugin_id.trim();
-        if plugin_id.is_empty()
-            || out
-                .iter()
-                .any(|item: &SelectedPluginRef| item.plugin_id == plugin_id)
-        {
-            continue;
-        }
-        out.push(SelectedPluginRef {
-            plugin_id: plugin_id.to_string(),
-            selected_skill_ids: normalize_unique_ids(value.selected_skill_ids),
-            selected_command_ids: normalize_unique_ids(value.selected_command_ids),
-            selected_agent_ids: normalize_unique_ids(value.selected_agent_ids),
-        });
-    }
-    out
-}
-
-fn normalize_optional_id(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn normalize_unique_ids(values: Vec<String>) -> Vec<String> {
-    let mut out = Vec::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() || out.iter().any(|item| item == trimmed) {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    out
 }
 
 #[derive(Debug, Deserialize)]

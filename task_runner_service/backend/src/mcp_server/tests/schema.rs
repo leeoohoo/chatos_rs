@@ -6,6 +6,8 @@ use crate::mcp_server::support::{
     create_model_config_schema, create_project_execution_tasks_schema,
     create_tasks_with_prerequisites_schema, update_model_config_schema,
 };
+use crate::mcp_server::{reject_ai_runtime_config, support::remove_internal_task_fields};
+use serde_json::Value;
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -20,25 +22,12 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(!properties.contains_key("status"));
     assert!(!properties.contains_key("mcp_config"));
     assert!(properties.contains_key("default_model_config_id"));
-    assert!(properties.contains_key("enabled_builtin_kinds"));
-    assert!(properties.contains_key("external_mcp_config_ids"));
+    assert!(!properties.contains_key("enabled_builtin_kinds"));
+    assert!(!properties.contains_key("external_mcp_config_ids"));
     assert!(!properties.contains_key("selected_skill_ids"));
-    assert!(properties.contains_key("plugin_device_id"));
-    assert!(properties.contains_key("plugin_workspace_id"));
-    assert!(properties.contains_key("selected_plugins"));
-
-    let kind_enum = properties
-        .get("enabled_builtin_kinds")
-        .and_then(|value| value.get("items"))
-        .and_then(|value| value.get("enum"))
-        .and_then(|value| value.as_array())
-        .expect("enabled_builtin_kinds enum");
-    assert!(kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("WebTools")));
-    assert!(!kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("RemoteConnectionController")));
+    assert!(!properties.contains_key("plugin_device_id"));
+    assert!(!properties.contains_key("plugin_workspace_id"));
+    assert!(!properties.contains_key("selected_plugins"));
 }
 
 #[test]
@@ -67,22 +56,6 @@ fn model_config_thinking_level_schema_is_enum_choice() {
 }
 
 #[test]
-fn task_mcp_config_schema_hides_host_passthrough_fields() {
-    let schema = task_mcp_config_schema();
-    let properties = schema
-        .get("properties")
-        .and_then(|value| value.as_object())
-        .expect("object properties");
-
-    assert!(!properties.contains_key("workspace_dir"));
-    assert!(!properties.contains_key("default_remote_server_id"));
-    assert!(!properties.contains_key("execution_service_id"));
-    assert!(properties.contains_key("enabled_builtin_kinds"));
-    assert!(properties.contains_key("external_mcp_config_ids"));
-    assert!(!properties.contains_key("selected_skill_ids"));
-}
-
-#[test]
 fn planner_task_creation_schemas_require_explicit_task_nature() {
     let create = create_task_schema();
     assert!(create.pointer("/properties/is_planning_task").is_some());
@@ -107,7 +80,7 @@ fn planner_task_creation_schemas_require_explicit_task_nature() {
 }
 
 #[test]
-fn ai_task_input_cannot_select_execution_service() {
+fn ai_task_input_cannot_supply_mcp_configuration() {
     let error = CreateTaskArgs {
         title: "task".to_string(),
         description: None,
@@ -131,9 +104,9 @@ fn ai_task_input_cannot_select_execution_service() {
         }),
     }
     .into_request()
-    .expect_err("AI execution service selection must be rejected");
+    .expect_err("AI MCP configuration must be rejected");
 
-    assert!(error.contains("cannot be selected by AI"));
+    assert!(error.contains("controlled by the program"));
 }
 
 #[test]
@@ -145,13 +118,58 @@ fn update_task_schema_hides_execution_status() {
         .expect("object properties");
 
     assert!(!properties.contains_key("status"));
+    assert!(!properties.contains_key("mcp_config"));
+    assert!(!properties.contains_key("plugin_config"));
 }
 
 #[test]
-fn normalization_keeps_only_the_ai_explicit_builtin_selection() {
-    let normalized = normalize_mcp_builtin_kind_names(vec!["CodeMaintainerWrite".to_string()])
-        .expect("normalized kinds");
-    assert_eq!(normalized, vec!["CodeMaintainerWrite".to_string()]);
+fn ai_task_update_rejects_program_managed_runtime_configuration() {
+    let plugin_config = chatos_plugin_management_sdk::TaskPluginConfig {
+        device_id: Some("device-1".to_string()),
+        ..Default::default()
+    };
+
+    let error = reject_ai_runtime_config(None, Some(&plugin_config))
+        .expect_err("AI Plugin routing update must fail closed");
+
+    assert!(error.contains("controlled by the program"));
+}
+
+#[test]
+fn agent_task_payload_hides_identity_and_runtime_routing_snapshots() {
+    let mut payload = json!({
+        "id": "task-1",
+        "title": "business task",
+        "project_id": "project-1",
+        "owner_user_id": "owner-a",
+        "source_session_id": "session-a",
+        "default_model_config_id": "model-a",
+        "plugin_config": { "device_id": "device-a" },
+        "mcp_config": { "execution_service_id": "service-a" },
+        "nested": {
+            "tenant_id": "tenant-a",
+            "subject_id": "subject-a"
+        }
+    });
+
+    remove_internal_task_fields(&mut payload);
+
+    assert_eq!(
+        payload.pointer("/id").and_then(Value::as_str),
+        Some("task-1")
+    );
+    for pointer in [
+        "/project_id",
+        "/owner_user_id",
+        "/source_session_id",
+        "/default_model_config_id",
+        "/plugin_config",
+        "/mcp_config",
+        "/nested/tenant_id",
+        "/nested/subject_id",
+    ] {
+        assert!(payload.pointer(pointer).is_none(), "leaked {pointer}");
+    }
 }
 
 #[test]
@@ -170,8 +188,8 @@ fn default_agent_hides_direct_history_status_tools() {
 }
 
 #[test]
-fn create_task_args_preserve_external_mcp_ids_without_legacy_skill_selection() {
-    let request = CreateTaskArgs {
+fn create_task_args_reject_handcrafted_mcp_capability_selection() {
+    let error = CreateTaskArgs {
         title: "task".to_string(),
         description: None,
         objective: "use external tools".to_string(),
@@ -195,21 +213,14 @@ fn create_task_args_preserve_external_mcp_ids_without_legacy_skill_selection() {
         mcp_config: None,
     }
     .into_request()
-    .expect("create task request");
+    .expect_err("AI MCP id selection must fail closed");
 
-    let mcp_config = request.mcp_config.expect("mcp config");
-    assert!(mcp_config.enabled);
-    assert!(mcp_config.enabled_builtin_kinds.is_empty());
-    assert_eq!(
-        mcp_config.external_mcp_config_ids,
-        vec!["external-mcp-1".to_string()]
-    );
-    assert!(mcp_config.selected_skill_ids.is_empty());
+    assert!(error.contains("controlled by the program"));
 }
 
 #[test]
-fn create_task_args_preserve_exact_plugin_device_workspace_and_selection() {
-    let request = CreateTaskArgs {
+fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
+    let error = CreateTaskArgs {
         title: "browser task".to_string(),
         description: None,
         objective: "control browser".to_string(),
@@ -242,22 +253,13 @@ fn create_task_args_preserve_exact_plugin_device_workspace_and_selection() {
         mcp_config: None,
     }
     .into_request()
-    .expect("Plugin task request");
+    .expect_err("AI Plugin routing must fail closed");
 
-    assert_eq!(request.plugin_config.device_id.as_deref(), Some("device-1"));
-    assert_eq!(
-        request.plugin_config.workspace_id.as_deref(),
-        Some("workspace-1")
-    );
-    assert_eq!(request.plugin_config.selected_plugins.len(), 1);
-    assert_eq!(
-        request.plugin_config.selected_plugins[0].plugin_id,
-        "plugin-browser"
-    );
+    assert!(error.contains("controlled by the program"));
 }
 
 #[test]
-fn request_context_plugin_selection_overrides_model_supplied_plugin_config() {
+fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
     let mut request = CreateTaskArgs {
         title: "browser task".to_string(),
         description: None,
@@ -271,14 +273,9 @@ fn request_context_plugin_selection_overrides_model_supplied_plugin_config() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        plugin_device_id: Some("model-device".to_string()),
-        plugin_workspace_id: Some("model-workspace".to_string()),
-        selected_plugins: Some(vec![chatos_plugin_management_sdk::SelectedPluginRef {
-            plugin_id: "model-plugin".to_string(),
-            selected_skill_ids: Vec::new(),
-            selected_command_ids: Vec::new(),
-            selected_agent_ids: Vec::new(),
-        }]),
+        plugin_device_id: None,
+        plugin_workspace_id: None,
+        selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
     }
@@ -417,16 +414,13 @@ fn async_planner_profile_exposes_only_planning_tools() {
     assert!(chatos_async_planner::planner_agent_tool_allowed(
         "create_tasks_with_prerequisites"
     ));
-    assert!(chatos_async_planner::planner_agent_tool_allowed(
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
         "list_mcp_builtin_catalog"
-    ));
-    assert!(chatos_async_planner::planner_agent_tool_allowed(
-        "list_external_mcp_configs"
     ));
     assert!(!chatos_async_planner::planner_agent_tool_allowed(
         "list_available_skills"
     ));
-    assert!(chatos_async_planner::planner_agent_tool_allowed(
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
         "list_available_plugins"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
@@ -475,14 +469,11 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
         .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
         .collect::<Vec<_>>();
 
-    assert_eq!(tool_names.len(), 10);
+    assert_eq!(tool_names.len(), 7);
     for expected in [
         "list_tasks",
         "get_task",
         "create_task",
-        "list_mcp_builtin_catalog",
-        "list_external_mcp_configs",
-        "list_available_plugins",
         "create_tasks_with_prerequisites",
         "cancel_task",
         "wait_for_task_completion",
@@ -492,6 +483,7 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
     }
     for hidden in [
         "get_task_stats",
+        "list_available_plugins",
         "list_available_skills",
         "create_project_execution_tasks",
         "update_task",
@@ -517,37 +509,11 @@ fn async_planner_update_task_cannot_change_status() {
         ..UpdateTaskRequest::default()
     };
     assert!(chatos_async_planner::planner_update_task_request(patch).is_ok());
-
-    let patch = UpdateTaskRequest {
-        mcp_config: Some(TaskMcpConfig {
-            enabled: false,
-            enabled_builtin_kinds: vec![
-                "CodeMaintainerRead".to_string(),
-                "TaskManager".to_string(),
-            ],
-            external_mcp_config_ids: vec!["external-mcp-1".to_string()],
-            ..TaskMcpConfig::default()
-        }),
-        ..UpdateTaskRequest::default()
-    };
-    let patch = chatos_async_planner::planner_update_task_request(patch).expect("planner patch");
-    let config = patch.mcp_config.expect("mcp config");
-    assert!(config.enabled);
-    assert!(config
-        .enabled_builtin_kinds
-        .contains(&"CodeMaintainerRead".to_string()));
-    assert!(!config
-        .enabled_builtin_kinds
-        .contains(&"TaskManager".to_string()));
-    assert_eq!(
-        config.external_mcp_config_ids,
-        vec!["external-mcp-1".to_string()]
-    );
 }
 
 #[test]
-fn async_planner_tasks_keep_fixed_mcp_out_of_stored_selection() {
-    let builtin_without_model_id = CreateTaskRequest {
+fn async_planner_preserves_only_execution_intent_before_programmatic_resolution() {
+    let request = CreateTaskRequest {
         title: "task".to_string(),
         description: None,
         objective: "objective".to_string(),
@@ -562,97 +528,23 @@ fn async_planner_tasks_keep_fixed_mcp_out_of_stored_selection() {
         subject_id: None,
         schedule: None,
         plugin_config: Default::default(),
-        mcp_config: Some(TaskMcpConfig {
-            enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
-            ..TaskMcpConfig::default()
+        mcp_config: Some(TaskMcpRequestConfig {
+            requires_execution: Some(false),
         }),
         prerequisite_task_ids: None,
     };
-    assert!(
-        chatos_async_planner::ensure_planner_required_fields(&builtin_without_model_id).is_ok()
-    );
-    let planned_builtin = chatos_async_planner::planner_root_create_request(
-        builtin_without_model_id.clone(),
-        &McpRequestContext::default(),
-    )
-    .expect("planner request");
-    let planned_builtin_kinds = planned_builtin
-        .mcp_config
-        .expect("mcp config")
-        .enabled_builtin_kinds;
-    assert!(planned_builtin_kinds.contains(&"CodeMaintainerRead".to_string()));
-    assert!(!planned_builtin_kinds.contains(&"TaskManager".to_string()));
-
-    let external_without_model_id = CreateTaskRequest {
-        mcp_config: Some(TaskMcpConfig {
-            enabled_builtin_kinds: Vec::new(),
-            external_mcp_config_ids: vec!["external-mcp-1".to_string()],
-            ..TaskMcpConfig::default()
-        }),
-        ..builtin_without_model_id.clone()
-    };
-    assert!(
-        chatos_async_planner::ensure_planner_required_fields(&external_without_model_id).is_ok()
-    );
-    let planned_external = chatos_async_planner::planner_root_create_request(
-        external_without_model_id,
-        &McpRequestContext::default(),
-    )
-    .expect("planner request");
-    let planned_external_mcp = planned_external.mcp_config.expect("mcp config");
-    assert_eq!(
-        planned_external_mcp.external_mcp_config_ids,
-        vec!["external-mcp-1".to_string()]
-    );
-    assert!(planned_external_mcp.enabled_builtin_kinds.is_empty());
-
-    let no_explicit_tool_source = CreateTaskRequest {
-        default_model_config_id: Some("model-1".to_string()),
-        mcp_config: None,
-        ..builtin_without_model_id.clone()
-    };
-    assert!(chatos_async_planner::ensure_planner_required_fields(&no_explicit_tool_source).is_ok());
-    let planned_default = chatos_async_planner::planner_root_create_request(
-        no_explicit_tool_source,
-        &McpRequestContext::default(),
-    )
-    .expect("planner request");
-    assert_eq!(
-        planned_default
-            .mcp_config
-            .expect("mcp config")
-            .enabled_builtin_kinds,
-        Vec::<String>::new()
-    );
-
-    let combined = CreateTaskRequest {
-        default_model_config_id: Some("model-1".to_string()),
-        mcp_config: Some(TaskMcpConfig {
-            enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
-            external_mcp_config_ids: vec!["external-mcp-2".to_string()],
-            ..TaskMcpConfig::default()
-        }),
-        ..builtin_without_model_id
-    };
-    assert!(chatos_async_planner::ensure_planner_required_fields(&combined).is_ok());
-    let planned_combined =
-        chatos_async_planner::planner_root_create_request(combined, &McpRequestContext::default())
+    assert!(chatos_async_planner::ensure_planner_required_fields(&request).is_ok());
+    let planned =
+        chatos_async_planner::planner_root_create_request(request, &McpRequestContext::default())
             .expect("planner request");
-    let planned_combined_mcp = planned_combined.mcp_config.expect("mcp config");
-    assert!(planned_combined_mcp
-        .enabled_builtin_kinds
-        .contains(&"CodeMaintainerWrite".to_string()));
-    assert!(!planned_combined_mcp
-        .enabled_builtin_kinds
-        .contains(&"TaskManager".to_string()));
     assert_eq!(
-        planned_combined_mcp.external_mcp_config_ids,
-        vec!["external-mcp-2".to_string()]
+        planned.mcp_config.expect("mcp config").requires_execution,
+        Some(false)
     );
 }
 
 #[test]
-fn async_planner_schema_hides_task_manager_from_builtin_selection() {
+fn async_planner_schema_does_not_expose_mcp_selection() {
     let mut tools = vec![json!({
         "name": "create_task",
         "inputSchema": create_task_schema(),
@@ -662,20 +554,25 @@ fn async_planner_schema_hides_task_manager_from_builtin_selection() {
 
     let input_schema = tools[0].get("inputSchema").expect("input schema");
     assert!(input_schema.get("anyOf").is_none());
-    let kind_enum = input_schema
-        .pointer("/properties/enabled_builtin_kinds/items/enum")
-        .and_then(|value| value.as_array())
-        .expect("enabled_builtin_kinds enum");
-    assert!(kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("CodeMaintainerRead")));
-    assert!(!kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("TaskManager")));
+    assert!(input_schema
+        .pointer("/properties/enabled_builtin_kinds")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/external_mcp_config_ids")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/plugin_device_id")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/plugin_workspace_id")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/selected_plugins")
+        .is_none());
 }
 
 #[test]
-fn async_planner_batch_schema_hides_task_manager_from_builtin_selection() {
+fn async_planner_batch_schema_does_not_expose_mcp_selection() {
     let mut tools = vec![json!({
         "name": "create_tasks_with_prerequisites",
         "inputSchema": super::super::support::create_tasks_with_prerequisites_schema(),
@@ -687,20 +584,25 @@ fn async_planner_batch_schema_hides_task_manager_from_builtin_selection() {
     assert!(input_schema
         .pointer("/properties/tasks/items/anyOf")
         .is_none());
-    let kind_enum = input_schema
-        .pointer("/properties/tasks/items/properties/enabled_builtin_kinds/items/enum")
-        .and_then(|value| value.as_array())
-        .expect("enabled_builtin_kinds enum");
-    assert!(kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("TerminalController")));
-    assert!(!kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("TaskManager")));
+    assert!(input_schema
+        .pointer("/properties/tasks/items/properties/enabled_builtin_kinds")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/tasks/items/properties/external_mcp_config_ids")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/tasks/items/properties/plugin_device_id")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/tasks/items/properties/plugin_workspace_id")
+        .is_none());
+    assert!(input_schema
+        .pointer("/properties/tasks/items/properties/selected_plugins")
+        .is_none());
 }
 
 #[test]
-fn async_planner_update_schema_hides_task_manager_from_builtin_selection() {
+fn async_planner_update_schema_does_not_expose_mcp_configuration() {
     let mut tools = vec![json!({
         "name": "update_task",
         "inputSchema": json!({
@@ -719,24 +621,8 @@ fn async_planner_update_schema_hides_task_manager_from_builtin_selection() {
         .and_then(|value| value.as_object())
         .expect("patch properties");
     assert!(!properties.contains_key("status"));
-    let mcp_properties = input_schema
-        .pointer("/properties/patch/properties/mcp_config/properties")
-        .and_then(|value| value.as_object())
-        .expect("mcp properties");
-    assert!(!mcp_properties.contains_key("enabled"));
-    assert!(!mcp_properties.contains_key("init_mode"));
-    let kind_enum = input_schema
-        .pointer(
-            "/properties/patch/properties/mcp_config/properties/enabled_builtin_kinds/items/enum",
-        )
-        .and_then(|value| value.as_array())
-        .expect("enabled_builtin_kinds enum");
-    assert!(kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("BrowserTools")));
-    assert!(!kind_enum
-        .iter()
-        .any(|value| value.as_str() == Some("TaskManager")));
+    assert!(!properties.contains_key("mcp_config"));
+    assert!(!properties.contains_key("plugin_config"));
 }
 
 #[test]

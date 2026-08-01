@@ -30,7 +30,7 @@ fn provider_skills_are_composed_into_the_mcp_system_context() {
             "id": "task_runner_usage",
             "name": "Task Runner Usage",
             "description": "Create durable background tasks.",
-            "instructions": "Call list_available_plugins before selecting selected_plugins."
+            "instructions": "Use the business tools exposed for this Runtime Session. Tool ownership and routing are resolved by the program."
         }]),
     );
 
@@ -62,8 +62,10 @@ fn provider_skills_are_composed_into_the_mcp_system_context() {
 
     assert!(prompt.contains("MCP Provider Skills"));
     assert!(prompt.contains("task_runner_service"));
-    assert!(prompt.contains("list_available_plugins"));
-    assert!(prompt.contains("selected_plugins"));
+    assert!(prompt.contains("business tools exposed for this Runtime Session"));
+    assert!(prompt.contains("routing are resolved by the program"));
+    assert!(!prompt.contains("list_available_plugins"));
+    assert!(!prompt.contains("selected_plugins"));
 }
 
 #[test]

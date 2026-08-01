@@ -14,7 +14,6 @@ import type {
   AgentConfig,
   Application,
   ChatConfig,
-  McpConfig,
   SystemContext,
 } from './config';
 import type { ChatError, UnknownRecord } from './common';
@@ -149,7 +148,6 @@ export interface ChatStateSnapshot {
   messages: Message[];
   chatConfig: ChatConfig;
   theme: Theme;
-  mcpConfigs: McpConfig[];
   aiModelConfigs: AiModelConfig[];
   systemContexts: SystemContext[];
   agents: AgentConfig[];

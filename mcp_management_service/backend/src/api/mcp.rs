@@ -514,13 +514,13 @@ mod tests {
             agent_key: "task_runner_run_phase".to_string(),
             project_id: "project-1".to_string(),
             run_id: Some("run-1".to_string()),
-            turn_id: None,
+            turn_id: Some("turn-1".to_string()),
             task_id: Some("task-1".to_string()),
-            source_session_id: None,
-            source_user_message_id: None,
-            contact_agent_id: None,
-            default_model_config_id: None,
-            expected_project_task_ids: Vec::new(),
+            source_session_id: Some("source-session-1".to_string()),
+            source_user_message_id: Some("source-message-1".to_string()),
+            contact_agent_id: Some("contact-agent-1".to_string()),
+            default_model_config_id: Some("model-1".to_string()),
+            expected_project_task_ids: vec!["project-task-1".to_string()],
             sandbox_target: None,
             project_context: ProjectExecutionContext {
                 project_id: "project-1".to_string(),
@@ -561,6 +561,35 @@ mod tests {
             cloud_stdio_bindings: Default::default(),
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             expires_at_unix: i64::MAX,
+        }
+    }
+
+    fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGrantClaims {
+        crate::runtime::RuntimeGrantClaims {
+            iss: "mcp-management-service".to_string(),
+            sub: snapshot.caller_service.clone(),
+            aud: "mcp-management-runtime".to_string(),
+            session_id: snapshot.session_id.clone(),
+            owner_user_id: snapshot.owner_user_id.clone(),
+            agent_key: snapshot.agent_key.clone(),
+            project_id: snapshot.project_id.clone(),
+            run_id: snapshot.run_id.clone(),
+            turn_id: snapshot.turn_id.clone(),
+            task_id: snapshot.task_id.clone(),
+            source_session_id: snapshot.source_session_id.clone(),
+            source_user_message_id: snapshot.source_user_message_id.clone(),
+            contact_agent_id: snapshot.contact_agent_id.clone(),
+            default_model_config_id: snapshot.default_model_config_id.clone(),
+            expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
+            policy_revision: snapshot.policy_revision.clone(),
+            route_revision: snapshot.route_revision.clone(),
+            allowed_resource_ids: snapshot
+                .routes
+                .iter()
+                .map(|route| route.resource_id.clone())
+                .collect(),
+            iat: 1,
+            exp: usize::try_from(snapshot.expires_at_unix).unwrap(),
         }
     }
 
@@ -879,39 +908,78 @@ mod tests {
     }
 
     #[test]
-    fn runtime_grant_rejects_scope_and_resource_drift() {
+    fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
         let snapshot = snapshot();
-        let claims = crate::runtime::RuntimeGrantClaims {
-            iss: "mcp-management-service".to_string(),
-            sub: snapshot.caller_service.clone(),
-            aud: "mcp-management-runtime".to_string(),
-            session_id: snapshot.session_id.clone(),
-            owner_user_id: snapshot.owner_user_id.clone(),
-            agent_key: snapshot.agent_key.clone(),
-            project_id: snapshot.project_id.clone(),
-            run_id: snapshot.run_id.clone(),
-            turn_id: snapshot.turn_id.clone(),
-            task_id: snapshot.task_id.clone(),
-            source_session_id: snapshot.source_session_id.clone(),
-            source_user_message_id: snapshot.source_user_message_id.clone(),
-            contact_agent_id: snapshot.contact_agent_id.clone(),
-            default_model_config_id: snapshot.default_model_config_id.clone(),
-            expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
-            policy_revision: snapshot.policy_revision.clone(),
-            route_revision: snapshot.route_revision.clone(),
-            allowed_resource_ids: vec!["mcp-1".to_string()],
-            iat: 1,
-            exp: usize::try_from(snapshot.expires_at_unix).unwrap(),
-        };
+        let claims = grant_claims(&snapshot);
         assert!(grant_matches_snapshot(&claims, &snapshot));
+
+        let mut wrong_session = claims.clone();
+        wrong_session.session_id = "another-session".to_string();
+        assert!(!grant_matches_snapshot(&wrong_session, &snapshot));
+
+        let mut wrong_caller = claims.clone();
+        wrong_caller.sub = "another-service".to_string();
+        assert!(!grant_matches_snapshot(&wrong_caller, &snapshot));
+
+        let mut wrong_owner = claims.clone();
+        wrong_owner.owner_user_id = "another-owner".to_string();
+        assert!(!grant_matches_snapshot(&wrong_owner, &snapshot));
+
+        let mut wrong_agent = claims.clone();
+        wrong_agent.agent_key = "another-agent".to_string();
+        assert!(!grant_matches_snapshot(&wrong_agent, &snapshot));
+
+        let mut wrong_project = claims.clone();
+        wrong_project.project_id = "another-project".to_string();
+        assert!(!grant_matches_snapshot(&wrong_project, &snapshot));
+
+        let mut wrong_run = claims.clone();
+        wrong_run.run_id = Some("another-run".to_string());
+        assert!(!grant_matches_snapshot(&wrong_run, &snapshot));
+
+        let mut wrong_turn = claims.clone();
+        wrong_turn.turn_id = Some("another-turn".to_string());
+        assert!(!grant_matches_snapshot(&wrong_turn, &snapshot));
 
         let mut wrong_task = claims.clone();
         wrong_task.task_id = Some("another-task".to_string());
         assert!(!grant_matches_snapshot(&wrong_task, &snapshot));
 
+        let mut wrong_source_session = claims.clone();
+        wrong_source_session.source_session_id = Some("another-source-session".to_string());
+        assert!(!grant_matches_snapshot(&wrong_source_session, &snapshot));
+
+        let mut wrong_source_message = claims.clone();
+        wrong_source_message.source_user_message_id = Some("another-source-message".to_string());
+        assert!(!grant_matches_snapshot(&wrong_source_message, &snapshot));
+
         let mut wrong_contact_agent = claims.clone();
         wrong_contact_agent.contact_agent_id = Some("another-contact-agent".to_string());
         assert!(!grant_matches_snapshot(&wrong_contact_agent, &snapshot));
+
+        let mut wrong_model = claims.clone();
+        wrong_model.default_model_config_id = Some("another-model".to_string());
+        assert!(!grant_matches_snapshot(&wrong_model, &snapshot));
+
+        let mut wrong_project_tasks = claims.clone();
+        wrong_project_tasks.expected_project_task_ids = vec!["another-project-task".to_string()];
+        assert!(!grant_matches_snapshot(&wrong_project_tasks, &snapshot));
+
+        let mut wrong_policy_revision = claims.clone();
+        wrong_policy_revision.policy_revision = "another-policy".to_string();
+        assert!(!grant_matches_snapshot(&wrong_policy_revision, &snapshot));
+
+        let mut wrong_route_revision = claims.clone();
+        wrong_route_revision.route_revision = "another-route".to_string();
+        assert!(!grant_matches_snapshot(&wrong_route_revision, &snapshot));
+
+        let mut wrong_expiry = claims.clone();
+        wrong_expiry.exp = wrong_expiry.exp.saturating_sub(1);
+        assert!(!grant_matches_snapshot(&wrong_expiry, &snapshot));
+
+        let mut missing_resource = claims.clone();
+        missing_resource.allowed_resource_ids.clear();
+        assert!(!grant_matches_snapshot(&missing_resource, &snapshot));
 
         let mut extra_resource = claims;
         extra_resource

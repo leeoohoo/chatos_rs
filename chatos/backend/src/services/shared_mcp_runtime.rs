@@ -2,10 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::core::mcp_tools::{build_builtin_tool_service, ToolInfo as ChatosToolInfo};
-use crate::services::builtin_mcp::BuiltinMcpKind as ChatosBuiltinMcpKind;
 use crate::services::mcp_loader::{
-    McpBuiltinServer as ChatosBuiltinServer, McpHttpServer as ChatosHttpServer,
-    McpStdioServer as ChatosStdioServer,
+    BuiltinMcpKind as ChatosBuiltinMcpKind, McpBuiltinServer as ChatosBuiltinServer,
+    McpHttpServer as ChatosHttpServer, McpStdioServer as ChatosStdioServer,
 };
 
 pub(crate) fn build_shared_mcp_executor(

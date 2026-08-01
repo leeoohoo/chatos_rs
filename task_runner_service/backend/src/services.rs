@@ -20,15 +20,13 @@ use crate::models::{
     normalize_execution_environment_mode, normalize_project_id, now_rfc3339,
     BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
     BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
-    ChatosProjectImportRequest, CreateExternalMcpConfigRequest, CreateTaskProjectRequest,
-    CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, PaginatedResponse,
-    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
-    StartTaskRunRequest, SystemConfigResponse, TaskClosureState, TaskIndexResponse,
-    TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse, TaskProjectRecord,
-    TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
-    UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    ChatosProjectImportRequest, CreateTaskProjectRequest, CreateTaskRequest, HealthResponse,
+    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskClosureState,
+    TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse,
+    TaskProjectRecord, TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord,
+    TaskRunStatus, TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest,
     UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
 use crate::store::AppStore;
@@ -59,7 +57,6 @@ mod builtin_providers;
 mod chatos_async_dispatch;
 mod chatos_callbacks;
 mod chatos_message_tasks;
-mod external_mcp_config_service;
 mod filter_sanitize;
 mod harness_run_diff;
 mod harness_run_git;
@@ -126,8 +123,7 @@ use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
 };
 use self::workspace_mcp::{
-    ensure_workspace_dir_available, normalize_builtin_kind_names, sanitize_task_mcp_config,
-    task_mcp_resolution_response,
+    ensure_workspace_dir_available, sanitize_task_mcp_config, task_mcp_resolution_response,
 };
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
@@ -167,11 +163,6 @@ pub struct ModelConfigService {
 
 #[derive(Clone)]
 pub struct RemoteServerService {
-    store: AppStore,
-}
-
-#[derive(Clone)]
-pub struct ExternalMcpConfigService {
     store: AppStore,
 }
 

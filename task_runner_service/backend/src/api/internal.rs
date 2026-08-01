@@ -13,8 +13,6 @@ use super::*;
 #[derive(Debug, Serialize)]
 pub(super) struct InternalExecutionOptionsResponse {
     pub model_config_ids: Vec<String>,
-    pub builtin_tool_ids: Vec<String>,
-    pub external_tool_ids: Vec<String>,
 }
 
 pub(super) async fn get_user_execution_options(
@@ -48,37 +46,8 @@ pub(super) async fn get_user_execution_options(
         .map(|model| model.id)
         .collect::<BTreeSet<_>>();
 
-    let mut builtin_tool_ids = BTreeSet::new();
-    for item in state.mcp_catalog_service.list_catalog() {
-        builtin_tool_ids.insert(item.kind);
-        if let Some(config_id) = item.config_id {
-            builtin_tool_ids.insert(config_id);
-        }
-    }
-
-    let external_tool_ids = state
-        .external_mcp_config_service
-        .list_external_mcp_configs()
-        .await
-        .map_err(ApiError::bad_request)?
-        .into_iter()
-        .filter(|config| config.enabled)
-        .filter(|config| {
-            owns_resource(
-                resource_owner_or_creator(
-                    config.owner_user_id.as_deref(),
-                    config.creator_user_id.as_deref(),
-                ),
-                owner_user_id,
-            )
-        })
-        .map(|config| config.id)
-        .collect::<BTreeSet<_>>();
-
     Ok(Json(InternalExecutionOptionsResponse {
         model_config_ids: model_config_ids.into_iter().collect(),
-        builtin_tool_ids: builtin_tool_ids.into_iter().collect(),
-        external_tool_ids: external_tool_ids.into_iter().collect(),
     }))
 }
 
@@ -89,23 +58,8 @@ fn owns_resource(owner_user_id: Option<&str>, expected_owner_user_id: &str) -> b
         == Some(expected_owner_user_id)
 }
 
-fn resource_owner_or_creator<'a>(
-    owner_user_id: Option<&'a str>,
-    creator_user_id: Option<&'a str>,
-) -> Option<&'a str> {
-    owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            creator_user_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -116,10 +70,10 @@ mod tests {
     use crate::auth::AuthService;
     use crate::config::{AppConfig, StoreMode};
     use crate::mcp_server::TaskRunnerMcpService;
-    use crate::models::{ExternalMcpConfigRecord, ModelConfigRecord};
+    use crate::models::ModelConfigRecord;
     use crate::services::{
-        ExternalMcpConfigService, McpCatalogService, ModelConfigService, RemoteServerService,
-        RunService, TaskProjectService, TaskService, ToolingStateService,
+        McpCatalogService, ModelConfigService, RemoteServerService, RunService, TaskProjectService,
+        TaskService, ToolingStateService,
     };
     use crate::store::AppStore;
 
@@ -138,11 +92,6 @@ mod tests {
                 .expect("execution options");
 
         assert_eq!(response.model_config_ids, vec!["model-owner"]);
-        assert!(response.builtin_tool_ids.iter().any(|id| !id.is_empty()));
-        assert_eq!(
-            response.external_tool_ids,
-            vec!["external-created-by-owner", "external-owner"]
-        );
     }
 
     #[tokio::test]
@@ -237,48 +186,10 @@ mod tests {
             .save_model_config(model_config("model-disabled", Some("owner-1"), false))
             .await
             .expect("save disabled model");
-        store
-            .save_external_mcp_config(external_config(
-                "external-owner",
-                Some("owner-1"),
-                None,
-                true,
-            ))
-            .await
-            .expect("save owner external mcp");
-        store
-            .save_external_mcp_config(external_config(
-                "external-created-by-owner",
-                None,
-                Some("owner-1"),
-                true,
-            ))
-            .await
-            .expect("save creator external mcp");
-        store
-            .save_external_mcp_config(external_config(
-                "external-other",
-                Some("owner-2"),
-                None,
-                true,
-            ))
-            .await
-            .expect("save other external mcp");
-        store
-            .save_external_mcp_config(external_config(
-                "external-disabled",
-                Some("owner-1"),
-                None,
-                false,
-            ))
-            .await
-            .expect("save disabled external mcp");
-
         let auth_service = AuthService::new(config.clone(), store.clone());
         let task_service = TaskService::new(config.clone(), store.clone());
         let model_config_service = ModelConfigService::new(store.clone());
         let remote_server_service = RemoteServerService::new(store.clone());
-        let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
         let task_project_service = TaskProjectService::new(store.clone());
         let ask_user_prompt_service = AskUserPromptService::new(store.clone());
         let run_service = RunService::new(
@@ -292,10 +203,8 @@ mod tests {
         let task_runner_mcp_service = TaskRunnerMcpService::new(
             task_service.clone(),
             model_config_service.clone(),
-            external_mcp_config_service.clone(),
             run_service.clone(),
             ask_user_prompt_service.clone(),
-            mcp_catalog_service.clone(),
         );
 
         AppState {
@@ -303,7 +212,6 @@ mod tests {
             task_service,
             model_config_service,
             remote_server_service,
-            external_mcp_config_service,
             task_project_service,
             run_service,
             ask_user_prompt_service,
@@ -389,34 +297,6 @@ mod tests {
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             enabled,
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-        }
-    }
-
-    fn external_config(
-        id: &str,
-        owner_user_id: Option<&str>,
-        creator_user_id: Option<&str>,
-        enabled: bool,
-    ) -> ExternalMcpConfigRecord {
-        ExternalMcpConfigRecord {
-            id: id.to_string(),
-            name: id.to_string(),
-            transport: "stdio".to_string(),
-            command: Some("echo".to_string()),
-            args: vec!["ok".to_string()],
-            url: None,
-            headers: BTreeMap::new(),
-            env: BTreeMap::new(),
-            cwd: None,
-            enabled,
-            creator_user_id: creator_user_id.map(ToOwned::to_owned),
-            creator_username: None,
-            creator_display_name: None,
-            owner_user_id: owner_user_id.map(ToOwned::to_owned),
-            owner_username: None,
-            owner_display_name: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         }

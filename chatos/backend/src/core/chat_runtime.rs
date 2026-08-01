@@ -71,7 +71,6 @@ mod tests {
                     content: "# Team Debug".to_string(),
                     updated_at: Some("2026-03-24T00:00:00Z".to_string()),
                 }],
-                mcp_policy: None,
                 project_policy: None,
                 updated_at: "2026-03-24T00:00:00Z".to_string(),
             }),
@@ -118,7 +117,6 @@ mod tests {
                 content: "debug steps".to_string(),
                 updated_at: None,
             }],
-            mcp_policy: None,
             project_policy: None,
             updated_at: "2026-03-24T00:00:00Z".to_string(),
         };
@@ -154,7 +152,6 @@ mod tests {
                 skill_ids: vec![],
                 runtime_skills: vec![],
                 runtime_commands: vec![],
-                mcp_policy: None,
                 project_policy: None,
                 updated_at: "2026-03-24T00:00:00Z".to_string(),
             }),
@@ -202,9 +199,7 @@ mod tests {
                 "projectId": " project_1 ",
                 "project_root": " /tmp/workspace ",
                 "workspaceRoot": " /tmp/ws ",
-                "remoteConnectionId": " conn_1 ",
-                "mcpEnabled": true,
-                "enabledMcpIds": ["alpha", " alpha ", "beta", ""]
+                "remoteConnectionId": " conn_1 "
             }
         });
 
@@ -215,8 +210,6 @@ mod tests {
         assert_eq!(runtime.project_root.as_deref(), Some("/tmp/workspace"));
         assert_eq!(runtime.workspace_root.as_deref(), Some("/tmp/ws"));
         assert_eq!(runtime.remote_connection_id.as_deref(), Some("conn_1"));
-        assert_eq!(runtime.mcp_enabled, Some(true));
-        assert_eq!(runtime.enabled_mcp_ids, vec!["alpha", "beta"]);
         assert_eq!(runtime.auto_create_task, None);
     }
 

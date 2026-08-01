@@ -41,8 +41,8 @@ pub use crate::config::Config;
 pub use crate::core::ai_model_config::ResolvedChatModelConfig;
 pub use crate::services::agent_runtime::mcp_tool_execute::{McpToolExecute, ToolInfo, ToolResult};
 pub use crate::services::agent_runtime::message_manager::MessageManager;
-pub use crate::services::builtin_mcp::BuiltinMcpKind;
 pub use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
+pub use chatos_mcp_runtime::BuiltinMcpKind;
 
 pub fn build_mcp_tool_execute(
     http_servers: Vec<McpHttpServer>,

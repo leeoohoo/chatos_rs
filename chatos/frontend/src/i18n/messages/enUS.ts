@@ -167,7 +167,6 @@ export const enUS: MessageDictionary = {
   'header.openApplications': 'Open applications',
   'header.currentUser': 'Current user',
   'header.unnamedUser': 'No display name',
-  'header.mcpManager': 'Manage MCP services',
   'header.agentManager': 'Manage agents',
   'header.aiModelManager': 'Manage AI models',
   'header.memoryModelSettings': 'Memory summary model',

@@ -181,7 +181,6 @@ export const apiClient = new ApiClient();
 export const conversationsApi = {
   getDetails: (conversationId: string) => apiClient.getConversationDetails(conversationId),
   getAssistant: (conversationId: string) => apiClient.getAssistant(conversationId),
-  getMcpServers: (conversationId?: string) => apiClient.getMcpServers(conversationId),
   saveMessage: (conversationId: string, message: ConversationMessagePayload) => apiClient.saveMessage(conversationId, message),
   getMessages: (conversationId: string, params?: { limit?: number; offset?: number }) => apiClient.getMessages(conversationId, params),
   addMessage: (conversationId: string, message: ConversationMessagePayload) => apiClient.addMessage(conversationId, message),

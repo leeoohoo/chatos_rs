@@ -152,7 +152,6 @@ impl AgentBuilderService {
                             "additionalProperties": false
                         }
                     },
-                    "mcp_policy": { "type": "object" },
                     "project_policy": { "type": "object" }
                 },
                 "required": ["name", "role_definition"],
@@ -201,7 +200,6 @@ impl AgentBuilderService {
                             "additionalProperties": false
                         }
                     },
-                    "mcp_policy": { "type": "object" },
                     "project_policy": { "type": "object" }
                 },
                 "required": ["agent_id"],
@@ -344,7 +342,6 @@ fn build_create_payload(args: Value, default_user_id: Option<&str>) -> Result<Va
         "skills": optional_skill_array(&args, "skills"),
         "skill_ids": optional_string_array(&args, "skill_ids"),
         "default_skill_ids": optional_string_array(&args, "default_skill_ids"),
-        "mcp_policy": optional_object_value(&args, "mcp_policy"),
         "project_policy": optional_object_value(&args, "project_policy"),
         "enabled": args.get("enabled").and_then(Value::as_bool),
     });
@@ -361,7 +358,6 @@ fn build_update_payload(args: &Value) -> Value {
         "skills": optional_skill_array(args, "skills"),
         "skill_ids": optional_string_array(args, "skill_ids"),
         "default_skill_ids": optional_string_array(args, "default_skill_ids"),
-        "mcp_policy": optional_object_value(args, "mcp_policy"),
         "project_policy": optional_object_value(args, "project_policy"),
         "enabled": args.get("enabled").and_then(Value::as_bool),
     });
@@ -505,6 +501,7 @@ mod tests {
                 .and_then(Value::as_object)
                 .expect("tool properties");
             assert!(!properties.contains_key("plugin_sources"));
+            assert!(!properties.contains_key("mcp_policy"));
             assert!(!properties.contains_key("user_id"));
         }
     }

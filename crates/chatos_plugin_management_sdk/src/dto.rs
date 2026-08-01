@@ -164,14 +164,12 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 12] = [
         Self::ChatosConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
         Self::TaskRunnerPlanPhase,
-        Self::TaskRunnerLocalPlanPhase,
         Self::TaskRunnerRunPhase,
-        Self::TaskRunnerLocalRunPhase,
         Self::ProjectManagementAgent,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,

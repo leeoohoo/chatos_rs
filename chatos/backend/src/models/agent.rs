@@ -25,7 +25,6 @@ pub struct Agent {
     pub skills: Vec<AgentSkill>,
     pub skill_ids: Vec<String>,
     pub default_skill_ids: Vec<String>,
-    pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub enabled: bool,
     pub created_at: String,
@@ -43,7 +42,6 @@ impl Agent {
         skills: Vec<AgentSkill>,
         skill_ids: Vec<String>,
         default_skill_ids: Vec<String>,
-        mcp_policy: Option<Value>,
         project_policy: Option<Value>,
         enabled: bool,
     ) -> Self {
@@ -60,7 +58,6 @@ impl Agent {
             skills,
             skill_ids,
             default_skill_ids,
-            mcp_policy,
             project_policy,
             enabled,
             created_at: now.clone(),

@@ -59,12 +59,6 @@ pub(super) struct CompactHistoryQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct AddMcpServerRequest {
-    pub(super) mcp_server_name: Option<String>,
-    pub(super) mcp_config_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct UpdateSessionRuntimeSettingsRequest {
     #[serde(alias = "selectedModelId")]
     pub(super) selected_model_id: Option<Option<String>>,
@@ -80,10 +74,6 @@ pub(super) struct UpdateSessionRuntimeSettingsRequest {
     pub(super) reasoning_enabled: Option<bool>,
     #[serde(alias = "planModeEnabled")]
     pub(super) plan_mode_enabled: Option<bool>,
-    #[serde(alias = "mcpEnabled")]
-    pub(super) mcp_enabled: Option<bool>,
-    #[serde(alias = "enabledMcpIds")]
-    pub(super) enabled_mcp_ids: Option<Vec<String>>,
     #[serde(alias = "autoCreateTask")]
     pub(super) auto_create_task: Option<bool>,
 }

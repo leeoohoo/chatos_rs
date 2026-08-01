@@ -20,9 +20,9 @@ use tracing::warn;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     now_rfc3339, AskUserPromptRecord, AskUserPromptStatus, AskUserPromptTaskCountRecord,
-    ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus, ExternalMcpConfigRecord,
-    ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
-    RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
+    ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus, ModelConfigRecord,
+    ModelConfigUsageRecord, PaginatedResponse, PromptListFilters, RemoteServerRecord,
+    RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
     TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord,
     TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus,
     TaskSummaryRecord, UserRecord,
@@ -115,7 +115,6 @@ struct StoreData {
     model_configs: BTreeMap<String, ModelConfigRecord>,
     runtime_settings: Option<RuntimeSettingsRecord>,
     remote_servers: BTreeMap<String, RemoteServerRecord>,
-    external_mcp_configs: BTreeMap<String, ExternalMcpConfigRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
     ask_user_prompts: BTreeMap<String, AskUserPromptRecord>,
@@ -137,7 +136,6 @@ pub(crate) struct MongoStore {
     model_configs: Collection<ModelConfigRecord>,
     runtime_settings: Collection<RuntimeSettingsRecord>,
     remote_servers: Collection<RemoteServerRecord>,
-    external_mcp_configs: Collection<ExternalMcpConfigRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
     ask_user_prompts: Collection<AskUserPromptRecord>,

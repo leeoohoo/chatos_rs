@@ -22,7 +22,7 @@ pub(crate) mod selectable_views;
 mod task_config_application;
 
 use plugin_selection::{
-    is_local_task_runner_agent, plugin_selection_requires_local_execution, plugin_snapshot,
+    plugin_selection_requires_local_execution, plugin_snapshot,
     validate_plugin_component_selection, validate_supported_plugin,
 };
 
@@ -34,6 +34,7 @@ const BUILTIN_RUNTIME_KIND: &str = chatos_plugin_management_sdk::LEGACY_BUILTIN_
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRunnerCapabilityPolicy {
     capabilities: ResolvedAgentCapabilities,
+    portable_uses_local: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,7 +49,15 @@ pub(crate) struct TaskSkillSnapshotView {
 }
 
 impl TaskRunnerCapabilityPolicy {
+    #[cfg(test)]
     fn new(capabilities: ResolvedAgentCapabilities) -> Result<Self, String> {
+        Self::new_for_runtime(capabilities, false)
+    }
+
+    fn new_for_runtime(
+        capabilities: ResolvedAgentCapabilities,
+        portable_uses_local: bool,
+    ) -> Result<Self, String> {
         if !capabilities.agent_enabled {
             return Err(format!(
                 "Task Runner Agent is disabled by Plugin Management: {}",
@@ -62,14 +71,21 @@ impl TaskRunnerCapabilityPolicy {
             .ensure_required_skills_supported([])
             .map_err(|err| err.to_string())?;
         for plugin in capabilities.required_plugins() {
-            validate_supported_plugin(plugin, capabilities.agent_key.as_str())?;
+            validate_supported_plugin(
+                plugin,
+                capabilities.agent_key.as_str(),
+                portable_uses_local,
+            )?;
         }
         for item in capabilities.required_mcps() {
             if plugin_task_process_log_mcp(item) {
                 validate_task_process_log_mcp_runtime(item)?;
             }
         }
-        Ok(Self { capabilities })
+        Ok(Self {
+            capabilities,
+            portable_uses_local,
+        })
     }
 
     pub(crate) fn policy_revision(&self) -> &str {
@@ -86,6 +102,7 @@ impl TaskRunnerCapabilityPolicy {
         out
     }
 
+    #[cfg(test)]
     pub(crate) fn selectable_builtin_kind_names(&self) -> Vec<String> {
         self.selectable_builtin_kinds()
             .into_iter()
@@ -118,7 +135,12 @@ impl TaskRunnerCapabilityPolicy {
         self.capabilities
             .selectable_plugins()
             .filter(|plugin| {
-                validate_supported_plugin(plugin, self.capabilities.agent_key.as_str()).is_ok()
+                validate_supported_plugin(
+                    plugin,
+                    self.capabilities.agent_key.as_str(),
+                    self.portable_uses_local,
+                )
+                .is_ok()
             })
             .collect()
     }
@@ -171,11 +193,13 @@ impl TaskRunnerCapabilityPolicy {
                 plugin,
                 selected,
                 self.capabilities.agent_key.as_str(),
+                self.portable_uses_local,
             )?;
             if plugin_selection_requires_local_execution(
                 plugin,
                 selected,
                 self.capabilities.agent_key.as_str(),
+                self.portable_uses_local,
             )? {
                 normalized_plugin_identifier(
                     config.device_id.as_deref().unwrap_or_default(),
@@ -260,6 +284,7 @@ impl TaskRunnerCapabilityPolicy {
                     task.plugin_config.workspace_id.as_deref(),
                     command_invocations.as_slice(),
                     self.capabilities.agent_key.as_str(),
+                    self.portable_uses_local,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -311,40 +336,31 @@ impl TaskRunnerCapabilityPolicy {
 }
 
 impl TaskService {
-    pub(crate) async fn resolve_task_runner_policy(
-        &self,
-        current_user: Option<&CurrentUser>,
-        owner_user_id: Option<&str>,
-    ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
-        self.resolve_task_runner_policy_for_agent(
-            current_user,
-            owner_user_id,
-            SystemAgentKey::TaskRunnerRunPhase,
-        )
-        .await
-    }
-
-    pub(crate) async fn resolve_task_runner_policy_for_agent(
-        &self,
-        current_user: Option<&CurrentUser>,
-        owner_user_id: Option<&str>,
-        agent_key: SystemAgentKey,
-    ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
-        self.resolve_task_runner_policy_for_agent_on_device(
-            current_user,
-            owner_user_id,
-            agent_key,
-            None,
-        )
-        .await
-    }
-
     pub(crate) async fn resolve_task_runner_policy_for_agent_on_device(
         &self,
         current_user: Option<&CurrentUser>,
         owner_user_id: Option<&str>,
         agent_key: SystemAgentKey,
         device_id: Option<String>,
+    ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
+        let runtime_provider = device_id.as_ref().map(|_| "local_connector".to_string());
+        self.resolve_task_runner_policy_for_agent_runtime(
+            current_user,
+            owner_user_id,
+            agent_key,
+            device_id,
+            runtime_provider,
+        )
+        .await
+    }
+
+    pub(crate) async fn resolve_task_runner_policy_for_agent_runtime(
+        &self,
+        current_user: Option<&CurrentUser>,
+        owner_user_id: Option<&str>,
+        agent_key: SystemAgentKey,
+        device_id: Option<String>,
+        runtime_provider: Option<String>,
     ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
         let Some(client) = self.plugin_management_client.as_ref() else {
             // Task definition CRUD does not execute an Agent or grant tools. The run path below
@@ -359,6 +375,7 @@ impl TaskService {
             agent_key,
             Some(TaskRunnerPolicyRuntimeContext {
                 device_id,
+                runtime_provider,
                 ..TaskRunnerPolicyRuntimeContext::default()
             }),
         )
@@ -377,6 +394,14 @@ impl RunService {
         let owner_user_id = task_owner_user_id(task)
             .ok_or_else(|| "task owner user id is required for plugin policy".to_string())?;
         let project_source_type = self.task_project_source_type(task).await?;
+        let runtime_provider = if project_source_type
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("local"))
+        {
+            "local_connector"
+        } else {
+            "cloud"
+        };
         resolve_policy(
             client,
             owner_user_id,
@@ -388,7 +413,7 @@ impl RunService {
             Some(TaskRunnerPolicyRuntimeContext {
                 task_profile: Some(task.task_profile.clone()),
                 project_source_type,
-                runtime_provider: Some("cloud".to_string()),
+                runtime_provider: Some(runtime_provider.to_string()),
                 schedule_mode: Some(task.schedule.mode.mode_key().to_string()),
                 device_id: normalized_text(task.plugin_config.device_id.clone()),
             }),
@@ -426,6 +451,8 @@ async fn resolve_policy(
     runtime_context: Option<TaskRunnerPolicyRuntimeContext>,
 ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
     let runtime_context = runtime_context.unwrap_or_default();
+    let portable_uses_local =
+        runtime_context.runtime_provider.as_deref() == Some("local_connector");
     let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id)
         .with_runtime_context(
             runtime_context.task_profile,
@@ -445,7 +472,7 @@ async fn resolve_policy(
             .await
             .map_err(|err| err.to_string())?
     };
-    TaskRunnerCapabilityPolicy::new(capabilities).map(Some)
+    TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, portable_uses_local).map(Some)
 }
 
 fn normalized_text(value: Option<String>) -> Option<String> {

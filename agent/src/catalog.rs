@@ -70,13 +70,13 @@ pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor:
     AgentToolPlane::Managed,
 );
 
-pub static TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+static RETIRED_TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerLocalPlanPhase,
-    "Local Task Runner Planning Agent",
+    "Retired Local Task Runner Planning Agent",
     "task-runner",
-    "Runs non-mutating Task Runner planning tasks on the Local Connector execution plane with a local planning capability boundary.",
-    true,
-    AgentToolPlane::Managed,
+    "Retired compatibility identity. Local projects use the cloud Task Runner planning Agent and route local tools through Local Connector.",
+    false,
+    AgentToolPlane::None,
 );
 
 pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -88,13 +88,13 @@ pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     AgentToolPlane::Managed,
 );
 
-pub static TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+static RETIRED_TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerLocalRunPhase,
-    "Local Task Runner Execution Agent",
+    "Retired Local Task Runner Execution Agent",
     "task-runner",
-    "Executes implementation, testing, repair, and other mutating Task Runner work on the Local Connector execution plane.",
-    true,
-    AgentToolPlane::Managed,
+    "Retired compatibility identity. Local projects use the cloud Task Runner execution Agent and route local tools through Local Connector.",
+    false,
+    AgentToolPlane::None,
 );
 
 pub static PROJECT_MANAGEMENT_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -161,14 +161,12 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     AgentToolPlane::None,
 );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 14] = [
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 12] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
     &CHATOS_PLANNING_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
     &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
-    &TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
-    &TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
     &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR,
@@ -190,9 +188,11 @@ pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
             &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR
         }
         SystemAgentKey::TaskRunnerPlanPhase => &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
-        SystemAgentKey::TaskRunnerLocalPlanPhase => &TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR,
+        SystemAgentKey::TaskRunnerLocalPlanPhase => {
+            &RETIRED_TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR
+        }
         SystemAgentKey::TaskRunnerRunPhase => &TASK_RUNNER_AGENT_DESCRIPTOR,
-        SystemAgentKey::TaskRunnerLocalRunPhase => &TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
+        SystemAgentKey::TaskRunnerLocalRunPhase => &RETIRED_TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectManagementAgent => &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
             &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR
@@ -225,7 +225,7 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 14);
+        assert_eq!(keys.len(), 12);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
@@ -234,9 +234,7 @@ mod tests {
                 "chatos_planning_agent",
                 "project_requirement_execution_planner_agent",
                 "task_runner_plan_phase",
-                "task_runner_local_plan_phase",
                 "task_runner_run_phase",
-                "task_runner_local_run_phase",
                 "project_management_agent",
                 "local_connector_command_approval_agent",
                 "memory_engine_summary_agent",

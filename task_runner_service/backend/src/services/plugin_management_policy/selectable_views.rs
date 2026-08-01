@@ -10,16 +10,6 @@ use serde_json::Value;
 use super::{is_task_runner_execution_agent, TaskRunnerCapabilityPolicy};
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct SelectableExternalMcpView {
-    pub id: String,
-    pub name: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub runtime_kind: String,
-    pub visibility: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub(crate) struct SelectablePluginView {
     pub id: String,
     pub plugin_key: String,
@@ -73,20 +63,6 @@ pub(crate) struct SelectablePluginAgentView {
 }
 
 impl TaskRunnerCapabilityPolicy {
-    pub(crate) fn selectable_external_mcp_views(&self) -> Vec<SelectableExternalMcpView> {
-        self.selectable_external_mcps()
-            .into_iter()
-            .map(|item| SelectableExternalMcpView {
-                id: item.resource.id.clone(),
-                name: item.resource.name.clone(),
-                display_name: item.resource.display_name.clone(),
-                description: item.resource.description.clone(),
-                runtime_kind: item.resource.runtime.kind.clone(),
-                visibility: item.resource.visibility.clone(),
-            })
-            .collect()
-    }
-
     pub(crate) fn selectable_plugin_views(&self) -> Vec<SelectablePluginView> {
         self.selectable_plugins()
             .into_iter()
@@ -103,8 +79,7 @@ impl TaskRunnerCapabilityPolicy {
                     })
                     .collect::<BTreeMap<_, _>>();
                 let execution_type = plugin_execution_type(component_hosts.values().copied());
-                let local_portable_execution =
-                    super::is_local_task_runner_agent(self.capabilities.agent_key.as_str());
+                let local_portable_execution = self.portable_uses_local;
                 let components = plugin
                     .components
                     .iter()

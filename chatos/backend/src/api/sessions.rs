@@ -12,7 +12,6 @@ mod history_compact;
 mod history_display;
 mod history_process;
 pub(crate) mod history_process_support;
-mod mcp_server_handlers;
 mod message_handlers;
 mod review_handlers;
 mod runtime_settings_handlers;
@@ -20,7 +19,6 @@ mod session_handlers;
 mod summary_handlers;
 mod support;
 
-use self::mcp_server_handlers::{add_mcp_server, delete_mcp_server, list_mcp_servers};
 use self::message_handlers::{
     create_session_message, get_session_compact_history, get_session_messages,
     get_session_turn_display_messages, get_session_turn_display_messages_by_turn,
@@ -51,14 +49,6 @@ pub fn router() -> Router {
         .route(
             "/api/conversations/{conversation_id}/runtime-settings",
             get(get_session_runtime_settings).put(update_session_runtime_settings),
-        )
-        .route(
-            "/api/conversations/{conversation_id}/mcp-servers",
-            get(list_mcp_servers).post(add_mcp_server),
-        )
-        .route(
-            "/api/conversations/{conversation_id}/mcp-servers/{mcp_config_id}",
-            delete(delete_mcp_server),
         )
         .route(
             "/api/conversations/{conversation_id}/messages",

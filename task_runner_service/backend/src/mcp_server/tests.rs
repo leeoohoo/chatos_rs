@@ -4,8 +4,7 @@
 use super::chatos_async_planner;
 use super::support::{
     agent_tool_allowed, create_task_schema, enrich_tool_schemas_with_model_configs,
-    filter_model_configs_for_user, model_configs_for_user, normalize_mcp_builtin_kind_names,
-    task_mcp_config_schema, update_task_schema,
+    filter_model_configs_for_user, model_configs_for_user, update_task_schema,
 };
 use super::{CreateTaskArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 use crate::ask_user_prompt_service::AskUserPromptService;
@@ -13,13 +12,10 @@ use crate::auth::CurrentUser;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     ChatosSyncedModelConfigRequest, CreateTaskProjectRequest, CreateTaskRequest, ModelConfigRecord,
-    TaskMcpConfig, TaskScheduleMode, TaskSourceContext, TaskStatus, UpdateTaskRequest, UserRole,
-    PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    TaskMcpConfig, TaskMcpRequestConfig, TaskScheduleMode, TaskSourceContext, TaskStatus,
+    UpdateTaskRequest, UserRole, PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
-use crate::services::{
-    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService,
-    TaskProjectService, TaskService,
-};
+use crate::services::{ModelConfigService, RunService, TaskProjectService, TaskService};
 use crate::store::AppStore;
 use axum::{
     extract::{Path, State},
@@ -52,10 +48,7 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         subject_id: None,
         schedule: None,
         plugin_config: Default::default(),
-        mcp_config: Some(TaskMcpConfig {
-            enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
-            ..TaskMcpConfig::default()
-        }),
+        mcp_config: None,
         prerequisite_task_ids: None,
     }
 }
@@ -71,20 +64,15 @@ async fn test_mcp_service_with_config(
     let store = AppStore::new(&config).await.expect("store");
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
-    let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone());
-    let mcp_catalog_service =
-        McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());
     let task_project_service = TaskProjectService::new(store);
     (
         TaskRunnerMcpService::new(
             task_service.clone(),
             model_config_service,
-            external_mcp_config_service,
             run_service,
             ask_user_prompt_service,
-            mcp_catalog_service,
         ),
         task_service,
         task_project_service,

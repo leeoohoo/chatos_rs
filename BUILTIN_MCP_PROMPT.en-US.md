@@ -336,7 +336,7 @@ Usage rules:
 2. Skills may only be created as inline skills owned by that Agent. Do not reference retired Skill-center IDs or write `plugin_sources`; users select Plugin capabilities per conversation or task through the Plugin Picker.
 3. Before creation, use `preview_agent_context` to inspect the final merged role and inline Skills context and remove duplicate, conflicting, or vague instructions.
 4. Call `create_memory_agent` only when the user explicitly asks to create an agent. Use `update_memory_agent` for an existing agent and provide the exact `agent_id`.
-5. `mcp_policy`, `project_policy`, and enabled state change the agent's permissions and behavior. Do not broaden them without explicit user authorization.
+5. MCP access is assigned by Plugin Management and routed by the platform. Never ask the model to choose MCP IDs, services, devices, or execution locations. `project_policy` and enabled state still require explicit user authorization before broadening.
 6. After a create or update call, rely on the returned agent data. Do not claim settings took effect when the tool did not return them.
 
 ## [conditional_contact_memory_readers]

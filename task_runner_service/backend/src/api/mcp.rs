@@ -68,30 +68,19 @@ pub(super) async fn list_task_capability_catalog(
     );
     let policy = state
         .task_service
-        .resolve_task_runner_policy_for_agent_on_device(
+        .resolve_task_runner_policy_for_agent_runtime(
             Some(&user),
             Some(owner_user_id),
             agent_key,
             query.device_id.clone(),
+            query.runtime_provider.clone(),
         )
         .await
         .map_err(ApiError::bad_gateway)?
         .ok_or_else(|| ApiError::internal("plugin management policy resolver is unavailable"))?;
-    let selectable_builtin_kinds = policy
-        .selectable_builtin_kind_names()
-        .into_iter()
-        .collect::<std::collections::HashSet<_>>();
-    let selectable_builtin_mcps = state
-        .mcp_catalog_service
-        .list_catalog()
-        .into_iter()
-        .filter(|item| selectable_builtin_kinds.contains(item.kind.as_str()))
-        .collect::<Vec<_>>();
     Ok(Json(json!({
         "agent_key": agent_key.as_str(),
         "policy_revision": policy.policy_revision(),
-        "selectable_builtin_mcps": selectable_builtin_mcps,
-        "selectable_external_mcps": policy.selectable_external_mcp_views(),
         "selectable_plugins": policy.selectable_plugin_views(),
     })))
 }

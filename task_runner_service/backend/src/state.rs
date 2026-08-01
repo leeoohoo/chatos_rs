@@ -6,8 +6,8 @@ use crate::auth::{AuthService, SseTicketStore};
 use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::services::{
-    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RemoteServerService,
-    RunService, TaskProjectService, TaskService, ToolingStateService,
+    McpCatalogService, ModelConfigService, RemoteServerService, RunService, TaskProjectService,
+    TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
@@ -20,7 +20,6 @@ pub struct AppState {
     pub task_service: TaskService,
     pub model_config_service: ModelConfigService,
     pub remote_server_service: RemoteServerService,
-    pub external_mcp_config_service: ExternalMcpConfigService,
     pub task_project_service: TaskProjectService,
     pub run_service: RunService,
     pub ask_user_prompt_service: AskUserPromptService,
@@ -51,7 +50,6 @@ impl AppState {
             TaskProjectService::new_with_config(store.clone(), config.clone());
         task_project_service.ensure_public_project().await?;
         let remote_server_service = RemoteServerService::new(store.clone());
-        let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
         let ask_user_prompt_service =
             AskUserPromptService::new_with_config(store.clone(), config.clone());
         let run_service = RunService::new_with_plugin_management(
@@ -66,17 +64,14 @@ impl AppState {
         let task_runner_mcp_service = TaskRunnerMcpService::new(
             task_service.clone(),
             model_config_service.clone(),
-            external_mcp_config_service.clone(),
             run_service.clone(),
             ask_user_prompt_service.clone(),
-            mcp_catalog_service.clone(),
         );
         Ok(Self {
             config,
             task_service,
             model_config_service,
             remote_server_service,
-            external_mcp_config_service,
             task_project_service,
             run_service,
             ask_user_prompt_service,

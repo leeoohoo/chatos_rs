@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentManager from './AgentManager';
 import AiModelManager from './AiModelManager';
 import ApplicationsPanel from './ApplicationsPanel';
-import McpManager from './McpManager';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { ApiClientProvider } from '../lib/api/ApiClientContext';
 import type ApiClient from '../lib/api/client';
@@ -21,7 +20,6 @@ import type {
   AiModelConfig,
   AiModelProvider,
   Application,
-  McpConfig,
 } from '../types';
 import { DialogProvider } from './ui/DialogProvider';
 
@@ -36,7 +34,6 @@ vi.mock('../lib/store/ChatStoreContext', async () => {
 const mockedUseChatStoreResolved = vi.mocked(useChatStoreResolved);
 
 const createApiClientStub = (modelProviders: AiModelProvider[] = []) => ({
-  getMcpConfigResourceByCommand: vi.fn(async () => ({ success: true, config: null })),
   getAiModelProviders: vi.fn(async () => modelProviders),
 } as unknown as ApiClient);
 
@@ -83,18 +80,6 @@ const sampleAiProvider: AiModelProvider = {
   updatedAt: new Date('2026-06-01T00:00:00Z'),
 };
 
-const sampleMcpConfig: McpConfig = {
-  id: 'mcp-1',
-  name: 'filesystem',
-  command: 'npx @modelcontextprotocol/server-filesystem /tmp',
-  type: 'stdio',
-  args: [],
-  cwd: '/tmp',
-  enabled: true,
-  createdAt: new Date('2026-06-01T00:00:00Z'),
-  updatedAt: new Date('2026-06-01T00:00:00Z'),
-};
-
 const sampleAgent: AgentConfig = {
   id: 'agent-1',
   name: '工程助理',
@@ -107,7 +92,6 @@ const sampleAgent: AgentConfig = {
   skill_ids: [],
   default_skill_ids: [],
   skills: [],
-  mcp_policy: null,
   project_policy: null,
   app_ids: [],
   createdAt: new Date('2026-06-01T00:00:00Z'),
@@ -150,24 +134,6 @@ describe('manager dialogs integration', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '编辑' }));
     expect(screen.getByRole('dialog', { name: '编辑 AI 供应商' })).toBeInTheDocument();
-  });
-
-  it('opens add and edit dialogs from McpManager', () => {
-    const store = {
-      mcpConfigs: [sampleMcpConfig],
-      updateMcpConfig: vi.fn(async () => sampleMcpConfig),
-      deleteMcpConfig: vi.fn(async () => undefined),
-      loadMcpConfigs: vi.fn(async () => undefined),
-    };
-
-    renderWithProviders(<McpManager onClose={vi.fn()} store={() => store} />);
-
-    fireEvent.click(screen.getByRole('button', { name: /\+ 添加 MCP 服务器|添加 MCP 服务器/ }));
-    expect(screen.getByRole('dialog', { name: '添加新服务器' })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'Escape' });
-
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
-    expect(screen.getByRole('dialog', { name: '编辑服务器' })).toBeInTheDocument();
   });
 
   it('opens add and edit dialogs from AgentManager', () => {

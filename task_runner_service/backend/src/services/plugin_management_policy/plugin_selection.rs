@@ -17,6 +17,7 @@ use super::{
 pub(super) fn validate_supported_plugin(
     plugin: &ResolvedPlugin,
     expected_agent: &str,
+    portable_uses_local: bool,
 ) -> Result<(), String> {
     let mut supported = 0usize;
     for component in plugin
@@ -24,7 +25,11 @@ pub(super) fn validate_supported_plugin(
         .iter()
         .filter(|component| component.available)
     {
-        if plugin_component_supported_for_agent(&component.component, expected_agent) {
+        if plugin_component_supported_for_agent(
+            &component.component,
+            expected_agent,
+            portable_uses_local,
+        ) {
             supported += 1;
         } else if component.component.required {
             return Err(format!(
@@ -46,8 +51,9 @@ pub(super) fn validate_plugin_component_selection(
     plugin: &ResolvedPlugin,
     selected: &SelectedPluginRef,
     expected_agent: &str,
+    portable_uses_local: bool,
 ) -> Result<(), String> {
-    validate_supported_plugin(plugin, expected_agent)?;
+    validate_supported_plugin(plugin, expected_agent, portable_uses_local)?;
     let release = plugin
         .release
         .as_ref()
@@ -65,7 +71,11 @@ pub(super) fn validate_plugin_component_selection(
         .filter(|component| {
             component.available
                 && component.component.kind == PluginComponentKind::SkillCollection
-                && plugin_component_supported_for_agent(&component.component, expected_agent)
+                && plugin_component_supported_for_agent(
+                    &component.component,
+                    expected_agent,
+                    portable_uses_local,
+                )
         })
         .map(|component| plugin_skill_id(&component.component))
         .collect::<HashSet<_>>();
@@ -84,7 +94,11 @@ pub(super) fn validate_plugin_component_selection(
         .filter(|component| {
             component.available
                 && component.component.kind == PluginComponentKind::Command
-                && plugin_component_supported_for_agent(&component.component, expected_agent)
+                && plugin_component_supported_for_agent(
+                    &component.component,
+                    expected_agent,
+                    portable_uses_local,
+                )
         })
         .map(|component| (component.component.component_key.as_str(), component))
         .collect::<HashMap<_, _>>();
@@ -99,7 +113,8 @@ pub(super) fn validate_plugin_component_selection(
         })?;
         debug_assert!(plugin_component_supported_for_agent(
             &command.component,
-            expected_agent
+            expected_agent,
+            portable_uses_local,
         ));
     }
 
@@ -109,7 +124,11 @@ pub(super) fn validate_plugin_component_selection(
         .filter(|component| {
             component.available
                 && component.component.kind == PluginComponentKind::Agent
-                && plugin_component_supported_for_agent(&component.component, expected_agent)
+                && plugin_component_supported_for_agent(
+                    &component.component,
+                    expected_agent,
+                    portable_uses_local,
+                )
         })
         .map(|component| component.component.component_key.as_str())
         .collect::<HashSet<_>>();
@@ -136,6 +155,7 @@ pub(super) fn plugin_selection_requires_local_execution(
     plugin: &ResolvedPlugin,
     selected: &SelectedPluginRef,
     expected_agent: &str,
+    portable_uses_local: bool,
 ) -> Result<bool, String> {
     let selected_skill_ids =
         normalized_unique_ids(&selected.selected_skill_ids, "selected_skill_ids")?
@@ -160,9 +180,10 @@ pub(super) fn plugin_selection_requires_local_execution(
                 &selected_command_ids,
                 &selected_agent_ids,
                 expected_agent,
+                portable_uses_local,
             ) && (component.component.execution_host == PluginExecutionHost::Local
                 || (component.component.execution_host == PluginExecutionHost::Portable
-                    && is_local_task_runner_agent(expected_agent)))
+                    && portable_uses_local))
         }))
 }
 
@@ -173,8 +194,9 @@ pub(super) fn plugin_snapshot(
     workspace_id: Option<&str>,
     command_invocations: &[PluginCommandInvocation],
     expected_agent: &str,
+    portable_uses_local: bool,
 ) -> Result<RunPluginSnapshot, String> {
-    validate_plugin_component_selection(plugin, selected, expected_agent)?;
+    validate_plugin_component_selection(plugin, selected, expected_agent, portable_uses_local)?;
     let release = plugin
         .release
         .as_ref()
@@ -209,6 +231,7 @@ pub(super) fn plugin_snapshot(
             &selected_command_ids,
             &selected_agent_ids,
             expected_agent,
+            portable_uses_local,
         ) {
             continue;
         }
@@ -299,8 +322,7 @@ pub(super) fn plugin_snapshot(
 
     let local_execution = component_snapshots.iter().any(|component| {
         component.execution_host == PluginExecutionHost::Local
-            || (component.execution_host == PluginExecutionHost::Portable
-                && is_local_task_runner_agent(expected_agent))
+            || (component.execution_host == PluginExecutionHost::Portable && portable_uses_local)
     });
     let device_id = if local_execution {
         let selected_device_id =
@@ -381,8 +403,9 @@ fn component_selected_for_run(
     selected_command_ids: &HashSet<String>,
     selected_agent_ids: &HashSet<String>,
     expected_agent: &str,
+    portable_uses_local: bool,
 ) -> bool {
-    if !plugin_component_supported_for_agent(component, expected_agent) {
+    if !plugin_component_supported_for_agent(component, expected_agent, portable_uses_local) {
         return false;
     }
     match component.kind {
@@ -405,11 +428,9 @@ fn component_selected_for_run(
 fn plugin_component_supported_for_agent(
     component: &PluginComponentDescriptor,
     expected_agent: &str,
+    portable_uses_local: bool,
 ) -> bool {
-    let local_agent = is_local_task_runner_agent(expected_agent);
-    if (component.execution_host == PluginExecutionHost::Cloud && local_agent)
-        || (component.execution_host == PluginExecutionHost::Local && !local_agent)
-    {
+    if component.execution_host == PluginExecutionHost::Local && !portable_uses_local {
         return false;
     }
     match component.kind {
@@ -432,10 +453,6 @@ fn plugin_component_supported_for_agent(
         PluginComponentKind::UiContribution => is_task_runner_execution_agent(expected_agent),
         _ => false,
     }
-}
-
-pub(super) fn is_local_task_runner_agent(agent_key: &str) -> bool {
-    agent_key == "task_runner_local_plan_phase" || agent_key == "task_runner_local_run_phase"
 }
 
 fn plugin_skill_id(component: &PluginComponentDescriptor) -> String {

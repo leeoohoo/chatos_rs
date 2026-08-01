@@ -14,8 +14,7 @@ mod tests {
     use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::modules::conversation_runtime::task_board::build_runtime_prefixed_input_items_for_turn;
-    use crate::services::builtin_mcp::BuiltinMcpKind;
-    use crate::services::mcp_loader::McpBuiltinServer;
+    use crate::services::mcp_loader::{BuiltinMcpKind, McpBuiltinServer};
 
     fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
         McpBuiltinServer {

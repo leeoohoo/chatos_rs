@@ -20,24 +20,6 @@ export interface ChatConfig {
   model: string;
   temperature: number;
   systemPrompt: string;
-  enableMcp: boolean;
-}
-
-export interface McpConfig {
-  id: string;
-  name: string;
-  display_name?: string;
-  command: string;
-  type: 'http' | 'stdio';
-  args?: string[] | null;
-  env?: Record<string, string> | null;
-  cwd?: string | null;
-  enabled: boolean;
-  readonly?: boolean;
-  builtin?: boolean;
-  config?: UnknownRecord | null;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface AiModelConfig {
@@ -130,7 +112,6 @@ export interface AgentConfig {
     content_summary?: string | null;
     updated_at?: string | null;
   }>;
-  mcp_policy?: UnknownRecord | null;
   project_policy?: UnknownRecord | null;
   ui_status?: 'creating';
   createdAt: Date;
