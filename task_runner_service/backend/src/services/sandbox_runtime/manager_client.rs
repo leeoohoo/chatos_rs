@@ -16,13 +16,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::AppConfig;
 use crate::models::{RunOutputChangeManifest, TaskRecord, TaskRunRecord};
 
 use super::workspace::{
     copy_workspace_to_sandbox, sandbox_baseline_workspace, write_generated_config_files,
 };
 use super::{SandboxEnvironmentPlan, SandboxRuntimeContext};
+
+mod auth;
 #[derive(Debug, Serialize)]
 struct CreateSandboxLeaseRequest {
     tenant_id: String,
@@ -761,66 +762,6 @@ where
     read_response_json_limited::<T>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("decode {label} response failed: {err}"))
-}
-
-impl SandboxManagerAuth {
-    pub(super) fn from_config(config: &AppConfig) -> Option<Self> {
-        match (
-            config.sandbox_manager_client_id.clone(),
-            config.sandbox_manager_client_key.clone(),
-        ) {
-            (Some(_client_id), Some(client_key)) => Some(Self {
-                client_key,
-                mode: SandboxManagerAuthMode::Cloud,
-                owner_user_id: None,
-            }),
-            _ => None,
-        }
-    }
-
-    pub(super) fn local_connector(client_key: String, owner_user_id: String) -> Self {
-        Self {
-            client_key,
-            mode: SandboxManagerAuthMode::LocalConnector,
-            owner_user_id: Some(owner_user_id),
-        }
-    }
-
-    pub(super) fn for_context(
-        config: &AppConfig,
-        context: &SandboxRuntimeContext,
-    ) -> Result<Option<Self>, String> {
-        match context.provider_kind()? {
-            chatos_mcp_management_sdk::SandboxProviderKind::LocalConnector => {
-                let owner_user_id = context.owner_user_id.trim();
-                if owner_user_id.is_empty() {
-                    return Err(
-                        "Local Connector sandbox context is missing owner user id".to_string()
-                    );
-                }
-                let client_key = config
-                    .local_connector_internal_api_secret
-                    .clone()
-                    .or_else(|| {
-                        std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET").ok()
-                    })
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| {
-                        "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required for local sandbox release"
-                            .to_string()
-                    })?;
-                Ok(Some(Self::local_connector(
-                    client_key,
-                    owner_user_id.to_string(),
-                )))
-            }
-            chatos_mcp_management_sdk::SandboxProviderKind::Cloud => Ok(Self::from_config(config)),
-            chatos_mcp_management_sdk::SandboxProviderKind::None => {
-                Err("sandbox runtime context provider is unresolved".to_string())
-            }
-        }
-    }
 }
 
 #[cfg(test)]
