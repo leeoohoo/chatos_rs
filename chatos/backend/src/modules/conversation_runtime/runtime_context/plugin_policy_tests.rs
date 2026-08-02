@@ -6,14 +6,18 @@ use chatos_agent::ChatosAgentProfile;
 use super::policy::merge_optional_system_prompts;
 
 #[test]
-fn normal_and_plan_modes_use_distinct_system_agent_keys() {
+fn plan_mode_is_a_program_routed_task_profile_not_a_second_chatos_agent() {
     assert_eq!(
         ChatosAgentProfile::from_flags(false, false).key(),
         chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent
     );
     assert_eq!(
         ChatosAgentProfile::from_flags(true, false).key(),
-        chatos_plugin_management_sdk::SystemAgentKey::ChatosPlanningAgent
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent
+    );
+    assert_eq!(
+        ChatosAgentProfile::from_flags(true, false).task_runner_task_profile(),
+        Some("chatos_plan")
     );
     assert_eq!(
         ChatosAgentProfile::from_flags(false, true).key(),
@@ -60,7 +64,8 @@ fn provider_skills_are_composed_into_the_mcp_system_context() {
         chatos_plugin_management_sdk::compose_mcp_provider_skills_prompt([&mcp], Some("zh-CN"))
             .expect("provider prompt");
 
-    assert!(prompt.contains("MCP Provider Skills"));
+    assert!(prompt.contains("Tool Usage Instructions"));
+    assert!(!prompt.contains("Provider"));
     assert!(prompt.contains("task_runner_service"));
     assert!(prompt.contains("business tools exposed for this Runtime Session"));
     assert!(prompt.contains("routing are resolved by the program"));

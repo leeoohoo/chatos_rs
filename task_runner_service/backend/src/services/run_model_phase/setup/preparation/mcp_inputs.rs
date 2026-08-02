@@ -27,14 +27,14 @@ mod tests {
     #[test]
     fn provider_skills_prompt_is_added_as_a_system_input_item() {
         let items = mcp_provider_skills_prefixed_input_items(Some(
-            "# MCP Provider Skills\n\nUse the issue tracker.".to_string(),
+            "# Tool Usage Instructions\n\nUse the issue tracker.".to_string(),
         ));
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["role"].as_str(), Some("system"));
         assert_eq!(
             items[0].pointer("/content/0/text").and_then(Value::as_str),
-            Some("# MCP Provider Skills\n\nUse the issue tracker.")
+            Some("# Tool Usage Instructions\n\nUse the issue tracker.")
         );
     }
 }

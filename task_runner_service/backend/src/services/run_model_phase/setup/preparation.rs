@@ -28,6 +28,7 @@ pub(super) async fn prepare_model_execution(
             "Plugin Command allowed tools require the task MCP runtime to be enabled".to_string(),
         );
     }
+    service.ensure_run_thread(task, run).await?;
     crate::services::model_runtime_resolver::ensure_cloud_task_project_execution(
         &service.config,
         task,
@@ -40,7 +41,7 @@ pub(super) async fn prepare_model_execution(
     let harness_run_context = if sandbox_required {
         service
             .prepare_harness_run_for_sandbox(task, run, effective_workspace_dir)
-            .await
+            .await?
     } else {
         None
     };
@@ -98,7 +99,7 @@ pub(super) async fn prepare_model_execution(
         .await
         .map_err(|err| format!("加载运行时配置失败: {err}"))?;
     let runtime_config =
-        build_runtime_config(service, task, command_constraints.max_iterations).await?;
+        build_runtime_config(service, task, run, command_constraints.max_iterations).await?;
 
     let mut runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
     if !command_constraints.tool_allowlists.is_empty() {
@@ -187,10 +188,10 @@ fn validate_command_target_agent(
 
 fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale) -> Value {
     let content = if locale.is_english() {
-        "[Authoritative current-run project workspace]\nTask Runner has already acquired and health-checked the sandbox lease for this run. The TerminalController and CodeMaintainer tools exposed in this turn are already bound by the program to the authoritative current project workspace. Provider, device, workspace, sandbox and lease routing are program-managed and must not be requested from the user or inferred by the model.\n\nA project runtime environment status of `pending` only limits application-service topology and Project Gateway targets; it does not disable this run-scoped project workspace or its terminal/file tools. Any historical memory claiming that `pending` forbids all terminal use is obsolete for this run. Reopen and continue child tasks that were blocked only because of that obsolete conclusion. Do not ask the user to initialize the project application environment merely to use the workspace tools already prepared for this run."
+        "[Current project workspace]\nThe project file and terminal tools exposed in this run all operate on the same current project workspace. Use project-root-relative paths and use the tools directly."
             .to_string()
     } else {
-        "[当前运行的权威项目工作区]\nTask Runner 已为本次运行申请并完成沙箱租约健康检查。本轮暴露的 TerminalController 与 CodeMaintainer 工具已由程序绑定到当前权威项目工作区。Provider、设备、Workspace、Sandbox 与租约路由均由程序管理，不得向用户索取，也不得由模型猜测。\n\n项目运行环境的 `pending` 仅限制应用服务拓扑与 Project Gateway 目标，不会禁用本次运行专属的项目工作区及其终端/文件工具。历史记忆中“`pending` 禁止使用所有终端”的结论对本次运行已经过期。仅因为该旧结论而阻塞的子任务应重新打开并继续执行。不得仅为使用本轮已经准备好的工作区工具，再次要求用户初始化项目应用环境。"
+        "[当前项目工作区]\n本轮提供的项目文件与项目终端工具都作用于同一个当前项目工作区。路径使用项目根目录相对路径，直接使用工具即可。"
             .to_string()
     };
     json!({
@@ -284,32 +285,24 @@ fn task_runner_agent_for_task(task: &TaskRecord) -> TaskRunnerAgent {
 }
 
 fn build_memory_scope(service: &RunService, task: &TaskRecord, run: &TaskRunRecord) -> MemoryScope {
-    let scope = MemoryScope::thread(
+    MemoryScope::thread(
         task.tenant_id.clone(),
         service.config.memory_engine_source_id.clone(),
-        task.memory_thread_id.clone(),
+        run.memory_thread_id.clone(),
     )
-    .with_subject_id(task.subject_id.clone());
-    if run
-        .input_snapshot
-        .get("retry_of_run_id")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return scope.with_policy(ComposeContextPolicy {
-            include_recent_records: Some(false),
-            include_thread_summary: Some(false),
-            include_subject_memory: Some(false),
-            recent_record_limit: Some(1),
-            summary_limit: Some(1),
-        });
-    }
-    scope
+    .with_policy(ComposeContextPolicy {
+        include_recent_records: Some(true),
+        include_thread_summary: Some(true),
+        include_subject_memory: Some(false),
+        recent_record_limit: None,
+        summary_limit: None,
+    })
 }
 
 async fn build_runtime_config(
     service: &RunService,
     task: &TaskRecord,
+    run: &TaskRunRecord,
     plugin_max_iterations: Option<usize>,
 ) -> Result<TaskRuntimeConfig, String> {
     let configured_max_iterations = service
@@ -332,14 +325,15 @@ async fn build_runtime_config(
                 "task-runner",
                 service.config.memory_engine_operator_token.clone(),
             )
-            .with_record_scope(Some(MemoryRecordScope::message_thread(
-                task.tenant_id.clone(),
-                task.memory_thread_id.clone(),
-            ))),
+            .with_record_scope(Some(build_memory_record_scope(task, run))),
         ));
     }
 
     Ok(runtime_config)
+}
+
+fn build_memory_record_scope(task: &TaskRecord, run: &TaskRunRecord) -> MemoryRecordScope {
+    MemoryRecordScope::message_thread(task.tenant_id.clone(), run.memory_thread_id.clone())
 }
 
 fn bounded_plugin_max_iterations(configured: usize, plugin_limit: Option<usize>) -> usize {
@@ -432,43 +426,70 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_run_fact_overrides_stale_project_environment_memory() {
+    fn sandbox_run_fact_only_describes_the_program_bound_workspace() {
         let item = sandbox_run_fact_input_item(BuiltinMcpPromptLocale::ZhCn);
         let content = item["content"].as_str().expect("system content");
 
         assert_eq!(item["role"].as_str(), Some("system"));
-        assert!(content.contains("已为本次运行申请并完成沙箱租约健康检查"));
-        assert!(content.contains("`pending` 仅限制应用服务拓扑"));
-        assert!(content.contains("历史记忆"));
-        assert!(content.contains("重新打开并继续执行"));
-        assert!(content.contains("均由程序管理"));
+        assert!(content.contains("都作用于同一个当前项目工作区"));
+        assert!(content.contains("项目根目录相对路径"));
+        assert!(!content.contains("pending"));
+        assert!(!content.contains("初始化"));
+        assert!(!content.contains("Provider"));
+        assert!(!content.contains("租约"));
         assert!(!content.contains("/workspace"));
         assert!(!content.contains("pairing"));
     }
 
     #[test]
-    fn retry_run_uses_clean_memory_context_instead_of_failed_attempt_history() {
+    fn run_memory_scope_keeps_current_run_history_without_subject_recall() {
         let service = test_run_service(test_config());
         let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
         let mut run = sample_run(&task);
         run.input_snapshot = json!({ "retry_of_run_id": "run-old" });
 
-        let policy = build_memory_scope(&service, &task, &run)
-            .policy
-            .expect("retry memory policy");
+        let scope = build_memory_scope(&service, &task, &run);
+        let policy = scope.policy.expect("run memory policy");
 
-        assert_eq!(policy.include_recent_records, Some(false));
-        assert_eq!(policy.include_thread_summary, Some(false));
+        assert_eq!(scope.thread_id, run.memory_thread_id);
+        assert_eq!(policy.include_recent_records, Some(true));
+        assert_eq!(policy.include_thread_summary, Some(true));
         assert_eq!(policy.include_subject_memory, Some(false));
     }
 
     #[test]
-    fn initial_run_keeps_default_memory_context_policy() {
+    fn compose_and_record_scopes_use_the_same_run_thread() {
         let service = test_run_service(test_config());
         let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
         let run = sample_run(&task);
+        let compose_scope = build_memory_scope(&service, &task, &run);
+        let record_scope = build_memory_record_scope(&task, &run);
 
-        assert!(build_memory_scope(&service, &task, &run).policy.is_none());
+        assert_eq!(compose_scope.tenant_id, record_scope.tenant_id);
+        assert_eq!(Some(compose_scope.thread_id), record_scope.thread_id);
+    }
+
+    #[test]
+    fn different_runs_do_not_share_memory_threads() {
+        let service = test_run_service(test_config());
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let mut first = sample_run(&task);
+        first.id = "run-1".to_string();
+        first.memory_thread_id = crate::models::task_run_memory_thread_id(
+            task.memory_thread_id.as_str(),
+            first.id.as_str(),
+        );
+        let mut second = sample_run(&task);
+        second.id = "run-2".to_string();
+        second.memory_thread_id = crate::models::task_run_memory_thread_id(
+            task.memory_thread_id.as_str(),
+            second.id.as_str(),
+        );
+
+        assert_ne!(
+            build_memory_scope(&service, &task, &first).thread_id,
+            build_memory_scope(&service, &task, &second).thread_id
+        );
     }
 
     fn test_config() -> AppConfig {
@@ -577,7 +598,10 @@ mod tests {
             id: "run-1".to_string(),
             task_id: task.id.clone(),
             model_config_id: "model-1".to_string(),
-            memory_thread_id: task.memory_thread_id.clone(),
+            memory_thread_id: crate::models::task_run_memory_thread_id(
+                task.memory_thread_id.as_str(),
+                "run-1",
+            ),
             status: crate::models::TaskRunStatus::Queued,
             started_at: None,
             finished_at: None,

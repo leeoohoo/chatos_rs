@@ -47,6 +47,26 @@ fn context() -> ProjectExecutionContext {
 }
 
 #[test]
+fn capability_runtime_provider_uses_project_execution_locality_not_backend_name() {
+    let mut project_context = context();
+
+    project_context.workspace_provider = WorkspaceProviderKind::Harness;
+    assert_eq!(capability_runtime_provider(&project_context), "cloud");
+
+    project_context.workspace_provider = WorkspaceProviderKind::CloudSandbox;
+    assert_eq!(capability_runtime_provider(&project_context), "cloud");
+
+    project_context.workspace_provider = WorkspaceProviderKind::CloudStorage;
+    assert_eq!(capability_runtime_provider(&project_context), "cloud");
+
+    project_context.workspace_provider = WorkspaceProviderKind::LocalConnector;
+    assert_eq!(
+        capability_runtime_provider(&project_context),
+        "local_connector"
+    );
+}
+
+#[test]
 fn context_override_must_match_authoritative_device() {
     validate_context_overrides(&request(), &context()).unwrap();
     let mut invalid = request();

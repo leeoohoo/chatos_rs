@@ -439,7 +439,7 @@ export const resolveRequirementExecutionRecoveryActions = ({
 }): { canRegenerate: boolean; canRevise: boolean; canRerun: boolean } => ({
   canRegenerate: recoveryAction === 'regenerate' && !hasActiveRuns,
   canRevise: !hasActiveRuns
-    && (!actuallyStarted || ['completed', 'failed', 'stopped'].includes(phase)),
+    && (!actuallyStarted || phase === 'stopped'),
   canRerun: recoveryAction === 'rerun' && phase === 'stopped' && !hasActiveRuns,
 });
 

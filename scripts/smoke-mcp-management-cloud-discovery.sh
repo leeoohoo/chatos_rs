@@ -133,7 +133,10 @@ local_project_has_live_sandbox() {
         enabled: true,
         sandbox_readiness: /^ready$/i
       });
-      const liveSession = connectorDb.local_connector_sessions.find({
+      // The active lease collection is the authoritative online signal used by
+      // Local Connector Service. `local_connector_sessions` is legacy history
+      // and must not be used to decide whether MCP Management can route locally.
+      const liveSession = connectorDb.local_connector_active_sessions.find({
         owner_user_id: project.owner_user_id,
         device_id: deviceId,
         status: "connected"

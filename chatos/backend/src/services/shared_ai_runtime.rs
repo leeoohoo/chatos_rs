@@ -12,11 +12,10 @@ use tracing::warn;
 use crate::config::Config;
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
-use crate::services::access_token_scope;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
-use crate::services::chatos_memory_engine::CHATOS_COMPAT_SOURCE_ID;
+use crate::services::chatos_memory_engine::{apply_data_auth, CHATOS_COMPAT_SOURCE_ID};
 
 pub fn build_shared_ai_runtime(
     tool_executor: Option<McpToolExecute>,
@@ -55,16 +54,12 @@ pub fn build_shared_contextual_turn_runner_with_max_iterations(
     let cfg = Config::try_get()?;
     let runtime = build_shared_ai_runtime_with_chatos_records(tool_executor, message_manager)
         .with_max_iterations(max_iterations);
-    let mut memory_client = memory_engine_sdk::MemoryEngineClient::new_direct(
+    let memory_client = memory_engine_sdk::MemoryEngineClient::new_direct(
         cfg.memory_engine_base_url.clone(),
         Duration::from_millis(cfg.memory_engine_request_timeout_ms.max(300) as u64),
         CHATOS_COMPAT_SOURCE_ID.to_string(),
     )?;
-    if let Some(access_token) = access_token_scope::get_current_access_token() {
-        memory_client = memory_client.with_bearer_token(access_token);
-    } else if let Some(operator_token) = cfg.memory_engine_operator_token.as_deref() {
-        memory_client = memory_client.with_internal_service_auth("chatos-backend", operator_token);
-    }
+    let memory_client = apply_data_auth(memory_client, cfg);
     let composer = chatos_ai_runtime::MemoryContextComposer::from_client(memory_client);
     Ok(chatos_ai_runtime::ContextualTurnRunner::new(
         runtime,

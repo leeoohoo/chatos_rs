@@ -27,13 +27,14 @@ use crate::utils::abort_registry;
 #[cfg(test)]
 use super::requirement_execution::WorkItemPlanItem;
 use super::requirement_execution::{
-    collect_requirement_execution_scope, load_execution_links_for_work_items,
-    load_requirement_execution_request_context, mark_execution_messages_for_stop,
-    parse_requirements, parse_work_items, project_plan_array, project_plan_value,
-    requirement_dependency_map, select_contact_runtime, sync_execution_link_status,
-    sync_requirement_execution_state, task_runner_callback_event_for_status,
-    task_runner_status_is_active, task_runner_status_is_cancelled, task_runner_status_is_success,
-    value_string, ExecutionLink, HandlerError,
+    apply_task_runner_task_snapshot, collect_requirement_execution_scope,
+    load_execution_links_for_work_items, load_requirement_execution_request_context,
+    mark_execution_messages_for_stop, parse_requirements, parse_work_items, project_plan_array,
+    project_plan_value, requirement_dependency_map, select_contact_runtime,
+    sync_execution_link_status, sync_requirement_execution_state,
+    task_runner_callback_event_for_status, task_runner_status_is_active,
+    task_runner_status_is_cancelled, task_runner_status_is_success, value_string, ExecutionLink,
+    HandlerError,
 };
 
 mod execute_planning;
@@ -43,6 +44,8 @@ mod rerun_execution;
 mod rerun_support;
 
 use execute_planning::execute_requirement_inner;
+#[cfg(test)]
+use execute_planning::prepare_requirement_planner_turn;
 use execution_dispatch::{
     confirm_requirement_execution_inner, mutate_requirement_execution_dispatch_inner,
 };
@@ -406,10 +409,9 @@ async fn stop_requirement_execution_inner(
                 && link.source_user_message_id.as_deref() == Some(execution_group_id.as_str())
         });
     }
-    for link in links
-        .iter_mut()
-        .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
-    {
+    // Retries reuse the Task Runner task id. Always reconcile the authoritative
+    // task snapshot so a cached failed link cannot hide a newly active retry.
+    for link in links.iter_mut() {
         let task = task_runner_api_client::get_task_runner_task(
             contact_runtime.task_runner_base_url.as_str(),
             contact_runtime.task_runner_agent_token.as_str(),
@@ -417,7 +419,7 @@ async fn stop_requirement_execution_inner(
         )
         .await
         .map_err(|err| HandlerError::bad_gateway("校验 Task Runner 任务状态失败", err))?;
-        link.task_runner_status = Some(task.status.clone());
+        apply_task_runner_task_snapshot(link, &task);
         sync_execution_link_status(
             cfg.project_service_base_url.as_str(),
             project_sync_secret.as_str(),

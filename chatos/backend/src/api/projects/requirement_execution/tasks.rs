@@ -10,6 +10,7 @@ use super::status::{
     project_work_item_status_is_active, task_runner_callback_event_for_status,
     task_runner_status_is_active,
 };
+use super::sync::apply_task_runner_task_snapshot;
 use super::sync::{load_execution_links_for_work_items, sync_execution_link_status};
 use super::types::{ExecutionLink, RequirementPlanItem, SelectedContactRuntime, WorkItemPlanItem};
 
@@ -22,10 +23,10 @@ pub(in crate::api::projects) async fn ensure_requirement_execution_not_active(
     contact_runtime: &SelectedContactRuntime,
 ) -> Result<(), HandlerError> {
     let mut links = load_execution_links_for_work_items(base_url, access_token, work_items).await?;
-    for link in links
-        .iter_mut()
-        .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
-    {
+    // The Task Runner task is authoritative for the current run. A retry reuses
+    // the same task id and can reopen a link whose cached status is terminal, so
+    // reconcile every link instead of trusting the cached active predicate.
+    for link in links.iter_mut() {
         let task = task_runner_api_client::get_task_runner_task(
             contact_runtime.task_runner_base_url.as_str(),
             contact_runtime.task_runner_agent_token.as_str(),
@@ -33,7 +34,7 @@ pub(in crate::api::projects) async fn ensure_requirement_execution_not_active(
         )
         .await
         .map_err(|err| HandlerError::bad_gateway("校验 Task Runner 任务状态失败", err))?;
-        link.task_runner_status = Some(task.status.clone());
+        apply_task_runner_task_snapshot(link, &task);
         sync_execution_link_status(
             base_url,
             project_sync_secret,

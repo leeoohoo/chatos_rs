@@ -151,6 +151,9 @@ impl InMemoryStore {
         run.claim_token = Some(claim_token.to_string());
         run.claim_until = Some(claim_until.to_string());
         run.attempt += 1;
+        run.finished_at = None;
+        run.result_summary = None;
+        run.error_message = None;
         if run.started_at.is_none() {
             run.started_at = Some(now_rfc3339());
         }
@@ -199,15 +202,16 @@ impl InMemoryStore {
         true
     }
 
-    pub(in crate::store) fn fail_expired_run_claims(
+    pub(in crate::store) fn reconcile_expired_run_claims(
         &self,
         expired_before: &str,
-        failed_at: &str,
+        reconciled_at: &str,
+        max_attempts: i64,
     ) -> Vec<TaskRunRecord> {
         let mut data = self.inner.write();
         let cancel_requested_runs = data.cancel_requested_runs.clone();
         let mut terminal_run_ids = Vec::new();
-        let mut failed_runs = Vec::new();
+        let mut reconciled_runs = Vec::new();
         for run in data.runs.values_mut() {
             if run.status != TaskRunStatus::Running {
                 continue;
@@ -226,24 +230,39 @@ impl InMemoryStore {
                 run.result_summary =
                     Some("任务取消请求已生效；运行节点心跳过期后按取消收尾".to_string());
                 run.error_message = None;
+                run.finished_at = Some(reconciled_at.to_string());
+                ensure_terminal_callback_pending(run);
+                terminal_run_ids.push(run.id.clone());
+            } else if run.attempt < max_attempts.max(1) {
+                run.status = TaskRunStatus::Queued;
+                run.started_at = None;
+                run.finished_at = None;
+                run.result_summary = Some("任务运行节点中断，已自动重新排队恢复".to_string());
+                run.error_message = None;
+                run.usage = None;
+                run.report = None;
+                run.summary_job_run_id = None;
+                run.chatos_callback_delivery = None;
             } else {
                 run.status = TaskRunStatus::Failed;
-                run.result_summary = Some("任务运行节点心跳过期，已标记为失败".to_string());
+                run.result_summary = Some(format!(
+                    "任务运行节点连续中断，达到 {max_attempts} 次尝试上限后标记为失败"
+                ));
                 run.error_message = Some("worker claim expired".to_string());
+                run.finished_at = Some(reconciled_at.to_string());
+                ensure_terminal_callback_pending(run);
+                terminal_run_ids.push(run.id.clone());
             }
-            run.finished_at = Some(failed_at.to_string());
-            run.updated_at = failed_at.to_string();
+            run.updated_at = reconciled_at.to_string();
             run.cancel_requested = false;
             run.claim_token = None;
             run.claim_until = None;
-            ensure_terminal_callback_pending(run);
-            terminal_run_ids.push(run.id.clone());
-            failed_runs.push(run.clone());
+            reconciled_runs.push(run.clone());
         }
         for run_id in terminal_run_ids {
             data.cancel_requested_runs.remove(run_id.as_str());
         }
-        failed_runs
+        reconciled_runs
     }
 
     pub(in crate::store) fn list_pending_chatos_callback_runs(
@@ -426,9 +445,11 @@ mod tests {
         let mut stale = store
             .claim_next_queued_run("worker-1", "claim-1", "2000-01-01T00:00:00Z")
             .expect("claim run");
+        stale.attempt = 3;
+        stale = store.save_run(stale).expect("persist exhausted attempts");
 
         let failed_runs =
-            store.fail_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z");
+            store.reconcile_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z", 3);
         assert_eq!(failed_runs.len(), 1);
         assert_eq!(failed_runs[0].id, "run-1");
         assert_eq!(
@@ -450,6 +471,31 @@ mod tests {
     }
 
     #[test]
+    fn expired_claim_is_requeued_before_attempt_limit() {
+        let store = test_store();
+        store.save_run(queued_run()).expect("save queued run");
+        store
+            .claim_next_queued_run("worker-1", "claim-1", "2000-01-01T00:00:00Z")
+            .expect("claim run");
+
+        let reconciled =
+            store.reconcile_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z", 3);
+
+        assert_eq!(reconciled.len(), 1);
+        assert_eq!(reconciled[0].status, TaskRunStatus::Queued);
+        assert_eq!(reconciled[0].attempt, 1);
+        assert!(reconciled[0].finished_at.is_none());
+        assert!(reconciled[0].claim_token.is_none());
+        assert!(reconciled[0].claim_until.is_none());
+        assert!(reconciled[0].chatos_callback_delivery.is_none());
+        let reclaimed = store
+            .claim_next_queued_run("worker-2", "claim-2", "2002-01-01T00:00:00Z")
+            .expect("reclaim recovered run");
+        assert_eq!(reclaimed.attempt, 2);
+        assert!(reclaimed.result_summary.is_none());
+    }
+
+    #[test]
     fn expired_cancel_requested_claim_becomes_cancelled() {
         let store = test_store();
         store.save_run(queued_run()).expect("save queued run");
@@ -461,7 +507,7 @@ mod tests {
             .expect("mark cancel requested");
 
         let terminal_runs =
-            store.fail_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z");
+            store.reconcile_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z", 3);
 
         assert_eq!(terminal_runs.len(), 1);
         assert_eq!(terminal_runs[0].status, TaskRunStatus::Cancelled);
@@ -489,7 +535,7 @@ mod tests {
             .expect("claim run");
 
         assert!(store
-            .fail_expired_run_claims("2000-12-31T23:59:59Z", "2001-01-01T00:01:00Z",)
+            .reconcile_expired_run_claims("2000-12-31T23:59:59Z", "2001-01-01T00:01:00Z", 3,)
             .is_empty());
         assert_eq!(
             store.get_run("run-1").expect("persisted run").status,

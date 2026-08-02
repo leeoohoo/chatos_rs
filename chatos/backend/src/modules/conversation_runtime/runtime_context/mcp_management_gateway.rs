@@ -156,6 +156,14 @@ fn gateway_server(session: RuntimeSessionResponse) -> Result<McpHttpServer, Stri
             ask_user_timeout_ms,
         );
     }
+    let terminal_descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::TerminalController);
+    let terminal_wait_timeout_ms = chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000;
+    for tool_name in ["process_wait", "process"] {
+        tool_timeout_ms.insert(
+            format!("{}_{}", terminal_descriptor.server_name, tool_name),
+            terminal_wait_timeout_ms,
+        );
+    }
     Ok(McpHttpServer {
         name: GATEWAY_SERVER_NAME.to_string(),
         url: session.mcp_server_url,
@@ -226,6 +234,13 @@ mod tests {
                 .get("ask_user_prompt_choices")
                 .copied(),
             Some(ASK_USER_TRANSPORT_TIMEOUT_MS)
+        );
+        assert_eq!(
+            server
+                .tool_timeout_ms
+                .get("terminal_controller_process_wait")
+                .copied(),
+            Some(chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000)
         );
         assert_eq!(
             server

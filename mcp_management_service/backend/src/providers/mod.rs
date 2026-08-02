@@ -358,6 +358,7 @@ impl ProviderDispatcher {
         source_session_id: Option<&str>,
         source_user_message_id: Option<&str>,
         default_model_config_id: Option<&str>,
+        task_profile: Option<&str>,
         expected_project_task_ids: &[String],
         expires_at_unix: i64,
     ) -> std::collections::HashMap<String, Vec<Value>> {
@@ -374,6 +375,7 @@ impl ProviderDispatcher {
                 source_session_id,
                 source_user_message_id,
                 default_model_config_id,
+                task_profile,
                 expected_project_task_ids,
                 expires_at_unix,
             )

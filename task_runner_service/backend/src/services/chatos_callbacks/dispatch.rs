@@ -20,6 +20,15 @@ const CALLBACK_RETRY_DELAYS: [Duration; 6] = [
 ];
 
 impl RunService {
+    pub(in crate::services) async fn try_send_task_callback(
+        &self,
+        event: &str,
+        task_id: &str,
+        run: Option<&TaskRunRecord>,
+    ) {
+        send_task_callback_with_store(&self.config, &self.store, event, task_id, run).await;
+    }
+
     pub(in crate::services) async fn try_send_terminal_callback(
         &self,
         task_id: &str,

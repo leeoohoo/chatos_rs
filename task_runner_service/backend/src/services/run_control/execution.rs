@@ -180,6 +180,14 @@ impl RunService {
         ensure_task_thread_for_config(&self.config, task).await
     }
 
+    pub(in crate::services) async fn ensure_run_thread(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+    ) -> Result<(), String> {
+        super::super::task_threads::ensure_run_thread_for_config(&self.config, task, run).await
+    }
+
     async fn finish_claimed_run_without_task(&self, run: &mut TaskRunRecord, message: String) {
         run.status = TaskRunStatus::Failed;
         run.finished_at = Some(now_rfc3339());

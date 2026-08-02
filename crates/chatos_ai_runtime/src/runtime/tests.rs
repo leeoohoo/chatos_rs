@@ -15,20 +15,69 @@ use axum::{
 use serde_json::{json, Value};
 use tokio::sync::Mutex as AsyncMutex;
 
-use chatos_mcp_runtime::{ToolCallerModelRuntime, ToolResult};
+use chatos_mcp_runtime::{ToolCallContext, ToolCallerModelRuntime, ToolResult, ToolResultCallback};
 
 use super::{
     append_runtime_input_items, empty_final_response_followup_item,
-    merge_pending_tool_turn_into_input, merge_record_metadata, prepare_iteration_request,
-    should_persist_tool_result, IterativeContextRefresh, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
+    merge_current_turn_tool_history_into_input, merge_pending_tool_turn_into_input,
+    merge_record_metadata, prepare_iteration_request, should_persist_tool_result,
+    IterativeContextRefresh, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
 };
 use crate::{
     AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus,
     ModelRequest, RuntimeBeforeModelRequest, RuntimeCallbacks, RuntimeFinalResponseAction,
-    RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook,
+    RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook, ToolExecutor,
 };
 
 struct TestLifecycleHook;
+
+struct PagingToolExecutor;
+
+#[async_trait]
+impl ToolExecutor for PagingToolExecutor {
+    fn available_tools(&self) -> Vec<Value> {
+        vec![json!({
+            "type": "function",
+            "name": "list_page",
+            "description": "List one page",
+            "parameters": {
+                "type": "object",
+                "properties": {"offset": {"type": "integer"}}
+            }
+        })]
+    }
+
+    async fn execute_tools_stream(
+        &self,
+        tool_calls: &[Value],
+        _context: ToolCallContext,
+        _on_tool_result: Option<ToolResultCallback>,
+    ) -> Vec<ToolResult> {
+        tool_calls
+            .iter()
+            .map(|call| {
+                let call_id = call
+                    .get("call_id")
+                    .or_else(|| call.get("id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                ToolResult {
+                    tool_call_id: call_id.clone(),
+                    name: "list_page".to_string(),
+                    success: true,
+                    is_error: false,
+                    is_stream: false,
+                    conversation_turn_id: None,
+                    content: format!("result-{call_id}"),
+                    result: None,
+                    fatal_error: false,
+                    transient_model_input: None,
+                }
+            })
+            .collect()
+    }
+}
 
 #[async_trait]
 impl RuntimeLifecycleHook for TestLifecycleHook {
@@ -180,6 +229,70 @@ async fn start_lifecycle_mock_provider(
         connection_headers,
         server,
     )
+}
+
+#[tokio::test]
+async fn iterative_context_refresh_keeps_prior_tool_batches_in_later_model_requests() {
+    let (base_url, requests, _connection_headers, server) = start_lifecycle_mock_provider(vec![
+        json!({
+            "id": "response-page-1",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+                "name": "list_page",
+                "arguments": "{\"offset\":0}",
+                "status": "completed"
+            }]
+        }),
+        json!({
+            "id": "response-page-2",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "id": "fc_2",
+                "call_id": "call_2",
+                "name": "list_page",
+                "arguments": "{\"offset\":4}",
+                "status": "completed"
+            }]
+        }),
+        json!({
+            "id": "response-final",
+            "status": "completed",
+            "output_text": "verified both pages"
+        }),
+    ])
+    .await;
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "verify every page"}]),
+    )
+    .with_responses_support(true);
+    let refresh =
+        IterativeContextRefresh::new(None, None, Vec::new()).with_sticky_input_items(vec![
+            json!({"role": "user", "content": "verify every page"}),
+        ]);
+    let options = AiRuntimeOptions::for_conversation("session-current-turn-history")
+        .with_iterative_context_refresh(Some(refresh));
+
+    let result = AiRuntime::new(Some(Arc::new(PagingToolExecutor)))
+        .with_max_iterations(4)
+        .run_turn(request, options)
+        .await
+        .expect("paginated tool turn");
+    server.abort();
+
+    assert_eq!(result.content, "verified both pages");
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1].to_string().contains("result-call_1"));
+    assert!(requests[2].to_string().contains("result-call_1"));
+    assert!(requests[2].to_string().contains("result-call_2"));
 }
 
 #[derive(Clone, Default)]
@@ -664,6 +777,97 @@ fn merge_pending_tool_turn_into_input_repairs_refreshed_context() {
 }
 
 #[test]
+fn refreshed_context_keeps_every_tool_batch_from_the_current_turn() {
+    let refreshed = json!([
+        {"type":"message","role":"user","content":[]},
+        {"type":"function_call","call_id":"call_2","name":"list_tasks","arguments":"{\"offset\":4}"},
+        {"type":"function_call_output","call_id":"call_2","output":"page-2-from-memory"}
+    ]);
+    let calls = vec![
+        json!({"type":"function_call","call_id":"call_1","name":"list_tasks","arguments":"{\"offset\":0}"}),
+        json!({"type":"function_call","call_id":"call_2","name":"list_tasks","arguments":"{\"offset\":4}"}),
+    ];
+    let outputs = vec![
+        json!({"type":"function_call_output","call_id":"call_1","output":"page-1"}),
+        json!({"type":"function_call_output","call_id":"call_2","output":"page-2-authoritative"}),
+    ];
+
+    let merged = merge_current_turn_tool_history_into_input(
+        refreshed,
+        calls.as_slice(),
+        outputs.as_slice(),
+        None,
+    );
+    let items = merged.as_array().expect("items");
+
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| { item.get("type").and_then(Value::as_str) == Some("function_call") })
+            .count(),
+        2
+    );
+    assert!(items.iter().any(|item| {
+        item.get("call_id").and_then(Value::as_str) == Some("call_1")
+            && item.get("output").and_then(Value::as_str) == Some("page-1")
+    }));
+    assert!(items.iter().any(|item| {
+        item.get("call_id").and_then(Value::as_str) == Some("call_2")
+            && item.get("output").and_then(Value::as_str) == Some("page-2-authoritative")
+    }));
+}
+
+#[test]
+fn current_turn_tool_history_budget_prefers_newest_results_without_forgetting_old_calls() {
+    let calls = vec![
+        json!({"type":"function_call","call_id":"call_old","name":"read_page","arguments":"{\"offset\":0}"}),
+        json!({"type":"function_call","call_id":"call_new","name":"read_page","arguments":"{\"offset\":4}"}),
+    ];
+    let outputs = vec![
+        json!({"type":"function_call_output","call_id":"call_old","output":"older-page"}),
+        json!({"type":"function_call_output","call_id":"call_new","output":"latest-page"}),
+    ];
+
+    let merged = merge_current_turn_tool_history_into_input(
+        json!([]),
+        calls.as_slice(),
+        outputs.as_slice(),
+        Some(crate::tool_runtime::ToolResultModelBudgetLimits::new(
+            100, 11,
+        )),
+    );
+    let items = merged.as_array().expect("items");
+    let old_output = items
+        .iter()
+        .find(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some("call_old")
+        })
+        .and_then(|item| item.get("output"))
+        .and_then(Value::as_str)
+        .expect("old output");
+    let new_output = items
+        .iter()
+        .find(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some("call_new")
+        })
+        .and_then(|item| item.get("output"))
+        .and_then(Value::as_str)
+        .expect("new output");
+
+    assert!(old_output.contains("combined tool results exceed"));
+    assert_eq!(new_output, "latest-page");
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| { item.get("type").and_then(Value::as_str) == Some("function_call") })
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn append_runtime_input_items_wraps_string_input_for_empty_final_followup() {
     let followup = empty_final_response_followup_item();
     let merged = append_runtime_input_items(Value::String("do the task".to_string()), &[followup]);
@@ -709,9 +913,9 @@ fn empty_final_followup_does_not_forbid_needed_tools() {
 }
 
 #[test]
-fn should_persist_tool_result_skips_successful_empty_arrays_only() {
+fn should_persist_every_completed_tool_result_including_empty_arrays() {
     let empty_success = tool_result("[]", Some(json!([])), true, false, false);
-    assert!(!should_persist_tool_result(&empty_success));
+    assert!(should_persist_tool_result(&empty_success));
 
     let non_empty_success = tool_result("[1]", Some(json!([1])), true, false, false);
     assert!(should_persist_tool_result(&non_empty_success));

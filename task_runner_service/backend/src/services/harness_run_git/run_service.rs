@@ -9,12 +9,12 @@ impl RunService {
         task: &TaskRecord,
         run: &mut TaskRunRecord,
         effective_workspace_dir: &str,
-    ) -> Option<HarnessRunContext> {
+    ) -> Result<Option<HarnessRunContext>, String> {
         let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
         if project_id == crate::models::PUBLIC_PROJECT_ID
             || !project_management_api_client::project_service_enabled(&self.config)
         {
-            return None;
+            return Ok(None);
         }
         let project = match project_management_api_client::sync_get_project(
             &self.config,
@@ -23,10 +23,14 @@ impl RunService {
         .await
         {
             Ok(Some(project)) => project,
-            Ok(None) => return None,
+            Ok(None) => {
+                return Err(format!(
+                    "Harness project context is unavailable: {project_id}"
+                ))
+            }
             Err(err) => {
-                self.append_harness_prepare_failure(run, err).await;
-                return None;
+                self.append_harness_prepare_failure(run, err.clone()).await;
+                return Err(err);
             }
         };
         match self
@@ -65,11 +69,11 @@ impl RunService {
                         "append Harness prepared event failed"
                     );
                 }
-                Some(context)
+                Ok(Some(context))
             }
             Err(err) => {
-                self.append_harness_prepare_failure(run, err).await;
-                None
+                self.append_harness_prepare_failure(run, err.clone()).await;
+                Err(err)
             }
         }
     }
@@ -135,16 +139,26 @@ impl RunService {
                     .await
             };
             let run_branch = format!("chatos/runs/{}", normalize_run_branch_component(&run.id));
-            let commit_message = format!("Sync project snapshot before run {}", run.id);
-            let base_commit = create_snapshot_commit_and_push(
-                workspace_dir.as_str(),
-                worktree.as_path(),
-                base_branch.as_str(),
-                run_branch.as_str(),
-                commit_message.as_str(),
-                &secrets,
-            )
-            .await?;
+            let base_commit = if is_cloud {
+                create_cloud_run_branch(
+                    worktree.as_path(),
+                    base_branch.as_str(),
+                    run_branch.as_str(),
+                    &secrets,
+                )
+                .await?
+            } else {
+                let commit_message = format!("Sync project snapshot before run {}", run.id);
+                create_snapshot_commit_and_push(
+                    workspace_dir.as_str(),
+                    worktree.as_path(),
+                    base_branch.as_str(),
+                    run_branch.as_str(),
+                    commit_message.as_str(),
+                    &secrets,
+                )
+                .await?
+            };
             Ok(HarnessRunContext {
                 project_id: project.id.clone(),
                 repo_path: access.repo_path.clone(),
@@ -173,7 +187,7 @@ impl RunService {
                 run.id.clone(),
                 "harness_run_prepare_failed",
                 Some(format!(
-                    "准备 Harness 运行分支失败，继续使用沙箱 manifest: {error}"
+                    "准备 Harness 运行分支失败，任务不会降级到其他工作区: {error}"
                 )),
                 None,
             ))
@@ -285,6 +299,92 @@ impl RunService {
     }
 }
 
+pub(in crate::services) async fn create_cloud_run_branch(
+    worktree: &Path,
+    base_branch: &str,
+    run_branch: &str,
+    secrets: &[&str],
+) -> Result<String, String> {
+    let remote_ref = format!("refs/remotes/origin/{base_branch}");
+    let base_commit = match run_git_output(
+        vec!["rev-parse".to_string(), "--verify".to_string(), remote_ref],
+        Some(worktree),
+        secrets,
+    )
+    .await
+    {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => initialize_empty_cloud_base_branch(worktree, base_branch, secrets).await?,
+    };
+    if base_commit.is_empty() {
+        return Err(format!("Harness base branch is empty: {base_branch}"));
+    }
+    run_git(
+        vec![
+            "push".to_string(),
+            "origin".to_string(),
+            "--force".to_string(),
+            format!("{base_commit}:refs/heads/{run_branch}"),
+        ],
+        Some(worktree),
+        secrets,
+    )
+    .await?;
+    Ok(base_commit)
+}
+
+async fn initialize_empty_cloud_base_branch(
+    worktree: &Path,
+    base_branch: &str,
+    secrets: &[&str],
+) -> Result<String, String> {
+    let bootstrap_branch = format!("chatos-bootstrap-{}", Uuid::new_v4().simple());
+    let bootstrap_commit = create_orphan_commit(
+        worktree,
+        bootstrap_branch.as_str(),
+        "Initialize cloud project repository",
+        secrets,
+    )
+    .await?;
+    let push_result = run_git(
+        vec![
+            "push".to_string(),
+            "origin".to_string(),
+            format!("--force-with-lease=refs/heads/{base_branch}:"),
+            format!("{bootstrap_commit}:refs/heads/{base_branch}"),
+        ],
+        Some(worktree),
+        secrets,
+    )
+    .await;
+    let push_error = match push_result {
+        Ok(()) => return Ok(bootstrap_commit),
+        Err(error) => error,
+    };
+    let remote_ref = format!("refs/remotes/origin/{base_branch}");
+    if run_git(
+        vec![
+            "fetch".to_string(),
+            "origin".to_string(),
+            format!("refs/heads/{base_branch}:{remote_ref}"),
+        ],
+        Some(worktree),
+        secrets,
+    )
+    .await
+    .is_err()
+    {
+        return Err(push_error);
+    }
+    run_git_output(
+        vec!["rev-parse".to_string(), "--verify".to_string(), remote_ref],
+        Some(worktree),
+        secrets,
+    )
+    .await
+    .map(|value| value.trim().to_string())
+}
+
 pub(in crate::services) async fn create_snapshot_commit_and_push(
     workspace_dir: &str,
     worktree: &Path,
@@ -308,11 +408,47 @@ pub(in crate::services) async fn create_snapshot_commit_and_push(
     .filter(|value| !value.is_empty());
     replace_git_worktree_with_workspace(workspace_dir, worktree)?;
     let snapshot_branch = format!("chatos-snapshot-{}", Uuid::new_v4().simple());
+    let base_commit =
+        create_orphan_commit(worktree, snapshot_branch.as_str(), commit_message, secrets).await?;
+    let base_lease = expected_base_commit
+        .map(|commit| format!("--force-with-lease=refs/heads/{base_branch}:{commit}"))
+        .unwrap_or_else(|| format!("--force-with-lease=refs/heads/{base_branch}:"));
+    run_git(
+        vec![
+            "push".to_string(),
+            "origin".to_string(),
+            base_lease,
+            format!("HEAD:refs/heads/{base_branch}"),
+        ],
+        Some(worktree),
+        secrets,
+    )
+    .await?;
+    run_git(
+        vec![
+            "push".to_string(),
+            "origin".to_string(),
+            format!("HEAD:refs/heads/{run_branch}"),
+            "--force".to_string(),
+        ],
+        Some(worktree),
+        secrets,
+    )
+    .await?;
+    Ok(base_commit)
+}
+
+async fn create_orphan_commit(
+    worktree: &Path,
+    branch: &str,
+    commit_message: &str,
+    secrets: &[&str],
+) -> Result<String, String> {
     run_git(
         vec![
             "checkout".to_string(),
             "--orphan".to_string(),
-            snapshot_branch,
+            branch.to_string(),
         ],
         Some(worktree),
         secrets,
@@ -359,31 +495,6 @@ pub(in crate::services) async fn create_snapshot_commit_and_push(
     .await?
     .trim()
     .to_string();
-    let base_lease = expected_base_commit
-        .map(|commit| format!("--force-with-lease=refs/heads/{base_branch}:{commit}"))
-        .unwrap_or_else(|| format!("--force-with-lease=refs/heads/{base_branch}:"));
-    run_git(
-        vec![
-            "push".to_string(),
-            "origin".to_string(),
-            base_lease,
-            format!("HEAD:refs/heads/{base_branch}"),
-        ],
-        Some(worktree),
-        secrets,
-    )
-    .await?;
-    run_git(
-        vec![
-            "push".to_string(),
-            "origin".to_string(),
-            format!("HEAD:refs/heads/{run_branch}"),
-            "--force".to_string(),
-        ],
-        Some(worktree),
-        secrets,
-    )
-    .await?;
     Ok(base_commit)
 }
 

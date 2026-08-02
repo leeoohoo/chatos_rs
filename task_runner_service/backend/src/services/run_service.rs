@@ -3,7 +3,9 @@
 
 use super::*;
 
-const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(120);
+const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(5);
+const MAX_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(30);
+const MAX_WORKER_CLAIM_ATTEMPTS: i64 = 3;
 const WORKER_CLAIM_EXPIRED_ERROR: &str = "worker claim expired";
 const CANCEL_REQUESTED_CLAIM_EXPIRED_REASON: &str =
     "run cancellation requested before worker claim expired";
@@ -16,10 +18,9 @@ pub(crate) enum RejectedRunClaimHeartbeatAction {
 }
 
 pub(crate) fn worker_claim_expiry_grace(claim_ttl: Duration) -> Duration {
-    claim_ttl
-        .checked_mul(2)
-        .unwrap_or(Duration::MAX)
-        .max(MIN_WORKER_CLAIM_EXPIRY_GRACE)
+    let proportional =
+        Duration::from_millis((claim_ttl.as_millis() / 10).min(u64::MAX as u128) as u64);
+    proportional.clamp(MIN_WORKER_CLAIM_EXPIRY_GRACE, MAX_WORKER_CLAIM_EXPIRY_GRACE)
 }
 
 impl RunService {
@@ -225,25 +226,32 @@ impl RunService {
             .await
     }
 
-    pub async fn fail_expired_run_claims(&self, claim_ttl: Duration) -> Result<usize, String> {
+    pub async fn reconcile_expired_run_claims(&self, claim_ttl: Duration) -> Result<usize, String> {
         let now = now_rfc3339();
         let expiry_cutoff = (chrono::Utc::now()
             - chrono::Duration::from_std(worker_claim_expiry_grace(claim_ttl))
                 .map_err(|err| err.to_string())?)
         .to_rfc3339();
-        let failed_runs = self
+        let reconciled_runs = self
             .store
-            .fail_expired_run_claims(expiry_cutoff.as_str(), now.as_str())
+            .reconcile_expired_run_claims(
+                expiry_cutoff.as_str(),
+                now.as_str(),
+                MAX_WORKER_CLAIM_ATTEMPTS,
+            )
             .await?;
-        for run in &failed_runs {
+        for run in &reconciled_runs {
             self.store.signal_local_run_abort(run.id.as_str());
             let cancelled_after_request = run.status == TaskRunStatus::Cancelled;
+            let requeued_after_interruption = run.status == TaskRunStatus::Queued;
             if let Err(err) = self
                 .ask_user_prompt_service
                 .cancel_pending_prompts_for_run(
                     run.id.as_str(),
                     if cancelled_after_request {
                         CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
+                    } else if requeued_after_interruption {
+                        "run execution was interrupted and automatically requeued"
                     } else {
                         WORKER_CLAIM_EXPIRED_ERROR
                     },
@@ -260,6 +268,8 @@ impl RunService {
                 if task.last_run_id.as_deref() == Some(run.id.as_str()) {
                     task.status = if cancelled_after_request {
                         TaskStatus::Cancelled
+                    } else if requeued_after_interruption {
+                        TaskStatus::Queued
                     } else {
                         TaskStatus::Failed
                     };
@@ -273,6 +283,8 @@ impl RunService {
                     run.id.clone(),
                     if cancelled_after_request {
                         "run.cancel_requested.claim_expired"
+                    } else if requeued_after_interruption {
+                        "run.claim.expired.requeued"
                     } else {
                         "run.claim.expired"
                     }
@@ -281,10 +293,14 @@ impl RunService {
                     Some(serde_json::json!({
                         "reason": if cancelled_after_request {
                             CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
+                        } else if requeued_after_interruption {
+                            "worker_claim_expired_requeued"
                         } else {
                             "worker_claim_expired"
                         },
                         "previous_worker_id": run.worker_id,
+                        "attempt": run.attempt,
+                        "max_attempts": MAX_WORKER_CLAIM_ATTEMPTS,
                     })),
                 ))
                 .await?;
@@ -295,11 +311,13 @@ impl RunService {
                     "failed to release sandboxes after worker claim expired"
                 );
             }
-            self.try_send_terminal_callback(run.task_id.as_str(), run)
-                .await;
+            if !requeued_after_interruption {
+                self.try_send_terminal_callback(run.task_id.as_str(), run)
+                    .await;
+            }
         }
         self.store.refresh_runtime_guards().await?;
-        Ok(failed_runs.len())
+        Ok(reconciled_runs.len())
     }
 
     pub(crate) fn signal_local_run_abort(&self, run_id: &str) {
@@ -464,10 +482,10 @@ mod worker_claim_tests {
     use super::*;
 
     #[test]
-    fn claim_expiry_grace_is_at_least_two_lease_periods() {
+    fn claim_expiry_grace_is_a_small_clock_skew_window() {
         assert_eq!(
             worker_claim_expiry_grace(Duration::from_secs(120)),
-            Duration::from_secs(240)
+            Duration::from_secs(12)
         );
     }
 
@@ -476,6 +494,14 @@ mod worker_claim_tests {
         assert_eq!(
             worker_claim_expiry_grace(Duration::from_secs(30)),
             MIN_WORKER_CLAIM_EXPIRY_GRACE
+        );
+    }
+
+    #[test]
+    fn long_claim_ttl_caps_expiry_grace() {
+        assert_eq!(
+            worker_claim_expiry_grace(Duration::from_secs(600)),
+            MAX_WORKER_CLAIM_EXPIRY_GRACE
         );
     }
 }

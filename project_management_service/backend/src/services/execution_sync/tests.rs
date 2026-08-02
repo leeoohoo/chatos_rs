@@ -392,6 +392,42 @@ async fn retried_work_item_restores_failed_related_requirements_to_in_progress()
 
 #[tokio::test]
 #[ignore = "requires MongoDB"]
+async fn replanned_ready_task_reopens_cancelled_work_item() {
+    let store = test_store().await;
+    let project = create_test_project(&store).await;
+    let requirement = create_test_requirement(&store, &project.id, None, "Requirement").await;
+    let item = create_test_work_item(&store, &requirement, "Replanned task").await;
+
+    store
+        .update_work_item(
+            &item.id,
+            UpdateProjectWorkItemRequest {
+                status: Some(ProjectWorkItemStatus::Cancelled),
+                ..UpdateProjectWorkItemRequest::default()
+            },
+        )
+        .await
+        .expect("cancel work item")
+        .expect("work item");
+
+    let response = sync_task_runner_work_item_status(
+        &store,
+        &item.id,
+        SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: "task-runner-replanned".to_string(),
+            task_runner_status: Some("ready".to_string()),
+            execution_group_id: Some("new-execution-group".to_string()),
+            ..SyncTaskRunnerWorkItemStatusRequest::default()
+        },
+    )
+    .await
+    .expect("sync replanned ready task");
+
+    assert_eq!(response.work_item.status, ProjectWorkItemStatus::Ready);
+}
+
+#[tokio::test]
+#[ignore = "requires MongoDB"]
 async fn successful_retry_completes_previously_failed_requirement() {
     let store = test_store().await;
     let project = create_test_project(&store).await;

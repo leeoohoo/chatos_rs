@@ -10,6 +10,7 @@ mod sessions;
 mod snapshots;
 mod types;
 
+pub(crate) use self::client::apply_data_auth;
 pub(crate) use self::mappers::engine_record_to_message;
 pub use self::mapping::CHATOS_COMPAT_SOURCE_ID;
 pub use self::memories::{

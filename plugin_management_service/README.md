@@ -97,13 +97,12 @@ Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker�
 系统 Agent registry 登记当前代码中真实存在、具有独立 MCP/skills 能力边界的系统级智能体角色或运行模式：
 
 - `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
-- `chatos_planning_agent`：Chat OS 规划智能体。必需使用 `task_runner_service`，并将 Task Runner 切换到 `chatos_plan` profile。
 - `task_runner_plan_phase`：Task Runner 云端规划任务智能体。使用云端可用的只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
 - `task_runner_run_phase`：Task Runner 云端执行任务智能体。负责云端代码修改、终端执行、测试、部署及工程验收。
-- `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、`project_environment`、`sandbox_images`。
+- `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、只读 `ProjectManagement`、`project_environment`、`sandbox_images`。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 
-Chat OS 的两个角色共用会话模型循环，但普通模式与规划模式的 MCP 强制性不同，因此分开管理。Task Runner 根据 `task_profile=chatos_plan && requires_execution=false` 选择规划 Agent，其他任务进入执行 Agent；项目工具的本地/云端执行位置由 MCP Management 路由。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
+Chat OS 只有普通对话 Agent。规划开关不是第二个 Chat OS Agent，而是程序硬路由：程序使用当前用户、项目、会话和源消息上下文创建 `task_profile=chatos_plan && requires_execution=false` 的 Task Runner 任务，随后由 `task_runner_plan_phase` 读取项目事实并写入 Project Management 规划产物。用户进入项目执行流程后，程序调用 `project_requirement_execution_planner_agent` 创建等待确认的 Task Runner 执行 DAG。其他任务进入执行 Agent；项目工具的本地/云端执行位置由 MCP Management 路由。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
 
 ## 环境变量
 

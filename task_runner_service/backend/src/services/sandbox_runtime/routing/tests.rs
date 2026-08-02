@@ -67,6 +67,7 @@ fn project_workspace_is_used_without_task_level_selection() {
         environment: ProjectRuntimeEnvironmentSettings {
             sandbox_enabled: true,
             status: "ready".to_string(),
+            not_runnable_reason: None,
             execution_service_id: Some("workspace".to_string()),
             env_vars: serde_json::json!({}),
             generated_config_files: Vec::new(),
@@ -103,6 +104,7 @@ fn environment_plan_contains_only_workspace_and_dependencies() {
         environment: ProjectRuntimeEnvironmentSettings {
             sandbox_enabled: true,
             status: "ready".to_string(),
+            not_runnable_reason: None,
             execution_service_id: Some("workspace".to_string()),
             env_vars: serde_json::json!({}),
             generated_config_files: Vec::new(),
@@ -134,7 +136,7 @@ fn runtime_topology_v2_feature_flag_defaults_on_and_can_fail_back() {
 }
 
 #[test]
-fn workspace_route_can_fall_back_but_business_service_cannot() {
+fn project_environment_never_falls_back_to_a_base_sandbox() {
     let mut task = task();
     task.mcp_config.requires_execution = true;
     let mut route = SandboxTaskRoute {
@@ -151,10 +153,10 @@ fn workspace_route_can_fall_back_but_business_service_cannot() {
         policy: task.mcp_config.sandbox_policy_request(),
     };
 
-    assert!(sandbox_environment_fallback_allowed(&task, &route));
+    assert!(!sandbox_environment_fallback_allowed(&task, &route));
 
     task.mcp_config.execution_service_id = Some("workspace".to_string());
-    assert!(sandbox_environment_fallback_allowed(&task, &route));
+    assert!(!sandbox_environment_fallback_allowed(&task, &route));
 
     task.mcp_config.execution_service_id = Some("api".to_string());
     assert!(!sandbox_environment_fallback_allowed(&task, &route));
@@ -219,11 +221,12 @@ fn local_pairing_policy_caps_task_permissions_and_discards_extra_roots() {
 }
 
 #[test]
-fn code_or_terminal_execution_without_workspace_uses_configured_base_image() {
+fn execution_without_a_ready_project_workspace_is_rejected() {
     let runtime = ProjectSandboxRuntimeSettings {
         environment: ProjectRuntimeEnvironmentSettings {
             sandbox_enabled: true,
             status: "pending".to_string(),
+            not_runnable_reason: None,
             execution_service_id: None,
             env_vars: serde_json::json!({}),
             generated_config_files: Vec::new(),
@@ -233,14 +236,61 @@ fn code_or_terminal_execution_without_workspace_uses_configured_base_image() {
     let mut task = task();
     task.mcp_config.requires_execution = true;
 
+    let plan_error = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
+        .expect_err("pending project runtime must block execution");
+    assert!(plan_error.contains("status=pending"));
+    let image_error =
+        sandbox_image_id_for_task(&task, &runtime, "cloud_sandbox_manager", "dev-java21")
+            .expect_err("pending project runtime must not use a base image");
+    assert!(image_error.contains("status=pending"));
+}
+
+#[test]
+fn execution_with_not_runnable_reason_is_rejected_even_if_status_is_ready() {
+    let runtime = ProjectSandboxRuntimeSettings {
+        environment: ProjectRuntimeEnvironmentSettings {
+            sandbox_enabled: true,
+            status: "ready".to_string(),
+            not_runnable_reason: Some("项目内容尚未生成".to_string()),
+            execution_service_id: Some("workspace".to_string()),
+            env_vars: serde_json::json!({}),
+            generated_config_files: Vec::new(),
+        },
+        images: vec![image("workspace", "workspace_gateway_target", true, true)],
+    };
+    let mut task = task();
+    task.mcp_config.requires_execution = true;
+
+    let error = sandbox_image_id_for_task(&task, &runtime, "cloud_sandbox_manager", "dev-java21")
+        .expect_err("not runnable project must block execution");
+    assert!(error.contains("not runnable"));
+    assert!(error.contains("项目内容尚未生成"));
+}
+
+#[test]
+fn file_only_task_can_use_the_program_base_image() {
+    let runtime = ProjectSandboxRuntimeSettings {
+        environment: ProjectRuntimeEnvironmentSettings {
+            sandbox_enabled: true,
+            status: "pending".to_string(),
+            not_runnable_reason: None,
+            execution_service_id: None,
+            env_vars: serde_json::json!({}),
+            generated_config_files: Vec::new(),
+        },
+        images: Vec::new(),
+    };
+    let mut task = task();
+    task.mcp_config.requires_execution = false;
+
     assert!(
         sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
-            .expect("empty project runtime must fall back")
+            .expect("file-only task route")
             .is_none()
     );
     assert_eq!(
-        sandbox_image_id_for_task(&task, &runtime, "cloud_sandbox_manager", "dev-java21",)
-            .expect("configured base image"),
+        sandbox_image_id_for_task(&task, &runtime, "cloud_sandbox_manager", "dev-java21")
+            .expect("program base image"),
         Some("dev-java21".to_string())
     );
 }
@@ -250,7 +300,8 @@ fn explicit_business_service_execution_is_rejected() {
     let runtime = ProjectSandboxRuntimeSettings {
         environment: ProjectRuntimeEnvironmentSettings {
             sandbox_enabled: true,
-            status: "pending".to_string(),
+            status: "ready".to_string(),
+            not_runnable_reason: None,
             execution_service_id: None,
             env_vars: serde_json::json!({}),
             generated_config_files: Vec::new(),
@@ -285,6 +336,7 @@ fn dependency_services_do_not_serialize_an_mcp_policy() {
         environment: ProjectRuntimeEnvironmentSettings {
             sandbox_enabled: true,
             status: "ready".to_string(),
+            not_runnable_reason: None,
             execution_service_id: Some("workspace".to_string()),
             env_vars: serde_json::json!({}),
             generated_config_files: Vec::new(),

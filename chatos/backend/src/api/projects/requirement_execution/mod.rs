@@ -28,9 +28,9 @@ pub(super) use status::{
     task_runner_status_is_cancelled, task_runner_status_is_success,
 };
 pub(super) use sync::{
-    load_execution_links_for_work_items, mark_execution_messages_for_stop,
-    set_execution_turn_hidden, sync_execution_link_status, sync_execution_message_task_tracking,
-    sync_requirement_execution_state,
+    apply_task_runner_task_snapshot, load_execution_links_for_work_items,
+    mark_execution_messages_for_stop, set_execution_turn_hidden, sync_execution_link_status,
+    sync_execution_message_task_tracking, sync_requirement_execution_state,
 };
 pub(super) use tasks::ensure_requirement_execution_not_active;
 pub(super) use types::{ExecutionLink, WorkItemPlanItem};

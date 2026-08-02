@@ -14,6 +14,18 @@ pub(in crate::services::environment_agent) async fn generate_project_runtime_env
         .get_project_runtime_environment(project.id.as_str())
         .await?
         .ok_or_else(|| "项目运行环境尚未初始化".to_string())?;
+    if environment.status == ProjectRuntimeEnvironmentStatus::NotRunnable
+        || environment
+            .not_runnable_reason
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|reason| !reason.is_empty())
+    {
+        return Err(environment
+            .not_runnable_reason
+            .clone()
+            .unwrap_or_else(|| "当前项目没有可生成的运行环境".to_string()));
+    }
     crate::services::runtime_environment::refresh_environment_variable_values(&mut environment);
     let mut images = state
         .store
@@ -332,6 +344,27 @@ async fn finish_project_runtime_environment_image_build(
         return Ok(());
     }
     crate::services::runtime_environment::refresh_environment_variable_values(&mut environment);
+    if environment
+        .not_runnable_reason
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|reason| !reason.is_empty())
+    {
+        environment.status = ProjectRuntimeEnvironmentStatus::NotRunnable;
+        environment.analysis_summary = environment.not_runnable_reason.clone();
+        environment.execution_service_id = None;
+        environment.last_error = None;
+        environment.updated_at = now_rfc3339();
+        state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await?;
+        state
+            .store
+            .replace_project_runtime_environment_images(project.id.as_str(), &[])
+            .await?;
+        return Ok(());
+    }
     environment.status = if errors.is_empty()
         && images
             .iter()
@@ -514,6 +547,23 @@ fn apply_prepared_application_result(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "镜像准备成功响应缺少 image_ref".to_string())?;
+    let dependency_feature = result
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|feature| {
+            feature
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("dependency@")
+        });
+    if image_id.to_ascii_lowercase().starts_with("dependency:") || dependency_feature {
+        return Err(format!(
+            "工作区执行镜像不能使用依赖服务镜像: {image_id} ({image_ref})"
+        ));
+    }
     image.image_id = Some(image_id.to_string());
     image.image_ref = Some(image_ref.to_string());
     image.image_provider = provider;

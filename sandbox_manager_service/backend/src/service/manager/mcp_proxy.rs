@@ -27,6 +27,7 @@ use super::SandboxManager;
 
 const SANDBOX_AGENT_MCP_TIMEOUT: Duration = Duration::from_secs(135);
 const SANDBOX_AGENT_CLOUD_STDIO_TIMEOUT: Duration = Duration::from_secs(10 * 60 + 15);
+const TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
 
 #[derive(Debug, Clone)]
 pub struct SandboxMcpRuntimeBinding {
@@ -357,7 +358,8 @@ pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
     payload: Value,
 ) -> Result<Value, ApiError> {
     let url = format!("{}/mcp", agent_endpoint.trim_end_matches('/'));
-    let client = http_client_builder(HttpClientTimeouts::new(SANDBOX_AGENT_MCP_TIMEOUT))
+    let request_timeout = sandbox_agent_mcp_timeout(&payload);
+    let client = http_client_builder(HttpClientTimeouts::new(request_timeout))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|err| ApiError::internal(format!("build MCP proxy client failed: {err}")))?;
@@ -408,6 +410,34 @@ pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
             ),
         )
     })
+}
+
+fn sandbox_agent_mcp_timeout(payload: &Value) -> Duration {
+    terminal_wait_timeout_ms(payload)
+        .map(|timeout_ms| {
+            Duration::from_millis(timeout_ms.saturating_add(TERMINAL_WAIT_TRANSPORT_GRACE_MS))
+        })
+        .unwrap_or(SANDBOX_AGENT_MCP_TIMEOUT)
+        .max(SANDBOX_AGENT_MCP_TIMEOUT)
+}
+
+fn terminal_wait_timeout_ms(payload: &Value) -> Option<u64> {
+    match payload {
+        Value::Array(items) => items.iter().filter_map(terminal_wait_timeout_ms).max(),
+        Value::Object(_) => {
+            if payload.get("method").and_then(Value::as_str) != Some("tools/call") {
+                return None;
+            }
+            let tool_name = payload.pointer("/params/name").and_then(Value::as_str)?;
+            let arguments = payload.pointer("/params/arguments").unwrap_or(&Value::Null);
+            let is_wait = tool_name == "process_wait"
+                || tool_name.ends_with("_process_wait")
+                || ((tool_name == "process" || tool_name.ends_with("_process"))
+                    && arguments.get("action").and_then(Value::as_str) == Some("wait"));
+            is_wait.then(|| chatos_mcp::resolve_wait_timeout_ms(arguments))
+        }
+        _ => None,
+    }
 }
 
 pub(in crate::service::manager) async fn cloud_stdio_agent_proxy<I, O>(
@@ -701,5 +731,29 @@ mod tests {
             .expect("properties");
         assert!(properties.contains_key("command"));
         assert!(!properties.contains_key("additionalPermissions"));
+    }
+
+    #[test]
+    fn mcp_proxy_timeout_tracks_terminal_wait_request() {
+        let wait = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "call-1",
+            "method": "tools/call",
+            "params": {
+                "name": "process_wait",
+                "arguments": {"timeout_ms": 600_000}
+            }
+        });
+        let poll = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "call-2",
+            "method": "tools/call",
+            "params": {"name": "process_poll", "arguments": {}}
+        });
+        assert_eq!(
+            sandbox_agent_mcp_timeout(&wait),
+            Duration::from_millis(615_000)
+        );
+        assert_eq!(sandbox_agent_mcp_timeout(&poll), SANDBOX_AGENT_MCP_TIMEOUT);
     }
 }

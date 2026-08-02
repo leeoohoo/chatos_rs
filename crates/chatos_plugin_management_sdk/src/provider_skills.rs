@@ -71,7 +71,7 @@ pub fn compose_mcp_provider_skills_prompt<'a>(
             .or_else(|| normalize_text(mcp.name.as_str()))
             .unwrap_or_else(|| mcp.id.clone());
         sections.push(format!(
-            "## MCP `{server_name}`\n\n{}",
+            "## `{server_name}` tool usage\n\n{}",
             skill_sections.join("\n\n")
         ));
     }
@@ -80,12 +80,12 @@ pub fn compose_mcp_provider_skills_prompt<'a>(
         return None;
     }
     let introduction = if locale == Some("en-US") {
-        "The following instructions are supplied by MCP providers that are actually enabled and loaded for this run. Follow them when deciding whether and how to call those MCP tools. Do not assume an MCP is available unless its tools are exposed in the current run."
+        "The following usage instructions apply to tools loaded for this run. Follow them when deciding whether and how to call a tool. A tool is available only when it is exposed in the current run."
     } else {
-        "以下说明来自本轮实际启用并已加载的 MCP Provider。决定是否以及如何调用 MCP 工具时必须遵循这些说明；只有当前运行真正暴露出的工具才可视为可用。"
+        "以下使用说明适用于本轮已加载的工具。决定是否以及如何调用工具时必须遵循这些说明；只有当前运行真正暴露出的工具才可视为可用。"
     };
     Some(format!(
-        "# MCP Provider Skills\n\n{introduction}\n\n{}",
+        "# Tool Usage Instructions\n\n{introduction}\n\n{}",
         sections.join("\n\n")
     ))
 }
@@ -122,7 +122,22 @@ impl ResolvedAgentCapabilities {
         effective_mcp_identifiers: impl IntoIterator<Item = &'a str>,
         locale: Option<&str>,
     ) -> Option<String> {
-        let mcps = self.available_mcps_matching(effective_mcp_identifiers);
+        let mut seen = HashSet::new();
+        let mcps = effective_mcp_identifiers
+            .into_iter()
+            .filter_map(|identifier| {
+                let identifier = identifier.trim();
+                if identifier.is_empty() {
+                    return None;
+                }
+                let item = self.mcps.iter().find(|item| {
+                    item.binding.enabled
+                        && item.resource.enabled
+                        && mcp_matches_identifier(&item.resource, identifier)
+                })?;
+                seen.insert(item.resource.id.as_str()).then_some(item)
+            })
+            .collect::<Vec<_>>();
         compose_mcp_provider_skills_prompt(mcps.into_iter().map(|item| &item.resource), locale)
     }
 }
@@ -281,10 +296,7 @@ mod tests {
         ]);
 
         let prompt = capabilities
-            .compose_provider_skills_prompt(
-                ["used_server", "offline", "disabled", "used"],
-                Some("zh-CN"),
-            )
+            .compose_provider_skills_prompt(["used_server", "disabled", "used"], Some("zh-CN"))
             .expect("provider prompt");
 
         assert!(prompt.contains("使用 used_server"));
@@ -292,7 +304,8 @@ mod tests {
         assert!(!prompt.contains("offline_server"));
         assert!(!prompt.contains("disabled_server"));
         assert!(!prompt.contains("Use used_server"));
-        assert_eq!(prompt.matches("## MCP `used_server`").count(), 1);
+        assert_eq!(prompt.matches("## `used_server` tool usage").count(), 1);
+        assert!(!prompt.contains("Provider"));
     }
 
     #[test]
@@ -318,5 +331,21 @@ mod tests {
             .expect("provider prompt");
 
         assert!(prompt.contains("Use used_server"));
+    }
+
+    #[test]
+    fn effective_tools_keep_provider_skills_after_runtime_route_materialization() {
+        let capabilities = capabilities(vec![resolved_mcp(
+            "builtin_code_maintainer_write",
+            "code_maintainer_write",
+            false,
+            true,
+        )]);
+
+        let prompt = capabilities
+            .compose_provider_skills_prompt(["builtin_code_maintainer_write"], Some("zh-CN"))
+            .expect("effective provider prompt");
+
+        assert!(prompt.contains("使用 code_maintainer_write"));
     }
 }

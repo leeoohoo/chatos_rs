@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::{
     apply_task_runner_callback_to_user_message,
     build_task_runner_callback_assistant_message_with_contact,
     build_task_runner_callback_message_id, is_task_runner_terminal_event,
-    TaskRunnerCallbackRequest,
+    should_publish_task_runner_terminal_message, TaskRunnerCallbackRequest,
 };
 use crate::models::message::Message;
 
@@ -30,6 +30,12 @@ fn sample_callback_payload() -> TaskRunnerCallbackRequest {
         source_user_message_id: Some("user-1".to_string()),
         parent_task_id: None,
         source_run_id: None,
+        cancel_reason: None,
+        cancelled_by_user_id: None,
+        cancelled_by_username: None,
+        cancelled_by_display_name: None,
+        replacement_task_ids: Vec::new(),
+        cancelled_because_task_id: None,
         schedule_mode: Some("once".to_string()),
         prompt: None,
         callback_at: Some("2026-06-10T10:00:00Z".to_string()),
@@ -180,6 +186,61 @@ fn terminal_callback_marks_source_user_message_completed() {
 }
 
 #[test]
+fn retry_start_callback_reopens_failed_task_tracking_with_new_run() {
+    let mut message = Message::new(
+        "session-1".to_string(),
+        "user".to_string(),
+        "please handle this".to_string(),
+    );
+    message.id = "user-1".to_string();
+    message.metadata = Some(json!({
+        "task_runner_async": {
+            "overall_status": "completed",
+            "created_task_ids": ["task-1"],
+            "running_task_ids": [],
+            "terminal_task_ids": ["task-1"],
+            "failed_task_ids": ["task-1"],
+            "last_run_id": "run-failed"
+        }
+    }));
+
+    let mut payload = sample_callback_payload();
+    payload.event = "task.run.started".to_string();
+    payload.run_id = Some("run-retry".to_string());
+    payload.status = "queued".to_string();
+    payload.task_status = Some("queued".to_string());
+    apply_task_runner_callback_to_user_message(&mut message, &payload);
+
+    let task_runner_async = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .expect("task runner metadata");
+    assert_eq!(
+        task_runner_async
+            .get("overall_status")
+            .and_then(Value::as_str),
+        Some("processing")
+    );
+    assert_eq!(
+        task_runner_async.get("last_run_id").and_then(Value::as_str),
+        Some("run-retry")
+    );
+    assert!(task_runner_async
+        .get("running_task_ids")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("task-1"))));
+    assert!(task_runner_async
+        .get("terminal_task_ids")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty));
+    assert!(task_runner_async
+        .get("failed_task_ids")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty));
+}
+
+#[test]
 fn terminal_callback_keeps_group_processing_until_all_created_tasks_finish() {
     let mut message = Message::new(
         "session-1".to_string(),
@@ -281,6 +342,51 @@ fn task_runner_terminal_event_includes_failed_blocked_and_cancelled() {
     assert!(is_task_runner_terminal_event("task.blocked"));
     assert!(is_task_runner_terminal_event("task.cancelled"));
     assert!(!is_task_runner_terminal_event("task.created"));
+}
+
+#[test]
+fn program_managed_planner_cancellation_does_not_create_a_chat_message() {
+    let mut payload = sample_callback_payload();
+    payload.event = "task.cancelled".to_string();
+    payload.status = "cancelled".to_string();
+    payload.cancel_reason = Some("调查结论已经足够，不再继续后台调查。".to_string());
+    payload.cancelled_by_user_id = Some("mcp-management:mcp-session-1".to_string());
+    payload.cancelled_by_username = Some("mcp-management-chatos_planning_agent".to_string());
+
+    assert!(!should_publish_task_runner_terminal_message(&payload));
+}
+
+#[test]
+fn replacement_cancellation_does_not_create_one_message_per_old_task() {
+    let mut payload = sample_callback_payload();
+    payload.event = "task.cancelled".to_string();
+    payload.status = "cancelled".to_string();
+    payload.cancel_reason = Some("重新执行前继续取消旧需求执行：深渊余烬".to_string());
+    payload.cancelled_by_user_id = Some("user-1".to_string());
+
+    assert!(!should_publish_task_runner_terminal_message(&payload));
+}
+
+#[test]
+fn direct_user_cancellation_remains_visible() {
+    let mut payload = sample_callback_payload();
+    payload.event = "task.cancelled".to_string();
+    payload.status = "cancelled".to_string();
+    payload.cancel_reason = Some("用户停止本次任务".to_string());
+    payload.cancelled_by_user_id = Some("user-1".to_string());
+
+    assert!(should_publish_task_runner_terminal_message(&payload));
+}
+
+#[test]
+fn dependency_cascade_cancellation_does_not_create_duplicate_chat_messages() {
+    let mut payload = sample_callback_payload();
+    payload.event = "task.cancelled".to_string();
+    payload.status = "cancelled".to_string();
+    payload.cancelled_because_task_id = Some("task-root".to_string());
+    payload.cancelled_by_user_id = Some("user-1".to_string());
+
+    assert!(!should_publish_task_runner_terminal_message(&payload));
 }
 
 #[test]

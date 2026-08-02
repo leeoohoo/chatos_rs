@@ -20,6 +20,7 @@ const GATEWAY_SERVER_NAME: &str = "mcp_management";
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
     chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
+const TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS: u64 = chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000;
 
 pub(super) async fn resolve_mcp_management_gateway(
     task: &TaskRecord,
@@ -158,6 +159,13 @@ fn gateway_server(
             ask_user_timeout,
         );
     }
+    let terminal_descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::TerminalController);
+    for tool_name in ["process_wait", "process"] {
+        server = server.with_tool_timeout(
+            format!("{}_{}", terminal_descriptor.server_name, tool_name),
+            Duration::from_millis(TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS),
+        );
+    }
     Ok(server)
 }
 
@@ -201,6 +209,14 @@ mod tests {
         assert_eq!(
             server.tool_timeout_duration("ask_user_prompt_choices"),
             Some(Duration::from_secs(3_600))
+        );
+        assert_eq!(
+            server.tool_timeout_duration("terminal_controller_process_wait"),
+            Some(Duration::from_millis(TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS))
+        );
+        assert_eq!(
+            server.tool_timeout_duration("terminal_controller_process"),
+            Some(Duration::from_millis(TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS))
         );
         assert_eq!(
             server

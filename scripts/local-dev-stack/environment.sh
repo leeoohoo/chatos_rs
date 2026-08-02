@@ -179,7 +179,12 @@ export_local_env() {
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET="$TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET"
   export TASK_RUNNER_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_BASE_URL"
   export TASK_RUNNER_SANDBOX_MANAGER_BASE_URL="http://127.0.0.1:${SANDBOX_MANAGER_PORT}"
-  export TASK_RUNNER_SANDBOX_BASE_IMAGE_ID="${TASK_RUNNER_SANDBOX_BASE_IMAGE_ID:-dev-java21}"
+  # Empty cloud projects need a bootstrap image before their project-specific
+  # runtime can be inferred from repository files. Keep the local-dev baseline
+  # useful for frontend and scripting tasks, and let services.sh verify/build it
+  # before Task Runner starts.
+  export TASK_RUNNER_SANDBOX_BASE_IMAGE_ID="${TASK_RUNNER_SANDBOX_BASE_IMAGE_ID:-dev-node24-python3.11}"
+  export CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES="${CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES:-node@24,python@3.11}"
   export TASK_RUNNER_CHATOS_CALLBACK_URL="http://127.0.0.1:${BACKEND_PORT}/api/agent/chat/task-runner/callback"
   export CHATOS_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export CHATOS_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"

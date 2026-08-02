@@ -91,6 +91,80 @@ pub(crate) fn refresh_project_runtime_compose_config(
     Ok(previous != current)
 }
 
+#[cfg(test)]
+mod compose_refresh_tests {
+    use super::*;
+
+    fn dependency_image(environment_key: &str) -> ProjectRuntimeEnvironmentImageRecord {
+        let now = "2026-08-02T00:00:00Z".to_string();
+        let mut image = ProjectRuntimeEnvironmentImageRecord {
+            id: format!("image-{environment_key}"),
+            project_id: "project-1".to_string(),
+            environment_key: environment_key.to_string(),
+            environment_type: "service".to_string(),
+            display_name: environment_key.to_string(),
+            service_id: String::new(),
+            service_role: RuntimeServiceRole::Unknown,
+            source_root: ".".to_string(),
+            component_kind: "service".to_string(),
+            startup_command: None,
+            test_command: None,
+            depends_on: Vec::new(),
+            auto_start: true,
+            mcp_policy: ProgramManagedMcpPolicy::default(),
+            image_id: None,
+            image_ref: None,
+            image_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            features: empty_array(),
+            ports: empty_array(),
+            env_vars: empty_object(),
+            dockerfile: None,
+            custom_build_script: None,
+            status: "ready".to_string(),
+            error: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        crate::services::runtime_environment::apply_program_managed_image_policy(&mut image);
+        image
+    }
+
+    #[test]
+    fn dependency_only_bootstrap_does_not_require_an_application_compose_plan() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::PendingImageBuild,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: serde_json::json!([
+                {"type": "postgres"},
+                {"type": "redis"}
+            ]),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "2026-08-02T00:00:00Z".to_string(),
+            updated_at: "2026-08-02T00:00:00Z".to_string(),
+        };
+        let images = vec![dependency_image("postgres"), dependency_image("redis")];
+
+        assert!(!refresh_project_runtime_compose_config(
+            "project-1",
+            &mut environment,
+            images.as_slice(),
+        )
+        .expect("dependency-only bootstrap must not require a phantom application"));
+        assert!(environment.generated_config_files.is_empty());
+    }
+}
+
 mod runtime;
 
 pub async fn start_project_runtime_environment(

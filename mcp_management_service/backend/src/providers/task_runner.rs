@@ -39,6 +39,7 @@ struct TaskRunnerRequestBinding<'a> {
     source_session_id: Option<&'a str>,
     source_user_message_id: Option<&'a str>,
     default_model_config_id: Option<&'a str>,
+    task_profile: Option<&'a str>,
     expected_project_task_ids: &'a [String],
 }
 
@@ -56,6 +57,7 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for TaskRunnerRequestBinding<'a> {
             source_session_id: snapshot.source_session_id.as_deref(),
             source_user_message_id: snapshot.source_user_message_id.as_deref(),
             default_model_config_id: snapshot.default_model_config_id.as_deref(),
+            task_profile: snapshot.task_profile.as_deref(),
             expected_project_task_ids: snapshot.expected_project_task_ids.as_slice(),
         }
     }
@@ -134,6 +136,7 @@ impl TaskRunnerProvider {
         source_session_id: Option<&str>,
         source_user_message_id: Option<&str>,
         default_model_config_id: Option<&str>,
+        task_profile: Option<&str>,
         expected_project_task_ids: &[String],
         expires_at_unix: i64,
     ) -> HashMap<String, Vec<Value>> {
@@ -150,6 +153,7 @@ impl TaskRunnerProvider {
             source_session_id,
             source_user_message_id,
             default_model_config_id,
+            task_profile,
             expected_project_task_ids,
         };
         for route in routes
@@ -306,6 +310,10 @@ impl TaskRunnerProvider {
                 "x-mcp-management-default-model-config-id",
                 snapshot.default_model_config_id.as_deref(),
             ),
+            (
+                "x-mcp-management-task-profile",
+                snapshot.task_profile.as_deref(),
+            ),
         ] {
             if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
                 request = request.header(header, value);
@@ -403,6 +411,7 @@ impl TaskRunnerProvider {
                 "x-mcp-management-default-model-config-id",
                 binding.default_model_config_id,
             ),
+            ("x-mcp-management-task-profile", binding.task_profile),
         ] {
             if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
                 request = request.header(header, value);

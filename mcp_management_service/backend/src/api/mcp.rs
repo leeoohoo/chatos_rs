@@ -478,6 +478,7 @@ fn grant_matches_snapshot(
         && claims.sub == snapshot.caller_service
         && claims.owner_user_id == snapshot.owner_user_id
         && claims.agent_key == snapshot.agent_key
+        && claims.task_profile == snapshot.task_profile
         && claims.project_id == snapshot.project_id
         && claims.run_id == snapshot.run_id
         && claims.turn_id == snapshot.turn_id

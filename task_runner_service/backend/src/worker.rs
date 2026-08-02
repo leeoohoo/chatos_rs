@@ -15,6 +15,7 @@ pub fn spawn_task_worker(config: AppConfig, run_service: RunService) -> JoinHand
     tokio::spawn(async move {
         let semaphore = Arc::new(Semaphore::new(config.worker_concurrency));
         let mut last_stale_recovery = Instant::now();
+        let stale_recovery_interval = heartbeat_interval(config.worker_claim_ttl);
 
         info!(
             worker_id = config.worker_id.as_str(),
@@ -23,13 +24,14 @@ pub fn spawn_task_worker(config: AppConfig, run_service: RunService) -> JoinHand
             claim_ttl_ms = config.worker_claim_ttl.as_millis(),
             claim_expiry_grace_ms =
                 crate::services::worker_claim_expiry_grace(config.worker_claim_ttl).as_millis(),
+            stale_recovery_poll_ms = stale_recovery_interval.as_millis(),
             "task runner worker started"
         );
 
         loop {
-            if last_stale_recovery.elapsed() >= config.worker_claim_ttl {
+            if last_stale_recovery.elapsed() >= stale_recovery_interval {
                 match run_service
-                    .fail_expired_run_claims(config.worker_claim_ttl)
+                    .reconcile_expired_run_claims(config.worker_claim_ttl)
                     .await
                 {
                     Ok(count) if count > 0 => {
@@ -96,6 +98,10 @@ fn spawn_claimed_run(
     tokio::spawn(async move {
         let _permit = permit;
         let run_id = run.id.clone();
+        // A recovered run reuses its run id. Clear only this process' stale
+        // abort marker before the new claim starts; the persisted claim token
+        // still fences an older execution from committing any output.
+        run_service.clear_local_run_abort(run_id.as_str());
         let heartbeat = spawn_claim_heartbeat(
             run_service.clone(),
             worker_id.clone(),

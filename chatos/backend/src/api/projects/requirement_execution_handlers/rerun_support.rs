@@ -15,11 +15,12 @@ use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::{chatos_sessions, task_runner_api_client};
 
 use super::super::requirement_execution::{
-    create_execution_planner_failure_message, load_execution_links_for_work_items,
-    mark_execution_messages_for_stop, sync_execution_link_status,
-    sync_execution_message_task_tracking, sync_requirement_execution_state,
-    task_runner_callback_event_for_status, task_runner_status_is_active,
-    task_runner_status_is_cancelled, value_string, ExecutionLink, HandlerError, WorkItemPlanItem,
+    apply_task_runner_task_snapshot, create_execution_planner_failure_message,
+    load_execution_links_for_work_items, mark_execution_messages_for_stop,
+    sync_execution_link_status, sync_execution_message_task_tracking,
+    sync_requirement_execution_state, task_runner_callback_event_for_status,
+    task_runner_status_is_active, task_runner_status_is_cancelled, value_string, ExecutionLink,
+    HandlerError, WorkItemPlanItem,
 };
 use super::plan_query::execution_status_is_stopped_terminal;
 use super::{execution_message_status, retire_cloud_execution_batch};
@@ -206,7 +207,7 @@ pub(super) async fn ensure_old_cloud_execution_batch_ready_for_replacement(
         )
         .await
         .map_err(|err| HandlerError::bad_gateway("校验旧执行批次 Task Runner 状态失败", err))?;
-        link.task_runner_status = Some(task.status.clone());
+        apply_task_runner_task_snapshot(link, &task);
         sync_execution_link_status(
             project_service_base_url,
             project_sync_secret,
@@ -223,6 +224,9 @@ pub(super) async fn ensure_old_cloud_execution_batch_ready_for_replacement(
         .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
         .cloned()
         .collect::<Vec<_>>();
+    if execution_batch_has_started_active_tasks(links) {
+        return Err(HandlerError::conflict(not_stopped_message));
+    }
     if active_links.is_empty() {
         return match resolve_old_cloud_execution_batch_state(old_message, links) {
             OldCloudExecutionBatchState::ReplacementReady => {
@@ -310,6 +314,16 @@ pub(super) async fn ensure_old_cloud_execution_batch_ready_for_replacement(
         "旧执行批次仍有 {} 个 Task Runner 任务正在取消，已重新发送取消请求，请等待取消完成后再重新执行。",
         active_links.len()
     )))
+}
+
+pub(super) fn execution_batch_has_started_active_tasks(links: &[ExecutionLink]) -> bool {
+    links.iter().any(|link| {
+        link.task_runner_run_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    }) && links
+        .iter()
+        .any(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

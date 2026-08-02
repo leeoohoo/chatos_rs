@@ -137,9 +137,11 @@ export const RequirementExecutionProcessSidebar: React.FC<{
         placeholder={cancellationSettling
           ? '正在取消当前批次，任务状态收敛后即可调整'
           : !canRevise
-          ? '当前批次仍有活动任务，请先取消本次执行后再调整'
-          : phase === 'completed'
-            ? '输入新的调整意见，将基于已完成结果重新生成执行流程……'
+            ? phase === 'completed'
+              ? '当前执行已经完成；新的产品迭代请创建新的项目需求'
+              : phase === 'running'
+                ? '执行已经开始；如需调整，请先明确停止当前执行批次'
+                : '当前批次仍有活动任务，请先停止并等待状态收敛后再调整'
             : '输入你的想法，例如：先补测试，再修改接口；把前端和后端拆开执行……'}
         className="min-h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:bg-muted/40"
       />

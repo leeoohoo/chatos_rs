@@ -18,6 +18,7 @@ use super::super::history_process_support::{
     normalize_task_runner_callback_for_display, select_final_assistant_index,
     strip_assistant_for_compact_history,
 };
+use super::turn_process_stats::collect_turn_process_stats;
 
 pub(super) fn find_user_index_by_turn_id(messages: &[Message], turn_id: &str) -> Option<usize> {
     let normalized = turn_id.trim();
@@ -100,45 +101,19 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
     let final_assistant_index =
         select_final_assistant_index(messages, user_index + 1, next_user_index);
 
-    let mut tool_call_count = 0usize;
-    let mut thinking_count = 0usize;
-    let mut process_message_count = 0usize;
-    let mut callback_updates = Vec::new();
-
-    for (index, message) in messages
-        .iter()
-        .enumerate()
-        .take(next_user_index)
-        .skip(user_index + 1)
-    {
-        if is_task_runner_callback_message(message) {
-            callback_updates.push(index);
-            continue;
-        }
-
-        if message.role == "assistant" && !is_session_summary(message) {
-            tool_call_count += extract_tool_calls_from_message(message).len();
-            thinking_count += count_assistant_thinking_steps(message);
-        }
-
-        if Some(index) != final_assistant_index
-            && (message.role == "assistant" || message.role == "tool")
-            && !(message.role == "assistant" && is_session_summary(message))
-        {
-            process_message_count += 1;
-        }
-    }
+    let stats =
+        collect_turn_process_stats(messages, user_index, next_user_index, final_assistant_index);
 
     let final_assistant_message_id = final_assistant_index.map(|index| messages[index].id.clone());
     let task_runner_async_turn_completed = final_assistant_index
         .is_some_and(|index| is_task_runner_async_plan_summary_message(&messages[index]))
-        || !callback_updates.is_empty();
+        || !stats.callback_updates.is_empty();
     attach_user_history_process_metadata(
         &mut user_message,
-        process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
-        tool_call_count,
-        thinking_count,
-        process_message_count,
+        stats.process_message_count > 0 || stats.tool_call_count > 0 || stats.thinking_count > 0,
+        stats.tool_call_count,
+        stats.thinking_count,
+        stats.process_message_count,
         final_assistant_message_id,
     );
     normalize_task_runner_async_user_status_for_display(
@@ -155,7 +130,7 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
         display_messages.push(assistant);
     }
 
-    for index in callback_updates {
+    for index in stats.callback_updates {
         let mut assistant = messages[index].clone();
         normalize_task_runner_callback_for_display(&mut assistant);
         display_messages.push(assistant);

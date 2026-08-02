@@ -263,6 +263,10 @@ impl ProjectEnvironmentToolProvider {
             .required_services
             .as_ref()
             .unwrap_or(&environment.required_services);
+        let analysis_requirement = environment
+            .detected_stack
+            .get("analysis_requirement")
+            .cloned();
         let selected_service_kinds =
             selected_dependency_service_kinds(self.selected_dependencies.as_slice());
         if proposes_not_runnable
@@ -291,6 +295,9 @@ impl ProjectEnvironmentToolProvider {
             "selected_dependencies".to_string(),
             json!(self.selected_dependencies.clone()),
         );
+        if let Some(analysis_requirement) = analysis_requirement {
+            detected_stack.insert("analysis_requirement".to_string(), analysis_requirement);
+        }
         detected_stack.insert(
             "environment_variable_scan".to_string(),
             json!({
@@ -367,11 +374,9 @@ impl ProjectEnvironmentToolProvider {
                 &environment.required_services,
                 image_records.as_slice(),
             )?;
-            upsert_project_compose_config_file(
+            super::refresh_project_runtime_compose_config(
                 self.project.id.as_str(),
-                &mut environment.generated_config_files,
-                &environment.environment_variables,
-                &environment.required_services,
+                &mut environment,
                 image_records.as_slice(),
             )?;
             if image_records

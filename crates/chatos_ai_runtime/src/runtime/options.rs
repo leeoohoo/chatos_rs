@@ -97,7 +97,7 @@ impl IterativeContextRefresh {
             );
         }
 
-        items.extend(self.sticky_input_items.iter().cloned());
+        merge_current_turn_input_items(&mut items, self.sticky_input_items.as_slice());
         Ok(Value::Array(items))
     }
 
@@ -160,6 +160,29 @@ impl IterativeContextRefresh {
         notify_context_overflow_recovery(callbacks, "上下文压缩完成，正在继续当前请求。");
         Ok(true)
     }
+}
+
+fn merge_current_turn_input_items(items: &mut Vec<Value>, current_input_items: &[Value]) {
+    if current_input_items.is_empty() {
+        return;
+    }
+
+    let current_user_contents = current_input_items
+        .iter()
+        .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+        .filter_map(|item| item.get("content"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !current_user_contents.is_empty() {
+        items.retain(|item| {
+            item.get("role").and_then(Value::as_str) != Some("user")
+                || item
+                    .get("content")
+                    .is_none_or(|content| !current_user_contents.contains(content))
+        });
+    }
+
+    items.extend(current_input_items.iter().cloned());
 }
 
 impl Default for MemoryContextOverflowRecovery {
@@ -385,6 +408,59 @@ mod callback_tests {
     use memory_engine_sdk::RunThreadActiveSummaryResponse;
 
     use super::*;
+
+    #[tokio::test]
+    async fn iterative_refresh_keeps_current_task_without_memory_records() {
+        let refresh = IterativeContextRefresh::new(
+            None,
+            None,
+            vec![json!({"role":"system","content":"tool instructions"})],
+        )
+        .with_sticky_input_items(vec![
+            json!({"role":"system","content":"current workspace fact"}),
+            json!({"role":"user","content":"current task contract"}),
+        ]);
+
+        let input = refresh.compose_input().await.expect("compose input");
+        let items = input.as_array().expect("input items");
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[2]["role"].as_str(), Some("user"));
+        assert_eq!(items[2]["content"].as_str(), Some("current task contract"));
+    }
+
+    #[tokio::test]
+    async fn iterative_refresh_deduplicates_and_appends_current_user_task() {
+        let refresh = IterativeContextRefresh::new(
+            None,
+            None,
+            vec![
+                json!({"type":"message","role":"user","content":"authoritative current task"}),
+                json!({"type":"message","role":"assistant","content":"previous tool call"}),
+            ],
+        )
+        .with_sticky_input_items(vec![
+            json!({"role":"system","content":"current workspace fact"}),
+            json!({"role":"user","content":"authoritative current task"}),
+        ]);
+
+        let input = refresh.compose_input().await.expect("compose input");
+        let items = input.as_array().expect("input items");
+        let user_items = items
+            .iter()
+            .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_items.len(), 1);
+        assert_eq!(
+            user_items[0]["content"].as_str(),
+            Some("authoritative current task")
+        );
+        assert_eq!(
+            items.last().and_then(|item| item["role"].as_str()),
+            Some("user")
+        );
+    }
 
     #[test]
     fn context_summary_payload_contains_scope_and_status() {

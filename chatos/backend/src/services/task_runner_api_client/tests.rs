@@ -3,7 +3,8 @@
 
 use super::{
     ensure_task_runner_body_within_limit, exchange_task_runner_token_via_user_service,
-    signed_chatos_internal_request_with_secret, UserServiceTaskRunnerExchange,
+    signed_chatos_internal_request_with_secret, TaskRunnerTaskRecord,
+    UserServiceTaskRunnerExchange,
 };
 use axum::extract::State;
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
@@ -177,4 +178,16 @@ fn task_runner_body_limit_rejects_oversized_body() {
 
     assert!(err.contains("exceeded limit"));
     assert!(err.contains("1025 bytes > 1024 bytes"));
+}
+
+#[test]
+fn task_runner_task_response_exposes_current_retry_run_identity() {
+    let task: TaskRunnerTaskRecord = serde_json::from_value(json!({
+        "status": "running",
+        "last_run_id": "run-retry"
+    }))
+    .expect("task response");
+
+    assert_eq!(task.status, "running");
+    assert_eq!(task.last_run_id.as_deref(), Some("run-retry"));
 }

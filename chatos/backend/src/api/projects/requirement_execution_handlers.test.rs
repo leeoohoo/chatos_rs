@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::projects::requirement_execution_handlers::rerun_support::execution_batch_has_started_active_tasks;
     use chatos_project_execution::RequirementPlanItem;
 
     #[test]
@@ -47,6 +48,24 @@ mod tests {
         .expect("request should deserialize");
 
         assert_eq!(request.model_config_id.as_deref(), Some("model-selected"));
+    }
+
+    #[test]
+    fn new_requirement_planner_turn_does_not_inherit_previous_cancellation() {
+        let session_id = "requirement-planner-reset-session";
+        abort_registry::clear(session_id);
+        abort_registry::reset_turn(session_id, Some("old-turn"));
+        assert!(abort_registry::abort_turn(session_id, Some("old-turn")));
+        assert!(abort_registry::is_aborted(session_id));
+
+        prepare_requirement_planner_turn(session_id, "new-turn");
+
+        assert!(!abort_registry::is_aborted(session_id));
+        let token = abort_registry::abort_token_for_turn(session_id, Some("new-turn"))
+            .expect("new planner turn token");
+        assert!(!token.is_cancelled());
+        assert!(abort_registry::abort_token_for_turn(session_id, Some("old-turn")).is_none());
+        abort_registry::clear(session_id);
     }
 
     #[test]
@@ -219,6 +238,19 @@ mod tests {
             ),
             OldCloudExecutionBatchState::CancellationSettling(1)
         );
+    }
+
+    #[test]
+    fn started_active_batch_cannot_be_implicitly_cancelled_by_replanning() {
+        let mut running = execution_link_with_status("running");
+        running.task_runner_run_id = Some("run-1".to_string());
+        let waiting = execution_link_with_status("ready");
+
+        assert!(execution_batch_has_started_active_tasks(&[running, waiting]));
+        assert!(!execution_batch_has_started_active_tasks(&[
+            execution_link_with_status("ready"),
+            execution_link_with_status("pending"),
+        ]));
     }
 
     #[test]

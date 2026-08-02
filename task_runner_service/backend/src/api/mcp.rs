@@ -331,6 +331,7 @@ struct McpManagementBinding {
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
     default_model_config_id: Option<String>,
+    task_profile: Option<String>,
     expected_project_task_ids: std::collections::BTreeSet<String>,
 }
 
@@ -441,7 +442,10 @@ async fn dispatch_bound_task_runner_tool(
     };
     let is_requirement_planner =
         binding.agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent;
-    let is_chatos_plan = binding.agent_key == SystemAgentKey::ChatosPlanningAgent;
+    let is_chatos_plan = binding
+        .task_profile
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN));
     let request_context = McpRequestContext {
         project_id: Some(binding.project_id.clone()),
         source_session_id: binding.source_session_id.clone(),
@@ -458,7 +462,7 @@ async fn dispatch_bound_task_runner_tool(
             }
             .to_string(),
         ),
-        task_profile: is_chatos_plan.then(|| crate::models::TASK_PROFILE_CHATOS_PLAN.to_string()),
+        task_profile: binding.task_profile.clone(),
         builtin_prompt_locale: None,
         chatos_plan_mode: is_chatos_plan,
         expected_project_task_ids: binding.expected_project_task_ids.clone(),

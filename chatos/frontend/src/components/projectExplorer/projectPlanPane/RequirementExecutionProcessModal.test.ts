@@ -171,7 +171,7 @@ describe('requirement execution process phase', () => {
       hasActiveRuns: false,
       phase: 'failed',
       recoveryAction: 'none',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+    })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: false,
@@ -192,7 +192,7 @@ describe('requirement execution process phase', () => {
       hasActiveRuns: false,
       phase: 'completed',
       recoveryAction: 'none',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+    })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
   });
 
   it('keeps a completed batch as history when feedback starts a new plan', () => {
@@ -204,6 +204,10 @@ describe('requirement execution process phase', () => {
       phase: 'awaiting_confirmation',
       replacePreviousBatch: true,
     })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'running',
+      replacePreviousBatch: true,
+    })).toBe(false);
   });
 
   it('restores a persisted cloud or local planning batch for reopening from Plan', () => {

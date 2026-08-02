@@ -348,7 +348,7 @@ impl SandboxManagerClient {
             ttl_seconds,
             policy,
         };
-        let idempotency_key = format!("sandbox-lease:{}", run.id);
+        let idempotency_key = sandbox_lease_idempotency_key("sandbox-lease", run);
         let url = format!("{}/api/sandboxes/leases", self.base_url);
         for attempt in 0..6 {
             let response = self
@@ -405,7 +405,7 @@ impl SandboxManagerClient {
             )?
             .header(
                 "x-idempotency-key",
-                format!("sandbox-environment-lease:{}", run.id),
+                sandbox_lease_idempotency_key("sandbox-environment-lease", run),
             )
             .json(&payload)
             .send()
@@ -744,6 +744,10 @@ impl SandboxManagerClient {
             Ok(request)
         }
     }
+}
+
+fn sandbox_lease_idempotency_key(prefix: &str, run: &TaskRunRecord) -> String {
+    format!("{prefix}:{}:attempt:{}", run.id, run.attempt.max(1))
 }
 
 async fn read_error_body(response: reqwest::Response) -> String {

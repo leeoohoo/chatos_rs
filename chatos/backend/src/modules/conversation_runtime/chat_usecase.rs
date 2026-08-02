@@ -13,7 +13,10 @@ use serde_json::Value;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_execution::init_chatos_stream_agent;
-use super::chat_runner::{build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput};
+use super::chat_runner::{
+    build_chat_event_sink, run_bootstrapped_chat, run_bootstrapped_project_planning,
+    BootstrappedChatInput, BootstrappedProjectPlanningInput,
+};
 use super::guidance;
 
 pub struct RunChatUsecaseInput {
@@ -82,6 +85,21 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         &model_runtime,
     ))
     .await;
+    if req.plan_mode {
+        run_bootstrapped_project_planning(BootstrappedProjectPlanningInput {
+            sender,
+            user_id: req.user_id.clone(),
+            project_id: req.project_id.clone(),
+            session_id: &session_id,
+            content: &content,
+            persisted_user_message_content,
+            persisted_user_message_metadata,
+            model_runtime: &model_runtime,
+            bootstrap,
+        })
+        .await;
+        return;
+    }
     let agent = init_chatos_stream_agent(&model_runtime, bootstrap.runtime_context.agent_profile);
     run_bootstrapped_chat(BootstrappedChatInput {
         sender: sender.clone(),

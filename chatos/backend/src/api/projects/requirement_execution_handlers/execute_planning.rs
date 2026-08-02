@@ -18,7 +18,9 @@ use crate::api::chat_stream_common::ChatStreamRequest;
 use crate::core::auth::AuthUser;
 use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
+use crate::modules::conversation_runtime::guidance;
 use crate::services::{access_token_scope, project_management_api_client};
+use crate::utils::abort_registry;
 
 use super::super::requirement_execution::{
     add_requirement_work_item_dependencies, collect_requirement_execution_scope,
@@ -198,6 +200,14 @@ pub(super) async fn execute_requirement_inner(
         &contact_runtime,
     )
     .await?;
+    project_management_api_client::analyze_project_service_runtime_environment(
+        cfg.project_service_base_url.as_str(),
+        access_token.as_str(),
+        project.id.as_str(),
+        &project_management_api_client::AnalyzeProjectRuntimeEnvironmentRequest::default(),
+    )
+    .await
+    .map_err(|err| HandlerError::bad_gateway("启动项目运行环境初始化失败", err))?;
     let requirement_documents = load_requirement_documents_for_scope(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
@@ -309,6 +319,7 @@ pub(super) async fn execute_requirement_inner(
         session_id: session.id.clone(),
         task_runner_base_url: contact_runtime.task_runner_base_url.clone(),
     };
+    prepare_requirement_planner_turn(session.id.as_str(), execution_group_id.as_str());
     access_token_scope::spawn_with_current_access_token(async move {
         run_chat_usecase(RunChatUsecaseInput {
             sender: None,
@@ -351,6 +362,11 @@ pub(super) async fn execute_requirement_inner(
         "planner_agent_key": "project_requirement_execution_planner_agent",
         "plan_mode_enabled": false,
     }))
+}
+
+pub(super) fn prepare_requirement_planner_turn(session_id: &str, execution_group_id: &str) {
+    abort_registry::reset_turn(session_id, Some(execution_group_id));
+    guidance::register_active_turn(session_id, execution_group_id);
 }
 
 async fn load_requirement_documents_for_scope(

@@ -22,8 +22,8 @@ mod messages;
 use self::messages::{
     apply_task_runner_callback_to_user_message,
     build_task_runner_callback_assistant_message_with_contact,
-    build_task_runner_callback_contact_display, is_task_runner_terminal_event,
-    messages_match_for_callback_upsert, publish_task_runner_callback_realtime,
+    build_task_runner_callback_contact_display, messages_match_for_callback_upsert,
+    publish_task_runner_callback_realtime, should_publish_task_runner_terminal_message,
 };
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +47,18 @@ pub(super) struct TaskRunnerCallbackRequest {
     source_user_message_id: Option<String>,
     parent_task_id: Option<String>,
     source_run_id: Option<String>,
+    #[serde(default)]
+    cancel_reason: Option<String>,
+    #[serde(default)]
+    cancelled_by_user_id: Option<String>,
+    #[serde(default)]
+    cancelled_by_username: Option<String>,
+    #[serde(default)]
+    cancelled_by_display_name: Option<String>,
+    #[serde(default)]
+    replacement_task_ids: Vec<String>,
+    #[serde(default)]
+    cancelled_because_task_id: Option<String>,
     schedule_mode: Option<String>,
     prompt: Option<TaskRunnerCallbackPrompt>,
     callback_at: Option<String>,
@@ -190,57 +202,62 @@ pub(super) async fn task_runner_callback(
         }
     }
 
-    let (saved_assistant_message, assistant_message_changed) = if is_task_runner_terminal_event(
-        payload.event.as_str(),
-    ) {
-        let contact_display = build_task_runner_callback_contact_display(&session);
-        let assistant_message = build_task_runner_callback_assistant_message_with_contact(
-            &session.id,
-            &payload,
-            Some(&contact_display),
-        );
-        match conversation_messages::get_message_by_id_in_session(
-            &session,
-            assistant_message.id.as_str(),
-        )
-        .await
-        {
-            Ok(Some(existing_message)) if existing_message.session_id != session.id => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(
-                        json!({ "accepted": false, "error": "assistant message session mismatch" }),
-                    ),
-                );
-            }
-            Ok(Some(existing_message))
-                if messages_match_for_callback_upsert(&existing_message, &assistant_message) =>
+    let (saved_assistant_message, assistant_message_changed) =
+        if should_publish_task_runner_terminal_message(&payload) {
+            let contact_display = build_task_runner_callback_contact_display(&session);
+            let assistant_message = build_task_runner_callback_assistant_message_with_contact(
+                &session.id,
+                &payload,
+                Some(&contact_display),
+            );
+            match conversation_messages::get_message_by_id_in_session(
+                &session,
+                assistant_message.id.as_str(),
+            )
+            .await
             {
-                (Some(existing_message), false)
-            }
-            Ok(_) => {
-                match conversation_messages::upsert_message_in_session(&session, &assistant_message)
-                    .await
+                Ok(Some(existing_message)) if existing_message.session_id != session.id => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(
+                            json!({ "accepted": false, "error": "assistant message session mismatch" }),
+                        ),
+                    );
+                }
+                Ok(Some(existing_message))
+                    if messages_match_for_callback_upsert(
+                        &existing_message,
+                        &assistant_message,
+                    ) =>
                 {
-                    Ok(message) => (Some(message), true),
-                    Err(err) => {
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({ "accepted": false, "error": err })),
-                        );
+                    (Some(existing_message), false)
+                }
+                Ok(_) => {
+                    match conversation_messages::upsert_message_in_session(
+                        &session,
+                        &assistant_message,
+                    )
+                    .await
+                    {
+                        Ok(message) => (Some(message), true),
+                        Err(err) => {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(json!({ "accepted": false, "error": err })),
+                            );
+                        }
                     }
                 }
+                Err(err) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "accepted": false, "error": err })),
+                    );
+                }
             }
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "accepted": false, "error": err })),
-                );
-            }
-        }
-    } else {
-        (None, false)
-    };
+        } else {
+            (None, false)
+        };
 
     let session_changed = user_message_changed || assistant_message_changed;
     let refreshed_session = if session_changed {

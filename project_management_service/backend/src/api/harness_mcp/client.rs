@@ -66,7 +66,7 @@ pub(super) struct HarnessContentInfo {
     #[serde(default)]
     pub(super) path: String,
     #[serde(default)]
-    pub(super) size: i64,
+    pub(super) size: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

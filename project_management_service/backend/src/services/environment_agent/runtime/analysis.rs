@@ -85,7 +85,11 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     environment.not_runnable_reason = None;
     environment.last_agent_run_id = Some(run_id.clone());
     environment.last_error = None;
-    bind_selected_dependencies(&mut environment.detected_stack, selected_dependencies);
+    bind_analysis_request(
+        &mut environment.detected_stack,
+        analysis_requirement,
+        selected_dependencies,
+    );
     environment.updated_at = now_rfc3339();
     environment = state
         .store
@@ -191,7 +195,34 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
                     .await?;
                 return response_for_project(state, failed).await;
             }
-            response_for_project(state, environment).await
+            let mut response = response_for_project(state, environment).await?;
+            if enforce_project_runtime_boundary(
+                project,
+                &mut response.environment,
+                &mut response.images,
+            ) {
+                response.environment = state
+                    .store
+                    .upsert_project_runtime_environment(&response.environment)
+                    .await?;
+                response.images = state
+                    .store
+                    .replace_project_runtime_environment_images(
+                        project.id.as_str(),
+                        response.images.as_slice(),
+                    )
+                    .await?;
+            }
+            let Some(image_record_id) = pending_workspace_image_id(&response) else {
+                return Ok(response);
+            };
+            super::super::generate_project_runtime_environment_image(
+                state,
+                project,
+                user_access_token,
+                image_record_id.as_str(),
+            )
+            .await
         }
         Err(err) => {
             environment.status = ProjectRuntimeEnvironmentStatus::Failed;
@@ -214,6 +245,32 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     }
 }
 
+fn pending_workspace_image_id(response: &ProjectRuntimeEnvironmentResponse) -> Option<String> {
+    if !response.environment.sandbox_enabled
+        || matches!(
+            response.environment.status,
+            ProjectRuntimeEnvironmentStatus::Disabled
+                | ProjectRuntimeEnvironmentStatus::Analyzing
+                | ProjectRuntimeEnvironmentStatus::NotRunnable
+                | ProjectRuntimeEnvironmentStatus::Failed
+        )
+    {
+        return None;
+    }
+    response
+        .images
+        .iter()
+        .find(|image| {
+            image.service_role == RuntimeServiceRole::Workspace
+                && image.mcp_policy.attachment == RuntimeMcpAttachment::WorkspaceGatewayTarget
+                && !matches!(
+                    image.status.trim().to_ascii_lowercase().as_str(),
+                    "ready" | "available" | "local" | "succeeded" | "completed" | "running"
+                )
+        })
+        .map(|image| image.id.clone())
+}
+
 struct ProjectEnvironmentAgentRunContext<'a> {
     run_id: &'a str,
     owner_user_id: &'a str,
@@ -234,6 +291,125 @@ async fn response_for_project(
         environment,
         images,
     })
+}
+
+#[cfg(test)]
+mod automatic_image_preparation_tests {
+    use super::*;
+
+    #[test]
+    fn pending_analysis_selects_the_program_workspace_image() {
+        let response = ProjectRuntimeEnvironmentResponse {
+            environment: ProjectRuntimeEnvironmentRecord {
+                project_id: "project-1".to_string(),
+                status: ProjectRuntimeEnvironmentStatus::PendingImageBuild,
+                sandbox_enabled: true,
+                sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+                file_provider: RuntimeEnvironmentProvider::Harness,
+                analysis_summary: None,
+                not_runnable_reason: None,
+                execution_service_id: Some("workspace".to_string()),
+                detected_stack: Value::Object(Default::default()),
+                required_services: Value::Array(Vec::new()),
+                env_vars: Value::Object(Default::default()),
+                environment_variables: Vec::new(),
+                generated_config_files: Vec::new(),
+                last_agent_run_id: None,
+                last_error: None,
+                created_at: "2026-08-02T00:00:00Z".to_string(),
+                updated_at: "2026-08-02T00:00:00Z".to_string(),
+            },
+            images: vec![ProjectRuntimeEnvironmentImageRecord {
+                id: "workspace-image".to_string(),
+                project_id: "project-1".to_string(),
+                environment_key: "workspace".to_string(),
+                environment_type: "workspace".to_string(),
+                service_id: "workspace".to_string(),
+                display_name: "Project Workspace".to_string(),
+                service_role: RuntimeServiceRole::Workspace,
+                source_root: ".".to_string(),
+                dockerfile: None,
+                image_id: None,
+                image_ref: None,
+                image_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+                status: "planned".to_string(),
+                error: None,
+                features: Value::Array(Vec::new()),
+                custom_build_script: None,
+                startup_command: None,
+                test_command: None,
+                auto_start: true,
+                depends_on: Vec::new(),
+                ports: Value::Array(Vec::new()),
+                env_vars: Value::Object(Default::default()),
+                mcp_policy: ProgramManagedMcpPolicy::workspace_target(),
+                component_kind: String::new(),
+                created_at: "2026-08-02T00:00:00Z".to_string(),
+                updated_at: "2026-08-02T00:00:00Z".to_string(),
+            }],
+        };
+
+        assert_eq!(
+            pending_workspace_image_id(&response).as_deref(),
+            Some("workspace-image")
+        );
+    }
+
+    #[test]
+    fn not_runnable_project_never_prepares_a_workspace_image() {
+        let mut response = ProjectRuntimeEnvironmentResponse {
+            environment: ProjectRuntimeEnvironmentRecord {
+                project_id: "project-1".to_string(),
+                status: ProjectRuntimeEnvironmentStatus::NotRunnable,
+                sandbox_enabled: true,
+                sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+                file_provider: RuntimeEnvironmentProvider::Harness,
+                analysis_summary: None,
+                not_runnable_reason: Some("empty project".to_string()),
+                execution_service_id: Some("workspace".to_string()),
+                detected_stack: Value::Object(Default::default()),
+                required_services: Value::Array(Vec::new()),
+                env_vars: Value::Object(Default::default()),
+                environment_variables: Vec::new(),
+                generated_config_files: Vec::new(),
+                last_agent_run_id: None,
+                last_error: None,
+                created_at: "2026-08-02T00:00:00Z".to_string(),
+                updated_at: "2026-08-02T00:00:00Z".to_string(),
+            },
+            images: Vec::new(),
+        };
+        response.images.push(ProjectRuntimeEnvironmentImageRecord {
+            id: "workspace-image".to_string(),
+            project_id: "project-1".to_string(),
+            environment_key: "workspace".to_string(),
+            environment_type: "workspace".to_string(),
+            display_name: "Project Workspace".to_string(),
+            service_id: "workspace".to_string(),
+            service_role: RuntimeServiceRole::Workspace,
+            source_root: ".".to_string(),
+            component_kind: String::new(),
+            startup_command: None,
+            test_command: None,
+            depends_on: Vec::new(),
+            auto_start: true,
+            mcp_policy: ProgramManagedMcpPolicy::workspace_target(),
+            image_id: None,
+            image_ref: None,
+            image_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            features: Value::Array(Vec::new()),
+            ports: Value::Array(Vec::new()),
+            env_vars: Value::Object(Default::default()),
+            dockerfile: None,
+            custom_build_script: None,
+            status: "planned".to_string(),
+            error: None,
+            created_at: "2026-08-02T00:00:00Z".to_string(),
+            updated_at: "2026-08-02T00:00:00Z".to_string(),
+        });
+
+        assert_eq!(pending_workspace_image_id(&response), None);
+    }
 }
 
 async fn run_project_environment_agent(
@@ -342,7 +518,11 @@ async fn execute_project_environment_agent(
     Ok(())
 }
 
-fn bind_selected_dependencies(detected_stack: &mut Value, selected_dependencies: &[String]) {
+fn bind_analysis_request(
+    detected_stack: &mut Value,
+    analysis_requirement: Option<&str>,
+    selected_dependencies: &[String],
+) {
     if !detected_stack.is_object() {
         *detected_stack = json!({});
     }
@@ -360,6 +540,17 @@ fn bind_selected_dependencies(detected_stack: &mut Value, selected_dependencies:
         "selected_dependencies".to_string(),
         json!(selected_dependencies),
     );
+    if let Some(analysis_requirement) = analysis_requirement
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        object.insert(
+            "analysis_requirement".to_string(),
+            Value::String(analysis_requirement.to_string()),
+        );
+    } else {
+        object.remove("analysis_requirement");
+    }
 }
 
 fn build_project_environment_agent_prompt(
@@ -420,7 +611,7 @@ fn apply_stop_decision(
 
 #[cfg(test)]
 mod tests {
-    use super::{bind_selected_dependencies, project_environment_agent_context};
+    use super::{bind_analysis_request, project_environment_agent_context};
 
     #[test]
     fn agent_context_does_not_expose_program_routing_or_environment_state() {
@@ -454,10 +645,11 @@ mod tests {
     }
 
     #[test]
-    fn selected_dependencies_are_bound_to_the_persisted_analysis_run() {
+    fn analysis_request_is_bound_to_the_persisted_analysis_run() {
         let mut detected_stack = serde_json::json!({"project_type": "rust"});
-        bind_selected_dependencies(
+        bind_analysis_request(
             &mut detected_stack,
+            Some("Build a React game and run browser tests"),
             &[
                 " Redis ".to_string(),
                 "PostgreSQL".to_string(),
@@ -467,6 +659,10 @@ mod tests {
         assert_eq!(
             detected_stack["selected_dependencies"],
             serde_json::json!(["PostgreSQL", "Redis"])
+        );
+        assert_eq!(
+            detected_stack["analysis_requirement"],
+            "Build a React game and run browser tests"
         );
     }
 }

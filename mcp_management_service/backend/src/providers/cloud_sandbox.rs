@@ -27,9 +27,12 @@ const INTERNAL_SCOPE: &str = "sandbox.service";
 pub(super) struct CloudSandboxProvider {
     http: reqwest::Client,
     base_url: String,
+    request_timeout: Duration,
     internal_secret: Option<String>,
     response_limit_bytes: usize,
 }
+
+const TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
 
 #[derive(Debug, Deserialize)]
 struct SandboxLeaseBinding {
@@ -75,6 +78,7 @@ impl CloudSandboxProvider {
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
+            request_timeout,
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
@@ -205,7 +209,10 @@ impl CloudSandboxProvider {
                 "x-mcp-management-run-id",
                 snapshot.run_id.as_deref().unwrap_or_default(),
             );
+        let request_timeout =
+            cloud_sandbox_call_timeout(original_tool_name, &arguments, self.request_timeout);
         let response = request
+            .timeout(request_timeout)
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": invocation_id,
@@ -332,6 +339,28 @@ impl CloudSandboxProvider {
     }
 }
 
+fn cloud_sandbox_call_timeout(
+    original_tool_name: &str,
+    arguments: &Value,
+    default_timeout: Duration,
+) -> Duration {
+    if !is_terminal_wait_call(original_tool_name, arguments) {
+        return default_timeout;
+    }
+    let requested_timeout_ms = chatos_mcp::resolve_wait_timeout_ms(arguments);
+    default_timeout.max(Duration::from_millis(
+        requested_timeout_ms.saturating_add(TERMINAL_WAIT_TRANSPORT_GRACE_MS),
+    ))
+}
+
+fn is_terminal_wait_call(original_tool_name: &str, arguments: &Value) -> bool {
+    let tool_name = original_tool_name.trim();
+    tool_name == "process_wait"
+        || tool_name.ends_with("_process_wait")
+        || ((tool_name == "process" || tool_name.ends_with("_process"))
+            && arguments.get("action").and_then(Value::as_str) == Some("wait"))
+}
+
 fn validate_lease_binding(
     record: &SandboxLeaseBinding,
     target: &SandboxExecutionTarget,
@@ -419,6 +448,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn terminal_wait_call_timeout_follows_requested_wait_budget() {
+        let default_timeout = Duration::from_secs(180);
+        assert_eq!(
+            cloud_sandbox_call_timeout(
+                "process_wait",
+                &json!({"timeout_ms": 600_000}),
+                default_timeout,
+            ),
+            Duration::from_millis(615_000)
+        );
+        assert_eq!(
+            cloud_sandbox_call_timeout(
+                "process",
+                &json!({"action": "wait", "timeout": 600}),
+                default_timeout,
+            ),
+            Duration::from_millis(615_000)
+        );
+        assert_eq!(
+            cloud_sandbox_call_timeout("process_poll", &json!({}), default_timeout),
+            default_timeout
+        );
+    }
+
     #[tokio::test]
     async fn cloud_sandbox_call_uses_signed_manager_proxy_and_bound_headers() {
         async fn lease(headers: HeaderMap) -> Json<Value> {
@@ -486,6 +540,7 @@ mod tests {
             caller_service: "task-runner".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
+            task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
             run_id: Some("run-1".to_string()),
             turn_id: None,

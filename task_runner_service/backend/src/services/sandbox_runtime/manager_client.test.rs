@@ -4,8 +4,37 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        SandboxLeaseListItem, SandboxManagerAuth, SandboxManagerAuthMode, SandboxManagerClient,
+        sandbox_lease_idempotency_key, SandboxLeaseListItem, SandboxManagerAuth,
+        SandboxManagerAuthMode, SandboxManagerClient,
     };
+    use crate::models::TaskRunRecord;
+    use serde_json::json;
+
+    fn run_with_attempt(attempt: i64) -> TaskRunRecord {
+        let mut run = TaskRunRecord::queued(
+            "run-1".to_string(),
+            "task-1".to_string(),
+            "model-1".to_string(),
+            "thread-1".to_string(),
+            json!({}),
+            Vec::new(),
+            "2026-08-02T00:00:00Z".to_string(),
+        );
+        run.attempt = attempt;
+        run
+    }
+
+    #[test]
+    fn recovered_run_uses_a_new_sandbox_idempotency_key() {
+        assert_eq!(
+            sandbox_lease_idempotency_key("sandbox-lease", &run_with_attempt(1)),
+            "sandbox-lease:run-1:attempt:1"
+        );
+        assert_eq!(
+            sandbox_lease_idempotency_key("sandbox-lease", &run_with_attempt(2)),
+            "sandbox-lease:run-1:attempt:2"
+        );
+    }
 
     #[test]
     fn terminal_sandbox_lease_statuses_do_not_require_cleanup() {

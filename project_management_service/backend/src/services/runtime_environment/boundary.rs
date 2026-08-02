@@ -11,6 +11,23 @@ pub fn enforce_project_runtime_boundary(
     images: &mut Vec<ProjectRuntimeEnvironmentImageRecord>,
 ) -> bool {
     let mut changed = false;
+    if environment
+        .not_runnable_reason
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|reason| !reason.is_empty())
+        && !matches!(
+            environment.status,
+            ProjectRuntimeEnvironmentStatus::Disabled
+                | ProjectRuntimeEnvironmentStatus::Analyzing
+                | ProjectRuntimeEnvironmentStatus::Failed
+                | ProjectRuntimeEnvironmentStatus::NotRunnable
+        )
+    {
+        environment.status = ProjectRuntimeEnvironmentStatus::NotRunnable;
+        environment.analysis_summary = environment.not_runnable_reason.clone();
+        changed = true;
+    }
     if !environment.sandbox_enabled {
         if environment.sandbox_provider != RuntimeEnvironmentProvider::None {
             environment.sandbox_provider = RuntimeEnvironmentProvider::None;
@@ -73,6 +90,23 @@ pub fn enforce_project_runtime_boundary(
     if environment.file_provider != desired_file_provider {
         environment.file_provider = desired_file_provider;
         changed = true;
+    }
+    if environment.status == ProjectRuntimeEnvironmentStatus::NotRunnable {
+        if !images.is_empty() {
+            images.clear();
+            changed = true;
+        }
+        if environment.execution_service_id.take().is_some() {
+            changed = true;
+        }
+        if environment.analysis_summary != environment.not_runnable_reason {
+            environment.analysis_summary = environment.not_runnable_reason.clone();
+            changed = true;
+        }
+        if changed {
+            environment.updated_at = now_rfc3339();
+        }
+        return changed;
     }
     if desired_sandbox_provider == RuntimeEnvironmentProvider::None {
         if !images.is_empty() {

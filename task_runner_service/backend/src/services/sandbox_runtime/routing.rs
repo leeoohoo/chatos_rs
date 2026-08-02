@@ -121,12 +121,6 @@ impl RunService {
         } else {
             None
         };
-        // Keep the resolved workspace/base image even when topology v2 is selected.
-        // The environment plan may be stale or temporarily unbuildable after a previous
-        // task changes the repository. Generic implementation tasks must still be able to
-        // enter a plain execution sandbox and repair the project instead of failing before
-        // the model gets any tools. `create_lease` ignores this value while the environment
-        // plan succeeds and uses it only for the guarded fallback path.
         let image_id = if local_project.is_some() {
             local_sandbox_image_id_for_task(task, &runtime)?
         } else {
@@ -165,14 +159,12 @@ fn runtime_topology_v2_enabled_from_value(value: Option<&str>) -> bool {
     )
 }
 
+#[cfg(test)]
 pub(super) fn sandbox_environment_fallback_allowed(
-    task: &TaskRecord,
-    route: &SandboxTaskRoute,
+    _task: &TaskRecord,
+    _route: &SandboxTaskRoute,
 ) -> bool {
-    route.provider == "cloud_sandbox_manager"
-        && route.environment_plan.is_some()
-        && route.image_id.is_some()
-        && normalized_execution_service_id(task).is_none_or(|service_id| service_id == "workspace")
+    false
 }
 
 fn sandbox_environment_plan_for_task(
@@ -183,6 +175,7 @@ fn sandbox_environment_plan_for_task(
     if !task.mcp_config.requires_execution {
         return Ok(None);
     }
+    ensure_project_runtime_ready(runtime)?;
     let global_environment = json_object_to_string_map(&runtime.environment.env_vars);
     let mut services = Vec::new();
     let mut workspace_service_ids = Vec::new();
@@ -258,7 +251,7 @@ fn sandbox_environment_plan_for_task(
                 "execution_service_id is not the ready project workspace: {requested}"
             ));
         }
-        return Ok(None);
+        return Err("project runtime environment has no ready workspace image".to_string());
     }
     if workspace_service_ids.len() != 1 {
         return Err("project runtime must contain exactly one ready workspace service".to_string());
@@ -405,10 +398,39 @@ fn sandbox_image_id_for_task(
     if !task.mcp_config.requires_execution {
         return Ok(Some(normalize_base_image_id(base_image_id)));
     }
-    match sandbox_image_id_for_runtime(runtime, provider, normalized_execution_service_id(task))? {
-        Some(image_id) => Ok(Some(image_id)),
-        None => Ok(Some(normalize_base_image_id(base_image_id))),
+    ensure_project_runtime_ready(runtime)?;
+    sandbox_image_id_for_runtime(runtime, provider, normalized_execution_service_id(task))?
+        .map(Some)
+        .ok_or_else(|| "project runtime environment has no ready workspace image".to_string())
+}
+
+fn ensure_project_runtime_ready(runtime: &ProjectSandboxRuntimeSettings) -> Result<(), String> {
+    if !runtime.environment.sandbox_enabled {
+        return Err("project sandbox environment is disabled".to_string());
     }
+    if let Some(reason) = runtime
+        .environment
+        .not_runnable_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+    {
+        return Err(format!(
+            "project sandbox environment is not runnable: {reason}"
+        ));
+    }
+    let status = runtime.environment.status.trim().to_ascii_lowercase();
+    if status != "ready" {
+        return Err(format!(
+            "project sandbox environment is not ready: status={}",
+            if status.is_empty() {
+                "pending"
+            } else {
+                status.as_str()
+            }
+        ));
+    }
+    Ok(())
 }
 
 fn local_sandbox_image_id_for_task(

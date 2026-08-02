@@ -16,6 +16,7 @@ use crate::models::{
     UpsertProjectProfileRequest,
 };
 use crate::services::cloud_import::{import_git_url_to_harness, import_zip_to_harness};
+use crate::services::environment_agent::analyze_project_runtime_environment;
 use crate::services::harness_repo::ensure_harness_repo_for_project;
 use crate::services::runtime_environment::ensure_runtime_environment_for_project;
 use crate::state::AppState;
@@ -150,12 +151,87 @@ pub(in crate::api) async fn create_cloud_project(
                 .save_project_record(&project)
                 .await
                 .map_err(ApiError::bad_request)?;
+            if cloud_import_should_bootstrap_runtime(import_source) {
+                queue_cloud_runtime_environment_bootstrap(
+                    &state,
+                    project.clone(),
+                    access_token.0.clone(),
+                )
+                .await;
+            }
             Ok((StatusCode::CREATED, Json(project)))
         }
         Err(err) => {
             let failed = mark_cloud_import_failed(state, project, err).await?;
             Ok((StatusCode::BAD_GATEWAY, Json(failed)))
         }
+    }
+}
+
+fn cloud_import_should_bootstrap_runtime(import_source: CloudImportSource) -> bool {
+    matches!(
+        import_source,
+        CloudImportSource::Git | CloudImportSource::Zip
+    )
+}
+
+async fn queue_cloud_runtime_environment_bootstrap(
+    state: &AppState,
+    project: ProjectRecord,
+    access_token: String,
+) {
+    let project_id = project.id.clone();
+    if !state
+        .runtime_environment_analysis_jobs
+        .lock()
+        .await
+        .insert(project_id.clone())
+    {
+        return;
+    }
+    let worker_state = state.clone();
+    tokio::spawn(async move {
+        let run_id = format!("project_env_bootstrap_{}", uuid::Uuid::new_v4());
+        if let Err(error) = analyze_project_runtime_environment(
+            &worker_state,
+            &project,
+            Some(access_token.as_str()),
+            run_id.as_str(),
+            None,
+            &[],
+        )
+        .await
+        {
+            warn!(
+                project_id = project_id.as_str(),
+                error = error.as_str(),
+                "automatic cloud project runtime initialization failed"
+            );
+        }
+        worker_state
+            .runtime_environment_analysis_jobs
+            .lock()
+            .await
+            .remove(project_id.as_str());
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cloud_import_should_bootstrap_runtime;
+    use crate::models::CloudImportSource;
+
+    #[test]
+    fn empty_cloud_project_waits_for_project_requirements_before_runtime_analysis() {
+        assert!(!cloud_import_should_bootstrap_runtime(
+            CloudImportSource::Empty
+        ));
+        assert!(cloud_import_should_bootstrap_runtime(
+            CloudImportSource::Git
+        ));
+        assert!(cloud_import_should_bootstrap_runtime(
+            CloudImportSource::Zip
+        ));
     }
 }
 

@@ -406,7 +406,7 @@ mod tests {
     use super::{clone_run_branch, count_file_changes, parse_name_status, parse_numstat};
     use crate::models::RunOutputFileChange;
     use crate::services::harness_run_git::{
-        commit_workspace_to_run_branch, create_snapshot_commit_and_push,
+        commit_workspace_to_run_branch, create_cloud_run_branch, create_snapshot_commit_and_push,
         promote_run_branch_to_base, run_git_output,
     };
     use crate::services::workspace_snapshot::copy_workspace_snapshot;
@@ -466,6 +466,107 @@ mod tests {
         assert_eq!(counts.binary, 1);
         assert_eq!(counts.diff_available, 0);
     }
+
+    #[tokio::test]
+    async fn cloud_run_branches_do_not_rewrite_the_shared_base_branch() {
+        let root = TestDirectory::new("cloud-branches");
+        let bare_repo = root.path().join("harness.git");
+        let seed = root.path().join("seed");
+        let prepare = root.path().join("prepare");
+
+        run_git_output(
+            vec![
+                "init".to_string(),
+                "--bare".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("initialize Harness repository");
+        run_git_output(
+            vec![
+                "clone".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                seed.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("clone seed repository");
+        fs::write(seed.join("README.md"), "baseline\n").expect("write baseline");
+        run_git_output(
+            vec!["add".to_string(), "README.md".to_string()],
+            Some(seed.as_path()),
+            &[],
+        )
+        .await
+        .expect("stage baseline");
+        run_git_output(
+            vec![
+                "-c".to_string(),
+                "user.name=Test".to_string(),
+                "-c".to_string(),
+                "user.email=test@example.invalid".to_string(),
+                "commit".to_string(),
+                "-m".to_string(),
+                "baseline".to_string(),
+            ],
+            Some(seed.as_path()),
+            &[],
+        )
+        .await
+        .expect("commit baseline");
+        run_git_output(
+            vec![
+                "push".to_string(),
+                "origin".to_string(),
+                "HEAD:refs/heads/main".to_string(),
+            ],
+            Some(seed.as_path()),
+            &[],
+        )
+        .await
+        .expect("push baseline");
+        run_git_output(
+            vec![
+                "clone".to_string(),
+                "--no-checkout".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                prepare.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("clone preparation repository");
+
+        let first = create_cloud_run_branch(prepare.as_path(), "main", "chatos/runs/first", &[])
+            .await
+            .expect("create first run branch");
+        let second = create_cloud_run_branch(prepare.as_path(), "main", "chatos/runs/second", &[])
+            .await
+            .expect("create second run branch");
+        let base_after = run_git_output(
+            vec![
+                "--git-dir".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                "rev-parse".to_string(),
+                "refs/heads/main".to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("read main branch");
+
+        assert_eq!(first, second);
+        assert_eq!(base_after.trim(), first);
+    }
+
+    include!("harness_run_git.test.rs");
 
     #[tokio::test]
     async fn bare_repo_round_trip_commits_and_parses_sandbox_changes() {

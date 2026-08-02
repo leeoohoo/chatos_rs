@@ -125,7 +125,7 @@ pub async fn resolve_auth_user_via_user_service(
         cfg.user_service_request_timeout_ms,
     )
     .await
-    .map_err(AuthResolveError::UserServiceUnavailable)?;
+    .map_err(map_user_service_verify_error)?;
     let principal = payload.principal;
     if principal.principal_type != "human_user" {
         return Err(AuthResolveError::InvalidPrincipal);
@@ -143,6 +143,13 @@ pub async fn resolve_auth_user_via_user_service(
     Ok(AuthUser { user_id, role })
 }
 
+fn map_user_service_verify_error(detail: String) -> AuthResolveError {
+    match user_service_api_client::response_status_from_error(detail.as_str()) {
+        Some(401 | 403) => AuthResolveError::InvalidPrincipal,
+        _ => AuthResolveError::UserServiceUnavailable(detail),
+    }
+}
+
 fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::UNAUTHORIZED,
@@ -150,4 +157,29 @@ fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
             "error": message
         })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{map_user_service_verify_error, AuthResolveError};
+
+    #[test]
+    fn verify_auth_rejections_are_not_reported_as_gateway_failures() {
+        for status in [401, 403] {
+            assert!(matches!(
+                map_user_service_verify_error(format!(
+                    "user_service request failed: {status} invalid token"
+                )),
+                AuthResolveError::InvalidPrincipal
+            ));
+        }
+    }
+
+    #[test]
+    fn verify_transport_failures_remain_gateway_failures() {
+        assert!(matches!(
+            map_user_service_verify_error("connection refused".to_string()),
+            AuthResolveError::UserServiceUnavailable(detail) if detail == "connection refused"
+        ));
+    }
 }

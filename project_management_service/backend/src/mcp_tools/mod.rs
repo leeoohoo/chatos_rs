@@ -4,6 +4,7 @@
 use chatos_mcp::project_management_contract::{args::ToolCallParams, tools};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::domain::visibility::{
@@ -12,6 +13,7 @@ use crate::domain::visibility::{
 use crate::models::*;
 use crate::state::AppState;
 
+mod agent_views;
 mod conversions;
 mod documents;
 mod pagination;
@@ -165,11 +167,28 @@ async fn require_project_task_in_project(
 ) -> Result<ProjectWorkItemRecord, String> {
     validate_required("project_id", project_id)?;
     validate_required("project_task_id", project_task_id)?;
-    let item = state
-        .store
-        .get_work_item(project_task_id)
-        .await?
-        .ok_or_else(|| format!("项目任务不存在: {project_task_id}"))?;
+    let item = match state.store.get_work_item(project_task_id).await? {
+        Some(item) => item,
+        None => {
+            let candidates = state
+                .store
+                .list_work_items_by_project(project_id, None, None, None)
+                .await?;
+            let resolved_id = unique_nearby_project_task_id(project_task_id, &candidates)
+                .map(str::to_string)
+                .ok_or_else(|| format!("项目任务不存在: {project_task_id}"))?;
+            tracing::warn!(
+                supplied_project_task_id = project_task_id,
+                resolved_project_task_id = resolved_id.as_str(),
+                project_id,
+                "resolved a mistyped project task UUID inside the authorized project boundary"
+            );
+            candidates
+                .into_iter()
+                .find(|candidate| candidate.id == resolved_id)
+                .ok_or_else(|| format!("项目任务不存在: {project_task_id}"))?
+        }
+    };
     if item.project_id != project_id {
         return Err(format!(
             "项目任务不属于当前项目，project_task_id={project_task_id}"
@@ -189,6 +208,94 @@ async fn require_project_task_in_project(
     }
     require_project_access(state, project_id, user).await?;
     Ok(item)
+}
+
+async fn resolve_project_task_ids_in_project(
+    state: &AppState,
+    project_task_ids: Vec<String>,
+    project_id: &str,
+    user: &CurrentUser,
+) -> Result<Vec<String>, String> {
+    let mut resolved = Vec::with_capacity(project_task_ids.len());
+    for project_task_id in project_task_ids {
+        let item =
+            require_project_task_in_project(state, &project_task_id, project_id, user).await?;
+        if !resolved.iter().any(|existing| existing == &item.id) {
+            resolved.push(item.id);
+        }
+    }
+    Ok(resolved)
+}
+
+fn unique_nearby_project_task_id<'a>(
+    supplied_id: &str,
+    candidates: &'a [ProjectWorkItemRecord],
+) -> Option<&'a str> {
+    const MAX_DISTANCE: usize = 2;
+
+    let mut best: Option<(&str, usize)> = None;
+    let mut best_is_ambiguous = false;
+    for candidate in candidates {
+        let Some(distance) = uuid_damerau_levenshtein(supplied_id, candidate.id.as_str()) else {
+            continue;
+        };
+        if distance > MAX_DISTANCE {
+            continue;
+        }
+        match best {
+            None => {
+                best = Some((candidate.id.as_str(), distance));
+                best_is_ambiguous = false;
+            }
+            Some((_, best_distance)) if distance < best_distance => {
+                best = Some((candidate.id.as_str(), distance));
+                best_is_ambiguous = false;
+            }
+            Some((_, best_distance)) if distance == best_distance => {
+                best_is_ambiguous = true;
+            }
+            Some(_) => {}
+        }
+    }
+    best.filter(|_| !best_is_ambiguous).map(|(id, _)| id)
+}
+
+fn uuid_damerau_levenshtein(left: &str, right: &str) -> Option<usize> {
+    let left = Uuid::parse_str(left)
+        .ok()?
+        .simple()
+        .to_string()
+        .into_bytes();
+    let right = Uuid::parse_str(right)
+        .ok()?
+        .simple()
+        .to_string()
+        .into_bytes();
+    let mut distance = vec![vec![0usize; right.len() + 1]; left.len() + 1];
+    for (index, row) in distance.iter_mut().enumerate() {
+        row[0] = index;
+    }
+    for index in 0..=right.len() {
+        distance[0][index] = index;
+    }
+    for left_index in 1..=left.len() {
+        for right_index in 1..=right.len() {
+            let substitution_cost = usize::from(left[left_index - 1] != right[right_index - 1]);
+            let mut value = distance[left_index - 1][right_index]
+                .saturating_add(1)
+                .min(distance[left_index][right_index - 1].saturating_add(1))
+                .min(distance[left_index - 1][right_index - 1].saturating_add(substitution_cost));
+            if left_index > 1
+                && right_index > 1
+                && left[left_index - 1] == right[right_index - 2]
+                && left[left_index - 2] == right[right_index - 1]
+            {
+                value = value.min(distance[left_index - 2][right_index - 2].saturating_add(1));
+            }
+            distance[left_index][right_index] = value;
+        }
+    }
+    Some(distance[left.len()][right.len()])
 }
 
 fn ensure_project_writable(project: &ProjectRecord) -> Result<(), String> {
@@ -249,6 +356,70 @@ mod tests {
     use super::*;
     use crate::config::AppConfig;
     use crate::models::UserRole;
+
+    fn project_task_candidate(id: &str) -> ProjectWorkItemRecord {
+        ProjectWorkItemRecord {
+            id: id.to_string(),
+            project_id: "project-1".to_string(),
+            requirement_id: "requirement-1".to_string(),
+            title: "Task".to_string(),
+            description: None,
+            status: ProjectWorkItemStatus::Todo,
+            priority: 0,
+            assignee_user_id: None,
+            estimate_points: None,
+            due_at: None,
+            sort_order: 0,
+            tags: Vec::new(),
+            is_planning_task: false,
+            creator_user_id: Some("user-1".to_string()),
+            creator_username: Some("owner".to_string()),
+            creator_display_name: Some("Owner".to_string()),
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            archived_at: None,
+        }
+    }
+
+    #[test]
+    fn uniquely_corrects_the_observed_uuid_copy_error_inside_one_project() {
+        let candidates = vec![
+            project_task_candidate("2f45ed1e-d368-434c-ada5-e49405a38ad0"),
+            project_task_candidate("93fc86c6-2d25-4bf8-9f2d-aef194c3e76a"),
+        ];
+
+        assert_eq!(
+            uuid_damerau_levenshtein(
+                "2f45ed1e-d368-434e-ad5a-e49405a38ad0",
+                "2f45ed1e-d368-434c-ada5-e49405a38ad0",
+            ),
+            Some(2)
+        );
+        assert_eq!(
+            unique_nearby_project_task_id("2f45ed1e-d368-434e-ad5a-e49405a38ad0", &candidates,),
+            Some("2f45ed1e-d368-434c-ada5-e49405a38ad0")
+        );
+    }
+
+    #[test]
+    fn refuses_ambiguous_or_non_uuid_project_task_corrections() {
+        let candidates = vec![
+            project_task_candidate("00000000-0000-4000-8000-000000000001"),
+            project_task_candidate("00000000-0000-4000-8000-000000000002"),
+        ];
+
+        assert_eq!(
+            unique_nearby_project_task_id("00000000-0000-4000-8000-000000000000", &candidates,),
+            None
+        );
+        assert_eq!(
+            unique_nearby_project_task_id("not-a-uuid", &candidates),
+            None
+        );
+    }
 
     async fn test_state() -> AppState {
         let base_url = std::env::var("PROJECT_SERVICE_TEST_MONGODB_BASE_URL")

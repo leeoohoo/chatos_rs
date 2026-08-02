@@ -60,6 +60,70 @@ const extractSandboxOutputCounts = (report: unknown): Record<string, unknown> | 
   return counts;
 };
 
+interface RunExecutionLocation {
+  environmentMode: string | null;
+  sandboxEnabled: boolean | null;
+  sandboxProvider: string | null;
+  sandboxId: string | null;
+  leaseId: string | null;
+  leaseExpiresAt: string | null;
+  harnessRepoPath: string | null;
+  harnessBaseBranch: string | null;
+  harnessRunBranch: string | null;
+  harnessStatus: string | null;
+  harnessResultCommit: string | null;
+}
+
+const readRecord = (value: unknown): Record<string, unknown> | null => (
+  isRecord(value) ? value : null
+);
+
+const extractRunExecutionLocation = (
+  run: MessageTaskRunnerRunDetailResponse['run'],
+): RunExecutionLocation => {
+  const input = readRecord(run.input_snapshot);
+  const inputSandbox = readRecord(input?.sandbox);
+  const inputHarness = readRecord(input?.harness);
+  const report = readRecord(run.report);
+  const reportOutput = readRecord(report?.output);
+  const outputSandbox = readRecord(reportOutput?.sandbox);
+  const outputHarness = readRecord(reportOutput?.harness);
+  const sandboxEnabled = typeof input?.sandbox_enabled === 'boolean'
+    ? input.sandbox_enabled
+    : typeof outputSandbox?.enabled === 'boolean'
+      ? outputSandbox.enabled
+      : inputSandbox
+        ? true
+        : null;
+
+  return {
+    environmentMode: readString(input?.execution_environment_mode),
+    sandboxEnabled,
+    sandboxProvider: readString(inputSandbox?.provider),
+    sandboxId: readString(inputSandbox?.sandbox_id) || readString(outputSandbox?.sandbox_id),
+    leaseId: readString(inputSandbox?.lease_id) || readString(outputSandbox?.lease_id),
+    leaseExpiresAt: readString(inputSandbox?.expires_at),
+    harnessRepoPath: readString(inputHarness?.repo_path) || readString(outputHarness?.repo_path),
+    harnessBaseBranch: readString(inputHarness?.base_branch) || readString(outputHarness?.base_branch),
+    harnessRunBranch: readString(inputHarness?.run_branch) || readString(outputHarness?.run_branch),
+    harnessStatus: readString(outputHarness?.status) || readString(inputHarness?.status),
+    harnessResultCommit: readString(outputHarness?.result_commit),
+  };
+};
+
+const environmentModeLabel = (mode: string | null): string => {
+  if (mode === 'cloud') return '云端';
+  if (mode === 'local') return '本地';
+  return mode || '-';
+};
+
+const sandboxStatusLabel = (location: RunExecutionLocation): string => {
+  if (location.sandboxId && location.leaseId) return '已准备';
+  if (location.sandboxEnabled === true) return '准备中';
+  if (location.sandboxEnabled === false) return '未启用';
+  return '-';
+};
+
 export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   detail,
   messageId,
@@ -84,6 +148,7 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   const resultSummary = readString(run.result_summary);
   const normalizedReportContent = readString(reportContent);
   const sandboxOutputCounts = extractSandboxOutputCounts(run.report);
+  const executionLocation = extractRunExecutionLocation(run);
   const userVisibleError = run.error_message
     ? sanitizeUserVisibleAppError(run.error_message)
     : null;
@@ -112,6 +177,26 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
           ['已加载工具事件', toolEventCount],
         ]}
       />
+
+      <CollapsibleSection title="执行位置" defaultOpen>
+        <FieldGrid
+          items={[
+            ['执行环境', environmentModeLabel(executionLocation.environmentMode)],
+            ['沙箱状态', sandboxStatusLabel(executionLocation)],
+            ['沙箱提供方', executionLocation.sandboxProvider],
+            ['Sandbox ID', executionLocation.sandboxId],
+            ['Lease ID', executionLocation.leaseId],
+            ['租约到期', executionLocation.leaseExpiresAt
+              ? formatDateTime(executionLocation.leaseExpiresAt)
+              : null],
+            ['Harness 仓库', executionLocation.harnessRepoPath],
+            ['Harness 基线分支', executionLocation.harnessBaseBranch],
+            ['Harness 运行分支', executionLocation.harnessRunBranch],
+            ['Harness 状态', executionLocation.harnessStatus],
+            ['Harness 结果提交', executionLocation.harnessResultCommit],
+          ]}
+        />
+      </CollapsibleSection>
 
       <PluginRunSnapshotCard inputSnapshot={run.input_snapshot} />
       <BrowserSessionEventsCard events={events} />

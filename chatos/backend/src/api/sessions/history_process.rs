@@ -1,20 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::core::messages::{
-    is_runtime_guidance_user_message, is_session_summary_message as is_session_summary,
-};
 use crate::models::message::Message;
 
-use super::history_process_support::{
-    attach_user_history_process_metadata, count_assistant_thinking_steps,
-    extract_tool_calls_from_message, is_task_runner_async_plan_summary_message,
-    is_task_runner_callback_message, normalize_task_runner_async_user_status_for_display,
-    normalize_task_runner_callback_for_display, select_final_assistant_index,
-    strip_assistant_for_compact_history,
-};
-
+mod compact;
 mod turn_display;
+mod turn_process_stats;
 mod turn_slices;
 
 pub(super) fn build_compact_history_messages_from_turn_slices(
@@ -60,105 +51,7 @@ pub(super) fn build_turn_display_messages_with_process_records(
 }
 
 pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
-    if messages.is_empty() {
-        return messages;
-    }
-
-    let user_indexes: Vec<usize> = messages
-        .iter()
-        .enumerate()
-        .filter_map(|(index, message)| {
-            (message.role == "user" && !is_runtime_guidance_user_message(message)).then_some(index)
-        })
-        .collect();
-
-    if user_indexes.is_empty() {
-        return messages;
-    }
-
-    let mut compact = Vec::new();
-
-    for (position, user_index) in user_indexes.iter().enumerate() {
-        let next_user_index = if position + 1 < user_indexes.len() {
-            user_indexes[position + 1]
-        } else {
-            messages.len()
-        };
-
-        let mut user_message = messages[*user_index].clone();
-        let user_message_id = user_message.id.clone();
-        let final_assistant_index =
-            select_final_assistant_index(&messages, user_index + 1, next_user_index);
-
-        let mut tool_call_count = 0usize;
-        let mut thinking_count = 0usize;
-        let mut process_message_count = 0usize;
-        let mut callback_updates = Vec::new();
-
-        for (index, message) in messages
-            .iter()
-            .enumerate()
-            .take(next_user_index)
-            .skip(user_index + 1)
-        {
-            if is_task_runner_callback_message(message) {
-                callback_updates.push(index);
-                continue;
-            }
-
-            if message.role == "assistant" && !is_session_summary(message) {
-                tool_call_count += extract_tool_calls_from_message(message).len();
-                thinking_count += count_assistant_thinking_steps(message);
-            }
-
-            if Some(index) != final_assistant_index
-                && (message.role == "assistant" || message.role == "tool")
-                && !(message.role == "assistant" && is_session_summary(message))
-            {
-                process_message_count += 1;
-            }
-        }
-
-        let final_assistant_message_id =
-            final_assistant_index.map(|index| messages[index].id.clone());
-        let task_runner_async_turn_completed = final_assistant_index
-            .is_some_and(|index| is_task_runner_async_plan_summary_message(&messages[index]))
-            || !callback_updates.is_empty();
-        attach_user_history_process_metadata(
-            &mut user_message,
-            process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
-            tool_call_count,
-            thinking_count,
-            process_message_count,
-            final_assistant_message_id,
-        );
-        normalize_task_runner_async_user_status_for_display(
-            &mut user_message,
-            task_runner_async_turn_completed,
-        );
-        compact.push(user_message);
-
-        for (index, source) in messages
-            .iter()
-            .enumerate()
-            .take(next_user_index)
-            .skip(user_index + 1)
-        {
-            if Some(index) == final_assistant_index {
-                let mut assistant = source.clone();
-                strip_assistant_for_compact_history(&mut assistant, &user_message_id);
-                compact.push(assistant);
-            }
-        }
-
-        for index in callback_updates {
-            let mut assistant = messages[index].clone();
-            normalize_task_runner_callback_for_display(&mut assistant);
-            compact.push(assistant);
-        }
-    }
-
-    compact
+    compact::build_compact_history_messages(messages)
 }
 
 #[cfg(test)]
@@ -383,6 +276,57 @@ mod tests {
                 .and_then(|value| value.get("historyFinalForUserMessageId"))
                 .and_then(|value| value.as_str()),
             Some("user-1")
+        );
+    }
+
+    #[test]
+    fn compact_history_keeps_intermediate_tool_call_turn_processing() {
+        let mut user = build_engine_record("user-1", "user", "plan it", "turn-1");
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "overall_status": "processing"
+            }
+        }));
+        let mut assistant = build_engine_record("assistant-1", "assistant", "", "turn-1");
+        assistant.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "response_status": "tool_calls",
+            "toolCalls": [{
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": "project_management_service_list_project_tasks",
+                    "arguments": "{}"
+                }
+            }],
+            "task_runner_async": {
+                "mode": "contact_async",
+                "message_kind": "plan_summary"
+            }
+        }));
+
+        let compact = build_compact_history_messages_from_turn_slices(vec![
+            memory_engine_sdk::TurnRecordSlice {
+                turn_id: "turn-1".to_string(),
+                user_record: user,
+                final_assistant_record: Some(assistant),
+                has_process: true,
+                tool_call_count: 1,
+                thinking_count: 0,
+                process_message_count: 1,
+            },
+        ]);
+
+        assert_eq!(
+            compact[0]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("task_runner_async"))
+                .and_then(|value| value.get("overall_status"))
+                .and_then(Value::as_str),
+            Some("processing")
         );
     }
 

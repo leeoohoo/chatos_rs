@@ -18,6 +18,8 @@ pub struct RuntimeGrantClaims {
     pub session_id: String,
     pub owner_user_id: String,
     pub agent_key: String,
+    #[serde(default)]
+    pub task_profile: Option<String>,
     pub project_id: String,
     pub run_id: Option<String>,
     pub turn_id: Option<String>,
@@ -146,6 +148,7 @@ mod tests {
             session_id: "session-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
+            task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
             run_id: Some("run-1".to_string()),
             turn_id: None,
@@ -171,6 +174,7 @@ mod tests {
         let verified = service.verify(issued.token.as_str()).unwrap();
         assert_eq!(verified.session_id, "session-1");
         assert_eq!(verified.owner_user_id, "user-1");
+        assert_eq!(verified.task_profile.as_deref(), Some("default"));
         assert_eq!(verified.route_revision, "route-1");
         assert_eq!(verified.allowed_resource_ids, vec!["mcp-1"]);
     }

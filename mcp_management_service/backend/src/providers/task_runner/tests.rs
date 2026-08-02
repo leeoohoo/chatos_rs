@@ -92,6 +92,7 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
     assert_eq!(headers["x-mcp-management-run-id"], "run-1");
     assert_eq!(headers["x-mcp-management-task-id"], "task-1");
+    assert_eq!(headers["x-mcp-management-task-profile"], "default");
     assert_eq!(
         headers["x-mcp-management-source-session-id"],
         "source-session-1"
@@ -204,6 +205,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
             Some("source-session-1"),
             Some("message-1"),
             Some("model-1"),
+            Some("chatos_plan"),
             expected_project_task_ids.as_slice(),
             i64::MAX,
         )
@@ -226,6 +228,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
     );
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
     assert_eq!(headers["x-mcp-management-turn-id"], "turn-1");
+    assert_eq!(headers["x-mcp-management-task-profile"], "chatos_plan");
     assert_eq!(
         headers["x-mcp-management-source-session-id"],
         "source-session-1"
@@ -284,6 +287,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         caller_service: "task-runner".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
+        task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         run_id: Some("run-1".to_string()),
         turn_id: Some("turn-1".to_string()),

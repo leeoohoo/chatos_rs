@@ -39,7 +39,17 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
         | BuiltinMcpKind::WebTools => {
             let server = kind.default_server(".");
             build_shared_builtin_tool_service(&server)?
-                .map(|service| service.list_tools())
+                .map(|service| {
+                    let tools = service.list_tools();
+                    if matches!(
+                        kind,
+                        BuiltinMcpKind::CodeMaintainerRead | BuiltinMcpKind::CodeMaintainerWrite
+                    ) {
+                        location_neutral_workspace_catalog(tools)
+                    } else {
+                        tools
+                    }
+                })
                 .ok_or_else(|| format!("builtin tool service is unavailable: {}", kind.kind_name()))
         }
         BuiltinMcpKind::BrowserTools => BrowserToolsService::new(BrowserToolsOptions {
@@ -61,7 +71,7 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
                 max_output_chars: DEFAULT_MAX_OUTPUT_CHARS,
                 store: TerminalControllerStoreRef::new(store),
             })
-            .map(|service| service.list_tools())
+            .map(|service| location_neutral_workspace_catalog(service.list_tools()))
         }
         BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
         BuiltinMcpKind::ProjectManagement => {
@@ -122,6 +132,32 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             .map(|service| service.list_tools())
         }
     }
+}
+
+fn location_neutral_workspace_catalog(mut tools: Vec<Value>) -> Vec<Value> {
+    const RUNTIME_WORKSPACE_NOTE: &str =
+        "Paths are relative to the current project workspace root.";
+    for tool in &mut tools {
+        let Some(description) = tool.get("description").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut lines = description
+            .lines()
+            .filter(|line| {
+                !line
+                    .trim_start()
+                    .starts_with("Current project workspace root:")
+            })
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if !lines.iter().any(|line| line == RUNTIME_WORKSPACE_NOTE) {
+            lines.push(RUNTIME_WORKSPACE_NOTE.to_string());
+        }
+        if let Some(object) = tool.as_object_mut() {
+            object.insert("description".to_string(), Value::String(lines.join("\n")));
+        }
+    }
+    tools
 }
 
 #[async_trait]
@@ -374,6 +410,25 @@ mod tests {
             assert!(tools
                 .iter()
                 .all(|tool| tool.get("name").and_then(Value::as_str).is_some()));
+        }
+    }
+
+    #[test]
+    fn project_tool_catalogs_do_not_publish_schema_process_working_directory() {
+        for kind in [
+            BuiltinMcpKind::CodeMaintainerWrite,
+            BuiltinMcpKind::TerminalController,
+        ] {
+            let tools = builtin_tool_catalog(kind).expect("project tool catalog");
+            let descriptions = tools
+                .iter()
+                .filter_map(|tool| tool.get("description").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert!(!descriptions.contains("Current project workspace root:"));
+            assert!(!descriptions.contains("/workspace"));
+            assert!(descriptions.contains("current project workspace root"));
         }
     }
 }

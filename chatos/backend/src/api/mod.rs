@@ -91,8 +91,14 @@ pub fn router() -> Result<Router, String> {
                 debug!(status = %res.status(), latency_ms = %latency.as_millis(), "request.end");
             },
         )
-        .on_failure(|err, latency: std::time::Duration, _span: &tracing::Span| {
-            tracing::error!(error = %err, latency_ms = %latency.as_millis(), "request.failure");
+        .on_failure(|err, latency: std::time::Duration, span: &tracing::Span| {
+            span.in_scope(|| {
+                debug!(
+                    error = %err,
+                    latency_ms = %latency.as_millis(),
+                    "request.failure"
+                );
+            });
         });
 
     let protected_api =
@@ -110,12 +116,30 @@ pub fn router() -> Result<Router, String> {
         .layer(middleware::from_fn(
             enforce_plugin_ui_resource_origin_namespace,
         ))
+        .layer(middleware::from_fn(log_server_error_requests))
         .layer(trace)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
         )))
+}
+
+async fn log_server_error_requests(request: Request<Body>, next: middleware::Next) -> Response {
+    let method = request.method().clone();
+    let uri = sanitize_request_uri(request.uri());
+    let started_at = Instant::now();
+    let response = next.run(request).await;
+    if response.status().is_server_error() {
+        tracing::error!(
+            method = %method,
+            uri = %uri,
+            status = %response.status(),
+            latency_ms = %started_at.elapsed().as_millis(),
+            "request.server_error"
+        );
+    }
+    response
 }
 
 async fn enforce_plugin_ui_resource_origin_namespace(

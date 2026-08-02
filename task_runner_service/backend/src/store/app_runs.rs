@@ -119,16 +119,19 @@ impl AppStore {
         }
     }
 
-    pub async fn fail_expired_run_claims(
+    pub async fn reconcile_expired_run_claims(
         &self,
         expired_before: &str,
-        failed_at: &str,
+        reconciled_at: &str,
+        max_attempts: i64,
     ) -> Result<Vec<TaskRunRecord>, String> {
         match self {
-            Self::InMemory(store) => Ok(store.fail_expired_run_claims(expired_before, failed_at)),
+            Self::InMemory(store) => {
+                Ok(store.reconcile_expired_run_claims(expired_before, reconciled_at, max_attempts))
+            }
             Self::Mongo(store) => {
                 store
-                    .fail_expired_run_claims(expired_before, failed_at)
+                    .reconcile_expired_run_claims(expired_before, reconciled_at, max_attempts)
                     .await
             }
         }

@@ -460,7 +460,7 @@ fn async_planner_profile_exposes_only_planning_tools() {
 }
 
 #[tokio::test]
-async fn provider_descriptor_exposes_only_chatos_planner_tools() {
+async fn provider_descriptor_exposes_all_chatos_planner_profile_tools() {
     let (service, _, _) = test_mcp_service().await;
     let descriptor = service.provider_descriptor();
     let tool_names = descriptor
@@ -469,12 +469,13 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
         .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
         .collect::<Vec<_>>();
 
-    assert_eq!(tool_names.len(), 7);
+    assert_eq!(tool_names.len(), 8);
     for expected in [
         "list_tasks",
         "get_task",
         "create_task",
         "create_tasks_with_prerequisites",
+        "create_project_execution_tasks",
         "cancel_task",
         "wait_for_task_completion",
         "get_task_dependency_graph",
@@ -485,7 +486,6 @@ async fn provider_descriptor_exposes_only_chatos_planner_tools() {
         "get_task_stats",
         "list_available_plugins",
         "list_available_skills",
-        "create_project_execution_tasks",
         "update_task",
         "set_task_prerequisites",
         "list_model_configs",

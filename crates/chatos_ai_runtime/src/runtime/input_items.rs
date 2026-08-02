@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
+
 use serde_json::{json, Value};
 
-use crate::tool_runtime::merge_pending_tool_turn_items;
+use crate::tool_runtime::{
+    merge_pending_tool_turn_items, ToolResultModelBudget, ToolResultModelBudgetLimits,
+};
 
 use super::EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT;
 
@@ -50,6 +54,77 @@ pub(super) fn merge_pending_tool_turn_into_input(
     });
     merge_pending_tool_turn_items(&mut items, pending_tool_calls, pending_tool_outputs);
     Value::Array(items)
+}
+
+pub(super) fn merge_current_turn_tool_history_into_input(
+    input: Value,
+    tool_call_items: &[Value],
+    tool_output_items: &[Value],
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Value {
+    if tool_call_items.is_empty() && tool_output_items.is_empty() {
+        return input;
+    }
+
+    let mut items = input.as_array().cloned().unwrap_or_else(|| {
+        if input.is_null() {
+            Vec::new()
+        } else {
+            vec![input]
+        }
+    });
+    let sanitized_outputs =
+        sanitize_current_turn_tool_outputs(tool_call_items, tool_output_items, limits);
+    merge_pending_tool_turn_items(
+        &mut items,
+        Some(tool_call_items),
+        Some(sanitized_outputs.as_slice()),
+    );
+    Value::Array(items)
+}
+
+fn sanitize_current_turn_tool_outputs(
+    tool_call_items: &[Value],
+    tool_output_items: &[Value],
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Vec<Value> {
+    let tool_names = tool_call_items
+        .iter()
+        .filter_map(|item| {
+            let call_id = item.get("call_id")?.as_str()?.trim();
+            let name = item.get("name")?.as_str()?.trim();
+            (!call_id.is_empty() && !name.is_empty())
+                .then(|| (call_id.to_string(), name.to_string()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut budget = limits
+        .map(ToolResultModelBudget::from_limits)
+        .unwrap_or_else(ToolResultModelBudget::from_env);
+    let mut sanitized = Vec::with_capacity(tool_output_items.len());
+
+    // Preserve the newest evidence when the current turn exceeds the cumulative
+    // model-input budget. Earlier calls remain visible as compact advisories so
+    // the model knows they already ran instead of repeating them after a memory
+    // context refresh.
+    for item in tool_output_items.iter().rev() {
+        let mut item = item.clone();
+        if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let tool_name = tool_names
+                .get(call_id)
+                .map(String::as_str)
+                .unwrap_or("unknown");
+            if let Some(output) = item.get("output").and_then(Value::as_str) {
+                item["output"] = Value::String(budget.sanitize_content(tool_name, output));
+            }
+        }
+        sanitized.push(item);
+    }
+    sanitized.reverse();
+    sanitized
 }
 
 pub(super) fn append_runtime_input_items(input: Value, items: &[Value]) -> Value {

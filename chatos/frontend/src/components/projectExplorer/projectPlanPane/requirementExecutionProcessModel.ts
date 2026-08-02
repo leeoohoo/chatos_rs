@@ -166,8 +166,7 @@ export const shouldStopRequirementExecutionBeforeReplacement = ({
   replacePreviousBatch: boolean;
 }): boolean => (
   replacePreviousBatch
-  && phase !== 'stopped'
-  && phase !== 'completed'
+  && ['awaiting_confirmation', 'failed'].includes(phase)
 );
 
 export const shouldShowCancelRequirementExecution = ({

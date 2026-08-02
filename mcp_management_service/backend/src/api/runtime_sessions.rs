@@ -68,12 +68,13 @@ pub(super) async fn resolve_runtime_session(
         .workspace
         .as_ref()
         .and_then(|workspace| workspace.device_id.clone());
+    let runtime_provider = capability_runtime_provider(&project_context);
     let capability_request =
         ResolveAgentCapabilitiesRequest::new(agent_key, request.owner_user_id.trim().to_string())
             .with_runtime_context(
                 normalized(request.task_profile.clone()),
                 project_context.source_type.clone(),
-                Some(project_context.workspace_provider.as_str().to_string()),
+                Some(runtime_provider.to_string()),
                 None,
             )
             .with_device_id(device_id);
@@ -179,6 +180,7 @@ pub(super) async fn resolve_runtime_session(
             request.source_session_id.as_deref(),
             request.source_user_message_id.as_deref(),
             request.default_model_config_id.as_deref(),
+            request.task_profile.as_deref(),
             expected_project_task_ids.as_slice(),
             expires_at_unix,
         )
@@ -335,6 +337,7 @@ pub(super) async fn resolve_runtime_session(
             session_id: session_id.clone(),
             owner_user_id: request.owner_user_id.trim().to_string(),
             agent_key: agent_key.as_str().to_string(),
+            task_profile: normalized(request.task_profile.clone()),
             project_id: request.project_id.trim().to_string(),
             run_id: normalized(request.run_id.clone()),
             turn_id: normalized(request.turn_id.clone()),
@@ -366,6 +369,7 @@ pub(super) async fn resolve_runtime_session(
             caller_service,
             owner_user_id: request.owner_user_id.trim().to_string(),
             agent_key: agent_key.as_str().to_string(),
+            task_profile: normalized(request.task_profile),
             project_id: request.project_id.trim().to_string(),
             run_id: normalized(request.run_id),
             turn_id: normalized(request.turn_id),
@@ -518,6 +522,24 @@ fn apply_live_tool_snapshots(
             resolved.status = "ready".to_string();
             resolved.reason = None;
         }
+    }
+}
+
+fn capability_runtime_provider(
+    context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+) -> &'static str {
+    // Plugin Management's runtime_provider condition expresses execution
+    // locality (cloud or Local Connector), not the concrete workspace backend.
+    // Harness, Cloud Sandbox and Cloud Storage are all cloud execution
+    // locations. Keeping this translation here lets capability policy remain
+    // stable while MCP Management independently chooses the concrete provider
+    // from the authoritative Project Execution Context.
+    match context.workspace_provider {
+        WorkspaceProviderKind::LocalConnector => WorkspaceProviderKind::LocalConnector.as_str(),
+        WorkspaceProviderKind::Harness
+        | WorkspaceProviderKind::CloudSandbox
+        | WorkspaceProviderKind::CloudStorage
+        | WorkspaceProviderKind::None => "cloud",
     }
 }
 

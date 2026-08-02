@@ -4,24 +4,16 @@
 use super::*;
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    MemoryContextComposer, RuntimeBeforeModelRequest, RuntimeIterationContext,
-    RuntimeLifecycleHook, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
-    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+    RuntimeBeforeModelRequest, RuntimeIterationContext, RuntimeLifecycleHook,
+    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
+    TaskExecutionReviewTrigger,
 };
-use std::time::Duration;
-
-const TASK_RUNNER_REVIEW_TRIGGER_REASON: &str = "task_runner_execution_review_checkpoint";
 
 struct TaskRunnerLifecycleHook {
     finalization: TaskFinalizationLifecycleHook,
     progress: Arc<TaskExecutionProgressState>,
     store: crate::store::AppStore,
     run_id: String,
-    memory_composer: Option<MemoryContextComposer>,
-    memory_scope: Option<MemoryScope>,
-    tool_result_model_budget_limits: ToolResultModelBudgetLimits,
-    active_summary_poll_interval: Duration,
-    active_summary_poll_timeout: Duration,
 }
 
 impl TaskRunnerLifecycleHook {
@@ -30,28 +22,17 @@ impl TaskRunnerLifecycleHook {
         progress: Arc<TaskExecutionProgressState>,
         store: crate::store::AppStore,
         run_id: String,
-        memory_composer: Option<MemoryContextComposer>,
-        memory_scope: Option<MemoryScope>,
-        tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     ) -> Self {
         Self {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
             progress,
             store,
             run_id,
-            memory_composer,
-            memory_scope,
-            tool_result_model_budget_limits,
-            active_summary_poll_interval: Duration::from_secs(10),
-            active_summary_poll_timeout: Duration::from_secs(120),
         }
     }
 
-    async fn checkpoint_input_items(
-        &self,
-        checkpoint: TaskExecutionReviewCheckpoint,
-    ) -> Vec<Value> {
-        let mut payload = json!({
+    fn checkpoint_input_items(&self, checkpoint: TaskExecutionReviewCheckpoint) -> Vec<Value> {
+        let payload = json!({
             "iteration": checkpoint.iteration,
             "trigger": checkpoint.trigger.as_str(),
             "read_only_iterations": checkpoint.read_only_iterations,
@@ -60,74 +41,17 @@ impl TaskRunnerLifecycleHook {
                 "read_only_iterations": checkpoint.policy.read_only_iterations,
                 "missing_read_failures": checkpoint.policy.missing_read_failures,
                 "repeat_interval_iterations": checkpoint.policy.repeat_interval_iterations,
-            }
+            },
+            "context_action": "guidance_only",
+            "disabled_tool_names": [],
         });
-        let summary_error = if let (Some(composer), Some(scope)) =
-            (self.memory_composer.as_ref(), self.memory_scope.as_ref())
-        {
-            self.store.append_run_event_sync(TaskRunEventRecord::new(
-                self.run_id.clone(),
-                "execution_review_summary_started",
-                Some("检测到疑似偏航，正在先复盘历史动作并刷新上下文".to_string()),
-                Some(payload.clone()),
-            ));
-            match self.run_active_summary_and_refresh(composer, scope).await {
-                Ok(items) => {
-                    payload["refreshed_memory_item_count"] = json!(items.len());
-                    self.store.append_run_event_sync(TaskRunEventRecord::new(
-                        self.run_id.clone(),
-                        "execution_review_summary_completed",
-                        Some("自动复盘完成，已把刷新后的上下文交给下一次模型请求".to_string()),
-                        Some(payload.clone()),
-                    ));
-                    let mut input_items = vec![checkpoint_guidance_message(checkpoint, true, None)];
-                    input_items.extend(items);
-                    return input_items;
-                }
-                Err(err) => err,
-            }
-        } else {
-            "Memory Engine 未配置，无法刷新复盘摘要".to_string()
-        };
-
-        payload["summary_error"] = json!(summary_error);
         self.store.append_run_event_sync(TaskRunEventRecord::new(
             self.run_id.clone(),
-            "execution_review_summary_failed",
-            Some("自动复盘刷新失败，已注入偏航校准提示并继续执行".to_string()),
+            "execution_review_checkpoint",
+            Some("检测到疑似偏航，已注入轻量校准提示并继续执行".to_string()),
             Some(payload),
         ));
-        vec![checkpoint_guidance_message(
-            checkpoint,
-            false,
-            Some(summary_error.as_str()),
-        )]
-    }
-
-    async fn run_active_summary_and_refresh(
-        &self,
-        composer: &MemoryContextComposer,
-        scope: &MemoryScope,
-    ) -> Result<Vec<Value>, String> {
-        let initial = composer
-            .run_active_summary(scope, Some(TASK_RUNNER_REVIEW_TRIGGER_REASON))
-            .await?;
-        let status = composer
-            .wait_for_active_summary_completion(
-                scope,
-                initial,
-                self.active_summary_poll_interval,
-                self.active_summary_poll_timeout,
-            )
-            .await?;
-        if status.failed {
-            return Err(status
-                .error_message
-                .unwrap_or_else(|| "active summary failed".to_string()));
-        }
-        composer
-            .compose_input_items_with_budget(scope, Some(self.tool_result_model_budget_limits))
-            .await
+        vec![checkpoint_guidance_message(checkpoint)]
     }
 }
 
@@ -147,34 +71,13 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         let Some(checkpoint) = self.progress.should_trigger_review(iteration) else {
             return Ok(before);
         };
-        let items = self.checkpoint_input_items(checkpoint).await;
+        let items = self.checkpoint_input_items(checkpoint);
         before.input_items.extend(items);
-        self.store.append_run_event_sync(TaskRunEventRecord::new(
-            self.run_id.clone(),
-            "execution_review_checkpoint",
-            Some("检测到疑似偏航，已触发历史动作复盘并继续执行".to_string()),
-            Some(json!({
-                "iteration": iteration,
-                "trigger": checkpoint.trigger.as_str(),
-                "read_only_iterations": checkpoint.read_only_iterations,
-                "missing_read_failures": checkpoint.missing_read_failures,
-                "policy": {
-                    "read_only_iterations": checkpoint.policy.read_only_iterations,
-                    "missing_read_failures": checkpoint.policy.missing_read_failures,
-                    "repeat_interval_iterations": checkpoint.policy.repeat_interval_iterations,
-                },
-                "disabled_tool_names": [],
-            })),
-        ));
         Ok(before)
     }
 }
 
-fn checkpoint_guidance_message(
-    checkpoint: TaskExecutionReviewCheckpoint,
-    memory_refreshed: bool,
-    summary_error: Option<&str>,
-) -> Value {
+fn checkpoint_guidance_message(checkpoint: TaskExecutionReviewCheckpoint) -> Value {
     let trigger = match checkpoint.trigger {
         TaskExecutionReviewTrigger::ReadOnlyLoop => "连续多轮只读/观察，没有真实工程改动",
         TaskExecutionReviewTrigger::MissingTargetedReads => {
@@ -184,24 +87,14 @@ fn checkpoint_guidance_message(
             "写入了 progress/unlock/placeholder 这类不能解决任务本身的占位文件"
         }
     };
-    let memory_state = if memory_refreshed {
-        "已先触发历史动作复盘，并已把复盘后的 Memory 上下文刷新进本次请求。"
-    } else {
-        "尝试触发历史动作复盘但未能刷新 Memory；仍需立刻基于已有上下文自我校准。"
-    };
-    let error_detail = summary_error
-        .map(|error| format!("\n- 复盘刷新错误：{error}"))
-        .unwrap_or_default();
     json!({
         "role": "system",
         "content": format!(
             "[Task Runner 自动复盘 checkpoint]\n\
              检测原因：{trigger}。\n\
-             {memory_state}{error_detail}\n\
-             \n\
              现在先在心里复盘：用户目标是什么、当前已经做了哪些真实动作、哪些动作偏离航线、真实路径/工具结果已经证明了什么。\n\
              然后继续执行，不要因为这次 checkpoint 自行退出、不要把它当成权限限制、不要要求用户替你改代码。\n\
-             工具没有被禁用；如果文件不存在，把它当作路径证据，不要重复读同一个不存在路径。所有 Harness/代码工具路径都按仓库根目录相对路径理解，没有隐式 cwd。\n\
+             工具没有被禁用；如果文件不存在，把它当作路径证据，不要重复读同一个不存在路径。所有项目文件工具路径都按项目根目录相对路径理解。\n\
              不要创建 TASK_RUNNER_PROGRESS_NOTE、unlock、placeholder、probe 之类的假进展文件；只有修改真实项目文件、运行必要验证、或给出有证据的终态结论才算进展。\n\
              当前计数：read_only_iterations={}, missing_read_failures={}。"
             ,
@@ -255,13 +148,6 @@ impl RunService {
                 progress,
                 self.store.clone(),
                 run.id.clone(),
-                self.config
-                    .memory_client()
-                    .ok()
-                    .flatten()
-                    .map(MemoryContextComposer::from_client),
-                run_spec.memory_scope.clone(),
-                tool_result_model_budget_limits,
             ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))

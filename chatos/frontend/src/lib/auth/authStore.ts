@@ -204,6 +204,16 @@ export const createAuthStore = (
         }
         set({ accessToken: token });
       });
+      const authenticationFailureUnsubscribe = client.onAuthenticationFailure(() => {
+        client.setAccessToken(null);
+        set({
+          accessToken: null,
+          user: null,
+          initialized: true,
+          loading: false,
+          error: null,
+        });
+      });
 
       const getClient = (): ApiClient => {
         client.setAccessToken(get().accessToken);
@@ -368,6 +378,7 @@ export const createAuthStore = (
       };
 
       void tokenRefreshUnsubscribe;
+      void authenticationFailureUnsubscribe;
       return storeState;
     },
     {

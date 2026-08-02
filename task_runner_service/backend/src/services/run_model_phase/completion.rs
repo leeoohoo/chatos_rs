@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[path = "completion/harness.rs"]
+mod harness;
+
 impl RunService {
     pub(super) async fn finalize_model_phase(
         &self,
@@ -18,6 +21,7 @@ impl RunService {
             effective_workspace_dir,
         );
         let mut report = report;
+        harness::fail_report_when_promotion_failed(&mut report, harness_output.as_ref());
         report.content = report
             .content
             .map(|content| path_redactor.redact_text(content.as_str()));
@@ -197,7 +201,7 @@ impl RunService {
                 run_id = run.id.as_str(),
                 task_id = task.id.as_str(),
                 task_title = task.title.as_str(),
-                memory_thread_id = task.memory_thread_id.as_str(),
+                memory_thread_id = run.memory_thread_id.as_str(),
                 "task runner skipped automatic memory summary because TASK_RUNNER_AUTO_MEMORY_SUMMARY is disabled"
             );
         }
@@ -530,6 +534,66 @@ mod tests {
             .expect("get parent")
             .expect("parent");
         assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn harness_promotion_failure_fails_completed_model_run() {
+        let (task_service, run_service) = test_services().await;
+        let task = create_task(&task_service, "harness failure", TaskStatus::Ready).await;
+        let mut run = run_record(&task);
+        run_service
+            .store
+            .save_run(run.clone())
+            .await
+            .expect("save run");
+        let report = TaskRunReport {
+            task_id: task.id.clone(),
+            run_id: run.id.clone(),
+            model_config_id: Some(run.model_config_id.clone()),
+            status: AiTurnStatus::Completed,
+            content: Some("model completed".to_string()),
+            reasoning: None,
+            error: None,
+            tool_calls: None,
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            response_id: None,
+            completed_at: now_rfc3339(),
+        };
+        let harness_output = HarnessRunOutputReport {
+            enabled: true,
+            project_id: "project-1".to_string(),
+            repo_path: "owner/repo".to_string(),
+            git_url: "https://example.invalid/repo.git".to_string(),
+            base_branch: "main".to_string(),
+            run_branch: "chatos/runs/run-1".to_string(),
+            base_commit: "base".to_string(),
+            result_commit: None,
+            status: "failed".to_string(),
+            message: Some("concurrent base update".to_string()),
+        };
+
+        run_service
+            .finalize_model_phase(&task, &mut run, report, ".", None, Some(harness_output))
+            .await;
+
+        let saved_run = run_service
+            .store
+            .get_run(run.id.as_str())
+            .await
+            .expect("get run")
+            .expect("run");
+        assert_eq!(saved_run.status, TaskRunStatus::Failed);
+        assert!(saved_run
+            .error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("concurrent base update")));
+        let saved_task = task_service
+            .get_task(task.id.as_str())
+            .await
+            .expect("get task")
+            .expect("task");
+        assert_eq!(saved_task.status, TaskStatus::Failed);
     }
 
     #[tokio::test]

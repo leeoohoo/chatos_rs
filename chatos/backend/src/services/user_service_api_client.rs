@@ -17,6 +17,17 @@ pub use types::{
     UserServiceModelProviderRecord, UserServiceModelSettingsRecord, UserServiceVerifyResponse,
 };
 
+pub fn response_status_from_error(error: &str) -> Option<u16> {
+    error
+        .trim()
+        .strip_prefix("user_service request failed:")?
+        .trim_start()
+        .split_whitespace()
+        .next()?
+        .parse::<u16>()
+        .ok()
+}
+
 #[derive(Debug, Serialize)]
 struct UserServiceAuthRequest<'a> {
     username: &'a str,
@@ -474,7 +485,7 @@ pub async fn delete_model_provider(
 #[cfg(test)]
 mod tests {
     use super::{
-        create_agent_account, get_me, list_agent_accounts, login,
+        create_agent_account, get_me, list_agent_accounts, login, response_status_from_error,
         CreateUserServiceAgentAccountRequest,
     };
     use axum::{
@@ -492,6 +503,20 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
         (format!("http://{addr}"), handle)
+    }
+
+    #[test]
+    fn response_status_is_extracted_from_user_service_error() {
+        assert_eq!(
+            response_status_from_error(
+                "user_service request failed: 401 invalid or expired access token"
+            ),
+            Some(401)
+        );
+        assert_eq!(
+            response_status_from_error("connection refused by user_service"),
+            None
+        );
     }
 
     #[tokio::test]

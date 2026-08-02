@@ -31,6 +31,7 @@ class ApiClient {
   private accessToken: string | null = null;
   private readonly localRuntime = new LocalRuntimeClient();
   private tokenRefreshListeners = new Set<(token: string) => void>();
+  private authenticationFailureListeners = new Set<() => void>();
   private readonly requestFn: workspaceApi.ApiRequestFn = (endpoint, options) => this.request(endpoint, options);
 
   constructor(baseUrl: string = API_BASE_URL) {
@@ -74,6 +75,25 @@ class ApiClient {
     return () => this.tokenRefreshListeners.delete(listener);
   }
 
+  onAuthenticationFailure(listener: () => void): () => void {
+    this.authenticationFailureListeners.add(listener);
+    return () => this.authenticationFailureListeners.delete(listener);
+  }
+
+  private invalidateAccessToken(): void {
+    if (!this.accessToken) {
+      return;
+    }
+    this.accessToken = null;
+    this.authenticationFailureListeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (error) {
+        console.error('Authentication failure listener failed:', error);
+      }
+    });
+  }
+
   private applyRefreshedAccessToken(response: Response): void {
     const refreshed = (response.headers.get('x-access-token') || '').trim();
     if (!refreshed || refreshed === this.accessToken) {
@@ -108,6 +128,9 @@ class ApiClient {
     try {
       const response = await fetch(url, config);
       this.applyRefreshedAccessToken(response);
+      if (response.status === 401) {
+        this.invalidateAccessToken();
+      }
       const text = await response.text();
       let parsedBody: unknown = null;
 

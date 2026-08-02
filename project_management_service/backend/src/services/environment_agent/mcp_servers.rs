@@ -373,6 +373,16 @@ pub(super) fn ensure_agent_required_tools_available(
     if !has_project_update {
         return Err("project environment update tool is unavailable".to_string());
     }
+    for required in [
+        "project_management_service_list_requirements",
+        "project_management_service_list_project_tasks",
+    ] {
+        if !tool_names.iter().any(|name| name == required) {
+            return Err(format!(
+                "project planning read tool is unavailable: {required}"
+            ));
+        }
+    }
     let has_image_search = tool_names
         .iter()
         .any(|name| name == "sandbox_images_search_images");

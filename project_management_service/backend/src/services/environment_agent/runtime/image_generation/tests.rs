@@ -341,3 +341,50 @@ fn dependency_prepare_results_are_applied_per_image_ref() {
     assert!(images[1].error.is_none());
     assert_eq!(errors, vec!["pull timed out".to_string()]);
 }
+
+#[test]
+fn workspace_result_rejects_dependency_images_fail_closed() {
+    let mut image = ProjectRuntimeEnvironmentImageRecord {
+        id: "workspace-image".to_string(),
+        project_id: "project-1".to_string(),
+        environment_key: "workspace".to_string(),
+        environment_type: "workspace".to_string(),
+        display_name: "Project Workspace".to_string(),
+        service_id: "workspace".to_string(),
+        service_role: RuntimeServiceRole::Workspace,
+        source_root: ".".to_string(),
+        component_kind: "workspace".to_string(),
+        startup_command: None,
+        test_command: None,
+        depends_on: Vec::new(),
+        auto_start: true,
+        mcp_policy: ProgramManagedMcpPolicy::workspace_target(),
+        image_id: None,
+        image_ref: None,
+        image_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+        features: empty_array(),
+        ports: empty_array(),
+        env_vars: empty_object(),
+        dockerfile: None,
+        custom_build_script: None,
+        status: "building".to_string(),
+        error: None,
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+    };
+
+    let error = apply_prepared_application_result(
+        &mut image,
+        RuntimeEnvironmentProvider::CloudSandboxManager,
+        &serde_json::json!({
+            "image_id": "dependency:postgres:16-alpine",
+            "image_ref": "postgres:16-alpine",
+            "features": ["dependency@postgres:16-alpine"],
+        }),
+    )
+    .expect_err("dependency image must not become the workspace target");
+
+    assert!(error.contains("工作区执行镜像不能使用依赖服务镜像"));
+    assert!(image.image_id.is_none());
+    assert!(image.image_ref.is_none());
+}

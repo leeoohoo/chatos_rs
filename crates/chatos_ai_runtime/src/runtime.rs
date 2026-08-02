@@ -38,7 +38,8 @@ use self::final_response::{
 };
 use self::input_items::{
     append_runtime_input_items, empty_final_response_followup_item, input_item_count,
-    json_value_size_bytes, merge_pending_tool_turn_into_input,
+    json_value_size_bytes, merge_current_turn_tool_history_into_input,
+    merge_pending_tool_turn_into_input,
 };
 use self::model_request::dispatch_model_request;
 use self::persistence::{normalized_option, should_persist_tool_result};
@@ -114,6 +115,8 @@ impl AiRuntime {
         let mut iteration_reason = "initial".to_string();
         let mut pending_tool_calls: Option<Vec<Value>> = None;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
+        let mut current_turn_tool_calls = Vec::new();
+        let mut current_turn_tool_outputs = Vec::new();
         let mut empty_final_response_followup_attempted = false;
         let mut runtime_followup_items: Vec<Value> = Vec::new();
         let mut runtime_followup_appended_to_request = false;
@@ -138,6 +141,12 @@ impl AiRuntime {
             if iteration > 1 {
                 if let Some(refresh) = &options.iterative_context_refresh {
                     request.input = refresh.compose_input().await?;
+                    request.input = merge_current_turn_tool_history_into_input(
+                        request.input,
+                        current_turn_tool_calls.as_slice(),
+                        current_turn_tool_outputs.as_slice(),
+                        options.tool_result_model_budget_limits,
+                    );
                     request.input = merge_pending_tool_turn_into_input(
                         request.input,
                         pending_tool_calls.as_deref(),
@@ -368,6 +377,18 @@ impl AiRuntime {
                     "ai runtime stopped after repeated failed tool batches"
                 );
                 return Err(error);
+            }
+            if options.iterative_context_refresh.is_some() {
+                current_turn_tool_calls.extend(tool_execution.tool_call_items.iter().cloned());
+                current_turn_tool_outputs.extend(
+                    tool_execution
+                        .tool_output_items
+                        .iter()
+                        .filter(|item| {
+                            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                        })
+                        .cloned(),
+                );
             }
             pending_tool_calls = Some(tool_execution.tool_call_items);
             pending_tool_outputs = Some(tool_execution.tool_output_items);

@@ -107,7 +107,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_controller_uses_server_workspace_dir() {
+    async fn terminal_controller_hides_server_workspace_dir() {
         let default_workspace = unique_temp_dir("default");
         let task_workspace = unique_temp_dir("task");
         std::fs::create_dir_all(&default_workspace).expect("create default workspace");
@@ -145,7 +145,8 @@ mod tests {
             .and_then(Value::as_str)
             .expect("tool description");
 
-        assert!(description.contains("/workspace"));
+        assert!(description.contains("current project workspace"));
+        assert!(!description.contains("/workspace"));
         assert!(!description.contains(task_workspace.to_string_lossy().as_ref()));
         assert!(!description.contains(default_workspace.to_string_lossy().as_ref()));
     }

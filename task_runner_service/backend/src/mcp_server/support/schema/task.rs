@@ -112,7 +112,7 @@ fn requires_execution_schema() -> Value {
     json!({
         "type": "boolean",
         "default": true,
-        "description": "Whether the task must run or validate the project. Set false for file-only inspection or editing: Task Runner uses the default sandbox image and does not require the project's initialized runtime image."
+        "description": "Whether the task must execute commands, start services, or validate runtime behavior. Set false only for file-only inspection or editing; runtime environment preparation is enforced by the program."
     })
 }
 

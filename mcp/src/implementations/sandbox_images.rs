@@ -219,7 +219,10 @@ where
     };
     let catalog = backend.image_catalog().await?;
     let matches = search_images(&catalog, &search_args);
-    if let Some(image) = matches.into_iter().find(image_is_available) {
+    if let Some(image) = matches
+        .into_iter()
+        .find(|image| image_is_available(image) && image_is_workspace_capable(image))
+    {
         return Ok(ready_image_result(true, Some(image), None));
     }
 
@@ -238,12 +241,20 @@ where
             .unwrap_or("sandbox image creation failed");
         return Err(reason.to_string());
     }
+    if !image_is_workspace_capable(&final_job) {
+        return Err(
+            "sandbox image initialization returned a dependency image for a workspace request"
+                .to_string(),
+        );
+    }
     let refreshed = backend.image_catalog().await?;
-    let image = find_image_by_job(&refreshed, &final_job).or_else(|| {
-        search_images(&refreshed, &search_args)
-            .into_iter()
-            .find(image_is_available)
-    });
+    let image = find_image_by_job(&refreshed, &final_job)
+        .filter(image_is_workspace_capable)
+        .or_else(|| {
+            search_images(&refreshed, &search_args)
+                .into_iter()
+                .find(|image| image_is_available(image) && image_is_workspace_capable(image))
+        });
     Ok(ready_image_result(false, image, Some(final_job)))
 }
 
@@ -446,6 +457,21 @@ fn image_is_available(image: &Value) -> bool {
         )
 }
 
+fn image_is_workspace_capable(image: &Value) -> bool {
+    let image_id = image
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if image_id.starts_with("dependency:") {
+        return false;
+    }
+    !image_feature_set(image)
+        .iter()
+        .any(|feature| feature.starts_with("dependency@"))
+}
+
 fn image_status(image: &Value) -> Option<String> {
     normalized_value(image.get("status").and_then(Value::as_str))
 }
@@ -617,6 +643,33 @@ mod tests {
 
         assert_eq!(result.get("reused").and_then(Value::as_bool), Some(true));
         assert_eq!(backend.initialize_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn empty_workspace_request_never_reuses_a_dependency_image() {
+        let backend = TestBackend {
+            catalog: json!({
+                "images": [{
+                    "id": "dependency:postgres:16-alpine",
+                    "image_ref": "postgres:16-alpine",
+                    "features": ["dependency@postgres:16-alpine"],
+                    "initialized": true,
+                    "status": "ready"
+                }]
+            }),
+            initialize_calls: AtomicUsize::new(0),
+        };
+
+        let result = ensure_image(&backend, CreateImageArgs::default())
+            .await
+            .expect("workspace image initialization should start");
+
+        assert_eq!(result.get("reused").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            result.get("image_id").and_then(Value::as_str),
+            Some("custom-image")
+        );
+        assert_eq!(backend.initialize_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

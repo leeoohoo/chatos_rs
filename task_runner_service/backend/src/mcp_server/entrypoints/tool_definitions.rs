@@ -29,7 +29,19 @@ impl TaskRunnerMcpService {
                 tool.get("name")
                     .and_then(Value::as_str)
                     .is_some_and(|name| {
+                        // This descriptor is the control-plane catalog shared by
+                        // every ChatOS Agent binding. The request-scoped Task
+                        // Runner endpoint still applies the exact tool profile,
+                        // but the catalog must contain the union of tools that
+                        // any supported ChatOS planner profile can receive. If
+                        // it only advertises the ordinary async-planner subset,
+                        // MCP Management cannot grant the requirement execution
+                        // planner its dedicated materialization tool.
                         agent_tool_allowed_for_profile(name, McpToolProfile::ChatosAsyncPlanner)
+                            || agent_tool_allowed_for_profile(
+                                name,
+                                McpToolProfile::ProjectRequirementExecutionPlanner,
+                            )
                     })
             })
             .collect::<Vec<_>>();

@@ -20,6 +20,8 @@ pub(super) struct UserServiceTaskRunnerTokenResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TaskRunnerTaskRecord {
     pub status: String,
+    #[serde(default)]
+    pub last_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

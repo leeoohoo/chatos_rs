@@ -3,6 +3,10 @@
 
 use super::*;
 use crate::auth::CurrentUser;
+use crate::models::{
+    normalize_execution_environment_mode, normalize_project_id, PUBLIC_PROJECT_ID,
+};
+use crate::services::project_management_api_client;
 
 impl RunService {
     pub async fn start_run(
@@ -151,14 +155,23 @@ impl RunService {
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
-        let execution_environment_mode = self
+        let configured_execution_environment_mode = self
             .effective_execution_environment_mode()
             .await
             .unwrap_or_else(|_| self.config.default_execution_environment_mode.clone());
+        let execution_environment_mode = self
+            .execution_environment_mode_for_task(
+                &runtime_task,
+                configured_execution_environment_mode.as_str(),
+            )
+            .await;
         let sandbox_enabled = self
             .should_route_task_to_sandbox(&runtime_task, capability_policy.is_some())
             .await
             .unwrap_or(false);
+        if sandbox_enabled {
+            self.validate_sandbox_route_for_task(&runtime_task).await?;
+        }
 
         let run_id = Uuid::new_v4().to_string();
         let skill_snapshots = capability_policy
@@ -246,8 +259,45 @@ impl RunService {
                 None,
             ))
             .await?;
+        // Publish the new run identity immediately. Retries reuse the same task
+        // id, so downstream project execution links must replace the terminal
+        // run id/status before batch pause or cancellation decisions are made.
+        self.try_send_task_callback("task.run.started", task_id, Some(&run))
+            .await;
 
         Ok(run)
+    }
+
+    async fn execution_environment_mode_for_task(
+        &self,
+        task: &TaskRecord,
+        configured_mode: &str,
+    ) -> String {
+        let fallback = normalize_execution_environment_mode(Some(configured_mode));
+        let project_id = normalize_project_id(Some(task.project_id.clone()));
+        if project_id == PUBLIC_PROJECT_ID
+            || !project_management_api_client::project_service_enabled(&self.config)
+        {
+            return fallback;
+        }
+
+        match project_management_api_client::sync_get_project(&self.config, project_id.as_str())
+            .await
+        {
+            Ok(Some(project)) => execution_environment_mode_for_project_source(
+                project.source_type.as_deref(),
+                fallback.as_str(),
+            ),
+            Ok(None) => fallback,
+            Err(error) => {
+                warn!(
+                    project_id = project_id.as_str(),
+                    error = error.as_str(),
+                    "failed to resolve project execution environment mode; using configured fallback"
+                );
+                fallback
+            }
+        }
     }
 
     async fn prepare_retry_task_session(
@@ -275,10 +325,26 @@ fn cancelled_task_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
     matches!(trigger, RunTriggerSource::Retry)
 }
 
+fn execution_environment_mode_for_project_source(
+    source_type: Option<&str>,
+    configured_mode: &str,
+) -> String {
+    match source_type
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("cloud") => "cloud".to_string(),
+        Some("local" | "local_connector") => "local".to_string(),
+        _ => normalize_execution_environment_mode(Some(configured_mode)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        cancelled_task_trigger_is_allowed, contact_async_trigger_is_allowed, RunTriggerSource,
+        cancelled_task_trigger_is_allowed, contact_async_trigger_is_allowed,
+        execution_environment_mode_for_project_source, RunTriggerSource,
     };
 
     #[test]
@@ -297,5 +363,29 @@ mod tests {
         assert!(!cancelled_task_trigger_is_allowed(
             RunTriggerSource::Scheduler
         ));
+    }
+
+    #[test]
+    fn cloud_project_overrides_a_local_host_default_for_run_observability() {
+        assert_eq!(
+            execution_environment_mode_for_project_source(Some("cloud"), "local"),
+            "cloud"
+        );
+    }
+
+    #[test]
+    fn local_connector_project_remains_local_even_with_a_cloud_default() {
+        assert_eq!(
+            execution_environment_mode_for_project_source(Some("local_connector"), "cloud"),
+            "local"
+        );
+    }
+
+    #[test]
+    fn unknown_project_source_uses_the_configured_mode() {
+        assert_eq!(
+            execution_environment_mode_for_project_source(Some("legacy"), "cloud"),
+            "cloud"
+        );
     }
 }

@@ -18,6 +18,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         caller_service: "task-runner".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
+        task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         run_id: Some("run-1".to_string()),
         turn_id: Some("turn-1".to_string()),
@@ -78,6 +79,7 @@ fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGra
         session_id: snapshot.session_id.clone(),
         owner_user_id: snapshot.owner_user_id.clone(),
         agent_key: snapshot.agent_key.clone(),
+        task_profile: snapshot.task_profile.clone(),
         project_id: snapshot.project_id.clone(),
         run_id: snapshot.run_id.clone(),
         turn_id: snapshot.turn_id.clone(),
@@ -430,6 +432,10 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     let mut wrong_agent = claims.clone();
     wrong_agent.agent_key = "another-agent".to_string();
     assert!(!grant_matches_snapshot(&wrong_agent, &snapshot));
+
+    let mut wrong_task_profile = claims.clone();
+    wrong_task_profile.task_profile = Some("chatos_plan".to_string());
+    assert!(!grant_matches_snapshot(&wrong_task_profile, &snapshot));
 
     let mut wrong_project = claims.clone();
     wrong_project.project_id = "another-project".to_string();

@@ -36,6 +36,25 @@ fn task_runner_cloud_plan_phase_excludes_mutating_engineering_tools() {
 }
 
 #[test]
+fn task_runner_planning_agent_owns_read_only_code_and_project_planning_capabilities() {
+    let required = task_runner_cloud_plan_phase_builtin_kinds()
+        .into_iter()
+        .filter(|kind| task_runner_cloud_plan_phase_required(*kind))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        required,
+        vec![
+            BuiltinMcpKind::CodeMaintainerRead,
+            BuiltinMcpKind::ProjectManagement,
+            BuiltinMcpKind::AskUser,
+        ]
+    );
+    assert!(!required.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+    assert!(!required.contains(&BuiltinMcpKind::TerminalController));
+}
+
+#[test]
 fn every_seeded_builtin_mcp_has_provider_skills_in_both_locales() {
     for kind in builtin_kinds() {
         let skills = provider_skills_for_builtin_mcp(kind);
@@ -86,7 +105,7 @@ fn every_system_mcp_has_provider_skills() {
 }
 
 #[test]
-fn project_runtime_environment_skill_distinguishes_application_topology_from_base_sandbox() {
+fn project_runtime_environment_skill_distinguishes_application_topology_from_project_tools() {
     let skills = provider_skills_for_system_mcp(PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID)
         .and_then(|value| value.as_array().cloned())
         .expect("project runtime provider skill");
@@ -95,17 +114,30 @@ fn project_runtime_environment_skill_distinguishes_application_topology_from_bas
         .and_then(Value::as_str)
         .expect("instructions");
 
-    assert!(instructions.contains("项目运行环境状态不等于当前 Task Runner 基础执行沙箱状态"));
-    assert!(instructions.contains("不能仅因项目环境为 `pending` 而阻塞"));
-    assert!(instructions.contains("Project Gateway application target"));
+    assert!(instructions.contains("项目应用环境状态不等于当前项目文件和终端工具的可用状态"));
+    assert!(instructions.contains("不能仅因应用环境为 `pending` 而阻塞"));
+    assert!(instructions.contains("只有明确依赖项目应用服务"));
+    for forbidden in [
+        "Task Runner",
+        "沙箱",
+        "Harness",
+        "Local Connector",
+        "Provider",
+    ] {
+        assert!(!instructions.contains(forbidden), "{forbidden}");
+    }
 }
 
 #[test]
-fn legacy_chatos_plan_key_is_replaced_by_the_explicit_planning_role() {
+fn legacy_chatos_planning_agents_are_retired_in_favor_of_task_runner_plan_phase() {
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
-    assert!(system_agent_specs()
+    assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_planning_agent"));
+    assert!(!system_agent_specs()
         .iter()
         .any(|(agent_key, _, _, _, _, _)| *agent_key == "chatos_planning_agent"));
+    assert!(system_agent_specs()
+        .iter()
+        .any(|(agent_key, _, _, _, _, _)| *agent_key == "task_runner_plan_phase"));
 }
 
 #[test]
@@ -114,10 +146,14 @@ fn all_chatos_runtime_agents_receive_the_cloud_notepad_binding() {
         CHATOS_NOTEPAD_AGENT_KEYS,
         [
             "chatos_conversation_agent",
-            "chatos_planning_agent",
             "project_requirement_execution_planner_agent",
         ]
     );
+}
+
+#[test]
+fn only_the_conversation_agent_can_delegate_generic_task_runner_work() {
+    assert_eq!(CHATOS_TASK_RUNNER_AGENT_KEYS, ["chatos_conversation_agent"]);
 }
 
 #[test]
@@ -142,7 +178,6 @@ fn system_agent_registry_contains_all_runtime_roles() {
         keys,
         vec![
             "chatos_conversation_agent",
-            "chatos_planning_agent",
             "project_requirement_execution_planner_agent",
             "task_runner_plan_phase",
             "task_runner_run_phase",

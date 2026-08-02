@@ -140,12 +140,17 @@ fn project_environment_agent_keeps_required_update_search_and_file_read_tools() 
             agent_key,
             &[
                 SystemMcpKey::CodeMaintainerRead,
+                SystemMcpKey::ProjectManagement,
                 SystemMcpKey::ProjectEnvironment,
                 SystemMcpKey::SandboxImages,
             ],
         ),
         &[
             system_route(SystemMcpKey::CodeMaintainerRead, McpProviderKind::Harness),
+            system_route(
+                SystemMcpKey::ProjectManagement,
+                McpProviderKind::InternalService,
+            ),
             system_route(
                 SystemMcpKey::ProjectEnvironment,
                 McpProviderKind::InternalService,
@@ -161,6 +166,10 @@ fn project_environment_agent_keeps_required_update_search_and_file_read_tools() 
         .collect::<Vec<_>>();
     assert!(names.contains(&"project_environment_update_current_project_runtime_environment"));
     assert!(names.contains(&"sandbox_images_search_images"));
+    assert!(names.contains(&"project_management_service_list_requirements"));
+    assert!(names.contains(&"project_management_service_list_project_tasks"));
+    assert!(!names.contains(&"project_management_service_create_requirement"));
+    assert!(!names.contains(&"project_management_service_create_project_task"));
     assert!(names.iter().any(|name| {
         name.starts_with("code_maintainer_read_")
             && (name.ends_with("read_file_raw")

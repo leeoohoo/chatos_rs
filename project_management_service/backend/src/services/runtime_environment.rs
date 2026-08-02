@@ -298,13 +298,12 @@ pub fn workspace_runtime_features(
     images: &[ProjectRuntimeEnvironmentImageRecord],
     detected_stack: &Value,
 ) -> Vec<String> {
+    const EMPTY_PROJECT_BOOTSTRAP_FEATURES: [&str; 2] = ["node@24", "python@3.11"];
     const ORDERED_RUNTIMES: [&str; 10] = [
         "java", "node", "python", "rust", "go", "dotnet", "php", "ruby", "gcc", "clang",
     ];
     let mut selected = BTreeMap::<&'static str, String>::new();
-    let mut evidence = serde_json::to_string(detected_stack)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let mut evidence = detected_stack_runtime_evidence(detected_stack);
     for image in images.iter().filter(|image| {
         matches!(
             image.service_role,
@@ -359,10 +358,44 @@ pub fn workspace_runtime_features(
                 .or_insert_with(|| feature.to_string());
         }
     }
-    ORDERED_RUNTIMES
+    let selected = ORDERED_RUNTIMES
         .into_iter()
         .filter_map(|runtime| selected.get(runtime).cloned())
-        .collect()
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return EMPTY_PROJECT_BOOTSTRAP_FEATURES
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect();
+    }
+    selected
+}
+
+fn detected_stack_runtime_evidence(detected_stack: &Value) -> String {
+    const RUNTIME_EVIDENCE_KEYS: [&str; 12] = [
+        "analysis_requirement",
+        "application_entrypoints",
+        "build_manifests",
+        "build_tools",
+        "frameworks",
+        "languages",
+        "package_managers",
+        "project_type",
+        "runtime",
+        "runtimes",
+        "stack",
+        "technology_stack",
+    ];
+    let Some(object) = detected_stack.as_object() else {
+        return String::new();
+    };
+    RUNTIME_EVIDENCE_KEYS
+        .into_iter()
+        .filter_map(|key| object.get(key))
+        .filter_map(|value| serde_json::to_string(value).ok())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 fn canonical_workspace_runtime(value: &str) -> Option<(&'static str, String)> {

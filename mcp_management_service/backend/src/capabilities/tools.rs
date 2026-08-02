@@ -267,12 +267,19 @@ fn agent_allows_system_tool(
     let Some(descriptor) = system_mcp_descriptor_by_resource_id(route.resource_id.as_str()) else {
         return true;
     };
-    if agent_key != SystemAgentKey::ProjectManagementAgent.as_str()
-        || descriptor.key != SystemMcpKey::SandboxImages
-    {
+    if agent_key != SystemAgentKey::ProjectManagementAgent.as_str() {
         return true;
     }
-    matches!(original_tool_name, "get_image_catalog" | "search_images")
+    match descriptor.key {
+        SystemMcpKey::SandboxImages => {
+            matches!(original_tool_name, "get_image_catalog" | "search_images")
+        }
+        SystemMcpKey::ProjectManagement => {
+            chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
+                .contains(&original_tool_name)
+        }
+        _ => true,
+    }
 }
 
 pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &str) -> bool {

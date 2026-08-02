@@ -133,6 +133,31 @@ mod tests {
     }
 
     #[test]
+    fn empty_project_workspace_uses_a_runnable_build_and_test_baseline() {
+        assert_eq!(
+            workspace_runtime_features(&[], &empty_object()),
+            vec!["node@24".to_string(), "python@3.11".to_string()]
+        );
+    }
+
+    #[test]
+    fn explanatory_scan_summary_cannot_invent_a_runtime() {
+        assert_eq!(
+            workspace_runtime_features(
+                &[],
+                &serde_json::json!({
+                    "workspace_empty": true,
+                    "runtimes": [],
+                    "environment_variable_scan": {
+                        "summary": "未发现 Spring、Cargo.toml 或 Node.js 配置"
+                    }
+                }),
+            ),
+            vec!["node@24".to_string(), "python@3.11".to_string()]
+        );
+    }
+
+    #[test]
     fn project_boundary_creates_one_workspace_and_keeps_applications_peer_equal() {
         let mut environment = ProjectRuntimeEnvironmentRecord {
             project_id: "project-1".to_string(),
@@ -201,6 +226,50 @@ mod tests {
                 .mcp_policy,
             ProgramManagedMcpPolicy::workspace_target(),
         );
+    }
+
+    #[test]
+    fn project_boundary_repairs_ready_environment_with_not_runnable_reason() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::Ready,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: Some("运行环境已就绪".to_string()),
+            not_runnable_reason: Some("项目内容尚未生成".to_string()),
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut workspace = runtime_image("workspace", "workspace", None, None);
+        apply_program_managed_image_policy(&mut workspace);
+        workspace.image_id = Some("dev-node24".to_string());
+        workspace.status = "ready".to_string();
+        let mut images = vec![workspace];
+
+        assert!(enforce_project_runtime_boundary(
+            &project(ProjectSourceType::Cloud, None),
+            &mut environment,
+            &mut images,
+        ));
+        assert_eq!(
+            environment.status,
+            ProjectRuntimeEnvironmentStatus::NotRunnable
+        );
+        assert_eq!(
+            environment.analysis_summary.as_deref(),
+            Some("项目内容尚未生成")
+        );
+        assert!(environment.execution_service_id.is_none());
+        assert!(images.is_empty());
     }
 
     #[test]

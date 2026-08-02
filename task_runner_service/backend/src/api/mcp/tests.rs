@@ -43,6 +43,10 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         " message-1 ".parse().expect("valid header"),
     );
     headers.insert(
+        "x-mcp-management-task-profile",
+        " chatos_plan ".parse().expect("valid header"),
+    );
+    headers.insert(
         "x-mcp-management-expected-project-task-ids",
         " project-task-b,project-task-a,project-task-a "
             .parse()
@@ -62,6 +66,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         Some("source-session-1")
     );
     assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
+    assert_eq!(binding.task_profile.as_deref(), Some("chatos_plan"));
     assert_eq!(
         binding.expected_project_task_ids,
         std::collections::BTreeSet::from([
@@ -93,6 +98,7 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
         source_session_id: None,
         source_user_message_id: None,
         default_model_config_id: None,
+        task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
         expected_project_task_ids: std::collections::BTreeSet::new(),
     };
 

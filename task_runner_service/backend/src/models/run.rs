@@ -95,11 +95,13 @@ impl TaskRunRecord {
         id: String,
         task_id: String,
         model_config_id: String,
-        memory_thread_id: String,
+        task_memory_thread_id: String,
         input_snapshot: Value,
         plugin_snapshots: Vec<RunPluginSnapshot>,
         now: String,
     ) -> Self {
+        let memory_thread_id =
+            task_run_memory_thread_id(task_memory_thread_id.as_str(), id.as_str());
         Self {
             id,
             task_id,
@@ -126,6 +128,42 @@ impl TaskRunRecord {
             created_at: now.clone(),
             updated_at: now,
         }
+    }
+}
+
+pub fn task_run_memory_thread_id(task_memory_thread_id: &str, run_id: &str) -> String {
+    let task_memory_thread_id = task_memory_thread_id.trim();
+    let run_id = run_id.trim();
+    let suffix = format!(":run:{run_id}");
+    if task_memory_thread_id.ends_with(suffix.as_str()) {
+        task_memory_thread_id.to_string()
+    } else {
+        format!("{task_memory_thread_id}{suffix}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::task_run_memory_thread_id;
+
+    #[test]
+    fn task_runs_receive_distinct_memory_threads() {
+        assert_eq!(
+            task_run_memory_thread_id("task-1", "run-1"),
+            "task-1:run:run-1"
+        );
+        assert_eq!(
+            task_run_memory_thread_id("task-1", "run-2"),
+            "task-1:run:run-2"
+        );
+    }
+
+    #[test]
+    fn task_run_memory_thread_id_is_idempotent_for_the_same_run() {
+        assert_eq!(
+            task_run_memory_thread_id("task-1:run:run-1", "run-1"),
+            "task-1:run:run-1"
+        );
     }
 }
 

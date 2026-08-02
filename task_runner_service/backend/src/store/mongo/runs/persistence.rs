@@ -80,6 +80,11 @@ impl MongoStore {
                         "updated_at": now.as_str(),
                     },
                     "$inc": { "attempt": 1_i64 },
+                    "$unset": {
+                        "finished_at": "",
+                        "result_summary": "",
+                        "error_message": "",
+                    },
                 },
                 FindOneAndUpdateOptions::builder()
                     .sort(doc! { "created_at": 1, "id": 1 })
@@ -146,10 +151,11 @@ impl MongoStore {
         Ok(result.matched_count > 0)
     }
 
-    pub(in crate::store) async fn fail_expired_run_claims(
+    pub(in crate::store) async fn reconcile_expired_run_claims(
         &self,
         expired_before: &str,
-        failed_at: &str,
+        reconciled_at: &str,
+        max_attempts: i64,
     ) -> Result<Vec<TaskRunRecord>, String> {
         let candidates = self
             .runs
@@ -165,47 +171,57 @@ impl MongoStore {
             .try_collect::<Vec<TaskRunRecord>>()
             .await
             .map_err(|err| err.to_string())?;
-        let mut failed_runs = Vec::new();
+        let mut reconciled_runs = Vec::new();
         for mut run in candidates {
             let was_cancel_requested = run.cancel_requested;
-            let (
-                terminal_status,
-                terminal_status_text,
-                result_summary,
-                error_message,
-                callback_event,
-            ) = if was_cancel_requested {
-                (
-                    TaskRunStatus::Cancelled,
-                    "cancelled",
-                    "任务取消请求已生效；运行节点心跳过期后按取消收尾",
-                    None,
-                    "task.cancelled",
-                )
-            } else {
-                (
-                    TaskRunStatus::Failed,
-                    "failed",
-                    "任务运行节点心跳过期，已标记为失败",
-                    Some("worker claim expired"),
-                    "task.failed",
-                )
-            };
+            let should_requeue = !was_cancel_requested && run.attempt < max_attempts.max(1);
+            let (next_status, next_status_text, result_summary, error_message, callback_event) =
+                if was_cancel_requested {
+                    (
+                        TaskRunStatus::Cancelled,
+                        "cancelled",
+                        "任务取消请求已生效；运行节点心跳过期后按取消收尾".to_string(),
+                        None,
+                        Some("task.cancelled"),
+                    )
+                } else if should_requeue {
+                    (
+                        TaskRunStatus::Queued,
+                        "queued",
+                        "任务运行节点中断，已自动重新排队恢复".to_string(),
+                        None,
+                        None,
+                    )
+                } else {
+                    (
+                        TaskRunStatus::Failed,
+                        "failed",
+                        format!("任务运行节点连续中断，达到 {max_attempts} 次尝试上限后标记为失败"),
+                        Some("worker claim expired"),
+                        Some("task.failed"),
+                    )
+                };
             let mut set_doc = doc! {
-                "status": terminal_status_text,
-                "finished_at": failed_at,
-                "updated_at": failed_at,
-                "result_summary": result_summary,
+                "status": next_status_text,
+                "updated_at": reconciled_at,
+                "result_summary": result_summary.as_str(),
                 "cancel_requested": false,
-                "chatos_callback_delivery": bson::to_bson(&ChatosCallbackDeliveryState {
-                    event: callback_event.to_string(),
-                    status: ChatosCallbackDeliveryStatus::Pending,
-                    attempt_count: 0,
-                    next_attempt_at: Some(failed_at.to_string()),
-                    last_error: None,
-                    updated_at: failed_at.to_string(),
-                }).map_err(|err| err.to_string())?,
             };
+            if let Some(callback_event) = callback_event {
+                set_doc.insert("finished_at", reconciled_at);
+                set_doc.insert(
+                    "chatos_callback_delivery",
+                    bson::to_bson(&ChatosCallbackDeliveryState {
+                        event: callback_event.to_string(),
+                        status: ChatosCallbackDeliveryStatus::Pending,
+                        attempt_count: 0,
+                        next_attempt_at: Some(reconciled_at.to_string()),
+                        last_error: None,
+                        updated_at: reconciled_at.to_string(),
+                    })
+                    .map_err(|err| err.to_string())?,
+                );
+            }
             if let Some(error_message) = error_message {
                 set_doc.insert("error_message", error_message);
             }
@@ -213,7 +229,15 @@ impl MongoStore {
                 "claim_token": "",
                 "claim_until": "",
             };
-            if was_cancel_requested {
+            if should_requeue {
+                unset_doc.insert("started_at", "");
+                unset_doc.insert("finished_at", "");
+                unset_doc.insert("error_message", "");
+                unset_doc.insert("usage", "");
+                unset_doc.insert("report", "");
+                unset_doc.insert("summary_job_run_id", "");
+                unset_doc.insert("chatos_callback_delivery", "");
+            } else if was_cancel_requested {
                 unset_doc.insert("error_message", "");
             }
             let result = self
@@ -235,18 +259,28 @@ impl MongoStore {
             if result.modified_count == 0 {
                 continue;
             }
-            run.status = terminal_status;
-            run.finished_at = Some(failed_at.to_string());
-            run.updated_at = failed_at.to_string();
-            run.result_summary = Some(result_summary.to_string());
+            run.status = next_status;
+            if should_requeue {
+                run.started_at = None;
+            }
+            run.finished_at = (!should_requeue).then(|| reconciled_at.to_string());
+            run.updated_at = reconciled_at.to_string();
+            run.result_summary = Some(result_summary);
             run.error_message = error_message.map(ToOwned::to_owned);
             run.cancel_requested = false;
             run.claim_token = None;
             run.claim_until = None;
-            ensure_terminal_callback_pending(&mut run);
+            if should_requeue {
+                run.usage = None;
+                run.report = None;
+                run.summary_job_run_id = None;
+                run.chatos_callback_delivery = None;
+            } else {
+                ensure_terminal_callback_pending(&mut run);
+            }
             self.sync_cancel_requested_cache(&run);
-            failed_runs.push(run);
+            reconciled_runs.push(run);
         }
-        Ok(failed_runs)
+        Ok(reconciled_runs)
     }
 }

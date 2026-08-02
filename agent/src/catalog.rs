@@ -42,13 +42,13 @@ pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
     AgentToolPlane::Managed,
 );
 
-pub static CHATOS_PLANNING_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+static RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::ChatosPlanningAgent,
-    "Chat OS Planning Agent",
+    "Retired Chat OS Planning Agent",
     "chatos",
-    "Runs Chat OS plan mode and requires the Task Runner MCP with the chatos_plan task profile.",
+    "Retired compatibility identity. Chat OS plan mode now submits a Task Runner planning task programmatically, and task_runner_plan_phase performs the planning.",
     false,
-    AgentToolPlane::Managed,
+    AgentToolPlane::None,
 );
 
 pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescriptor =
@@ -161,9 +161,8 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     AgentToolPlane::None,
 );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 12] = [
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 11] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-    &CHATOS_PLANNING_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
     &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
@@ -183,7 +182,7 @@ pub fn system_agent_catalog() -> &'static [&'static AgentDescriptor] {
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-        SystemAgentKey::ChatosPlanningAgent => &CHATOS_PLANNING_AGENT_DESCRIPTOR,
+        SystemAgentKey::ChatosPlanningAgent => &RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
             &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR
         }
@@ -225,13 +224,12 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 12);
+        assert_eq!(keys.len(), 11);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
             vec![
                 "chatos_conversation_agent",
-                "chatos_planning_agent",
                 "project_requirement_execution_planner_agent",
                 "task_runner_plan_phase",
                 "task_runner_run_phase",
