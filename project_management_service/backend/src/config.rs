@@ -8,7 +8,7 @@ use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
-    env_bool_strict as read_bool_env, is_production_environment, validate_production_secret,
+    env_bool_strict as read_bool_env, parse_bool_text, validate_production_secret,
     DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
 };
 
@@ -106,11 +106,9 @@ impl AppConfig {
                 .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
                 .unwrap_or_else(default_user_service_base_url),
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
-            user_service_internal_secret: normalized_env(
+            user_service_internal_secret: Some(required_text(
                 "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET",
-            )
-            .or_else(|| normalized_env("CHATOS_USER_SERVICE_INTERNAL_SECRET"))
-            .or_else(|| normalized_env("USER_SERVICE_INTERNAL_API_SECRET")),
+            )?),
             local_connector_service_base_url: normalized_env(
                 "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
             )
@@ -126,24 +124,19 @@ impl AppConfig {
             memory_engine_source_id: normalized_env("PROJECT_SERVICE_MEMORY_ENGINE_SOURCE_ID")
                 .or_else(|| normalized_env("MEMORY_ENGINE_SOURCE_ID"))
                 .unwrap_or_else(|| "project_management_agent".to_string()),
-            memory_engine_operator_token: normalized_env(
-                "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            )
-            .or_else(|| normalized_env("PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN"))
-            .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
-            .or_else(|| Some(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())),
+            memory_engine_operator_token: Some(required_text(
+                "PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN",
+            )?),
             memory_engine_request_timeout: Duration::from_millis(memory_engine_request_timeout_ms),
             sandbox_manager_base_url: normalized_env("PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL")
                 .or_else(|| normalized_env("SANDBOX_MANAGER_BASE_URL"))
                 .unwrap_or_else(default_sandbox_manager_base_url),
-            sandbox_manager_client_id: normalized_env("PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID")
-                .or_else(|| Some("project-service".to_string())),
-            sandbox_manager_client_key: normalized_env(
-                "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-            )
-            .or_else(|| normalized_env("PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY"))
-            .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
-            .or_else(|| Some(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string())),
+            sandbox_manager_client_id: Some(required_text(
+                "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID",
+            )?),
+            sandbox_manager_client_key: Some(required_text(
+                "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY",
+            )?),
             sandbox_image_mcp_request_timeout: Duration::from_millis(
                 sandbox_image_mcp_request_timeout_ms,
             ),
@@ -167,16 +160,13 @@ impl AppConfig {
             cloud_project_git_timeout: Duration::from_millis(cloud_project_git_timeout_ms),
             task_runner_base_url: normalized_env("PROJECT_SERVICE_TASK_RUNNER_BASE_URL"),
             task_runner_request_timeout: Duration::from_millis(task_runner_request_timeout_ms),
-            task_runner_internal_secret: normalized_env(
+            task_runner_internal_secret: Some(required_text(
                 "PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET",
-            )
-            .or_else(|| normalized_env("TASK_RUNNER_INTERNAL_API_SECRET"))
-            .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET")),
-            sync_secret: normalized_env("PROJECT_SERVICE_SYNC_SECRET"),
+            )?),
+            sync_secret: Some(required_text("PROJECT_SERVICE_SYNC_SECRET")?),
             internal_api_secrets: caller_internal_api_secrets(),
-            require_signed_internal_requests: read_bool_env(
+            require_signed_internal_requests: required_managed_bool(
                 "PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-                is_production_environment(),
             )?,
         };
 
@@ -345,6 +335,16 @@ fn default_local_connector_service_base_url() -> String {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(39230);
     format!("http://{host}:{port}")
+}
+
+fn required_managed_bool(key: &str) -> Result<bool, String> {
+    let value = normalized_env(key)
+        .ok_or_else(|| format!("{key} is required from configuration center"))?;
+    parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+fn required_text(key: &str) -> Result<String, String> {
+    normalized_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
 }
 
 fn default_memory_engine_base_url() -> String {

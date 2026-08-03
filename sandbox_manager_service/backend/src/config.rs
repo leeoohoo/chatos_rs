@@ -8,9 +8,9 @@ use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
-    env_flag as env_bool, env_parse, is_production_environment, validate_production_secret,
+    env_flag as env_bool, env_parse, parse_bool_text, validate_production_secret,
     DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET, DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN,
-    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
+    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +73,10 @@ pub struct AppConfig {
     pub image_tag_prefix: String,
     pub image_build_context: PathBuf,
     pub image_dockerfile: PathBuf,
+    pub docker_maintenance_enabled: bool,
+    pub docker_build_cache_max_used_space: String,
+    pub docker_build_cache_reserved_space: String,
+    pub docker_build_cache_timeout: Duration,
     pub require_auth: bool,
     pub operator_token: Option<String>,
     pub user_service_base_url: String,
@@ -175,11 +179,25 @@ impl AppConfig {
                 .unwrap_or_else(|| "chatos-sandbox-agent".to_string()),
             image_build_context,
             image_dockerfile,
+            docker_maintenance_enabled: env_bool(
+                "SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED",
+                true,
+            ),
+            docker_build_cache_max_used_space: storage_limit_env(
+                "SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE",
+                "32gb",
+            ),
+            docker_build_cache_reserved_space: storage_limit_env(
+                "SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE",
+                "8gb",
+            ),
+            docker_build_cache_timeout: Duration::from_secs(
+                env_parse::<u64>("SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS")
+                    .unwrap_or(180)
+                    .max(30),
+            ),
             require_auth: env_bool("SANDBOX_MANAGER_REQUIRE_AUTH", true),
-            operator_token: normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN").or_else(|| {
-                (!is_production_environment())
-                    .then(|| DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN.to_string())
-            }),
+            operator_token: Some(required_text("SANDBOX_MANAGER_OPERATOR_TOKEN")?),
             user_service_base_url: normalized_env("SANDBOX_MANAGER_USER_SERVICE_BASE_URL")
                 .or_else(|| normalized_env("CHATOS_USER_SERVICE_BASE_URL"))
                 .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
@@ -191,14 +209,8 @@ impl AppConfig {
             .or_else(|| env_parse("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS"))
             .unwrap_or(5_000)
             .max(300),
-            system_client_id: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_ID").or_else(|| {
-                (!is_production_environment())
-                    .then(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID.to_string())
-            }),
-            system_client_key: normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY").or_else(|| {
-                (!is_production_environment())
-                    .then(|| DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY.to_string())
-            }),
+            system_client_id: Some(required_text("SANDBOX_MANAGER_SYSTEM_CLIENT_ID")?),
+            system_client_key: Some(required_text("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY")?),
             system_client_scopes: env_csv(
                 "SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES",
                 &[
@@ -225,14 +237,10 @@ impl AppConfig {
             ),
             system_client_max_lease_ttl_seconds,
             internal_api_secrets: caller_internal_api_secrets(),
-            require_signed_internal_requests: env_bool(
+            require_signed_internal_requests: required_managed_bool(
                 "SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-                is_production_environment(),
-            ),
-            agent_token_secret: normalized_env("SANDBOX_MANAGER_AGENT_TOKEN_SECRET")
-                .or_else(|| normalized_env("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"))
-                .or_else(|| normalized_env("SANDBOX_MANAGER_OPERATOR_TOKEN"))
-                .unwrap_or_else(|| DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET.to_string()),
+            )?,
+            agent_token_secret: required_text("SANDBOX_MANAGER_AGENT_TOKEN_SECRET")?,
         };
 
         if config.require_auth {
@@ -330,6 +338,29 @@ fn env_csv(key: &str, default_values: &[&str]) -> Vec<String> {
         })
 }
 
+fn required_text(key: &str) -> Result<String, String> {
+    normalized_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
+}
+
+fn storage_limit_env(key: &str, default_value: &str) -> String {
+    normalized_env(key)
+        .filter(|value| valid_storage_limit(value.as_str()))
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_else(|| default_value.to_string())
+}
+
+fn valid_storage_limit(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    let digits_end = value
+        .char_indices()
+        .find_map(|(index, character)| (!character.is_ascii_digit()).then_some(index))
+        .unwrap_or(value.len());
+    let (digits, suffix) = value.split_at(digits_end);
+    !digits.is_empty()
+        && digits.parse::<u64>().is_ok_and(|value| value > 0)
+        && matches!(suffix, "" | "b" | "kb" | "mb" | "gb" | "tb")
+}
+
 fn default_database_url() -> String {
     let host = normalized_env("SANDBOX_MANAGER_MONGODB_HOST")
         .or_else(|| normalized_env("DEV_MONGO_HOST"))
@@ -388,4 +419,24 @@ fn command_exists(command: &str) -> bool {
                 .find(|candidate| candidate.is_file())
         })
         .is_some()
+}
+
+fn required_managed_bool(key: &str) -> Result<bool, String> {
+    let value = normalized_env(key)
+        .ok_or_else(|| format!("{key} is required from configuration center"))?;
+    parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_storage_limit;
+
+    #[test]
+    fn docker_storage_limit_rejects_shell_or_ambiguous_values() {
+        assert!(valid_storage_limit("32gb"));
+        assert!(valid_storage_limit("8192MB"));
+        assert!(!valid_storage_limit("0gb"));
+        assert!(!valid_storage_limit("32 gb"));
+        assert!(!valid_storage_limit("32gb; rm -rf /"));
+    }
 }

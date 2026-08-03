@@ -48,59 +48,43 @@ pub(super) fn internal_service_user_from_request(
                 "Local Connector caller is required for signed internal requests",
             ));
         }
-        None if config.require_signed_internal_requests => {
+        None => {
             return Err(ApiError::unauthorized(
-                "signed Local Connector internal API token is required",
+                "Local Connector caller is required for internal API requests",
             ));
         }
-        None => "legacy-service",
     };
-    if caller != "legacy-service" && !access.allowed_callers.contains(&caller) {
+    if !access.allowed_callers.contains(&caller) {
         return Err(ApiError::forbidden(
             "caller service is not allowed for this Local Connector operation",
         ));
     }
 
-    if caller == "legacy-service" {
-        let expected = config
-            .legacy_internal_api_secret
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| ApiError::unauthorized("Local Connector internal API is disabled"))?;
-        require_legacy_secret(legacy_secret, expected)?;
+    let expected = config
+        .internal_api_secrets
+        .get(caller)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::unauthorized("Local Connector internal API is disabled for caller")
+        })?;
+    if let Some(token) = token {
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            expected,
+            caller,
+            TOKEN_AUDIENCE,
+            access.scope,
+        )
+        .map_err(|_| ApiError::unauthorized("invalid Local Connector internal API token"))?;
     } else {
-        let expected = config
-            .internal_api_secrets
-            .get(caller)
-            .map(String::as_str)
-            .or_else(|| {
-                (!config.require_signed_internal_requests)
-                    .then_some(config.legacy_internal_api_secret.as_deref())
-                    .flatten()
-            })
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ApiError::unauthorized("Local Connector internal API is disabled for caller")
-            })?;
-        if let Some(token) = token {
-            chatos_service_runtime::verify_internal_service_token(
-                token,
-                expected,
-                caller,
-                TOKEN_AUDIENCE,
-                access.scope,
-            )
-            .map_err(|_| ApiError::unauthorized("invalid Local Connector internal API token"))?;
-        } else {
-            if config.require_signed_internal_requests {
-                return Err(ApiError::unauthorized(
-                    "signed Local Connector internal API token is required",
-                ));
-            }
-            require_legacy_secret(legacy_secret, expected)?;
+        if config.require_signed_internal_requests {
+            return Err(ApiError::unauthorized(
+                "signed Local Connector internal API token is required",
+            ));
         }
+        require_legacy_secret(legacy_secret, expected)?;
     }
 
     let owner_user_id = header_text(headers, "x-local-connector-owner-user-id")
@@ -675,7 +659,6 @@ mod tests {
             plugin_hook_relay_request_timeout: Duration::from_secs(1),
             sandbox_image_relay_request_timeout: Duration::from_secs(1),
             public_base_url: None,
-            legacy_internal_api_secret: Some("legacy-local-connector-secret".to_string()),
             internal_api_secrets: HashMap::new(),
             require_signed_internal_requests: false,
             require_device_connect_signature: true,

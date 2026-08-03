@@ -6,14 +6,152 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use chatos_service_runtime::{
-    env_bool_strict, env_text, is_production_environment, validate_production_secret,
-};
+use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secret};
 
-const DEFAULT_INTERNAL_SECRET: &str = "change_me_mcp_management_internal_secret";
 const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
 const DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET: &str =
     "change_me_mcp_management_runtime_session_encryption_secret";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsyncToolDispatchMode {
+    LocalQueue,
+    RabbitMq,
+}
+
+impl AsyncToolDispatchMode {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "local" | "local_queue" | "in_memory" => Ok(Self::LocalQueue),
+            "rabbitmq" | "rabbit_mq" | "amqp" => Ok(Self::RabbitMq),
+            other => Err(format!(
+                "MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE is invalid: {other}"
+            )),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalQueue => "local_queue",
+            Self::RabbitMq => "rabbitmq",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AsyncToolDispatchTopology {
+    pub mode: AsyncToolDispatchMode,
+    pub worker_concurrency: usize,
+    pub local_queue_buffer: usize,
+    pub rabbitmq_url: Option<String>,
+    pub rabbitmq_exchange: Option<String>,
+    pub queue_name: Option<String>,
+}
+
+impl AsyncToolDispatchTopology {
+    fn from_env() -> Result<Self, String> {
+        let mode = AsyncToolDispatchMode::parse(
+            required_text("MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE")?.as_str(),
+        )?;
+        let worker_concurrency = required_u64("MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY")
+            .and_then(|value| {
+                usize::try_from(value).map_err(|_| {
+                    "MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY is too large".to_string()
+                })
+            })?;
+        let local_queue_buffer = match mode {
+            AsyncToolDispatchMode::LocalQueue => {
+                required_u64("MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER")?
+                    .try_into()
+                    .map_err(|_| {
+                        "MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER is too large".to_string()
+                    })?
+            }
+            AsyncToolDispatchMode::RabbitMq => 0,
+        };
+        let rabbitmq_url = match mode {
+            AsyncToolDispatchMode::RabbitMq => {
+                Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL")?)
+            }
+            AsyncToolDispatchMode::LocalQueue => None,
+        };
+        let rabbitmq_exchange = match mode {
+            AsyncToolDispatchMode::RabbitMq => Some(required_text(
+                "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE",
+            )?),
+            AsyncToolDispatchMode::LocalQueue => None,
+        };
+        let queue_name = match mode {
+            AsyncToolDispatchMode::RabbitMq => {
+                Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE")?)
+            }
+            AsyncToolDispatchMode::LocalQueue => None,
+        };
+        let topology = Self {
+            mode,
+            worker_concurrency,
+            local_queue_buffer,
+            rabbitmq_url,
+            rabbitmq_exchange,
+            queue_name,
+        };
+        topology.validate()?;
+        Ok(topology)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.worker_concurrency == 0 {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY must be at least 1".to_string(),
+            );
+        }
+        match self.mode {
+            AsyncToolDispatchMode::LocalQueue => {
+                if self.local_queue_buffer == 0 {
+                    return Err(
+                        "MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER must be at least 1"
+                            .to_string(),
+                    );
+                }
+            }
+            AsyncToolDispatchMode::RabbitMq => {
+                if self
+                    .rabbitmq_url
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(
+                        "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL is required for RabbitMQ dispatch"
+                            .to_string(),
+                    );
+                }
+                if self
+                    .rabbitmq_exchange
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(
+                        "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE is required for RabbitMQ dispatch"
+                            .to_string(),
+                    );
+                }
+                if self
+                    .queue_name
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(
+                        "MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE is required for RabbitMQ dispatch"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -49,6 +187,7 @@ pub struct AppConfig {
     pub runtime_session_database_url: Option<String>,
     pub runtime_session_encryption_secret: String,
     pub runtime_session_ttl: Duration,
+    pub async_tool_dispatch_topology: AsyncToolDispatchTopology,
 }
 
 impl AppConfig {
@@ -59,33 +198,27 @@ impl AppConfig {
         let port = env_text("MCP_MANAGEMENT_PORT")
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(39280);
-        let internal_api_secret = env_text("MCP_MANAGEMENT_INTERNAL_API_SECRET")
-            .unwrap_or_else(|| DEFAULT_INTERNAL_SECRET.to_string());
+        let internal_api_secret = required_text("MCP_MANAGEMENT_INTERNAL_API_SECRET")?;
         validate_production_secret(
             "MCP_MANAGEMENT_INTERNAL_API_SECRET",
             Some(internal_api_secret.as_str()),
-            &[DEFAULT_INTERNAL_SECRET],
+            &["change_me_mcp_management_internal_secret"],
         )?;
-        let require_signed_internal_requests = env_bool_strict(
-            "MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-            is_production_environment(),
-        )?;
-        let allowed_internal_callers = env_text("MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS")
-            .map(|value| parse_callers(value.as_str()))
-            .unwrap_or_else(default_internal_callers);
+        let require_signed_internal_requests =
+            required_bool("MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS")?;
+        let allowed_internal_callers =
+            parse_callers(required_text("MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS")?.as_str());
         if allowed_internal_callers.is_empty() {
             return Err("MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS cannot be empty".to_string());
         }
-        let runtime_grant_secret = env_text("MCP_MANAGEMENT_RUNTIME_GRANT_SECRET")
-            .unwrap_or_else(|| DEFAULT_RUNTIME_GRANT_SECRET.to_string());
+        let runtime_grant_secret = required_text("MCP_MANAGEMENT_RUNTIME_GRANT_SECRET")?;
         validate_production_secret(
             "MCP_MANAGEMENT_RUNTIME_GRANT_SECRET",
             Some(runtime_grant_secret.as_str()),
             &[DEFAULT_RUNTIME_GRANT_SECRET],
         )?;
         let runtime_session_encryption_secret =
-            env_text("MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET")
-                .unwrap_or_else(|| DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET.to_string());
+            required_text("MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET")?;
         validate_production_secret(
             "MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET",
             Some(runtime_session_encryption_secret.as_str()),
@@ -95,18 +228,23 @@ impl AppConfig {
             env_text("MCP_MANAGEMENT_DATABASE_URL")
                 .unwrap_or_else(|| "mongodb://127.0.0.1:27017/mcp_management_service".to_string()),
         );
-        let plugin_management_internal_api_secret =
-            env_text("PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET")
-                .or_else(|| env_text("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"));
-        let project_service_internal_api_secret =
-            env_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET");
-        let task_runner_internal_api_secret =
-            env_text("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET");
-        let chatos_internal_api_secret = env_text("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET");
-        let local_connector_internal_api_secret =
-            env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET");
-        let sandbox_manager_internal_api_secret =
-            env_text("MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET");
+        let plugin_management_internal_api_secret = Some(required_text(
+            "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
+        )?);
+        let project_service_internal_api_secret = Some(required_text(
+            "MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
+        )?);
+        let task_runner_internal_api_secret = Some(required_text(
+            "MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
+        )?);
+        let chatos_internal_api_secret =
+            Some(required_text("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")?);
+        let local_connector_internal_api_secret = Some(required_text(
+            "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        )?);
+        let sandbox_manager_internal_api_secret = Some(required_text(
+            "MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET",
+        )?);
         validate_production_secret(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             plugin_management_internal_api_secret.as_deref(),
@@ -203,6 +341,7 @@ impl AppConfig {
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(2 * 1024 * 1024)
                 .clamp(64 * 1024, 16 * 1024 * 1024);
+        let async_tool_dispatch_topology = AsyncToolDispatchTopology::from_env()?;
         let public_base_url = normalize_base_url(
             env_text("MCP_MANAGEMENT_PUBLIC_BASE_URL")
                 .unwrap_or_else(|| format!("http://127.0.0.1:{port}")),
@@ -267,6 +406,7 @@ impl AppConfig {
             runtime_session_database_url,
             runtime_session_encryption_secret,
             runtime_session_ttl,
+            async_tool_dispatch_topology,
         })
     }
 
@@ -348,6 +488,14 @@ impl AppConfig {
             runtime_session_encryption_secret: "a-long-runtime-session-encryption-secret"
                 .to_string(),
             runtime_session_ttl: Duration::from_secs(30 * 60),
+            async_tool_dispatch_topology: AsyncToolDispatchTopology {
+                mode: AsyncToolDispatchMode::LocalQueue,
+                worker_concurrency: 4,
+                local_queue_buffer: 64,
+                rabbitmq_url: None,
+                rabbitmq_exchange: None,
+                queue_name: None,
+            },
         }
     }
 }
@@ -365,19 +513,20 @@ fn parse_callers(value: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn default_internal_callers() -> BTreeSet<String> {
-    [
-        "chatos",
-        "task-runner",
-        "project-service",
-        "memory-engine",
-        "local-connector-service",
-        "sandbox-manager",
-        "plugin-management-service",
-    ]
-    .into_iter()
-    .map(ToOwned::to_owned)
-    .collect()
+fn required_text(key: &str) -> Result<String, String> {
+    env_text(key).ok_or_else(|| format!("{key} is required from config center"))
+}
+
+fn required_u64(key: &str) -> Result<u64, String> {
+    let value = required_text(key)?;
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("{key} must be an unsigned integer"))
+}
+
+fn required_bool(key: &str) -> Result<bool, String> {
+    let value = required_text(key)?;
+    parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
 }
 
 pub fn load_mcp_management_dotenv() {
@@ -394,5 +543,25 @@ mod tests {
             parse_callers("chatos, task-runner,chatos"),
             BTreeSet::from(["chatos".to_string(), "task-runner".to_string()])
         );
+    }
+
+    #[test]
+    fn async_tool_dispatch_mode_parser_rejects_unknown_values() {
+        assert!(AsyncToolDispatchMode::parse("rabbitmq").is_ok());
+        assert!(AsyncToolDispatchMode::parse("local").is_ok());
+        assert!(AsyncToolDispatchMode::parse("mystery").is_err());
+    }
+
+    #[test]
+    fn rabbitmq_async_dispatch_requires_explicit_topology() {
+        let topology = AsyncToolDispatchTopology {
+            mode: AsyncToolDispatchMode::RabbitMq,
+            worker_concurrency: 2,
+            local_queue_buffer: 0,
+            rabbitmq_url: None,
+            rabbitmq_exchange: Some("mcp_management".to_string()),
+            queue_name: Some("mcp_management.async.dispatch".to_string()),
+        };
+        assert!(topology.validate().is_err());
     }
 }

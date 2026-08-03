@@ -102,6 +102,40 @@ pub(super) fn task_runner_service_default_values(
         .collect()
 }
 
+pub(super) fn mcp_management_service_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("mcp-management-service")
+        })
+        .filter(|definition| {
+            [
+                MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
+                MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY_CONFIG_KEY,
+                MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER_CONFIG_KEY,
+                MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
+                MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE_CONFIG_KEY,
+                MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
+                MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY,
+                MCP_MANAGEMENT_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_RUNTIME_GRANT_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
 pub(super) fn ensure_task_runner_runtime_values(
     values: &mut BTreeMap<String, Value>,
     defaults: &BTreeMap<String, Value>,
@@ -119,6 +153,143 @@ pub(super) fn ensure_task_runner_runtime_values(
             true
         };
         if changed {
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_mcp_management_runtime_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn sandbox_manager_pool_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            matches!(
+                definition.key.as_str(),
+                SANDBOX_MANAGER_POOL_MAX_ACTIVE_CONFIG_KEY
+                    | SANDBOX_MANAGER_POOL_MAX_PENDING_CONFIG_KEY
+            ) && definition.scope == "service"
+                && definition.service_name.as_deref() == Some("sandbox-manager")
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn internal_request_security_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            [
+                LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+                LOCAL_CONNECTOR_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                LOCAL_CONNECTOR_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+                MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+                PROJECT_SERVICE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_SELF_INTERNAL_API_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_SYNC_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY,
+                PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID_CONFIG_KEY,
+                PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY_CONFIG_KEY,
+                PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+                MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+                MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                MEMORY_ENGINE_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY,
+                MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+                SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                SANDBOX_MANAGER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                SANDBOX_MANAGER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                SANDBOX_MANAGER_OPERATOR_TOKEN_CONFIG_KEY,
+                SANDBOX_MANAGER_SYSTEM_CLIENT_ID_CONFIG_KEY,
+                SANDBOX_MANAGER_SYSTEM_CLIENT_KEY_CONFIG_KEY,
+                SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY,
+                SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn user_service_smtp_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            [
+                USER_SERVICE_SMTP_HOST_CONFIG_KEY,
+                USER_SERVICE_SMTP_PORT_CONFIG_KEY,
+                USER_SERVICE_SMTP_USERNAME_CONFIG_KEY,
+                USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
+                USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn ensure_sandbox_manager_pool_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_internal_request_security_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_user_service_smtp_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
             changed_keys.push(key.clone());
         }
     }

@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use std::env;
 
 use chatos_service_runtime::{
-    env_flag, env_text, is_production_environment, validate_production_secret,
-    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+    env_text, parse_bool_text, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
 };
 
 #[derive(Debug, Clone)]
@@ -89,9 +88,7 @@ impl AppConfig {
             2,
             1,
         );
-        let operator_token = env_text("MEMORY_ENGINE_OPERATOR_TOKEN").or_else(|| {
-            (!is_production_environment()).then(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string())
-        });
+        let operator_token = Some(required_text("MEMORY_ENGINE_OPERATOR_TOKEN")?);
         let user_service_base_url = env_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")
             .or_else(|| env_text("MEMORY_ENGINE_USER_SERVICE_API_BASE"))
             .or_else(|| env_text("CHATOS_USER_SERVICE_BASE_URL"))
@@ -124,10 +121,9 @@ impl AppConfig {
             worker_reconcile_concurrency,
             operator_token,
             internal_api_secrets: caller_internal_api_secrets(),
-            require_signed_internal_requests: env_flag(
+            require_signed_internal_requests: required_managed_bool(
                 "MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-                is_production_environment(),
-            ),
+            )?,
             user_service_base_url,
             user_service_request_timeout_ms,
         };
@@ -217,6 +213,16 @@ fn parse_bounded_f64(raw: Option<String>, default: f64, min: f64, max: f64) -> f
     raw.and_then(|value| value.trim().parse::<f64>().ok())
         .unwrap_or(default)
         .clamp(min, max)
+}
+
+fn required_managed_bool(key: &str) -> Result<bool, String> {
+    let value =
+        env_text(key).ok_or_else(|| format!("{key} is required from configuration center"))?;
+    parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+fn required_text(key: &str) -> Result<String, String> {
+    env_text(key).ok_or_else(|| format!("{key} is required from configuration center"))
 }
 
 #[cfg(test)]

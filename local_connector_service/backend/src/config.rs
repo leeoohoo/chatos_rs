@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
-use chatos_service_runtime::{env_flag, is_production_environment, validate_production_secret};
+use chatos_service_runtime::{env_flag, parse_bool_text, validate_production_secret};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -20,7 +20,6 @@ pub struct AppConfig {
     pub plugin_hook_relay_request_timeout: Duration,
     pub sandbox_image_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
-    pub legacy_internal_api_secret: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
     pub require_device_connect_signature: bool,
@@ -100,12 +99,10 @@ impl AppConfig {
                 sandbox_image_relay_timeout_ms,
             ),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
-            legacy_internal_api_secret: normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET"),
             internal_api_secrets: caller_internal_api_secrets(),
-            require_signed_internal_requests: env_flag(
+            require_signed_internal_requests: required_managed_bool(
                 "LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-                is_production_environment(),
-            ),
+            )?,
             require_device_connect_signature: env_flag(
                 "LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE",
                 true,
@@ -145,20 +142,6 @@ impl AppConfig {
                     ));
                 }
             }
-        }
-        if config.legacy_internal_api_secret.is_some() {
-            validate_production_secret(
-                "LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-                config.legacy_internal_api_secret.as_deref(),
-                &[
-                    "chatos-local-connector-dev-secret",
-                    "change_me_task_runner_internal_secret",
-                    "change_me_chatos_local_connector_secret",
-                    "change_me_task_runner_local_connector_secret",
-                    "change_me_project_service_local_connector_secret",
-                    "change_me_mcp_management_local_connector_secret",
-                ],
-            )?;
         }
         for (caller, secret) in &config.internal_api_secrets {
             validate_production_secret(
@@ -203,7 +186,6 @@ impl AppConfig {
             plugin_hook_relay_request_timeout: Duration::from_secs(2),
             sandbox_image_relay_request_timeout: Duration::from_secs(2),
             public_base_url: None,
-            legacy_internal_api_secret: None,
             internal_api_secrets,
             require_signed_internal_requests: true,
             require_device_connect_signature: true,
@@ -263,4 +245,10 @@ fn default_user_service_base_url() -> String {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(39190);
     format!("http://{host}:{port}")
+}
+
+fn required_managed_bool(key: &str) -> Result<bool, String> {
+    let value = normalized_env(key)
+        .ok_or_else(|| format!("{key} is required from configuration center"))?;
+    parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
 }
