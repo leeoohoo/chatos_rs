@@ -621,7 +621,7 @@ export const enUS: MessageDictionary = {
   'composer.reasoning.onTitle': 'Reasoning is on',
   'composer.reasoning.offTitle': 'Reasoning is off',
   'composer.reasoning.label': 'Reasoning {state}',
-  'composer.planMode.onTitle': 'Plan mode is on: sending automatically creates a Task Runner planning task',
+  'composer.planMode.onTitle': 'Plan mode is on: sending automatically analyzes the project and creates an implementation plan',
   'composer.planMode.offTitle': 'Plan mode is off: this turn uses the normal conversation and execution flow',
   'composer.planMode.label': 'Plan {state}',
   'composer.currentProject': 'Current project',

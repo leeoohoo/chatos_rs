@@ -4,6 +4,7 @@
 use super::*;
 
 use super::payload::{build_chatos_task_callback_payload, load_task_snapshot_for_callback};
+use super::publisher::{publish_chatos_task_callback, CallbackPublishOutcome};
 use crate::models::{ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus};
 use chrono::Utc;
 use std::sync::Arc;
@@ -26,7 +27,15 @@ impl RunService {
         task_id: &str,
         run: Option<&TaskRunRecord>,
     ) {
-        send_task_callback_with_store(&self.config, &self.store, event, task_id, run).await;
+        send_task_callback_with_store(
+            &self.config,
+            Some(&self.task_queue_topology),
+            &self.store,
+            event,
+            task_id,
+            run,
+        )
+        .await;
     }
 
     pub(in crate::services) async fn try_send_terminal_callback(
@@ -87,7 +96,9 @@ impl RunService {
         };
         if matches!(
             delivery.status,
-            ChatosCallbackDeliveryStatus::Delivered | ChatosCallbackDeliveryStatus::Skipped
+            ChatosCallbackDeliveryStatus::Enqueued
+                | ChatosCallbackDeliveryStatus::Delivered
+                | ChatosCallbackDeliveryStatus::Skipped
         ) {
             return false;
         }
@@ -166,17 +177,11 @@ impl RunService {
         let payload_run_id = payload.run_id.clone().unwrap_or_default();
         let payload_user_message_id = payload.source_user_message_id.clone().unwrap_or_default();
         let payload_event = payload.event.clone();
-        match super::delivery::send_chatos_task_callback(self.config.clone(), payload).await {
-            Ok(()) => {
-                if let Err(err) = self
-                    .update_callback_delivery(run_id, |state| {
-                        state.status = ChatosCallbackDeliveryStatus::Delivered;
-                        state.next_attempt_at = None;
-                        state.last_error = None;
-                        state.updated_at = now_rfc3339();
-                    })
-                    .await
-                {
+        match publish_chatos_task_callback(self.config.clone(), &self.task_queue_topology, payload)
+            .await
+        {
+            Ok(outcome) => {
+                if let Err(err) = self.record_callback_publish_outcome(run_id, outcome).await {
                     warn!(
                         run_id,
                         error = err.as_str(),
@@ -191,18 +196,41 @@ impl RunService {
                     attempt,
                     "sent task callback to chatos"
                 );
+                if outcome == CallbackPublishOutcome::RabbitMqEnqueued {
+                    info!(
+                        task_id = payload_task_id.as_str(),
+                        run_id = payload_run_id.as_str(),
+                        event = payload_event.as_str(),
+                        "task callback enqueued to rabbitmq for asynchronous delivery"
+                    );
+                }
             }
             Err(err) => {
-                self.record_callback_failure(run_id, err.as_str()).await;
-                warn!(
-                    task_id = payload_task_id.as_str(),
-                    run_id = payload_run_id.as_str(),
-                    event = payload_event.as_str(),
-                    attempt,
-                    next_attempt_at = next_attempt_at.as_str(),
-                    error = err.as_str(),
-                    "failed to send task callback; persisted for retry"
-                );
+                let error_message = err.to_string();
+                if err.is_retryable() {
+                    self.record_callback_failure(run_id, error_message.as_str())
+                        .await;
+                    warn!(
+                        task_id = payload_task_id.as_str(),
+                        run_id = payload_run_id.as_str(),
+                        event = payload_event.as_str(),
+                        attempt,
+                        next_attempt_at = next_attempt_at.as_str(),
+                        error = %err,
+                        "failed to send task callback; persisted for retry"
+                    );
+                } else {
+                    self.record_callback_skipped(run_id, error_message.as_str())
+                        .await;
+                    warn!(
+                        task_id = payload_task_id.as_str(),
+                        run_id = payload_run_id.as_str(),
+                        event = payload_event.as_str(),
+                        attempt,
+                        error = %err,
+                        "task callback permanently rejected; stopped retrying"
+                    );
+                }
             }
         }
         true
@@ -238,6 +266,7 @@ impl RunService {
         if let Err(persist_error) = self
             .update_callback_delivery(run_id, |state| {
                 state.status = ChatosCallbackDeliveryStatus::Pending;
+                state.next_attempt_at = Some(callback_next_attempt_at(state.attempt_count.max(1)));
                 state.last_error = Some(error.to_string());
                 state.updated_at = now_rfc3339();
             })
@@ -250,6 +279,74 @@ impl RunService {
             );
         }
     }
+
+    async fn record_callback_skipped(&self, run_id: &str, error: &str) {
+        if let Err(persist_error) = self
+            .update_callback_delivery(run_id, |state| {
+                state.status = ChatosCallbackDeliveryStatus::Skipped;
+                state.next_attempt_at = None;
+                state.last_error = Some(error.to_string());
+                state.updated_at = now_rfc3339();
+            })
+            .await
+        {
+            warn!(
+                run_id,
+                error = persist_error.as_str(),
+                "failed to persist permanently rejected callback state"
+            );
+        }
+    }
+
+    async fn record_callback_publish_outcome(
+        &self,
+        run_id: &str,
+        outcome: CallbackPublishOutcome,
+    ) -> Result<(), String> {
+        self.update_callback_delivery(run_id, |state| {
+            state.status = match outcome {
+                CallbackPublishOutcome::InlineDelivered => ChatosCallbackDeliveryStatus::Delivered,
+                CallbackPublishOutcome::RabbitMqEnqueued => ChatosCallbackDeliveryStatus::Enqueued,
+            };
+            state.next_attempt_at = None;
+            state.last_error = None;
+            state.updated_at = now_rfc3339();
+        })
+        .await
+    }
+
+    pub(in crate::services) async fn record_callback_delivery_result(
+        &self,
+        run_id: &str,
+        delivered: bool,
+        failure: Option<(&str, bool)>,
+    ) -> Result<(), String> {
+        if delivered {
+            return self
+                .update_callback_delivery(run_id, |state| {
+                    state.status = ChatosCallbackDeliveryStatus::Delivered;
+                    state.next_attempt_at = None;
+                    state.last_error = None;
+                    state.updated_at = now_rfc3339();
+                })
+                .await;
+        }
+        let Some((error, retryable)) = failure else {
+            return Ok(());
+        };
+        self.update_callback_delivery(run_id, |state| {
+            state.status = if retryable {
+                ChatosCallbackDeliveryStatus::Pending
+            } else {
+                ChatosCallbackDeliveryStatus::Skipped
+            };
+            state.next_attempt_at =
+                retryable.then(|| callback_next_attempt_at(state.attempt_count.max(1)));
+            state.last_error = Some(error.to_string());
+            state.updated_at = now_rfc3339();
+        })
+        .await
+    }
 }
 
 impl TaskService {
@@ -259,12 +356,13 @@ impl TaskService {
         task_id: &str,
         run: Option<&TaskRunRecord>,
     ) {
-        send_task_callback_with_store(&self.config, &self.store, event, task_id, run).await;
+        send_task_callback_with_store(&self.config, None, &self.store, event, task_id, run).await;
     }
 }
 
 async fn send_task_callback_with_store(
     config: &AppConfig,
+    task_queue_topology: Option<&crate::platform_queue::TaskQueueTopology>,
     store: &AppStore,
     event: &str,
     task_id: &str,
@@ -302,19 +400,48 @@ async fn send_task_callback_with_store(
     let payload_run_id = payload.run_id.clone().unwrap_or_default();
     let payload_user_message_id = payload.source_user_message_id.clone().unwrap_or_default();
     let payload_event = payload.event.clone();
-    if let Err(err) = super::delivery::send_chatos_task_callback(config.clone(), payload).await {
+    let owned_task_queue_topology;
+    let task_queue_topology = if let Some(task_queue_topology) = task_queue_topology {
+        task_queue_topology
+    } else {
+        owned_task_queue_topology =
+            match crate::platform_queue::TaskQueueTopology::from_managed_env() {
+                Ok(task_queue_topology) => task_queue_topology,
+                Err(err) => {
+                    warn!(
+                        error = err.as_str(),
+                        "failed to load managed task queue topology for callback delivery"
+                    );
+                    return;
+                }
+            };
+        &owned_task_queue_topology
+    };
+    if let Err(err) =
+        publish_chatos_task_callback(config.clone(), task_queue_topology, payload).await
+    {
         warn!(
             "failed to send task callback for task {} and event {}: {}",
             task_id, event, err
         );
     } else {
-        info!(
-            task_id = payload_task_id.as_str(),
-            run_id = payload_run_id.as_str(),
-            event = payload_event.as_str(),
-            source_user_message_id = payload_user_message_id.as_str(),
-            "sent task callback to chatos"
-        );
+        match task_queue_topology.callback_delivery_mode {
+            crate::platform_queue::TaskQueueMode::Inline => info!(
+                task_id = payload_task_id.as_str(),
+                run_id = payload_run_id.as_str(),
+                event = payload_event.as_str(),
+                source_user_message_id = payload_user_message_id.as_str(),
+                "sent task callback to chatos"
+            ),
+            crate::platform_queue::TaskQueueMode::RabbitMq => info!(
+                task_id = payload_task_id.as_str(),
+                run_id = payload_run_id.as_str(),
+                event = payload_event.as_str(),
+                source_user_message_id = payload_user_message_id.as_str(),
+                queue = task_queue_topology.callback_delivery_queue.as_str(),
+                "enqueued task callback for asynchronous delivery"
+            ),
+        }
     }
 }
 

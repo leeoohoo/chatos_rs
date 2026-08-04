@@ -237,6 +237,11 @@ mod tests {
                 ("x-task-runner-run-id".to_string(), "run-1".to_string()),
             ]),
             body: json!({}),
+            platform_signature: None,
+            platform_signature_key_id: None,
+            platform_signature_alg: None,
+            platform_timestamp: None,
+            platform_nonce: None,
         };
         assert_eq!(
             local_mcp_terminal_project_id(&request).as_deref(),

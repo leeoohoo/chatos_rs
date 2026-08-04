@@ -402,6 +402,23 @@ fn service_environment_templates_resolve_from_project_values() {
     );
 }
 
+#[test]
+fn global_environment_templates_resolve_from_project_values() {
+    let global = json_object_to_string_map(&serde_json::json!({
+        "POSTGRES_DB": "starabyss_online",
+        "POSTGRES_USER": "starabyss",
+        "POSTGRES_PASSWORD": "generated-project-secret",
+        "DATABASE_URL": "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgresql:5432/${POSTGRES_DB}",
+    }));
+
+    let environment = merged_environment(&global, &serde_json::json!({}));
+
+    assert_eq!(
+        environment.get("DATABASE_URL").map(String::as_str),
+        Some("postgresql://starabyss:generated-project-secret@postgresql:5432/starabyss_online")
+    );
+}
+
 fn task() -> TaskRecord {
     TaskRecord {
         id: "task-1".to_string(),

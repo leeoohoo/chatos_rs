@@ -4,9 +4,11 @@
 pub mod api;
 pub mod auth;
 pub mod config;
+mod managed_config;
 mod managed_requirements;
 pub mod models;
 pub mod relay;
+mod relay_signature;
 pub mod state;
 pub mod store;
 

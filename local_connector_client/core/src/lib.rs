@@ -27,6 +27,8 @@ pub mod plugins;
 mod process_lifetime;
 mod registration;
 mod relay;
+mod relay_signature;
+mod remote_control_auth;
 mod runtime;
 mod sandbox;
 mod secure_storage;
@@ -166,6 +168,16 @@ pub async fn run_local_connector() -> Result<()> {
     if let Err(err) = sandbox::docker::destroy_all_local_sandbox_containers().await {
         tracing_stdout(format!("stale local sandbox cleanup skipped: {err}").as_str());
     }
+    tokio::spawn(async {
+        let report = sandbox::docker::enforce_docker_build_cache_limit().await;
+        tracing_stdout(
+            format!(
+                "startup {}",
+                sandbox::docker::docker_maintenance_report_message(&report)
+            )
+            .as_str(),
+        );
+    });
     let _sandbox_lease_reaper =
         sandbox::lease::spawn_local_sandbox_lease_reaper(runtime.sandbox_runtime.clone());
     if let Some(refresh) = managed_requirements.background_refresh {

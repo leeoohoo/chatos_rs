@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -12,12 +12,70 @@ use tokio::process::Command;
 use crate::config::{AppConfig, DockerAgentEndpointMode};
 
 use super::{
-    append_sandbox_create_runtime_args, SandboxBackend, SandboxCreateSpec,
+    append_sandbox_create_runtime_args, append_sandbox_runtime_environment,
+    sandbox_runtime_environment_values, SandboxBackend, SandboxCreateSpec,
     SandboxEnvironmentCreateSpec, SandboxEnvironmentInstance, SandboxEnvironmentServiceInstance,
     SandboxEnvironmentServiceSpec, SandboxExecResult, SandboxInstance,
 };
 
 mod runtime;
+
+const MANAGED_PLAYWRIGHT_IMAGE_PREFIX: &str = "chatos-sandbox-agent:";
+const MANAGED_PLAYWRIGHT_CACHE_TARGET: &str = "/ms-playwright";
+const MANAGED_PLAYWRIGHT_WORKSPACE_LINK: &str = ".chatos/ms-playwright";
+
+fn uses_managed_playwright_cache(image: &str) -> bool {
+    image
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name.starts_with(MANAGED_PLAYWRIGHT_IMAGE_PREFIX))
+}
+
+#[cfg(unix)]
+fn prepare_managed_playwright_workspace_link(
+    run_workspace: &str,
+    image: &str,
+) -> Result<(), String> {
+    if !uses_managed_playwright_cache(image) {
+        return Ok(());
+    }
+    let link = Path::new(run_workspace).join(MANAGED_PLAYWRIGHT_WORKSPACE_LINK);
+    match std::fs::symlink_metadata(link.as_path()) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink()
+                && std::fs::read_link(link.as_path()).ok().as_deref()
+                    == Some(Path::new(MANAGED_PLAYWRIGHT_CACHE_TARGET))
+            {
+                return Ok(());
+            }
+            // Preserve project-owned paths. The managed cache is an optimization,
+            // never a reason to replace files already present in the workspace.
+            return Ok(());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect managed Playwright workspace link failed: {error}"
+            ));
+        }
+    }
+    let parent = link
+        .parent()
+        .ok_or_else(|| "managed Playwright workspace link has no parent".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        format!("create managed Playwright workspace directory failed: {error}")
+    })?;
+    std::os::unix::fs::symlink(MANAGED_PLAYWRIGHT_CACHE_TARGET, link.as_path())
+        .map_err(|error| format!("create managed Playwright workspace link failed: {error}"))
+}
+
+#[cfg(not(unix))]
+fn prepare_managed_playwright_workspace_link(
+    _run_workspace: &str,
+    _image: &str,
+) -> Result<(), String> {
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct DockerSandboxBackend {
@@ -469,7 +527,27 @@ async fn environment_volume_names(environment_id: &str) -> Result<Vec<String>, S
 }
 
 async fn environment_image_names(environment_id: &str) -> Result<Vec<String>, String> {
-    let output = Command::new("docker")
+    let mut identifiers = BTreeSet::new();
+    let labeled = Command::new("docker")
+        .arg("image")
+        .arg("ls")
+        .arg("--all")
+        .arg("--quiet")
+        .arg("--no-trunc")
+        .arg("--filter")
+        .arg(format!("label=chatos.environment_id={environment_id}"))
+        .output()
+        .await
+        .map_err(|err| format!("list labeled Docker environment images failed: {err}"))?;
+    if !labeled.status.success() {
+        return Err(format!(
+            "list labeled Docker environment images failed: {}",
+            String::from_utf8_lossy(&labeled.stderr)
+        ));
+    }
+    identifiers.extend(output_lines(&labeled.stdout));
+
+    let referenced = Command::new("docker")
         .arg("image")
         .arg("ls")
         .arg("--filter")
@@ -482,13 +560,14 @@ async fn environment_image_names(environment_id: &str) -> Result<Vec<String>, St
         .output()
         .await
         .map_err(|err| format!("list Docker environment images failed: {err}"))?;
-    if !output.status.success() {
+    if !referenced.status.success() {
         return Err(format!(
             "list Docker environment images failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&referenced.stderr)
         ));
     }
-    Ok(output_lines(&output.stdout))
+    identifiers.extend(output_lines(&referenced.stdout));
+    Ok(identifiers.into_iter().collect())
 }
 
 async fn docker_resource_names(
@@ -663,6 +742,9 @@ async fn run_docker_build(
     dockerfile: &Path,
     context: &Path,
     image: &str,
+    environment_id: &str,
+    service_id: &str,
+    image_role: &str,
     docker_config: Option<&Path>,
     docker_host: Option<&str>,
 ) -> Result<(), String> {
@@ -670,10 +752,19 @@ async fn run_docker_build(
     let mut command = Command::new("docker");
     command
         .arg("build")
+        .arg("--load")
         .arg("--file")
         .arg(dockerfile)
         .arg("--tag")
         .arg(image)
+        .arg("--label")
+        .arg("chatos.managed=true")
+        .arg("--label")
+        .arg(format!("chatos.environment_id={environment_id}"))
+        .arg("--label")
+        .arg(format!("chatos.service_id={service_id}"))
+        .arg("--label")
+        .arg(format!("chatos.image.role={image_role}"))
         .arg(context)
         .kill_on_drop(true);
     if let Some(docker_config) = docker_config {
@@ -700,6 +791,69 @@ async fn run_docker_build(
         ));
     }
     Ok(())
+}
+
+async fn docker_image_id(config: &AppConfig, image_ref: &str) -> Option<String> {
+    let mut command = Command::new("docker");
+    command.args(["image", "inspect", "--format", "{{.Id}}", image_ref]);
+    crate::docker_maintenance::apply_docker_connection(config, &mut command).ok()?;
+    let output = command.output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(output.stdout.as_slice())
+        .lines()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+async fn collect_replaced_image_id(
+    config: &AppConfig,
+    image_ref: &str,
+    previous_image_id: Option<String>,
+    replaced_image_ids: &mut Vec<String>,
+) {
+    let Some(previous_image_id) = previous_image_id else {
+        return;
+    };
+    let Some(current_image_id) = docker_image_id(config, image_ref).await else {
+        return;
+    };
+    if image_ids_equal(previous_image_id.as_str(), current_image_id.as_str()) {
+        return;
+    }
+    replaced_image_ids.push(previous_image_id);
+}
+
+async fn cleanup_replaced_environment_images(config: &AppConfig, image_ids: &[String]) {
+    for image_id in image_ids {
+        let mut command = Command::new("docker");
+        command.args(["image", "rm", image_id.as_str()]);
+        if let Err(error) = crate::docker_maintenance::apply_docker_connection(config, &mut command)
+        {
+            tracing::warn!(
+                image_id,
+                "prepare old environment image cleanup failed: {error}"
+            );
+            continue;
+        }
+        match command.output().await {
+            Ok(output) if output.status.success() => {
+                tracing::info!(image_id, "removed replaced environment image");
+            }
+            Ok(output) => tracing::warn!(
+                image_id,
+                error = %String::from_utf8_lossy(output.stderr.as_slice()).trim(),
+                "old environment image cleanup skipped"
+            ),
+            Err(error) => tracing::warn!(image_id, "old environment image cleanup failed: {error}"),
+        }
+    }
+}
+
+fn image_ids_equal(left: &str, right: &str) -> bool {
+    left.trim().trim_start_matches("sha256:") == right.trim().trim_start_matches("sha256:")
 }
 
 async fn inspect_image_command(image: &str) -> Result<Vec<String>, String> {

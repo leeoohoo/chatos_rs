@@ -34,7 +34,7 @@ impl PluginRelayClient {
         task: &TaskRecord,
         run: &TaskRunRecord,
     ) -> Result<Self, String> {
-        let base_url = plugin_relay_base_url()?;
+        let base_url = plugin_relay_base_url(&service.config)?;
         let internal_secret = service
             .config
             .local_connector_internal_api_secret
@@ -70,21 +70,11 @@ impl PluginRelayClient {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        let timeout_ms = std::env::var("TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(60_000)
-            .clamp(1_000, 120_000);
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_millis(timeout_ms))
+            .timeout(service.config.plugin_relay_request_timeout)
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| format!("build Plugin relay HTTP client failed: {error}"))?;
-        let hook_dispatch_timeout_ms = std::env::var("TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(5 * 60 * 1_000 + 30_000)
-            .clamp(45_000, 10 * 60 * 1_000);
         Ok(Self {
             http,
             base_url,
@@ -94,7 +84,7 @@ impl PluginRelayClient {
             workspace_id,
             run_id: run.id.clone(),
             store: service.store.clone(),
-            hook_dispatch_timeout: Duration::from_millis(hook_dispatch_timeout_ms),
+            hook_dispatch_timeout: service.config.plugin_hook_relay_timeout,
         })
     }
 
@@ -292,15 +282,15 @@ fn sanitized_runtime_error_token(token: &str) -> &str {
     }
 }
 
-pub(crate) fn plugin_relay_base_url() -> Result<String, String> {
-    let value = std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL")
-        .ok()
-        .or_else(|| std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_BASE_URL").ok())
-        .or_else(|| std::env::var("LOCAL_CONNECTOR_CLOUD_BASE_URL").ok())
-        .map(|value| value.trim().trim_end_matches('/').to_string())
+pub(crate) fn plugin_relay_base_url(config: &crate::config::AppConfig) -> Result<String, String> {
+    let value = config
+        .local_connector_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .map(|value| value.trim_end_matches('/').to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL or LOCAL_CONNECTOR_CLOUD_BASE_URL is required for Plugin execution"
+            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL is required from configuration center for Plugin execution"
                 .to_string()
         })?;
     validate_plugin_relay_base_url(value)

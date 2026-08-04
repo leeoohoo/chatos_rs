@@ -15,7 +15,7 @@ use super::core::{
     system_config_handler, task_runner_internal_prompt_preview_handler,
     update_system_config_handler, update_user,
 };
-use super::internal::get_user_execution_options;
+use super::internal::{get_system_stats, get_user_execution_options};
 use super::mcp::{
     get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog, list_plugin_connectors,
     list_task_capability_catalog, mcp_entrypoint, mcp_management_entrypoint, preview_mcp_prompt,
@@ -233,6 +233,7 @@ pub fn build_router(state: AppState) -> Router {
             "/internal/users/{owner_user_id}/execution-options",
             get(get_user_execution_options),
         )
+        .route("/internal/system/stats", get(get_system_stats))
         .route(
             "/internal/mcp-management/mcp/{system_key}",
             post(mcp_management_entrypoint),

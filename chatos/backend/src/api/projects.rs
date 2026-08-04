@@ -17,6 +17,22 @@ mod run_handlers;
 mod runtime_environment_handlers;
 mod session_resolver;
 
+pub(crate) use self::requirement_execution_handlers::{
+    cloud_execution_planner_message_is_stale, execution_message_status,
+};
+
+pub(crate) async fn repair_stale_cloud_execution_planner_message_for_reconciler(
+    message: crate::models::message::Message,
+    no_execution_links: bool,
+) -> Result<crate::models::message::Message, String> {
+    self::requirement_execution_handlers::repair_stale_cloud_execution_planner_message(
+        message,
+        no_execution_links,
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))
+}
+
 use self::contact_handlers::{
     add_project_contact, get_project_contact_lock, list_project_contacts, remove_project_contact,
 };

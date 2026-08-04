@@ -9,7 +9,9 @@ pub(super) fn fail_report_when_promotion_failed(
     report: &mut TaskRunReport,
     harness_output: Option<&HarnessRunOutputReport>,
 ) {
-    let Some(harness) = harness_output.filter(|harness| harness.status == "failed") else {
+    let Some(harness) = harness_output
+        .filter(|harness| matches!(harness.status.as_str(), "failed" | "merge_conflict"))
+    else {
         return;
     };
     let harness_error = harness

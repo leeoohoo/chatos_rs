@@ -18,12 +18,6 @@ fn load_secret_material() -> String {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::env::var("AUTH_JWT_SECRET")
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
         .unwrap_or_else(|| crate::config::Config::get().auth_jwt_secret.clone())
 }
 

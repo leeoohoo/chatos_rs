@@ -58,7 +58,11 @@ const displayStatusForTask = (
   prerequisiteCount: number,
 ): string | null | undefined => {
   const status = readString(task.status)?.toLowerCase();
-  if (prerequisiteCount > 0 && (status === 'ready' || status === 'queued')) {
+  const hasIncompletePrerequisite = prerequisiteCount > 0
+    && (task.prerequisite_tasks || []).some(
+      (prerequisite) => readString(prerequisite.status)?.toLowerCase() !== 'succeeded',
+    );
+  if (status === 'ready' && hasIncompletePrerequisite) {
     return 'waiting_prerequisite';
   }
   return task.status;

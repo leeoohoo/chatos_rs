@@ -11,6 +11,50 @@ pub struct HealthResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunnerSystemStatsResponse {
+    pub ok: bool,
+    pub service: &'static str,
+    pub now: String,
+    pub runtime: TaskRunnerRuntimeStatsSnapshot,
+    pub queue: TaskRunnerQueueStatsSnapshot,
+    pub runs: TaskRunnerRunStatsSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunnerRuntimeStatsSnapshot {
+    pub worker_claim_failures_total: u64,
+    pub active_run_event_streams: usize,
+    pub pending_sse_tickets: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunnerQueueStatsSnapshot {
+    pub rabbitmq_enabled: bool,
+    pub run_dispatch_mode: String,
+    pub callback_delivery_mode: String,
+    pub run_events_publish_mode: String,
+    pub rabbitmq_exchange: String,
+    pub run_dispatch_queue: String,
+    pub callback_delivery_queue: String,
+    pub run_events_queue: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunnerRunStatsSnapshot {
+    pub total: usize,
+    pub active: usize,
+    pub queued: usize,
+    pub running: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+    pub blocked: usize,
+    pub dispatch_paused: usize,
+    pub callback_pending: usize,
+    pub callback_enqueued: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemConfigResponse {
     pub host: String,
     pub port: u16,
@@ -26,6 +70,9 @@ pub struct SystemConfigResponse {
     pub default_execution_timeout_ms: u64,
     pub execution_timeout_ms: u64,
     pub scheduler_poll_interval_ms: u64,
+    pub worker_poll_interval_ms: u64,
+    pub worker_claim_ttl_ms: u64,
+    pub worker_concurrency: usize,
     pub auto_memory_summary: bool,
     pub default_task_execution_max_iterations: usize,
     pub task_execution_max_iterations: usize,
@@ -44,6 +91,14 @@ pub struct SystemConfigResponse {
     pub sandbox_manager_auth_configured: bool,
     pub default_sandbox_lease_ttl_seconds: u64,
     pub sandbox_lease_ttl_seconds: u64,
+    pub task_queue_rabbitmq_enabled: bool,
+    pub task_queue_run_dispatch_mode: String,
+    pub task_queue_callback_delivery_mode: String,
+    pub task_queue_run_events_publish_mode: String,
+    pub task_queue_rabbitmq_exchange: String,
+    pub task_queue_run_dispatch_queue: String,
+    pub task_queue_callback_delivery_queue: String,
+    pub task_queue_run_events_queue: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

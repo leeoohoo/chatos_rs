@@ -4,6 +4,39 @@
 use super::*;
 
 impl MongoStore {
+    async fn active_execution_lane_keys(&self) -> Result<Vec<Bson>, String> {
+        self.runs
+            .distinct(
+                "execution_lane_key",
+                Some(doc! {
+                    "status": "running",
+                    "execution_lane_key": { "$type": "string" },
+                }),
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    async fn queued_run_claim_filter(&self) -> Result<Document, String> {
+        let active_execution_lanes = self.active_execution_lane_keys().await?;
+        let mut filter = doc! {
+            "status": "queued",
+            "dispatch_paused": { "$ne": true },
+        };
+        if !active_execution_lanes.is_empty() {
+            filter.insert(
+                "$or",
+                vec![
+                    doc! { "execution_lane_key": { "$exists": false } },
+                    doc! { "execution_lane_key": null },
+                    doc! { "execution_lane_key": { "$nin": active_execution_lanes } },
+                ],
+            );
+        }
+        Ok(filter)
+    }
+
     pub(in crate::store) async fn save_run(
         &self,
         run: TaskRunRecord,
@@ -64,12 +97,11 @@ impl MongoStore {
         claim_until: &str,
     ) -> Result<Option<TaskRunRecord>, String> {
         let now = Utc::now().to_rfc3339();
-        self.runs
+        let filter = self.queued_run_claim_filter().await?;
+        match self
+            .runs
             .find_one_and_update(
-                doc! {
-                    "status": "queued",
-                    "dispatch_paused": { "$ne": true },
-                },
+                filter,
                 doc! {
                     "$set": {
                         "status": "running",
@@ -92,7 +124,53 @@ impl MongoStore {
                     .build(),
             )
             .await
-            .map_err(|err| err.to_string())
+        {
+            Ok(run) => Ok(run),
+            Err(err) if is_mongo_execution_lane_conflict(&err.to_string()) => Ok(None),
+            Err(err) => Err(err.to_string()),
+        }
+    }
+
+    pub(in crate::store) async fn claim_queued_run_by_id(
+        &self,
+        run_id: &str,
+        worker_id: &str,
+        claim_token: &str,
+        claim_until: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        let now = Utc::now().to_rfc3339();
+        let mut filter = self.queued_run_claim_filter().await?;
+        filter.insert("id", run_id);
+        match self
+            .runs
+            .find_one_and_update(
+                filter,
+                doc! {
+                    "$set": {
+                        "status": "running",
+                        "worker_id": worker_id,
+                        "claim_token": claim_token,
+                        "claim_until": claim_until,
+                        "started_at": now.as_str(),
+                        "updated_at": now.as_str(),
+                    },
+                    "$inc": { "attempt": 1_i64 },
+                    "$unset": {
+                        "finished_at": "",
+                        "result_summary": "",
+                        "error_message": "",
+                    },
+                },
+                FindOneAndUpdateOptions::builder()
+                    .return_document(ReturnDocument::After)
+                    .build(),
+            )
+            .await
+        {
+            Ok(run) => Ok(run),
+            Err(err) if is_mongo_execution_lane_conflict(&err.to_string()) => Ok(None),
+            Err(err) => Err(err.to_string()),
+        }
     }
 
     pub(in crate::store) async fn set_queued_runs_dispatch_paused(

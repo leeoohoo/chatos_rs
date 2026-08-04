@@ -26,12 +26,12 @@ use super::{
     plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
     proxy_plugin_release_artifact, require_auth, resolve_local_runtime_capabilities, revoke_device,
     sandbox_facade_path, sandbox_facade_root, skill_cancel_relay, skill_execute_relay,
-    skill_prepare_relay, sync_user_skill_inventory, terminal_exec_relay, terminal_input_relay,
-    terminal_session_create_relay, terminal_ws_relay, update_local_mcp, update_local_mcp_status,
-    update_managed_requirements_assignment, update_managed_requirements_policy,
-    update_plugin_preference, update_project_binding, update_sandbox_pairing,
-    update_user_skill_preference, update_workspace, user_service_protected_proxy,
-    user_service_public_proxy, AuthState,
+    skill_prepare_relay, sync_user_skill_inventory, system_stats_handler, terminal_exec_relay,
+    terminal_input_relay, terminal_session_create_relay, terminal_ws_relay, update_local_mcp,
+    update_local_mcp_status, update_managed_requirements_assignment,
+    update_managed_requirements_policy, update_plugin_preference, update_project_binding,
+    update_sandbox_pairing, update_user_skill_preference, update_workspace,
+    user_service_protected_proxy, user_service_public_proxy, AuthState,
 };
 
 pub fn build_router(state: AppState) -> Router {
@@ -84,6 +84,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/local-connectors/devices/{id}/connect",
             get(connect_device),
+        )
+        .route(
+            "/api/local-connectors/system/stats",
+            get(system_stats_handler),
         )
         .route(
             "/api/local-connectors/workspaces",

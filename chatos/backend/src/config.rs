@@ -76,148 +76,89 @@ impl Config {
     }
 
     fn from_env() -> Result<Config, String> {
-        let node_env = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string());
-        let normalized_env = normalize_env(node_env.as_str());
+        let node_env = require_config_center_value("NODE_ENV")?;
+        let normalized_env = normalize_env(node_env.as_str())?;
+        let openai_api_key = optional_config_center_text("OPENAI_API_KEY").unwrap_or_default();
+        let openai_base_url = require_config_center_value("OPENAI_BASE_URL")?;
 
-        let read_int = |key: &str, def: i64| -> i64 {
-            match std::env::var(key) {
-                Ok(v) => v.parse::<i64>().unwrap_or(def),
-                Err(_) => def,
-            }
-        };
-        let read_num = |key: &str, def: f64| -> f64 {
-            match std::env::var(key) {
-                Ok(v) => v.parse::<f64>().unwrap_or(def),
-                Err(_) => def,
-            }
-        };
+        let port = require_config_center_u16("BACKEND_PORT")?;
+        let host = require_config_center_value("HOST")?;
 
-        let openai_api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
-        let openai_base_url = std::env::var("OPENAI_BASE_URL")
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        let log_level = require_config_center_value("LOG_LEVEL")?;
+        let log_max_files = require_config_center_value("LOG_MAX_FILES")?;
+        let cors_origins = require_config_center_csv("CORS_ORIGINS")?;
 
-        let port = std::env::var("BACKEND_PORT")
-            .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(3997);
-        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-
-        let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
-        let log_max_files = std::env::var("LOG_MAX_FILES").unwrap_or_else(|_| "7d".to_string());
-
-        let cors_origins = match std::env::var("CORS_ORIGINS") {
-            Ok(v) => v
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-            Err(_) => vec!["*".to_string()],
-        };
-
-        let summary_enabled = std::env::var("SUMMARY_ENABLED")
-            .unwrap_or_else(|_| "true".to_string())
-            .to_lowercase()
-            != "false";
-        let summary_message_limit = read_int("SUMMARY_MESSAGE_LIMIT", 40);
-        let summary_max_context_tokens = read_int("SUMMARY_MAX_CONTEXT_TOKENS", 6000);
-        let summary_keep_last_n = read_int("SUMMARY_KEEP_LAST_N", 6);
-        let summary_target_tokens = read_int("SUMMARY_TARGET_TOKENS", 700);
-        let summary_merge_target_tokens =
-            read_int("SUMMARY_MERGE_TARGET_TOKENS", summary_target_tokens);
-        let summary_temperature = read_num("SUMMARY_TEMPERATURE", 0.2);
-        let summary_cooldown_seconds = read_int("SUMMARY_COOLDOWN_SECONDS", 60);
-        let dynamic_summary_enabled = std::env::var("DYNAMIC_SUMMARY_ENABLED")
-            .unwrap_or_else(|_| "true".to_string())
-            .to_lowercase()
-            != "false";
-        let summary_bisect_enabled = std::env::var("SUMMARY_BISECT_ENABLED")
-            .unwrap_or_else(|_| "true".to_string())
-            .to_lowercase()
-            != "false";
-        let summary_bisect_max_depth = read_int("SUMMARY_BISECT_MAX_DEPTH", 6);
-        let summary_bisect_min_messages = read_int("SUMMARY_BISECT_MIN_MESSAGES", 4);
-        let summary_retry_on_context_overflow = std::env::var("SUMMARY_RETRY_ON_CONTEXT_OVERFLOW")
-            .unwrap_or_else(|_| "true".to_string())
-            .to_lowercase()
-            != "false";
-        let auth_jwt_secret = std::env::var("AUTH_JWT_SECRET")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .or_else(|| read_optional_env("AUTH_COMPAT_SECRET"));
-        let auth_jwt_secret =
-            require_secret_for_env(auth_jwt_secret, "AUTH_JWT_SECRET", normalized_env)?;
-        let auth_compat_secret = read_optional_env("AUTH_COMPAT_SECRET");
+        let summary_enabled = require_config_center_bool("SUMMARY_ENABLED")?;
+        let summary_message_limit = require_config_center_i64("SUMMARY_MESSAGE_LIMIT")?;
+        let summary_max_context_tokens = require_config_center_i64("SUMMARY_MAX_CONTEXT_TOKENS")?;
+        let summary_keep_last_n = require_config_center_i64("SUMMARY_KEEP_LAST_N")?;
+        let summary_target_tokens = require_config_center_i64("SUMMARY_TARGET_TOKENS")?;
+        let summary_merge_target_tokens = require_config_center_i64("SUMMARY_MERGE_TARGET_TOKENS")?;
+        let summary_temperature = require_config_center_f64("SUMMARY_TEMPERATURE")?;
+        let summary_cooldown_seconds = require_config_center_i64("SUMMARY_COOLDOWN_SECONDS")?;
+        let dynamic_summary_enabled = require_config_center_bool("DYNAMIC_SUMMARY_ENABLED")?;
+        let summary_bisect_enabled = require_config_center_bool("SUMMARY_BISECT_ENABLED")?;
+        let summary_bisect_max_depth = require_config_center_i64("SUMMARY_BISECT_MAX_DEPTH")?;
+        let summary_bisect_min_messages = require_config_center_i64("SUMMARY_BISECT_MIN_MESSAGES")?;
+        let summary_retry_on_context_overflow =
+            require_config_center_bool("SUMMARY_RETRY_ON_CONTEXT_OVERFLOW")?;
+        let auth_jwt_secret = require_config_center_value("AUTH_JWT_SECRET")?;
+        let auth_compat_secret = optional_config_center_text("AUTH_COMPAT_SECRET");
         let auth_access_token_ttl_seconds =
-            read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
-        let user_service_base_url = read_optional_env("CHATOS_USER_SERVICE_BASE_URL")
-            .or_else(|| read_optional_env("USER_SERVICE_BASE_URL"))
-            .or_else(|| Some(default_user_service_base_url()));
+            require_config_center_i64("AUTH_ACCESS_TOKEN_TTL_SECONDS")?.max(60);
+        let user_service_base_url =
+            Some(require_config_center_value("CHATOS_USER_SERVICE_BASE_URL")?);
         let user_service_request_timeout_ms =
-            read_int("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
-        let project_service_base_url = read_optional_env("CHATOS_PROJECT_SERVICE_BASE_URL")
-            .or_else(|| read_optional_env("PROJECT_SERVICE_BASE_URL"))
-            .unwrap_or_else(default_project_service_base_url);
-        let project_service_sync_secret =
-            read_optional_env("CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET")
-                .or_else(|| read_optional_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET"))
-                .or_else(|| read_optional_env("PROJECT_SERVICE_SYNC_SECRET"));
-        let task_runner_base_url = read_optional_env("CHATOS_TASK_RUNNER_BASE_URL")
-            .or_else(|| read_optional_env("TASK_RUNNER_BASE_URL"))
-            .unwrap_or_else(default_task_runner_base_url);
-        let task_runner_internal_api_secret =
-            read_optional_env("CHATOS_TASK_RUNNER_INTERNAL_API_SECRET");
+            require_config_center_i64("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
+        let project_service_base_url =
+            require_config_center_value("CHATOS_PROJECT_SERVICE_BASE_URL")?;
+        let project_service_sync_secret = Some(require_config_center_value(
+            "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
+        )?);
+        let task_runner_base_url = require_config_center_value("CHATOS_TASK_RUNNER_BASE_URL")?;
+        let task_runner_internal_api_secret = Some(require_config_center_value(
+            "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
+        )?);
         let task_runner_request_timeout_ms =
-            read_optional_env("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS")
-                .or_else(|| read_optional_env("TASK_RUNNER_REQUEST_TIMEOUT_MS"))
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(30_000)
-                .max(300);
-        let mcp_management_internal_api_secret =
-            read_optional_env("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET");
+            require_config_center_i64("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS")?.max(300);
+        let mcp_management_internal_api_secret = Some(require_config_center_value(
+            "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
+        )?);
         let local_connector_service_base_url =
-            read_optional_env("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")
-                .or_else(|| read_optional_env("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
-                .unwrap_or_else(default_local_connector_service_base_url);
-        let local_connector_internal_api_secret =
-            read_optional_env("CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET");
+            require_config_center_value("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")?;
+        let local_connector_internal_api_secret = Some(require_config_center_value(
+            "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        )?);
         let local_connector_service_request_timeout_ms =
-            read_optional_env("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")
-                .or_else(|| read_optional_env("LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS"))
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(30_000)
+            require_config_center_i64("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")?
                 .max(300);
         let plugin_ui_parent_origin = normalize_plugin_ui_origin(
             "CHATOS_PLUGIN_UI_PARENT_ORIGIN",
-            read_optional_env("CHATOS_PLUGIN_UI_PARENT_ORIGIN"),
+            optional_config_center_text("CHATOS_PLUGIN_UI_PARENT_ORIGIN"),
             normalized_env,
         )?;
         let plugin_ui_resource_origin = normalize_plugin_ui_origin(
             "CHATOS_PLUGIN_UI_RESOURCE_ORIGIN",
-            read_optional_env("CHATOS_PLUGIN_UI_RESOURCE_ORIGIN"),
+            optional_config_center_text("CHATOS_PLUGIN_UI_RESOURCE_ORIGIN"),
             normalized_env,
         )?;
         validate_plugin_ui_origin_pair(
             plugin_ui_parent_origin.as_deref(),
             plugin_ui_resource_origin.as_deref(),
         )?;
-        let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
-            .unwrap_or_else(|_| default_memory_engine_base_url());
-        let memory_engine_operator_token = Some(
-            read_optional_env("CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET")
-                .or_else(|| read_optional_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
-                .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
-        );
+        let memory_engine_base_url = require_config_center_value("CHATOS_MEMORY_ENGINE_BASE_URL")?;
+        let memory_engine_operator_token = Some(require_config_center_value(
+            "CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET",
+        )?);
         let memory_engine_request_timeout_ms =
-            read_int("MEMORY_ENGINE_REQUEST_TIMEOUT_MS", 5000).max(300);
+            require_config_center_i64("CHATOS_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")?.max(300);
         let memory_engine_active_summary_trigger_timeout_ms =
-            read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS", 5000).max(300);
+            require_config_center_i64("MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS")?.max(300);
         let memory_engine_active_summary_poll_interval_ms =
-            read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS", 10_000).max(1_000);
+            require_config_center_i64("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS")?.max(1_000);
         let memory_engine_active_summary_poll_timeout_ms =
-            read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS", 120_000).max(10_000);
-        let task_runner_callback_secret = read_optional_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET")
-            .or_else(|| read_optional_env("CHATOS_TASK_RUNNER_CALLBACK_SECRET"));
+            require_config_center_i64("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS")?.max(10_000);
+        let task_runner_callback_secret = task_runner_internal_api_secret.clone();
         validate_production_secret(
             "AUTH_JWT_SECRET",
             Some(auth_jwt_secret.as_str()),
@@ -231,23 +172,14 @@ impl Config {
                 "change_me_chatos_memory_engine_secret",
             ],
         )?;
-        if project_service_sync_secret.is_some() {
-            validate_production_secret(
-                "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
-                project_service_sync_secret.as_deref(),
-                &[
-                    "change_me_project_sync_secret",
-                    "change_me_chatos_project_service_secret",
-                ],
-            )?;
-        }
-        if task_runner_callback_secret.is_some() {
-            validate_production_secret(
-                "TASK_RUNNER_CHATOS_CALLBACK_SECRET",
-                task_runner_callback_secret.as_deref(),
-                &["change_me_chatos_task_runner_secret"],
-            )?;
-        }
+        validate_production_secret(
+            "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
+            project_service_sync_secret.as_deref(),
+            &[
+                "change_me_project_sync_secret",
+                "change_me_chatos_project_service_secret",
+            ],
+        )?;
         validate_production_secret(
             "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
             task_runner_internal_api_secret.as_deref(),
@@ -382,77 +314,66 @@ fn read_optional_env(key: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-fn read_optional_u16_env(key: &str) -> Option<u16> {
-    read_optional_env(key).and_then(|value| value.parse::<u16>().ok())
+fn require_config_center_value(key: &str) -> Result<String, String> {
+    read_optional_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
 }
 
-fn client_accessible_host(host: Option<String>) -> String {
-    match host.as_deref().map(str::trim) {
-        Some("") | Some("0.0.0.0") | Some("::") | Some("[::]") | None => "127.0.0.1".to_string(),
-        Some(value) => value.to_string(),
+fn require_config_center_i64(key: &str) -> Result<i64, String> {
+    let value = require_config_center_value(key)?;
+    value
+        .parse::<i64>()
+        .map_err(|err| format!("{key} must be a valid integer: {err}"))
+}
+
+fn require_config_center_u16(key: &str) -> Result<u16, String> {
+    let value = require_config_center_value(key)?;
+    value
+        .parse::<u16>()
+        .map_err(|err| format!("{key} must be a valid integer: {err}"))
+}
+
+fn require_config_center_csv(key: &str) -> Result<Vec<String>, String> {
+    let values = require_config_center_value(key)?
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Err(format!("{key} must contain at least one value"));
+    }
+    Ok(values)
+}
+
+fn optional_config_center_text(key: &str) -> Option<String> {
+    read_optional_env(key)
+}
+
+fn require_config_center_bool(key: &str) -> Result<bool, String> {
+    match require_config_center_value(key)?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(format!("{key} must be a valid boolean")),
     }
 }
 
-fn default_memory_engine_base_url() -> String {
-    let host = client_accessible_host(read_optional_env("MEMORY_ENGINE_HOST"));
-    let port = read_optional_u16_env("MEMORY_ENGINE_PORT").unwrap_or(7081);
-    build_memory_engine_base_url(host.as_str(), port)
+fn require_config_center_f64(key: &str) -> Result<f64, String> {
+    let value = require_config_center_value(key)?;
+    value
+        .parse::<f64>()
+        .map_err(|err| format!("{key} must be a valid number: {err}"))
 }
 
-fn default_user_service_base_url() -> String {
-    let host = client_accessible_host(read_optional_env("USER_SERVICE_HOST"));
-    let port = read_optional_u16_env("USER_SERVICE_PORT").unwrap_or(39190);
-    build_user_service_base_url(host.as_str(), port)
-}
-
-fn default_task_runner_base_url() -> String {
-    let host = client_accessible_host(read_optional_env("TASK_RUNNER_HOST"));
-    let port = read_optional_u16_env("TASK_RUNNER_BACKEND_PORT")
-        .or_else(|| read_optional_u16_env("TASK_RUNNER_PORT"))
-        .unwrap_or(39090);
-    build_task_runner_base_url(host.as_str(), port)
-}
-
-fn default_local_connector_service_base_url() -> String {
-    let host = client_accessible_host(read_optional_env("LOCAL_CONNECTOR_SERVICE_HOST"));
-    let port = read_optional_u16_env("LOCAL_CONNECTOR_SERVICE_PORT").unwrap_or(39230);
-    build_local_connector_service_base_url(host.as_str(), port)
-}
-
-fn default_project_service_base_url() -> String {
-    let host = client_accessible_host(read_optional_env("PROJECT_SERVICE_HOST"));
-    let port = read_optional_u16_env("PROJECT_SERVICE_PORT").unwrap_or(39210);
-    build_project_service_base_url(host.as_str(), port)
-}
-
-fn build_memory_engine_base_url(host: &str, port: u16) -> String {
-    format!("http://{host}:{port}/api/memory-engine/v1")
-}
-
-fn build_user_service_base_url(host: &str, port: u16) -> String {
-    format!("http://{host}:{port}")
-}
-
-fn build_task_runner_base_url(host: &str, port: u16) -> String {
-    format!("http://{host}:{port}")
-}
-
-fn build_local_connector_service_base_url(host: &str, port: u16) -> String {
-    format!("http://{host}:{port}")
-}
-
-fn build_project_service_base_url(host: &str, port: u16) -> String {
-    format!("http://{host}:{port}")
-}
-
-fn normalize_env(value: &str) -> &str {
+fn normalize_env(value: &str) -> Result<&'static str, String> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "prod" => "production",
-        "development" => "development",
-        "staging" => "staging",
-        "test" => "test",
-        "production" => "production",
-        _ => "development",
+        "prod" | "production" => Ok("production"),
+        "development" => Ok("development"),
+        "staging" => Ok("staging"),
+        "test" => Ok("test"),
+        _ => Err("NODE_ENV must be one of: development, staging, test, production".to_string()),
     }
 }
 
@@ -504,20 +425,6 @@ fn validate_plugin_ui_origin_pair(
     }
 }
 
-fn require_secret_for_env(
-    value: Option<String>,
-    env_key: &str,
-    normalized_env: &str,
-) -> Result<String, String> {
-    match value {
-        Some(secret) => Ok(secret),
-        None if normalized_env == "production" => {
-            Err(format!("{env_key} must be set when NODE_ENV=production"))
-        }
-        None => Ok("dev-only-change-me-please".to_string()),
-    }
-}
-
 fn validate_config(
     normalized_env: &str,
     port: u16,
@@ -555,31 +462,15 @@ fn validate_config(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_memory_engine_base_url, build_task_runner_base_url, build_user_service_base_url,
-        client_accessible_host, normalize_env, normalize_plugin_ui_origin, require_secret_for_env,
-        validate_config, validate_plugin_ui_origin_pair,
+        normalize_env, normalize_plugin_ui_origin, validate_config, validate_plugin_ui_origin_pair,
     };
 
     #[test]
     fn normalize_env_maps_prod_alias() {
-        assert_eq!(normalize_env("prod"), "production");
-        assert_eq!(normalize_env("production"), "production");
-        assert_eq!(normalize_env("staging"), "staging");
-        assert_eq!(normalize_env("weird"), "development");
-    }
-
-    #[test]
-    fn require_secret_allows_dev_fallback() {
-        let secret = require_secret_for_env(None, "AUTH_JWT_SECRET", "development")
-            .expect("development fallback");
-        assert_eq!(secret, "dev-only-change-me-please");
-    }
-
-    #[test]
-    fn require_secret_rejects_missing_prod_secret() {
-        let err = require_secret_for_env(None, "AUTH_JWT_SECRET", "production")
-            .expect_err("production must reject missing secret");
-        assert!(err.contains("AUTH_JWT_SECRET"));
+        assert_eq!(normalize_env("prod").unwrap(), "production");
+        assert_eq!(normalize_env("production").unwrap(), "production");
+        assert_eq!(normalize_env("staging").unwrap(), "staging");
+        assert!(normalize_env("weird").is_err());
     }
 
     #[test]
@@ -659,37 +550,5 @@ mod tests {
         )
         .is_err());
         assert!(validate_plugin_ui_origin_pair(Some("https://app.example.com"), None).is_err());
-    }
-
-    #[test]
-    fn build_memory_engine_base_url_uses_loopback_host() {
-        assert_eq!(
-            build_memory_engine_base_url("127.0.0.1", 7199),
-            "http://127.0.0.1:7199/api/memory-engine/v1"
-        );
-    }
-
-    #[test]
-    fn build_task_runner_base_url_uses_loopback_host() {
-        assert_eq!(
-            build_task_runner_base_url("127.0.0.1", 39090),
-            "http://127.0.0.1:39090"
-        );
-    }
-
-    #[test]
-    fn build_user_service_base_url_uses_loopback_host() {
-        assert_eq!(
-            build_user_service_base_url("127.0.0.1", 39190),
-            "http://127.0.0.1:39190"
-        );
-    }
-
-    #[test]
-    fn client_accessible_host_preserves_explicit_host() {
-        assert_eq!(
-            client_accessible_host(Some("memory-engine.internal".to_string())),
-            "memory-engine.internal"
-        );
     }
 }

@@ -223,11 +223,11 @@ fn agent_instructions_apply_user_language_to_project_artifacts() {
     assert!(chinese.contains("latest substantive, user-authored request"));
     assert!(chinese.contains("简体中文（zh-CN）"));
     assert!(chinese.contains("requirement titles"));
-    assert!(chinese.contains("project-task titles and descriptions"));
-    assert!(chinese.contains("Task Runner task titles/objectives"));
+    assert!(chinese.contains("implementation-task titles and descriptions"));
+    assert!(chinese.contains("execution-task titles and objectives"));
     assert!(chinese.contains("User-Facing Final Reply Policy"));
-    assert!(chinese.contains("do not expose internal IDs"));
-    assert!(chinese.contains("never reconstruct, abbreviate, or guess"));
+    assert!(chinese.contains("concise product delivery note"));
+    assert!(chinese.contains("names and concepts a customer sees"));
 
     let mut english_context = runtime_context(false);
     english_context.internal_context_locale = InternalContextLocale::ZhCn;

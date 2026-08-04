@@ -68,7 +68,15 @@ pub(super) fn require_internal_api_secret(
             INTERNAL_TOKEN_AUDIENCE,
             required_scope,
         )
-        .map_err(|_| ApiError::unauthorized("invalid plugin management internal API token"))?;
+        .map_err(|error| {
+            tracing::warn!(
+                caller_service,
+                required_scope,
+                error = error.as_str(),
+                "plugin management internal token verification failed"
+            );
+            ApiError::unauthorized("invalid plugin management internal API token")
+        })?;
         return Ok(());
     }
     if state.config.require_signed_internal_requests {

@@ -57,6 +57,12 @@ struct StartSandboxEnvironmentRequest<'a> {
     services: &'a [super::SandboxEnvironmentServicePlan],
 }
 
+#[derive(Debug, Serialize)]
+struct RenewSandboxEnvironmentLeaseRequest<'a> {
+    lease_id: &'a str,
+    ttl_seconds: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateSandboxLeaseResponse {
     pub(super) lease_id: String,
@@ -638,6 +644,32 @@ impl SandboxManagerClient {
             .unwrap_or(if ok { "ok" } else { "unknown health failure" })
             .to_string();
         Ok(SandboxHealthResult { ok, message, raw })
+    }
+
+    pub(super) async fn renew_environment_lease(
+        &self,
+        context: &SandboxRuntimeContext,
+        ttl_seconds: u64,
+    ) -> Result<String, String> {
+        if !context.is_environment {
+            return Ok(context.expires_at.clone());
+        }
+        let payload = RenewSandboxEnvironmentLeaseRequest {
+            lease_id: context.lease_id.as_str(),
+            ttl_seconds,
+        };
+        let response = self
+            .apply_auth(self.client.post(format!(
+                "{}/api/sandbox-environments/{}/renew",
+                self.base_url, context.sandbox_id
+            )))?
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox environment renewal failed: {err}"))?;
+        let renewed: SandboxEnvironmentLeaseResponse =
+            decode_success_json(response, "sandbox environment renewal request").await?;
+        Ok(renewed.expires_at)
     }
 
     pub(super) async fn release(

@@ -234,7 +234,12 @@ impl RunService {
                     error = err.as_str(),
                     "commit sandbox output to Harness failed"
                 );
-                let report = context.output_report("failed", None, Some(err.clone()));
+                let status = if is_harness_concurrent_merge_conflict(err.as_str()) {
+                    "merge_conflict"
+                } else {
+                    "failed"
+                };
+                let report = context.output_report(status, None, None, Some(err.clone()));
                 let _ = self
                     .store
                     .append_run_event(TaskRunEventRecord::new(
@@ -276,16 +281,20 @@ impl RunService {
                 &secrets,
             )
             .await?;
-            if status == "committed" {
-                promote_run_branch_to_base(
-                    worktree.as_path(),
-                    context.base_branch.as_str(),
-                    context.base_commit.as_str(),
-                    &secrets,
+            let promoted_commit = if status == "committed" {
+                Some(
+                    promote_run_branch_to_base(
+                        worktree.as_path(),
+                        context.base_branch.as_str(),
+                        context.base_commit.as_str(),
+                        &secrets,
+                    )
+                    .await?,
                 )
-                .await?;
-            }
-            Ok(context.output_report(status.as_str(), Some(result_commit), None))
+            } else {
+                None
+            };
+            Ok(context.output_report(status.as_str(), Some(result_commit), promoted_commit, None))
         }
         .await;
         let _ = fs::remove_dir_all(&temp_root);
@@ -578,21 +587,104 @@ pub(in crate::services) async fn commit_workspace_to_run_branch(
     Ok(("committed".to_string(), result_commit))
 }
 
+const HARNESS_CONCURRENT_MERGE_CONFLICT: &str = "harness concurrent merge conflict";
+const HARNESS_PROMOTION_MAX_ATTEMPTS: usize = 8;
+
+fn is_harness_concurrent_merge_conflict(error: &str) -> bool {
+    error.contains(HARNESS_CONCURRENT_MERGE_CONFLICT)
+}
+
 pub(in crate::services) async fn promote_run_branch_to_base(
     worktree: &Path,
     base_branch: &str,
     expected_base_commit: &str,
     secrets: &[&str],
-) -> Result<(), String> {
-    run_git(
-        vec![
-            "push".to_string(),
-            "origin".to_string(),
-            format!("--force-with-lease=refs/heads/{base_branch}:{expected_base_commit}"),
-            format!("HEAD:refs/heads/{base_branch}"),
-        ],
-        Some(worktree),
-        secrets,
-    )
-    .await
+) -> Result<String, String> {
+    let remote_ref = format!("refs/remotes/origin/{base_branch}");
+    let mut rebased_onto = expected_base_commit.to_string();
+    let mut last_push_error = None;
+
+    for _ in 0..HARNESS_PROMOTION_MAX_ATTEMPTS {
+        run_git(
+            vec![
+                "fetch".to_string(),
+                "origin".to_string(),
+                format!("+refs/heads/{base_branch}:{remote_ref}"),
+            ],
+            Some(worktree),
+            secrets,
+        )
+        .await?;
+        let latest_base_commit = run_git_output(
+            vec![
+                "rev-parse".to_string(),
+                "--verify".to_string(),
+                remote_ref.clone(),
+            ],
+            Some(worktree),
+            secrets,
+        )
+        .await?
+        .trim()
+        .to_string();
+
+        if latest_base_commit != rebased_onto {
+            let rebase_result = run_git(
+                vec![
+                    "-c".to_string(),
+                    "user.name=Chatos Task Runner".to_string(),
+                    "-c".to_string(),
+                    "user.email=task-runner@chatos.local".to_string(),
+                    "rebase".to_string(),
+                    "--onto".to_string(),
+                    latest_base_commit.clone(),
+                    rebased_onto.clone(),
+                ],
+                Some(worktree),
+                secrets,
+            )
+            .await;
+            if let Err(error) = rebase_result {
+                let _ = run_git(
+                    vec!["rebase".to_string(), "--abort".to_string()],
+                    Some(worktree),
+                    secrets,
+                )
+                .await;
+                return Err(format!("{HARNESS_CONCURRENT_MERGE_CONFLICT}: {error}"));
+            }
+            rebased_onto = latest_base_commit.clone();
+        }
+
+        let promoted_commit = run_git_output(
+            vec!["rev-parse".to_string(), "HEAD".to_string()],
+            Some(worktree),
+            secrets,
+        )
+        .await?
+        .trim()
+        .to_string();
+        match run_git(
+            vec![
+                "push".to_string(),
+                "origin".to_string(),
+                format!("--force-with-lease=refs/heads/{base_branch}:{latest_base_commit}"),
+                format!("HEAD:refs/heads/{base_branch}"),
+            ],
+            Some(worktree),
+            secrets,
+        )
+        .await
+        {
+            Ok(()) => return Ok(promoted_commit),
+            Err(error) => {
+                last_push_error = Some(error);
+            }
+        }
+    }
+
+    Err(format!(
+        "Harness base branch changed during all {HARNESS_PROMOTION_MAX_ATTEMPTS} promotion attempts: {}",
+        last_push_error.unwrap_or_else(|| "unknown git push failure".to_string())
+    ))
 }

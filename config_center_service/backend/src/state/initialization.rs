@@ -32,6 +32,16 @@ impl AppState {
         state.purge_user_preferences_from_config_center().await?;
         state.migrate_agent_max_iterations_config().await?;
         state.migrate_task_runner_runtime_config().await?;
+        state.migrate_mcp_management_runtime_config().await?;
+        state.migrate_local_connector_runtime_config().await?;
+        state.migrate_sandbox_manager_pool_config().await?;
+        state.migrate_sandbox_manager_runtime_config().await?;
+        state.migrate_memory_engine_runtime_config().await?;
+        state.migrate_internal_request_security_config().await?;
+        state.migrate_project_service_runtime_config().await?;
+        state.migrate_plugin_management_runtime_config().await?;
+        state.migrate_user_service_runtime_config().await?;
+        state.migrate_user_service_smtp_config().await?;
         state.migrate_chatos_ui_config().await?;
         Ok(state)
     }

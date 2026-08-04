@@ -20,8 +20,8 @@ use crate::error::ApiError;
 use crate::models::{
     CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCancelRequest,
     CloudStdioMcpCancelResponse, CloudStdioMcpCloseRequest, CloudStdioMcpCloseResponse,
-    CreateSandboxEnvironmentLeaseRequest, SandboxEnvironmentExecRequest,
-    SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
+    CreateSandboxEnvironmentLeaseRequest, RenewSandboxEnvironmentLeaseRequest,
+    SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
     SandboxEnvironmentServiceInput, SandboxEnvironmentServiceRecord, SandboxEnvironmentStopRequest,
     SandboxLeaseRecord, SandboxStatus, StartSandboxEnvironmentRequest,
 };
@@ -354,6 +354,77 @@ impl SandboxManager {
             "environment_ready",
             Some("sandbox environment is ready"),
             Some(json!({ "execution_service_id": execution_service_id })),
+        )
+        .await;
+        Ok(self.environment_response(&record))
+    }
+
+    pub async fn renew_environment_lease(
+        &self,
+        auth: &SandboxAuthContext,
+        environment_id: &str,
+        input: RenewSandboxEnvironmentLeaseRequest,
+    ) -> Result<SandboxEnvironmentLeaseResponse, ApiError> {
+        let mut record = self.require_environment(environment_id).await?;
+        if record.id != input.lease_id {
+            return Err(ApiError::bad_request("lease_id does not match environment"));
+        }
+        let ttl_seconds = input
+            .ttl_seconds
+            .unwrap_or(self.config.lease_ttl.as_secs())
+            .max(60);
+        auth.ensure_lease_renewal_allowed(&record, ttl_seconds)?;
+        if !matches!(
+            record.status,
+            SandboxStatus::Pending
+                | SandboxStatus::Leasing
+                | SandboxStatus::Starting
+                | SandboxStatus::Ready
+                | SandboxStatus::Running
+        ) {
+            return Err(ApiError::with_code(
+                StatusCode::CONFLICT,
+                "sandbox_environment_not_renewable",
+                format!(
+                    "sandbox environment lease cannot be renewed from status {}",
+                    record.status.as_str()
+                ),
+            ));
+        }
+
+        let now = Utc::now();
+        let renew_before = now + ChronoDuration::seconds((ttl_seconds / 2).max(30) as i64);
+        let current_expiry = chrono::DateTime::parse_from_rfc3339(record.expires_at.as_str())
+            .ok()
+            .map(|value| value.with_timezone(&Utc));
+        if current_expiry.is_some_and(|expires_at| expires_at > renew_before) {
+            return Ok(self.environment_response(&record));
+        }
+
+        let expires_at = (now
+            + ChronoDuration::from_std(Duration::from_secs(ttl_seconds))
+                .unwrap_or_else(|_| ChronoDuration::hours(2)))
+        .to_rfc3339();
+        self.store
+            .extend_active_slot(record.id.as_str(), expires_at.as_str())
+            .await
+            .map_err(ApiError::internal)?;
+        let previous_expires_at = record.expires_at.clone();
+        record.expires_at = expires_at.clone();
+        record.updated_at = now_rfc3339();
+        self.store
+            .replace_lease(&record)
+            .await
+            .map_err(ApiError::internal)?;
+        self.event(
+            &record,
+            "environment_lease_renewed",
+            Some("sandbox environment lease renewed for active run"),
+            Some(json!({
+                "previous_expires_at": previous_expires_at,
+                "expires_at": expires_at,
+                "ttl_seconds": ttl_seconds,
+            })),
         )
         .await;
         Ok(self.environment_response(&record))

@@ -12,28 +12,29 @@ pub struct PluginManagementClientConfig {
 }
 
 impl PluginManagementClientConfig {
-    pub async fn from_env(caller_service: impl Into<String>) -> Self {
+    pub async fn from_env(caller_service: impl Into<String>) -> Result<Self, String> {
         let caller_service = caller_service.into();
-        let fallback = normalized_env("PLUGIN_MANAGEMENT_SERVICE_URL")
-            .or_else(|| normalized_env("PLUGIN_MANAGEMENT_SERVICE_BASE_URL"))
-            .unwrap_or_else(|| "http://127.0.0.1:39260".to_string());
+        let managed_base_url = required_managed_env("PLUGIN_MANAGEMENT_SERVICE_URL")?;
         let base_url = chatos_service_runtime::resolve_service_base_url(
             "plugin-management-service",
-            fallback.as_str(),
+            managed_base_url.as_str(),
         )
         .await;
-        let timeout_ms = normalized_env("PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS")
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(5_000)
+        let timeout_ms = required_managed_env("PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS")?
+            .parse::<u64>()
+            .map_err(|error| {
+                format!("PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS must be an integer: {error}")
+            })?
             .max(300);
-        Self {
+        let secret_env_key = caller_secret_env_key(caller_service.as_str()).ok_or_else(|| {
+            format!("plugin management caller service is not configured: {caller_service}")
+        })?;
+        Ok(Self {
             base_url: normalize_base_url(base_url),
             request_timeout: Duration::from_millis(timeout_ms),
-            internal_api_secret: caller_secret_env_key(caller_service.as_str())
-                .and_then(normalized_env)
-                .or_else(|| normalized_env("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET")),
+            internal_api_secret: Some(required_managed_env(secret_env_key)?),
             caller_service,
-        }
+        })
     }
 
     pub fn with_base_url(caller_service: impl Into<String>, base_url: impl Into<String>) -> Self {
@@ -53,12 +54,17 @@ fn normalized_env(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn required_managed_env(key: &str) -> Result<String, String> {
+    normalized_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
+}
+
 fn normalize_base_url(value: String) -> String {
     value.trim().trim_end_matches('/').to_string()
 }
 
 fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
     match caller_service {
+        "chatos-backend" => Some("PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"),
         "task-runner" => Some("PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"),
         "project-service" => Some("PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET"),
         "local-connector-service" => {
@@ -76,6 +82,10 @@ mod tests {
 
     #[test]
     fn maps_known_callers_to_dedicated_secret_variables() {
+        assert_eq!(
+            caller_secret_env_key("chatos-backend"),
+            Some("PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")
+        );
         assert_eq!(
             caller_secret_env_key("task-runner"),
             Some("PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")

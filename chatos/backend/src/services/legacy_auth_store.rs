@@ -7,9 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::repositories::auth_users::AuthUserRecord;
 
-const DEFAULT_LEGACY_AUTH_MONGODB_URI: &str = "mongodb://admin:admin@127.0.0.1:27018/admin";
-const DEFAULT_LEGACY_AUTH_MONGODB_DATABASE: &str = "legacy_auth";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegacyAuthUserRecord {
     pub user_id: String,
@@ -32,11 +29,13 @@ impl LegacyAuthUserRecord {
 }
 
 pub async fn list_users() -> Result<Vec<LegacyAuthUserRecord>, String> {
-    let client = mongodb::Client::with_uri_str(legacy_mongodb_uri().as_str())
+    let mongodb_uri = legacy_mongodb_uri()?;
+    let mongodb_database = legacy_mongodb_database()?;
+    let client = mongodb::Client::with_uri_str(mongodb_uri.as_str())
         .await
         .map_err(|e| format!("connect legacy auth store failed: {e}"))?;
     let collection = client
-        .database(legacy_mongodb_database().as_str())
+        .database(mongodb_database.as_str())
         .collection::<LegacyAuthUserRecord>("auth_users");
 
     let mut cursor = collection
@@ -57,18 +56,20 @@ pub async fn list_users() -> Result<Vec<LegacyAuthUserRecord>, String> {
     Ok(items)
 }
 
-fn legacy_mongodb_uri() -> String {
+fn legacy_mongodb_uri() -> Result<String, String> {
     std::env::var("LEGACY_AUTH_MONGODB_URI")
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| DEFAULT_LEGACY_AUTH_MONGODB_URI.to_string())
+        .ok_or_else(|| "LEGACY_AUTH_MONGODB_URI is required from configuration center".to_string())
 }
 
-fn legacy_mongodb_database() -> String {
+fn legacy_mongodb_database() -> Result<String, String> {
     std::env::var("LEGACY_AUTH_MONGODB_DATABASE")
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| DEFAULT_LEGACY_AUTH_MONGODB_DATABASE.to_string())
+        .ok_or_else(|| {
+            "LEGACY_AUTH_MONGODB_DATABASE is required from configuration center".to_string()
+        })
 }

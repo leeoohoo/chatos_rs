@@ -4,10 +4,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use mongodb::bson::{doc, DateTime};
+use mongodb::bson::{self, doc, DateTime};
 use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::RwLock;
 
 const MAX_MEMORY_INVOCATIONS: usize = 8_192;
@@ -15,9 +16,11 @@ const MAX_MEMORY_INVOCATIONS: usize = 8_192;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeInvocationStatus {
+    Queued,
     Running,
     CancelRequested,
     Completed,
+    Failed,
     Cancelled,
     UnknownExecutionState,
 }
@@ -25,9 +28,11 @@ pub enum RuntimeInvocationStatus {
 impl RuntimeInvocationStatus {
     fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Running => "running",
             Self::CancelRequested => "cancel_requested",
             Self::Completed => "completed",
+            Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::UnknownExecutionState => "unknown_execution_state",
         }
@@ -46,7 +51,19 @@ pub struct RuntimeInvocationRecord {
     pub mutation_may_have_started: bool,
     pub cancel_supported: bool,
     pub status: RuntimeInvocationStatus,
+    #[serde(default)]
+    pub async_execution: bool,
     pub created_at_unix_ms: i64,
+    #[serde(default)]
+    pub started_at_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub completed_at_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub terminal_result: Option<Value>,
+    #[serde(default)]
+    pub terminal_error_code: Option<i32>,
+    #[serde(default)]
+    pub terminal_error_message: Option<String>,
     pub expires_at: DateTime,
     pub expires_at_unix: i64,
 }
@@ -54,6 +71,16 @@ pub struct RuntimeInvocationRecord {
 #[derive(Clone)]
 pub struct RuntimeInvocationStore {
     backend: Arc<RuntimeInvocationStoreBackend>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RuntimeInvocationStoreStats {
+    pub backend: &'static str,
+    pub total_active: usize,
+    pub queued: usize,
+    pub running: usize,
+    pub cancel_requested: usize,
+    pub terminal: usize,
 }
 
 enum RuntimeInvocationStoreBackend {
@@ -117,8 +144,11 @@ impl RuntimeInvocationStore {
     }
 
     pub async fn register(&self, record: RuntimeInvocationRecord) -> Result<(), String> {
-        if record.status != RuntimeInvocationStatus::Running {
-            return Err("new Runtime Invocation must start in running state".to_string());
+        if !matches!(
+            record.status,
+            RuntimeInvocationStatus::Queued | RuntimeInvocationStatus::Running
+        ) {
+            return Err("new Runtime Invocation must start in queued or running state".to_string());
         }
         if record.expires_at_unix <= chrono::Utc::now().timestamp() {
             return Err("cannot register an expired Runtime Invocation".to_string());
@@ -133,7 +163,8 @@ impl RuntimeInvocationStore {
                         || value.request_id_key != record.request_id_key
                         || matches!(
                             value.status,
-                            RuntimeInvocationStatus::Running
+                            RuntimeInvocationStatus::Queued
+                                | RuntimeInvocationStatus::Running
                                 | RuntimeInvocationStatus::CancelRequested
                         )
                 });
@@ -145,7 +176,8 @@ impl RuntimeInvocationStore {
                         && value.request_id_key == record.request_id_key
                         && matches!(
                             value.status,
-                            RuntimeInvocationStatus::Running
+                            RuntimeInvocationStatus::Queued
+                                | RuntimeInvocationStatus::Running
                                 | RuntimeInvocationStatus::CancelRequested
                         )
                 }) {
@@ -164,6 +196,7 @@ impl RuntimeInvocationStore {
                             "request_id_key": record.request_id_key.as_str(),
                             "status": { "$in": [
                                 RuntimeInvocationStatus::Completed.as_str(),
+                                RuntimeInvocationStatus::Failed.as_str(),
                                 RuntimeInvocationStatus::Cancelled.as_str(),
                                 RuntimeInvocationStatus::UnknownExecutionState.as_str(),
                             ] },
@@ -209,6 +242,35 @@ impl RuntimeInvocationStore {
         .await
     }
 
+    pub async fn get_for_caller(
+        &self,
+        invocation_id: &str,
+        caller_service: &str,
+    ) -> Result<Option<RuntimeInvocationRecord>, String> {
+        let now = chrono::Utc::now().timestamp();
+        match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => {
+                let mut invocations = invocations.write().await;
+                invocations.retain(|_, record| record.expires_at_unix > now);
+                Ok(invocations
+                    .get(invocation_id)
+                    .filter(|record| record.caller_service == caller_service)
+                    .cloned())
+            }
+            RuntimeInvocationStoreBackend::Mongo(collection) => collection
+                .find_one(
+                    doc! {
+                        "_id": invocation_id,
+                        "caller_service": caller_service,
+                        "expires_at_unix": { "$gt": now },
+                    },
+                    None,
+                )
+                .await
+                .map_err(|error| format!("load Runtime Invocation failed: {error}")),
+        }
+    }
+
     async fn request_cancel<F>(
         &self,
         mut identity_filter: mongodb::bson::Document,
@@ -227,7 +289,10 @@ impl RuntimeInvocationStore {
                     .values_mut()
                     .find(|record| memory_matches(record));
                 if let Some(record) = record {
-                    if record.status == RuntimeInvocationStatus::Running {
+                    if matches!(
+                        record.status,
+                        RuntimeInvocationStatus::Queued | RuntimeInvocationStatus::Running
+                    ) {
                         record.status = RuntimeInvocationStatus::CancelRequested;
                     }
                     return Ok(Some(record.clone()));
@@ -236,7 +301,15 @@ impl RuntimeInvocationStore {
             }
             RuntimeInvocationStoreBackend::Mongo(collection) => {
                 let mut running_filter = identity_filter.clone();
-                running_filter.insert("status", RuntimeInvocationStatus::Running.as_str());
+                running_filter.insert(
+                    "status",
+                    doc! {
+                        "$in": [
+                            RuntimeInvocationStatus::Queued.as_str(),
+                            RuntimeInvocationStatus::Running.as_str(),
+                        ]
+                    },
+                );
                 let updated = collection
                     .find_one_and_update(
                         running_filter,
@@ -285,11 +358,40 @@ impl RuntimeInvocationStore {
         }
     }
 
-    pub async fn finish_if_running(&self, invocation_id: &str) -> Result<bool, String> {
-        self.transition(
+    pub async fn mark_running(&self, invocation_id: &str) -> Result<bool, String> {
+        self.transition_status(
             invocation_id,
+            &[RuntimeInvocationStatus::Queued],
             RuntimeInvocationStatus::Running,
+        )
+        .await
+    }
+
+    pub async fn complete(&self, invocation_id: &str, result: Value) -> Result<bool, String> {
+        self.transition_terminal(
+            invocation_id,
+            &[RuntimeInvocationStatus::Running],
             RuntimeInvocationStatus::Completed,
+            Some(result),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn fail(
+        &self,
+        invocation_id: &str,
+        error_code: i32,
+        error_message: impl Into<String>,
+    ) -> Result<bool, String> {
+        self.transition_terminal(
+            invocation_id,
+            &[RuntimeInvocationStatus::Running],
+            RuntimeInvocationStatus::Failed,
+            None,
+            Some(error_code),
+            Some(error_message.into()),
         )
         .await
     }
@@ -305,18 +407,104 @@ impl RuntimeInvocationStore {
         ) {
             return Err("invalid terminal Runtime Invocation cancellation state".to_string());
         }
-        self.transition(
+        self.transition_terminal(
             invocation_id,
-            RuntimeInvocationStatus::CancelRequested,
+            &[RuntimeInvocationStatus::CancelRequested],
             status,
+            None,
+            None,
+            None,
         )
         .await
     }
 
-    async fn transition(
+    pub async fn cancel_without_start(&self, invocation_id: &str) -> Result<bool, String> {
+        self.transition_terminal(
+            invocation_id,
+            &[
+                RuntimeInvocationStatus::Queued,
+                RuntimeInvocationStatus::CancelRequested,
+            ],
+            RuntimeInvocationStatus::Cancelled,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn stats(&self) -> Result<RuntimeInvocationStoreStats, String> {
+        let now = chrono::Utc::now().timestamp();
+        match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => {
+                let mut invocations = invocations.write().await;
+                invocations.retain(|_, record| record.expires_at_unix > now);
+                Ok(summarize_runtime_invocations(
+                    "memory",
+                    invocations.values().map(|record| record.status),
+                ))
+            }
+            RuntimeInvocationStoreBackend::Mongo(collection) => {
+                let total_active = count_runtime_invocations(
+                    collection,
+                    doc! { "expires_at_unix": { "$gt": now } },
+                )
+                .await?;
+                let queued = count_runtime_invocations(
+                    collection,
+                    doc! {
+                        "expires_at_unix": { "$gt": now },
+                        "status": RuntimeInvocationStatus::Queued.as_str(),
+                    },
+                )
+                .await?;
+                let running = count_runtime_invocations(
+                    collection,
+                    doc! {
+                        "expires_at_unix": { "$gt": now },
+                        "status": RuntimeInvocationStatus::Running.as_str(),
+                    },
+                )
+                .await?;
+                let cancel_requested = count_runtime_invocations(
+                    collection,
+                    doc! {
+                        "expires_at_unix": { "$gt": now },
+                        "status": RuntimeInvocationStatus::CancelRequested.as_str(),
+                    },
+                )
+                .await?;
+                let terminal = count_runtime_invocations(
+                    collection,
+                    doc! {
+                        "expires_at_unix": { "$gt": now },
+                        "status": {
+                            "$in": [
+                                RuntimeInvocationStatus::Completed.as_str(),
+                                RuntimeInvocationStatus::Failed.as_str(),
+                                RuntimeInvocationStatus::Cancelled.as_str(),
+                                RuntimeInvocationStatus::UnknownExecutionState.as_str(),
+                            ]
+                        },
+                    },
+                )
+                .await?;
+                Ok(RuntimeInvocationStoreStats {
+                    backend: "mongo",
+                    total_active,
+                    queued,
+                    running,
+                    cancel_requested,
+                    terminal,
+                })
+            }
+        }
+    }
+
+    async fn transition_status(
         &self,
         invocation_id: &str,
-        from: RuntimeInvocationStatus,
+        from: &[RuntimeInvocationStatus],
         to: RuntimeInvocationStatus,
     ) -> Result<bool, String> {
         match self.backend.as_ref() {
@@ -325,23 +513,172 @@ impl RuntimeInvocationStore {
                 let Some(record) = invocations.get_mut(invocation_id) else {
                     return Ok(false);
                 };
-                if record.status != from {
+                if !from.contains(&record.status) {
                     return Ok(false);
                 }
                 record.status = to;
+                if to == RuntimeInvocationStatus::Running && record.started_at_unix_ms.is_none() {
+                    record.started_at_unix_ms = Some(chrono::Utc::now().timestamp_millis());
+                }
                 Ok(true)
             }
-            RuntimeInvocationStoreBackend::Mongo(collection) => collection
-                .update_one(
-                    doc! { "_id": invocation_id, "status": from.as_str() },
-                    doc! { "$set": { "status": to.as_str() } },
-                    None,
-                )
-                .await
-                .map(|result| result.modified_count == 1)
-                .map_err(|error| format!("finish Runtime Invocation failed: {error}")),
+            RuntimeInvocationStoreBackend::Mongo(collection) => {
+                let mut set_doc = doc! { "status": to.as_str() };
+                if to == RuntimeInvocationStatus::Running {
+                    set_doc.insert(
+                        "started_at_unix_ms",
+                        bson::to_bson(&chrono::Utc::now().timestamp_millis())
+                            .map_err(|error| error.to_string())?,
+                    );
+                }
+                collection
+                    .update_one(
+                        doc! {
+                            "_id": invocation_id,
+                            "status": { "$in": from.iter().map(|status| status.as_str()).collect::<Vec<_>>() }
+                        },
+                        doc! { "$set": set_doc },
+                        None,
+                    )
+                    .await
+                    .map(|result| result.modified_count == 1)
+                    .map_err(|error| format!("finish Runtime Invocation failed: {error}"))
+            }
         }
     }
+
+    async fn transition_terminal(
+        &self,
+        invocation_id: &str,
+        from: &[RuntimeInvocationStatus],
+        to: RuntimeInvocationStatus,
+        result: Option<Value>,
+        error_code: Option<i32>,
+        error_message: Option<String>,
+    ) -> Result<bool, String> {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let result = sanitize_terminal_result(result)?;
+        match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => {
+                let mut invocations = invocations.write().await;
+                let Some(record) = invocations.get_mut(invocation_id) else {
+                    return Ok(false);
+                };
+                if !from.contains(&record.status) {
+                    return Ok(false);
+                }
+                record.status = to;
+                record.completed_at_unix_ms = Some(now_ms);
+                record.terminal_result = result;
+                record.terminal_error_code = error_code;
+                record.terminal_error_message = error_message;
+                Ok(true)
+            }
+            RuntimeInvocationStoreBackend::Mongo(collection) => {
+                let mut set_doc = doc! {
+                    "status": to.as_str(),
+                    "completed_at_unix_ms": now_ms,
+                };
+                match result {
+                    Some(value) => {
+                        set_doc.insert(
+                            "terminal_result",
+                            bson::to_bson(&value).map_err(|error| error.to_string())?,
+                        );
+                    }
+                    None => {
+                        set_doc.insert("terminal_result", bson::Bson::Null);
+                    }
+                }
+                match error_code {
+                    Some(value) => {
+                        set_doc.insert("terminal_error_code", value);
+                    }
+                    None => {
+                        set_doc.insert("terminal_error_code", bson::Bson::Null);
+                    }
+                }
+                match error_message {
+                    Some(value) => {
+                        set_doc.insert("terminal_error_message", value);
+                    }
+                    None => {
+                        set_doc.insert("terminal_error_message", bson::Bson::Null);
+                    }
+                }
+                collection
+                    .update_one(
+                        doc! {
+                            "_id": invocation_id,
+                            "status": { "$in": from.iter().map(|status| status.as_str()).collect::<Vec<_>>() }
+                        },
+                        doc! { "$set": set_doc },
+                        None,
+                    )
+                    .await
+                    .map(|result| result.modified_count == 1)
+                    .map_err(|error| format!("finish Runtime Invocation failed: {error}"))
+            }
+        }
+    }
+}
+
+fn sanitize_terminal_result(result: Option<Value>) -> Result<Option<Value>, String> {
+    const MAX_INLINE_RESULT_BYTES: usize = 256 * 1024;
+
+    let Some(result) = result else {
+        return Ok(None);
+    };
+    let encoded = serde_json::to_vec(&result).map_err(|error| error.to_string())?;
+    if encoded.len() <= MAX_INLINE_RESULT_BYTES {
+        return Ok(Some(result));
+    }
+    Ok(Some(serde_json::json!({
+        "status": "result_truncated",
+        "result_bytes": encoded.len(),
+    })))
+}
+
+fn summarize_runtime_invocations(
+    backend: &'static str,
+    statuses: impl IntoIterator<Item = RuntimeInvocationStatus>,
+) -> RuntimeInvocationStoreStats {
+    let mut stats = RuntimeInvocationStoreStats {
+        backend,
+        total_active: 0,
+        queued: 0,
+        running: 0,
+        cancel_requested: 0,
+        terminal: 0,
+    };
+    for status in statuses {
+        stats.total_active = stats.total_active.saturating_add(1);
+        match status {
+            RuntimeInvocationStatus::Queued => stats.queued = stats.queued.saturating_add(1),
+            RuntimeInvocationStatus::Running => stats.running = stats.running.saturating_add(1),
+            RuntimeInvocationStatus::CancelRequested => {
+                stats.cancel_requested = stats.cancel_requested.saturating_add(1)
+            }
+            RuntimeInvocationStatus::Completed
+            | RuntimeInvocationStatus::Failed
+            | RuntimeInvocationStatus::Cancelled
+            | RuntimeInvocationStatus::UnknownExecutionState => {
+                stats.terminal = stats.terminal.saturating_add(1)
+            }
+        }
+    }
+    stats
+}
+
+async fn count_runtime_invocations(
+    collection: &Collection<RuntimeInvocationRecord>,
+    filter: mongodb::bson::Document,
+) -> Result<usize, String> {
+    collection
+        .count_documents(filter, None)
+        .await
+        .map_err(|error| format!("count Runtime Invocations failed: {error}"))
+        .map(|count| usize::try_from(count).unwrap_or(usize::MAX))
 }
 
 #[cfg(test)]
@@ -359,7 +696,13 @@ mod tests {
             mutation_may_have_started: false,
             cancel_supported: true,
             status: RuntimeInvocationStatus::Running,
+            async_execution: false,
             created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+            started_at_unix_ms: Some(chrono::Utc::now().timestamp_millis()),
+            completed_at_unix_ms: None,
+            terminal_result: None,
+            terminal_error_code: None,
+            terminal_error_message: None,
             expires_at: DateTime::from_millis((chrono::Utc::now().timestamp() + 60) * 1_000),
             expires_at_unix: chrono::Utc::now().timestamp() + 60,
         }
@@ -388,7 +731,10 @@ mod tests {
     async fn completed_invocation_cannot_be_changed_to_cancel_requested() {
         let store = RuntimeInvocationStore::memory();
         store.register(record()).await.unwrap();
-        assert!(store.finish_if_running("invocation-1").await.unwrap());
+        assert!(store
+            .complete("invocation-1", serde_json::json!({"ok": true}))
+            .await
+            .unwrap());
         let completed = store
             .request_cancel_by_invocation("invocation-1", "task-runner")
             .await
@@ -401,7 +747,10 @@ mod tests {
     async fn completed_request_id_can_be_reused_after_the_prior_call_is_terminal() {
         let store = RuntimeInvocationStore::memory();
         store.register(record()).await.unwrap();
-        assert!(store.finish_if_running("invocation-1").await.unwrap());
+        assert!(store
+            .complete("invocation-1", serde_json::json!({"ok": true}))
+            .await
+            .unwrap());
         let mut reused = record();
         reused.invocation_id = "invocation-2".to_string();
         store.register(reused).await.unwrap();
@@ -448,5 +797,81 @@ mod tests {
             )
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn queued_invocation_can_be_marked_running_and_failed_with_queryable_error() {
+        let store = RuntimeInvocationStore::memory();
+        let mut queued = record();
+        queued.invocation_id = "invocation-queued".to_string();
+        queued.status = RuntimeInvocationStatus::Queued;
+        queued.async_execution = true;
+        queued.started_at_unix_ms = None;
+        store.register(queued).await.unwrap();
+        assert!(store.mark_running("invocation-queued").await.unwrap());
+        assert!(store
+            .fail("invocation-queued", -32000, "provider timed out")
+            .await
+            .unwrap());
+        let record = store
+            .get_for_caller("invocation-queued", "task-runner")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status, RuntimeInvocationStatus::Failed);
+        assert_eq!(record.terminal_error_code, Some(-32000));
+        assert_eq!(
+            record.terminal_error_message.as_deref(),
+            Some("provider timed out")
+        );
+    }
+
+    #[tokio::test]
+    async fn stats_summarize_memory_store_by_status() {
+        let store = RuntimeInvocationStore::memory();
+
+        let queued = RuntimeInvocationRecord {
+            invocation_id: "invocation-stats-queued".to_string(),
+            session_id: "session-stats-queued".to_string(),
+            request_id_key: "\"request-stats-queued\"".to_string(),
+            status: RuntimeInvocationStatus::Queued,
+            async_execution: true,
+            started_at_unix_ms: None,
+            ..record()
+        };
+        let running = RuntimeInvocationRecord {
+            invocation_id: "invocation-stats-running".to_string(),
+            session_id: "session-stats-running".to_string(),
+            request_id_key: "\"request-stats-running\"".to_string(),
+            status: RuntimeInvocationStatus::Running,
+            ..record()
+        };
+        let terminal = RuntimeInvocationRecord {
+            invocation_id: "invocation-stats-terminal".to_string(),
+            session_id: "session-stats-terminal".to_string(),
+            request_id_key: "\"request-stats-terminal\"".to_string(),
+            status: RuntimeInvocationStatus::Completed,
+            completed_at_unix_ms: Some(chrono::Utc::now().timestamp_millis()),
+            ..record()
+        };
+
+        store.register(queued).await.unwrap();
+        store.register(running).await.unwrap();
+        let mut terminal_ready = terminal.clone();
+        terminal_ready.status = RuntimeInvocationStatus::Running;
+        terminal_ready.completed_at_unix_ms = None;
+        store.register(terminal_ready).await.unwrap();
+        store
+            .complete("invocation-stats-terminal", serde_json::json!({"ok": true}))
+            .await
+            .unwrap();
+
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.backend, "memory");
+        assert_eq!(stats.total_active, 3);
+        assert_eq!(stats.queued, 1);
+        assert_eq!(stats.running, 1);
+        assert_eq!(stats.cancel_requested, 0);
+        assert_eq!(stats.terminal, 1);
     }
 }

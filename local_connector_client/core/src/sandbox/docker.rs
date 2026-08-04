@@ -3,6 +3,7 @@
 
 mod container;
 mod executable;
+mod maintenance;
 mod status;
 
 pub(super) const DEFAULT_LOCAL_SANDBOX_AGENT_PORT: u16 = 49_888;
@@ -13,4 +14,8 @@ pub(crate) use container::{
     start_local_sandbox_container, wait_for_local_sandbox_agent,
 };
 pub(crate) use executable::{docker_command, docker_executable};
+pub(crate) use maintenance::{
+    docker_maintenance_report_message, enforce_docker_build_cache_limit,
+    maintain_workspace_docker_artifacts,
+};
 pub(crate) use status::{docker_status, docker_status_struct, ensure_docker_running};

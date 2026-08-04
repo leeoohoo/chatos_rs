@@ -68,6 +68,11 @@ async fn executes_user_mcp_from_sqlite_manifest() {
             ),
         ]),
         body: json!({"jsonrpc":"2.0","id":"rpc-1","method":"tools/list"}),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let response = handle_user_mcp_body(&request, &database)
         .await

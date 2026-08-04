@@ -2,13 +2,17 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use uuid::Uuid;
+
+use crate::managed_config::RelayRuntimeLimits;
+use crate::models::LocalConnectorRelayStats;
+use crate::relay_signature::PlatformRelaySigner;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayRequest {
@@ -22,6 +26,16 @@ pub struct RelayRequest {
     pub path: String,
     pub headers: BTreeMap<String, String>,
     pub body: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_signature_key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_signature_alg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_timestamp: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_nonce: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +79,11 @@ pub fn plugin_artifact_relay_request(
         path: format!("/plugins/artifacts/{action}"),
         headers: BTreeMap::new(),
         body,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     }
 }
 
@@ -114,12 +133,27 @@ pub enum RelayError {
     Offline,
     Timeout,
     RequestEncode(String),
+    Signing(String),
+    TooManyPendingRequests { device_id: String, limit: usize },
     ResponseChannelClosed,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ConnectorRelay {
+    runtime: Arc<RwLock<RelayRuntimeConfig>>,
     inner: Arc<Mutex<RelayState>>,
+}
+
+#[derive(Clone)]
+struct RelayRuntimeConfig {
+    limits: RelayRuntimeLimits,
+    signer: Option<Arc<PlatformRelaySigner>>,
+}
+
+impl Default for ConnectorRelay {
+    fn default() -> Self {
+        Self::new(None, RelayRuntimeLimits::default())
+    }
 }
 
 #[derive(Default)]
@@ -142,6 +176,28 @@ struct PendingRelayRequest {
 }
 
 impl ConnectorRelay {
+    pub(crate) fn new(
+        signer: Option<Arc<PlatformRelaySigner>>,
+        limits: RelayRuntimeLimits,
+    ) -> Self {
+        Self {
+            runtime: Arc::new(RwLock::new(RelayRuntimeConfig { limits, signer })),
+            inner: Arc::new(Mutex::new(RelayState::default())),
+        }
+    }
+
+    pub(crate) fn update_runtime_config(
+        &self,
+        signer: Option<Arc<PlatformRelaySigner>>,
+        limits: RelayRuntimeLimits,
+    ) {
+        let mut runtime = self
+            .runtime
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *runtime = RelayRuntimeConfig { limits, signer };
+    }
+
     pub async fn register_session(
         &self,
         device_id: String,
@@ -204,6 +260,8 @@ impl ConnectorRelay {
     ) -> Result<RelayResponse, RelayError> {
         let request_id = request.request_id.clone();
         let device_id = request.device_id.clone();
+        let request = self.sign_request(request)?;
+        let runtime = self.runtime_config();
         let outbound = {
             let mut inner = self.inner.lock().await;
             let Some(session) = inner.sessions.get(device_id.as_str()) else {
@@ -211,6 +269,17 @@ impl ConnectorRelay {
             };
             if session.owner_user_id != request.owner_user_id {
                 return Err(RelayError::Offline);
+            }
+            let pending_count = inner
+                .pending
+                .values()
+                .filter(|pending| pending.device_id == device_id)
+                .count();
+            if pending_count >= runtime.limits.max_pending_requests_per_device {
+                return Err(RelayError::TooManyPendingRequests {
+                    device_id,
+                    limit: runtime.limits.max_pending_requests_per_device,
+                });
             }
             let outbound = session.outbound.clone();
             let (sender, receiver) = oneshot::channel();
@@ -243,6 +312,7 @@ impl ConnectorRelay {
 
     pub async fn send(&self, request: RelayRequest) -> Result<(), RelayError> {
         let device_id = request.device_id.clone();
+        let request = self.sign_request(request)?;
         let outbound = {
             let inner = self.inner.lock().await;
             let Some(session) = inner.sessions.get(device_id.as_str()) else {
@@ -259,15 +329,45 @@ impl ConnectorRelay {
         outbound.send(text).await.map_err(|_| RelayError::Offline)
     }
 
+    pub async fn stats(&self) -> LocalConnectorRelayStats {
+        let runtime = self.runtime_config();
+        let inner = self.inner.lock().await;
+        let terminal_ws_subscribers = inner
+            .terminal_events
+            .values()
+            .map(broadcast::Sender::receiver_count)
+            .sum();
+        LocalConnectorRelayStats {
+            active_device_sessions: inner.sessions.len(),
+            pending_relay_requests: inner.pending.len(),
+            terminal_sessions: inner.terminal_events.len(),
+            terminal_ws_subscribers,
+            max_pending_requests_per_device: runtime.limits.max_pending_requests_per_device,
+            terminal_max_event_bytes: runtime.limits.terminal_max_event_bytes,
+            terminal_event_channel_capacity: runtime.limits.terminal_event_channel_capacity,
+            relay_signing_enabled: runtime.signer.is_some(),
+        }
+    }
+
+    fn sign_request(&self, mut request: RelayRequest) -> Result<RelayRequest, RelayError> {
+        if let Some(signer) = self.runtime_config().signer {
+            signer
+                .sign_request(&mut request)
+                .map_err(RelayError::Signing)?;
+        }
+        Ok(request)
+    }
+
     pub async fn subscribe_terminal_session(
         &self,
         terminal_session_id: &str,
     ) -> broadcast::Receiver<TerminalRelayEvent> {
         let mut inner = self.inner.lock().await;
+        let capacity = self.runtime_config().limits.terminal_event_channel_capacity;
         let sender = inner
             .terminal_events
             .entry(terminal_session_id.to_string())
-            .or_insert_with(|| broadcast::channel(4096).0);
+            .or_insert_with(|| broadcast::channel(capacity).0);
         sender.subscribe()
     }
 
@@ -349,6 +449,8 @@ impl ConnectorRelay {
     }
 
     async fn publish_terminal_event(&self, inbound: InboundTerminalEvent) -> bool {
+        let original_message_type = inbound.message_type.clone();
+        let terminal_session_id = inbound.terminal_session_id.clone();
         let body = inbound.body.unwrap_or_else(|| {
             let mut body = serde_json::Map::new();
             if let Some(data) = inbound.data {
@@ -365,20 +467,49 @@ impl ConnectorRelay {
             }
             Value::Object(body)
         });
-        let event = TerminalRelayEvent {
-            message_type: inbound.message_type,
-            terminal_session_id: inbound.terminal_session_id.clone(),
+        let event = self.normalize_terminal_event(TerminalRelayEvent {
+            message_type: original_message_type,
+            terminal_session_id: terminal_session_id.clone(),
             body,
-        };
+        });
+        let capacity = self.runtime_config().limits.terminal_event_channel_capacity;
         let sender = {
             let mut inner = self.inner.lock().await;
             inner
                 .terminal_events
-                .entry(inbound.terminal_session_id)
-                .or_insert_with(|| broadcast::channel(4096).0)
+                .entry(terminal_session_id)
+                .or_insert_with(|| broadcast::channel(capacity).0)
                 .clone()
         };
         sender.send(event).is_ok()
+    }
+
+    fn normalize_terminal_event(&self, event: TerminalRelayEvent) -> TerminalRelayEvent {
+        let runtime = self.runtime_config();
+        let within_budget = serde_json::to_vec(&event)
+            .map(|bytes| bytes.len() <= runtime.limits.terminal_max_event_bytes)
+            .unwrap_or(false);
+        if within_budget {
+            return event;
+        }
+        TerminalRelayEvent {
+            message_type: "terminal_error".to_string(),
+            terminal_session_id: event.terminal_session_id,
+            body: serde_json::json!({
+                "error": format!(
+                    "terminal relay event exceeded {} bytes and was dropped",
+                    runtime.limits.terminal_max_event_bytes
+                ),
+                "original_message_type": event.message_type,
+            }),
+        }
+    }
+
+    fn runtime_config(&self) -> RelayRuntimeConfig {
+        self.runtime
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -390,6 +521,10 @@ impl RelayError {
             Self::RequestEncode(err) => {
                 format!("encode Local Connector relay request failed: {err}")
             }
+            Self::Signing(err) => format!("sign Local Connector relay request failed: {err}"),
+            Self::TooManyPendingRequests { device_id, limit } => format!(
+                "too many Local Connector relay requests are pending for device {device_id} (limit: {limit})"
+            ),
             Self::ResponseChannelClosed => {
                 "Local Connector relay response channel closed".to_string()
             }
@@ -404,6 +539,123 @@ fn default_body() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn rejects_pending_requests_over_per_device_limit() {
+        let relay = ConnectorRelay::new(
+            None,
+            RelayRuntimeLimits {
+                max_pending_requests_per_device: 1,
+                ..RelayRuntimeLimits::default()
+            },
+        );
+        let (outbound, mut inbound) = mpsc::channel(8);
+        relay
+            .register_session(
+                "device-1".to_string(),
+                "owner-1".to_string(),
+                "session-1".to_string(),
+                outbound,
+            )
+            .await;
+
+        let first_dispatch = {
+            let relay = relay.clone();
+            tokio::spawn(async move {
+                relay
+                    .dispatch(
+                        RelayRequest {
+                            message_type: "plugin_prepare_request".to_string(),
+                            request_id: "request-1".to_string(),
+                            owner_user_id: "owner-1".to_string(),
+                            device_id: "device-1".to_string(),
+                            workspace_id: "workspace-1".to_string(),
+                            method: "POST".to_string(),
+                            path: "/plugins/prepare".to_string(),
+                            headers: BTreeMap::new(),
+                            body: serde_json::json!({"plugin_id":"plugin-browser"}),
+                            platform_signature: None,
+                            platform_signature_key_id: None,
+                            platform_signature_alg: None,
+                            platform_timestamp: None,
+                            platform_nonce: None,
+                        },
+                        Duration::from_secs(1),
+                    )
+                    .await
+            })
+        };
+        let outbound = inbound.recv().await.expect("first outbound request");
+        assert!(outbound.contains("request-1"));
+
+        let second_error = relay
+            .dispatch(
+                RelayRequest {
+                    message_type: "plugin_prepare_request".to_string(),
+                    request_id: "request-2".to_string(),
+                    owner_user_id: "owner-1".to_string(),
+                    device_id: "device-1".to_string(),
+                    workspace_id: "workspace-1".to_string(),
+                    method: "POST".to_string(),
+                    path: "/plugins/prepare".to_string(),
+                    headers: BTreeMap::new(),
+                    body: serde_json::json!({"plugin_id":"plugin-browser"}),
+                    platform_signature: None,
+                    platform_signature_key_id: None,
+                    platform_signature_alg: None,
+                    platform_timestamp: None,
+                    platform_nonce: None,
+                },
+                Duration::from_millis(250),
+            )
+            .await
+            .expect_err("second request should be rejected");
+        assert!(matches!(
+            second_error,
+            RelayError::TooManyPendingRequests { limit: 1, .. }
+        ));
+
+        assert!(relay
+            .handle_inbound_text(
+                r#"{"type":"plugin_prepare_response","request_id":"request-1","status":200,"body":{"adapter_session_id":"adapter-1"}}"#,
+            )
+            .await
+            .expect("complete first request"));
+        first_dispatch
+            .await
+            .expect("first dispatch task")
+            .expect("first dispatch response");
+    }
+
+    #[tokio::test]
+    async fn oversized_terminal_event_is_rewritten_to_terminal_error() {
+        let relay = ConnectorRelay::new(
+            None,
+            RelayRuntimeLimits {
+                terminal_max_event_bytes: 256,
+                ..RelayRuntimeLimits::default()
+            },
+        );
+        let mut receiver = relay.subscribe_terminal_session("terminal-1").await;
+        assert!(relay
+            .handle_inbound_text(
+                serde_json::json!({
+                    "type": "terminal_output",
+                    "terminal_session_id": "terminal-1",
+                    "data": "x".repeat(2048),
+                })
+                .to_string()
+                .as_str(),
+            )
+            .await
+            .expect("publish oversized terminal event"));
+        let event = receiver.recv().await.expect("terminal event");
+        assert_eq!(event.message_type, "terminal_error");
+        assert_eq!(
+            event.body["original_message_type"].as_str(),
+            Some("terminal_output")
+        );
+    }
 
     #[tokio::test]
     async fn plugin_response_completes_pending_relay_request() {
@@ -431,6 +683,11 @@ mod tests {
                         path: "/plugins/prepare".to_string(),
                         headers: BTreeMap::new(),
                         body: serde_json::json!({"plugin_id":"plugin-browser"}),
+                        platform_signature: None,
+                        platform_signature_key_id: None,
+                        platform_signature_alg: None,
+                        platform_timestamp: None,
+                        platform_nonce: None,
                     },
                     Duration::from_secs(1),
                 )
@@ -466,6 +723,11 @@ mod tests {
                         path: "/plugins/ui/assets".to_string(),
                         headers: BTreeMap::new(),
                         body: serde_json::json!({"relative_path":"./ui/index.html"}),
+                        platform_signature: None,
+                        platform_signature_key_id: None,
+                        platform_signature_alg: None,
+                        platform_timestamp: None,
+                        platform_nonce: None,
                     },
                     Duration::from_secs(1),
                 )
@@ -506,6 +768,11 @@ mod tests {
                             path: format!("/plugins/artifacts/{action}"),
                             headers: BTreeMap::new(),
                             body: serde_json::json!({"access":{"run_id":"run-1"}}),
+                            platform_signature: None,
+                            platform_signature_key_id: None,
+                            platform_signature_alg: None,
+                            platform_timestamp: None,
+                            platform_nonce: None,
                         },
                         Duration::from_secs(1),
                     )
@@ -533,5 +800,94 @@ mod tests {
             assert_eq!(response.status, 200);
             assert_eq!(response.body["action"].as_str(), Some(action));
         }
+    }
+
+    #[tokio::test]
+    async fn runtime_limits_are_applied_after_hot_reload() {
+        let relay = ConnectorRelay::default();
+        let (outbound, mut inbound) = mpsc::channel(8);
+        relay
+            .register_session(
+                "device-1".to_string(),
+                "owner-1".to_string(),
+                "session-1".to_string(),
+                outbound,
+            )
+            .await;
+
+        relay.update_runtime_config(
+            None,
+            RelayRuntimeLimits {
+                max_pending_requests_per_device: 1,
+                ..RelayRuntimeLimits::default()
+            },
+        );
+
+        let first_dispatch = {
+            let relay = relay.clone();
+            tokio::spawn(async move {
+                relay
+                    .dispatch(
+                        RelayRequest {
+                            message_type: "plugin_prepare_request".to_string(),
+                            request_id: "request-1".to_string(),
+                            owner_user_id: "owner-1".to_string(),
+                            device_id: "device-1".to_string(),
+                            workspace_id: "workspace-1".to_string(),
+                            method: "POST".to_string(),
+                            path: "/plugins/prepare".to_string(),
+                            headers: BTreeMap::new(),
+                            body: serde_json::json!({"plugin_id":"plugin-browser"}),
+                            platform_signature: None,
+                            platform_signature_key_id: None,
+                            platform_signature_alg: None,
+                            platform_timestamp: None,
+                            platform_nonce: None,
+                        },
+                        Duration::from_secs(1),
+                    )
+                    .await
+            })
+        };
+        let outbound = inbound.recv().await.expect("first outbound request");
+        assert!(outbound.contains("request-1"));
+
+        let second_error = relay
+            .dispatch(
+                RelayRequest {
+                    message_type: "plugin_prepare_request".to_string(),
+                    request_id: "request-2".to_string(),
+                    owner_user_id: "owner-1".to_string(),
+                    device_id: "device-1".to_string(),
+                    workspace_id: "workspace-1".to_string(),
+                    method: "POST".to_string(),
+                    path: "/plugins/prepare".to_string(),
+                    headers: BTreeMap::new(),
+                    body: serde_json::json!({"plugin_id":"plugin-browser"}),
+                    platform_signature: None,
+                    platform_signature_key_id: None,
+                    platform_signature_alg: None,
+                    platform_timestamp: None,
+                    platform_nonce: None,
+                },
+                Duration::from_millis(250),
+            )
+            .await
+            .expect_err("second request should be rejected");
+        assert!(matches!(
+            second_error,
+            RelayError::TooManyPendingRequests { limit: 1, .. }
+        ));
+
+        assert!(relay
+            .handle_inbound_text(
+                r#"{"type":"plugin_prepare_response","request_id":"request-1","status":200,"body":{"adapter_session_id":"adapter-1"}}"#,
+            )
+            .await
+            .expect("complete first request"));
+        first_dispatch
+            .await
+            .expect("first dispatch task")
+            .expect("first dispatch response");
     }
 }

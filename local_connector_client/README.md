@@ -185,7 +185,24 @@ LOCAL_CONNECTOR_CORE_API_PORT
 LOCAL_CONNECTOR_SANDBOX_DOCKER_IMAGE
 LOCAL_CONNECTOR_SANDBOX_IMAGE_BUILD_CONTEXT
 LOCAL_CONNECTOR_SANDBOX_IMAGE_DOCKERFILE
+LOCAL_CONNECTOR_DOCKER_MAINTENANCE_ENABLED
+LOCAL_CONNECTOR_DOCKER_BUILD_CACHE_MAX_USED_SPACE
+LOCAL_CONNECTOR_DOCKER_BUILD_CACHE_RESERVED_SPACE
+LOCAL_CONNECTOR_DOCKER_BUILD_CACHE_TIMEOUT_SECS
 ```
+
+Signed remote-control trust is managed by configuration center and delivered to the desktop client
+through `GET /api/local-connectors/config/runtime`. The client rejects MCP/terminal/plugin/sandbox
+commands unless they carry a trusted Ed25519 platform signature from that managed control-plane
+bundle.
+
+Local Docker maintenance is program-managed and enabled by default. Managed Compose services are
+tracked even when they rely on Compose's implicit `<project>-<service>:latest` image name. After a
+task terminal is released, the Connector removes unused dangling Compose images only for Compose
+projects whose working/config paths belong to that authorized workspace. BuildKit garbage
+collection is serialized and keeps cache usage at or below `32gb` by default while reserving
+`8gb`; the limits can be overridden with the variables above. No Prompt instruction or Agent-side
+cleanup command is required.
 
 Command Approval Agent 完整保留在客户端本地：模型循环只使用本地只读项目工具和本地 `approval_decision`，风险判断、人工确认、白名单、Session Approval 与审批历史也都在设备侧完成。它不会创建云端 MCP Runtime Session，也不会调用云端 MCP 工具。Agent Prompt、能力策略和 Memory 可继续通过普通受认证 REST 获取，但这些控制面请求不会成为工具调用链。
 

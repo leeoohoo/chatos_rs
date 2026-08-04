@@ -566,6 +566,287 @@ mod tests {
         assert_eq!(base_after.trim(), first);
     }
 
+    #[tokio::test]
+    async fn concurrent_run_outputs_merge_into_base_without_cross_run_diff_leakage() {
+        let root = TestDirectory::new("concurrent-promotions");
+        let bare_repo = root.path().join("harness.git");
+        let seed = root.path().join("seed");
+        let prepare = root.path().join("prepare");
+        let first_output = root.path().join("first-output");
+        let second_output = root.path().join("second-output");
+        let first_commit_worktree = root.path().join("first-commit");
+        let second_commit_worktree = root.path().join("second-commit");
+        let verify_base = root.path().join("verify-base");
+        let verify_second_run = root.path().join("verify-second-run");
+
+        run_git_output(
+            vec![
+                "init".to_string(),
+                "--bare".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("initialize Harness repository");
+        run_git_output(
+            vec![
+                "clone".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                seed.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("clone seed repository");
+        fs::write(seed.join("README.md"), "baseline\n").expect("write baseline");
+        run_git_output(
+            vec!["add".to_string(), "README.md".to_string()],
+            Some(seed.as_path()),
+            &[],
+        )
+        .await
+        .expect("stage baseline");
+        run_git_output(
+            vec![
+                "-c".to_string(),
+                "user.name=Test".to_string(),
+                "-c".to_string(),
+                "user.email=test@example.invalid".to_string(),
+                "commit".to_string(),
+                "-m".to_string(),
+                "baseline".to_string(),
+            ],
+            Some(seed.as_path()),
+            &[],
+        )
+        .await
+        .expect("commit baseline");
+        run_git_output(
+            vec![
+                "push".to_string(),
+                "origin".to_string(),
+                "HEAD:refs/heads/main".to_string(),
+            ],
+            Some(seed.as_path()),
+            &[],
+        )
+        .await
+        .expect("push baseline");
+        run_git_output(
+            vec![
+                "clone".to_string(),
+                "--no-checkout".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                prepare.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("clone preparation repository");
+
+        let first_base =
+            create_cloud_run_branch(prepare.as_path(), "main", "chatos/runs/first", &[])
+                .await
+                .expect("create first run branch");
+        let second_base =
+            create_cloud_run_branch(prepare.as_path(), "main", "chatos/runs/second", &[])
+                .await
+                .expect("create second run branch");
+        assert_eq!(first_base, second_base);
+
+        copy_workspace_snapshot(
+            seed.to_string_lossy().as_ref(),
+            first_output.to_string_lossy().as_ref(),
+        )
+        .expect("copy first output baseline");
+        copy_workspace_snapshot(
+            seed.to_string_lossy().as_ref(),
+            second_output.to_string_lossy().as_ref(),
+        )
+        .expect("copy second output baseline");
+        fs::write(first_output.join("first.txt"), "first task\n").expect("write first task output");
+        fs::write(second_output.join("second.txt"), "second task\n")
+            .expect("write second task output");
+
+        let (_, first_result_commit) = commit_workspace_to_run_branch(
+            bare_repo.to_string_lossy().to_string(),
+            first_commit_worktree.as_path(),
+            "chatos/runs/first",
+            first_output.to_string_lossy().as_ref(),
+            "first task output",
+            &[],
+        )
+        .await
+        .expect("commit first output");
+        let (_, second_result_commit) = commit_workspace_to_run_branch(
+            bare_repo.to_string_lossy().to_string(),
+            second_commit_worktree.as_path(),
+            "chatos/runs/second",
+            second_output.to_string_lossy().as_ref(),
+            "second task output",
+            &[],
+        )
+        .await
+        .expect("commit second output");
+
+        let first_promoted_commit = promote_run_branch_to_base(
+            first_commit_worktree.as_path(),
+            "main",
+            first_base.as_str(),
+            &[],
+        )
+        .await
+        .expect("promote first output");
+        let second_promoted_commit = promote_run_branch_to_base(
+            second_commit_worktree.as_path(),
+            "main",
+            second_base.as_str(),
+            &[],
+        )
+        .await
+        .expect("rebase and promote second output");
+
+        assert_eq!(first_promoted_commit, first_result_commit);
+        assert_ne!(second_promoted_commit, second_result_commit);
+        run_git_output(
+            vec![
+                "clone".to_string(),
+                "--branch".to_string(),
+                "main".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                verify_base.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("clone authoritative base");
+        assert_eq!(
+            fs::read_to_string(verify_base.join("first.txt")).expect("read first output"),
+            "first task\n"
+        );
+        assert_eq!(
+            fs::read_to_string(verify_base.join("second.txt")).expect("read second output"),
+            "second task\n"
+        );
+
+        run_git_output(
+            vec![
+                "clone".to_string(),
+                "--branch".to_string(),
+                "chatos/runs/second".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                verify_second_run.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("clone isolated second run branch");
+        assert!(!verify_second_run.join("first.txt").exists());
+        assert_eq!(
+            fs::read_to_string(verify_second_run.join("second.txt"))
+                .expect("read isolated second output"),
+            "second task\n"
+        );
+
+        let conflict_prepare = root.path().join("conflict-prepare");
+        let conflict_first_output = root.path().join("conflict-first-output");
+        let conflict_second_output = root.path().join("conflict-second-output");
+        let conflict_first_worktree = root.path().join("conflict-first-commit");
+        let conflict_second_worktree = root.path().join("conflict-second-commit");
+        run_git_output(
+            vec![
+                "clone".to_string(),
+                "--no-checkout".to_string(),
+                bare_repo.to_string_lossy().to_string(),
+                conflict_prepare.to_string_lossy().to_string(),
+            ],
+            None,
+            &[],
+        )
+        .await
+        .expect("clone conflict preparation repository");
+        let conflict_first_base = create_cloud_run_branch(
+            conflict_prepare.as_path(),
+            "main",
+            "chatos/runs/conflict-first",
+            &[],
+        )
+        .await
+        .expect("create first conflicting run branch");
+        let conflict_second_base = create_cloud_run_branch(
+            conflict_prepare.as_path(),
+            "main",
+            "chatos/runs/conflict-second",
+            &[],
+        )
+        .await
+        .expect("create second conflicting run branch");
+        assert_eq!(conflict_first_base, conflict_second_base);
+        copy_workspace_snapshot(
+            verify_base.to_string_lossy().as_ref(),
+            conflict_first_output.to_string_lossy().as_ref(),
+        )
+        .expect("copy first conflict baseline");
+        copy_workspace_snapshot(
+            verify_base.to_string_lossy().as_ref(),
+            conflict_second_output.to_string_lossy().as_ref(),
+        )
+        .expect("copy second conflict baseline");
+        fs::write(
+            conflict_first_output.join("README.md"),
+            "first conflicting value\n",
+        )
+        .expect("write first conflicting output");
+        fs::write(
+            conflict_second_output.join("README.md"),
+            "second conflicting value\n",
+        )
+        .expect("write second conflicting output");
+        commit_workspace_to_run_branch(
+            bare_repo.to_string_lossy().to_string(),
+            conflict_first_worktree.as_path(),
+            "chatos/runs/conflict-first",
+            conflict_first_output.to_string_lossy().as_ref(),
+            "first conflicting output",
+            &[],
+        )
+        .await
+        .expect("commit first conflicting output");
+        commit_workspace_to_run_branch(
+            bare_repo.to_string_lossy().to_string(),
+            conflict_second_worktree.as_path(),
+            "chatos/runs/conflict-second",
+            conflict_second_output.to_string_lossy().as_ref(),
+            "second conflicting output",
+            &[],
+        )
+        .await
+        .expect("commit second conflicting output");
+        promote_run_branch_to_base(
+            conflict_first_worktree.as_path(),
+            "main",
+            conflict_first_base.as_str(),
+            &[],
+        )
+        .await
+        .expect("promote first conflicting output");
+        let conflict = promote_run_branch_to_base(
+            conflict_second_worktree.as_path(),
+            "main",
+            conflict_second_base.as_str(),
+            &[],
+        )
+        .await
+        .expect_err("second conflicting output must request a clean rerun");
+        assert!(conflict.contains("harness concurrent merge conflict"));
+    }
+
     include!("harness_run_git.test.rs");
 
     #[tokio::test]

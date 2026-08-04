@@ -6,6 +6,7 @@ use std::error::Error as StdError;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -17,13 +18,18 @@ const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
 const MCP_TOOLS_LIST_ERROR_CACHE_TTL: Duration = Duration::from_secs(10);
 const MCP_HTTP_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const MCP_HTTP_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
+const MCP_MANAGEMENT_POLL_INTERVAL: Duration = Duration::from_millis(300);
+const MCP_MANAGEMENT_POLL_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 static MCP_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
     OnceLock::new();
 mod internal_headers;
 mod stdio;
 
-pub use internal_headers::{headers_require_per_request_signing, prepare_http_headers};
+pub use internal_headers::{
+    headers_require_per_request_signing, headers_support_mcp_management_polling,
+    prepare_http_headers,
+};
 
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};
@@ -32,6 +38,30 @@ pub use stdio::{invalidate_stdio_session, jsonrpc_stdio_call, jsonrpc_stdio_call
 struct ToolsListCacheEntry {
     expires_at: Instant,
     result: Result<Vec<Value>, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RuntimeInvocationPollStatus {
+    Queued,
+    Running,
+    CancelRequested,
+    Completed,
+    Failed,
+    Cancelled,
+    UnknownExecutionState,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeInvocationPollResponse {
+    invocation_id: String,
+    status: RuntimeInvocationPollStatus,
+    #[serde(default)]
+    terminal_result: Option<Value>,
+    #[serde(default)]
+    terminal_error_code: Option<i32>,
+    #[serde(default)]
+    terminal_error_message: Option<String>,
 }
 
 pub async fn list_tools_http(
@@ -98,8 +128,36 @@ pub async fn jsonrpc_http_tool_call_cancellable(
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let mut cancellation_guard = HttpCancellationGuard::new(url, headers, id.as_str(), timeout);
-    let result =
-        jsonrpc_http_call_with_id(url, headers, "tools/call", params, timeout, id.as_str()).await;
+    let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
+    let started = Instant::now();
+    let result = match jsonrpc_http_call_with_id(
+        url,
+        headers,
+        "tools/call",
+        params,
+        Some(request_timeout),
+        id.as_str(),
+    )
+    .await
+    {
+        Ok(response) => {
+            if let Some(invocation_id) =
+                accepted_invocation_id(&response).filter(|_| can_poll_mcp_management(headers))
+            {
+                poll_mcp_management_invocation(
+                    url,
+                    headers.expect("polling eligibility requires headers"),
+                    invocation_id,
+                    started,
+                    request_timeout,
+                )
+                .await
+            } else {
+                Ok(response)
+            }
+        }
+        Err(error) => Err(error),
+    };
     cancellation_guard.disarm();
     result
 }
@@ -270,6 +328,164 @@ fn mcp_http_client() -> Result<reqwest::Client, String> {
                 .map_err(|err| err.to_string())
         })
         .clone()
+}
+
+fn accepted_invocation_id(response: &Value) -> Option<&str> {
+    if response.get("status").and_then(Value::as_str) != Some("accepted") {
+        return None;
+    }
+    if response.get("queued").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    response
+        .get("invocation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn can_poll_mcp_management(headers: Option<&HashMap<String, String>>) -> bool {
+    headers.is_some_and(headers_support_mcp_management_polling)
+}
+
+async fn poll_mcp_management_invocation(
+    mcp_url: &str,
+    headers: &HashMap<String, String>,
+    invocation_id: &str,
+    started: Instant,
+    total_timeout: Duration,
+) -> Result<Value, String> {
+    let poll_url = mcp_management_invocation_poll_url(mcp_url, invocation_id)?;
+    loop {
+        let elapsed = started.elapsed();
+        let Some(remaining) = total_timeout.checked_sub(elapsed) else {
+            return Err(format!(
+                "tools/call {mcp_url} accepted invocation {invocation_id}, but polling exceeded timeout={}s",
+                total_timeout.as_secs()
+            ));
+        };
+        let poll_timeout = remaining.min(MCP_MANAGEMENT_POLL_REQUEST_TIMEOUT);
+        let invocation: RuntimeInvocationPollResponse = http_get_json(
+            poll_url.as_str(),
+            headers,
+            poll_timeout,
+            "MCP Management invocation polling",
+        )
+        .await?;
+        match invocation.status {
+            RuntimeInvocationPollStatus::Queued
+            | RuntimeInvocationPollStatus::Running
+            | RuntimeInvocationPollStatus::CancelRequested => {
+                if remaining <= MCP_MANAGEMENT_POLL_INTERVAL {
+                    return Err(format!(
+                        "tools/call {mcp_url} accepted invocation {invocation_id}, but polling exceeded timeout={}s",
+                        total_timeout.as_secs()
+                    ));
+                }
+                tokio::time::sleep(MCP_MANAGEMENT_POLL_INTERVAL).await;
+            }
+            RuntimeInvocationPollStatus::Completed => {
+                return invocation.terminal_result.ok_or_else(|| {
+                    format!(
+                        "accepted MCP invocation {invocation_id} completed without a terminal result"
+                    )
+                });
+            }
+            RuntimeInvocationPollStatus::Failed => {
+                return Err(format_invocation_terminal_error("failed", &invocation));
+            }
+            RuntimeInvocationPollStatus::Cancelled => {
+                return Err(format_invocation_terminal_error("cancelled", &invocation));
+            }
+            RuntimeInvocationPollStatus::UnknownExecutionState => {
+                return Err(format_invocation_terminal_error(
+                    "unknown_execution_state",
+                    &invocation,
+                ));
+            }
+        }
+    }
+}
+
+fn mcp_management_invocation_poll_url(
+    mcp_url: &str,
+    invocation_id: &str,
+) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(mcp_url)
+        .map_err(|err| format!("invalid MCP Management URL {mcp_url}: {err}"))?;
+    let path = url.path().trim_end_matches('/');
+    let base_path = path.strip_suffix("/mcp").unwrap_or(path);
+    url.set_path(&format!(
+        "{}/api/internal/runtime/invocations/{}",
+        base_path,
+        invocation_id.trim()
+    ));
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
+async fn http_get_json<T>(
+    url: &str,
+    headers: &HashMap<String, String>,
+    timeout: Duration,
+    request_label: &str,
+) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let client = mcp_http_client()?;
+    let mut request = client.get(url).timeout(timeout);
+    for (key, value) in prepare_http_headers(headers)? {
+        request = request.header(key.as_str(), value.as_str());
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|err| format_http_send_error("GET", url, timeout, &err))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = read_http_response_body_limited(response, MCP_HTTP_ERROR_BODY_PREVIEW_BYTES)
+            .await
+            .map(|body| String::from_utf8_lossy(body.as_slice()).into_owned())
+            .unwrap_or_else(|err| err);
+        return Err(format!(
+            "{request_label} failed after HTTP response: 外部 MCP 返回 HTTP {status}; body={}",
+            response_preview(body.as_str())
+        ));
+    }
+    let body = read_http_response_body_limited(response, MCP_HTTP_RESPONSE_LIMIT_BYTES)
+        .await
+        .map_err(|err| format!("{request_label} failed after HTTP response: {err}"))?;
+    serde_json::from_slice(body.as_slice()).map_err(|err| {
+        let body_text = String::from_utf8_lossy(body.as_slice());
+        format!(
+            "{request_label} failed after HTTP response: 外部 MCP 返回的不是 JSON: {err}; body={}",
+            response_preview(body_text.as_ref())
+        )
+    })
+}
+
+fn format_invocation_terminal_error(
+    outcome: &str,
+    invocation: &RuntimeInvocationPollResponse,
+) -> String {
+    let mut message = format!(
+        "accepted MCP invocation {} ended with status {outcome}",
+        invocation.invocation_id
+    );
+    if let Some(code) = invocation.terminal_error_code {
+        message.push_str(format!(" (code={code})").as_str());
+    }
+    if let Some(detail) = invocation
+        .terminal_error_message
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        message.push_str(format!(": {detail}").as_str());
+    }
+    message
 }
 
 async fn read_http_response_body_limited(

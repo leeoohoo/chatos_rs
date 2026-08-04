@@ -223,6 +223,14 @@ impl ConfigClient {
         }
     }
 
+    pub async fn load_strict(&self) -> Result<ConfigSnapshot, String> {
+        let snapshot = self.fetch(None).await?.ok_or_else(|| {
+            "config center returned not modified without a fresh snapshot".to_string()
+        })?;
+        self.install(snapshot.clone()).await;
+        Ok(snapshot)
+    }
+
     pub async fn refresh(&self) -> Result<Option<ConfigSnapshot>, String> {
         let etag = self.current().await.map(|snapshot| snapshot.etag());
         let Some(snapshot) = self.fetch(etag.as_deref()).await? else {
@@ -501,6 +509,37 @@ mod tests {
         assert!(loaded.stale);
         assert_eq!(loaded.source.as_deref(), Some("memory"));
         assert_eq!(client.current().await, Some(loaded));
+
+        let _ = tokio::fs::remove_dir_all(cache_dir).await;
+    }
+
+    #[tokio::test]
+    async fn strict_load_does_not_fallback_to_local_cache() {
+        let cache_dir = unique_cache_dir("strict-no-cache");
+        let client = ConfigClient::new(
+            "task-runner",
+            "test",
+            "http://127.0.0.1:9",
+            None,
+            Duration::from_millis(300),
+            &cache_dir,
+        )
+        .expect("client should build");
+        tokio::fs::create_dir_all(&cache_dir)
+            .await
+            .expect("cache directory should be created");
+        tokio::fs::write(
+            &client.cache_path,
+            serde_json::to_vec(&test_snapshot()).expect("snapshot should serialize"),
+        )
+        .await
+        .expect("cache snapshot should be written");
+
+        let err = client
+            .load_strict()
+            .await
+            .expect_err("strict load should not fallback to cache");
+        assert!(err.contains("Connection refused") || err.contains("error sending request"));
 
         let _ = tokio::fs::remove_dir_all(cache_dir).await;
     }

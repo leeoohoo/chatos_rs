@@ -3,15 +3,6 @@
 
 use super::*;
 
-pub(super) fn default_database_url(store_mode: StoreMode, mongodb_database: &str) -> String {
-    match store_mode {
-        StoreMode::Memory => "memory://task_runner_service".to_string(),
-        StoreMode::Mongo => {
-            format!("mongodb://admin:admin@127.0.0.1:27018/{mongodb_database}?authSource=admin")
-        }
-    }
-}
-
 pub(super) fn normalize_database_url(
     store_mode: StoreMode,
     database_url: String,

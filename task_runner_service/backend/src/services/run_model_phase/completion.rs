@@ -412,6 +412,11 @@ mod tests {
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -465,6 +470,7 @@ mod tests {
         TaskRunRecord {
             id: "run-1".to_string(),
             task_id: task.id.clone(),
+            execution_lane_key: None,
             model_config_id: "model-1".to_string(),
             memory_thread_id: task.memory_thread_id.clone(),
             status: TaskRunStatus::Running,
@@ -569,6 +575,7 @@ mod tests {
             run_branch: "chatos/runs/run-1".to_string(),
             base_commit: "base".to_string(),
             result_commit: None,
+            promoted_commit: None,
             status: "failed".to_string(),
             message: Some("concurrent base update".to_string()),
         };

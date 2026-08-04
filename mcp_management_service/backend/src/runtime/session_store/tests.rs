@@ -236,6 +236,59 @@ fn restored_external_http_binding_revalidates_pinned_public_addresses() {
     assert!(restore_external_http_binding(binding, Duration::from_secs(60)).is_err());
 }
 
+#[test]
+fn cache_snapshot_evicts_oldest_entries_instead_of_clearing_everything() {
+    let mut cache = RuntimeSessionCache::default();
+    let first = snapshot("cache-first");
+    let second = snapshot("cache-second");
+    let third = snapshot("cache-third");
+
+    cache_snapshot_with_limits(&mut cache, [1; 32], first, 2, usize::MAX);
+    cache_snapshot_with_limits(&mut cache, [2; 32], second, 2, usize::MAX);
+    cache_snapshot_with_limits(&mut cache, [3; 32], third, 2, usize::MAX);
+
+    assert_eq!(cache.entries.len(), 2);
+    assert!(!cache.entries.contains_key("cache-first"));
+    assert!(cache.entries.contains_key("cache-second"));
+    assert!(cache.entries.contains_key("cache-third"));
+}
+
+#[test]
+fn cache_snapshot_skips_entries_that_exceed_byte_budget() {
+    let mut cache = RuntimeSessionCache::default();
+    let oversized = snapshot("cache-oversized");
+    let approx_size = estimate_snapshot_cache_bytes(&oversized);
+
+    cache_snapshot_with_limits(
+        &mut cache,
+        [9; 32],
+        oversized,
+        16,
+        approx_size.saturating_sub(1),
+    );
+
+    assert!(cache.entries.is_empty());
+    assert_eq!(cache.total_bytes, 0);
+}
+
+#[tokio::test]
+async fn memory_store_stats_report_active_sessions_and_snapshot_sizes() {
+    let store = RuntimeSessionStore::memory();
+    store.insert(snapshot("stats-session-1")).await.unwrap();
+    store.insert(snapshot("stats-session-2")).await.unwrap();
+
+    let stats = store.stats().await.unwrap();
+
+    assert_eq!(stats.backend, "memory");
+    assert_eq!(stats.active_session_count, 2);
+    assert_eq!(stats.cached_session_count, 2);
+    assert!(stats.cached_total_bytes > 0);
+    assert!(stats.cached_avg_snapshot_bytes > 0);
+    assert!(stats.cached_p95_snapshot_bytes >= stats.cached_avg_snapshot_bytes);
+    assert_eq!(stats.cache_entry_limit, None);
+    assert_eq!(stats.cache_byte_limit, None);
+}
+
 #[tokio::test]
 #[ignore = "requires CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL"]
 async fn mongodb_store_is_shared_across_service_instances() {

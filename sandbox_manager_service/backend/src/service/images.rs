@@ -264,11 +264,18 @@ async fn run_initialize_job(
         .map(|script| general_purpose::STANDARD.encode(script.as_bytes()));
     let previous_image_id = image_id_for_ref(&cli, build.record.image_ref.as_str()).await;
     let mut command = Command::new(&cli);
+    command.arg("build");
+    if matches!(backend, SandboxBackendKind::Docker) {
+        command.arg("--load");
+    }
     command
-        .arg("build")
         .arg("--force-rm")
         .arg("-t")
         .arg(&build.record.image_ref)
+        .arg("--label")
+        .arg("chatos.managed=true")
+        .arg("--label")
+        .arg("chatos.image.kind=sandbox-agent")
         .arg("-f")
         .arg(&config.image_dockerfile)
         .arg("--build-arg")
@@ -356,6 +363,15 @@ async fn run_initialize_job(
             .await;
         }
     }
+    let maintenance_message =
+        match crate::docker_maintenance::enforce_build_cache_limit(&config).await {
+            Ok(message) => message,
+            Err(error) => format!("Docker maintenance failed: {error}"),
+        };
+    jobs.update(job_id.as_str(), |job| {
+        append_job_output(job, &format!("{maintenance_message}\n"));
+    })
+    .await;
 }
 
 async fn cleanup_replaced_image(

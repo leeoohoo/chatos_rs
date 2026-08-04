@@ -466,7 +466,7 @@ async fn run_compose_up_with_cleanup(
     project_name: &str,
     normalized_compose: &Value,
 ) -> Result<String> {
-    let image_refs = managed_application_image_refs(normalized_compose);
+    let image_refs = managed_application_image_refs(project_name, normalized_compose);
     let previous_images = existing_image_ids(image_refs.as_slice()).await;
     let build_output = run_compose_command(
         project_root,
@@ -475,7 +475,6 @@ async fn run_compose_up_with_cleanup(
         &["build", "--force-rm"],
     )
     .await?;
-    let cleanup_output = cleanup_replaced_compose_images(previous_images).await;
     let up_output = run_compose_command(
         project_root,
         compose_path,
@@ -483,10 +482,17 @@ async fn run_compose_up_with_cleanup(
         &["up", "-d", "--no-build", "--remove-orphans"],
     )
     .await?;
+    let cleanup_output = cleanup_replaced_compose_images(previous_images).await;
+    let build_cache_report = crate::sandbox::docker::enforce_docker_build_cache_limit().await;
+    let build_cache_output = format!(
+        "[local connector] {}",
+        crate::sandbox::docker::docker_maintenance_report_message(&build_cache_report)
+    );
     let output = join_compose_outputs([
         build_output.as_str(),
-        cleanup_output.as_str(),
         up_output.as_str(),
+        cleanup_output.as_str(),
+        build_cache_output.as_str(),
     ]);
     Ok(output)
 }
@@ -500,26 +506,30 @@ fn join_compose_outputs<'a>(parts: impl IntoIterator<Item = &'a str>) -> String 
         .join("\n")
 }
 
-fn managed_application_image_refs(normalized_compose: &Value) -> Vec<String> {
+fn managed_application_image_refs(project_name: &str, normalized_compose: &Value) -> Vec<String> {
     let mut refs = std::collections::BTreeSet::new();
-    for service in normalized_compose
+    for (service_name, service) in normalized_compose
         .get("services")
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
-        .filter_map(|(_, service)| service.as_object())
+        .filter_map(|(service_name, service)| {
+            service
+                .as_object()
+                .map(|service| (service_name.as_str(), service))
+        })
     {
         if service.get("build").is_none() {
             continue;
         }
-        if let Some(image_ref) = service
+        let image_ref = service
             .get("image")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-        {
-            refs.insert(image_ref.to_string());
-        }
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("{project_name}-{service_name}:latest"));
+        refs.insert(image_ref);
     }
     refs.into_iter().collect()
 }

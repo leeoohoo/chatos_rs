@@ -19,10 +19,11 @@ use crate::models::{
     DeleteSandboxAccessClientResponse, DestroySandboxResponse, HeartbeatRequest, HeartbeatResponse,
     InitializeSandboxImageRequest, ListSandboxQuery, PoolStatusResponse,
     PrepareSandboxDependencyImagesRequest, PrepareSandboxDependencyImagesResponse,
-    ReleaseSandboxRequest, ReleaseSandboxResponse, RotateSandboxAccessClientKeyResponse,
-    SandboxAccessClientResponse, SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse,
-    SandboxEnvironmentLeaseResponse, SandboxEnvironmentStopRequest, SandboxEventRecord,
-    SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
+    ReleaseSandboxRequest, ReleaseSandboxResponse, RenewSandboxEnvironmentLeaseRequest,
+    RotateSandboxAccessClientKeyResponse, SandboxAccessClientResponse,
+    SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
+    SandboxEnvironmentStopRequest, SandboxEventRecord, SandboxHealthResponse,
+    SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
     StartSandboxEnvironmentRequest, SystemConfigResponse, UpdatePoolConfigRequest,
     UpdateSandboxAccessClientRequest,
 };
@@ -262,6 +263,20 @@ pub async fn start_sandbox_environment(
         state
             .manager
             .start_environment(&auth, environment_id.as_str(), input)
+            .await?,
+    ))
+}
+
+pub async fn renew_sandbox_environment_lease(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<RenewSandboxEnvironmentLeaseRequest>,
+) -> Result<Json<SandboxEnvironmentLeaseResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .renew_environment_lease(&auth, environment_id.as_str(), input)
             .await?,
     ))
 }

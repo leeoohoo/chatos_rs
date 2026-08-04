@@ -114,6 +114,49 @@ mod tests {
         assert_eq!(payload["HostConfig"]["Init"], json!(true));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn prepares_project_local_playwright_path_for_managed_agent_images() {
+        let root = std::env::temp_dir().join(format!(
+            "chatos-playwright-link-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(root.as_path()).expect("workspace");
+        prepare_managed_playwright_workspace_link(
+            root.to_string_lossy().as_ref(),
+            "registry.example/chatos-sandbox-agent:dev-node24-python3.11",
+        )
+        .expect("managed Playwright link");
+        let link = root.join(MANAGED_PLAYWRIGHT_WORKSPACE_LINK);
+        assert_eq!(
+            std::fs::read_link(link.as_path()).expect("read link"),
+            Path::new(MANAGED_PLAYWRIGHT_CACHE_TARGET)
+        );
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_project_owned_playwright_path() {
+        let root = std::env::temp_dir().join(format!(
+            "chatos-playwright-owned-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let owned = root.join(MANAGED_PLAYWRIGHT_WORKSPACE_LINK);
+        std::fs::create_dir_all(owned.as_path()).expect("owned path");
+        std::fs::write(owned.join("marker"), "project-owned").expect("marker");
+        prepare_managed_playwright_workspace_link(
+            root.to_string_lossy().as_ref(),
+            "chatos-sandbox-agent:dev-node24-python3.11",
+        )
+        .expect("preserve owned path");
+        assert_eq!(
+            std::fs::read_to_string(owned.join("marker")).expect("marker read"),
+            "project-owned"
+        );
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
     #[tokio::test]
     #[ignore = "requires Docker and a locally built chatos-sandbox-agent:latest image"]
     async fn docker_environment_smoke_groups_services_and_keeps_dependency_agent_free() {

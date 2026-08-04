@@ -43,6 +43,9 @@ mod plan_query;
 mod rerun_execution;
 mod rerun_support;
 
+pub(in crate::api::projects) use plan_query::repair_stale_cloud_execution_planner_message;
+pub(crate) use plan_query::{cloud_execution_planner_message_is_stale, execution_message_status};
+
 use execute_planning::execute_requirement_inner;
 #[cfg(test)]
 use execute_planning::prepare_requirement_planner_turn;
@@ -52,13 +55,9 @@ use execution_dispatch::{
 #[cfg(test)]
 use plan_query::{
     cloud_execution_message_is_newer, cloud_execution_message_matches_scope,
-    cloud_execution_planner_message_is_stale, execution_message_is_stopped_terminal,
-    STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS,
+    execution_message_is_stopped_terminal, STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS,
 };
-use plan_query::{
-    execution_message_status, get_requirement_execution_plan_inner,
-    load_cloud_execution_source_message,
-};
+use plan_query::{get_requirement_execution_plan_inner, load_cloud_execution_source_message};
 use rerun_execution::rerun_requirement_execution_inner;
 #[cfg(test)]
 use rerun_support::{

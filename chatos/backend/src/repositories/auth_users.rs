@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use futures::TryStreamExt;
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +61,24 @@ pub async fn upsert_user(user: &AuthUserRecord) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(())
+        })
+    })
+    .await
+}
+
+pub async fn list_users() -> Result<Vec<AuthUserRecord>, String> {
+    with_db(|db| {
+        Box::pin(async move {
+            let mut cursor = db
+                .collection::<AuthUserRecord>("auth_users")
+                .find(doc! {}, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut items = Vec::new();
+            while let Some(item) = cursor.try_next().await.map_err(|e| e.to_string())? {
+                items.push(item);
+            }
+            Ok(items)
         })
     })
     .await

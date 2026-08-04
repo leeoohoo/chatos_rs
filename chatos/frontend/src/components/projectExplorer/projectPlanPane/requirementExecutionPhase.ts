@@ -200,18 +200,18 @@ export const phaseCopy: Record<
 > = {
   planning_context: {
     title: '正在读取需求、项目任务和技术文档',
-    detail: '规划 Agent 正在建立执行上下文，Task Runner 尚未启动。',
+    detail: '正在整理执行范围和约束，任务执行尚未启动。',
   },
   building_graph: {
     title: '正在生成完整执行流程',
-    detail: '任务节点会随着 Agent 创建而实时出现在右侧流程图中。',
+    detail: '新创建的任务节点会实时出现在右侧流程图中。',
   },
   awaiting_confirmation: {
     title: '执行流程已生成，等待你确认',
-    detail: '你可以继续输入调整意见；只有点击“执行”后 Task Runner 才会启动。',
+    detail: '你可以继续输入调整意见；只有点击“执行”后任务才会启动。',
   },
   running: {
-    title: 'Task Runner 正在执行',
+    title: '任务正在执行',
     detail: '已收到你的执行确认，任务正在按照依赖顺序运行。',
   },
   paused: {
@@ -274,34 +274,34 @@ export const runnerProcessEntryForPhase = (
 ): Pick<ProcessEntry, 'title' | 'detail' | 'state'> => {
   if (phase === 'stopped') {
     return {
-      title: 'Task Runner 执行已取消',
+      title: '本次执行已取消',
       detail: '当前批次已经整体取消，不会继续调度或执行后续任务',
       state: 'stopped',
     };
   }
   if (phase === 'paused') {
     return {
-      title: 'Task Runner 已暂停调度',
+      title: '后续任务已暂停',
       detail: '运行中的节点可正常收尾，但不会启动新的节点',
       state: 'active',
     };
   }
   if (phase === 'completed') {
     return {
-      title: 'Task Runner 执行完成',
+      title: '本次执行已完成',
       detail: '所有任务均已到达终态',
       state: 'done',
     };
   }
   if (phase === 'failed') {
     return {
-      title: 'Task Runner 执行失败',
+      title: '本次执行失败',
       detail: '当前批次存在失败或阻塞任务',
       state: 'error',
     };
   }
   return {
-    title: 'Task Runner 已开始执行',
+    title: '任务已开始执行',
     detail: '正在按照右侧依赖顺序运行',
     state: 'active',
   };
@@ -388,12 +388,12 @@ export const buildRequirementExecutionProcessEntries = ({
       : phase === 'stopped'
       ? '保留现有流程图用于查看，不再继续生成或调度任务'
       : graphReady
-        ? '流程图已冻结等待确认，尚未启动任何 run'
+        ? '流程图已冻结等待确认，尚未启动任何任务'
         : phase === 'completed'
           ? '流程图和依赖关系已经全部执行完毕'
           : actuallyStarted
-            ? '流程图已冻结，Task Runner 正在按照依赖关系执行'
-            : '仍在等待 Agent 补全任务节点和依赖',
+            ? '流程图已冻结，任务正在按照依赖关系执行'
+            : '仍在补全任务节点和依赖关系',
     state: cancellationSettling
       ? 'active'
       : phase === 'stopped'
@@ -406,14 +406,14 @@ export const buildRequirementExecutionProcessEntries = ({
     entries.push({
       id: 'confirmation',
       title: '等待用户点击“执行”',
-      detail: '在此之前 Task Runner 不会开始运行',
+      detail: '确认之前不会开始运行任务',
       state: 'active',
     });
   }
   if (actuallyStarted) {
     const runnerEntry = cancellationSettling
       ? {
-        title: 'Task Runner 正在取消',
+        title: '正在取消本次执行',
         detail: '后续调度已停止，正在等待运行中/排队任务收敛到终态',
         state: 'active' as const,
       }

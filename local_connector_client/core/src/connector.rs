@@ -15,6 +15,7 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use uuid::Uuid;
 
+use crate::config::api_url;
 use crate::device_keys::sign_device_message;
 use crate::history::CommandHistoryRecorder;
 use crate::local_runtime::LocalDatabase;
@@ -26,6 +27,7 @@ use crate::model_configs::handle_model_runtime_request;
 use crate::plugins::{oauth_status_message, PluginOAuthBroker, PluginRuntimeHost};
 use crate::registration::cloud_authentication_expired;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
+use crate::remote_control_auth::RemoteControlVerifier;
 use crate::sandbox::pairing::reconcile_sandbox_pairings;
 use crate::sandbox::relay::handle_sandbox_request;
 use crate::sandbox::types::LocalSandboxRuntime;
@@ -42,6 +44,7 @@ use crate::{config::ClientConfig, tracing_stdout, LocalState};
 
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 15;
 const MCP_CHECK_INTERVAL_SECONDS: u64 = 45;
+const MANAGED_RUNTIME_CONFIG_SYNC_INTERVAL_SECONDS: u64 = 60;
 
 pub(crate) async fn connect_loop(
     config: ClientConfig,
@@ -56,6 +59,11 @@ pub(crate) async fn connect_loop(
         .timeout(Duration::from_secs(120))
         .build()
         .context("build local adapter HTTP client")?;
+    sync_managed_runtime_config(&http_client, &config, &state).await?;
+    let remote_control_verifier = {
+        let state_snapshot = state.read().await.clone();
+        RemoteControlVerifier::from_state(&state_snapshot)?
+    };
     let ws_path = format!("/api/local-connectors/devices/{device_id}/connect");
     let ws_url = websocket_url(&config.cloud_base_url, ws_path.as_str());
     let connect_request = websocket_connect_request(
@@ -85,8 +93,12 @@ pub(crate) async fn connect_loop(
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Value>();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS));
     let mut mcp_check = tokio::time::interval(Duration::from_secs(MCP_CHECK_INTERVAL_SECONDS));
+    let mut managed_runtime_config_sync = tokio::time::interval(Duration::from_secs(
+        MANAGED_RUNTIME_CONFIG_SYNC_INTERVAL_SECONDS,
+    ));
     let mut plugin_execute_tasks = tokio::task::JoinSet::new();
     mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    managed_runtime_config_sync.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing_stdout("connected to local_connector_service");
     match reconcile_sandbox_pairings(&http_client, &config, &state, device_id.as_str()).await {
         Ok(count) if count > 0 => tracing_stdout(
@@ -98,6 +110,23 @@ pub(crate) async fn connect_loop(
 
     loop {
         tokio::select! {
+            _ = managed_runtime_config_sync.tick() => {
+                match sync_managed_runtime_config(&http_client, &config, &state).await {
+                    Ok(updated) => {
+                        let state_snapshot = state.read().await.clone();
+                        if let Err(err) = remote_control_verifier.reload_from_state(&state_snapshot).await {
+                            tracing_stdout(
+                                format!("refresh remote control verifier failed: {err}").as_str(),
+                            );
+                        } else if updated {
+                            tracing_stdout("refreshed managed runtime config from local_connector_service");
+                        }
+                    }
+                    Err(err) => tracing_stdout(
+                        format!("refresh managed runtime config failed: {err}").as_str(),
+                    ),
+                }
+            }
             _ = mcp_check.tick() => {
                 if let Err(err) = refresh_enabled_local_mcp_checks(&database, state.as_ref()).await {
                     tracing_stdout(format!("refresh local MCP checks failed: {err}").as_str());
@@ -163,11 +192,12 @@ pub(crate) async fn connect_loop(
                             if value.get("type").and_then(Value::as_str)
                                 == Some("plugin_execute_request")
                             {
-                                if let Err(err) = validate_remote_control_context(
+                                if let Err(err) = validate_remote_control_request(
                                     "plugin_execute_request",
                                     &value,
                                     &state_snapshot,
-                                ) {
+                                    &remote_control_verifier,
+                                ).await {
                                     if let Some(response) = remote_control_error_response(
                                         "plugin_execute_request",
                                         &value,
@@ -200,6 +230,7 @@ pub(crate) async fn connect_loop(
                                 &history_recorder,
                                 &plugin_runtime,
                                 outbound_tx.clone(),
+                                &remote_control_verifier,
                             ).await
                         {
                             write
@@ -219,6 +250,74 @@ pub(crate) async fn connect_loop(
     }
 }
 
+async fn sync_managed_runtime_config(
+    http_client: &reqwest::Client,
+    config: &ClientConfig,
+    state: &Arc<RwLock<LocalState>>,
+) -> Result<bool> {
+    let response = http_client
+        .get(api_url(
+            config.cloud_base_url.as_str(),
+            "/api/local-connectors/config/runtime",
+        ))
+        .bearer_auth(config.access_token.as_str())
+        .send()
+        .await
+        .context("request managed runtime config")?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("read managed runtime config")?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "managed runtime config request failed with {status}: {}",
+            safe_runtime_config_error(body.as_str())
+        ));
+    }
+    let bundle = serde_json::from_str::<chatos_agent::ManagedRuntimeConfigBundle>(body.as_str())
+        .context("decode managed runtime config")?;
+    let source_instance_id = config.cloud_base_url.trim_end_matches('/').to_string();
+    let state_to_save = {
+        let mut state = state.write().await;
+        let changed = match state.managed_runtime_config.as_ref() {
+            Some(current) => {
+                current.source_instance_id != source_instance_id || current.bundle != bundle
+            }
+            None => true,
+        };
+        if !changed {
+            None
+        } else {
+            state.managed_runtime_config = Some(crate::state::ManagedRuntimeConfigCache {
+                source_instance_id,
+                bundle,
+                last_synced_at: crate::local_now_rfc3339(),
+            });
+            Some(state.clone())
+        }
+    };
+    if let Some(state_to_save) = state_to_save {
+        state_to_save.save(config.state_path.as_path())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn safe_runtime_config_error(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(Value::as_str)
+                .or_else(|| value.get("message").and_then(Value::as_str))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "managed runtime config endpoint rejected the request".to_string())
+}
+
 async fn handle_text_message(
     text: &str,
     state: &LocalState,
@@ -229,6 +328,7 @@ async fn handle_text_message(
     history_recorder: &CommandHistoryRecorder,
     plugin_runtime: &PluginRuntimeHost,
     outbound_tx: mpsc::UnboundedSender<Value>,
+    remote_control_verifier: &RemoteControlVerifier,
 ) -> Option<Value> {
     let value = serde_json::from_str::<Value>(text).ok()?;
     let message_type = value
@@ -236,7 +336,10 @@ async fn handle_text_message(
         .and_then(Value::as_str)
         .unwrap_or_default();
     if is_remote_control_message(message_type) {
-        if let Err(err) = validate_remote_control_context(message_type, &value, state) {
+        if let Err(err) =
+            validate_remote_control_request(message_type, &value, state, remote_control_verifier)
+                .await
+        {
             tracing_stdout(format!("rejected local connector relay message: {err}").as_str());
             return remote_control_error_response(message_type, &value, err);
         }
@@ -342,13 +445,23 @@ fn is_remote_control_message(message_type: &str) -> bool {
     )
 }
 
-fn validate_remote_control_context(
+async fn validate_remote_control_request(
     message_type: &str,
     value: &Value,
     state: &LocalState,
+    remote_control_verifier: &RemoteControlVerifier,
 ) -> Result<(), String> {
     let request = serde_json::from_value::<RelayRequest>(value.clone())
         .map_err(|err| format!("invalid relay request envelope: {err}"))?;
+    remote_control_verifier.verify(&request).await?;
+    validate_remote_control_context(message_type, &request, state)
+}
+
+fn validate_remote_control_context(
+    message_type: &str,
+    request: &RelayRequest,
+    state: &LocalState,
+) -> Result<(), String> {
     let owner_user_id = normalized_optional(request.owner_user_id.as_deref())
         .ok_or_else(|| "relay owner_user_id is required".to_string())?;
     let local_owner_user_id = local_owner_user_id(state)

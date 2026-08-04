@@ -70,6 +70,39 @@ pub struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct LocalConnectorSystemStatsResponse {
+    pub ok: bool,
+    pub service: String,
+    pub now: String,
+    pub relay: LocalConnectorRelayStats,
+    pub store: LocalConnectorStoreStats,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalConnectorRelayStats {
+    pub active_device_sessions: usize,
+    pub pending_relay_requests: usize,
+    pub terminal_sessions: usize,
+    pub terminal_ws_subscribers: usize,
+    pub max_pending_requests_per_device: usize,
+    pub terminal_max_event_bytes: usize,
+    pub terminal_event_channel_capacity: usize,
+    pub relay_signing_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalConnectorStoreStats {
+    pub devices_total: usize,
+    pub devices_online: usize,
+    pub devices_offline: usize,
+    pub devices_revoked: usize,
+    pub workspaces_total: usize,
+    pub project_bindings_total: usize,
+    pub sandbox_pairings_total: usize,
+    pub active_sessions_total: usize,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]

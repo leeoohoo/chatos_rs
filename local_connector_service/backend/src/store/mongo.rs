@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use crate::models::{
     lease_deadline_rfc3339, lease_now_rfc3339, now_rfc3339, ApplicableManagedRequirementsLayer,
     LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
-    LocalConnectorSession, LocalConnectorWorkspace, ManagedRequirementsAssignment,
-    ManagedRequirementsPolicy, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED,
-    MANAGED_REQUIREMENTS_SCOPE_GLOBAL, MANAGED_REQUIREMENTS_SCOPE_ROLE,
-    MANAGED_REQUIREMENTS_SCOPE_USER, SESSION_STATUS_CONNECTED,
+    LocalConnectorSession, LocalConnectorStoreStats, LocalConnectorWorkspace,
+    ManagedRequirementsAssignment, ManagedRequirementsPolicy, DEVICE_STATUS_OFFLINE,
+    DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED, MANAGED_REQUIREMENTS_SCOPE_GLOBAL,
+    MANAGED_REQUIREMENTS_SCOPE_ROLE, MANAGED_REQUIREMENTS_SCOPE_USER, SESSION_STATUS_CONNECTED,
 };
 use crate::store::SessionAcquireError;
 use futures::TryStreamExt;
@@ -52,6 +52,53 @@ impl MongoConnectorStore {
         };
         store.ensure_indexes().await?;
         Ok(store)
+    }
+
+    pub async fn system_stats(&self) -> Result<LocalConnectorStoreStats, String> {
+        let now = lease_now_rfc3339();
+        Ok(LocalConnectorStoreStats {
+            devices_total: self.count_documents(&self.devices, doc! {}).await?,
+            devices_online: self
+                .count_documents(&self.devices, doc! { "status": DEVICE_STATUS_ONLINE })
+                .await?,
+            devices_offline: self
+                .count_documents(&self.devices, doc! { "status": DEVICE_STATUS_OFFLINE })
+                .await?,
+            devices_revoked: self
+                .count_documents(&self.devices, doc! { "status": DEVICE_STATUS_REVOKED })
+                .await?,
+            workspaces_total: self.count_documents(&self.workspaces, doc! {}).await?,
+            project_bindings_total: self
+                .count_documents(&self.project_bindings, doc! {})
+                .await?,
+            sandbox_pairings_total: self
+                .count_documents(&self.sandbox_pairings, doc! {})
+                .await?,
+            active_sessions_total: self
+                .count_documents(
+                    &self.sessions,
+                    doc! {
+                        "status": SESSION_STATUS_CONNECTED,
+                        "expires_at": { "$gt": &now },
+                    },
+                )
+                .await?,
+        })
+    }
+
+    async fn count_documents<T>(
+        &self,
+        collection: &Collection<T>,
+        filter: mongodb::bson::Document,
+    ) -> Result<usize, String>
+    where
+        T: Send + Sync,
+    {
+        collection
+            .count_documents(filter, None)
+            .await
+            .map_err(|err| err.to_string())
+            .map(|count| usize::try_from(count).unwrap_or(usize::MAX))
     }
 }
 

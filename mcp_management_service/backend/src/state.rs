@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use crate::async_dispatch::AsyncToolDispatch;
 use crate::config::AppConfig;
 use crate::project_context::ProjectContextClient;
 use crate::providers::{
@@ -20,6 +21,7 @@ pub struct AppState {
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
     pub runtime_invocations: RuntimeInvocationStore,
+    pub async_tool_dispatch: AsyncToolDispatch,
 }
 
 impl AppState {
@@ -80,7 +82,9 @@ impl AppState {
             Some(database_url) => RuntimeInvocationStore::connect(database_url).await?,
             None => RuntimeInvocationStore::memory(),
         };
-        Ok(Self {
+        let async_tool_dispatch =
+            AsyncToolDispatch::new(config.async_tool_dispatch_topology.clone());
+        let state = Self {
             runtime_grants: RuntimeGrantService::new(
                 config.runtime_grant_secret.clone(),
                 config.runtime_session_ttl,
@@ -92,6 +96,12 @@ impl AppState {
             providers,
             runtime_sessions,
             runtime_invocations,
-        })
+            async_tool_dispatch,
+        };
+        state
+            .async_tool_dispatch
+            .start_local_worker(state.clone())
+            .await?;
+        Ok(state)
     }
 }

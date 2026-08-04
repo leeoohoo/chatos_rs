@@ -300,6 +300,41 @@ pub struct CloseRuntimeSessionResponse {
     pub closed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeInvocationStatus {
+    Queued,
+    Running,
+    CancelRequested,
+    Completed,
+    Failed,
+    Cancelled,
+    UnknownExecutionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeInvocationResponse {
+    pub invocation_id: String,
+    pub session_id: String,
+    pub caller_service: String,
+    pub resource_id: String,
+    pub exposed_tool_name: String,
+    pub status: RuntimeInvocationStatus,
+    #[serde(default)]
+    pub async_execution: bool,
+    pub created_at_unix_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_unix_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_unix_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_error_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeToolDescriptor {
     pub exposed_name: String,

@@ -2,9 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeSet;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[cfg(test)]
+use std::net::Ipv4Addr;
 
 use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secret};
 
@@ -192,12 +195,10 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
-        let host = env_text("MCP_MANAGEMENT_HOST")
-            .and_then(|value| value.parse::<IpAddr>().ok())
-            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-        let port = env_text("MCP_MANAGEMENT_PORT")
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(39280);
+        let host = required_text("MCP_MANAGEMENT_HOST")?
+            .parse::<IpAddr>()
+            .map_err(|err| format!("MCP_MANAGEMENT_HOST must be a valid IP address: {err}"))?;
+        let port = required_u16("MCP_MANAGEMENT_PORT")?;
         let internal_api_secret = required_text("MCP_MANAGEMENT_INTERNAL_API_SECRET")?;
         validate_production_secret(
             "MCP_MANAGEMENT_INTERNAL_API_SECRET",
@@ -224,10 +225,7 @@ impl AppConfig {
             Some(runtime_session_encryption_secret.as_str()),
             &[DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET],
         )?;
-        let runtime_session_database_url = Some(
-            env_text("MCP_MANAGEMENT_DATABASE_URL")
-                .unwrap_or_else(|| "mongodb://127.0.0.1:27017/mcp_management_service".to_string()),
-        );
+        let runtime_session_database_url = Some(required_text("MCP_MANAGEMENT_DATABASE_URL")?);
         let plugin_management_internal_api_secret = Some(required_text(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
         )?);
@@ -276,128 +274,85 @@ impl AppConfig {
             &["change_me_mcp_management_sandbox_manager_secret"],
         )?;
         let downstream_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(5_000)
-                .clamp(300, 60_000),
+            required_u64("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")?.clamp(300, 60_000),
         );
         let external_http_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(60_000)
+            required_u64("MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 10 * 60 * 1_000),
         );
         let runtime_session_ttl = Duration::from_secs(
-            env_text("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(30 * 60)
-                .clamp(5 * 60, 2 * 60 * 60),
+            required_u64("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")?.clamp(5 * 60, 2 * 60 * 60),
         );
         let sandbox_manager_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(180_000)
+            required_u64("MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
         );
         let sandbox_image_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS")
-                .or_else(|| env_text("SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS"))
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(2 * 60 * 60 * 1_000 + 30_000)
+            required_u64("MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS")?
                 .clamp(30_000, 3 * 60 * 60 * 1_000),
         );
         let task_runner_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(180_000)
+            required_u64("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
         );
         let task_runner_ask_user_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000)
-                .clamp(
-                    chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
-                    7 * 24 * 60 * 60 * 1_000,
-                ),
+            required_u64("MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS")?.clamp(
+                chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+                7 * 24 * 60 * 60 * 1_000,
+            ),
         );
         let chatos_ask_user_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000)
-                .clamp(
-                    chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
-                    7 * 24 * 60 * 60 * 1_000,
-                ),
+            required_u64("MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS")?.clamp(
+                chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+                7 * 24 * 60 * 60 * 1_000,
+            ),
         );
         let chatos_browser_request_timeout = Duration::from_millis(
-            env_text("MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(120_000)
+            required_u64("MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS")?
                 .clamp(30_000, 10 * 60 * 1_000),
         );
         let provider_response_limit_bytes =
-            env_text("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")
-                .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(2 * 1024 * 1024)
+            required_usize("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")?
                 .clamp(64 * 1024, 16 * 1024 * 1024);
         let async_tool_dispatch_topology = AsyncToolDispatchTopology::from_env()?;
-        let public_base_url = normalize_base_url(
-            env_text("MCP_MANAGEMENT_PUBLIC_BASE_URL")
-                .unwrap_or_else(|| format!("http://127.0.0.1:{port}")),
-        );
+        let public_base_url = normalize_base_url(required_text("MCP_MANAGEMENT_PUBLIC_BASE_URL")?);
         Ok(Self {
             host,
             port,
             internal_api_secret,
             require_signed_internal_requests,
             allowed_internal_callers,
-            plugin_management_service_base_url: normalize_base_url(
-                env_text("MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL")
-                    .or_else(|| env_text("PLUGIN_MANAGEMENT_SERVICE_BASE_URL"))
-                    .unwrap_or_else(|| "http://127.0.0.1:39260".to_string()),
-            ),
+            plugin_management_service_base_url: normalize_base_url(required_text(
+                "MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL",
+            )?),
             plugin_management_internal_api_secret,
-            project_service_base_url: normalize_base_url(
-                env_text("MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL")
-                    .or_else(|| env_text("PROJECT_SERVICE_BASE_URL"))
-                    .unwrap_or_else(|| "http://127.0.0.1:39210".to_string()),
-            ),
+            project_service_base_url: normalize_base_url(required_text(
+                "MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL",
+            )?),
             project_service_internal_api_secret,
-            task_runner_service_base_url: normalize_base_url(
-                env_text("MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL")
-                    .or_else(|| env_text("TASK_RUNNER_SERVICE_BASE_URL"))
-                    .or_else(|| env_text("TASK_RUNNER_BASE_URL"))
-                    .unwrap_or_else(|| "http://127.0.0.1:39090".to_string()),
-            ),
+            task_runner_service_base_url: normalize_base_url(required_text(
+                "MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL",
+            )?),
             task_runner_internal_api_secret,
             task_runner_request_timeout,
             task_runner_ask_user_request_timeout,
-            chatos_service_base_url: normalize_base_url(
-                env_text("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL")
-                    .or_else(|| env_text("CHATOS_BACKEND_BASE_URL"))
-                    .unwrap_or_else(|| "http://127.0.0.1:3997".to_string()),
-            ),
+            chatos_service_base_url: normalize_base_url(required_text(
+                "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL",
+            )?),
             chatos_internal_api_secret,
             chatos_ask_user_request_timeout,
             chatos_browser_request_timeout,
-            local_connector_service_base_url: normalize_base_url(
-                env_text("MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL")
-                    .or_else(|| env_text("LOCAL_CONNECTOR_SERVICE_BASE_URL"))
-                    .unwrap_or_else(|| "http://127.0.0.1:39230".to_string()),
-            ),
+            local_connector_service_base_url: normalize_base_url(required_text(
+                "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            )?),
             local_connector_internal_api_secret,
-            sandbox_manager_service_base_url: normalize_base_url(
-                env_text("MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL")
-                    .or_else(|| env_text("SANDBOX_MANAGER_SERVICE_BASE_URL"))
-                    .unwrap_or_else(|| "http://127.0.0.1:8095".to_string()),
-            ),
+            sandbox_manager_service_base_url: normalize_base_url(required_text(
+                "MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL",
+            )?),
             sandbox_manager_internal_api_secret,
             sandbox_manager_request_timeout,
             sandbox_image_request_timeout,
-            embedded_work_dir: env_text("MCP_MANAGEMENT_EMBEDDED_WORK_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| std::env::temp_dir().join("chatos-mcp-management")),
+            embedded_work_dir: PathBuf::from(required_text("MCP_MANAGEMENT_EMBEDDED_WORK_DIR")?),
             downstream_request_timeout,
             external_http_request_timeout,
             provider_response_limit_bytes,
@@ -521,6 +476,20 @@ fn required_u64(key: &str) -> Result<u64, String> {
     let value = required_text(key)?;
     value
         .parse::<u64>()
+        .map_err(|_| format!("{key} must be an unsigned integer"))
+}
+
+fn required_u16(key: &str) -> Result<u16, String> {
+    let value = required_text(key)?;
+    value
+        .parse::<u16>()
+        .map_err(|err| format!("{key} must be a valid port: {err}"))
+}
+
+fn required_usize(key: &str) -> Result<usize, String> {
+    let value = required_text(key)?;
+    value
+        .parse::<usize>()
         .map_err(|_| format!("{key} must be an unsigned integer"))
 }
 

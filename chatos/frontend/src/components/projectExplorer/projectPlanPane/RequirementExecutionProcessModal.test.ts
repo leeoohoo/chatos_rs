@@ -83,9 +83,9 @@ describe('requirement execution process phase', () => {
     })).toBe(true);
   });
 
-  it('renders a stopped Task Runner as static instead of active', () => {
+  it('renders a stopped execution as static instead of active', () => {
     expect(runnerProcessEntryForPhase('stopped')).toEqual({
-      title: 'Task Runner 执行已取消',
+      title: '本次执行已取消',
       detail: '当前批次已经整体取消，不会继续调度或执行后续任务',
       state: 'stopped',
     });
@@ -122,7 +122,7 @@ describe('requirement execution process phase', () => {
       taskStatuses: ['running', 'queued'],
     })).toBe('paused');
     expect(runnerProcessEntryForPhase('paused')).toEqual({
-      title: 'Task Runner 已暂停调度',
+      title: '后续任务已暂停',
       detail: '运行中的节点可正常收尾，但不会启动新的节点',
       state: 'active',
     });

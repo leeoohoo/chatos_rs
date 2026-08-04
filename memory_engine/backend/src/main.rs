@@ -21,7 +21,7 @@ use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, Tr
 use tracing::{info, Level};
 
 use crate::config::AppConfig;
-use crate::state::AppState;
+use crate::state::{AppState, MemoryEngineRuntimeStats};
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
@@ -34,7 +34,9 @@ async fn main() -> Result<(), String> {
         )
         .init();
 
-    chatos_service_runtime::apply_config_center_env("memory-engine").await;
+    chatos_service_runtime::apply_config_center_env("memory-engine")
+        .await
+        .map_err(|err| format!("apply managed config failed: {err}"))?;
     repositories::control_plane::initialize_managed_memory_policy().await;
     let mut config = AppConfig::from_env()?;
     config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
@@ -53,10 +55,19 @@ async fn main() -> Result<(), String> {
         pool,
         config: config.clone(),
         user_service_http,
+        runtime_stats: Arc::new(MemoryEngineRuntimeStats::default()),
     });
 
     if config.worker_enabled {
         jobs::worker::start(state.clone());
+    }
+
+    if !config.api_enabled {
+        info!("[MEMORY-ENGINE] running without HTTP API listener");
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|err| format!("wait for shutdown signal failed: {err}"))?;
+        return Ok(());
     }
 
     let app = api::router(state)

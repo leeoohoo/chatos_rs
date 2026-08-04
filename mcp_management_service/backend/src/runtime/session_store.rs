@@ -38,6 +38,7 @@ const MAX_PERSISTED_TOOL_POLICY_ITEMS: usize = 512;
 const MAX_PERSISTED_TOOL_NAME_BYTES: usize = 256;
 const MAX_PERSISTED_SNAPSHOT_BYTES: usize = 12 * 1024 * 1024;
 const MAX_RUNTIME_SESSION_CACHE_ENTRIES: usize = 2_048;
+const MAX_RUNTIME_SESSION_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct ExternalHttpProviderBinding {
@@ -172,6 +173,18 @@ pub struct RuntimeSessionStore {
     backend: Arc<RuntimeSessionStoreBackend>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RuntimeSessionStoreStats {
+    pub backend: &'static str,
+    pub active_session_count: usize,
+    pub cached_session_count: usize,
+    pub cached_total_bytes: usize,
+    pub cached_avg_snapshot_bytes: usize,
+    pub cached_p95_snapshot_bytes: usize,
+    pub cache_entry_limit: Option<usize>,
+    pub cache_byte_limit: Option<usize>,
+}
+
 enum RuntimeSessionStoreBackend {
     Memory(RwLock<HashMap<String, RuntimeSessionSnapshot>>),
     Mongo(MongoRuntimeSessionStore),
@@ -181,13 +194,22 @@ struct MongoRuntimeSessionStore {
     collection: Collection<StoredRuntimeSessionDocument>,
     cipher: SnapshotCipher,
     external_http_request_timeout: Duration,
-    cache: RwLock<HashMap<String, CachedRuntimeSessionSnapshot>>,
+    cache: RwLock<RuntimeSessionCache>,
 }
 
 #[derive(Clone)]
 struct CachedRuntimeSessionSnapshot {
     envelope_digest: [u8; 32],
     snapshot: RuntimeSessionSnapshot,
+    approx_size_bytes: usize,
+    last_access_tick: u64,
+}
+
+#[derive(Default)]
+struct RuntimeSessionCache {
+    entries: HashMap<String, CachedRuntimeSessionSnapshot>,
+    total_bytes: usize,
+    next_access_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,7 +322,7 @@ impl RuntimeSessionStore {
                     collection,
                     cipher: SnapshotCipher::new(encryption_secret)?,
                     external_http_request_timeout,
-                    cache: RwLock::new(HashMap::new()),
+                    cache: RwLock::new(RuntimeSessionCache::default()),
                 },
             )),
         })
@@ -367,9 +389,14 @@ impl RuntimeSessionStore {
                     return Ok(None);
                 }
                 let envelope_digest = document.envelope_digest();
-                if let Some(cached) = store.cache.read().await.get(session_id).cloned() {
-                    if cached.envelope_digest == envelope_digest {
-                        return Ok(Some(cached.snapshot));
+                {
+                    let mut cache = store.cache.write().await;
+                    if let Some(snapshot) = cache.get_if_fresh(
+                        session_id,
+                        envelope_digest,
+                        chrono::Utc::now().timestamp(),
+                    ) {
+                        return Ok(Some(snapshot));
                     }
                 }
                 let snapshot = store
@@ -413,6 +440,57 @@ impl RuntimeSessionStore {
             }
         }
     }
+
+    pub async fn stats(&self) -> Result<RuntimeSessionStoreStats, String> {
+        let now = chrono::Utc::now().timestamp();
+        match self.backend.as_ref() {
+            RuntimeSessionStoreBackend::Memory(sessions) => {
+                let mut sessions = sessions.write().await;
+                sessions.retain(|_, snapshot| snapshot.expires_at_unix > now);
+                let snapshot_sizes = sessions
+                    .values()
+                    .map(estimate_snapshot_cache_bytes)
+                    .collect::<Vec<_>>();
+                let size_stats = summarize_snapshot_sizes(snapshot_sizes.as_slice());
+                Ok(RuntimeSessionStoreStats {
+                    backend: "memory",
+                    active_session_count: sessions.len(),
+                    cached_session_count: sessions.len(),
+                    cached_total_bytes: size_stats.total_bytes,
+                    cached_avg_snapshot_bytes: size_stats.avg_bytes,
+                    cached_p95_snapshot_bytes: size_stats.p95_bytes,
+                    cache_entry_limit: None,
+                    cache_byte_limit: None,
+                })
+            }
+            RuntimeSessionStoreBackend::Mongo(store) => {
+                let active_session_count = store
+                    .collection
+                    .count_documents(doc! { "expires_at_unix": { "$gt": now } }, None)
+                    .await
+                    .map_err(|error| format!("count active Runtime Sessions failed: {error}"))
+                    .map(saturating_u64_to_usize)?;
+                let mut cache = store.cache.write().await;
+                cache.retain_unexpired(now);
+                let snapshot_sizes = cache
+                    .entries
+                    .values()
+                    .map(|entry| entry.approx_size_bytes)
+                    .collect::<Vec<_>>();
+                let size_stats = summarize_snapshot_sizes(snapshot_sizes.as_slice());
+                Ok(RuntimeSessionStoreStats {
+                    backend: "mongo",
+                    active_session_count,
+                    cached_session_count: cache.entries.len(),
+                    cached_total_bytes: cache.total_bytes,
+                    cached_avg_snapshot_bytes: size_stats.avg_bytes,
+                    cached_p95_snapshot_bytes: size_stats.p95_bytes,
+                    cache_entry_limit: Some(MAX_RUNTIME_SESSION_CACHE_ENTRIES),
+                    cache_byte_limit: Some(MAX_RUNTIME_SESSION_CACHE_BYTES),
+                })
+            }
+        }
+    }
 }
 
 impl StoredRuntimeSessionDocument {
@@ -427,24 +505,142 @@ impl StoredRuntimeSessionDocument {
 }
 
 fn cache_snapshot(
-    cache: &mut HashMap<String, CachedRuntimeSessionSnapshot>,
+    cache: &mut RuntimeSessionCache,
     envelope_digest: [u8; 32],
     snapshot: RuntimeSessionSnapshot,
 ) {
+    cache_snapshot_with_limits(
+        cache,
+        envelope_digest,
+        snapshot,
+        MAX_RUNTIME_SESSION_CACHE_ENTRIES,
+        MAX_RUNTIME_SESSION_CACHE_BYTES,
+    );
+}
+
+fn cache_snapshot_with_limits(
+    cache: &mut RuntimeSessionCache,
+    envelope_digest: [u8; 32],
+    snapshot: RuntimeSessionSnapshot,
+    max_entries: usize,
+    max_bytes: usize,
+) {
     let now = chrono::Utc::now().timestamp();
-    cache.retain(|_, cached| cached.snapshot.expires_at_unix > now);
-    if cache.len() >= MAX_RUNTIME_SESSION_CACHE_ENTRIES
-        && !cache.contains_key(snapshot.session_id.as_str())
-    {
-        cache.clear();
+    cache.retain_unexpired(now);
+    let approx_size_bytes = estimate_snapshot_cache_bytes(&snapshot);
+    let session_id = snapshot.session_id.clone();
+    cache.remove(session_id.as_str());
+    if approx_size_bytes > max_bytes {
+        return;
     }
-    cache.insert(
-        snapshot.session_id.clone(),
+    let last_access_tick = cache.allocate_access_tick();
+    cache.entries.insert(
+        session_id,
         CachedRuntimeSessionSnapshot {
             envelope_digest,
             snapshot,
+            approx_size_bytes,
+            last_access_tick,
         },
     );
+    cache.total_bytes = cache.total_bytes.saturating_add(approx_size_bytes);
+    cache.evict_to_limits(max_entries, max_bytes);
+}
+
+fn estimate_snapshot_cache_bytes(snapshot: &RuntimeSessionSnapshot) -> usize {
+    PersistedRuntimeSessionSnapshot::try_from(snapshot)
+        .ok()
+        .and_then(|persisted| serde_json::to_vec(&persisted).ok().map(|value| value.len()))
+        .unwrap_or(MAX_PERSISTED_SNAPSHOT_BYTES)
+}
+
+#[derive(Default)]
+struct SnapshotSizeStats {
+    total_bytes: usize,
+    avg_bytes: usize,
+    p95_bytes: usize,
+}
+
+fn summarize_snapshot_sizes(snapshot_sizes: &[usize]) -> SnapshotSizeStats {
+    if snapshot_sizes.is_empty() {
+        return SnapshotSizeStats::default();
+    }
+    let total_bytes = snapshot_sizes
+        .iter()
+        .copied()
+        .fold(0_usize, usize::saturating_add);
+    let avg_bytes = total_bytes / snapshot_sizes.len();
+    let mut sorted = snapshot_sizes.to_vec();
+    sorted.sort_unstable();
+    let p95_index = ((sorted.len() * 95).saturating_sub(1)) / 100;
+    SnapshotSizeStats {
+        total_bytes,
+        avg_bytes,
+        p95_bytes: sorted[p95_index],
+    }
+}
+
+fn saturating_u64_to_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+impl RuntimeSessionCache {
+    fn allocate_access_tick(&mut self) -> u64 {
+        self.next_access_tick = self.next_access_tick.saturating_add(1);
+        self.next_access_tick
+    }
+
+    fn get_if_fresh(
+        &mut self,
+        session_id: &str,
+        envelope_digest: [u8; 32],
+        now: i64,
+    ) -> Option<RuntimeSessionSnapshot> {
+        self.retain_unexpired(now);
+        let cached = self.entries.get(session_id)?;
+        if cached.envelope_digest != envelope_digest {
+            self.remove(session_id);
+            return None;
+        }
+        let access_tick = self.allocate_access_tick();
+        let cached = self.entries.get_mut(session_id)?;
+        cached.last_access_tick = access_tick;
+        Some(cached.snapshot.clone())
+    }
+
+    fn remove(&mut self, session_id: &str) -> Option<CachedRuntimeSessionSnapshot> {
+        let removed = self.entries.remove(session_id)?;
+        self.total_bytes = self.total_bytes.saturating_sub(removed.approx_size_bytes);
+        Some(removed)
+    }
+
+    fn retain_unexpired(&mut self, now: i64) {
+        let expired = self
+            .entries
+            .iter()
+            .filter(|(_, cached)| cached.snapshot.expires_at_unix <= now)
+            .map(|(session_id, _)| session_id.clone())
+            .collect::<Vec<_>>();
+        for session_id in expired {
+            self.remove(session_id.as_str());
+        }
+    }
+
+    fn evict_to_limits(&mut self, max_entries: usize, max_bytes: usize) {
+        while self.entries.len() > max_entries || self.total_bytes > max_bytes {
+            let Some(session_id) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, cached)| {
+                    (cached.last_access_tick, cached.snapshot.expires_at_unix)
+                })
+                .map(|(session_id, _)| session_id.clone())
+            else {
+                break;
+            };
+            self.remove(session_id.as_str());
+        }
+    }
 }
 
 impl SnapshotCipher {

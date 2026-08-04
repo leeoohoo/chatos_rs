@@ -8,7 +8,7 @@ use std::time::Instant;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
-use chatos_mcp_management_sdk::McpProviderKind;
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, RuntimeToolDescriptor};
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, CancelledNotificationParams, JsonRpcRequest, JsonRpcResponse,
     MCP_ERROR_AUTH_REQUIRED, MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS,
@@ -20,6 +20,7 @@ use mongodb::bson::DateTime;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::async_dispatch::QueuedAsyncToolCallEnvelope;
 use crate::capabilities::route_allows_system_tool;
 use crate::providers::ProviderCancelOutcome;
 use crate::runtime::{RuntimeInvocationRecord, RuntimeInvocationStatus, RuntimeSessionSnapshot};
@@ -194,8 +195,22 @@ async fn handle_tool_call(
         exposed_tool_name: tool.exposed_name.clone(),
         mutation_may_have_started,
         cancel_supported: route.cancel_supported,
-        status: RuntimeInvocationStatus::Running,
+        status: if should_execute_async(route, tool) {
+            RuntimeInvocationStatus::Queued
+        } else {
+            RuntimeInvocationStatus::Running
+        },
+        async_execution: should_execute_async(route, tool),
         created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+        started_at_unix_ms: if should_execute_async(route, tool) {
+            None
+        } else {
+            Some(chrono::Utc::now().timestamp_millis())
+        },
+        completed_at_unix_ms: None,
+        terminal_result: None,
+        terminal_error_code: None,
+        terminal_error_message: None,
         expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
         expires_at_unix: snapshot.expires_at_unix,
     };
@@ -212,33 +227,59 @@ async fn handle_tool_call(
             "runtime invocation registry is unavailable or request id is already active",
         );
     }
-    let started = Instant::now();
-    let dispatch = {
-        let outcome = state.providers.call_tool(
-            snapshot,
-            route,
-            tool.original_name.as_str(),
-            arguments,
-            invocation_id.as_str(),
-        );
-        tokio::pin!(outcome);
-        tokio::select! {
-            outcome = &mut outcome => {
-                match state.runtime_invocations.finish_if_running(invocation_id.as_str()).await {
-                    Ok(true) => DispatchResult::Completed(outcome),
-                    Ok(false) => DispatchResult::CancelRequested,
-                    Err(error) => DispatchResult::RegistryFailed(error),
-                }
-            }
-            cancellation = wait_for_cancellation(state, invocation_id.as_str()) => {
-                match cancellation {
-                    Ok(()) => DispatchResult::CancelRequested,
-                    Err(error) => DispatchResult::RegistryFailed(error),
-                }
-            }
+    if should_execute_async(route, tool) {
+        if let Err(error) = state
+            .async_tool_dispatch
+            .enqueue(QueuedAsyncToolCallEnvelope {
+                invocation_id: invocation_id.clone(),
+                session_id: snapshot.session_id.clone(),
+                resource_id: route.resource_id.clone(),
+                exposed_tool_name: tool.exposed_name.clone(),
+                arguments,
+                mutation_may_have_started,
+            })
+            .await
+        {
+            let _ = state
+                .runtime_invocations
+                .fail(
+                    invocation_id.as_str(),
+                    MCP_ERROR_INTERNAL,
+                    format!("async tool dispatch enqueue failed: {error}"),
+                )
+                .await;
+            tracing::error!(
+                invocation_id = invocation_id.as_str(),
+                session_id = snapshot.session_id.as_str(),
+                resource_id = route.resource_id.as_str(),
+                exposed_tool_name = tool.exposed_name.as_str(),
+                error = error.as_str(),
+                "enqueue async MCP Provider invocation failed"
+            );
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INTERNAL,
+                "async tool dispatch queue is unavailable",
+            );
         }
-    };
-    let duration_ms = started.elapsed().as_millis() as u64;
+        return jsonrpc_ok(
+            id,
+            json!({
+                "status": "accepted",
+                "invocation_id": invocation_id,
+                "queued": true,
+            }),
+        );
+    }
+    let (dispatch, duration_ms) = dispatch_provider_call(
+        state,
+        snapshot,
+        route,
+        tool,
+        arguments,
+        invocation_id.as_str(),
+    )
+    .await;
     match dispatch {
         DispatchResult::CancelRequested => {
             handle_cancelled_tool_call(
@@ -294,6 +335,178 @@ async fn handle_tool_call(
                 "MCP Provider invocation failed"
             );
             jsonrpc_error(id, error.code, error.message)
+        }
+    }
+}
+
+fn should_execute_async(route: &ResolvedMcpRoute, tool: &RuntimeToolDescriptor) -> bool {
+    tool.definition
+        .pointer("/annotations/x-chatos-preferAsync")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || (route.allow_writes
+            && matches!(
+                route.provider_kind,
+                McpProviderKind::LocalConnector
+                    | McpProviderKind::CloudSandbox
+                    | McpProviderKind::CloudStdio
+                    | McpProviderKind::PluginLocal
+                    | McpProviderKind::PluginCloud
+            ))
+}
+
+async fn dispatch_provider_call(
+    state: &AppState,
+    snapshot: &RuntimeSessionSnapshot,
+    route: &ResolvedMcpRoute,
+    tool: &RuntimeToolDescriptor,
+    arguments: Value,
+    invocation_id: &str,
+) -> (DispatchResult, u64) {
+    let started = Instant::now();
+    let dispatch = {
+        let outcome = state.providers.call_tool(
+            snapshot,
+            route,
+            tool.original_name.as_str(),
+            arguments,
+            invocation_id,
+        );
+        tokio::pin!(outcome);
+        tokio::select! {
+            outcome = &mut outcome => {
+                match outcome {
+                    Ok(success) => match state.runtime_invocations.complete(invocation_id, success.result.clone()).await {
+                        Ok(true) => DispatchResult::Completed(Ok(success)),
+                        Ok(false) => DispatchResult::CancelRequested,
+                        Err(error) => DispatchResult::RegistryFailed(error),
+                    },
+                    Err(error) => match state.runtime_invocations.fail(invocation_id, error.code, error.message.clone()).await {
+                        Ok(true) => DispatchResult::Completed(Err(error)),
+                        Ok(false) => DispatchResult::CancelRequested,
+                        Err(registry_error) => DispatchResult::RegistryFailed(registry_error),
+                    },
+                }
+            }
+            cancellation = wait_for_cancellation(state, invocation_id) => {
+                match cancellation {
+                    Ok(()) => DispatchResult::CancelRequested,
+                    Err(error) => DispatchResult::RegistryFailed(error),
+                }
+            }
+        }
+    };
+    (dispatch, started.elapsed().as_millis() as u64)
+}
+
+pub(crate) async fn execute_async_tool_call(
+    state: AppState,
+    snapshot: RuntimeSessionSnapshot,
+    route: ResolvedMcpRoute,
+    tool: RuntimeToolDescriptor,
+    arguments: Value,
+    invocation_id: String,
+    mutation_may_have_started: bool,
+) {
+    match state
+        .runtime_invocations
+        .cancellation_requested(invocation_id.as_str())
+        .await
+    {
+        Ok(true) => {
+            let _ = state
+                .runtime_invocations
+                .cancel_without_start(invocation_id.as_str())
+                .await;
+            return;
+        }
+        Ok(false) => {}
+        Err(error) => {
+            tracing::error!(
+                invocation_id = invocation_id.as_str(),
+                error = error.as_str(),
+                "load queued Runtime Invocation cancellation state failed"
+            );
+            return;
+        }
+    }
+    match state
+        .runtime_invocations
+        .mark_running(invocation_id.as_str())
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return;
+        }
+        Err(error) => {
+            tracing::error!(
+                invocation_id = invocation_id.as_str(),
+                error = error.as_str(),
+                "mark queued Runtime Invocation as running failed"
+            );
+            return;
+        }
+    }
+    let (dispatch, duration_ms) = dispatch_provider_call(
+        &state,
+        &snapshot,
+        &route,
+        &tool,
+        arguments,
+        invocation_id.as_str(),
+    )
+    .await;
+    match dispatch {
+        DispatchResult::CancelRequested => {
+            let _ = handle_cancelled_tool_call(
+                Value::Null,
+                &snapshot,
+                &route,
+                tool.exposed_name.as_str(),
+                invocation_id.as_str(),
+                mutation_may_have_started,
+                duration_ms,
+                &state,
+            )
+            .await;
+        }
+        DispatchResult::RegistryFailed(error) => {
+            tracing::error!(
+                invocation_id = invocation_id.as_str(),
+                session_id = snapshot.session_id.as_str(),
+                error = error.as_str(),
+                status = "registry_failed",
+                "async MCP Provider invocation coordination failed"
+            );
+        }
+        DispatchResult::Completed(Ok(outcome)) => {
+            tracing::info!(
+                invocation_id = invocation_id.as_str(),
+                session_id = snapshot.session_id.as_str(),
+                resource_id = route.resource_id.as_str(),
+                exposed_tool_name = tool.exposed_name.as_str(),
+                provider_kind = route.provider_kind.as_str(),
+                duration_ms,
+                result_bytes = outcome.response_bytes,
+                status = "succeeded",
+                mode = "async",
+                "async MCP Provider invocation completed"
+            );
+        }
+        DispatchResult::Completed(Err(error)) => {
+            tracing::warn!(
+                invocation_id = invocation_id.as_str(),
+                session_id = snapshot.session_id.as_str(),
+                resource_id = route.resource_id.as_str(),
+                exposed_tool_name = tool.exposed_name.as_str(),
+                provider_kind = route.provider_kind.as_str(),
+                duration_ms,
+                error_code = error.code,
+                status = "failed",
+                mode = "async",
+                "async MCP Provider invocation failed"
+            );
         }
     }
 }
@@ -440,7 +653,9 @@ async fn handle_cancel_notification(
 
 pub(super) fn cancel_response_status(record: &RuntimeInvocationRecord) -> &'static str {
     match record.status {
-        RuntimeInvocationStatus::Running | RuntimeInvocationStatus::CancelRequested => {
+        RuntimeInvocationStatus::Queued
+        | RuntimeInvocationStatus::Running
+        | RuntimeInvocationStatus::CancelRequested => {
             if record.mutation_may_have_started && !record.cancel_supported {
                 "unknown_execution_state"
             } else {
@@ -448,6 +663,7 @@ pub(super) fn cancel_response_status(record: &RuntimeInvocationRecord) -> &'stat
             }
         }
         RuntimeInvocationStatus::Completed => "already_completed",
+        RuntimeInvocationStatus::Failed => "already_failed",
         RuntimeInvocationStatus::Cancelled => "cancelled",
         RuntimeInvocationStatus::UnknownExecutionState => "unknown_execution_state",
     }

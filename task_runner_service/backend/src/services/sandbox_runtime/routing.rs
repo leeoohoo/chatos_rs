@@ -322,11 +322,25 @@ fn merged_environment(
     global: &std::collections::BTreeMap<String, String>,
     service: &serde_json::Value,
 ) -> std::collections::BTreeMap<String, String> {
-    let mut environment = global.clone();
+    let expanded_global = global
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.clone(),
+                expand_environment_value(value.as_str(), global),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut environment = expanded_global.clone();
     environment.extend(
         json_object_to_string_map(service)
             .into_iter()
-            .map(|(name, value)| (name, expand_environment_value(value.as_str(), global))),
+            .map(|(name, value)| {
+                (
+                    name,
+                    expand_environment_value(value.as_str(), &expanded_global),
+                )
+            }),
     );
     environment
 }
@@ -684,9 +698,9 @@ async fn resolve_local_connector_sandbox_route(
         "sandbox-routing.read",
         60,
     )?;
-    let service_base = local_connector_service_base_url();
+    let service_base = local_connector_service_base_url(config)?;
     let response = reqwest::Client::builder()
-        .timeout(local_connector_service_request_timeout())
+        .timeout(local_connector_service_request_timeout(config))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|err| format!("build Local Connector sandbox routing client failed: {err}"))?
@@ -764,31 +778,29 @@ fn sandbox_auth_for_task(
     Ok(SandboxManagerAuth::from_config(config))
 }
 
-fn local_connector_service_base_url() -> String {
-    std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL")
-        .ok()
-        .or_else(|| std::env::var("LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
-        .or_else(|| std::env::var("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL").ok())
-        .map(|value| value.trim().trim_end_matches('/').to_string())
+fn local_connector_service_base_url(config: &crate::config::AppConfig) -> Result<String, String> {
+    config
+        .local_connector_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .map(|value| value.trim_end_matches('/').to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:39230".to_string())
+        .ok_or_else(|| {
+            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL is required from configuration center for local sandbox routing"
+                .to_string()
+        })
 }
 
-fn local_connector_service_request_timeout() -> std::time::Duration {
-    let timeout_ms = std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")
-        .ok()
-        .or_else(|| std::env::var("LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS").ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(5_000)
-        .max(300);
-    std::time::Duration::from_millis(timeout_ms)
+fn local_connector_service_request_timeout(
+    config: &crate::config::AppConfig,
+) -> std::time::Duration {
+    config.local_connector_service_request_timeout
 }
 
 fn local_connector_internal_secret(config: &crate::config::AppConfig) -> Result<String, String> {
     config
         .local_connector_internal_api_secret
         .clone()
-        .or_else(|| std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET").ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {

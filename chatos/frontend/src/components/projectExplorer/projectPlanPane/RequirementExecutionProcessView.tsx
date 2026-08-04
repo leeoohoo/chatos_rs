@@ -125,43 +125,48 @@ export const RequirementExecutionProcessSidebar: React.FC<{
       </ol>
     </div>
 
-    <div className="shrink-0 border-t border-border bg-background px-4 py-3">
-      <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
-        <MessageSquareText className="h-3.5 w-3.5" />
-        调整执行计划
+    {canRevise ? (
+      <div className="shrink-0 border-t border-border bg-background px-4 py-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
+          <MessageSquareText className="h-3.5 w-3.5" />
+          调整执行计划
+        </div>
+        <textarea
+          value={feedback}
+          disabled={revising}
+          onChange={(event) => onFeedbackChange(event.target.value)}
+          placeholder="输入你的想法，例如：先补测试，再修改接口；把前端和后端拆开执行……"
+          className="min-h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:bg-muted/40"
+        />
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <span className="text-[10px] text-muted-foreground">
+            发送后会保留历史记录并生成新的任务依赖图
+          </span>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!feedback.trim() || revising}
+            onClick={onSubmitFeedback}
+          >
+            {revising
+              ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              : <Send className="h-3.5 w-3.5" />}
+            {revising ? '重新规划中' : '发送并调整'}
+          </button>
+        </div>
       </div>
-      <textarea
-        value={feedback}
-        disabled={!canRevise || revising}
-        onChange={(event) => onFeedbackChange(event.target.value)}
-        placeholder={cancellationSettling
-          ? '正在取消当前批次，任务状态收敛后即可调整'
-          : !canRevise
-            ? phase === 'completed'
-              ? '当前执行已经完成；新的产品迭代请创建新的项目需求'
-              : phase === 'running'
-                ? '执行已经开始；如需调整，请先明确停止当前执行批次'
-                : '当前批次仍有活动任务，请先停止并等待状态收敛后再调整'
-            : '输入你的想法，例如：先补测试，再修改接口；把前端和后端拆开执行……'}
-        className="min-h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:bg-muted/40"
-      />
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground">
-          发送后会保留历史记录并生成新的 DAG
-        </span>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!feedback.trim() || revising || !canRevise}
-          onClick={onSubmitFeedback}
-        >
-          {revising
-            ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-            : <Send className="h-3.5 w-3.5" />}
-          {revising ? '重新规划中' : '发送并调整'}
-        </button>
+    ) : (
+      <div className="shrink-0 border-t border-border bg-muted/20 px-4 py-3">
+        <div className="text-xs font-semibold text-foreground">执行计划已冻结</div>
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+          {cancellationSettling
+            ? '正在停止当前执行批次；所有任务收敛后才可重新规划。'
+            : phase === 'completed'
+              ? '当前批次已经完成；新的产品调整请创建新的项目需求。'
+              : '任务已开始执行，运行期间不能重新规划。需要调整时请先停止当前执行批次。'}
+        </p>
       </div>
-    </div>
+    )}
   </aside>
 );
 
@@ -192,7 +197,7 @@ export const RequirementExecutionGraphSurface: React.FC<{
           实时执行流程图
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Agent 每创建一个任务节点，右侧 DAG 都会自动更新。
+          每创建一个任务节点，右侧任务依赖图都会自动更新。
         </p>
       </div>
       <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
@@ -233,6 +238,8 @@ export const RequirementExecutionProcessActions: React.FC<{
   executionPaused: boolean;
   graphReady: boolean;
   hasActiveRuns: boolean;
+  runtimeEnvironmentReady: boolean;
+  runtimeEnvironmentStatus: string;
   onClose: () => void;
   onCancelRequirementExecution: () => void;
   onConfirmExecution: () => void;
@@ -261,6 +268,7 @@ export const RequirementExecutionProcessActions: React.FC<{
   executionPaused,
   graphReady,
   hasActiveRuns,
+  runtimeEnvironmentReady,
   onClose,
   onCancelRequirementExecution,
   onConfirmExecution,
@@ -289,8 +297,10 @@ export const RequirementExecutionProcessActions: React.FC<{
           : queuedTaskCount > 0
             ? `正在取消本次执行，等待 ${queuedTaskCount} 个排队任务回写取消状态。`
             : '正在取消本次执行，等待任务回写取消状态。')
+        : graphReady && !runtimeEnvironmentReady
+        ? '流程图已就绪，执行环境正在初始化，完成后自动开放执行。'
         : graphReady
-        ? '流程图已就绪，当前没有任何任务 run。'
+        ? '流程图和执行环境均已就绪，当前还没有任务开始运行。'
         : phase === 'paused'
           ? (runningTaskCount > 0
             ? `暂停门禁已生效，等待 ${runningTaskCount} 个运行中任务结束。`
@@ -300,8 +310,8 @@ export const RequirementExecutionProcessActions: React.FC<{
         : phase === 'failed'
           ? '当前批次存在失败任务，可查看详情、重试或重新规划。'
         : actuallyStarted
-          ? 'Task Runner 已收到执行确认。'
-          : '完整 DAG 生成前，执行按钮保持禁用。'}
+          ? '执行确认已收到，任务正在按依赖顺序启动。'
+          : '完整任务依赖图生成前，执行按钮保持禁用。'}
     </div>
     <div className="flex flex-wrap items-center gap-2">
       {!cancellationSettling && retryableFailedTaskCount > 0 ? (
@@ -397,13 +407,15 @@ export const RequirementExecutionProcessActions: React.FC<{
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-5 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!graphReady || confirming || stopping || pausing || revising}
+          disabled={!graphReady || !runtimeEnvironmentReady || confirming || stopping || pausing || revising}
           onClick={onConfirmExecution}
         >
-          {confirming
+          {confirming || (graphReady && !runtimeEnvironmentReady)
             ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
             : <Play className="h-3.5 w-3.5" />}
-          {confirming ? '启动中' : '执行'}
+          {confirming
+            ? '启动中'
+            : graphReady && !runtimeEnvironmentReady ? '初始化环境中' : '执行'}
         </button>
       ) : null}
       <button

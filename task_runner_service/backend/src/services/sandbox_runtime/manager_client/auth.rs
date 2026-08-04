@@ -47,9 +47,6 @@ impl SandboxManagerAuth {
                 let client_key = config
                     .local_connector_internal_api_secret
                     .clone()
-                    .or_else(|| {
-                        std::env::var("TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET").ok()
-                    })
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {

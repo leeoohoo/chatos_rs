@@ -163,6 +163,8 @@ pub(super) struct HarnessRunOutputReport {
     pub base_commit: String,
     #[serde(default)]
     pub result_commit: Option<String>,
+    #[serde(default)]
+    pub promoted_commit: Option<String>,
     pub status: String,
     #[serde(default)]
     pub message: Option<String>,
@@ -173,6 +175,7 @@ impl HarnessRunContext {
         &self,
         status: &str,
         result_commit: Option<String>,
+        promoted_commit: Option<String>,
         message: Option<String>,
     ) -> HarnessRunOutputReport {
         HarnessRunOutputReport {
@@ -184,6 +187,7 @@ impl HarnessRunContext {
             run_branch: self.run_branch.clone(),
             base_commit: self.base_commit.clone(),
             result_commit,
+            promoted_commit,
             status: status.to_string(),
             message,
         }

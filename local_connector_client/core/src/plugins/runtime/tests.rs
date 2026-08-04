@@ -2402,6 +2402,11 @@ async fn signed_packaged_connector_hooks_run_end_to_end_without_a_listener() {
         path: format!("/plugins/{action}"),
         headers: BTreeMap::new(),
         body,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let dispatch = |component_key: &str, adapter_session_id: &str| {
         relay_request(

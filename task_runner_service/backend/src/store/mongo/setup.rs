@@ -277,6 +277,37 @@ impl MongoStore {
             }
         }
 
+        let create_execution_lane_index = self
+            .runs
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "execution_lane_key": 1 })
+                    .options(
+                        IndexOptions::builder()
+                            .name(Some(ACTIVE_EXECUTION_LANE_UNIQUE_INDEX_NAME.to_string()))
+                            .unique(true)
+                            .partial_filter_expression(doc! {
+                                "status": "running",
+                                "execution_lane_key": { "$type": "string" }
+                            })
+                            .build(),
+                    )
+                    .build(),
+                None,
+            )
+            .await;
+
+        if let Err(err) = create_execution_lane_index {
+            if is_mongo_active_run_index_conflict(&err.to_string()) {
+                warn!(
+                    "skipping active execution lane unique index creation due to existing duplicate running lanes: {}",
+                    err
+                );
+            } else {
+                return Err(err.to_string());
+            }
+        }
+
         Ok(())
     }
 

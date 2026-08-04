@@ -4,12 +4,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::mongodb::init_mongodb;
+use super::types::{Database, DatabaseConfig, DatabaseType, MongoConfig};
 use once_cell::sync::OnceCell;
 use tokio::sync::Mutex;
-use tracing::warn;
-
-use super::mongodb::init_mongodb;
-use super::types::{Database, DatabaseConfig, DatabaseType};
 
 static DB_FACTORY: OnceCell<Arc<DatabaseFactory>> = OnceCell::new();
 
@@ -67,38 +65,46 @@ impl DatabaseFactory {
         Err("Database adapter not initialized. Call get_adapter() first.".to_string())
     }
 
-    pub fn load_config(&self, config_path: Option<PathBuf>) -> Result<DatabaseConfig, String> {
-        let path = config_path.unwrap_or_else(|| PathBuf::from("config/database.json"));
-        let mut cfg = if path.exists() {
-            let raw =
-                std::fs::read_to_string(&path).map_err(|e| format!("read config failed: {e}"))?;
-            let trimmed = raw.trim_start_matches('\u{feff}').trim();
-            if trimmed.is_empty() {
-                warn!(
-                    "[DatabaseFactory] config empty at {:?}, using default",
-                    path
-                );
-                DatabaseConfig::default()
-            } else {
-                serde_json::from_str::<DatabaseConfig>(trimmed)
-                    .map_err(|e| format!("parse config failed: {e}"))?
-            }
-        } else {
-            warn!(
-                "[DatabaseFactory] config not found at {:?}, using default",
-                path
-            );
-            DatabaseConfig::default()
-        };
-
-        cfg = apply_env_overrides(cfg);
-        Ok(cfg)
+    pub fn load_config(&self, _config_path: Option<PathBuf>) -> Result<DatabaseConfig, String> {
+        let connection_string = require_managed_database_value("MONGODB_CONNECTION_STRING")?;
+        let database = require_managed_database_value("MONGODB_DB")?;
+        Ok(build_managed_database_config(connection_string, database))
     }
 
     async fn create_adapter(&self, config: &DatabaseConfig) -> Result<Arc<Database>, String> {
         let mongo_cfg = config.mongodb.clone().unwrap_or_default();
         let db = init_mongodb(&mongo_cfg).await?;
         Ok(Arc::new(db))
+    }
+}
+
+fn require_managed_database_value(key: &str) -> Result<String, String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{key} is required from configuration center"))
+}
+
+fn build_managed_database_config(connection_string: String, database: String) -> DatabaseConfig {
+    let defaults = MongoConfig::default();
+    DatabaseConfig {
+        db_type: Some(DatabaseType::Mongodb),
+        mongodb: Some(MongoConfig {
+            host: None,
+            port: None,
+            database: Some(database),
+            username: None,
+            password: None,
+            connection_string: Some(connection_string),
+            max_pool_size: defaults.max_pool_size,
+            min_pool_size: defaults.min_pool_size,
+            server_selection_timeout_ms: defaults.server_selection_timeout_ms,
+            connect_timeout_ms: defaults.connect_timeout_ms,
+            socket_timeout_ms: defaults.socket_timeout_ms,
+        }),
+        auto_migrate: None,
+        debug: None,
     }
 }
 
@@ -125,164 +131,28 @@ pub fn get_db_sync() -> Result<Arc<Database>, String> {
     get_factory()?.get_adapter_sync()
 }
 
-fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
-    let db_type_env = std::env::var("DATABASE_TYPE")
-        .ok()
-        .map(|s| s.trim().to_lowercase());
-    if let Some(t) = db_type_env {
-        if t == "mongodb" || t == "mongo" {
-            cfg.db_type = Some(DatabaseType::Mongodb);
-        }
-    }
-
-    let has_mongo_env = [
-        "MONGODB_CONNECTION_STRING",
-        "MONGODB_HOST",
-        "MONGODB_PORT",
-        "MONGODB_DB",
-        "MONGODB_USER",
-        "MONGODB_PASSWORD",
-        "MONGODB_AUTH_SOURCE",
-    ]
-    .iter()
-    .any(|k| {
-        std::env::var(k)
-            .map(|v| !v.trim().is_empty())
-            .unwrap_or(false)
-    });
-
-    if has_mongo_env {
-        cfg.db_type = Some(DatabaseType::Mongodb);
-        let mut mongo = cfg.mongodb.clone().unwrap_or_default();
-        let host = std::env::var("MONGODB_HOST")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .or(mongo.host.clone())
-            .unwrap_or_else(|| "localhost".to_string());
-        let port = std::env::var("MONGODB_PORT")
-            .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-            .or(mongo.port)
-            .unwrap_or(27017);
-        let database = std::env::var("MONGODB_DB")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .or(mongo.database.clone())
-            .unwrap_or_else(|| "chatos".to_string());
-        let username = std::env::var("MONGODB_USER")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .or(mongo.username.clone());
-        let password = std::env::var("MONGODB_PASSWORD")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .or(mongo.password.clone());
-        let auth_source = std::env::var("MONGODB_AUTH_SOURCE").ok();
-        let conn_env = std::env::var("MONGODB_CONNECTION_STRING")
-            .ok()
-            .filter(|v| !v.trim().is_empty());
-
-        mongo.host = Some(host.clone());
-        mongo.port = Some(port);
-        mongo.database = Some(database.clone());
-        mongo.username = username.clone();
-        mongo.password = password.clone();
-
-        if let Some(conn) = conn_env {
-            mongo.connection_string = Some(conn);
-        } else {
-            let cred = if let (Some(u), Some(p)) = (username.clone(), password.clone()) {
-                format!("{}:{}@", urlencoding::encode(&u), urlencoding::encode(&p))
-            } else {
-                "".to_string()
-            };
-            let auth_query = auth_source
-                .map(|a| format!("?authSource={}", urlencoding::encode(&a)))
-                .unwrap_or_default();
-            mongo.connection_string = Some(format!(
-                "mongodb://{}{}:{}/{}{}",
-                cred, host, port, database, auth_query
-            ));
-        }
-
-        cfg.mongodb = Some(mongo);
-    }
-
-    cfg.db_type = Some(DatabaseType::Mongodb);
-
-    cfg
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
-
-    use super::{apply_env_overrides, DatabaseConfig};
+    use super::build_managed_database_config;
     use crate::db::types::DatabaseType;
 
-    const MONGO_ENV_KEYS: &[&str] = &[
-        "DATABASE_TYPE",
-        "MONGODB_CONNECTION_STRING",
-        "MONGODB_HOST",
-        "MONGODB_PORT",
-        "MONGODB_DB",
-        "MONGODB_USER",
-        "MONGODB_PASSWORD",
-        "MONGODB_AUTH_SOURCE",
-    ];
-
-    struct EnvRestore {
-        saved: Vec<(&'static str, Option<String>)>,
-    }
-
-    impl EnvRestore {
-        fn capture(keys: &[&'static str]) -> Self {
-            Self {
-                saved: keys
-                    .iter()
-                    .map(|key| (*key, std::env::var(key).ok()))
-                    .collect(),
-            }
-        }
-    }
-
-    impl Drop for EnvRestore {
-        fn drop(&mut self) {
-            for (key, value) in &self.saved {
-                match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     #[test]
-    fn mongo_env_without_database_uses_chatos_default() {
-        let _guard = env_lock().lock().expect("env lock poisoned");
-        let _restore = EnvRestore::capture(MONGO_ENV_KEYS);
-        for key in MONGO_ENV_KEYS {
-            std::env::remove_var(key);
-        }
-        std::env::set_var("MONGODB_HOST", "127.0.0.1");
-        std::env::set_var("MONGODB_PORT", "27018");
-        std::env::set_var("MONGODB_USER", "admin");
-        std::env::set_var("MONGODB_PASSWORD", "admin");
-        std::env::set_var("MONGODB_AUTH_SOURCE", "admin");
-
-        let cfg = apply_env_overrides(DatabaseConfig::default());
+    fn managed_database_config_uses_only_authoritative_connection_values() {
+        let cfg = build_managed_database_config(
+            "mongodb://managed.example:27017/managed".to_string(),
+            "managed".to_string(),
+        );
 
         assert!(matches!(cfg.db_type, Some(DatabaseType::Mongodb)));
         let mongo = cfg.mongodb.expect("mongodb config");
-        assert_eq!(mongo.database.as_deref(), Some("chatos"));
+        assert_eq!(mongo.database.as_deref(), Some("managed"));
         assert_eq!(
             mongo.connection_string.as_deref(),
-            Some("mongodb://admin:admin@127.0.0.1:27018/chatos?authSource=admin"),
+            Some("mongodb://managed.example:27017/managed"),
         );
+        assert_eq!(mongo.host, None);
+        assert_eq!(mongo.port, None);
+        assert_eq!(mongo.username, None);
+        assert_eq!(mongo.password, None);
     }
 }

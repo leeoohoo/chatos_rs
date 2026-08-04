@@ -205,6 +205,13 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setError(null);
   }, []);
 
+  const openExistingRequirementExecution = useCallback(() => {
+    // A starter from a previously selected requirement must not win the modal
+    // render precedence when the user opens an already generated plan.
+    setStartingExecutionRequirement(null);
+    setExecutionProcessOpen(true);
+  }, []);
+
   const executeRequirement = useCallback(async (
     requirement: ProjectRequirementResponse,
     options?: {
@@ -240,7 +247,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       setExecutionProcess(nextProcess);
       setStartingExecutionRequirement(null);
       setActiveExecutionBlockedRequirementId(null);
-      setExecutionMessage('执行计划工作台已打开；点击“执行”前 Task Runner 不会启动');
+      setExecutionMessage('执行计划工作台已打开；点击“执行”前不会启动任务');
       void loadPlan();
       try {
         await refreshSessionById(nextProcess.conversationId);
@@ -533,7 +540,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
         error={error}
         executionMessage={executionMessage}
         onOpenExecutionProcess={selectedRequirementExecutionProcess
-          ? () => setExecutionProcessOpen(true)
+          ? openExistingRequirementExecution
           : undefined}
         onStopActiveExecution={selectedRequirement
           && activeExecutionBlockedRequirementId === selectedRequirement.id
@@ -577,7 +584,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
               openRequirementExecutionStarter(requirement);
             }}
             onPreviewRequirement={setExecutionPreviewRequirement}
-            onOpenRequirementExecution={() => setExecutionProcessOpen(true)}
+            onOpenRequirementExecution={openExistingRequirementExecution}
             resolveRequirementTitle={resolveRequirementTitle}
             resolveWorkItemTitle={resolveWorkItemTitle}
             selectedDocumentsLoading={selectedDocumentsLoading}
@@ -610,7 +617,10 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
           requirement={startingExecutionRequirement}
           executionPlane={project.executionPlane}
           starting={executingRequirementId === startingExecutionRequirement.id}
-          onClose={() => setExecutionProcessOpen(false)}
+          onClose={() => {
+            setStartingExecutionRequirement(null);
+            setExecutionProcessOpen(false);
+          }}
           onStart={(planningFeedback) => {
             void executeRequirement(startingExecutionRequirement, { planningFeedback });
           }}

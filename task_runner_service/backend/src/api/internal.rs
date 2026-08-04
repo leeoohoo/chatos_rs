@@ -3,10 +3,15 @@
 
 use std::collections::BTreeSet;
 
+use crate::models::{
+    now_rfc3339, TaskRunnerQueueStatsSnapshot, TaskRunnerRunStatsSnapshot,
+    TaskRunnerRuntimeStatsSnapshot, TaskRunnerSystemStatsResponse,
+};
 use serde::Serialize;
 
 use super::internal_auth::{
-    require_task_runner_internal_request, EXECUTION_OPTIONS_READ_SCOPE, PROJECT_SERVICE_CALLER,
+    require_task_runner_internal_request, EXECUTION_OPTIONS_READ_SCOPE, MCP_MANAGEMENT_CALLER,
+    PROJECT_SERVICE_CALLER, SYSTEM_STATS_READ_SCOPE,
 };
 use super::*;
 
@@ -48,6 +53,73 @@ pub(super) async fn get_user_execution_options(
 
     Ok(Json(InternalExecutionOptionsResponse {
         model_config_ids: model_config_ids.into_iter().collect(),
+    }))
+}
+
+pub(super) async fn get_system_stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<TaskRunnerSystemStatsResponse>, ApiError> {
+    require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
+        SYSTEM_STATS_READ_SCOPE,
+    )
+    .map_err(|err| ApiError {
+        status: err.status,
+        message: err.message,
+    })?;
+    let run_stats = state
+        .run_service
+        .execution_stats()
+        .await
+        .map_err(ApiError::internal)?;
+    let sse_ticket_stats = state.sse_tickets.stats();
+    Ok(Json(TaskRunnerSystemStatsResponse {
+        ok: true,
+        service: "task_runner_service_backend",
+        now: now_rfc3339(),
+        runtime: TaskRunnerRuntimeStatsSnapshot {
+            worker_claim_failures_total: state.runtime_stats.worker_claim_failures_total(),
+            active_run_event_streams: state.runtime_stats.active_run_event_streams(),
+            pending_sse_tickets: sse_ticket_stats.active_ticket_count,
+        },
+        queue: TaskRunnerQueueStatsSnapshot {
+            rabbitmq_enabled: state.task_queue_topology.uses_rabbitmq(),
+            run_dispatch_mode: state
+                .task_queue_topology
+                .run_dispatch_mode
+                .as_str()
+                .to_string(),
+            callback_delivery_mode: state
+                .task_queue_topology
+                .callback_delivery_mode
+                .as_str()
+                .to_string(),
+            run_events_publish_mode: state
+                .task_queue_topology
+                .run_events_publish_mode
+                .as_str()
+                .to_string(),
+            rabbitmq_exchange: state.task_queue_topology.rabbitmq_exchange.clone(),
+            run_dispatch_queue: state.task_queue_topology.run_dispatch_queue.clone(),
+            callback_delivery_queue: state.task_queue_topology.callback_delivery_queue.clone(),
+            run_events_queue: state.task_queue_topology.run_events_queue.clone(),
+        },
+        runs: TaskRunnerRunStatsSnapshot {
+            total: run_stats.total,
+            active: run_stats.active,
+            queued: run_stats.queued,
+            running: run_stats.running,
+            succeeded: run_stats.succeeded,
+            failed: run_stats.failed,
+            cancelled: run_stats.cancelled,
+            blocked: run_stats.blocked,
+            dispatch_paused: run_stats.dispatch_paused,
+            callback_pending: run_stats.callback_pending,
+            callback_enqueued: run_stats.callback_enqueued,
+        },
     }))
 }
 
@@ -133,6 +205,57 @@ mod tests {
             .expect("signed execution options request");
     }
 
+    #[tokio::test]
+    async fn system_stats_returns_queue_run_and_runtime_counters() {
+        let state = test_state().await;
+        let queued_run = crate::models::TaskRunRecord::queued(
+            "run-queued".to_string(),
+            "task-queued".to_string(),
+            "model-owner".to_string(),
+            "thread-queued".to_string(),
+            serde_json::json!({}),
+            Vec::new(),
+            now_rfc3339(),
+        );
+        state
+            .run_service
+            .store()
+            .save_run(queued_run)
+            .await
+            .expect("save queued run");
+        state.sse_tickets.issue("test-access-token");
+        state.runtime_stats.record_worker_claim_failure();
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "internal-secret",
+            MCP_MANAGEMENT_CALLER,
+            super::super::internal_auth::TASK_RUNNER_TOKEN_AUDIENCE,
+            SYSTEM_STATS_READ_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-caller",
+            HeaderValue::from_static(MCP_MANAGEMENT_CALLER),
+        );
+        headers.insert(
+            "x-task-runner-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+
+        let Json(response) = get_system_stats(State(state), headers)
+            .await
+            .expect("system stats");
+
+        assert!(response.ok);
+        assert_eq!(response.runtime.worker_claim_failures_total, 1);
+        assert_eq!(response.runtime.pending_sse_tickets, 1);
+        assert_eq!(response.runs.total, 1);
+        assert_eq!(response.runs.active, 1);
+        assert_eq!(response.runs.queued, 1);
+        assert_eq!(response.queue.run_dispatch_mode, "inline");
+    }
+
     #[test]
     fn chatos_internal_auth_uses_dedicated_secret_and_scope() {
         let config = test_config();
@@ -206,9 +329,11 @@ mod tests {
             run_service.clone(),
             ask_user_prompt_service.clone(),
         );
+        let task_queue_topology = crate::platform_queue::TaskQueueTopology::inline_defaults();
 
         AppState {
             config,
+            task_queue_topology,
             task_service,
             model_config_service,
             remote_server_service,
@@ -220,6 +345,7 @@ mod tests {
             task_runner_mcp_service,
             auth_service,
             sse_tickets: crate::auth::SseTicketStore::default(),
+            runtime_stats: crate::state::TaskRunnerRuntimeStats::default(),
         }
     }
 
@@ -260,8 +386,13 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: Some("internal-secret".to_string()),
             chatos_internal_api_secret: Some("chatos-internal-secret".to_string()),
-            mcp_management_internal_api_secret: None,
+            mcp_management_internal_api_secret: Some("internal-secret".to_string()),
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

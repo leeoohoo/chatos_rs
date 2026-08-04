@@ -2,6 +2,39 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::catalog::{
+    CHATOS_BACKEND_PORT_CONFIG_KEY, CHATOS_CORS_ORIGINS_CONFIG_KEY, CHATOS_DATABASE_URL_CONFIG_KEY,
+    CHATOS_HOST_CONFIG_KEY, CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY,
+    CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY, CHATOS_LOG_MAX_FILES_CONFIG_KEY,
+    CHATOS_MONGODB_DATABASE_CONFIG_KEY, CHATOS_NODE_ENV_CONFIG_KEY,
+    LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY,
+    LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY, LOCAL_CONNECTOR_HOST_CONFIG_KEY,
+    LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY,
+    LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY,
+    LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY, LOCAL_CONNECTOR_PORT_CONFIG_KEY,
+    LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY,
+    MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY, MCP_MANAGEMENT_EMBEDDED_WORK_DIR_CONFIG_KEY,
+    MCP_MANAGEMENT_HOST_CONFIG_KEY, MCP_MANAGEMENT_PORT_CONFIG_KEY, MEMORY_ENGINE_HOST_CONFIG_KEY,
+    MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY, MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY,
+    MEMORY_ENGINE_PORT_CONFIG_KEY, PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY, PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY, PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
+    PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED_CONFIG_KEY,
+    PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES_CONFIG_KEY,
+    PROJECT_SERVICE_CLOUD_PROJECT_MAX_UNPACKED_BYTES_CONFIG_KEY,
+    PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES_CONFIG_KEY,
+    PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY, PROJECT_SERVICE_HOST_CONFIG_KEY,
+    PROJECT_SERVICE_PORT_CONFIG_KEY, SANDBOX_MANAGER_AGENT_PORT_CONFIG_KEY,
+    SANDBOX_MANAGER_CLEANUP_INTERVAL_SECONDS_CONFIG_KEY, SANDBOX_MANAGER_DATABASE_URL_CONFIG_KEY,
+    SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE_CONFIG_KEY,
+    SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE_CONFIG_KEY,
+    SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS_CONFIG_KEY,
+    SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED_CONFIG_KEY, SANDBOX_MANAGER_HOST_CONFIG_KEY,
+    SANDBOX_MANAGER_LEASE_TTL_SECONDS_CONFIG_KEY, SANDBOX_MANAGER_MONGODB_DATABASE_CONFIG_KEY,
+    SANDBOX_MANAGER_PORT_CONFIG_KEY, TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY, TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
+};
 
 pub(super) fn migrate_agent_iteration_values(
     values: &mut BTreeMap<String, Value>,
@@ -89,6 +122,40 @@ pub(super) fn ensure_task_runner_execution_environment_mode_value(
     true
 }
 
+pub(super) fn ensure_task_runner_queue_mode_value(
+    values: &mut BTreeMap<String, Value>,
+    key: &str,
+    fallback: Value,
+) -> bool {
+    let should_replace = match values.get(key).and_then(Value::as_str) {
+        None => true,
+        Some(value) => value.trim().eq_ignore_ascii_case("inline"),
+    };
+    if !should_replace {
+        return false;
+    }
+    if values.get(key) == Some(&fallback) {
+        return false;
+    }
+    values.insert(key.to_string(), fallback);
+    true
+}
+
+pub(super) fn migrate_task_runner_queue_mode_draft(
+    values: &mut BTreeMap<String, Value>,
+    key: &str,
+) -> bool {
+    let is_legacy_inline = values
+        .get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("inline"));
+    if !is_legacy_inline {
+        return false;
+    }
+    values.insert(key.to_string(), json!("rabbitmq"));
+    true
+}
+
 pub(super) fn task_runner_service_default_values(
     definitions: &[ConfigDefinitionRecord],
 ) -> BTreeMap<String, Value> {
@@ -127,8 +194,65 @@ pub(super) fn mcp_management_service_default_values(
                 MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
                 MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
                 MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_HOST_CONFIG_KEY,
+                MCP_MANAGEMENT_PORT_CONFIG_KEY,
+                MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
                 MCP_MANAGEMENT_RUNTIME_GRANT_SECRET_CONFIG_KEY,
                 MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET_CONFIG_KEY,
+                MCP_MANAGEMENT_EMBEDDED_WORK_DIR_CONFIG_KEY,
+                MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY,
+                MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS_CONFIG_KEY,
+                MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES_CONFIG_KEY,
+                MCP_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
+                MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
+                MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
+                MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY,
+                MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY,
+                MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+                MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn local_connector_service_runtime_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("local-connector-service")
+        })
+        .filter(|definition| {
+            [
+                LOCAL_CONNECTOR_HOST_CONFIG_KEY,
+                LOCAL_CONNECTOR_PORT_CONFIG_KEY,
+                LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
+                LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
+                LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY,
+                LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY,
+                LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
+                LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
+                LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY,
+                LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY,
+                LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY,
+                LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY,
             ]
             .contains(&definition.key.as_str())
         })
@@ -146,6 +270,16 @@ pub(super) fn ensure_task_runner_runtime_values(
             ensure_task_runner_iteration_value(values, fallback.clone())
         } else if key == TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY {
             ensure_task_runner_execution_environment_mode_value(values, fallback.clone())
+        } else if [
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
+            TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
+            TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
+        ]
+        .contains(&key.as_str())
+        {
+            ensure_task_runner_queue_mode_value(values, key, fallback.clone())
+        } else if key == TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY {
+            ensure_root_vhost_rabbitmq_url(values, key, fallback)
         } else if values.contains_key(key) {
             false
         } else {
@@ -160,6 +294,81 @@ pub(super) fn ensure_task_runner_runtime_values(
 }
 
 pub(super) fn ensure_mcp_management_runtime_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        let changed = if key == MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY {
+            ensure_root_vhost_rabbitmq_url(values, key, fallback)
+        } else if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            true
+        } else {
+            false
+        };
+        if changed {
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn normalize_root_vhost_rabbitmq_url_value(value: &Value) -> Option<Value> {
+    let url = value.as_str()?;
+    let (scheme, remainder) = url.split_once("://")?;
+    if !matches!(scheme, "amqp" | "amqps") || !remainder.ends_with('/') {
+        return None;
+    }
+    let authority = remainder.strip_suffix('/')?;
+    if authority.contains('/') {
+        return None;
+    }
+    Some(json!(format!("{scheme}://{authority}/%2f")))
+}
+
+pub(super) fn ensure_root_vhost_rabbitmq_url(
+    values: &mut BTreeMap<String, Value>,
+    key: &str,
+    fallback: &Value,
+) -> bool {
+    if let Some(current) = values.get(key).cloned() {
+        if let Some(normalized) = normalize_root_vhost_rabbitmq_url_value(&current) {
+            if normalized != current {
+                values.insert(key.to_string(), normalized);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    let fallback =
+        normalize_root_vhost_rabbitmq_url_value(fallback).unwrap_or_else(|| fallback.clone());
+    values.insert(key.to_string(), fallback);
+    true
+}
+
+#[test]
+fn normalizes_root_vhost_rabbitmq_urls_without_overwriting_authority() {
+    assert_eq!(
+        normalize_root_vhost_rabbitmq_url_value(&json!(
+            "amqp://chatos:change_me_rabbitmq_password@rabbitmq:5672/"
+        )),
+        Some(json!(
+            "amqp://chatos:change_me_rabbitmq_password@rabbitmq:5672/%2f"
+        ))
+    );
+    assert_eq!(
+        normalize_root_vhost_rabbitmq_url_value(&json!(crate::catalog::DEFAULT_LOCAL_RABBITMQ_URL)),
+        None
+    );
+    assert_eq!(
+        normalize_root_vhost_rabbitmq_url_value(&json!("amqp://rabbitmq:5672/team-a")),
+        None
+    );
+}
+
+pub(super) fn ensure_local_connector_runtime_values(
     values: &mut BTreeMap<String, Value>,
     defaults: &BTreeMap<String, Value>,
 ) -> Vec<String> {
@@ -190,6 +399,80 @@ pub(super) fn sandbox_manager_pool_default_values(
         .collect()
 }
 
+pub(super) fn sandbox_manager_runtime_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("sandbox-manager")
+        })
+        .filter(|definition| {
+            [
+                SANDBOX_MANAGER_HOST_CONFIG_KEY,
+                SANDBOX_MANAGER_PORT_CONFIG_KEY,
+                SANDBOX_MANAGER_DATABASE_URL_CONFIG_KEY,
+                SANDBOX_MANAGER_MONGODB_DATABASE_CONFIG_KEY,
+                SANDBOX_MANAGER_AGENT_PORT_CONFIG_KEY,
+                SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY,
+                SANDBOX_MANAGER_LEASE_TTL_SECONDS_CONFIG_KEY,
+                SANDBOX_MANAGER_CLEANUP_INTERVAL_SECONDS_CONFIG_KEY,
+                SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED_CONFIG_KEY,
+                SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE_CONFIG_KEY,
+                SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE_CONFIG_KEY,
+                SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS_CONFIG_KEY,
+                SANDBOX_MANAGER_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                SANDBOX_MANAGER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES_CONFIG_KEY,
+                SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS_CONFIG_KEY,
+                SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS_CONFIG_KEY,
+                SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS_CONFIG_KEY,
+                SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn memory_engine_runtime_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("memory-engine")
+        })
+        .filter(|definition| {
+            [
+                MEMORY_ENGINE_HOST_CONFIG_KEY,
+                MEMORY_ENGINE_PORT_CONFIG_KEY,
+                MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY,
+                MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY,
+                MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
+                MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY,
+                MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY,
+                MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY,
+                MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY,
+                MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY,
+                MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY,
+                MEMORY_ENGINE_WORKER_MAX_THREADS_PER_TICK_CONFIG_KEY,
+                MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY,
+                MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY,
+                MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY,
+                MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
 pub(super) fn internal_request_security_default_values(
     definitions: &[ConfigDefinitionRecord],
 ) -> BTreeMap<String, Value> {
@@ -201,12 +484,27 @@ pub(super) fn internal_request_security_default_values(
                 LOCAL_CONNECTOR_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
                 LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
                 LOCAL_CONNECTOR_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
                 LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
                 MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET_CONFIG_KEY,
+                CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
                 PROJECT_SERVICE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
                 PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
                 PROJECT_SERVICE_SELF_INTERNAL_API_SECRET_CONFIG_KEY,
                 PROJECT_SERVICE_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
                 PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET_CONFIG_KEY,
                 PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET_CONFIG_KEY,
                 PROJECT_SERVICE_SYNC_SECRET_CONFIG_KEY,
@@ -218,6 +516,7 @@ pub(super) fn internal_request_security_default_values(
                 MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
                 MEMORY_ENGINE_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
                 MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
                 MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY,
                 MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
                 SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -228,10 +527,132 @@ pub(super) fn internal_request_security_default_values(
                 SANDBOX_MANAGER_SYSTEM_CLIENT_KEY_CONFIG_KEY,
                 SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY,
                 SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+                TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
+                TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
+                TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY,
+                TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY,
+                TASK_RUNNER_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+                TASK_RUNNER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                TASK_RUNNER_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                USER_SERVICE_JWT_SECRET_CONFIG_KEY,
+                USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY,
+                USER_SERVICE_SECRET_KEY_CONFIG_KEY,
+                USER_SERVICE_PROJECT_SERVICE_INTERNAL_SECRET_CONFIG_KEY,
+                USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             ]
             .contains(&definition.key.as_str())
         })
         .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn project_service_runtime_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("project-service")
+        })
+        .filter(|definition| {
+            [
+                PROJECT_SERVICE_HOST_CONFIG_KEY,
+                PROJECT_SERVICE_PORT_CONFIG_KEY,
+                PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED_CONFIG_KEY,
+                PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES_CONFIG_KEY,
+                PROJECT_SERVICE_CLOUD_PROJECT_MAX_UNPACKED_BYTES_CONFIG_KEY,
+                PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES_CONFIG_KEY,
+                PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PROJECT_SERVICE_SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn plugin_management_service_runtime_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            (definition.scope == "service"
+                && definition.service_name.as_deref() == Some("plugin-management-service"))
+                || [
+                    SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
+                    SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                ]
+                .contains(&definition.key.as_str())
+        })
+        .filter(|definition| {
+            [
+                PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_SUPER_ADMIN_USERNAME_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
+                PLUGIN_MANAGEMENT_SEED_SYSTEM_RESOURCES_CONFIG_KEY,
+                SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
+                SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn plugin_management_snapshot_default_values(
+    defaults: &BTreeMap<String, Value>,
+    service_name: &str,
+) -> BTreeMap<String, Value> {
+    if service_name == "plugin-management-service" {
+        return defaults.clone();
+    }
+
+    defaults
+        .iter()
+        .filter(|(key, _)| {
+            [
+                SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
+                SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            ]
+            .contains(&key.as_str())
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
 
@@ -245,6 +666,7 @@ pub(super) fn user_service_smtp_default_values(
                 USER_SERVICE_SMTP_HOST_CONFIG_KEY,
                 USER_SERVICE_SMTP_PORT_CONFIG_KEY,
                 USER_SERVICE_SMTP_USERNAME_CONFIG_KEY,
+                USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY,
                 USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
                 USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY,
             ]
@@ -254,7 +676,144 @@ pub(super) fn user_service_smtp_default_values(
         .collect()
 }
 
+pub(super) fn user_service_runtime_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("user-service")
+        })
+        .filter(|definition| {
+            [
+                USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+                USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+                USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY,
+                USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY,
+                USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
+                USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
+                USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
+                USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
+                USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY,
+                USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
+                USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
+                USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY,
+                USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
+                USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT_CONFIG_KEY,
+                USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS_CONFIG_KEY,
+                USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS_CONFIG_KEY,
+                USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY,
+                USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY,
+                USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
+                USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
+                USER_SERVICE_HARNESS_SYNTHETIC_EMAIL_DOMAIN_CONFIG_KEY,
+                USER_SERVICE_HARNESS_SPACE_PREFIX_CONFIG_KEY,
+                USER_SERVICE_HARNESS_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
+pub(super) fn chatos_service_default_values(
+    definitions: &[ConfigDefinitionRecord],
+) -> BTreeMap<String, Value> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            definition.scope == "service"
+                && definition.service_name.as_deref() == Some("chatos-backend")
+        })
+        .filter(|definition| {
+            [
+                CHATOS_NODE_ENV_CONFIG_KEY,
+                CHATOS_HOST_CONFIG_KEY,
+                CHATOS_BACKEND_PORT_CONFIG_KEY,
+                CHATOS_DATABASE_URL_CONFIG_KEY,
+                CHATOS_MONGODB_DATABASE_CONFIG_KEY,
+                CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY,
+                CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY,
+                CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY,
+                CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
+                CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+                CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+                CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+                CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
+                CHATOS_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+                CHATOS_OPENAI_API_KEY_CONFIG_KEY,
+                CHATOS_OPENAI_BASE_URL_CONFIG_KEY,
+                CHATOS_SUMMARY_ENABLED_CONFIG_KEY,
+                CHATOS_SUMMARY_MESSAGE_LIMIT_CONFIG_KEY,
+                CHATOS_SUMMARY_MAX_CONTEXT_TOKENS_CONFIG_KEY,
+                CHATOS_SUMMARY_KEEP_LAST_N_CONFIG_KEY,
+                CHATOS_SUMMARY_TARGET_TOKENS_CONFIG_KEY,
+                CHATOS_SUMMARY_MERGE_TARGET_TOKENS_CONFIG_KEY,
+                CHATOS_SUMMARY_TEMPERATURE_CONFIG_KEY,
+                CHATOS_SUMMARY_COOLDOWN_SECONDS_CONFIG_KEY,
+                CHATOS_DYNAMIC_SUMMARY_ENABLED_CONFIG_KEY,
+                CHATOS_SUMMARY_BISECT_ENABLED_CONFIG_KEY,
+                CHATOS_SUMMARY_BISECT_MAX_DEPTH_CONFIG_KEY,
+                CHATOS_SUMMARY_BISECT_MIN_MESSAGES_CONFIG_KEY,
+                CHATOS_SUMMARY_RETRY_ON_CONTEXT_OVERFLOW_CONFIG_KEY,
+                CHATOS_AUTH_JWT_SECRET_CONFIG_KEY,
+                CHATOS_AUTH_COMPAT_SECRET_CONFIG_KEY,
+                CHATOS_AUTH_ACCESS_TOKEN_TTL_SECONDS_CONFIG_KEY,
+                CHATOS_LOG_MAX_FILES_CONFIG_KEY,
+                CHATOS_CORS_ORIGINS_CONFIG_KEY,
+                CHATOS_PLUGIN_UI_PARENT_ORIGIN_CONFIG_KEY,
+                CHATOS_PLUGIN_UI_RESOURCE_ORIGIN_CONFIG_KEY,
+                CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS_CONFIG_KEY,
+                CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS_CONFIG_KEY,
+                CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS_CONFIG_KEY,
+            ]
+            .contains(&definition.key.as_str())
+        })
+        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+        .collect()
+}
+
 pub(super) fn ensure_sandbox_manager_pool_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_sandbox_manager_runtime_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_memory_engine_runtime_values(
     values: &mut BTreeMap<String, Value>,
     defaults: &BTreeMap<String, Value>,
 ) -> Vec<String> {
@@ -282,7 +841,63 @@ pub(super) fn ensure_internal_request_security_values(
     changed_keys
 }
 
+pub(super) fn ensure_project_service_runtime_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_plugin_management_runtime_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
 pub(super) fn ensure_user_service_smtp_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_user_service_runtime_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Vec<String> {
+    let mut changed_keys = Vec::new();
+    for (key, fallback) in defaults {
+        if !values.contains_key(key) {
+            values.insert(key.clone(), fallback.clone());
+            changed_keys.push(key.clone());
+        }
+    }
+    changed_keys
+}
+
+pub(super) fn ensure_chatos_runtime_values(
     values: &mut BTreeMap<String, Value>,
     defaults: &BTreeMap<String, Value>,
 ) -> Vec<String> {
@@ -301,33 +916,6 @@ pub(super) fn ensure_changed_key(keys: &mut Vec<String>, key: &str) {
         keys.push(key.to_string());
         keys.sort();
     }
-}
-
-pub(super) fn chatos_local_project_creation_default_value(
-    definitions: &[ConfigDefinitionRecord],
-) -> Option<Value> {
-    definitions
-        .iter()
-        .find(|definition| {
-            definition.key == CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY
-                && definition.scope == "service"
-                && definition.service_name.as_deref() == Some("chatos-backend")
-        })
-        .map(|definition| definition.default_value.clone())
-}
-
-pub(super) fn ensure_chatos_local_project_creation_value(
-    values: &mut BTreeMap<String, Value>,
-    fallback: Value,
-) -> bool {
-    if values.contains_key(CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY) {
-        return false;
-    }
-    values.insert(
-        CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY.to_string(),
-        fallback,
-    );
-    true
 }
 
 pub(super) fn system_user() -> CurrentUser {

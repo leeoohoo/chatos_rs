@@ -65,6 +65,11 @@ pub struct AppConfig {
     pub chatos_internal_api_secret: Option<String>,
     pub mcp_management_internal_api_secret: Option<String>,
     pub local_connector_internal_api_secret: Option<String>,
+    pub local_connector_service_base_url: Option<String>,
+    pub local_connector_service_request_timeout: Duration,
+    pub plugin_relay_request_timeout: Duration,
+    pub plugin_hook_relay_timeout: Duration,
+    pub plugin_connector_discovery_timeout: Duration,
     pub callback_timeout: Duration,
     pub admin_username: String,
     pub admin_password: String,
@@ -95,6 +100,10 @@ impl AppConfig {
 
     pub fn scheduler_enabled(&self) -> bool {
         matches!(self.role, TaskRunnerRole::All | TaskRunnerRole::Scheduler)
+    }
+
+    pub fn callback_delivery_enabled(&self) -> bool {
+        matches!(self.role, TaskRunnerRole::All | TaskRunnerRole::Worker)
     }
 
     pub fn store_mode_key(&self) -> &'static str {
@@ -200,5 +209,80 @@ mod tests {
         assert!(files[0].ends_with("task_runner_service/backend/.env"));
         assert!(files[1].ends_with("task_runner_service/.env"));
         assert!(files[2].ends_with(".env"));
+    }
+
+    #[test]
+    fn role_flags_match_split_workload_expectations() {
+        let mut config = super::AppConfig {
+            host: "127.0.0.1".parse().unwrap(),
+            port: 39090,
+            role: super::TaskRunnerRole::Api,
+            store_mode: super::StoreMode::Mongo,
+            database_url: "mongodb://example/task_runner_service".to_string(),
+            memory_engine_base_url: None,
+            memory_engine_source_id: "task".to_string(),
+            memory_engine_operator_token: None,
+            default_tenant_id: "tenant".to_string(),
+            default_subject_id: "subject".to_string(),
+            default_workspace_dir: "/tmp/task-runner".to_string(),
+            memory_timeout: std::time::Duration::from_secs(5),
+            execution_timeout: std::time::Duration::from_secs(10),
+            scheduler_poll_interval: std::time::Duration::from_secs(1),
+            worker_id: "worker".to_string(),
+            worker_poll_interval: std::time::Duration::from_secs(1),
+            worker_claim_ttl: std::time::Duration::from_secs(30),
+            worker_concurrency: 1,
+            auto_memory_summary: false,
+            default_task_execution_max_iterations: 1,
+            default_tool_result_model_max_chars: 1,
+            default_tool_results_model_total_max_chars: 1,
+            default_execution_environment_mode: "local".to_string(),
+            default_sandbox_manager_base_url: "http://sandbox".to_string(),
+            sandbox_manager_client_id: None,
+            sandbox_manager_client_key: None,
+            default_sandbox_lease_ttl_seconds: 60,
+            chatos_callback_url: None,
+            chatos_callback_secret: None,
+            internal_api_secret: None,
+            chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
+            local_connector_internal_api_secret: None,
+            local_connector_service_base_url: None,
+            local_connector_service_request_timeout: std::time::Duration::from_secs(1),
+            plugin_relay_request_timeout: std::time::Duration::from_secs(1),
+            plugin_hook_relay_timeout: std::time::Duration::from_secs(1),
+            plugin_connector_discovery_timeout: std::time::Duration::from_secs(1),
+            callback_timeout: std::time::Duration::from_secs(1),
+            admin_username: "admin".to_string(),
+            admin_password: "secret".to_string(),
+            admin_display_name: "Admin".to_string(),
+            user_service_base_url: "http://user".to_string(),
+            user_service_request_timeout: std::time::Duration::from_secs(1),
+            project_service_base_url: None,
+            project_service_sync_secret: None,
+            project_service_request_timeout: std::time::Duration::from_secs(1),
+        };
+        assert!(config.api_enabled());
+        assert!(!config.worker_enabled());
+        assert!(!config.scheduler_enabled());
+        assert!(!config.callback_delivery_enabled());
+
+        config.role = super::TaskRunnerRole::Worker;
+        assert!(!config.api_enabled());
+        assert!(config.worker_enabled());
+        assert!(!config.scheduler_enabled());
+        assert!(config.callback_delivery_enabled());
+
+        config.role = super::TaskRunnerRole::Scheduler;
+        assert!(!config.api_enabled());
+        assert!(!config.worker_enabled());
+        assert!(config.scheduler_enabled());
+        assert!(!config.callback_delivery_enabled());
+
+        config.role = super::TaskRunnerRole::All;
+        assert!(config.api_enabled());
+        assert!(config.worker_enabled());
+        assert!(config.scheduler_enabled());
+        assert!(config.callback_delivery_enabled());
     }
 }

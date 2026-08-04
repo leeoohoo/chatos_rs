@@ -246,6 +246,23 @@ impl SandboxAuthContext {
         }
     }
 
+    pub fn ensure_lease_renewal_allowed(
+        &self,
+        record: &SandboxLeaseRecord,
+        ttl_seconds: u64,
+    ) -> Result<(), ApiError> {
+        self.ensure_lease_access(record, SCOPE_LEASE_CREATE)?;
+        if let Self::System(client) = self {
+            if ttl_seconds > client.max_lease_ttl_seconds {
+                return Err(ApiError::forbidden(format!(
+                    "ttl_seconds exceeds client policy: requested={ttl_seconds}, max={}",
+                    client.max_lease_ttl_seconds
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn ensure_tool_allowed(&self, tool_name: &str) -> Result<(), ApiError> {
         match self {
             Self::System(client) => client.ensure_tool_allowed(tool_name),

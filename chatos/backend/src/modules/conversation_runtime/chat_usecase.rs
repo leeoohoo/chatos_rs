@@ -10,6 +10,7 @@ use crate::services::ai_common::normalize_turn_id;
 use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
 use serde_json::Value;
+use tracing::warn;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_execution::init_chatos_stream_agent;
@@ -45,6 +46,12 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         None,
     );
     if let Err(err) = Config::try_get() {
+        warn!(
+            session_id = session_id.as_str(),
+            turn_id = initial_turn_id.as_deref().unwrap_or_default(),
+            error = err.as_str(),
+            "run_chat_usecase aborted before execution because runtime config is not initialized"
+        );
         send_error_event(
             &initial_sink,
             format!("服务配置未初始化: {err}").as_str(),
@@ -68,6 +75,12 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
     let model_runtime = match resolve_chat_model_runtime(&req, "gpt-4o", true).await {
         Ok(runtime) => runtime,
         Err(err) => {
+            warn!(
+                session_id = session_id.as_str(),
+                turn_id = initial_turn_id.as_deref().unwrap_or_default(),
+                error = err.as_str(),
+                "run_chat_usecase aborted before execution because model runtime resolution failed"
+            );
             send_error_event(
                 &initial_sink,
                 format!("解析模型配置失败: {err}").as_str(),

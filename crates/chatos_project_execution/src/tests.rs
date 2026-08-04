@@ -12,6 +12,19 @@ fn requirement(id: &str, parent: Option<&str>, status: &str) -> RequirementPlanI
     }
 }
 
+fn work_item(id: &str, requirement_id: &str, status: &str) -> WorkItemPlanItem {
+    WorkItemPlanItem {
+        id: id.to_string(),
+        requirement_id: requirement_id.to_string(),
+        title: id.to_string(),
+        description: None,
+        status: status.to_string(),
+        priority: 0,
+        tags: Vec::new(),
+        is_planning_task: false,
+    }
+}
+
 #[test]
 fn scope_is_shared_across_execution_planes() {
     let requirements = vec![
@@ -344,5 +357,114 @@ fn pending_task_selection_and_requirement_status_scope_are_shared() {
     assert_eq!(
         executing_requirement_ids("root", selected.as_slice()),
         BTreeSet::from(["root".to_string(), "child".to_string()])
+    );
+}
+
+#[test]
+fn unblocked_selection_keeps_the_runnable_part_of_a_requirement_batch() {
+    let tasks = vec![
+        work_item("task-ready", "visual", "ready"),
+        work_item("task-blocked", "visual", "todo"),
+        work_item("external", "chapter-one", "todo"),
+    ];
+    let selected = select_unblocked_pending_work_items(
+        tasks.as_slice(),
+        &BTreeSet::from(["visual".to_string()]),
+        &BTreeMap::from([("task-blocked".to_string(), vec!["external".to_string()])]),
+    )
+    .expect("the runnable task should form the current batch");
+
+    assert_eq!(
+        selected
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["task-ready"]
+    );
+}
+
+#[test]
+fn unblocked_selection_cascades_through_tasks_blocked_by_a_filtered_task() {
+    let tasks = vec![
+        work_item("task-ready", "visual", "ready"),
+        work_item("task-blocked", "visual", "todo"),
+        work_item("task-downstream", "visual", "todo"),
+        work_item("external", "chapter-one", "todo"),
+    ];
+    let selected = select_unblocked_pending_work_items(
+        tasks.as_slice(),
+        &BTreeSet::from(["visual".to_string()]),
+        &BTreeMap::from([
+            ("task-blocked".to_string(), vec!["external".to_string()]),
+            (
+                "task-downstream".to_string(),
+                vec!["task-blocked".to_string()],
+            ),
+        ]),
+    )
+    .expect("only the independent task should be selected");
+
+    assert_eq!(
+        selected
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["task-ready"]
+    );
+}
+
+#[test]
+fn unblocked_selection_reports_when_every_pending_task_is_blocked() {
+    let tasks = vec![
+        work_item("task-blocked", "visual", "todo"),
+        work_item("external", "chapter-one", "todo"),
+    ];
+    let error = select_unblocked_pending_work_items(
+        tasks.as_slice(),
+        &BTreeSet::from(["visual".to_string()]),
+        &BTreeMap::from([("task-blocked".to_string(), vec!["external".to_string()])]),
+    )
+    .expect_err("the batch has no runnable task");
+
+    assert!(error.contains("没有已解锁"));
+    assert!(error.contains("external"));
+}
+
+#[test]
+fn unblocked_selection_accepts_completed_external_prerequisites_and_later_batches() {
+    let mut tasks = vec![
+        work_item("task-first", "visual", "ready"),
+        work_item("task-later", "visual", "todo"),
+        work_item("external", "chapter-one", "todo"),
+    ];
+    let dependencies = BTreeMap::from([("task-later".to_string(), vec!["external".to_string()])]);
+    let first_batch = select_unblocked_pending_work_items(
+        tasks.as_slice(),
+        &BTreeSet::from(["visual".to_string()]),
+        &dependencies,
+    )
+    .expect("the first invocation selects the independent task");
+    assert_eq!(
+        first_batch
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["task-first"]
+    );
+
+    tasks[0].status = "done".to_string();
+    tasks[2].status = "done".to_string();
+    let later_batch = select_unblocked_pending_work_items(
+        tasks.as_slice(),
+        &BTreeSet::from(["visual".to_string()]),
+        &dependencies,
+    )
+    .expect("a later invocation selects only the remaining task");
+    assert_eq!(
+        later_batch
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["task-later"]
     );
 }

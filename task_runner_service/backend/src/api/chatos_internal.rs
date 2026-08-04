@@ -336,6 +336,7 @@ where
 fn trim_run_for_chatos_detail(
     mut run: crate::models::TaskRunRecord,
 ) -> crate::models::TaskRunRecord {
+    run.execution_lane_key = None;
     run.chatos_callback_delivery = None;
     redact_plugin_command_arguments(&mut run.input_snapshot);
     run.input_snapshot = truncate_run_input_snapshot_for_chatos(run.input_snapshot);

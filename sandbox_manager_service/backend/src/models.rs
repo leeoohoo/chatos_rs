@@ -191,6 +191,12 @@ pub struct StartSandboxEnvironmentRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct RenewSandboxEnvironmentLeaseRequest {
+    pub lease_id: String,
+    pub ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxEnvironmentServiceInput {
     pub service_id: String,

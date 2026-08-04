@@ -98,6 +98,10 @@ async fn test_project_sync_server() -> (String, CapturedProjectSyncCalls) {
             "/api/chatos-sync/projects/{project_id}",
             get(get_project_sync_record),
         )
+        .route(
+            "/api/chatos-sync/projects/{project_id}/runtime-environment",
+            get(get_project_runtime_environment),
+        )
         .with_state(calls.clone());
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -147,6 +151,43 @@ async fn get_project_sync_record(
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
         "archived_at": null
+    }))
+}
+
+async fn get_project_runtime_environment(
+    Path(_project_id): Path<String>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    assert_project_service_internal_headers(&headers, "project.read");
+    Json(json!({
+        "environment": {
+            "sandbox_enabled": true,
+            "status": "ready",
+            "not_runnable_reason": null,
+            "execution_service_id": "workspace",
+            "env_vars": {},
+            "generated_config_files": []
+        },
+        "images": [
+            {
+                "environment_key": "workspace",
+                "service_id": "workspace",
+                "display_name": "Workspace",
+                "service_role": "workspace",
+                "mcp_policy": {
+                    "managed_by": "system",
+                    "attachment": "workspace_gateway_target",
+                    "filesystem": true,
+                    "terminal": true
+                },
+                "image_id": "test-workspace-image",
+                "image_ref": null,
+                "image_provider": "cloud_sandbox_manager",
+                "status": "ready",
+                "dockerfile": null,
+                "env_vars": {}
+            }
+        ]
     }))
 }
 
@@ -205,6 +246,11 @@ fn test_config() -> AppConfig {
         chatos_internal_api_secret: None,
         mcp_management_internal_api_secret: None,
         local_connector_internal_api_secret: None,
+        local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+        local_connector_service_request_timeout: Duration::from_millis(5_000),
+        plugin_relay_request_timeout: Duration::from_millis(60_000),
+        plugin_hook_relay_timeout: Duration::from_millis(330_000),
+        plugin_connector_discovery_timeout: Duration::from_millis(10_000),
         callback_timeout: Duration::from_millis(1000),
         admin_username: "admin".to_string(),
         admin_password: "admin".to_string(),

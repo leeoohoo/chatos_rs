@@ -424,7 +424,7 @@ export const RequirementExecutionPreviewModal: React.FC<{
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
           <div className="text-xs text-muted-foreground">
             {onConfirm
-              ? '这里只选择 Agent 生成计划时覆盖的范围，不会启动 Task Runner。'
+              ? '这里只选择执行计划覆盖的范围，不会启动任务执行。'
               : optionalAvailable
                 ? '切换开关可预览是否纳入前置解锁出的额外后续需求。'
                 : '当前没有前置解锁出的额外后续需求。'}

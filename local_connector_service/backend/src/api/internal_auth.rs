@@ -17,6 +17,7 @@ pub(super) const PLUGIN_ARTIFACT_READ_SCOPE: &str = "plugin.artifact.read";
 pub(super) const PLUGIN_ARTIFACT_WRITE_SCOPE: &str = "plugin.artifact.write";
 pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
 pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
+pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
 
 const CHATOS_CALLER: &str = "chatos-backend";
 const TASK_RUNNER_CALLER: &str = "task-runner";
@@ -155,6 +156,10 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
                 PROJECT_SERVICE_CALLER,
                 MCP_MANAGEMENT_CALLER,
             ],
+        }),
+        (&Method::GET, ["api", "local-connectors", "system", "stats"]) => Some(InternalAccess {
+            scope: SYSTEM_STATS_READ_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER, CHATOS_CALLER],
         }),
         (
             &Method::POST,

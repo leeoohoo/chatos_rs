@@ -83,6 +83,25 @@ impl AppStore {
         }
     }
 
+    pub async fn claim_queued_run_by_id(
+        &self,
+        run_id: &str,
+        worker_id: &str,
+        claim_token: &str,
+        claim_until: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.claim_queued_run_by_id(run_id, worker_id, claim_token, claim_until))
+            }
+            Self::Mongo(store) => {
+                store
+                    .claim_queued_run_by_id(run_id, worker_id, claim_token, claim_until)
+                    .await
+            }
+        }
+    }
+
     pub async fn set_queued_runs_dispatch_paused(
         &self,
         task_ids: &[String],
@@ -155,23 +174,98 @@ impl AppStore {
         }
     }
 
+    pub async fn list_run_events_after(
+        &self,
+        run_id: &str,
+        after_created_at: Option<&str>,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<TaskRunEventRecord>, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.list_run_events_after(run_id, after_created_at, after_id, limit))
+            }
+            Self::Mongo(store) => {
+                store
+                    .list_run_events_after(run_id, after_created_at, after_id, limit)
+                    .await
+            }
+        }
+    }
+
     pub async fn append_run_event(&self, event: TaskRunEventRecord) -> Result<(), String> {
+        let publish_event = event.clone();
         match self {
             Self::InMemory(store) => {
                 store.append_run_event(event);
+                if let Err(err) =
+                    crate::run_event_queue::publish_run_event_if_configured(&publish_event).await
+                {
+                    warn!(
+                        run_id = publish_event.run_id.as_str(),
+                        event_id = publish_event.id.as_str(),
+                        event_type = publish_event.event_type.as_str(),
+                        error = err.as_str(),
+                        "failed to publish run event to rabbitmq"
+                    );
+                }
                 Ok(())
             }
-            Self::Mongo(store) => store.append_run_event(event).await,
+            Self::Mongo(store) => {
+                store.append_run_event(event).await?;
+                if let Err(err) =
+                    crate::run_event_queue::publish_run_event_if_configured(&publish_event).await
+                {
+                    warn!(
+                        run_id = publish_event.run_id.as_str(),
+                        event_id = publish_event.id.as_str(),
+                        event_type = publish_event.event_type.as_str(),
+                        error = err.as_str(),
+                        "failed to publish run event to rabbitmq"
+                    );
+                }
+                Ok(())
+            }
         }
     }
 
     pub fn append_run_event_sync(&self, event: TaskRunEventRecord) {
+        let publish_event = event.clone();
         match self.clone() {
-            Self::InMemory(store) => store.append_run_event(event),
+            Self::InMemory(store) => {
+                store.append_run_event(event);
+                tokio::spawn(async move {
+                    if let Err(err) =
+                        crate::run_event_queue::publish_run_event_if_configured(&publish_event)
+                            .await
+                    {
+                        warn!(
+                            run_id = publish_event.run_id.as_str(),
+                            event_id = publish_event.id.as_str(),
+                            event_type = publish_event.event_type.as_str(),
+                            error = err.as_str(),
+                            "failed to publish run event to rabbitmq"
+                        );
+                    }
+                });
+            }
             Self::Mongo(store) => {
                 tokio::spawn(async move {
                     if let Err(err) = store.append_run_event(event).await {
                         warn!("failed to append run event: {err}");
+                        return;
+                    }
+                    if let Err(err) =
+                        crate::run_event_queue::publish_run_event_if_configured(&publish_event)
+                            .await
+                    {
+                        warn!(
+                            run_id = publish_event.run_id.as_str(),
+                            event_id = publish_event.id.as_str(),
+                            event_type = publish_event.event_type.as_str(),
+                            error = err.as_str(),
+                            "failed to publish run event to rabbitmq"
+                        );
                     }
                 });
             }

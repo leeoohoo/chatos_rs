@@ -63,9 +63,9 @@ pub(super) fn build_task_prompt(
         task.mcp_config.requires_execution,
     ) {
         current_task_prompt.push_str(if locale.is_english() {
-            "\n\nExecution policy: this is a pure planning task. Produce analysis, plans, task decomposition, or Project Management updates only. Do not run commands and do not create, modify, move, or delete project files."
+            "\n\nPlanning scope: use project facts as read-only evidence and deliver analysis, technical plans, implementation tasks, and dependency updates. Engineering changes and runtime validation follow in the execution stage."
         } else {
-            "\n\n执行策略：这是纯规划任务。只产出分析、方案、任务拆分或 Project Management 更新；不得运行命令，不得创建、修改、移动或删除项目文件。"
+            "\n\n规划范围：以只读方式了解项目事实，交付分析、技术方案、实施任务和依赖关系；工程修改与运行验证由后续执行阶段承接。"
         });
     } else if !task.mcp_config.requires_execution {
         current_task_prompt.push_str(if locale.is_english() {
@@ -123,9 +123,9 @@ pub(super) fn build_task_prompt_template(locale: BuiltinMcpPromptLocale) -> Stri
 
 fn task_output_language_policy(locale: BuiltinMcpPromptLocale) -> &'static str {
     if locale.is_english() {
-        "[Output Language Policy]\nUse the language explicitly requested by the user or used in the current task title/objective for progress notes, Project Management artifacts, result summaries, reports, and other user-visible prose. If the task text is mixed or contains no clear natural language, use English (en-US). Preserve code identifiers, commands, paths, API/library/product names, and quoted source text in their original form. Keep each newly written artifact internally consistent instead of mixing English and Chinese sentences."
+        "[Output Language Policy]\nUse the language explicitly requested by the user or used in the current task title/objective for progress notes, project artifacts, result summaries, reports, and other user-visible prose. If the task text is mixed or contains no clear natural language, use English (en-US). Preserve code identifiers, commands, paths, API/library/product names, and quoted source text in their original form. Keep each newly written artifact internally consistent instead of mixing English and Chinese sentences."
     } else {
-        "[输出语言规则]\n进度说明、Project Management 产物、结果摘要、报告及其他用户可见文本，应优先使用用户明确指定的语言，或当前任务标题/目标所使用的自然语言。任务文本语言混合或无法判断时，使用简体中文（zh-CN）。代码标识符、命令、路径、API、库/产品名和引用原文保持不变。每个新写入的产物应保持语言一致，不要混用中英文完整句子。"
+        "[输出语言规则]\n进度说明、项目资料、结果摘要、报告及其他用户可见文本，应优先使用用户明确指定的语言，或当前任务标题/目标所使用的自然语言。任务文本语言混合或无法判断时，使用简体中文（zh-CN）。代码标识符、命令、路径、API、库/产品名和引用原文保持不变。每个新写入的产物应保持语言一致，不要混用中英文完整句子。"
     }
 }
 
@@ -353,12 +353,12 @@ mod tests {
         let chinese = build_task_prompt_template(BuiltinMcpPromptLocale::ZhCn);
         assert!(chinese.contains("输出语言规则"));
         assert!(chinese.contains("当前任务标题/目标所使用的自然语言"));
-        assert!(chinese.contains("Project Management 产物"));
+        assert!(chinese.contains("项目资料"));
 
         let english = build_task_prompt_template(BuiltinMcpPromptLocale::EnUs);
         assert!(english.contains("Output Language Policy"));
         assert!(english.contains("current task title/objective"));
-        assert!(english.contains("Project Management artifacts"));
+        assert!(english.contains("project artifacts"));
     }
 
     #[test]

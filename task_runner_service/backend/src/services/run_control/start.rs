@@ -63,6 +63,22 @@ impl RunService {
         .await
     }
 
+    pub(super) async fn start_automatic_retry_run(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+        previous_run_id: &str,
+    ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_trigger(
+            task_id,
+            input,
+            RunTriggerSource::AutomaticRetry,
+            Some(previous_run_id),
+            None,
+        )
+        .await
+    }
+
     pub(crate) fn start_lock_for_task(&self, task_id: &str) -> Arc<AsyncMutex<()>> {
         let mut locks = self.start_locks.lock();
         locks
@@ -213,6 +229,7 @@ impl RunService {
             plugin_snapshots,
             now,
         );
+        run.execution_lane_key = task.execution_lane_key();
         let requested_dispatch_paused = task.task_tool_state.execution_paused;
         run.dispatch_paused = requested_dispatch_paused || retry_of_run_id.is_some();
         self.store.save_run(run.clone()).await?;
@@ -264,6 +281,14 @@ impl RunService {
         // run id/status before batch pause or cancellation decisions are made.
         self.try_send_task_callback("task.run.started", task_id, Some(&run))
             .await;
+        if let Err(err) = self.enqueue_run_dispatch_if_needed(&run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                task_id = task_id,
+                error = err.as_str(),
+                "failed to enqueue queued run for rabbitmq dispatch"
+            );
+        }
 
         Ok(run)
     }
@@ -317,7 +342,7 @@ impl RunService {
 fn contact_async_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
     matches!(
         trigger,
-        RunTriggerSource::Scheduler | RunTriggerSource::Retry
+        RunTriggerSource::Scheduler | RunTriggerSource::Retry | RunTriggerSource::AutomaticRetry
     )
 }
 
@@ -348,17 +373,23 @@ mod tests {
     };
 
     #[test]
-    fn contact_async_allows_scheduler_and_explicit_retry_only() {
+    fn contact_async_allows_scheduler_and_retry_sources() {
         assert!(contact_async_trigger_is_allowed(
             RunTriggerSource::Scheduler
         ));
         assert!(contact_async_trigger_is_allowed(RunTriggerSource::Retry));
+        assert!(contact_async_trigger_is_allowed(
+            RunTriggerSource::AutomaticRetry
+        ));
         assert!(!contact_async_trigger_is_allowed(RunTriggerSource::Manual));
     }
 
     #[test]
     fn cancelled_task_can_only_be_reopened_by_explicit_retry() {
         assert!(cancelled_task_trigger_is_allowed(RunTriggerSource::Retry));
+        assert!(!cancelled_task_trigger_is_allowed(
+            RunTriggerSource::AutomaticRetry
+        ));
         assert!(!cancelled_task_trigger_is_allowed(RunTriggerSource::Manual));
         assert!(!cancelled_task_trigger_is_allowed(
             RunTriggerSource::Scheduler

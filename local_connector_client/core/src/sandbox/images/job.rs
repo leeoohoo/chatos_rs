@@ -137,6 +137,15 @@ pub(super) async fn run_local_sandbox_image_job(
             tracing_stdout(format!("save selected local sandbox image failed: {err}").as_str());
         }
     }
+    let maintenance_report = crate::sandbox::docker::enforce_docker_build_cache_limit().await;
+    let maintenance_message =
+        crate::sandbox::docker::docker_maintenance_report_message(&maintenance_report);
+    append_local_sandbox_job_output(
+        &jobs,
+        job_id.as_str(),
+        format!("[local connector] {maintenance_message}\n").as_str(),
+    )
+    .await;
 }
 
 async fn cleanup_replaced_local_sandbox_image(

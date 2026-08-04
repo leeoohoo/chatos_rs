@@ -26,6 +26,7 @@ pub enum TaskRunStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ChatosCallbackDeliveryStatus {
     Pending,
+    Enqueued,
     Delivered,
     Skipped,
 }
@@ -59,6 +60,8 @@ pub enum AskUserPromptStatus {
 pub struct TaskRunRecord {
     pub id: String,
     pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_lane_key: Option<String>,
     pub model_config_id: String,
     pub memory_thread_id: String,
     pub status: TaskRunStatus,
@@ -105,6 +108,7 @@ impl TaskRunRecord {
         Self {
             id,
             task_id,
+            execution_lane_key: None,
             model_config_id,
             memory_thread_id,
             status: TaskRunStatus::Queued,

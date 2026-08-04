@@ -93,6 +93,14 @@ impl RunService {
         self.retry_run_with_user(run_id, None, None, None).await
     }
 
+    pub(crate) async fn retry_run_automatically(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.retry_run_from_source(run_id, None, None, None, true)
+            .await
+    }
+
     pub async fn retry_run_with_instruction(
         &self,
         run_id: &str,
@@ -138,6 +146,24 @@ impl RunService {
         retry_instruction: Option<String>,
         execution_service_id: Option<String>,
     ) -> Result<Option<TaskRunRecord>, String> {
+        self.retry_run_from_source(
+            run_id,
+            current_user,
+            retry_instruction,
+            execution_service_id,
+            false,
+        )
+        .await
+    }
+
+    async fn retry_run_from_source(
+        &self,
+        run_id: &str,
+        current_user: Option<&CurrentUser>,
+        retry_instruction: Option<String>,
+        execution_service_id: Option<String>,
+        automatic: bool,
+    ) -> Result<Option<TaskRunRecord>, String> {
         let Some(run) = self.store.get_run(run_id).await? else {
             return Ok(None);
         };
@@ -169,9 +195,13 @@ impl RunService {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
         let request = retry_request_with_current_task_config(prompt_override, retry_instruction);
-        let restarted = self
-            .start_retry_run_with_user(&run.task_id, request, run.id.as_str(), current_user)
-            .await?;
+        let restarted = if automatic {
+            self.start_automatic_retry_run(&run.task_id, request, run.id.as_str())
+                .await?
+        } else {
+            self.start_retry_run_with_user(&run.task_id, request, run.id.as_str(), current_user)
+                .await?
+        };
         Ok(Some(restarted))
     }
 }

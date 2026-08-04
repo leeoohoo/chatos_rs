@@ -22,6 +22,9 @@ export interface SystemConfigResponse {
   default_execution_timeout_ms: number;
   execution_timeout_ms: number;
   scheduler_poll_interval_ms: number;
+  worker_poll_interval_ms: number;
+  worker_claim_ttl_ms: number;
+  worker_concurrency: number;
   auto_memory_summary: boolean;
   default_task_execution_max_iterations: number;
   task_execution_max_iterations: number;

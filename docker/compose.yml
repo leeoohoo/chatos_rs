@@ -232,6 +232,8 @@ services:
       CHATOS_SERVICE_HEALTH_PATH: /health
       MEMORY_ENGINE_HOST: 0.0.0.0
       MEMORY_ENGINE_PORT: 7081
+      MEMORY_ENGINE_API_ENABLED: "true"
+      MEMORY_ENGINE_WORKER_ENABLED: "false"
       MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
       MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
@@ -251,6 +253,33 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+
+  memory-engine-worker:
+    <<: *rust-service
+    image: ${MEMORY_ENGINE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-memory-engine-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: memory-engine
+      CHATOS_SERVICE_ID: memory-engine-worker-docker
+      CHATOS_SERVICE_ADDRESS: memory-engine-worker
+      CHATOS_SERVICE_PORT: 7081
+      CHATOS_SERVICE_HEALTH_PATH: /health
+      MEMORY_ENGINE_HOST: 0.0.0.0
+      MEMORY_ENGINE_PORT: 7081
+      MEMORY_ENGINE_API_ENABLED: "false"
+      MEMORY_ENGINE_WORKER_ENABLED: "true"
+      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
+      MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
+      CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
+      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
+      PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}
+      USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
+      PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
+      MEMORY_ENGINE_OPERATOR_TOKEN: ${MEMORY_ENGINE_OPERATOR_TOKEN:-}
+      MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
 
   project-management-backend:
     <<: *rust-service
@@ -406,6 +435,12 @@ services:
       MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET: ${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}
       MCP_MANAGEMENT_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/mcp_management_service?authSource=admin
       MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS: ${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}
+      MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE: ${MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE}
+      MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY: ${MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY}
+      MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER: ${MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER}
+      MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL: ${MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL}
+      MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE: ${MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE}
+      MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE: ${MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE}
       MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
       MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
@@ -452,6 +487,9 @@ services:
       CONTAINERS: "1"
       IMAGES: "1"
       BUILD: "1"
+      EXEC: "1"
+      GRPC: "1"
+      SESSION: "1"
       NETWORKS: "1"
       INFO: "1"
       PING: "1"
@@ -465,7 +503,7 @@ services:
       CONFIGS: "0"
       PLUGINS: "0"
       NODES: "0"
-      VOLUMES: "0"
+      VOLUMES: "1"
       AUTH: "0"
       DISTRIBUTION: "0"
     volumes:
@@ -502,8 +540,12 @@ services:
       SANDBOX_MANAGER_SYSTEM_CLIENT_KEY: ${SANDBOX_MANAGER_SYSTEM_CLIENT_KEY:-}
       SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT: /opt/chatos-sandbox-build-context
       SANDBOX_MANAGER_IMAGE_DOCKERFILE: /opt/chatos-sandbox-build-context/sandbox_manager_service/sandbox_agent/Dockerfile
+      SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED: ${SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED:-true}
+      SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE: ${SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE:-${CHATOS_DOCKER_BUILD_CACHE_MAX_USED_SPACE:-32gb}}
+      SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE: ${SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE:-${CHATOS_DOCKER_BUILD_CACHE_RESERVED_SPACE:-8gb}}
+      SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS: ${SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS:-180}
       DOCKER_HOST: tcp://sandbox-docker-socket-proxy:2375
-      DOCKER_BUILDKIT: "0"
+      DOCKER_BUILDKIT: "1"
     ports:
       - "${SANDBOX_MANAGER_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_PORT:-8095}:8095"
     volumes:
@@ -535,6 +577,7 @@ services:
       CHATOS_SERVICE_HEALTH_PATH: /api/health
       TASK_RUNNER_HOST: 0.0.0.0
       TASK_RUNNER_PORT: 39090
+      TASK_RUNNER_ROLE: ${TASK_RUNNER_ROLE:-api}
       TASK_RUNNER_STORE_MODE: mongo
       TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
@@ -587,6 +630,126 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+
+  task-runner-worker:
+    <<: *rust-service
+    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: task-runner
+      CHATOS_SERVICE_ID: task-runner-worker-docker
+      CHATOS_SERVICE_ADDRESS: task-runner-worker
+      CHATOS_SERVICE_PORT: 39090
+      CHATOS_SERVICE_HEALTH_PATH: /api/health
+      TASK_RUNNER_HOST: 0.0.0.0
+      TASK_RUNNER_PORT: 39090
+      TASK_RUNNER_ROLE: ${TASK_RUNNER_WORKER_ROLE:-worker}
+      TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_WORKER_ID:-task-runner-worker-docker}
+      TASK_RUNNER_STORE_MODE: mongo
+      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
+      TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
+      TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
+      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
+      TASK_RUNNER_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
+      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
+      TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
+      MCP_MANAGEMENT_SERVICE_BASE_URL: http://mcp-management-service-backend:39280
+      MCP_MANAGEMENT_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_mcp_management_internal_secret}
+      TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}
+      TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
+      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
+      TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: http://sandbox-manager-backend:8095
+      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: task-runner
+      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
+      TASK_RUNNER_CHATOS_CALLBACK_URL: http://chatos-backend:3997/api/agent/chat/task-runner/callback
+      TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
+      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
+      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
+      MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
+      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    volumes:
+      - task-runner-data:/data/task-runner
+    depends_on:
+      consul:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      sandbox-manager-backend:
+        condition: service_healthy
+      user-service-backend:
+        condition: service_healthy
+      memory-engine-backend:
+        condition: service_healthy
+      project-management-backend:
+        condition: service_healthy
+      plugin-management-backend:
+        condition: service_healthy
+      mcp-management-service-backend:
+        condition: service_healthy
+
+  task-runner-scheduler:
+    <<: *rust-service
+    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      <<: *service-runtime-env
+      CHATOS_SERVICE_NAME: task-runner
+      CHATOS_SERVICE_ID: task-runner-scheduler-docker
+      CHATOS_SERVICE_ADDRESS: task-runner-scheduler
+      CHATOS_SERVICE_PORT: 39090
+      CHATOS_SERVICE_HEALTH_PATH: /api/health
+      TASK_RUNNER_HOST: 0.0.0.0
+      TASK_RUNNER_PORT: 39090
+      TASK_RUNNER_ROLE: ${TASK_RUNNER_SCHEDULER_ROLE:-scheduler}
+      TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_SCHEDULER_WORKER_ID:-task-runner-scheduler-docker}
+      TASK_RUNNER_STORE_MODE: mongo
+      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
+      TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
+      TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
+      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
+      TASK_RUNNER_MEMORY_ENGINE_BASE_URL: http://memory-engine-backend:7081/api/memory-engine/v1
+      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
+      TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: http://local-connector-service-backend:39230
+      MCP_MANAGEMENT_SERVICE_BASE_URL: http://mcp-management-service-backend:39280
+      MCP_MANAGEMENT_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_mcp_management_internal_secret}
+      TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}
+      TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
+      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
+      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}}
+      TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: http://sandbox-manager-backend:8095
+      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: task-runner
+      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
+      TASK_RUNNER_CHATOS_CALLBACK_URL: http://chatos-backend:3997/api/agent/chat/task-runner/callback
+      TASK_RUNNER_CHATOS_CALLBACK_SECRET: ${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}
+      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
+      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
+      MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
+      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    volumes:
+      - task-runner-data:/data/task-runner
+    depends_on:
+      consul:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      sandbox-manager-backend:
+        condition: service_healthy
+      user-service-backend:
+        condition: service_healthy
+      memory-engine-backend:
+        condition: service_healthy
+      project-management-backend:
+        condition: service_healthy
+      plugin-management-backend:
+        condition: service_healthy
+      mcp-management-service-backend:
+        condition: service_healthy
 
   chatos-backend:
     <<: *rust-service

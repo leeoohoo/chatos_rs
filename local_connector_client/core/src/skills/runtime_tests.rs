@@ -47,6 +47,11 @@ async fn prepares_and_executes_selected_skill_on_the_client() {
         path: None,
         headers: BTreeMap::new(),
         body: json!({}),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let prepared = prepare_local_skill(&resolved_skill(&inventory), &state, &request)
         .expect("prepare selected local Skill");

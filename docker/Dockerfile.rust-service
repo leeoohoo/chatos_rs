@@ -2,6 +2,7 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 ARG DOCKER_CLI_VERSION=27.5.1
+ARG DOCKER_BUILDX_VERSION=0.20.0
 
 FROM rust:1.94.0-bookworm AS builder
 
@@ -12,7 +13,7 @@ ENV CARGO_HTTP_TIMEOUT=600
 ENV CARGO_TARGET_DIR=/tmp/chatos-target
 ENV RUSTUP_TOOLCHAIN=1.94.0
 
-RUN mkdir -p /root/.cargo \
+RUN mkdir -p "$CARGO_HOME" \
     && printf '%s\n' \
       '[source.crates-io]' \
       'replace-with = "rsproxy-sparse"' \
@@ -22,7 +23,7 @@ RUN mkdir -p /root/.cargo \
       '' \
       '[net]' \
       'git-fetch-with-cli = true' \
-      > /root/.cargo/config.toml
+      > "$CARGO_HOME/config.toml"
 
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
@@ -72,6 +73,7 @@ FROM debian:bookworm-slim AS runtime-deps
 
 ARG BIN_NAME
 ARG DOCKER_CLI_VERSION
+ARG DOCKER_BUILDX_VERSION
 ARG AGENT_BROWSER_VERSION=0.31.2
 ARG NODE_VERSION=24.4.1
 
@@ -112,8 +114,13 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
          && curl -fsSL \
            "https://download.docker.com/linux/debian/dists/bookworm/pool/stable/${docker_arch}/docker-ce-cli_${DOCKER_CLI_VERSION}-1~debian.12~bookworm_${docker_arch}.deb" \
            -o /tmp/docker-ce-cli.deb \
-         && apt-get install -y --no-install-recommends /tmp/docker-ce-cli.deb \
-         && rm -f /tmp/docker-ce-cli.deb; \
+         && curl -fsSL \
+           "https://download.docker.com/linux/debian/dists/bookworm/pool/stable/${docker_arch}/docker-buildx-plugin_${DOCKER_BUILDX_VERSION}-1~debian.12~bookworm_${docker_arch}.deb" \
+           -o /tmp/docker-buildx-plugin.deb \
+         && apt-get install -y --no-install-recommends \
+           /tmp/docker-ce-cli.deb \
+           /tmp/docker-buildx-plugin.deb \
+         && rm -f /tmp/docker-ce-cli.deb /tmp/docker-buildx-plugin.deb; \
        fi \
     && rm -rf /var/lib/apt/lists/*
 

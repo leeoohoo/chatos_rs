@@ -89,19 +89,17 @@ pub(super) async fn list_task_capability_catalog(
     })))
 }
 
-pub(super) async fn list_plugin_connectors() -> Result<Json<Value>, ApiError> {
+pub(super) async fn list_plugin_connectors(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, ApiError> {
     let access_token = crate::auth::get_current_access_token()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::unauthorized("current user access token is unavailable"))?;
-    let base_url = crate::services::plugin_relay_base_url().map_err(ApiError::bad_gateway)?;
-    let timeout_ms = std::env::var("TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(10_000)
-        .clamp(1_000, 30_000);
+    let base_url =
+        crate::services::plugin_relay_base_url(&state.config).map_err(ApiError::bad_gateway)?;
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .timeout(state.config.plugin_connector_discovery_timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| {

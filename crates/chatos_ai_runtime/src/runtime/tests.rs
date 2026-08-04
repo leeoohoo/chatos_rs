@@ -575,6 +575,7 @@ async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
         json!([{"role": "user", "content": "complete the task"}]),
     )
     .with_responses_support(true)
+    .with_thinking_level(Some("high".to_string()))
     .with_max_transient_retries(Some(1));
 
     let result = AiRuntime::new(None)
@@ -600,6 +601,14 @@ async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].get("stream"), Some(&Value::Bool(true)));
     assert_eq!(requests[1].get("stream"), Some(&Value::Bool(false)));
+    assert_eq!(
+        requests[0].pointer("/reasoning/effort"),
+        Some(&json!("high"))
+    );
+    assert_eq!(
+        requests[1].pointer("/reasoning/effort"),
+        Some(&json!("medium"))
+    );
     drop(requests);
 
     let connection_headers = state.connection_headers.lock().await;
@@ -614,8 +623,16 @@ async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
     assert_eq!(diagnostics.len(), 2);
     assert_eq!(diagnostics[0]["task_runner_debug"]["request_attempt"], 1);
     assert_eq!(diagnostics[0]["task_runner_debug"]["stream"], true);
+    assert_eq!(
+        diagnostics[0]["task_runner_debug"]["thinking_level"],
+        "high"
+    );
     assert_eq!(diagnostics[1]["task_runner_debug"]["request_attempt"], 2);
     assert_eq!(diagnostics[1]["task_runner_debug"]["stream"], false);
+    assert_eq!(
+        diagnostics[1]["task_runner_debug"]["thinking_level"],
+        "medium"
+    );
     assert_eq!(
         diagnostics[1]["task_runner_debug"]["connection_mode"],
         "isolated_retry"

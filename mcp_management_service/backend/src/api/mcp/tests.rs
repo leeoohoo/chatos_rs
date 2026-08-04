@@ -196,6 +196,110 @@ async fn tools_call_dispatches_the_original_name_to_project_service() {
 }
 
 #[tokio::test]
+async fn long_running_tool_returns_accepted_and_persists_async_result() {
+    async fn provider(Json(request): Json<Value>) -> Json<Value> {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {
+                "called": request.pointer("/params/name"),
+                "arguments": request.pointer("/params/arguments"),
+                "async": true,
+            }
+        }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/mcp", post(provider)))
+            .await
+            .unwrap();
+    });
+    let mut config = crate::config::AppConfig::test();
+    config.project_service_base_url = format!("http://{address}");
+    let state = AppState::new(config).await.unwrap();
+    let mut snapshot = snapshot();
+    snapshot.routes = vec![ResolvedMcpRoute {
+        resource_id: "builtin_project_management".to_string(),
+        server_name: "project_management_service".to_string(),
+        provider_kind: McpProviderKind::InternalService,
+        provider_ref: Some("project_management_service".to_string()),
+        tool_namespace: "project_management_service".to_string(),
+        allow_writes: false,
+        retry_class: McpRetryClass::IdempotentRead,
+        cancel_supported: true,
+        reason: "test".to_string(),
+    }];
+    snapshot.tools = vec![RuntimeToolDescriptor {
+        exposed_name: "project_management_service_list_requirements".to_string(),
+        original_name: "list_requirements".to_string(),
+        resource_id: "builtin_project_management".to_string(),
+        definition: json!({
+            "name": "project_management_service_list_requirements",
+            "inputSchema": {"type": "object"},
+            "annotations": {"x-chatos-preferAsync": true}
+        }),
+    }];
+    let response = handle_session_request(
+        JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("async-call-1")),
+            method: METHOD_TOOLS_CALL.to_string(),
+            params: json!({
+                "name": "project_management_service_list_requirements",
+                "arguments": {"status": "draft"}
+            }),
+        },
+        &snapshot,
+        &state,
+    )
+    .await;
+    let invocation_id = response
+        .result
+        .as_ref()
+        .and_then(|value| value.get("invocation_id"))
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        response.result,
+        Some(json!({
+            "status": "accepted",
+            "invocation_id": invocation_id,
+            "queued": true,
+        }))
+    );
+    let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(record) = state
+                .runtime_invocations
+                .get_for_caller(invocation_id.as_str(), snapshot.caller_service.as_str())
+                .await
+                .unwrap()
+            {
+                if record.status == RuntimeInvocationStatus::Completed {
+                    break record;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        completed.terminal_result,
+        Some(json!({
+            "called": "list_requirements",
+            "arguments": {"status": "draft"},
+            "async": true,
+        }))
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn cancelled_notification_stops_the_active_call_and_propagates_the_internal_id() {
     #[derive(Clone)]
     struct Capture {
@@ -371,7 +475,13 @@ async fn unconfirmed_mutation_cancellation_returns_unknown_execution_state() {
             mutation_may_have_started: true,
             cancel_supported: false,
             status: RuntimeInvocationStatus::Running,
+            async_execution: false,
             created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+            started_at_unix_ms: Some(chrono::Utc::now().timestamp_millis()),
+            completed_at_unix_ms: None,
+            terminal_result: None,
+            terminal_error_code: None,
+            terminal_error_message: None,
             expires_at: DateTime::from_millis(
                 (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
             ),

@@ -4,7 +4,10 @@
 use std::collections::BTreeMap;
 
 use crate::models::normalize_optional_text;
-use crate::models::{CurrentUser, HealthResponse, WORKSPACE_STATUS_DISABLED};
+use crate::models::{
+    now_rfc3339, CurrentUser, HealthResponse, LocalConnectorSystemStatsResponse,
+    WORKSPACE_STATUS_DISABLED,
+};
 use crate::relay::{
     plugin_artifact_relay_request, PluginArtifactRelayAction, RelayError, RelayRequest,
     RelayResponse,
@@ -109,6 +112,30 @@ async fn health_handler() -> Json<HealthResponse> {
         ok: true,
         service: "local_connector_service".to_string(),
     })
+}
+
+async fn system_stats_handler(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<LocalConnectorSystemStatsResponse>, ApiError> {
+    if user.principal_type != "service" && !user.is_super_admin() {
+        return Err(ApiError::forbidden(
+            "Local Connector system stats are restricted to service callers or super admins",
+        ));
+    }
+    let relay = state.relay.stats().await;
+    let store = state
+        .store
+        .system_stats()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(LocalConnectorSystemStatsResponse {
+        ok: true,
+        service: "local_connector_service".to_string(),
+        now: now_rfc3339(),
+        relay,
+        store,
+    }))
 }
 
 async fn current_user_handler(Extension(user): Extension<CurrentUser>) -> Json<CurrentUser> {
@@ -271,6 +298,11 @@ async fn mcp_relay(
         path: "/mcp".to_string(),
         headers: relay_headers,
         body: relay_body(body.as_ref()),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
     Ok(relay_response_to_http(response))
@@ -338,6 +370,11 @@ async fn skill_relay(
         path: format!("/skills/{action}"),
         headers: BTreeMap::new(),
         body,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
     Ok(relay_response_to_http(response))
@@ -405,6 +442,11 @@ async fn plugin_ui_asset_relay(
         path: "/plugins/ui/assets".to_string(),
         headers: BTreeMap::new(),
         body,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
     Ok(relay_response_to_http(response))
@@ -563,6 +605,11 @@ async fn plugin_relay(
         path: format!("/plugins/{action}"),
         headers: BTreeMap::new(),
         body,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let response = dispatch_relay(&state, request, relay_timeout).await?;
     Ok(relay_response_to_http(response))
@@ -643,6 +690,11 @@ async fn sandbox_facade_impl(
         path: relay_path,
         headers: relay_headers(&headers),
         body: relay_body(body.as_ref()),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
 
     let response = dispatch_relay(&state, request, relay_timeout).await?;
@@ -782,9 +834,10 @@ fn relay_error_to_api_error(error: RelayError) -> ApiError {
     match error {
         RelayError::Offline => ApiError::service_unavailable(error.message()),
         RelayError::Timeout => ApiError::gateway_timeout(error.message()),
-        RelayError::RequestEncode(_) | RelayError::ResponseChannelClosed => {
-            ApiError::bad_gateway(error.message())
-        }
+        RelayError::TooManyPendingRequests { .. } => ApiError::too_many_requests(error.message()),
+        RelayError::RequestEncode(_)
+        | RelayError::Signing(_)
+        | RelayError::ResponseChannelClosed => ApiError::bad_gateway(error.message()),
     }
 }
 

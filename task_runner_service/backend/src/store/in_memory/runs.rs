@@ -135,10 +135,21 @@ impl InMemoryStore {
         claim_until: &str,
     ) -> Option<TaskRunRecord> {
         let mut data = self.inner.write();
+        let active_execution_lanes = data
+            .runs
+            .values()
+            .filter(|run| run.status == TaskRunStatus::Running)
+            .filter_map(|run| run.execution_lane_key.clone())
+            .collect::<BTreeSet<_>>();
         let run_id = data
             .runs
             .values()
             .filter(|run| run.status == TaskRunStatus::Queued && !run.dispatch_paused)
+            .filter(|run| {
+                run.execution_lane_key
+                    .as_deref()
+                    .is_none_or(|lane| !active_execution_lanes.contains(lane))
+            })
             .min_by(|left, right| {
                 left.created_at
                     .cmp(&right.created_at)
@@ -146,6 +157,46 @@ impl InMemoryStore {
             })
             .map(|run| run.id.clone())?;
         let run = data.runs.get_mut(&run_id)?;
+        run.status = TaskRunStatus::Running;
+        run.worker_id = Some(worker_id.to_string());
+        run.claim_token = Some(claim_token.to_string());
+        run.claim_until = Some(claim_until.to_string());
+        run.attempt += 1;
+        run.finished_at = None;
+        run.result_summary = None;
+        run.error_message = None;
+        if run.started_at.is_none() {
+            run.started_at = Some(now_rfc3339());
+        }
+        run.updated_at = now_rfc3339();
+        Some(run.clone())
+    }
+
+    pub(in crate::store) fn claim_queued_run_by_id(
+        &self,
+        run_id: &str,
+        worker_id: &str,
+        claim_token: &str,
+        claim_until: &str,
+    ) -> Option<TaskRunRecord> {
+        let mut data = self.inner.write();
+        let execution_lane_key = data
+            .runs
+            .get(run_id)
+            .and_then(|run| run.execution_lane_key.clone());
+        if execution_lane_key.as_deref().is_some_and(|lane| {
+            data.runs.values().any(|run| {
+                run.id != run_id
+                    && run.status == TaskRunStatus::Running
+                    && run.execution_lane_key.as_deref() == Some(lane)
+            })
+        }) {
+            return None;
+        }
+        let run = data.runs.get_mut(run_id)?;
+        if run.status != TaskRunStatus::Queued || run.dispatch_paused {
+            return None;
+        }
         run.status = TaskRunStatus::Running;
         run.worker_id = Some(worker_id.to_string());
         run.claim_token = Some(claim_token.to_string());
@@ -301,6 +352,33 @@ impl InMemoryStore {
             .unwrap_or_default()
     }
 
+    pub(in crate::store) fn list_run_events_after(
+        &self,
+        run_id: &str,
+        after_created_at: Option<&str>,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> Vec<TaskRunEventRecord> {
+        let events = self
+            .inner
+            .read()
+            .run_events
+            .get(run_id)
+            .cloned()
+            .unwrap_or_default();
+        let mut items = events
+            .into_iter()
+            .filter(|event| run_event_is_after_cursor(event, after_created_at, after_id))
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then(left.id.cmp(&right.id))
+        });
+        items.truncate(limit);
+        items
+    }
+
     pub(in crate::store) fn append_run_event(&self, event: TaskRunEventRecord) {
         let mut data = self.inner.write();
         data.run_events
@@ -349,6 +427,20 @@ impl InMemoryStore {
     }
 }
 
+fn run_event_is_after_cursor(
+    event: &TaskRunEventRecord,
+    after_created_at: Option<&str>,
+    after_id: Option<&str>,
+) -> bool {
+    match (after_created_at, after_id) {
+        (Some(created_at), Some(id)) => {
+            event.created_at.as_str() > created_at
+                || (event.created_at.as_str() == created_at && event.id.as_str() > id)
+        }
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +455,7 @@ mod tests {
         TaskRunRecord {
             id: "run-1".to_string(),
             task_id: "task-1".to_string(),
+            execution_lane_key: None,
             model_config_id: "model-1".to_string(),
             memory_thread_id: "thread-1".to_string(),
             status: TaskRunStatus::Queued,
@@ -385,6 +478,63 @@ mod tests {
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,
+        }
+    }
+
+    #[test]
+    fn execution_lane_allows_only_one_running_project_task() {
+        let store = test_store();
+        let mut first = queued_run();
+        first.execution_lane_key = Some("project:one".to_string());
+        store.save_run(first).expect("save first run");
+
+        let mut second = queued_run();
+        second.id = "run-2".to_string();
+        second.task_id = "task-2".to_string();
+        second.execution_lane_key = Some("project:one".to_string());
+        store.save_run(second).expect("save second run");
+
+        let mut other_project = queued_run();
+        other_project.id = "run-3".to_string();
+        other_project.task_id = "task-3".to_string();
+        other_project.execution_lane_key = Some("project:two".to_string());
+        store
+            .save_run(other_project)
+            .expect("save other project run");
+
+        let claimed_first = store
+            .claim_next_queued_run("worker-1", "claim-1", "2999-01-01T00:00:00Z")
+            .expect("claim first lane");
+        assert_eq!(claimed_first.id, "run-1");
+
+        assert!(store
+            .claim_queued_run_by_id("run-2", "worker-2", "claim-2", "2999-01-01T00:00:00Z",)
+            .is_none());
+
+        let claimed_other = store
+            .claim_next_queued_run("worker-2", "claim-3", "2999-01-01T00:00:00Z")
+            .expect("claim other project");
+        assert_eq!(claimed_other.id, "run-3");
+
+        let mut finished_first = claimed_first;
+        finished_first.status = TaskRunStatus::Succeeded;
+        finished_first.updated_at = now_rfc3339();
+        store.save_run(finished_first).expect("finish first lane");
+
+        let claimed_second = store
+            .claim_next_queued_run("worker-3", "claim-4", "2999-01-01T00:00:00Z")
+            .expect("claim released lane");
+        assert_eq!(claimed_second.id, "run-2");
+    }
+
+    fn run_event(id: &str, created_at: &str) -> TaskRunEventRecord {
+        TaskRunEventRecord {
+            id: id.to_string(),
+            run_id: "run-1".to_string(),
+            event_type: "task.log".to_string(),
+            message: Some(id.to_string()),
+            payload: None,
+            created_at: created_at.to_string(),
         }
     }
 
@@ -436,6 +586,20 @@ mod tests {
         assert!(store
             .claim_next_queued_run("worker-1", "claim-2", "2999-01-01T00:00:00Z")
             .is_some());
+    }
+
+    #[test]
+    fn paused_queued_run_cannot_be_claimed_by_id() {
+        let store = test_store();
+        store.save_run(queued_run()).expect("save queued run");
+        assert_eq!(
+            store.set_queued_runs_dispatch_paused(&["task-1".to_string()], true),
+            1
+        );
+
+        assert!(store
+            .claim_queued_run_by_id("run-1", "worker-1", "claim-1", "2999-01-01T00:00:00Z",)
+            .is_none());
     }
 
     #[test]
@@ -554,5 +718,36 @@ mod tests {
 
         store.clear_local_run_abort("run-1");
         assert!(!store.is_cancel_requested("run-1"));
+    }
+
+    #[test]
+    fn list_run_events_after_returns_incremental_suffix() {
+        let store = test_store();
+        store.append_run_event(run_event("evt-1", "2026-08-03T10:00:00Z"));
+        store.append_run_event(run_event("evt-2", "2026-08-03T10:00:00Z"));
+        store.append_run_event(run_event("evt-3", "2026-08-03T10:00:01Z"));
+
+        let events =
+            store.list_run_events_after("run-1", Some("2026-08-03T10:00:00Z"), Some("evt-1"), 10);
+
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["evt-2", "evt-3"]
+        );
+    }
+
+    #[test]
+    fn list_run_events_after_respects_limit() {
+        let store = test_store();
+        store.append_run_event(run_event("evt-1", "2026-08-03T10:00:00Z"));
+        store.append_run_event(run_event("evt-2", "2026-08-03T10:00:01Z"));
+
+        let events = store.list_run_events_after("run-1", None, None, 1);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, "evt-1");
     }
 }

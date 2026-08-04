@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
@@ -14,11 +14,12 @@ use super::{RunService, TaskScheduleModeExt, TaskService, TaskStatusExt};
 mod delivery;
 mod dispatch;
 mod payload;
+mod publisher;
 mod reconciliation;
 
-pub use reconciliation::spawn_chatos_callback_reconciler;
+pub use reconciliation::{spawn_chatos_callback_queue_consumer, spawn_chatos_callback_reconciler};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ChatosTaskCallbackPayload {
     event: String,
     task_id: String,

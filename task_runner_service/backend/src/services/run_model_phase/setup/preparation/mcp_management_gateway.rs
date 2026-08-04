@@ -21,6 +21,10 @@ const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
     chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
 const TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS: u64 = chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000;
+const MCP_MANAGEMENT_INTERNAL_SECRET_HEADER: &str = "x-mcp-management-internal-secret";
+const MCP_MANAGEMENT_CALLER_HEADER: &str = "x-mcp-management-caller-service";
+const MCP_MANAGEMENT_SCOPE_HEADER: &str = "x-mcp-management-internal-scope";
+const MCP_MANAGEMENT_INVOCATIONS_READ_SCOPE: &str = "runtime.invocations.read";
 
 pub(super) async fn resolve_mcp_management_gateway(
     task: &TaskRecord,
@@ -34,7 +38,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         task.mcp_config.requires_execution,
     );
     let config = McpManagementClientConfig::from_env("task-runner").await;
-    let client = McpManagementClient::new(config)
+    let client = McpManagementClient::new(config.clone())
         .map_err(|err| format!("initialize MCP Management client failed: {err}"))?;
     let sandbox_provider = sandbox_context
         .map(SandboxRuntimeContext::provider_kind)
@@ -101,7 +105,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     let provider_skills_prompt = session.provider_skills_prompt.clone();
     let runtime_session =
         McpManagementRuntimeSessionHandle::new(client, session.session_id.clone());
-    let server = match gateway_server(session, timeout, ask_user_timeout) {
+    let server = match gateway_server(session, timeout, ask_user_timeout, &config) {
         Ok(server) => server,
         Err(error) => {
             let mcp_session_id = runtime_session.session_id().to_string();
@@ -140,12 +144,33 @@ fn gateway_server(
     session: RuntimeSessionResponse,
     timeout: Duration,
     ask_user_timeout: Duration,
+    client_config: &McpManagementClientConfig,
 ) -> Result<McpHttpServer, String> {
+    let mut headers = HashMap::from([(
+        "authorization".to_string(),
+        format!("Bearer {}", session.runtime_token),
+    )]);
+    if let Some(secret) = client_config
+        .internal_api_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.insert(
+            MCP_MANAGEMENT_INTERNAL_SECRET_HEADER.to_string(),
+            secret.to_string(),
+        );
+        headers.insert(
+            MCP_MANAGEMENT_CALLER_HEADER.to_string(),
+            client_config.caller_service.trim().to_string(),
+        );
+        headers.insert(
+            MCP_MANAGEMENT_SCOPE_HEADER.to_string(),
+            MCP_MANAGEMENT_INVOCATIONS_READ_SCOPE.to_string(),
+        );
+    }
     let mut server = McpHttpServer::new(GATEWAY_SERVER_NAME, session.mcp_server_url)
-        .with_headers(HashMap::from([(
-            "authorization".to_string(),
-            format!("Bearer {}", session.runtime_token),
-        )]))
+        .with_headers(headers)
         .with_timeout(timeout)
         .with_preserved_tool_names()
         .with_fail_on_unavailable();
@@ -201,6 +226,7 @@ mod tests {
             },
             Duration::from_secs(30),
             Duration::from_secs(3_600),
+            &McpManagementClientConfig::with_base_url("task-runner", "http://127.0.0.1:39280"),
         )
         .expect("gateway server");
         assert!(server.preserve_tool_names);
@@ -225,6 +251,51 @@ mod tests {
                 .and_then(|headers| headers.get("authorization"))
                 .map(String::as_str),
             Some("Bearer runtime-token")
+        );
+    }
+
+    #[test]
+    fn gateway_server_carries_internal_signing_headers_for_async_polling() {
+        let mut client_config =
+            McpManagementClientConfig::with_base_url("task-runner", "http://127.0.0.1:39280");
+        client_config.internal_api_secret = Some("a-long-mcp-management-secret".to_string());
+
+        let server = gateway_server(
+            RuntimeSessionResponse {
+                session_id: "session-1".to_string(),
+                policy_revision: "policy-1".to_string(),
+                route_revision: "route-1".to_string(),
+                expires_at: "2099-01-01T00:00:00Z".to_string(),
+                mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
+                runtime_token: "runtime-token".to_string(),
+                configured_mcp_count: 1,
+                exposed_tool_count: 1,
+                effective_mcp_ids: Vec::new(),
+                provider_skills_prompt: None,
+                unavailable_required_mcps: Vec::new(),
+            },
+            Duration::from_secs(30),
+            Duration::from_secs(3_600),
+            &client_config,
+        )
+        .expect("gateway server");
+
+        let headers = server.headers.as_ref().expect("headers");
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_INTERNAL_SECRET_HEADER)
+                .map(String::as_str),
+            Some("a-long-mcp-management-secret")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_CALLER_HEADER)
+                .map(String::as_str),
+            Some("task-runner")
+        );
+        assert_eq!(
+            headers.get(MCP_MANAGEMENT_SCOPE_HEADER).map(String::as_str),
+            Some(MCP_MANAGEMENT_INVOCATIONS_READ_SCOPE)
         );
     }
 }

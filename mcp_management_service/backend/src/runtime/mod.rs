@@ -9,6 +9,7 @@ mod session_store;
 pub use grant::{IssuedRuntimeGrant, RuntimeGrantClaims, RuntimeGrantService};
 pub use invocation_store::{
     RuntimeInvocationRecord, RuntimeInvocationStatus, RuntimeInvocationStore,
+    RuntimeInvocationStoreStats,
 };
 pub use plugin_mcp::{
     PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
@@ -16,5 +17,5 @@ pub use plugin_mcp::{
 };
 pub use session_store::{
     CloudStdioProviderBinding, ExternalHttpProviderBinding, RuntimeSessionSnapshot,
-    RuntimeSessionStore,
+    RuntimeSessionStore, RuntimeSessionStoreStats,
 };

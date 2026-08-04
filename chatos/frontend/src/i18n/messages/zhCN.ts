@@ -614,7 +614,7 @@ export const zhCN: MessageDictionary = {
   'composer.reasoning.onTitle': '推理已开启',
   'composer.reasoning.offTitle': '推理已关闭',
   'composer.reasoning.label': '推理 {state}',
-  'composer.planMode.onTitle': '规划模式已开启：发送后自动创建 Task Runner 规划任务',
+  'composer.planMode.onTitle': '规划模式已开启：发送后自动分析项目并生成实施计划',
   'composer.planMode.offTitle': '规划模式已关闭：本轮按普通对话和执行任务处理',
   'composer.planMode.label': '规划 {state}',
   'composer.currentProject': '当前项目',

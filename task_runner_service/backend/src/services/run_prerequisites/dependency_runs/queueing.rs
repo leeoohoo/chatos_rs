@@ -72,7 +72,7 @@ impl RunService {
             "started_as_prerequisite": true,
         });
         let now = now_rfc3339();
-        let run = TaskRunRecord::queued(
+        let mut run = TaskRunRecord::queued(
             run_id.clone(),
             task.id.clone(),
             model_config_id.clone(),
@@ -81,6 +81,7 @@ impl RunService {
             plugin_snapshots,
             now,
         );
+        run.execution_lane_key = task.execution_lane_key();
         self.store.save_run(run.clone()).await?;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
             if task_record.status != TaskStatus::Cancelled {
@@ -103,6 +104,14 @@ impl RunService {
                 None,
             ))
             .await?;
+        if let Err(err) = self.enqueue_run_dispatch_if_needed(&run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                task_id = task.id.as_str(),
+                error = err.as_str(),
+                "failed to enqueue prerequisite run for rabbitmq dispatch"
+            );
+        }
 
         Ok(run)
     }

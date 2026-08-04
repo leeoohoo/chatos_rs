@@ -66,6 +66,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::start_sandbox_environment),
         )
         .route(
+            "/api/sandbox-environments/{environment_id}/renew",
+            post(handlers::renew_sandbox_environment_lease),
+        )
+        .route(
             "/api/sandbox-environments/{environment_id}/stop",
             post(handlers::stop_sandbox_environment),
         )

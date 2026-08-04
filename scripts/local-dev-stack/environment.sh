@@ -37,6 +37,8 @@ export_local_env() {
   export MONGODB_HOST="${MONGODB_HOST:-127.0.0.1}"
   export MONGODB_PORT="$mongo_port"
   export MONGODB_AUTH_SOURCE="${MONGODB_AUTH_SOURCE:-admin}"
+  export MONGODB_CONNECTION_STRING="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/chatos?authSource=admin"
+  export MONGODB_DB="${MONGODB_DB:-chatos}"
 
   export CHATOS_ADMIN_USERNAME="${CHATOS_ADMIN_USERNAME:-admin}"
   export CHATOS_ADMIN_PASSWORD="${CHATOS_ADMIN_PASSWORD:-admin123456}"
@@ -132,6 +134,7 @@ export_local_env() {
   export TASK_RUNNER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/task_runner_service?authSource=admin"
   export MCP_MANAGEMENT_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/mcp_management_service?authSource=admin"
   export LEGACY_AUTH_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin"
+  export LEGACY_AUTH_MONGODB_DATABASE="${LEGACY_AUTH_MONGODB_DATABASE:-legacy_auth}"
 
   export MEMORY_ENGINE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export CONFIG_CENTER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
@@ -174,6 +177,9 @@ export_local_env() {
     export SANDBOX_MANAGER_DOCKER_HOST="${SANDBOX_MANAGER_DOCKER_HOST:-${DOCKER_HOST:-}}"
   fi
   export TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-mongo}"
+  # Do not inject a local default for TASK_RUNNER_WORKER_CONCURRENCY here.
+  # Task Runner loads the authoritative value from Configuration Center at
+  # startup unless the operator explicitly exports an environment override.
   export TASK_RUNNER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET="$TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET"
@@ -190,19 +196,103 @@ export_local_env() {
   export CHATOS_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
   export CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET="$CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET"
   export CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL="http://127.0.0.1:${LOCAL_CONNECTOR_SERVICE_PORT}"
-  export HARNESS_PROVISIONING_ENABLED="${CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED:-true}"
-  export HARNESS_BASE_URL="${CHATOS_LOCAL_DEV_HARNESS_BASE_URL:-http://127.0.0.1:3000}"
+  export USER_SERVICE_HARNESS_PROVISIONING_ENABLED="${CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED:-true}"
+  export USER_SERVICE_HARNESS_BASE_URL="${CHATOS_LOCAL_DEV_HARNESS_BASE_URL:-http://127.0.0.1:3000}"
   export OFFICIAL_WEBSITE_STATUS_HOST="${OFFICIAL_WEBSITE_STATUS_HOST:-127.0.0.1}"
 }
 
 ensure_dirs() {
-  mkdir -p "$LOG_DIR" "$PID_DIR" "$STATE_DIR/task-runner" "$STATE_DIR/chatos" "$STATE_DIR/sandboxes" "$STATE_DIR/docker-public-config"
+  mkdir -p \
+    "$LOG_DIR" \
+    "$PID_DIR" \
+    "$STATE_DIR/task-runner" \
+    "$STATE_DIR/chatos" \
+    "$STATE_DIR/sandboxes" \
+    "$STATE_DIR/docker-public-config" \
+    "$STATE_DIR/local-connector"
+}
+
+prepare_local_dev_apisix_config() {
+  local source_config="$ROOT_DIR/docker/apisix/apisix.yaml"
+  local target_config="$CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH"
+  if [[ ! -f "$source_config" ]]; then
+    echo "[ERROR] APISIX route config is missing: $source_config" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$target_config")"
+  sed \
+    -e 's/"chatos-backend:3997"/"host.docker.internal:3997"/g' \
+    -e 's/"user-service-backend:39190"/"host.docker.internal:39190"/g' \
+    -e 's/"project-management-backend:39210"/"host.docker.internal:39210"/g' \
+    -e 's/"plugin-management-backend:39260"/"host.docker.internal:39260"/g' \
+    -e 's/"mcp-management-service-backend:39280"/"host.docker.internal:39280"/g' \
+    -e 's/"local-connector-service-backend:39230"/"host.docker.internal:39230"/g' \
+    -e 's/"task-runner-backend:39090"/"host.docker.internal:39090"/g' \
+    -e 's/"memory-engine-backend:7081"/"host.docker.internal:7081"/g' \
+    -e 's/"chatos-frontend:80"/"host.docker.internal:8088"/g' \
+    -e 's/"official-website-frontend:80"/"host.docker.internal:39251"/g' \
+    "$source_config" >"$target_config"
+}
+
+infra_service_host_port() {
+  case "$1" in
+    consul)
+      printf '%s\n' "${CONSUL_HTTP_PORT:-8500}"
+      ;;
+    mongodb)
+      printf '%s\n' "${MONGODB_HOST_PORT:-27018}"
+      ;;
+    rabbitmq)
+      printf '%s\n' "${RABBITMQ_PORT:-5672}"
+      ;;
+    valkey)
+      printf '%s\n' "${VALKEY_PORT:-6379}"
+      ;;
+    harness)
+      printf '%s\n' "${HARNESS_PORT:-3000}"
+      ;;
+    apisix-gateway)
+      printf '%s\n' "${APISIX_GATEWAY_PORT:-9080}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+reuse_running_infra_service() {
+  local service="$1"
+  local match
+  match="$(
+    docker ps \
+      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service" \
+      --format '{{.Names}}' \
+      | head -n 1
+  )"
+  if [[ -n "$match" ]]; then
+    echo "[INFO] reusing $COMPOSE_PROJECT_NAME infrastructure container for $service: $match"
+    return 0
+  fi
+  return 1
 }
 
 start_infra() {
   need_cmd docker
-  echo "[INFO] starting local-dev infrastructure containers: ${INFRA_SERVICES[*]}"
-  compose up -d "${INFRA_SERVICES[@]}"
+  local service
+  local -a services_to_start=()
+  for service in "${INFRA_SERVICES[@]}"; do
+    if reuse_running_infra_service "$service"; then
+      continue
+    fi
+    services_to_start+=("$service")
+  done
+  if [[ ${#services_to_start[@]} -eq 0 ]]; then
+    echo "[INFO] reusing existing local-dev infrastructure containers"
+    return 0
+  fi
+  echo "[INFO] starting local-dev infrastructure containers: ${services_to_start[*]}"
+  compose up -d "${services_to_start[@]}"
 }
 
 stop_docker_app_services() {

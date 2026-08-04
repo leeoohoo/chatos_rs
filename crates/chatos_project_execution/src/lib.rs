@@ -713,6 +713,91 @@ pub fn select_pending_work_items(
         .collect()
 }
 
+pub fn select_unblocked_pending_work_items(
+    all_work_items: &[WorkItemPlanItem],
+    requirement_scope: &BTreeSet<String>,
+    dependency_map: &BTreeMap<String, Vec<String>>,
+) -> Result<Vec<WorkItemPlanItem>, String> {
+    let pending_work_items = select_pending_work_items(all_work_items, requirement_scope);
+    if pending_work_items.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let all_work_items_by_id = all_work_items
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<BTreeMap<_, _>>();
+    let pending_work_items_by_id = pending_work_items
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<BTreeMap<_, _>>();
+    let mut selected_ids = pending_work_items_by_id
+        .keys()
+        .map(|id| (*id).to_string())
+        .collect::<BTreeSet<_>>();
+
+    loop {
+        let blocked_ids = selected_ids
+            .iter()
+            .filter(|work_item_id| {
+                dependency_map
+                    .get(work_item_id.as_str())
+                    .into_iter()
+                    .flatten()
+                    .any(|dependency_id| {
+                        all_work_items_by_id
+                            .get(dependency_id.as_str())
+                            .is_none_or(|dependency| {
+                                !is_done_status(dependency.status.as_str())
+                                    && !selected_ids.contains(dependency_id.as_str())
+                            })
+                    })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if blocked_ids.is_empty() {
+            break;
+        }
+        for blocked_id in blocked_ids {
+            selected_ids.remove(blocked_id.as_str());
+        }
+    }
+
+    if selected_ids.is_empty() {
+        let mut blockers = Vec::new();
+        for item in &pending_work_items {
+            for dependency_id in dependency_map.get(item.id.as_str()).into_iter().flatten() {
+                match all_work_items_by_id.get(dependency_id.as_str()) {
+                    Some(dependency) if is_done_status(dependency.status.as_str()) => {}
+                    Some(dependency) => blockers.push(format!(
+                        "项目任务「{}」的前置任务尚未完成：{}（{}）",
+                        item.title, dependency.title, dependency.status
+                    )),
+                    None => blockers.push(format!(
+                        "项目任务「{}」包含不存在或不可见的前置任务: {}",
+                        item.title, dependency_id
+                    )),
+                }
+            }
+        }
+        blockers.sort();
+        blockers.dedup();
+        return Err(if blockers.is_empty() {
+            "当前需求执行范围内没有已解锁的项目任务".to_string()
+        } else {
+            format!(
+                "当前需求执行范围内没有已解锁的项目任务：{}",
+                blockers.join("；")
+            )
+        });
+    }
+
+    Ok(pending_work_items
+        .into_iter()
+        .filter(|item| selected_ids.contains(item.id.as_str()))
+        .collect())
+}
+
 pub fn sort_work_items_for_planning(work_items: &mut [WorkItemPlanItem]) {
     work_items.sort_by(|left, right| {
         right

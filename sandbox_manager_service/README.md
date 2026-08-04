@@ -42,9 +42,26 @@ This avoids publishing every agent port on the host.
 
 Compose does not mount `/var/run/docker.sock` into Sandbox Manager. Docker CLI requests are sent to
 the private `sandbox-docker-socket-proxy` service, which exposes only the container, image, build,
-network, info, ping and version API groups required by the manager. The proxy still permits
-container and image lifecycle operations, so it must remain private and must never publish port
-`2375` on the host.
+BuildKit session/exec, volume, network, info, ping and version API groups required by the manager.
+BuildKit uses its own managed container and state volume, so those narrowly scoped groups are
+required for cloud image builds and cache GC. The proxy still permits container and image lifecycle
+operations, so it must remain private and must never publish port `2375` on the host.
+
+Sandbox Manager labels every dynamically built image with its owning environment and service. It
+removes a replaced image only after the replacement container has started, and deletes environment
+images by their ownership labels when the environment is destroyed. BuildKit garbage collection is
+enabled by default and caps the shared builder cache at 32 GB while reserving 8 GB:
+
+```env
+SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED=true
+SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE=32gb
+SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE=8gb
+SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS=180
+```
+
+The cleanup code never selects another environment by image-name prefix alone; the environment ID
+label is the authoritative ownership boundary. The reference lookup only exists for images built by
+older releases before ownership labels were added.
 
 ## Auth
 

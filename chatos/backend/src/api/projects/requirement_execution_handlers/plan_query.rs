@@ -264,7 +264,7 @@ pub(super) async fn load_cloud_execution_source_message(
     Ok(message)
 }
 
-pub(super) fn execution_message_status(message: &crate::models::message::Message) -> String {
+pub(crate) fn execution_message_status(message: &crate::models::message::Message) -> String {
     let task_runner = message
         .metadata
         .as_ref()
@@ -397,7 +397,7 @@ fn is_cloud_execution_planner_status_pending(status: &str) -> bool {
     )
 }
 
-pub(super) fn cloud_execution_planner_message_is_stale(
+pub(crate) fn cloud_execution_planner_message_is_stale(
     message: &crate::models::message::Message,
     has_execution_links: bool,
     now: chrono::DateTime<chrono::Utc>,
@@ -415,7 +415,7 @@ pub(super) fn cloud_execution_planner_message_is_stale(
         >= STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS
 }
 
-async fn repair_stale_cloud_execution_planner_message(
+pub(crate) async fn repair_stale_cloud_execution_planner_message(
     mut message: crate::models::message::Message,
     no_execution_links: bool,
 ) -> Result<crate::models::message::Message, HandlerError> {

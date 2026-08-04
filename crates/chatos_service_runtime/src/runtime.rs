@@ -281,10 +281,7 @@ impl ChatosServiceRuntime {
 
         let mut applied = 0;
         for (key, value) in values {
-            if !is_user_preference_env_key(key.as_str()) && env::var_os(key.as_str()).is_none() {
-                env::set_var(key.as_str(), value.as_str());
-                applied += 1;
-            }
+            applied += apply_managed_env_var(key.as_str(), value.as_str());
         }
         Ok(applied)
     }
@@ -349,92 +346,65 @@ pub async fn resolve_service_url(
     fallback_url.trim().trim_end_matches('/').to_string()
 }
 
-pub async fn apply_config_center_env(service_name: &str) -> usize {
+pub async fn apply_config_center_env(service_name: &str) -> Result<usize, String> {
     let mut applied = 0usize;
-    match chatos_config_sdk::ConfigClient::from_env(service_name) {
-        Ok(client) => match client.load().await {
-            Ok(snapshot) => {
-                for (key, value) in &snapshot.env {
-                    if !is_user_preference_env_key(key) && env::var_os(key).is_none() {
-                        env::set_var(key, value);
-                        applied += 1;
-                    }
-                }
-                tracing::info!(
-                    service = service_name,
-                    environment = snapshot.environment.as_str(),
-                    revision = snapshot.revision,
-                    checksum = snapshot.checksum.as_str(),
-                    source = snapshot.source.as_deref().unwrap_or("configuration_center"),
-                    stale = snapshot.stale,
-                    applied,
-                    "loaded managed configuration snapshot"
-                );
-                let service_id = env::var("CHATOS_SERVICE_ID")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| format!("{service_name}-{}", std::process::id()));
-                let running_version = env::var("CHATOS_SERVICE_VERSION").ok();
-                if let Err(err) = client
-                    .report_instance(
-                        &snapshot,
-                        service_id.as_str(),
-                        running_version.as_deref(),
-                        &[],
-                        &[],
-                        None,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        service = service_name,
-                        error = err.as_str(),
-                        "failed to report configuration revision"
-                    );
-                }
-            }
-            Err(err) => {
-                tracing::warn!(
-                    service = service_name,
-                    error = err.as_str(),
-                    "configuration center API lookup failed; falling back to Consul KV"
-                );
-            }
-        },
-        Err(err) => {
-            tracing::warn!(
-                service = service_name,
-                error = err.as_str(),
-                "failed to initialize configuration center client"
-            );
-        }
+    let client = chatos_config_sdk::ConfigClient::from_env(service_name)
+        .map_err(|err| format!("failed to initialize configuration center client: {err}"))?;
+    let snapshot = client
+        .load_strict()
+        .await
+        .map_err(|err| format!("configuration center snapshot load failed: {err}"))?;
+    for (key, value) in &snapshot.env {
+        applied += apply_managed_env_var(key.as_str(), value.as_str());
     }
-
-    let runtime = ChatosServiceRuntime::from_env(service_name, 0, "/health");
-    match runtime.apply_config_center_env(service_name).await {
-        Ok(count) => {
-            if count > 0 {
-                tracing::info!(
-                    service = service_name,
-                    applied = count,
-                    "applied service config defaults from Consul KV"
-                );
-            }
-            applied + count
-        }
-        Err(err) => {
-            tracing::warn!(
-                service = service_name,
-                error = %err,
-                "config center lookup failed; continuing with local environment"
-            );
-            applied
-        }
+    tracing::info!(
+        service = service_name,
+        environment = snapshot.environment.as_str(),
+        revision = snapshot.revision,
+        checksum = snapshot.checksum.as_str(),
+        source = snapshot.source.as_deref().unwrap_or("configuration_center"),
+        stale = snapshot.stale,
+        applied,
+        "loaded managed configuration snapshot"
+    );
+    let service_id = env::var("CHATOS_SERVICE_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("{service_name}-{}", std::process::id()));
+    let running_version = env::var("CHATOS_SERVICE_VERSION").ok();
+    if let Err(err) = client
+        .report_instance(
+            &snapshot,
+            service_id.as_str(),
+            running_version.as_deref(),
+            &[],
+            &[],
+            None,
+        )
+        .await
+    {
+        tracing::warn!(
+            service = service_name,
+            error = err.as_str(),
+            "failed to report configuration revision"
+        );
     }
+    Ok(applied)
 }
 
 fn is_user_preference_env_key(key: &str) -> bool {
     matches!(key, "UI_LOCALE" | "INTERNAL_CONTEXT_LOCALE")
+}
+
+fn apply_managed_env_var(key: &str, value: &str) -> usize {
+    if is_user_preference_env_key(key) {
+        return 0;
+    }
+    if env::var(key).ok().as_deref() == Some(value) {
+        return 0;
+    }
+    env::set_var(key, value);
+    1
 }
 
 fn client_runtime() -> &'static ChatosServiceRuntime {

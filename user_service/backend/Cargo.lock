@@ -3211,7 +3211,6 @@ dependencies = [
  "jsonwebtoken",
  "lettre",
  "mongodb",
- "once_cell",
  "rand 0.10.2",
  "reqwest",
  "serde",

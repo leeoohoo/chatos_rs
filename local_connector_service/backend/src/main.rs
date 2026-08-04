@@ -12,7 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_local_connector_dotenv();
     init_tracing();
 
-    chatos_service_runtime::apply_config_center_env("local-connector-service").await;
+    chatos_service_runtime::apply_config_center_env("local-connector-service")
+        .await
+        .map_err(|err| format!("apply managed config failed: {err}"))?;
     let mut config = AppConfig::from_env()?;
     config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
         "user-service",

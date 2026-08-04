@@ -43,7 +43,9 @@ use self::input_items::{
 };
 use self::model_request::dispatch_model_request;
 use self::persistence::{normalized_option, should_persist_tool_result};
-use self::request_error::{handle_model_request_error, ModelRequestErrorAction};
+use self::request_error::{
+    downgraded_thinking_level, handle_model_request_error, ModelRequestErrorAction,
+};
 use self::summaries::summarize_tool_call_names;
 use self::tool_execution::{
     execute_runtime_tools, next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
@@ -172,7 +174,7 @@ impl AiRuntime {
                 }
             }
 
-            let (iteration_request, lifecycle_before) =
+            let (mut iteration_request, lifecycle_before) =
                 prepare_iteration_request(&request, &options, iteration, iteration_reason.as_str())
                     .await?;
 
@@ -232,11 +234,39 @@ impl AiRuntime {
                                 iteration_reason = "context_overflow_recovery".to_string();
                                 continue 'runtime_loop;
                             }
-                            ModelRequestErrorAction::RetryRequest { disable_stream } => {
+                            ModelRequestErrorAction::RetryRequest {
+                                disable_stream,
+                                downgrade_thinking,
+                            } => {
                                 // A retry must not inherit a potentially unhealthy pooled
                                 // connection. Build a new client for every retry attempt and
                                 // ask the provider to close that isolated connection afterward.
                                 force_non_stream |= disable_stream;
+                                if downgrade_thinking {
+                                    if let Some(next_level) = downgraded_thinking_level(
+                                        iteration_request.thinking_level.as_deref(),
+                                    ) {
+                                        warn!(
+                                            conversation_id = options
+                                                .conversation_id
+                                                .as_deref()
+                                                .unwrap_or(""),
+                                            conversation_turn_id = options
+                                                .conversation_turn_id
+                                                .as_deref()
+                                                .unwrap_or(""),
+                                            iteration,
+                                            request_attempt,
+                                            previous_thinking_level = iteration_request
+                                                .thinking_level
+                                                .as_deref()
+                                                .unwrap_or("default"),
+                                            next_thinking_level = next_level.as_str(),
+                                            "ai runtime lowering reasoning effort for transport retry"
+                                        );
+                                        iteration_request.thinking_level = Some(next_level);
+                                    }
+                                }
                                 recovery_request_handler = Some(AiRequestHandler::new());
                                 continue;
                             }

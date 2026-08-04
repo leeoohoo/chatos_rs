@@ -41,7 +41,7 @@ pub(in crate::api::projects) async fn load_requirement_execution_request_context
         .ok_or_else(|| {
             HandlerError::internal(
                 "项目执行需要配置项目管理同步密钥",
-                "CHATOS_PROJECT_SERVICE_SYNC_SECRET / PROJECT_SERVICE_SYNC_SECRET is required",
+                "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET is required from configuration center",
             )
         })?
         .to_string();

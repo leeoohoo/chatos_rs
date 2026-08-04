@@ -5,6 +5,7 @@ use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::{AuthService, SseTicketStore};
 use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
+use crate::platform_queue::TaskQueueTopology;
 use crate::services::{
     McpCatalogService, ModelConfigService, RemoteServerService, RunService, TaskProjectService,
     TaskService, ToolingStateService,
@@ -13,10 +14,54 @@ use crate::store::AppStore;
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 use memory_engine_sdk::UpsertSourceRequest;
 use serde_json::json;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskRunnerRuntimeStats {
+    worker_claim_failures_total: Arc<AtomicU64>,
+    active_run_event_streams: Arc<AtomicUsize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveRunEventStreamLease {
+    active_run_event_streams: Arc<AtomicUsize>,
+}
+
+impl TaskRunnerRuntimeStats {
+    pub fn record_worker_claim_failure(&self) {
+        self.worker_claim_failures_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn worker_claim_failures_total(&self) -> u64 {
+        self.worker_claim_failures_total.load(Ordering::Relaxed)
+    }
+
+    pub fn active_run_event_streams(&self) -> usize {
+        self.active_run_event_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn acquire_run_event_stream(&self) -> ActiveRunEventStreamLease {
+        self.active_run_event_streams
+            .fetch_add(1, Ordering::Relaxed);
+        ActiveRunEventStreamLease {
+            active_run_event_streams: Arc::clone(&self.active_run_event_streams),
+        }
+    }
+}
+
+impl Drop for ActiveRunEventStreamLease {
+    fn drop(&mut self) {
+        self.active_run_event_streams
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
+    pub task_queue_topology: TaskQueueTopology,
     pub task_service: TaskService,
     pub model_config_service: ModelConfigService,
     pub remote_server_service: RemoteServerService,
@@ -28,18 +73,21 @@ pub struct AppState {
     pub task_runner_mcp_service: TaskRunnerMcpService,
     pub auth_service: AuthService,
     pub sse_tickets: SseTicketStore,
+    pub runtime_stats: TaskRunnerRuntimeStats,
 }
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
         ensure_task_runner_memory_engine_source(&config).await?;
+        let task_queue_topology = TaskQueueTopology::from_managed_env()?;
         let store = AppStore::new(&config).await?;
         let auth_service = AuthService::new(config.clone(), store.clone());
         auth_service.ensure_default_admin(&config).await?;
-        let plugin_management_client = PluginManagementClient::new(
-            PluginManagementClientConfig::from_env("task-runner").await,
-        )
-        .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
+        let plugin_management_config = PluginManagementClientConfig::from_env("task-runner")
+            .await
+            .map_err(|err| format!("load plugin management client config failed: {err}"))?;
+        let plugin_management_client = PluginManagementClient::new(plugin_management_config)
+            .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
         let task_service = TaskService::new_with_plugin_management(
             config.clone(),
             store.clone(),
@@ -52,11 +100,14 @@ impl AppState {
         let remote_server_service = RemoteServerService::new(store.clone());
         let ask_user_prompt_service =
             AskUserPromptService::new_with_config(store.clone(), config.clone());
+        let runtime_stats = TaskRunnerRuntimeStats::default();
         let run_service = RunService::new_with_plugin_management(
             config.clone(),
+            task_queue_topology.clone(),
             store.clone(),
             ask_user_prompt_service.clone(),
             plugin_management_client,
+            runtime_stats.clone(),
         );
         let mcp_catalog_service =
             McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());
@@ -69,6 +120,7 @@ impl AppState {
         );
         Ok(Self {
             config,
+            task_queue_topology,
             task_service,
             model_config_service,
             remote_server_service,
@@ -80,6 +132,7 @@ impl AppState {
             task_runner_mcp_service,
             auth_service,
             sse_tickets: SseTicketStore::default(),
+            runtime_stats,
         })
     }
 }

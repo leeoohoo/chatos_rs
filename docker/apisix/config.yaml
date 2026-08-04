@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+
+apisix:
+  node_listen: 9080
+  enable_admin: false
+  enable_control: true
+  control:
+    ip: 0.0.0.0
+    port: 9092
+
+nginx_config:
+  error_log_level: warn

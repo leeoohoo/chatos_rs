@@ -9,8 +9,8 @@ use std::fmt;
 use crate::config::McpManagementClientConfig;
 use crate::dto::{
     CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpCatalogResponse,
-    ResolveMcpRoutesRequest, ResolveMcpRoutesResponse, RuntimeSessionResponse,
-    RuntimeSessionRoutesResponse,
+    ResolveMcpRoutesRequest, ResolveMcpRoutesResponse, RuntimeInvocationResponse,
+    RuntimeSessionResponse, RuntimeSessionRoutesResponse,
 };
 use crate::error::McpManagementClientError;
 
@@ -23,6 +23,7 @@ const ROUTES_RESOLVE_SCOPE: &str = "routes.resolve";
 const RUNTIME_SESSIONS_RESOLVE_SCOPE: &str = "runtime.sessions.resolve";
 const RUNTIME_SESSIONS_READ_SCOPE: &str = "runtime.sessions.read";
 const RUNTIME_SESSIONS_CLOSE_SCOPE: &str = "runtime.sessions.close";
+const RUNTIME_INVOCATIONS_READ_SCOPE: &str = "runtime.invocations.read";
 
 #[derive(Clone)]
 pub struct McpManagementClient {
@@ -149,6 +150,22 @@ impl McpManagementClient {
         );
         let response = self
             .internal_request(Method::POST, url, RUNTIME_SESSIONS_CLOSE_SCOPE)?
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn runtime_invocation(
+        &self,
+        invocation_id: &str,
+    ) -> Result<RuntimeInvocationResponse, McpManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/invocations/{}",
+            self.config.base_url,
+            urlencoding::encode(invocation_id.trim())
+        );
+        let response = self
+            .internal_request(Method::GET, url, RUNTIME_INVOCATIONS_READ_SCOPE)?
             .send()
             .await?;
         parse_response(response).await

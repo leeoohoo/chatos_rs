@@ -384,6 +384,35 @@ pull_prebuilt_images() {
   fi
 }
 
+sandbox_manager_requested() {
+  if [[ $# -eq 0 ]]; then
+    return 0
+  fi
+  local service
+  for service in "$@"; do
+    if [[ "$service" == "sandbox-manager-backend" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_sandbox_manager_docker_runtime() {
+  local buildkit_image="moby/buildkit:buildx-stable-1"
+  if ! docker image inspect "$buildkit_image" >/dev/null 2>&1; then
+    echo "[INFO] pulling Sandbox Manager BuildKit runtime image"
+    docker pull "$buildkit_image"
+  fi
+  echo "[INFO] starting Sandbox Manager Docker socket proxy"
+  compose up -d --no-build --pull missing sandbox-docker-socket-proxy
+}
+
+ensure_sandbox_manager_docker_runtime_if_requested() {
+  if sandbox_manager_requested "$@"; then
+    ensure_sandbox_manager_docker_runtime
+  fi
+}
+
 clean_dangling_images() {
   echo "[INFO] removing dangling Docker images (<none>:<none>)"
   docker image prune -f
@@ -399,19 +428,47 @@ clean_dangling_images_if_enabled() {
   clean_dangling_images
 }
 
+clean_build_cache() {
+  local max_used_space
+  local reserved_space
+  local timeout
+  max_used_space="$(env_value CHATOS_DOCKER_BUILD_CACHE_MAX_USED_SPACE 32gb)"
+  reserved_space="$(env_value CHATOS_DOCKER_BUILD_CACHE_RESERVED_SPACE 8gb)"
+  timeout="$(env_value CHATOS_DOCKER_BUILD_CACHE_TIMEOUT 180s)"
+  echo "[INFO] enforcing Docker BuildKit cache limit: max=$max_used_space reserved=$reserved_space"
+  docker builder prune --force --all \
+    --max-used-space "$max_used_space" \
+    --reserved-space "$reserved_space" \
+    --timeout "$timeout"
+}
+
+clean_build_cache_if_enabled() {
+  if ! env_flag_enabled CHATOS_DOCKER_PRUNE_BUILD_CACHE true; then
+    return 0
+  fi
+  clean_build_cache
+}
+
+clean_docker_artifacts_if_enabled() {
+  clean_dangling_images_if_enabled
+  clean_build_cache_if_enabled
+}
+
 start_from_prebuilt_images() {
   pull_prebuilt_images "$@"
+  ensure_sandbox_manager_docker_runtime_if_requested "$@"
   echo "[INFO] starting Chat OS cloud services from prebuilt images"
   compose up -d --no-build --remove-orphans "$@"
-  clean_dangling_images_if_enabled
+  clean_docker_artifacts_if_enabled
   print_urls
 }
 
 start_from_local_build() {
   build_local_images "$@"
+  ensure_sandbox_manager_docker_runtime_if_requested "$@"
   echo "[INFO] starting Chat OS cloud services from local build"
   compose_build up -d --no-build --remove-orphans "$@"
-  clean_dangling_images_if_enabled
+  clean_docker_artifacts_if_enabled
   print_urls
 }
 
@@ -435,6 +492,7 @@ restart_without_refresh() {
 rebuild_services() {
   local services=("$@")
   build_local_images "${services[@]}"
+  ensure_sandbox_manager_docker_runtime_if_requested "${services[@]}"
   if [[ ${#services[@]} -eq 0 ]]; then
     echo "[INFO] starting Chat OS cloud services from rebuilt local images"
     compose_build up -d --no-build --remove-orphans
@@ -442,7 +500,7 @@ rebuild_services() {
     echo "[INFO] recreating selected Chat OS services from rebuilt local images"
     compose_build up -d --no-build --pull never --no-deps --force-recreate "${services[@]}"
   fi
-  clean_dangling_images_if_enabled
+  clean_docker_artifacts_if_enabled
   print_urls
 }
 
@@ -518,7 +576,7 @@ case "$ACTION" in
   build)
     shift || true
     build_local_images "$@"
-    clean_dangling_images_if_enabled
+    clean_docker_artifacts_if_enabled
     ;;
   down|stop)
     compose down --remove-orphans
@@ -540,6 +598,9 @@ case "$ACTION" in
   clean-images|prune-images)
     clean_dangling_images
     ;;
+  clean-build-cache|prune-build-cache)
+    clean_build_cache
+    ;;
   services)
     compose_build config --services
     ;;
@@ -547,11 +608,12 @@ case "$ACTION" in
     print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|services|build-services|validate-plugin-ui-origin] [service...]" >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin] [service...]" >&2
     echo "  up/restart pull prebuilt images by default." >&2
     echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
     echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
     echo "  clean-images removes dangling <none>:<none> images." >&2
+    echo "  clean-build-cache enforces the configured BuildKit cache size limit." >&2
     echo "  service names can be listed with: $0 services" >&2
     echo "  buildable service names can be listed with: $0 build-services" >&2
     echo "  Plugin UI origins can be checked without Docker using: $0 validate-plugin-ui-origin" >&2

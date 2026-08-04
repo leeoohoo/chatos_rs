@@ -138,6 +138,7 @@ mod tests {
             openai_base_url: "http://127.0.0.1".to_string(),
             openai_model: "test".to_string(),
             openai_temperature: 0.0,
+            api_enabled: true,
             worker_enabled: false,
             worker_interval_secs: 30,
             worker_max_threads_per_tick: 1,

@@ -279,14 +279,21 @@ mod tests {
                         "context": "/tmp/project",
                         "dockerfile": ".chatos/runtime-environment/services/worker/Dockerfile"
                     }
+                },
+                "web": {
+                    "build": {
+                        "context": "/tmp/project",
+                        "dockerfile": ".chatos/runtime-environment/services/web/Dockerfile"
+                    }
                 }
             }
         });
 
         assert_eq!(
-            managed_application_image_refs(&normalized),
+            managed_application_image_refs("chatos-project", &normalized),
             vec![
                 "chatos-project-api:latest".to_string(),
+                "chatos-project-web:latest".to_string(),
                 "chatos-project-worker:latest".to_string()
             ]
         );

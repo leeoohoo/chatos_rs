@@ -179,9 +179,6 @@ impl TaskService {
         cascade_root_task_id: Option<String>,
     ) -> Result<CancelledTaskSnapshot, String> {
         ensure_task_status_cancellable(task.status)?;
-        let active_run_ids = self
-            .cancel_active_runs_for_task(task.id.as_str(), reason)
-            .await?;
         let now = now_rfc3339();
         task.status = TaskStatus::Cancelled;
         task.result_summary = Some(format!("任务已取消：{reason}"));
@@ -193,9 +190,6 @@ impl TaskService {
                 now.as_str(),
             )?;
         }
-        if let Some(last_run_id) = active_run_ids.first() {
-            task.last_run_id = Some(last_run_id.clone());
-        }
         task.task_tool_state.cancel_reason = Some(reason.to_string());
         task.task_tool_state.cancelled_at = Some(now.clone());
         task.task_tool_state.cancelled_by_user_id = current_user.map(|user| user.id.clone());
@@ -205,8 +199,16 @@ impl TaskService {
         task.task_tool_state.replacement_task_ids = replacement_task_ids;
         task.task_tool_state.cancelled_because_task_id = cancelled_because_task_id;
         task.task_tool_state.cascade_root_task_id = cascade_root_task_id;
-        task.updated_at = now;
-        let task = self.store.save_task(task).await?;
+        task.updated_at = now.clone();
+        let mut task = self.store.save_task(task).await?;
+        let active_run_ids = self
+            .cancel_active_runs_for_task(task.id.as_str(), reason)
+            .await?;
+        if let Some(last_run_id) = active_run_ids.first() {
+            task.last_run_id = Some(last_run_id.clone());
+            task.updated_at = now_rfc3339();
+            task = self.store.save_task(task).await?;
+        }
         Ok(CancelledTaskSnapshot {
             task,
             active_run_ids,
@@ -320,6 +322,11 @@ mod tests {
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

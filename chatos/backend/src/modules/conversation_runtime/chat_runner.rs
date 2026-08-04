@@ -301,7 +301,7 @@ pub async fn run_bootstrapped_project_planning(input: BootstrappedProjectPlannin
         },
         async move {
             let create_task_tool_name = create_task_tool_name.ok_or_else(|| {
-                "规划模式需要 Task Runner 创建规划任务，但当前运行没有该能力。".to_string()
+                "当前会话暂时无法创建规划任务。".to_string()
             })?;
             set_task_runner_async_overall_status_for_session(
                 lifecycle_session_id.as_str(),
@@ -339,10 +339,10 @@ pub async fn run_bootstrapped_project_planning(input: BootstrappedProjectPlannin
             let tool_result = tool_results
                 .into_iter()
                 .next()
-                .ok_or_else(|| "Task Runner 没有返回规划任务创建结果。".to_string())?;
+                .ok_or_else(|| "规划服务没有返回任务创建结果。".to_string())?;
             if !tool_result.success || tool_result.is_error {
                 return Err(if tool_result.content.trim().is_empty() {
-                    "Task Runner 创建规划任务失败。".to_string()
+                    "创建规划任务失败。".to_string()
                 } else {
                     tool_result.content
                 });
@@ -355,9 +355,9 @@ pub async fn run_bootstrapped_project_planning(input: BootstrappedProjectPlannin
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
             let acknowledgement = if output_is_english {
-                "The planning task has been submitted. The Task Runner planning agent is reading the project and generating requirements, the technical document, project tasks, and their dependency graph."
+                "Planning has started. The project is being analyzed to produce requirements, technical documentation, implementation tasks, and their dependencies."
             } else {
-                "规划任务已提交。Task Runner 规划 Agent 正在读取项目，并生成需求、技术文档、项目任务和依赖关系。"
+                "规划已开始。正在分析项目并整理需求、技术文档、实施任务和依赖关系。"
             };
             let metadata = json!({
                 "task_runner_async": {
@@ -437,12 +437,12 @@ fn project_planning_task_title(content: &str, english: bool) -> String {
 fn project_planning_task_objective(content: &str, english: bool) -> String {
     if english {
         format!(
-            "Plan the current project for the user's goal below. Use project facts as read-only evidence. Create or update traceable requirements, a non-empty technical document, project tasks, and a valid dependency graph in Project Management, then re-read the persisted artifacts and verify coverage before finishing. Do not modify project source files or run terminal commands.\n\nUser goal:\n{}",
+            "Plan the current project for the user's goal below. Use project facts as read-only evidence and turn the goal into traceable requirements, a non-empty technical document, implementation tasks, and a valid dependency graph in the project workspace. Re-read the saved artifacts and verify coverage before finishing; engineering implementation follows in the execution stage.\n\nUser goal:\n{}",
             content.trim()
         )
     } else {
         format!(
-            "根据下面的用户目标规划当前项目。项目代码只用于读取事实；在 Project Management 中创建或更新可追踪的需求、非空技术文档、项目任务和有效依赖图，完成后重新读取已落库产物并核对覆盖范围。不得修改项目源码，不得运行终端命令。\n\n用户目标：\n{}",
+            "根据下面的用户目标规划当前项目。以只读方式了解项目事实，并在项目空间中形成可追踪的需求、非空技术文档、实施任务和有效依赖图；完成后重新读取已保存的产物并核对覆盖范围，工程实现由后续执行阶段承接。\n\n用户目标：\n{}",
             content.trim()
         )
     }

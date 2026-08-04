@@ -12,7 +12,7 @@ pub use catalog::{agent_descriptor, system_agent_catalog, AgentDescriptor};
 #[cfg(feature = "managed-config")]
 pub use config::{
     load_agent_max_iterations, resolve_agent_max_iterations, resolve_task_runner_runtime_settings,
-    ManagedRuntimeConfigBundle,
+    ManagedRuntimeConfigBundle, RemoteControlTrustConfigBundle,
 };
 pub use config::{
     TaskRunnerRuntimeSettings, AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS,
