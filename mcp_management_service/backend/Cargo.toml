@@ -20,8 +20,8 @@ chatos_plugin_package = { path = "../../crates/chatos_plugin_package" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 futures-util = "0.3"
 hex = "0.4"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
-lapin = { version = "2.5", features = ["rustls", "rustls-native-certs"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+lapin = { version = "4.10", features = ["rustls", "rustls-native-certs"] }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 rand = "0.10"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
