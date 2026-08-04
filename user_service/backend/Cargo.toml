@@ -12,13 +12,13 @@ edition = "2021"
 aes-gcm = "0.11"
 argon2 = "0.5"
 axum = { version = "0.8", features = ["json", "macros"] }
-base64 = "0.22"
+base64 = "0.23"
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 futures-util = "0.3"
 hex = "0.4"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 rand = "0.10"
