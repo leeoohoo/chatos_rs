@@ -18,7 +18,7 @@ export function AgentPromptUpdateSettings() {
     try {
       setStatus(await api.agentPromptStatus());
     } catch (err) {
-      setError(err instanceof Error ? err.message : '读取系统 Agent 配置版本失败');
+      setError(err instanceof Error ? err.message : '读取本机审批 Agent 配置版本失败');
     }
   }, []);
 
@@ -33,9 +33,9 @@ export function AgentPromptUpdateSettings() {
     try {
       const next = await api.checkAgentPromptUpdates();
       setStatus(next);
-      setMessage(next.update_available ? '检测到新的系统 Agent 配置。' : '当前已经是最新版本。');
+      setMessage(next.update_available ? '检测到新的本机审批 Agent 配置。' : '当前已经是最新版本。');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '检查系统 Agent 配置更新失败');
+      setError(err instanceof Error ? err.message : '检查本机审批 Agent 配置更新失败');
       await loadStatus();
     } finally {
       setChecking(false);
@@ -49,9 +49,9 @@ export function AgentPromptUpdateSettings() {
     try {
       const next = await api.updateAgentPrompts();
       setStatus(next);
-      setMessage(`系统 Agent Prompt 与插件配置已更新到版本 ${next.installed_bundle_version}。`);
+      setMessage(`本机命令审批 Agent 配置已更新到版本 ${next.installed_bundle_version}。`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '更新系统 Agent 配置失败');
+      setError(err instanceof Error ? err.message : '更新本机审批 Agent 配置失败');
       await loadStatus();
     } finally {
       setUpdating(false);
@@ -62,8 +62,8 @@ export function AgentPromptUpdateSettings() {
     <section className="panel">
       <div className="panelHeader">
         <div>
-          <h2><Sparkles size={18} />系统 Agent 配置</h2>
-          <p>检测云端已发布版本，由你确认后原子同步 Prompt 与插件管理中的 MCP、Skill、Agent 状态和权限策略。</p>
+          <h2><Sparkles size={18} />本机命令审批 Agent</h2>
+          <p>仅同步本机命令审批所需的 Prompt 与能力策略；其他 Agent 统一由云端运行，不进入客户端。</p>
         </div>
         <button className="iconButton" onClick={() => void loadStatus()} title="刷新本机版本">
           <RefreshCw size={17} />
@@ -80,7 +80,7 @@ export function AgentPromptUpdateSettings() {
             <code>{status ? `${status.prompt_count}/${status.expected_prompt_count}` : '--'}</code>
           </div>
           <div>
-            <span>插件配置</span>
+            <span>审批策略</span>
             <code>{status ? `${status.capability_count}/${status.expected_capability_count}` : '--'}</code>
           </div>
           <div>

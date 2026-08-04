@@ -25,8 +25,6 @@ export interface SessionRuntimeSettingsResponse {
   workspace_root?: string | null;
   reasoning_enabled: boolean;
   plan_mode_enabled: boolean;
-  mcp_enabled: boolean;
-  enabled_mcp_ids: string[];
   auto_create_task: boolean;
   memory_auto_summary_enabled?: boolean;
   memory_summary_message_threshold?: number;
@@ -44,8 +42,6 @@ export interface SessionRuntimeSettingsPayload {
   workspace_root?: string | null;
   reasoning_enabled?: boolean;
   plan_mode_enabled?: boolean;
-  mcp_enabled?: boolean;
-  enabled_mcp_ids?: string[];
   auto_create_task?: boolean;
   memory_auto_summary_enabled?: boolean;
   memory_summary_message_threshold?: number;

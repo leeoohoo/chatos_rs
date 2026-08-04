@@ -3,6 +3,13 @@
 
 use super::*;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskMcpRequestConfig {
+    #[serde(default)]
+    pub requires_execution: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTaskRequest {
     pub title: String,
@@ -22,7 +29,7 @@ pub struct CreateTaskRequest {
     pub schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
     pub plugin_config: TaskPluginConfig,
-    pub mcp_config: Option<TaskMcpConfig>,
+    pub mcp_config: Option<TaskMcpRequestConfig>,
     #[serde(default)]
     pub prerequisite_task_ids: Option<Vec<String>>,
 }
@@ -37,6 +44,7 @@ pub struct TaskSourceContext {
     pub source_user_message_id: Option<String>,
     pub workspace_dir: Option<String>,
     pub remote_server_config: Option<CreateRemoteServerRequest>,
+    pub builtin_prompt_locale: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -56,7 +64,7 @@ pub struct UpdateTaskRequest {
     pub schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
     pub plugin_config: Option<TaskPluginConfig>,
-    pub mcp_config: Option<TaskMcpConfig>,
+    pub mcp_config: Option<TaskMcpRequestConfig>,
     #[serde(default)]
     pub prerequisite_task_ids: Option<Vec<String>>,
 }
@@ -96,19 +104,6 @@ pub struct RecordTaskProcessRequest {
     pub content: Option<String>,
     #[serde(default)]
     pub heading: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpdateTaskMcpRequest {
-    pub enabled: Option<bool>,
-    pub init_mode: Option<TaskMcpInitMode>,
-    pub builtin_prompt_mode: Option<TaskBuiltinMcpPromptMode>,
-    pub builtin_prompt_locale: Option<String>,
-    pub enabled_builtin_kinds: Option<Vec<String>>,
-    pub workspace_dir: Option<String>,
-    pub default_remote_server_id: Option<String>,
-    pub external_mcp_config_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,4 +182,58 @@ pub struct BatchTaskOperationResponse {
     pub succeeded: usize,
     pub failed: usize,
     pub results: Vec<BatchTaskOperationItem>,
+}
+
+#[cfg(test)]
+mod task_mcp_request_config_tests {
+    use super::*;
+
+    #[test]
+    fn request_accepts_only_execution_intent() {
+        let request = serde_json::from_value::<TaskMcpRequestConfig>(serde_json::json!({
+            "requires_execution": false
+        }))
+        .expect("execution intent");
+
+        assert_eq!(request.requires_execution, Some(false));
+    }
+
+    #[test]
+    fn request_rejects_program_managed_mcp_fields() {
+        for field in [
+            "enabled",
+            "init_mode",
+            "builtin_prompt_mode",
+            "builtin_prompt_locale",
+            "enabled_builtin_kinds",
+            "workspace_dir",
+            "sandbox_enabled",
+            "sandbox_manager_base_url",
+            "sandbox_mode",
+            "permission_profile_id",
+            "approval_policy",
+            "approval_reviewer",
+            "policy_revision",
+            "additional_writable_roots",
+            "execution_service_id",
+            "default_remote_server_id",
+            "external_mcp_config_ids",
+            "selected_skill_ids",
+            "skill_policy_revision",
+            "ephemeral_http_servers",
+        ] {
+            let value = serde_json::Value::Object(
+                [(field.to_string(), serde_json::Value::Null)]
+                    .into_iter()
+                    .collect(),
+            );
+            let error = serde_json::from_value::<TaskMcpRequestConfig>(value)
+                .expect_err("program-managed MCP field must be rejected");
+
+            assert!(
+                error.to_string().contains("unknown field"),
+                "unexpected error for {field}: {error}"
+            );
+        }
+    }
 }

@@ -4,10 +4,61 @@
 use super::*;
 
 impl RunService {
+    pub(in crate::services) async fn renew_active_sandbox_lease(
+        &self,
+        run_id: &str,
+    ) -> Result<(), String> {
+        let Some(run) = self.store.get_run(run_id).await? else {
+            return Ok(());
+        };
+        let Some(context) = sandbox_context_from_run(&run)? else {
+            return Ok(());
+        };
+        if context.provider_kind() != Ok(chatos_mcp_management_sdk::SandboxProviderKind::Cloud)
+            || !context.is_environment
+        {
+            return Ok(());
+        }
+        let auth = SandboxManagerAuth::for_context(&self.config, &context)?;
+        let client = SandboxManagerClient::new(context.manager_base_url.clone(), auth)?;
+        let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
+        client
+            .renew_environment_lease(&context, ttl_seconds)
+            .await
+            .map(|_| ())
+    }
+
     pub(crate) async fn release_sandboxes_for_terminal_run(
         &self,
         run: &TaskRunRecord,
     ) -> Result<usize, String> {
+        if let Some(context) = sandbox_context_from_run(run)? {
+            match context.provider_kind()? {
+                chatos_mcp_management_sdk::SandboxProviderKind::LocalConnector => {
+                    let auth = SandboxManagerAuth::for_context(&self.config, &context)?;
+                    let client = SandboxManagerClient::new(context.manager_base_url.clone(), auth)?;
+                    let response = client.release(&context, false, true).await?;
+                    self.store
+                        .append_run_event(TaskRunEventRecord::new(
+                            run.id.clone(),
+                            "sandbox_released_after_terminal_run",
+                            Some("任务运行节点中断后，本地沙箱已自动释放".to_string()),
+                            Some(json!({
+                                "sandbox_id": context.sandbox_id,
+                                "lease_id": context.lease_id,
+                                "release_status": response.status,
+                                "provider": context.provider,
+                            })),
+                        ))
+                        .await?;
+                    return Ok(1);
+                }
+                chatos_mcp_management_sdk::SandboxProviderKind::Cloud => {}
+                chatos_mcp_management_sdk::SandboxProviderKind::None => {
+                    return Err("sandbox runtime provider is unresolved".to_string());
+                }
+            }
+        }
         let base_url = self.effective_sandbox_manager_base_url().await?;
         let client =
             SandboxManagerClient::new(base_url, SandboxManagerAuth::from_config(&self.config))?;
@@ -102,7 +153,17 @@ impl RunService {
         } else {
             context.manager_base_url.clone()
         };
-        let auth = SandboxManagerAuth::from_config(&self.config);
+        let auth = match SandboxManagerAuth::for_context(&self.config, context) {
+            Ok(auth) => auth,
+            Err(err) => {
+                warn!(
+                    run_id = run.id.as_str(),
+                    sandbox_id = context.sandbox_id.as_str(),
+                    "failed to resolve sandbox auth for release: {err}"
+                );
+                return None;
+            }
+        };
         let client = match SandboxManagerClient::new(base_url, auth) {
             Ok(client) => client,
             Err(err) => {
@@ -115,7 +176,12 @@ impl RunService {
             }
         };
         match client.release(context, true, true).await {
-            Ok(response) => {
+            Ok(mut response) => {
+                if context.provider_kind()
+                    == Ok(chatos_mcp_management_sdk::SandboxProviderKind::LocalConnector)
+                {
+                    response.redact_local_paths();
+                }
                 let output_report = SandboxOutputReport::from_release_response(context, &response);
                 let output_error = response.output_error.clone();
                 let payload = json!({
@@ -355,4 +421,13 @@ impl RunService {
             );
         }
     }
+}
+
+fn sandbox_context_from_run(run: &TaskRunRecord) -> Result<Option<SandboxRuntimeContext>, String> {
+    let Some(value) = run.input_snapshot.get("sandbox") else {
+        return Ok(None);
+    };
+    serde_json::from_value::<SandboxRuntimeContext>(value.clone())
+        .map(Some)
+        .map_err(|err| format!("decode persisted sandbox context failed: {err}"))
 }

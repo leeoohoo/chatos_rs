@@ -73,7 +73,7 @@ export const PlanEmptyState: React.FC = () => (
       </div>
       <div className="mt-3 text-sm font-medium text-foreground">暂无需求</div>
       <div className="mt-1 text-xs text-muted-foreground">
-        规划任务写入 Project Management 后，需求和项目任务会显示在这里。
+        完成规划后，需求、技术文档和实施任务会显示在这里。
       </div>
     </div>
   </div>

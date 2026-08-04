@@ -26,11 +26,6 @@ import type {
   ConversationMessageEnvelope,
   ConversationMessagePayload,
   ConversationMessagesEnvelope,
-  ConversationMcpServersResponse,
-  McpConfigCreatePayload,
-  McpConfigResourceResponse,
-  McpConfigResponse,
-  McpConfigUpdatePayload,
   MemoryAgentsQueryOptions,
   MemoryAgentResponse,
   MemoryAgentSessionResponse,
@@ -48,16 +43,8 @@ import type {
   UpdateAgentPayload,
 } from '../types';
 import type ApiClient from '../../client';
-import {
-  assertCloudSessionOperation,
-  isLocalRuntimeSessionId,
-} from '../../localRuntime';
 
 export interface ConfigFacade {
-  getMcpConfigs(userId?: string, options?: { forceRefresh?: boolean }): Promise<McpConfigResponse[]>;
-  createMcpConfig(data: McpConfigCreatePayload): Promise<McpConfigResponse>;
-  updateMcpConfig(id: string, data: McpConfigUpdatePayload): Promise<McpConfigResponse>;
-  deleteMcpConfig(id: string): Promise<{ success?: boolean }>;
   getAiModelConfigs(): Promise<AiModelConfigResponse[]>;
   getAiModelConfig(id: string, options?: { includeSecret?: boolean }): Promise<AiModelConfigResponse>;
   getAiModelProviders(): Promise<AiModelProviderResponse[]>;
@@ -102,16 +89,6 @@ export interface ConfigFacade {
   getMemoryAgentRuntimeContext(agentId: string): Promise<MemoryAgentRuntimeContextResponse>;
   getConversationDetails(conversationId: string): Promise<ConversationDetailsResponse>;
   getAssistant(conversationId: string): Promise<ConversationAssistantResponse>;
-  getMcpServers(conversationId?: string): Promise<ConversationMcpServersResponse>;
-  getMcpConfigResource(configId: string): Promise<McpConfigResourceResponse>;
-  getMcpConfigResourceByCommand(data: {
-    type: 'stdio' | 'http';
-    command: string;
-    args?: string[] | null;
-    env?: Record<string, string> | null;
-    cwd?: string | null;
-    alias?: string | null;
-  }): Promise<McpConfigResourceResponse>;
   saveMessage(conversationId: string, message: ConversationMessagePayload): Promise<ConversationMessageEnvelope>;
   getMessages(
     conversationId: string,
@@ -121,18 +98,6 @@ export interface ConfigFacade {
 }
 
 export const configFacade: ConfigFacade & ThisType<ApiClient> = {
-  async getMcpConfigs(userId, options) {
-    return configsApi.getMcpConfigs(this.getRequestFn(), userId, options);
-  },
-  async createMcpConfig(data) {
-    return configsApi.createMcpConfig(this.getRequestFn(), data);
-  },
-  async updateMcpConfig(id, data) {
-    return configsApi.updateMcpConfig(this.getRequestFn(), id, data);
-  },
-  async deleteMcpConfig(id) {
-    return configsApi.deleteMcpConfig(this.getRequestFn(), id);
-  },
   async getAiModelConfigs() {
     return configsApi.getAiModelConfigs(this.getRequestFn());
   },
@@ -248,60 +213,18 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
     return this.getAgentRuntimeContext(agentId);
   },
   async getConversationDetails(conversationId) {
-    if (isLocalRuntimeSessionId(conversationId)) {
-      const session = await this.getLocalRuntimeClient().getSession(conversationId);
-      return {
-        data: {
-          conversation: {
-            id: session.id,
-            title: session.title,
-            created_at: session.created_at || session.createdAt || new Date().toISOString(),
-            updated_at: session.updated_at || session.updatedAt || new Date().toISOString(),
-          },
-        },
-      };
-    }
     return conversationApi.getConversationDetails(this.getRequestFn(), conversationId);
   },
   async getAssistant(conversationId) {
-    if (isLocalRuntimeSessionId(conversationId)) {
-      return {
-        data: {
-          assistant: {
-            id: 'local_runtime',
-            name: 'Local Runtime',
-            model_config: {},
-          },
-        },
-      };
-    }
     return conversationApi.getAssistant(this.getRequestFn(), conversationId);
   },
-  async getMcpServers(conversationId) {
-    if (isLocalRuntimeSessionId(conversationId)) {
-      return { data: { mcp_servers: [] } };
-    }
-    return conversationApi.getMcpServers(this.getRequestFn(), conversationId);
-  },
-  async getMcpConfigResource(configId) {
-    return conversationApi.getMcpConfigResource(this.getRequestFn(), configId);
-  },
-  async getMcpConfigResourceByCommand(data) {
-    return conversationApi.getMcpConfigResourceByCommand(this.getRequestFn(), data);
-  },
   async saveMessage(conversationId, message) {
-    assertCloudSessionOperation(conversationId, '直接保存消息');
     return conversationApi.saveMessage(this.getRequestFn(), conversationId, message);
   },
   async getMessages(conversationId, params = {}) {
-    if (isLocalRuntimeSessionId(conversationId)) {
-      const messages = await this.getLocalRuntimeClient().getMessages(conversationId);
-      return { data: { messages } };
-    }
     return conversationApi.getMessages(this.getRequestFn(), conversationId, params);
   },
   async addMessage(conversationId, message) {
-    assertCloudSessionOperation(conversationId, '追加消息');
     return conversationApi.addMessage(this.getRequestFn(), conversationId, message);
   },
 };

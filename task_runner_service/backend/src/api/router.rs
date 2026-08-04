@@ -15,14 +15,10 @@ use super::core::{
     system_config_handler, task_runner_internal_prompt_preview_handler,
     update_system_config_handler, update_user,
 };
-use super::external_mcp_configs::{
-    create_external_mcp_config, delete_external_mcp_config, get_external_mcp_config,
-    list_external_mcp_configs, update_external_mcp_config,
-};
-use super::internal::get_user_execution_options;
+use super::internal::{get_system_stats, get_user_execution_options};
 use super::mcp::{
     get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog, list_plugin_connectors,
-    list_task_capability_catalog, mcp_entrypoint, preview_mcp_prompt,
+    list_task_capability_catalog, mcp_entrypoint, mcp_management_entrypoint, preview_mcp_prompt,
 };
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -52,7 +48,7 @@ use super::tasks::{
     delete_task, get_task, get_task_dependency_graph, get_task_index, get_task_mcp_resolution,
     get_task_memory_context, get_task_memory_records, get_task_stats, list_task_prerequisites,
     list_task_summaries, list_tasks, list_tasks_page, preview_task_mcp_prompt, record_task_process,
-    set_task_prerequisites, summarize_task_memory, update_task, update_task_mcp,
+    set_task_prerequisites, summarize_task_memory, update_task,
 };
 use super::tooling::{
     get_terminal_process_logs, kill_terminal_process, list_notepad_folders, list_notepad_notes,
@@ -102,7 +98,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/tasks/{id}/runs",
             get(list_task_runs).post(start_task_run),
         )
-        .route("/api/tasks/{id}/mcp", patch(update_task_mcp))
         .route(
             "/api/tasks/{id}/mcp/resolution",
             get(get_task_mcp_resolution),
@@ -163,16 +158,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/remote-servers/{id}/test",
             post(test_remote_server_saved),
-        )
-        .route(
-            "/api/external-mcp-configs",
-            get(list_external_mcp_configs).post(create_external_mcp_config),
-        )
-        .route(
-            "/api/external-mcp-configs/{id}",
-            get(get_external_mcp_config)
-                .patch(update_external_mcp_config)
-                .delete(delete_external_mcp_config),
         )
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))
@@ -247,6 +232,11 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/internal/users/{owner_user_id}/execution-options",
             get(get_user_execution_options),
+        )
+        .route("/internal/system/stats", get(get_system_stats))
+        .route(
+            "/internal/mcp-management/mcp/{system_key}",
+            post(mcp_management_entrypoint),
         )
         .merge(chatos_internal::router())
         .merge(protected_api)

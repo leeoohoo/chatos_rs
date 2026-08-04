@@ -12,8 +12,8 @@ use crate::models::{UpdateRequirementDocumentRequest, UpsertRequirementDocumentR
 use crate::state::AppState;
 
 use super::{
-    decode_value, ensure_project_writable, ensure_requirement_mutable_for_mcp, normalized_optional,
-    require_project_access, require_requirement_in_project, tool_text_result,
+    agent_views, decode_value, ensure_project_writable, ensure_requirement_mutable_for_mcp,
+    normalized_optional, require_project_access, require_requirement_in_project, tool_text_result,
 };
 
 pub(super) async fn list_requirement_technical_documents(
@@ -28,7 +28,10 @@ pub(super) async fn list_requirement_technical_documents(
         .store
         .list_requirement_documents(&args.requirement_id, args.doc_type)
         .await?;
-    Ok(tool_text_result(json!(docs)))
+    Ok(tool_text_result(json!(docs
+        .iter()
+        .map(agent_views::requirement_document_summary)
+        .collect::<Vec<_>>())))
 }
 
 pub(super) async fn get_requirement_technical_document(
@@ -44,7 +47,7 @@ pub(super) async fn get_requirement_technical_document(
         .get_requirement_document_by_id(&args.requirement_id, &args.document_id)
         .await?
         .ok_or_else(|| format!("需求技术文档不存在: {}", args.document_id))?;
-    Ok(tool_text_result(json!(doc)))
+    Ok(tool_text_result(agent_views::requirement_document(&doc)))
 }
 
 pub(super) async fn upsert_requirement_technical_document(
@@ -89,5 +92,5 @@ pub(super) async fn upsert_requirement_technical_document(
             )
             .await?
     };
-    Ok(tool_text_result(json!(doc)))
+    Ok(tool_text_result(agent_views::requirement_document(&doc)))
 }

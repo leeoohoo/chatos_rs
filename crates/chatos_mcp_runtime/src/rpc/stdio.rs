@@ -66,11 +66,28 @@ pub async fn jsonrpc_stdio_call(
     cfg: &McpStdioServer,
     method: &str,
     params: Value,
+    conversation_id: Option<&str>,
+) -> Result<Value, String> {
+    jsonrpc_stdio_call_with_timeout(
+        cfg,
+        method,
+        params,
+        conversation_id,
+        DEFAULT_MCP_RPC_TIMEOUT,
+    )
+    .await
+}
+
+pub async fn jsonrpc_stdio_call_with_timeout(
+    cfg: &McpStdioServer,
+    method: &str,
+    params: Value,
     _conversation_id: Option<&str>,
+    timeout: Duration,
 ) -> Result<Value, String> {
     let session_key = stdio_session_cache_key(cfg);
     tokio::time::timeout(
-        DEFAULT_MCP_RPC_TIMEOUT,
+        timeout,
         jsonrpc_stdio_call_with_session(cfg, session_key.clone(), method, params),
     )
     .await
@@ -79,7 +96,7 @@ pub async fn jsonrpc_stdio_call(
         format!(
             "{method} stdio MCP command `{}` timed out after {}s",
             cfg.command,
-            DEFAULT_MCP_RPC_TIMEOUT.as_secs()
+            timeout.as_secs()
         )
     })?
 }

@@ -195,6 +195,12 @@ fn aggregate_work_item_status_from_links(
     }) {
         return Some(ProjectWorkItemStatus::InProgress);
     }
+    if statuses
+        .iter()
+        .any(|status| matches!(status.as_str(), "ready" | "pending"))
+    {
+        return Some(ProjectWorkItemStatus::Ready);
+    }
     if statuses.iter().all(|status| {
         matches!(
             status.as_str(),

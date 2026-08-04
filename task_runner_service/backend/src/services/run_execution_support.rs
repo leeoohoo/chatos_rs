@@ -38,13 +38,13 @@ impl RunService {
             return Ok(());
         };
         let response = client
-            .run_thread_repair_summary(&task.memory_thread_id, &task.tenant_id)
+            .run_thread_repair_summary(&run.memory_thread_id, &task.tenant_id)
             .await?;
         info!(
             run_id = run.id.as_str(),
             task_id = task.id.as_str(),
             task_title = task.title.as_str(),
-            memory_thread_id = task.memory_thread_id.as_str(),
+            memory_thread_id = run.memory_thread_id.as_str(),
             summary_job_run_id = response.job_run_id.as_deref().unwrap_or(""),
             "task runner triggered memory summary job"
         );

@@ -171,7 +171,7 @@ fn path_is_within_user_scope(candidate: &Path, scope: &UserScopedRoots) -> bool 
     crate::core::path_guard::path_is_within_root(candidate.as_path(), user_root.as_path())
 }
 
-fn user_path_component(user_id: &str) -> String {
+pub(crate) fn user_path_component(user_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(user_id.as_bytes());
     let digest = hex::encode(hasher.finalize());

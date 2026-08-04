@@ -34,7 +34,6 @@ const createFallbackAgent = (
     plugin_sources: [],
     runtime_plugins: [],
     runtime_skills: [],
-    mcp_policy: null,
     project_policy: null,
     createdAt: now,
     updatedAt: now,

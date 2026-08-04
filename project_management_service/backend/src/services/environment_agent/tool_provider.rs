@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use chatos_mcp_runtime::{BuiltinToolProvider, ToolCallContext, ToolStreamChunkCallback};
+use chatos_mcp_service::{McpRequestContext, McpToolProvider};
 
 use crate::models::{
     empty_array, empty_object, now_rfc3339, ProgramManagedMcpPolicy, ProjectRecord,
@@ -25,11 +26,11 @@ use crate::state::AppState;
 use super::super::runtime_environment::default_runtime_environment_for_project;
 
 #[derive(Clone)]
-pub(super) struct ProjectEnvironmentToolProvider {
-    pub(super) state: AppState,
-    pub(super) project: ProjectRecord,
-    pub(super) run_id: String,
-    pub(super) selected_dependencies: Vec<String>,
+pub(crate) struct ProjectEnvironmentToolProvider {
+    state: AppState,
+    project: ProjectRecord,
+    run_id: String,
+    selected_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -150,6 +151,52 @@ impl BuiltinToolProvider for ProjectEnvironmentToolProvider {
         _context: ToolCallContext,
         _on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
+        self.call_tool_inner(name, args).await
+    }
+}
+
+#[async_trait]
+impl McpToolProvider for ProjectEnvironmentToolProvider {
+    fn server_name(&self) -> &str {
+        chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::ProjectEnvironment,
+        )
+        .server_name
+    }
+
+    fn list_tools(&self, _context: &McpRequestContext) -> Vec<Value> {
+        chatos_mcp::system_mcp_static_tools(
+            chatos_plugin_management_sdk::SystemMcpKey::ProjectEnvironment,
+        )
+        .expect("Project Environment must have a static system MCP catalog")
+    }
+
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        _context: McpRequestContext,
+    ) -> Result<Value, String> {
+        self.call_tool_inner(name, args).await
+    }
+}
+
+impl ProjectEnvironmentToolProvider {
+    pub(crate) fn new(
+        state: AppState,
+        project: ProjectRecord,
+        run_id: impl Into<String>,
+        selected_dependencies: Vec<String>,
+    ) -> Self {
+        Self {
+            state,
+            project,
+            run_id: run_id.into(),
+            selected_dependencies,
+        }
+    }
+
+    async fn call_tool_inner(&self, name: &str, args: Value) -> Result<Value, String> {
         match name {
             "get_current_project_runtime_environment" => {
                 self.get_current_project_runtime_environment().await
@@ -160,9 +207,7 @@ impl BuiltinToolProvider for ProjectEnvironmentToolProvider {
             other => Err(format!("unknown project environment tool: {other}")),
         }
     }
-}
 
-impl ProjectEnvironmentToolProvider {
     async fn get_current_project_runtime_environment(&self) -> Result<Value, String> {
         let mut environment = self
             .state
@@ -170,6 +215,7 @@ impl ProjectEnvironmentToolProvider {
             .get_project_runtime_environment(self.project.id.as_str())
             .await?
             .unwrap_or_else(|| default_runtime_environment_for_project(&self.project, None));
+        ensure_project_environment_agent_run(&environment, self.run_id.as_str())?;
         crate::services::runtime_environment::refresh_environment_variable_values(&mut environment);
         let images = self
             .state
@@ -194,6 +240,7 @@ impl ProjectEnvironmentToolProvider {
             .get_project_runtime_environment(self.project.id.as_str())
             .await?
             .unwrap_or_else(|| default_runtime_environment_for_project(&self.project, None));
+        ensure_project_environment_agent_run(&environment, self.run_id.as_str())?;
 
         let environment_variable_scan =
             require_completed_environment_variable_scan(args.environment_variable_scan.clone())?;
@@ -216,6 +263,10 @@ impl ProjectEnvironmentToolProvider {
             .required_services
             .as_ref()
             .unwrap_or(&environment.required_services);
+        let analysis_requirement = environment
+            .detected_stack
+            .get("analysis_requirement")
+            .cloned();
         let selected_service_kinds =
             selected_dependency_service_kinds(self.selected_dependencies.as_slice());
         if proposes_not_runnable
@@ -240,6 +291,13 @@ impl ProjectEnvironmentToolProvider {
             .detected_stack
             .as_object_mut()
             .expect("ensure_object always returns an object");
+        detected_stack.insert(
+            "selected_dependencies".to_string(),
+            json!(self.selected_dependencies.clone()),
+        );
+        if let Some(analysis_requirement) = analysis_requirement {
+            detected_stack.insert("analysis_requirement".to_string(), analysis_requirement);
+        }
         detected_stack.insert(
             "environment_variable_scan".to_string(),
             json!({
@@ -302,11 +360,7 @@ impl ProjectEnvironmentToolProvider {
                 selected_service_kinds,
                 &mut image_records,
             )?;
-            enforce_project_runtime_boundary(
-                self.project.execution_plane,
-                &mut environment,
-                &mut image_records,
-            );
+            enforce_project_runtime_boundary(&self.project, &mut environment, &mut image_records);
         } else {
             environment.execution_service_id = None;
         }
@@ -320,11 +374,9 @@ impl ProjectEnvironmentToolProvider {
                 &environment.required_services,
                 image_records.as_slice(),
             )?;
-            upsert_project_compose_config_file(
+            super::refresh_project_runtime_compose_config(
                 self.project.id.as_str(),
-                &mut environment.generated_config_files,
-                &environment.environment_variables,
-                &environment.required_services,
+                &mut environment,
                 image_records.as_slice(),
             )?;
             if image_records
@@ -364,6 +416,19 @@ impl ProjectEnvironmentToolProvider {
             agent_visible_runtime_state(&self.project, &environment, images.as_slice()),
         ))
     }
+}
+
+pub(crate) fn ensure_project_environment_agent_run(
+    environment: &crate::models::ProjectRuntimeEnvironmentRecord,
+    run_id: &str,
+) -> Result<(), String> {
+    if environment.status != ProjectRuntimeEnvironmentStatus::Analyzing {
+        return Err("project environment analysis is no longer active".to_string());
+    }
+    if environment.last_agent_run_id.as_deref().map(str::trim) != Some(run_id.trim()) {
+        return Err("project environment analysis run has changed".to_string());
+    }
+    Ok(())
 }
 
 fn selected_dependency_service_kinds(

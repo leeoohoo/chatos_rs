@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".chatos-plugin/plugin.json": "3170710c60568e9c361a2a6513ebb146b7df52198348a71941f04027a54a665c",
+    ".chatos-plugin/plugin.json": "8cc0a6188cd0493782d3636a672b22abd46ffb1834fcfb9f915370c4179e18b9",
     "CHATOS-ADAPTATION.md": "99bdada94d5a3886ef190fb80bf6c832b031f4f914ff62a5c663320f89a046a3",
     "agents/ponytail-full-cloud.md": "cef8bdc6525149a357ae46420a5a10b0788a48eacf97f492eb0f0f0eaaaf547c",
     "agents/ponytail-full-local.md": "cef8bdc6525149a357ae46420a5a10b0788a48eacf97f492eb0f0f0eaaaf547c",
@@ -15,7 +15,7 @@
     "commands/ponytail-help.md": "01a955e7fd8e9f7b8118e92bf55fa12d0011c8d1723870e2dbe79bd36a4f51bd",
     "commands/ponytail-review.md": "5268932b6bfcdf6f4b599d5f8699b6ec888883b3f1f4e0294337580a8cba2604",
     "licenses/ponytail-LICENSE": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
-    "sbom.spdx.json": "1771d548ae2431527a0c153eba4264bc0ca74e7649a135cd099cba8b895430d9",
+    "sbom.spdx.json": "8d67bb3b2071571bd73bb5c714534c1f1943da6b1056eb304aedd9da7e550dda",
     "skills/ponytail/SKILL.md": "91a587d1556ef7721638027458c8f1c557d55024d8963136a9716bff9935bd0e"
   }
 }

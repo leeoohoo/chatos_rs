@@ -4,14 +4,11 @@
 use super::*;
 use crate::services::TaskRunnerCapabilityPolicy;
 
-mod mcp_builder;
 mod mcp_inputs;
+mod mcp_management_gateway;
 
-use mcp_builder::build_mcp_builder_parts;
-use mcp_inputs::{
-    external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
-    mcp_provider_skills_prefixed_input_items,
-};
+use mcp_inputs::mcp_provider_skills_prefixed_input_items;
+use mcp_management_gateway::resolve_mcp_management_gateway;
 
 pub(super) async fn prepare_model_execution(
     service: &RunService,
@@ -31,6 +28,7 @@ pub(super) async fn prepare_model_execution(
             "Plugin Command allowed tools require the task MCP runtime to be enabled".to_string(),
         );
     }
+    service.ensure_run_thread(task, run).await?;
     crate::services::model_runtime_resolver::ensure_cloud_task_project_execution(
         &service.config,
         task,
@@ -43,7 +41,7 @@ pub(super) async fn prepare_model_execution(
     let harness_run_context = if sandbox_required {
         service
             .prepare_harness_run_for_sandbox(task, run, effective_workspace_dir)
-            .await
+            .await?
     } else {
         None
     };
@@ -52,13 +50,6 @@ pub(super) async fn prepare_model_execution(
         .map(|context| context.effective_workspace_dir.as_str())
         .unwrap_or(effective_workspace_dir)
         .to_string();
-    let loaded_external_mcp = load_external_mcp_servers(
-        service,
-        task,
-        effective_workspace_dir.as_str(),
-        capability_policy,
-    )
-    .await?;
     let sandbox_context = service
         .prepare_sandbox_if_needed(
             task,
@@ -67,8 +58,6 @@ pub(super) async fn prepare_model_execution(
             authoritative_policy,
         )
         .await?;
-    let system_http_servers =
-        load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?;
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -110,28 +99,19 @@ pub(super) async fn prepare_model_execution(
         .await
         .map_err(|err| format!("加载运行时配置失败: {err}"))?;
     let runtime_config =
-        build_runtime_config(service, task, command_constraints.max_iterations).await?;
+        build_runtime_config(service, task, run, command_constraints.max_iterations).await?;
 
     let mut runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
     if !command_constraints.tool_allowlists.is_empty() {
         runtime_config.builtin_prompt_mode = chatos_ai_runtime::TaskBuiltinMcpPromptMode::Effective;
     }
 
-    let task_service = TaskService::new(service.config.clone(), service.store.clone());
-    let (mut builtin_servers, mut builtin_registry) = build_mcp_builder_parts(
-        service,
-        task,
-        run,
-        effective_workspace_dir.as_str(),
-        task_process_logging_enabled,
-        task_service,
-        sandbox_context.as_ref(),
-        authoritative_policy,
-    )
-    .await;
     let prepared_plugin_runtime = service
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
+    let mcp_management_gateway =
+        resolve_mcp_management_gateway(task, run, sandbox_context.as_ref()).await?;
+    let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
     let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
         crate::models::task_runner_agent_key_for(
             task.task_profile.as_str(),
@@ -139,34 +119,8 @@ pub(super) async fn prepare_model_execution(
         )
         .as_str(),
     );
-    builtin_servers.extend(prepared_plugin_runtime.builtin_servers.clone());
-    for provider in &prepared_plugin_runtime.providers {
-        builtin_registry.register_arc(provider.clone());
-    }
-    let mut prefixed_input_items = external_mcp_prefixed_input_items(
-        loaded_external_mcp.summaries.as_slice(),
-        task.mcp_config.locale(),
-    );
-    let provider_skills_prompt = capability_policy.and_then(|policy| {
-        let locale = if task.mcp_config.locale().is_english() {
-            "en-US"
-        } else {
-            "zh-CN"
-        };
-        let mut effective_mcp_identifiers = loaded_external_mcp
-            .summaries
-            .iter()
-            .map(|summary| summary.id.as_str())
-            .collect::<Vec<_>>();
-        if task_process_logging_enabled {
-            effective_mcp_identifiers
-                .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID);
-        }
-        policy.compose_provider_skills_prompt(effective_mcp_identifiers, locale)
-    });
-    prefixed_input_items.extend(mcp_provider_skills_prefixed_input_items(
-        provider_skills_prompt,
-    ));
+    let mut prefixed_input_items =
+        mcp_provider_skills_prefixed_input_items(gateway_provider_skills_prompt);
     prefixed_input_items.extend(prepared_plugin_runtime.prompt_items.clone());
     let mut run_spec = build_run_spec(
         &agent,
@@ -181,35 +135,17 @@ pub(super) async fn prepare_model_execution(
         task_process_logging_enabled,
         prefixed_input_items,
     );
-    if let Some(context) = sandbox_context.as_ref() {
-        run_spec.current_input_items.insert(
-            0,
-            sandbox_run_fact_input_item(task.mcp_config.locale(), context.run_workspace.as_str()),
-        );
+    if sandbox_context.is_some() {
+        run_spec
+            .current_input_items
+            .insert(0, sandbox_run_fact_input_item(task.mcp_config.locale()));
     }
     let memory_scope = build_memory_scope(service, task, run);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
-    if !loaded_external_mcp.summaries.is_empty() {
-        info!(
-            task_id = task.id.as_str(),
-            run_id = run.id.as_str(),
-            external_mcp_servers = %loaded_external_mcp
-                .summaries
-                .iter()
-                .map(|summary| format!("{}:{}:{}", summary.id, summary.name, summary.transport))
-                .collect::<Vec<_>>()
-                .join(","),
-            "task runner loaded external MCP servers"
-        );
-    }
-
-    let mut mcp_builder = McpExecutorBuilder::new()
-        .with_http_servers(system_http_servers)
-        .with_http_servers(loaded_external_mcp.http_servers)
-        .with_stdio_servers(loaded_external_mcp.stdio_servers)
-        .with_builtin_servers(builtin_servers)
-        .with_builtin_registry(builtin_registry);
+    let (mcp_management_server, mcp_management_runtime_session) =
+        mcp_management_gateway.into_parts();
+    let mut mcp_builder = McpExecutorBuilder::new().with_http_server(mcp_management_server);
     for allowed_tools in command_constraints.tool_allowlists {
         mcp_builder = mcp_builder.with_allowed_tool_names(allowed_tools);
     }
@@ -222,6 +158,7 @@ pub(super) async fn prepare_model_execution(
         run_spec,
         runtime_config,
         mcp_builder,
+        mcp_management_runtime_session,
         tool_result_model_budget_limits,
         sandbox_context,
         harness_run_context,
@@ -249,16 +186,13 @@ fn validate_command_target_agent(
     Ok(())
 }
 
-fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale, run_workspace: &str) -> Value {
-    let workspace = run_workspace.trim();
+fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale) -> Value {
     let content = if locale.is_english() {
-        format!(
-            "[Authoritative current-run project workspace]\nTask Runner has already acquired and health-checked the sandbox lease for this run. The TerminalController and CodeMaintainer tools exposed in this turn are already routed by the system to the authoritative current project workspace: `{workspace}`.\n\nA project runtime environment status of `pending` only limits application-service topology and Project Gateway targets; it does not disable this run-scoped project workspace or its terminal/file tools. Any historical memory claiming that `pending` forbids all terminal use is obsolete for this run. Reopen and continue child tasks that were blocked only because of that obsolete conclusion. Do not ask the user to initialize the project application environment merely to use the workspace tools already prepared for this run."
-        )
+        "[Current project workspace]\nThe project file and terminal tools exposed in this run all operate on the same current project workspace. Use project-root-relative paths and use the tools directly."
+            .to_string()
     } else {
-        format!(
-            "[当前运行的权威项目工作区]\nTask Runner 已为本次运行申请并完成沙箱租约健康检查。本轮暴露的 TerminalController 与 CodeMaintainer 工具已由系统路由到当前权威项目工作区：`{workspace}`。\n\n项目运行环境的 `pending` 仅限制应用服务拓扑与 Project Gateway 目标，不会禁用本次运行专属的项目工作区及其终端/文件工具。历史记忆中“`pending` 禁止使用所有终端”的结论对本次运行已经过期。仅因为该旧结论而阻塞的子任务应重新打开并继续执行。不得仅为使用本轮已经准备好的工作区工具，再次要求用户初始化项目应用环境。"
-        )
+        "[当前项目工作区]\n本轮提供的项目文件与项目终端工具都作用于同一个当前项目工作区。路径使用项目根目录相对路径，直接使用工具即可。"
+            .to_string()
     };
     json!({
         "role": "system",
@@ -351,32 +285,24 @@ fn task_runner_agent_for_task(task: &TaskRecord) -> TaskRunnerAgent {
 }
 
 fn build_memory_scope(service: &RunService, task: &TaskRecord, run: &TaskRunRecord) -> MemoryScope {
-    let scope = MemoryScope::thread(
+    MemoryScope::thread(
         task.tenant_id.clone(),
         service.config.memory_engine_source_id.clone(),
-        task.memory_thread_id.clone(),
+        run.memory_thread_id.clone(),
     )
-    .with_subject_id(task.subject_id.clone());
-    if run
-        .input_snapshot
-        .get("retry_of_run_id")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return scope.with_policy(ComposeContextPolicy {
-            include_recent_records: Some(false),
-            include_thread_summary: Some(false),
-            include_subject_memory: Some(false),
-            recent_record_limit: Some(1),
-            summary_limit: Some(1),
-        });
-    }
-    scope
+    .with_policy(ComposeContextPolicy {
+        include_recent_records: Some(true),
+        include_thread_summary: Some(true),
+        include_subject_memory: Some(false),
+        recent_record_limit: None,
+        summary_limit: None,
+    })
 }
 
 async fn build_runtime_config(
     service: &RunService,
     task: &TaskRecord,
+    run: &TaskRunRecord,
     plugin_max_iterations: Option<usize>,
 ) -> Result<TaskRuntimeConfig, String> {
     let configured_max_iterations = service
@@ -399,14 +325,15 @@ async fn build_runtime_config(
                 "task-runner",
                 service.config.memory_engine_operator_token.clone(),
             )
-            .with_record_scope(Some(MemoryRecordScope::message_thread(
-                task.tenant_id.clone(),
-                task.memory_thread_id.clone(),
-            ))),
+            .with_record_scope(Some(build_memory_record_scope(task, run))),
         ));
     }
 
     Ok(runtime_config)
+}
+
+fn build_memory_record_scope(task: &TaskRecord, run: &TaskRunRecord) -> MemoryRecordScope {
+    MemoryRecordScope::message_thread(task.tenant_id.clone(), run.memory_thread_id.clone())
 }
 
 fn bounded_plugin_max_iterations(configured: usize, plugin_limit: Option<usize>) -> usize {
@@ -430,13 +357,6 @@ async fn persist_context_snapshot(
             );
         }
     }
-}
-
-fn is_chatos_plan_task(task: &TaskRecord) -> bool {
-    crate::models::uses_task_runner_planning_agent(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    )
 }
 
 #[cfg(test)]
@@ -505,114 +425,71 @@ mod tests {
         assert_eq!(bounded_plugin_max_iterations(600, None), 600);
     }
 
-    #[tokio::test]
-    async fn chatos_plan_builtin_servers_include_project_management_provider() {
-        let config = test_config();
-        let service = test_run_service(config);
-        let mut task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
-        task.mcp_config.requires_execution = false;
-        let run = sample_run(&task);
-        let task_service = TaskService::new(service.config.clone(), service.store.clone());
-
-        let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
-                .await;
-        let server = builtin_servers
-            .iter()
-            .find(|server| server.name == chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME)
-            .expect("project management builtin server");
-
-        assert_eq!(
-            server.kind.as_str(),
-            chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement.kind_name()
-        );
-        assert_eq!(server.user_id.as_deref(), Some("owner-1"));
-        assert_eq!(server.project_id.as_deref(), Some("project-1"));
-
-        let executor = chatos_mcp_runtime::McpExecutorBuilder::new()
-            .with_builtin_servers(builtin_servers)
-            .with_builtin_registry(builtin_registry)
-            .build_builtin_only()
-            .expect("builtin executor");
-        let tool_names = executor
-            .available_tools()
-            .into_iter()
-            .filter_map(|tool| {
-                tool.get("name")
-                    .and_then(|name| name.as_str())
-                    .map(str::to_string)
-            })
-            .collect::<Vec<_>>();
-        assert!(tool_names
-            .iter()
-            .any(|name| name == "project_management_service_create_requirement"));
-    }
-
-    #[tokio::test]
-    async fn default_task_does_not_include_project_management_builtin() {
-        let config = test_config();
-        let service = test_run_service(config);
-        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
-        let run = sample_run(&task);
-        let task_service = TaskService::new(service.config.clone(), service.store.clone());
-
-        let system_servers =
-            load_system_http_mcp_servers(&service, &task, &run, None).expect("system servers");
-        assert!(system_servers.is_empty());
-
-        let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None, false)
-                .await;
-        assert!(builtin_servers
-            .iter()
-            .all(|server| server.name != chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME));
-        let executor = chatos_mcp_runtime::McpExecutorBuilder::new()
-            .with_builtin_servers(builtin_servers)
-            .with_builtin_registry(builtin_registry)
-            .build_builtin_only()
-            .expect("builtin executor");
-        assert!(executor.available_tools().into_iter().all(|tool| tool
-            .get("name")
-            .and_then(|name| name.as_str())
-            .is_none_or(|name| !name.starts_with("project_management_service_"))));
-    }
-
     #[test]
-    fn sandbox_run_fact_overrides_stale_project_environment_memory() {
-        let item = sandbox_run_fact_input_item(BuiltinMcpPromptLocale::ZhCn, "/workspace");
+    fn sandbox_run_fact_only_describes_the_program_bound_workspace() {
+        let item = sandbox_run_fact_input_item(BuiltinMcpPromptLocale::ZhCn);
         let content = item["content"].as_str().expect("system content");
 
         assert_eq!(item["role"].as_str(), Some("system"));
-        assert!(content.contains("已为本次运行申请并完成沙箱租约健康检查"));
-        assert!(content.contains("`pending` 仅限制应用服务拓扑"));
-        assert!(content.contains("历史记忆"));
-        assert!(content.contains("重新打开并继续执行"));
-        assert!(content.contains("`/workspace`"));
+        assert!(content.contains("都作用于同一个当前项目工作区"));
+        assert!(content.contains("项目根目录相对路径"));
+        assert!(!content.contains("pending"));
+        assert!(!content.contains("初始化"));
+        assert!(!content.contains("Provider"));
+        assert!(!content.contains("租约"));
+        assert!(!content.contains("/workspace"));
+        assert!(!content.contains("pairing"));
     }
 
     #[test]
-    fn retry_run_uses_clean_memory_context_instead_of_failed_attempt_history() {
+    fn run_memory_scope_keeps_current_run_history_without_subject_recall() {
         let service = test_run_service(test_config());
         let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
         let mut run = sample_run(&task);
         run.input_snapshot = json!({ "retry_of_run_id": "run-old" });
 
-        let policy = build_memory_scope(&service, &task, &run)
-            .policy
-            .expect("retry memory policy");
+        let scope = build_memory_scope(&service, &task, &run);
+        let policy = scope.policy.expect("run memory policy");
 
-        assert_eq!(policy.include_recent_records, Some(false));
-        assert_eq!(policy.include_thread_summary, Some(false));
+        assert_eq!(scope.thread_id, run.memory_thread_id);
+        assert_eq!(policy.include_recent_records, Some(true));
+        assert_eq!(policy.include_thread_summary, Some(true));
         assert_eq!(policy.include_subject_memory, Some(false));
     }
 
     #[test]
-    fn initial_run_keeps_default_memory_context_policy() {
+    fn compose_and_record_scopes_use_the_same_run_thread() {
         let service = test_run_service(test_config());
         let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
         let run = sample_run(&task);
+        let compose_scope = build_memory_scope(&service, &task, &run);
+        let record_scope = build_memory_record_scope(&task, &run);
 
-        assert!(build_memory_scope(&service, &task, &run).policy.is_none());
+        assert_eq!(compose_scope.tenant_id, record_scope.tenant_id);
+        assert_eq!(Some(compose_scope.thread_id), record_scope.thread_id);
+    }
+
+    #[test]
+    fn different_runs_do_not_share_memory_threads() {
+        let service = test_run_service(test_config());
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let mut first = sample_run(&task);
+        first.id = "run-1".to_string();
+        first.memory_thread_id = crate::models::task_run_memory_thread_id(
+            task.memory_thread_id.as_str(),
+            first.id.as_str(),
+        );
+        let mut second = sample_run(&task);
+        second.id = "run-2".to_string();
+        second.memory_thread_id = crate::models::task_run_memory_thread_id(
+            task.memory_thread_id.as_str(),
+            second.id.as_str(),
+        );
+
+        assert_ne!(
+            build_memory_scope(&service, &task, &first).thread_id,
+            build_memory_scope(&service, &task, &second).thread_id
+        );
     }
 
     fn test_config() -> AppConfig {
@@ -648,7 +525,13 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -719,8 +602,12 @@ mod tests {
         TaskRunRecord {
             id: "run-1".to_string(),
             task_id: task.id.clone(),
+            execution_lane_key: None,
             model_config_id: "model-1".to_string(),
-            memory_thread_id: task.memory_thread_id.clone(),
+            memory_thread_id: crate::models::task_run_memory_thread_id(
+                task.memory_thread_id.as_str(),
+                "run-1",
+            ),
             status: crate::models::TaskRunStatus::Queued,
             started_at: None,
             finished_at: None,

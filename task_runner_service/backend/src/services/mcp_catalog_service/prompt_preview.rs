@@ -92,11 +92,17 @@ impl McpCatalogService {
         }
         let builtin_servers =
             builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
-        let (builtin_registry, _) = build_builtin_registry(
+        let (builtin_registry, builtin_init_errors) = build_builtin_registry(
             &builtin_servers,
             self.task_service.clone(),
             self.ask_user_prompt_service.clone(),
         );
+        if !builtin_init_errors.is_empty() {
+            return Err(format!(
+                "builtin MCP provider initialization failed: {}",
+                builtin_init_errors.join("; ")
+            ));
+        }
         let executor = McpExecutorBuilder::new()
             .with_builtin_servers(builtin_servers)
             .with_builtin_registry(builtin_registry)
@@ -181,7 +187,13 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

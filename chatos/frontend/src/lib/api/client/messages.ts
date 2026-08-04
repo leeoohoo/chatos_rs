@@ -20,16 +20,6 @@ import type {
 } from './types';
 import { buildQuery } from './shared';
 import type { ApiRequestFn } from './workspace';
-import { isLocalRuntimeSessionId } from '../localRuntime';
-import {
-  getLocalTaskBoardGraph,
-  getLocalTaskBoardTask,
-  getLocalTaskBoardTasks,
-  getLocalTaskRunnerRunDetail,
-  getLocalTaskRunnerRunOutputChanges,
-  getLocalTaskRunnerRunOutputDiff,
-  retryLocalTaskRunnerRun,
-} from '../localRuntime/taskBoard';
 
 export interface MessageTaskRunnerLookupOptions {
   sessionId?: string | null;
@@ -76,9 +66,6 @@ export const getMessageTaskRunnerTasks = (
   messageId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerTasksResponse> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return getLocalTaskBoardTasks(options.sessionId, { ...options, includeDone: true });
-  }
   return request<MessageTaskRunnerTasksResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/tasks${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -89,9 +76,6 @@ export const getMessageTaskRunnerGraph = (
   messageId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerGraphResponse> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return getLocalTaskBoardGraph(options.sessionId, options);
-  }
   return request<MessageTaskRunnerGraphResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/graph${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -103,9 +87,6 @@ export const getMessageTaskRunnerTask = (
   taskId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerTask> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return getLocalTaskBoardTask(options.sessionId, taskId);
-  }
   return request<MessageTaskRunnerTask>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/tasks/${encodeURIComponent(taskId)}${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -117,9 +98,6 @@ export const getMessageTaskRunnerRun = (
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunDetailResponse> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return getLocalTaskRunnerRunDetail(runId, options);
-  }
   return request<MessageTaskRunnerRunDetailResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -133,21 +111,6 @@ export const retryMessageTaskRunnerRun = (
   retryInstruction?: string | null,
   executionServiceId?: string | null,
 ): Promise<MessageTaskRunnerRetryRunResponse> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    const normalizedInstruction = retryInstruction?.trim();
-    const normalizedExecutionServiceId = executionServiceId?.trim();
-    if (!normalizedInstruction && !normalizedExecutionServiceId) {
-      return retryLocalTaskRunnerRun(runId);
-    }
-    if (normalizedInstruction && !normalizedExecutionServiceId) {
-      return retryLocalTaskRunnerRun(runId, normalizedInstruction);
-    }
-    return retryLocalTaskRunnerRun(
-      runId,
-      normalizedInstruction || undefined,
-      normalizedExecutionServiceId || undefined,
-    );
-  }
   const normalizedInstruction = retryInstruction?.trim();
   const normalizedExecutionServiceId = executionServiceId?.trim();
   return request<MessageTaskRunnerRetryRunResponse>(
@@ -244,9 +207,6 @@ export const getMessageTaskRunnerGraphRun = (
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunDetailResponse> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return getLocalTaskRunnerRunDetail(runId, options);
-  }
   return request<MessageTaskRunnerRunDetailResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/graph/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -258,9 +218,6 @@ export const getMessageTaskRunnerRunOutputChanges = (
   runId: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunOutputChangesResponse> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return getLocalTaskRunnerRunOutputChanges(runId, options);
-  }
   return request<MessageTaskRunnerRunOutputChangesResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/output/changes${messageTaskRunnerLookupQuery(options)}`,
   );
@@ -273,9 +230,6 @@ export const getMessageTaskRunnerRunOutputDiff = (
   path: string,
   options?: MessageTaskRunnerLookupOptions,
 ): Promise<MessageTaskRunnerRunOutputDiffResponse> => {
-  if (options?.sessionId && isLocalRuntimeSessionId(options.sessionId)) {
-    return getLocalTaskRunnerRunOutputDiff(runId, path);
-  }
   return request<MessageTaskRunnerRunOutputDiffResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/output/diff${messageTaskRunnerLookupQuery({ ...options, path })}`,
   );

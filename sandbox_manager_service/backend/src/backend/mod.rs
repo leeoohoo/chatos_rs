@@ -20,6 +20,37 @@ pub use mock::MockSandboxBackend;
 
 pub type SandboxBackendRef = Arc<dyn SandboxBackend>;
 
+#[cfg(test)]
+const SANDBOX_RUNTIME_CACHE_ROOT: &str = "/home/sandbox/.cache";
+
+fn sandbox_runtime_environment() -> [(&'static str, &'static str); 10] {
+    [
+        ("HOME", "/home/sandbox"),
+        ("XDG_CACHE_HOME", "/home/sandbox/.cache/xdg"),
+        ("NPM_CONFIG_CACHE", "/home/sandbox/.cache/npm"),
+        ("COREPACK_HOME", "/home/sandbox/.cache/corepack"),
+        ("YARN_CACHE_FOLDER", "/home/sandbox/.cache/yarn"),
+        ("PIP_CACHE_DIR", "/home/sandbox/.cache/pip"),
+        ("UV_CACHE_DIR", "/home/sandbox/.cache/uv"),
+        ("CARGO_HOME", "/home/sandbox/.cache/cargo"),
+        ("GRADLE_USER_HOME", "/home/sandbox/.cache/gradle"),
+        ("MAVEN_CONFIG", "/home/sandbox/.cache/maven"),
+    ]
+}
+
+fn append_sandbox_runtime_environment(command: &mut Command) {
+    for (name, value) in sandbox_runtime_environment() {
+        command.arg("-e").arg(format!("{name}={value}"));
+    }
+}
+
+fn sandbox_runtime_environment_values() -> Vec<String> {
+    sandbox_runtime_environment()
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct SandboxCreateSpec {
     pub sandbox_id: String,
@@ -64,11 +95,8 @@ fn append_sandbox_create_runtime_args(
         .arg("-e")
         .arg(format!(
             "CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"
-        ))
-        .arg("-e")
-        .arg("HOME=/home/sandbox")
-        .arg("-e")
-        .arg("XDG_CACHE_HOME=/home/sandbox/.cache");
+        ));
+    append_sandbox_runtime_environment(command);
     if let Some(agent_token) = spec.agent_token.as_deref() {
         command
             .arg("-e")
@@ -159,6 +187,32 @@ pub trait SandboxBackend: Send + Sync {
         _command: &[String],
     ) -> Result<SandboxExecResult, String> {
         Err("sandbox environment groups are unsupported by this backend".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_caches_live_outside_the_project_workspace() {
+        let environment = sandbox_runtime_environment_values();
+        assert!(environment
+            .iter()
+            .any(|value| value == "HOME=/home/sandbox"));
+        assert!(environment
+            .iter()
+            .any(|value| { value == "NPM_CONFIG_CACHE=/home/sandbox/.cache/npm" }));
+        assert!(environment
+            .iter()
+            .any(|value| { value == "XDG_CACHE_HOME=/home/sandbox/.cache/xdg" }));
+        assert!(environment
+            .iter()
+            .filter(|value| !value.starts_with("HOME="))
+            .all(|value| value.contains(SANDBOX_RUNTIME_CACHE_ROOT)));
+        assert!(!environment
+            .iter()
+            .any(|value| value.contains("/workspace/")));
     }
 }
 

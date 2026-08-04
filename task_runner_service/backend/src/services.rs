@@ -20,17 +20,16 @@ use crate::models::{
     normalize_execution_environment_mode, normalize_project_id, now_rfc3339,
     BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
     BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
-    ChatosProjectImportRequest, CreateExternalMcpConfigRequest, CreateTaskProjectRequest,
-    CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, PaginatedResponse,
-    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
-    StartTaskRunRequest, SystemConfigResponse, TaskClosureState, TaskIndexResponse,
-    TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse, TaskProjectRecord,
-    TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
-    UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    ChatosProjectImportRequest, CreateTaskProjectRequest, CreateTaskRequest, HealthResponse,
+    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskClosureState,
+    TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse,
+    TaskProjectRecord, TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord,
+    TaskRunStatus, TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest,
     UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
+use crate::platform_queue::TaskQueueTopology;
 use crate::store::AppStore;
 
 fn managed_config_client() -> Option<&'static chatos_config_sdk::ConfigClient> {
@@ -59,7 +58,6 @@ mod builtin_providers;
 mod chatos_async_dispatch;
 mod chatos_callbacks;
 mod chatos_message_tasks;
-mod external_mcp_config_service;
 mod filter_sanitize;
 mod harness_run_diff;
 mod harness_run_git;
@@ -92,7 +90,6 @@ mod sandbox_runtime;
 mod schedule_helpers;
 mod status_display;
 mod stream_events;
-mod system_mcp_adapter;
 mod task_dependencies;
 mod task_manager_lifecycle;
 mod task_memory;
@@ -109,8 +106,9 @@ use self::batch_ops::{
     normalize_batch_task_ids, normalize_prerequisite_task_ids, normalize_tags, sanitize_id_list,
     summarize_batch_results,
 };
-use self::builtin_providers::{build_builtin_registry, DisabledBuiltinProvider};
-pub use self::chatos_callbacks::spawn_chatos_callback_reconciler;
+pub use self::chatos_callbacks::{
+    spawn_chatos_callback_queue_consumer, spawn_chatos_callback_reconciler,
+};
 pub use self::chatos_message_tasks::{
     ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
     ChatosMessageTaskDetail, ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge,
@@ -122,14 +120,14 @@ use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filter
 pub(crate) use self::plugin_management_policy::TaskRunnerCapabilityPolicy;
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
+pub use self::run_service::RunExecutionStats;
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
 use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
 };
 use self::workspace_mcp::{
-    ensure_workspace_dir_available, normalize_builtin_kind_names, sanitize_task_mcp_config,
-    task_mcp_resolution_response,
+    ensure_workspace_dir_available, sanitize_task_mcp_config, task_mcp_resolution_response,
 };
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
@@ -146,6 +144,7 @@ enum RunTriggerSource {
     Manual,
     Scheduler,
     Retry,
+    AutomaticRetry,
 }
 
 #[derive(Clone)]
@@ -173,11 +172,6 @@ pub struct RemoteServerService {
 }
 
 #[derive(Clone)]
-pub struct ExternalMcpConfigService {
-    store: AppStore,
-}
-
-#[derive(Clone)]
 pub struct TaskProjectService {
     config: Option<AppConfig>,
     store: AppStore,
@@ -186,9 +180,11 @@ pub struct TaskProjectService {
 #[derive(Clone)]
 pub struct RunService {
     config: AppConfig,
+    task_queue_topology: TaskQueueTopology,
     store: AppStore,
     plugin_management_client: Option<PluginManagementClient>,
     ask_user_prompt_service: AskUserPromptService,
+    runtime_stats: crate::state::TaskRunnerRuntimeStats,
     start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
     callback_delivery_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
     plugin_cloud_bundle_cache:
@@ -216,6 +212,7 @@ pub fn health() -> HealthResponse {
 
 pub fn system_config(
     config: &AppConfig,
+    task_queue_topology: &TaskQueueTopology,
     execution_timeout_ms: u64,
     task_runner_runtime_settings: chatos_agent::TaskRunnerRuntimeSettings,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
@@ -239,6 +236,9 @@ pub fn system_config(
         default_execution_timeout_ms: config.execution_timeout.as_millis() as u64,
         execution_timeout_ms,
         scheduler_poll_interval_ms: config.scheduler_poll_interval.as_millis() as u64,
+        worker_poll_interval_ms: config.worker_poll_interval.as_millis() as u64,
+        worker_claim_ttl_ms: config.worker_claim_ttl.as_millis() as u64,
+        worker_concurrency: config.worker_concurrency,
         auto_memory_summary: config.auto_memory_summary,
         default_task_execution_max_iterations: config.default_task_execution_max_iterations,
         task_execution_max_iterations: task_runner_runtime_settings.max_iterations,
@@ -262,6 +262,20 @@ pub fn system_config(
             && config.sandbox_manager_client_key.is_some(),
         default_sandbox_lease_ttl_seconds: config.default_sandbox_lease_ttl_seconds,
         sandbox_lease_ttl_seconds,
+        task_queue_rabbitmq_enabled: task_queue_topology.uses_rabbitmq(),
+        task_queue_run_dispatch_mode: task_queue_topology.run_dispatch_mode.as_str().to_string(),
+        task_queue_callback_delivery_mode: task_queue_topology
+            .callback_delivery_mode
+            .as_str()
+            .to_string(),
+        task_queue_run_events_publish_mode: task_queue_topology
+            .run_events_publish_mode
+            .as_str()
+            .to_string(),
+        task_queue_rabbitmq_exchange: task_queue_topology.rabbitmq_exchange.clone(),
+        task_queue_run_dispatch_queue: task_queue_topology.run_dispatch_queue.clone(),
+        task_queue_callback_delivery_queue: task_queue_topology.callback_delivery_queue.clone(),
+        task_queue_run_events_queue: task_queue_topology.run_events_queue.clone(),
     }
 }
 

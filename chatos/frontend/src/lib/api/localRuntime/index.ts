@@ -4,4 +4,3 @@
 export { LocalRuntimeClient } from './client';
 export { localRuntimeBridgeAvailable } from './bridge';
 export { parseLocalConnectorProjectRoot } from './projectRoot';
-export { assertCloudSessionOperation, isLocalRuntimeSessionId } from './sessionRouting';

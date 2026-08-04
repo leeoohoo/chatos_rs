@@ -21,10 +21,11 @@ pub struct AppState {
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
         let store = AppStore::new(&config.database_url).await?;
-        let plugin_management_client = PluginManagementClient::new(
-            PluginManagementClientConfig::from_env("project-service").await,
-        )
-        .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
+        let plugin_management_config = PluginManagementClientConfig::from_env("project-service")
+            .await
+            .map_err(|err| format!("load plugin management client config failed: {err}"))?;
+        let plugin_management_client = PluginManagementClient::new(plugin_management_config)
+            .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
         Ok(Self {
             config,
             store,

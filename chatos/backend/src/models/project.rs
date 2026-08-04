@@ -64,7 +64,7 @@ impl Project {
             root_path,
             git_url,
             source_type: Some("local".to_string()),
-            execution_plane: Some("local_connector".to_string()),
+            execution_plane: Some("cloud".to_string()),
             cloud_import_source: Some("none".to_string()),
             import_status: Some("none".to_string()),
             source_git_url: None,
@@ -251,7 +251,7 @@ fn project_from_project_service(
         root_path,
         git_url: record.git_url,
         source_type: record.source_type,
-        execution_plane: record.execution_plane,
+        execution_plane: Some("cloud".to_string()),
         cloud_import_source: record.cloud_import_source,
         import_status: record.import_status,
         source_git_url: record.source_git_url,
@@ -318,7 +318,6 @@ mod tests {
             root_path: root_path.map(ToOwned::to_owned),
             git_url: None,
             source_type: Some(source_type.to_string()),
-            execution_plane: None,
             cloud_import_source: None,
             import_status: None,
             source_git_url: None,
@@ -352,6 +351,7 @@ mod tests {
             project_from_project_service(project_record("local", Some("/workspace/local-project")));
         assert_eq!(project.root_path, "/workspace/local-project");
         assert_eq!(project.source_type.as_deref(), Some("local"));
+        assert_eq!(project.execution_plane.as_deref(), Some("cloud"));
     }
 
     #[test]

@@ -91,6 +91,8 @@ pub(crate) struct ProjectRuntimeEnvironmentSettings {
     pub(crate) sandbox_enabled: bool,
     #[serde(default)]
     pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) not_runnable_reason: Option<String>,
     #[serde(default, alias = "primary_service_id")]
     pub(crate) execution_service_id: Option<String>,
     #[serde(default)]

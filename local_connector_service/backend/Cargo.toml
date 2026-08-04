@@ -15,7 +15,6 @@ chatos_agent = { path = "../../agent", default-features = false, features = ["ma
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
-memory_engine_sdk = { path = "../../crates/memory_engine_sdk", default-features = false }
 chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 futures = "0.3"

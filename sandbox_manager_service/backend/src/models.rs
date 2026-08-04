@@ -191,6 +191,12 @@ pub struct StartSandboxEnvironmentRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct RenewSandboxEnvironmentLeaseRequest {
+    pub lease_id: String,
+    pub ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxEnvironmentServiceInput {
     pub service_id: String,
@@ -242,6 +248,58 @@ pub struct SandboxEnvironmentExecResponse {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCallRequest {
+    pub runtime_session_id: String,
+    pub resource_id: String,
+    #[serde(default)]
+    pub invocation_id: Option<String>,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub plugin_artifact: Option<chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle>,
+    #[serde(default)]
+    pub plugin_workspace_write: bool,
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+    pub expires_at_unix: i64,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCloseRequest {
+    pub runtime_session_id: String,
+    pub resource_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCancelRequest {
+    pub runtime_session_id: String,
+    pub resource_id: String,
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCallResponse {
+    pub result: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCloseResponse {
+    pub closed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CloudStdioMcpCancelResponse {
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

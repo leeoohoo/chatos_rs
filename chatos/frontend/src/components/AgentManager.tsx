@@ -98,7 +98,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       createdAt: new Date(),
       updatedAt: new Date(),
       skills: [],
-      mcp_policy: null,
       project_policy: null,
       app_ids: [],
     };

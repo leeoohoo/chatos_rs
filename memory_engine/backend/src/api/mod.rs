@@ -26,6 +26,7 @@ mod subject_memories_api;
 mod subject_memory_scopes_api;
 mod subjects_api;
 mod summaries_api;
+mod system_api;
 mod thread_snapshots_api;
 mod threads_api;
 

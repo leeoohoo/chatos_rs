@@ -17,7 +17,6 @@ use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::project_execution::{
     ensure_project_visible_on_request, project_is_visible_on_request,
-    require_local_connector_desktop,
 };
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
@@ -27,54 +26,9 @@ use crate::services::chatos_memory_mappings;
 use crate::services::realtime::publish_projects_updated;
 use crate::services::terminal_manager::get_terminal_manager;
 
-use super::super::fs::policy::{FsPathPolicy, FsPolicyError};
-use super::contracts::{CreateProjectRequest, ProjectQuery, UpdateProjectRequest};
+use super::contracts::{ProjectQuery, UpdateProjectRequest};
 use super::memory_sync::{sync_active_project, sync_archived_project};
 use super::session_resolver::resolve_project_contact_session_id;
-
-fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
-    (
-        err.status_code(),
-        Json(serde_json::json!({ "error": err.message() })),
-    )
-}
-
-async fn authorize_project_root(
-    auth: &AuthUser,
-    raw: &str,
-    empty_message: &str,
-    invalid_message: &str,
-) -> Result<String, (StatusCode, Json<Value>)> {
-    if raw.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": empty_message })),
-        ));
-    }
-    let policy = FsPathPolicy::for_user(auth)
-        .await
-        .map_err(fs_policy_error_tuple)?;
-    let authorized = policy
-        .authorize_existing_dir(raw, invalid_message, invalid_message)
-        .map_err(fs_policy_error_tuple)?;
-    policy
-        .require_write(&authorized)
-        .map_err(fs_policy_error_tuple)?;
-    Ok(authorized.path.to_string_lossy().to_string())
-}
-
-async fn authorize_optional_project_root(
-    auth: &AuthUser,
-    raw: Option<String>,
-    invalid_message: &str,
-) -> Result<Option<String>, (StatusCode, Json<Value>)> {
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    authorize_project_root(auth, raw.as_str(), invalid_message, invalid_message)
-        .await
-        .map(Some)
-}
 
 async fn attach_project_session_id(mut project: Project) -> Project {
     let project_id = project.id.clone();
@@ -159,84 +113,6 @@ pub(super) async fn list_projects(
             Json(serde_json::json!({"error": err})),
         ),
     }
-}
-
-pub(super) async fn create_project(
-    auth: AuthUser,
-    headers: HeaderMap,
-    Json(req): Json<CreateProjectRequest>,
-) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
-    let CreateProjectRequest {
-        name,
-        root_path,
-        git_url,
-        description,
-        user_id,
-    } = req;
-    let user_id = match resolve_user_id(user_id, &auth) {
-        Ok(user_id) => user_id,
-        Err(err) => return err,
-    };
-
-    let Some(name) = normalize_non_empty(name) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "项目名称不能为空"})),
-        );
-    };
-    let root_path = match authorize_project_root(
-        &auth,
-        root_path.as_deref().unwrap_or(""),
-        "项目目录不能为空",
-        "项目目录不存在或不是目录",
-    )
-    .await
-    {
-        Ok(path) => path,
-        Err(err) => return err,
-    };
-
-    let project = Project::new(name, root_path, git_url, description, Some(user_id));
-    let saved_id = match ProjectService::create(project.clone()).await {
-        Ok(id) => id,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": err})),
-            );
-        }
-    };
-    let saved = ProjectService::get_by_id(&saved_id)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(Project {
-            id: saved_id,
-            ..project
-        });
-    if let Err(err) = sync_active_project(&saved).await {
-        let _ = ProjectService::delete(saved.id.as_str()).await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "sync memory project failed",
-                "detail": err,
-            })),
-        );
-    }
-
-    (StatusCode::CREATED, {
-        publish_projects_updated(
-            auth.user_id.as_str(),
-            "project_created",
-            Some(saved.id.as_str()),
-            Some(saved.clone()),
-        );
-        Json(project_value(saved))
-    })
 }
 
 pub(super) async fn create_cloud_project(
@@ -405,19 +281,11 @@ pub(super) async fn update_project(
 
     let UpdateProjectRequest {
         name,
-        root_path,
         git_url,
         description,
     } = req;
 
-    let root_path =
-        match authorize_optional_project_root(&auth, root_path, "项目目录不存在或不是目录").await
-        {
-            Ok(path) => path,
-            Err(err) => return err,
-        };
-
-    if let Err(err) = ProjectService::update(&id, name, root_path, git_url, description).await {
+    if let Err(err) = ProjectService::update(&id, name, None, git_url, description).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),

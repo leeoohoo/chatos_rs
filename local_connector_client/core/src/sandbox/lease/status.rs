@@ -25,7 +25,11 @@ pub(crate) async fn get_local_sandbox(
             json!({ "error": "sandbox not found" }),
         ));
     };
-    Ok((200, BTreeMap::new(), json!(lease)))
+    Ok((
+        200,
+        BTreeMap::new(),
+        super::cloud_safe_local_sandbox_lease(&lease),
+    ))
 }
 
 pub(crate) async fn health_local_sandbox(
@@ -76,14 +80,14 @@ pub(crate) async fn health_local_sandbox(
             "lease_id": lease.id,
             "status": lease.status,
             "backend": lease.backend,
-            "backend_id": lease.backend_id,
+            "backend_id": null,
             "backend_alive": backend_alive,
-            "agent_endpoint": lease.agent_endpoint,
+            "agent_endpoint": null,
             "agent_alive": agent_alive,
             "workspace_alive": workspace_alive,
             "checked_at": local_now_rfc3339(),
-            "effective_policy": lease.effective_policy,
-            "effective_permissions": lease.effective_permissions,
+            "effective_policy": super::cloud_safe_effective_policy(&lease),
+            "effective_permissions": super::cloud_safe_effective_permissions(&lease),
             "message": if ok { "ok" } else { "local sandbox is not healthy" },
             "checks": [
                 { "name": backend_check_name, "ok": backend_alive, "message": if backend_alive { "running" } else { "not running" } },

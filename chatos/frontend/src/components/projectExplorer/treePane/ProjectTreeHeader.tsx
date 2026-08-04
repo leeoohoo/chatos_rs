@@ -5,6 +5,7 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { getUserVisiblePath } from '../../../lib/domain/filesystem';
+import { isCloudProjectSource } from '../../../lib/domain/projectSource';
 import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 import {
@@ -163,7 +164,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         onRefresh={onRefresh}
       />
       <div className="text-[11px] text-muted-foreground">
-        {project.sourceType?.trim().toLowerCase() === 'cloud'
+        {isCloudProjectSource(project)
           ? t('projectExplorer.tree.harnessHint')
           : t('projectExplorer.tree.gitHint')}
       </div>

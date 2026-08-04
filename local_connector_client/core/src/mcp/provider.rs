@@ -16,7 +16,8 @@ use crate::workspace::paths::{relative_to_workspace, workspace_for_request};
 use crate::LocalState;
 
 use super::selection::{
-    is_browser_tool, is_code_maintainer_tool, is_terminal_controller_tool, local_mcp_tool_selection,
+    is_browser_tool, is_code_maintainer_tool, is_local_command_approval_tool,
+    is_terminal_controller_tool, local_mcp_tool_selection,
 };
 use super::tools::{
     call_local_terminal_controller_tool, code_maintainer_service_for_root,
@@ -92,6 +93,9 @@ pub(crate) fn local_mcp_builtin_compatible_tools(
         )?;
         tools.extend(browser_service.list_tools());
     }
+    if selection.local_command_approval {
+        tools.push(chatos_mcp::local_command_approval_decision_tool_definition());
+    }
     Ok(tools)
 }
 
@@ -104,6 +108,14 @@ pub(crate) async fn call_builtin_compatible_local_tool(
 ) -> Result<Option<Value>> {
     let workspace = workspace_for_request(state, request.workspace_id.as_str())?;
     let selection = local_mcp_tool_selection(request);
+    if is_local_command_approval_tool(name) {
+        if !selection.local_command_approval {
+            return Ok(None);
+        }
+        let (_, result) = crate::approval::approval_decision_tool_result(arguments)
+            .map_err(anyhow::Error::msg)?;
+        return Ok(Some(result));
+    }
     if is_code_maintainer_tool(name) {
         if !selection.allows_code_tool(name) {
             return Ok(None);

@@ -97,6 +97,39 @@ mod tests {
     }
 
     #[test]
+    fn agent_schema_excludes_runtime_locations_and_user_assignment_ids() {
+        let definitions = schemas::project_management_server_tool_definitions();
+        let properties = |name: &str| {
+            definitions
+                .iter()
+                .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
+                .and_then(|tool| tool.pointer("/inputSchema/properties"))
+                .and_then(Value::as_object)
+                .unwrap_or_else(|| panic!("{name} properties"))
+        };
+
+        let initialize = properties(tools::INITIALIZE_PROJECT);
+        assert!(!initialize.contains_key("root_path"));
+        assert!(!initialize.contains_key("git_url"));
+
+        let create_requirement = properties(tools::CREATE_REQUIREMENT);
+        assert!(!create_requirement.contains_key("assignee_user_id"));
+        let update_requirement = properties(tools::UPDATE_REQUIREMENT);
+        assert!(update_requirement
+            .get("patch")
+            .and_then(|patch| patch.pointer("/properties/assignee_user_id"))
+            .is_none());
+
+        let create_task = properties(tools::CREATE_PROJECT_TASK);
+        assert!(!create_task.contains_key("assignee_user_id"));
+        let update_task = properties(tools::UPDATE_PROJECT_TASK);
+        assert!(update_task
+            .get("patch")
+            .and_then(|patch| patch.pointer("/properties/assignee_user_id"))
+            .is_none());
+    }
+
+    #[test]
     fn mutation_status_schemas_only_expose_user_managed_states() {
         let definitions = schemas::project_management_server_tool_definitions();
         let create_requirement = definitions
@@ -235,7 +268,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "project_management_server_tools",
             schemas::project_management_server_tool_definitions(),
-            0x263bd33f5a1766aa,
+            0xf5fa2a556b39da36,
         );
     }
 
@@ -244,7 +277,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
             schemas::task_runner_builtin_tool_definitions(),
-            0x263bd33f5a1766aa,
+            0xf5fa2a556b39da36,
         );
     }
 

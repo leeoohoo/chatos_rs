@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { EditOutlined, InfoCircleOutlined, SettingOutlined } from '@ant-design/icons';
+import { EditOutlined, SettingOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -79,13 +79,10 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const bindableById = new Map(
-        (bindingsQuery.data?.items || []).map((item) => [item.mcp.id, item.bindable]),
-      );
       return api.updateAgentMcpBindings(
         selectedAgentKey || '',
         Object.entries(modes)
-          .filter(([mcp_id, mode]) => mode !== 'disabled' && bindableById.get(mcp_id))
+          .filter(([, mode]) => mode !== 'disabled')
           .map(([mcp_id, mode]) => ({ mcp_id, mode })),
       );
     },
@@ -110,6 +107,20 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         ),
       },
       { title: t('table.service'), dataIndex: 'service_name', width: 190 },
+      {
+        title: t('agent.toolPlane'),
+        dataIndex: 'tool_plane',
+        width: 125,
+        render: (toolPlane: SystemAgentRecord['tool_plane']) => (
+          <Tag
+            color={
+              toolPlane === 'managed' ? 'blue' : toolPlane === 'local_only' ? 'cyan' : 'default'
+            }
+          >
+            {t(`agent.toolPlane.${toolPlane}`)}
+          </Tag>
+        ),
+      },
       {
         title: t('table.status'),
         dataIndex: 'enabled',
@@ -142,32 +153,35 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         title: t('table.actions'),
         key: 'actions',
         width: 260,
-        render: (_, record) => {
-          const supportsMcp = record.service_name !== 'memory-engine';
-          return (
-            <Space>
-              {supportsMcp ? (
-                <Button
-                  icon={<SettingOutlined />}
-                  onClick={() => {
-                    setSelectedAgentKey(record.agent_key);
-                    setSearch('');
-                    setModes({});
-                    setModalOpen(true);
-                  }}
-                >
-                  {t('agent.configureMcp')}
-                </Button>
-              ) : null}
-              <Button
-                icon={<EditOutlined />}
-                onClick={() => onOpenPromptSettings(record.agent_key)}
-              >
-                {t('agent.promptSettings')}
-              </Button>
-            </Space>
-          );
-        },
+        render: (_, record) => (
+          <Space>
+            <Button
+              icon={<SettingOutlined />}
+              disabled={record.tool_plane !== 'managed'}
+              title={
+                record.tool_plane === 'local_only'
+                  ? t('agent.toolPlaneLocalOnlyNotice')
+                  : record.tool_plane === 'none'
+                    ? t('agent.toolPlaneNoneNotice')
+                    : undefined
+              }
+              onClick={() => {
+                setSelectedAgentKey(record.agent_key);
+                setSearch('');
+                setModes({});
+                setModalOpen(true);
+              }}
+            >
+              {t('agent.configureMcp')}
+            </Button>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => onOpenPromptSettings(record.agent_key)}
+            >
+              {t('agent.promptSettings')}
+            </Button>
+          </Space>
+        ),
       },
     ],
     [completeness, onOpenPromptSettings, t],
@@ -195,7 +209,6 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         item.mcp.runtime.server_name,
         item.mcp.plugin_id,
         item.mcp.component_key,
-        item.unavailable_reason,
       ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(keyword)),
@@ -204,14 +217,10 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
 
   const mcpStats = useMemo(() => {
     const items = bindingsQuery.data?.items || [];
-    const bindableById = new Map(items.map((item) => [item.mcp.id, item.bindable]));
     return {
       total: items.length,
       shown: mcpItems.length,
-      bound: Object.entries(modes).filter(
-        ([mcpId, mode]) => mode !== 'disabled' && bindableById.get(mcpId),
-      ).length,
-      unavailable: items.filter((item) => !item.bindable).length,
+      bound: Object.values(modes).filter((mode) => mode !== 'disabled').length,
     };
   }, [bindingsQuery.data, mcpItems.length, modes]);
 
@@ -223,16 +232,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         render: (_, item) => (
           <Space direction="vertical" size={0}>
             <Space size={6} wrap>
-              <Typography.Text strong disabled={!item.bindable}>
-                {mcpDisplayName(item.mcp, t)}
-              </Typography.Text>
-              {!item.bindable ? (
-                <Tooltip title={agentMcpUnavailableReasonLabel(item.unavailable_reason, t)}>
-                  <Tag icon={<InfoCircleOutlined />} color="default">
-                    {t('agent.mcpNotBindable')}
-                  </Tag>
-                </Tooltip>
-              ) : null}
+              <Typography.Text strong>{mcpDisplayName(item.mcp, t)}</Typography.Text>
             </Space>
             <Typography.Text type="secondary">
               {item.mcp.name} · {item.mcp.id}
@@ -264,8 +264,8 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         render: (enabled, item) => (
           <Space direction="vertical" size={2}>
             <EnabledTag enabled={enabled} />
-            <Tag color={item.bindable ? 'green' : 'default'}>
-              {item.bindable ? t('agent.mcpBindable') : t('agent.mcpNotBindable')}
+            <Tag color={item.mode === 'disabled' ? 'default' : 'green'}>
+              {item.mode === 'disabled' ? t('agent.mcpNotBound') : t('agent.mcpBoundToRuntime')}
             </Tag>
           </Space>
         ),
@@ -279,7 +279,6 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
             <Segmented
               className="mcp-mode-control"
               block
-              disabled={!item.bindable}
               value={modes[item.mcp.id] || 'disabled'}
               options={[
                 { value: 'disabled', label: t('mcpMode.disabled') },
@@ -293,11 +292,6 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
                 }))
               }
             />
-            {!item.bindable ? (
-              <Typography.Text type="secondary">
-                {agentMcpUnavailableReasonLabel(item.unavailable_reason, t)}
-              </Typography.Text>
-            ) : null}
           </Space>
         ),
       },
@@ -375,15 +369,4 @@ function sourceKindLabel(value: string, t: (key: string) => string): string {
   const key = `sourceKind.${value}`;
   const translated = t(key);
   return translated === key ? value : translated;
-}
-
-function agentMcpUnavailableReasonLabel(
-  reason: string | null | undefined,
-  t: (key: string) => string,
-): string {
-  if (!reason) {
-    return '';
-  }
-  const translated = t(reason);
-  return translated === reason ? reason : translated;
 }

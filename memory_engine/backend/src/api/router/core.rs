@@ -10,7 +10,8 @@ use axum::{
 
 use crate::api::{
     context_api, health_api, jobs_api, records_api, sources_api, subject_memories_api,
-    subject_memory_scopes_api, subjects_api, summaries_api, thread_snapshots_api, threads_api,
+    subject_memory_scopes_api, subjects_api, summaries_api, system_api, thread_snapshots_api,
+    threads_api,
 };
 use crate::state::AppState;
 
@@ -20,6 +21,7 @@ pub fn public_routes() -> Router<Arc<AppState>> {
 
 pub fn operator_routes() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/api/internal/system/stats", get(system_api::system_stats))
         .route(
             "/api/memory-engine/v1/sources/{source_id}",
             put(sources_api::upsert_source),

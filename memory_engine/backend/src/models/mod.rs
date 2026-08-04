@@ -10,6 +10,7 @@ mod subject_memories;
 mod subject_memory_scopes;
 mod subjects;
 mod summaries;
+mod system;
 mod thread_snapshots;
 mod threads;
 
@@ -55,6 +56,11 @@ pub use self::summaries::{
     RunPendingSummariesResponse, RunThreadActiveSummaryRequest, RunThreadActiveSummaryResponse,
     RunThreadRepairSummaryRequest, RunThreadRepairSummaryResponse, RunThreadSummaryRequest,
     RunThreadSummaryResponse, UpsertThreadSummaryRequest,
+};
+pub use self::system::{
+    MemoryEngineBacklogStats, MemoryEngineReconcileBacklogStats, MemoryEngineRoleStats,
+    MemoryEngineRollupBacklogStats, MemoryEngineSummaryBacklogStats,
+    MemoryEngineSystemStatsResponse, MemoryEngineWorkerConfigStats, MemoryEngineWorkerRuntimeStats,
 };
 pub use self::thread_snapshots::{
     EngineThreadSnapshot, ThreadSnapshotLookupResponse, UpsertThreadSnapshotRequest,

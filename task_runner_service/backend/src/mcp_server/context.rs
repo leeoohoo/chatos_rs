@@ -64,6 +64,7 @@ impl McpRequestContext {
             source_user_message_id: self.source_user_message_id.clone(),
             workspace_dir: self.workspace_dir.clone(),
             remote_server_config,
+            builtin_prompt_locale: Some(self.requested_builtin_prompt_locale()),
         }))
     }
 

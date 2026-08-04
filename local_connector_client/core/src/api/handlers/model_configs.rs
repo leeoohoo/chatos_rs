@@ -108,12 +108,6 @@ pub(crate) async fn local_update_model_settings(
     }
     let settings = LocalModelSettings {
         model_request_max_retries,
-        memory_summary_model_config_id: req.memory_summary_model_config_id,
-        memory_summary_thinking_level: req.memory_summary_thinking_level,
-        project_management_agent_model_config_id: req.project_management_agent_model_config_id,
-        project_management_agent_thinking_level: req.project_management_agent_thinking_level,
-        environment_initialization_model_config_id: req.environment_initialization_model_config_id,
-        environment_initialization_thinking_level: req.environment_initialization_thinking_level,
         command_approval_model_config_id: req.command_approval_model_config_id,
         command_approval_thinking_level: req.command_approval_thinking_level,
         updated_at: None,

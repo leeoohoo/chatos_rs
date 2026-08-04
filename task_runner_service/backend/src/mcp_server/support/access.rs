@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::{ExternalMcpConfigRecord, ModelConfigRecord, TaskRecord, TaskStatus};
+use crate::models::{ModelConfigRecord, TaskRecord, TaskStatus};
 
 use super::super::chatos_async_planner::planner_agent_tool_allowed;
 use super::super::{McpRequestContext, McpToolProfile};
@@ -16,9 +16,6 @@ pub(crate) fn agent_tool_allowed(name: &str) -> bool {
             | "get_task"
             | "get_task_stats"
             | "create_task"
-            | "list_mcp_builtin_catalog"
-            | "list_external_mcp_configs"
-            | "list_available_plugins"
             | "create_tasks_with_prerequisites"
             | "update_task"
             | "set_task_prerequisites"
@@ -43,51 +40,6 @@ pub(crate) fn agent_tool_allowed(name: &str) -> bool {
     )
 }
 
-pub(crate) fn external_mcp_configs_for_user(
-    configs: Vec<ExternalMcpConfigRecord>,
-    current_user: &CurrentUser,
-) -> Vec<Value> {
-    configs
-        .into_iter()
-        .filter(|config| config.enabled)
-        .filter(|config| external_mcp_config_visible_to_user(config, current_user))
-        .map(external_mcp_config_for_external_mcp)
-        .collect()
-}
-
-fn external_mcp_config_visible_to_user(
-    config: &ExternalMcpConfigRecord,
-    current_user: &CurrentUser,
-) -> bool {
-    let owner = config
-        .owner_user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or(config.creator_user_id.as_deref());
-    current_user.can_access_owned_resource(owner)
-}
-
-fn external_mcp_config_for_external_mcp(config: ExternalMcpConfigRecord) -> Value {
-    let endpoint = if config.transport == "http" {
-        config.url.clone().unwrap_or_default()
-    } else {
-        std::iter::once(config.command.clone().unwrap_or_default())
-            .chain(config.args.clone())
-            .map(|item| item.trim().to_string())
-            .filter(|item| !item.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    json!({
-        "id": config.id,
-        "name": config.name,
-        "transport": config.transport,
-        "enabled": config.enabled,
-        "endpoint": endpoint,
-    })
-}
-
 pub(crate) fn agent_tool_allowed_for_profile(name: &str, tool_profile: McpToolProfile) -> bool {
     match tool_profile {
         McpToolProfile::Default => agent_tool_allowed(name),
@@ -97,9 +49,6 @@ pub(crate) fn agent_tool_allowed_for_profile(name: &str, tool_profile: McpToolPr
             "list_tasks"
                 | "get_task"
                 | "get_task_dependency_graph"
-                | "list_mcp_builtin_catalog"
-                | "list_external_mcp_configs"
-                | "list_available_plugins"
                 | "create_project_execution_tasks"
         ),
     }
@@ -217,12 +166,15 @@ pub(crate) fn require_admin_tool(current_user: &CurrentUser) -> Result<(), Strin
     }
 }
 
-pub(crate) fn tasks_for_external_mcp(tasks: Vec<TaskRecord>) -> Value {
-    Value::Array(tasks.into_iter().map(task_for_external_mcp).collect())
+pub(crate) fn tasks_for_agent_tool(tasks: Vec<TaskRecord>) -> Value {
+    Value::Array(tasks.into_iter().map(task_for_agent_tool).collect())
 }
 
-pub(crate) fn task_for_external_mcp(task: TaskRecord) -> Value {
-    let mut value = json!(task);
+pub(crate) fn task_for_agent_tool(task: TaskRecord) -> Value {
+    value_for_agent_tool(json!(task))
+}
+
+pub(crate) fn value_for_agent_tool(mut value: Value) -> Value {
     remove_internal_task_fields(&mut value);
     value
 }
@@ -235,8 +187,41 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
             }
         }
         Value::Object(object) => {
-            object.remove("process_log");
-            object.remove("project_id");
+            for field in [
+                "process_log",
+                "project_id",
+                "tenant_id",
+                "subject_id",
+                "task_profile",
+                "default_model_config_id",
+                "model_config_id",
+                "memory_thread_id",
+                "creator_user_id",
+                "creator_username",
+                "creator_display_name",
+                "owner_user_id",
+                "owner_username",
+                "owner_display_name",
+                "source_session_id",
+                "source_turn_id",
+                "source_user_message_id",
+                "agent_key",
+                "plugin_config",
+                "mcp_config",
+                "plugin_snapshots",
+                "skill_snapshots",
+                "effective_workspace_dir",
+                "execution_environment_mode",
+                "sandbox_enabled",
+                "task_tool_state",
+                "worker_id",
+                "claim_token",
+                "claim_until",
+                "summary_job_run_id",
+                "chatos_callback_delivery",
+            ] {
+                object.remove(field);
+            }
             for item in object.values_mut() {
                 remove_internal_task_fields(item);
             }

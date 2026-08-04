@@ -2,10 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::core::mcp_tools::{build_builtin_tool_service, ToolInfo as ChatosToolInfo};
-use crate::services::builtin_mcp::BuiltinMcpKind as ChatosBuiltinMcpKind;
 use crate::services::mcp_loader::{
-    McpBuiltinServer as ChatosBuiltinServer, McpHttpServer as ChatosHttpServer,
-    McpStdioServer as ChatosStdioServer,
+    BuiltinMcpKind as ChatosBuiltinMcpKind, McpBuiltinServer as ChatosBuiltinServer,
+    McpHttpServer as ChatosHttpServer, McpStdioServer as ChatosStdioServer,
 };
 
 pub(crate) fn build_shared_mcp_executor(
@@ -46,9 +45,12 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
         name: server.name,
         url: server.url,
         headers: server.headers,
-        timeout_ms: None,
+        timeout_ms: server.timeout_ms,
+        tool_timeout_ms: server.tool_timeout_ms,
         tool_name_aliases: Vec::new(),
         allowed_tool_names: server.allowed_tool_names,
+        preserve_tool_names: server.preserve_tool_names,
+        fail_on_unavailable: server.fail_on_unavailable,
         header_provider: server.header_provider,
     }
 }
@@ -67,21 +69,8 @@ pub(crate) fn shared_stdio_server(server: ChatosStdioServer) -> chatos_mcp_runti
 pub(crate) fn shared_builtin_server(
     server: ChatosBuiltinServer,
 ) -> Option<chatos_mcp_runtime::McpBuiltinServer> {
-    let kind = shared_builtin_kind(server.kind)?;
-    Some(chatos_mcp_runtime::McpBuiltinServer {
-        name: server.name,
-        kind: kind.kind_name().to_string(),
-        workspace_dir: server.workspace_dir,
-        user_id: server.user_id,
-        project_id: server.project_id,
-        remote_connection_id: server.remote_connection_id,
-        contact_agent_id: server.contact_agent_id,
-        auto_create_task: server.auto_create_task,
-        allow_writes: server.allow_writes,
-        max_file_bytes: server.max_file_bytes,
-        max_write_bytes: server.max_write_bytes,
-        search_limit: server.search_limit,
-    })
+    shared_builtin_kind(server.kind)?;
+    Some(server.to_runtime_server())
 }
 
 pub(crate) fn shared_builtin_kind(
@@ -226,16 +215,24 @@ mod tests {
                 "X-Chatos-Project-Id".to_string(),
                 "project-1".to_string(),
             )])),
+            timeout_ms: Some(30_000),
+            tool_timeout_ms: HashMap::from([("wait".to_string(), 60_000)]),
             allowed_tool_names: Some(vec![
                 "list_project_tasks".to_string(),
                 "get_project_dependency_graph".to_string(),
             ]),
+            preserve_tool_names: true,
+            fail_on_unavailable: true,
             header_provider: None,
         };
 
         let shared = shared_http_server(server);
 
         assert_eq!(shared.name, "project_management_service");
+        assert_eq!(shared.timeout_ms, Some(30_000));
+        assert_eq!(shared.tool_timeout_ms.get("wait"), Some(&60_000));
+        assert!(shared.preserve_tool_names);
+        assert!(shared.fail_on_unavailable);
         assert_eq!(
             shared
                 .headers

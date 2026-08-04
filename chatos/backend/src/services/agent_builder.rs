@@ -30,8 +30,6 @@ pub struct AiCreateAgentRequest {
     pub skill_ids: Option<Vec<String>>,
     pub skill_prompts: Option<Vec<String>>,
     pub enabled: Option<bool>,
-    pub mcp_enabled: Option<bool>,
-    pub enabled_mcp_ids: Option<Vec<String>>,
     pub project_id: Option<String>,
     pub project_root: Option<String>,
 }
@@ -58,8 +56,6 @@ struct NormalizedRequest {
     skill_ids: Option<Vec<String>>,
     skill_prompts: Option<Vec<String>>,
     enabled: Option<bool>,
-    mcp_enabled: Option<bool>,
-    enabled_mcp_ids: Option<Vec<String>>,
     project_id: Option<String>,
     project_root: Option<String>,
 }
@@ -122,8 +118,6 @@ impl NormalizedRequest {
             skill_ids: normalize_optional_string_array(req.skill_ids),
             skill_prompts: normalize_optional_string_array(req.skill_prompts),
             enabled: req.enabled,
-            mcp_enabled: req.mcp_enabled,
-            enabled_mcp_ids: normalize_optional_string_array(req.enabled_mcp_ids),
             project_id: normalize_optional_text(req.project_id),
             project_root: normalize_optional_text(req.project_root),
         })
@@ -230,7 +224,6 @@ fn build_create_agent_request(
             .and_then(Value::as_bool)
             .unwrap_or(true)
     });
-    let mcp_policy = resolve_mcp_policy(request, &payload);
     let project_policy = resolve_project_policy(request, &payload);
 
     Ok(CreateChatosAgentRequest {
@@ -256,7 +249,6 @@ fn build_create_agent_request(
         } else {
             Some(default_skill_ids)
         },
-        mcp_policy,
         project_policy,
         enabled: Some(enabled),
     })
@@ -476,38 +468,6 @@ fn truncate_text(raw: &str, max_chars: usize) -> String {
     let mut out = raw.chars().take(max_chars).collect::<String>();
     out.push_str("...");
     out
-}
-
-fn resolve_mcp_policy(request: &NormalizedRequest, payload: &Map<String, Value>) -> Option<Value> {
-    if request.mcp_enabled.is_some() || request.enabled_mcp_ids.is_some() {
-        return Some(json!({
-            "enabled": request.mcp_enabled.unwrap_or(true),
-            "enabled_mcp_ids": request.enabled_mcp_ids.clone().unwrap_or_default(),
-        }));
-    }
-
-    if let Some(value) = payload
-        .get("mcp_policy")
-        .and_then(normalize_mcp_policy_value)
-    {
-        return Some(value);
-    }
-
-    Some(json!({
-        "enabled": true,
-        "enabled_mcp_ids": [],
-    }))
-}
-
-fn normalize_mcp_policy_value(value: &Value) -> Option<Value> {
-    let obj = value.as_object()?;
-    Some(json!({
-        "enabled": obj.get("enabled").and_then(Value::as_bool).unwrap_or(true),
-        "enabled_mcp_ids": obj
-            .get("enabled_mcp_ids")
-            .and_then(parse_string_array_from_value)
-            .unwrap_or_default(),
-    }))
 }
 
 fn resolve_project_policy(

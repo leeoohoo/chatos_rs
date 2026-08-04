@@ -216,7 +216,7 @@ export const api = {
     ),
   approvalSettings: () => request<ApprovalSettings>('/api/local/approval/settings'),
   updateApprovalSettings: (
-    payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects' | 'ai'>> & {
+    payload: Partial<Pick<ApprovalSettings, 'default_mode' | 'projects'>> & {
       risk_acknowledged?: boolean;
     },
   ) =>

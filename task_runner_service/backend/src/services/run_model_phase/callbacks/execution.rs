@@ -12,6 +12,8 @@ impl RunService {
         model_config: &ModelConfigRecord,
         prepared_execution: PreparedModelExecution,
     ) -> TaskRunReport {
+        let mcp_management_runtime_session =
+            prepared_execution.mcp_management_runtime_session.clone();
         let max_iterations = prepared_execution
             .runtime_config
             .max_iterations
@@ -19,7 +21,7 @@ impl RunService {
         let runtime_settings = match self.effective_task_runner_runtime_settings().await {
             Ok(settings) => settings,
             Err(err) => {
-                return TaskRunReport::from_ai_report(
+                let report = TaskRunReport::from_ai_report(
                     task.id.clone(),
                     run.id.clone(),
                     Some(model_config.id.clone()),
@@ -27,6 +29,9 @@ impl RunService {
                         "failed to resolve Task Runner runtime settings: {err}"
                     )),
                 );
+                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
+                    .await;
+                return report;
             }
         };
         let review_policy = TaskExecutionReviewPolicy::new(
@@ -51,12 +56,15 @@ impl RunService {
         let execution_timeout = match self.effective_execution_timeout().await {
             Ok(timeout) => timeout,
             Err(err) => {
-                return TaskRunReport::from_ai_report(
+                let report = TaskRunReport::from_ai_report(
                     task.id.clone(),
                     run.id.clone(),
                     Some(model_config.id.clone()),
                     AiTurnReport::failed(format!("failed to resolve execution timeout: {err}")),
                 );
+                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
+                    .await;
+                return report;
             }
         };
         let mut run_spec = prepared_execution.run_spec;
@@ -151,6 +159,7 @@ impl RunService {
             report.content = Some(path_redactor.redact_text(content.as_str()));
             report.error = None;
         }
+        close_mcp_management_runtime_session(mcp_management_runtime_session, task, run).await;
         report
     }
 
@@ -223,6 +232,23 @@ impl RunService {
     }
 }
 
+async fn close_mcp_management_runtime_session(
+    runtime_session: McpManagementRuntimeSessionHandle,
+    task: &TaskRecord,
+    run: &TaskRunRecord,
+) {
+    let mcp_session_id = runtime_session.session_id().to_string();
+    if let Err(error) = runtime_session.close().await {
+        warn!(
+            task_id = task.id.as_str(),
+            run_id = run.id.as_str(),
+            mcp_session_id,
+            error = %error,
+            "close Task Runner MCP Management runtime session failed"
+        );
+    }
+}
+
 fn append_external_mcp_runtime_notice(
     run_spec: &mut TaskRunSpec,
     task: &TaskRecord,
@@ -267,11 +293,11 @@ fn append_external_mcp_runtime_notice(
 
     let text = if task.mcp_config.locale().is_english() {
         format!(
-            "[External MCP unavailable]\nThis task is bound to external MCP configs, but no external MCP tools were registered for this run. Do not claim that the external system was searched. Report this as a runtime MCP availability problem.\n\nUnavailable MCP servers:\n{unavailable_summary}"
+            "[External MCP unavailable]\nThe Agent binding resolved external MCP resources for this run, but no corresponding tools were registered. Do not claim that the external system was searched. Report this as a runtime MCP availability problem.\n\nUnavailable MCP servers:\n{unavailable_summary}"
         )
     } else {
         format!(
-            "[外部 MCP 不可用]\n当前任务绑定了外部 MCP 配置，但本次运行没有注册到任何外部 MCP 工具。不要声称已经检索过外部系统；请把它作为运行时 MCP 可用性问题说明。\n\n不可用 MCP 服务：\n{unavailable_summary}"
+            "[外部 MCP 不可用]\nAgent Binding 为本次运行解析出了外部 MCP 资源，但没有注册到对应工具。不要声称已经检索过外部系统；请把它作为运行时 MCP 可用性问题说明。\n\n不可用 MCP 服务：\n{unavailable_summary}"
         )
     };
     run_spec.prefixed_input_items.push(json!({

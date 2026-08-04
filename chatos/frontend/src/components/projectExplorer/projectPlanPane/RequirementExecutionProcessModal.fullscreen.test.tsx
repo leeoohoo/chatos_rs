@@ -61,14 +61,14 @@ describe('requirement execution modal fullscreen mode', () => {
       />,
     );
 
-    expect(screen.getByText('等待用户开始生成执行流程')).toBeTruthy();
+    expect(screen.getByText('等待开始生成执行计划')).toBeTruthy();
     expect(onStart).not.toHaveBeenCalled();
 
     await user.type(
-      screen.getByPlaceholderText('输入希望项目 Agent 遵循的规划要求，例如：先补测试，再拆分接口；把部署放到最后……'),
+      screen.getByPlaceholderText('输入希望执行计划遵循的要求，例如：先补测试，再拆分接口；把部署放到最后……'),
       '先补测试，再拆分接口',
     );
-    await user.click(screen.getByRole('button', { name: '开始生成执行流程' }));
+    await user.click(screen.getByRole('button', { name: '开始生成执行计划' }));
 
     expect(onStart).toHaveBeenCalledWith('先补测试，再拆分接口');
   });

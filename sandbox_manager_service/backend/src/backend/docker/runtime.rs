@@ -3,6 +3,11 @@
 
 use super::*;
 
+struct BuiltProgramManagedApplicationImage {
+    image_ref: String,
+    replaced_image_ids: Vec<String>,
+}
+
 impl DockerSandboxBackend {
     pub(super) async fn create_environment_with_cli(
         &self,
@@ -83,22 +88,30 @@ impl DockerSandboxBackend {
             environment.environment_id.as_str(),
             service.service_id.as_str(),
         );
-        let image = if service.mcp_enabled {
+        let (image, replaced_image_ids) = if service.mcp_enabled {
             if let Some(dockerfile) = service.dockerfile.as_deref() {
-                self.build_program_managed_application_image(
-                    environment.environment_id.as_str(),
-                    &service.service_id,
-                    environment.run_workspace.as_str(),
-                    service.image.as_str(),
-                    dockerfile,
-                )
-                .await?
+                let built = self
+                    .build_program_managed_application_image(
+                        environment.environment_id.as_str(),
+                        &service.service_id,
+                        environment.run_workspace.as_str(),
+                        service.image.as_str(),
+                        dockerfile,
+                    )
+                    .await?;
+                (built.image_ref, built.replaced_image_ids)
             } else {
-                service.image.clone()
+                (service.image.clone(), Vec::new())
             }
         } else {
-            service.image.clone()
+            (service.image.clone(), Vec::new())
         };
+        if service.mcp_enabled {
+            prepare_managed_playwright_workspace_link(
+                environment.run_workspace.as_str(),
+                image.as_str(),
+            )?;
+        }
 
         let mut command = Command::new("docker");
         let compose_project = environment_compose_project_name(environment.environment_id.as_str());
@@ -139,6 +152,8 @@ impl DockerSandboxBackend {
         if service.mcp_enabled {
             let cpu = environment.resource_limits.cpu.max(0.1).to_string();
             let memory = format!("{}m", environment.resource_limits.memory_mb.max(128));
+            let tmpfs_size_mb = (environment.resource_limits.disk_mb / 16).clamp(16, 512);
+            let home_tmpfs_size_mb = (environment.resource_limits.disk_mb / 8).clamp(256, 1024);
             let pids = environment
                 .resource_limits
                 .max_processes
@@ -159,9 +174,13 @@ impl DockerSandboxBackend {
                 .arg("--user")
                 .arg("1000:1000")
                 .arg("--tmpfs")
-                .arg("/tmp:rw,nosuid,nodev,size=256m,mode=1777")
+                .arg(format!(
+                    "/tmp:rw,nosuid,nodev,size={tmpfs_size_mb}m,mode=1777"
+                ))
                 .arg("--tmpfs")
-                .arg("/home/sandbox:rw,nosuid,nodev,size=256m,uid=1000,gid=1000,mode=0700")
+                .arg(format!(
+                    "/home/sandbox:rw,nosuid,nodev,size={home_tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700"
+                ))
                 .arg("-v")
                 .arg(format!("{}:/workspace:rw", environment.run_workspace))
                 .arg("-e")
@@ -179,12 +198,12 @@ impl DockerSandboxBackend {
                 .arg("-e")
                 .arg(format!("CHATOS_AGENT_PORT={}", self.config.agent_port))
                 .arg("-e")
-                .arg("CHATOS_WORKSPACE=/workspace")
-                .arg("-p")
-                .arg(format!(
-                    "{}::{}",
-                    self.config.docker_agent_bind_host, self.config.agent_port
-                ));
+                .arg("CHATOS_WORKSPACE=/workspace");
+            append_sandbox_runtime_environment(&mut command);
+            command.arg("-p").arg(format!(
+                "{}::{}",
+                self.config.docker_agent_bind_host, self.config.agent_port
+            ));
         } else if let Some((volume_name, mount_path)) =
             dependency_volume(&environment.environment_id, &service.service_id)
         {
@@ -205,6 +224,19 @@ impl DockerSandboxBackend {
                 service.service_id,
                 String::from_utf8_lossy(&output.stderr)
             ));
+        }
+        cleanup_replaced_environment_images(&self.config, replaced_image_ids.as_slice()).await;
+        match crate::docker_maintenance::enforce_build_cache_limit(&self.config).await {
+            Ok(message) => tracing::info!(
+                environment_id = %environment.environment_id,
+                service_id = %service.service_id,
+                "{message}"
+            ),
+            Err(error) => tracing::warn!(
+                environment_id = %environment.environment_id,
+                service_id = %service.service_id,
+                "Docker maintenance failed after environment image build: {error}"
+            ),
         }
         let backend_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let agent_endpoint = if service.mcp_enabled {
@@ -227,14 +259,14 @@ impl DockerSandboxBackend {
         })
     }
 
-    pub(super) async fn build_program_managed_application_image(
+    async fn build_program_managed_application_image(
         &self,
         environment_id: &str,
         service_id: &str,
         run_workspace: &str,
         agent_image: &str,
         dockerfile: &str,
-    ) -> Result<String, String> {
+    ) -> Result<BuiltProgramManagedApplicationImage, String> {
         let build_root = self
             .config
             .work_root
@@ -251,10 +283,15 @@ impl DockerSandboxBackend {
             safe_name(environment_id),
             safe_name(service_id)
         );
+        let previous_application_image_id =
+            docker_image_id(&self.config, application_image.as_str()).await;
         run_docker_build(
             application_dockerfile.as_path(),
             Path::new(run_workspace),
             application_image.as_str(),
+            environment_id,
+            service_id,
+            "application",
             self.config.docker_config.as_deref(),
             self.config.docker_host.as_deref(),
         )
@@ -277,15 +314,37 @@ impl DockerSandboxBackend {
             safe_name(environment_id),
             safe_name(service_id)
         );
+        let previous_final_image_id = docker_image_id(&self.config, final_image.as_str()).await;
         run_docker_build(
             wrapper_dockerfile.as_path(),
             build_root.as_path(),
             final_image.as_str(),
+            environment_id,
+            service_id,
+            "runtime",
             self.config.docker_config.as_deref(),
             self.config.docker_host.as_deref(),
         )
         .await?;
-        Ok(final_image)
+        let mut replaced_image_ids = Vec::new();
+        collect_replaced_image_id(
+            &self.config,
+            application_image.as_str(),
+            previous_application_image_id,
+            &mut replaced_image_ids,
+        )
+        .await;
+        collect_replaced_image_id(
+            &self.config,
+            final_image.as_str(),
+            previous_final_image_id,
+            &mut replaced_image_ids,
+        )
+        .await;
+        Ok(BuiltProgramManagedApplicationImage {
+            image_ref: final_image,
+            replaced_image_ids,
+        })
     }
 
     pub(super) async fn inspect_environment_service(
@@ -364,15 +423,20 @@ impl DockerSandboxBackend {
         &self,
         spec: SandboxCreateSpec,
     ) -> Result<SandboxInstance, String> {
+        prepare_managed_playwright_workspace_link(
+            spec.run_workspace.as_str(),
+            spec.image.as_str(),
+        )?;
         let name = docker_name(spec.sandbox_id.as_str());
         let cpu = spec.resource_limits.cpu.max(0.1).to_string();
         let memory = format!("{}m", spec.resource_limits.memory_mb.max(128));
         let pids = spec.resource_limits.max_processes.max(16).to_string();
         let tmpfs_size_mb = (spec.resource_limits.disk_mb / 16).clamp(16, 512);
+        let home_tmpfs_size_mb = (spec.resource_limits.disk_mb / 8).clamp(256, 1024);
         let workspace_limit_mb = spec
             .resource_limits
             .disk_mb
-            .saturating_sub(tmpfs_size_mb.saturating_mul(2))
+            .saturating_sub(tmpfs_size_mb.saturating_add(home_tmpfs_size_mb))
             .max(1);
         let disk_limit_bytes = workspace_limit_mb.saturating_mul(1024 * 1024);
         let requested_network = spec.network.mode.trim();
@@ -422,7 +486,7 @@ impl DockerSandboxBackend {
             ))
             .arg("--tmpfs")
             .arg(format!(
-                "/home/sandbox:rw,nosuid,nodev,size={tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700"
+                "/home/sandbox:rw,nosuid,nodev,size={home_tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700"
             ))
             .arg("--security-opt")
             .arg("no-new-privileges")
@@ -450,6 +514,10 @@ impl DockerSandboxBackend {
         &self,
         spec: SandboxCreateSpec,
     ) -> Result<SandboxInstance, String> {
+        prepare_managed_playwright_workspace_link(
+            spec.run_workspace.as_str(),
+            spec.image.as_str(),
+        )?;
         let api = self
             .api
             .as_ref()
@@ -464,19 +532,19 @@ impl DockerSandboxBackend {
         let publish_agent =
             self.config.docker_agent_publish && network != "none" && self.config.agent_port > 0;
         let tmpfs_size_mb = (spec.resource_limits.disk_mb / 16).clamp(16, 512);
+        let home_tmpfs_size_mb = (spec.resource_limits.disk_mb / 8).clamp(256, 1024);
         let workspace_limit_mb = spec
             .resource_limits
             .disk_mb
-            .saturating_sub(tmpfs_size_mb.saturating_mul(2))
+            .saturating_sub(tmpfs_size_mb.saturating_add(home_tmpfs_size_mb))
             .max(1);
         let disk_limit_bytes = workspace_limit_mb.saturating_mul(1024 * 1024);
         let mut env = vec![
             format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id),
             "CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write".to_string(),
             format!("CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"),
-            "HOME=/home/sandbox".to_string(),
-            "XDG_CACHE_HOME=/home/sandbox/.cache".to_string(),
         ];
+        env.extend(sandbox_runtime_environment_values());
         if let Some(agent_token) = spec.agent_token.as_deref() {
             env.push(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
         }
@@ -501,7 +569,7 @@ impl DockerSandboxBackend {
                 "CapDrop": ["ALL"],
                 "Tmpfs": {
                     "/tmp": format!("rw,nosuid,nodev,size={tmpfs_size_mb}m,mode=1777"),
-                    "/home/sandbox": format!("rw,nosuid,nodev,size={tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700")
+                    "/home/sandbox": format!("rw,nosuid,nodev,size={home_tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700")
                 },
                 "SecurityOpt": ["no-new-privileges"],
                 "Binds": [format!("{}:/workspace:rw", spec.run_workspace)],

@@ -47,6 +47,7 @@ pub(super) async fn create_system_agent(
         enabled: payload.enabled.unwrap_or(true),
         managed_by: payload.managed_by.unwrap_or_else(|| "admin".to_string()),
         include_user_resources: false,
+        tool_plane: AgentToolPlane::Managed,
         plugin_component: PluginComponentOwnership::default(),
         created_at: now.clone(),
         updated_at: now,
@@ -121,12 +122,7 @@ pub(super) async fn update_agent_mcp_bindings(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
-    if !agent_supports_mcp(&agent) && !payload.bindings.is_empty() {
-        return Err(ApiError::bad_request(
-            "This system agent does not support MCP bindings",
-        ));
-    }
-
+    ensure_managed_tool_plane(&agent)?;
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
     for selection in payload.bindings {
@@ -144,14 +140,8 @@ pub(super) async fn update_agent_mcp_bindings(
             .await
             .map_err(ApiError::internal)?
             .ok_or_else(|| ApiError::not_found(format!("MCP not found: {mcp_id}")))?;
-
-        if let Some(reason) = agent_mcp_unavailable_reason(&agent, &mcp) {
-            return Err(ApiError::bad_request(format!(
-                "MCP {} cannot be bound to system agent {}: {}",
-                mcp.id,
-                agent.agent_key,
-                agent_mcp_unavailable_message(reason)
-            )));
+        if !mcp.enabled {
+            return Err(ApiError::bad_request(format!("MCP is disabled: {mcp_id}")));
         }
         selected.push((mcp_id, selection.mode));
     }
@@ -212,12 +202,13 @@ pub(super) async fn update_agent_plugin_bindings(
     Json(payload): Json<UpdateAgentPluginBindingsRequest>,
 ) -> Result<Json<AgentPluginBindingsResponse>, ApiError> {
     ensure_super_admin(&user)?;
-    state
+    let agent = state
         .store
         .get_agent(agent_key.as_str())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    ensure_managed_tool_plane(&agent)?;
 
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
@@ -305,6 +296,7 @@ async fn build_agent_plugin_bindings_response(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
+    ensure_managed_tool_plane(&agent)?;
     let plugins = state
         .store
         .list_plugin_catalog(
@@ -380,12 +372,7 @@ pub(super) async fn build_agent_mcp_bindings_response(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("System agent not found"))?;
-    if !agent_supports_mcp(&agent) {
-        return Ok(AgentMcpBindingsResponse {
-            agent,
-            items: Vec::new(),
-        });
-    }
+    ensure_managed_tool_plane(&agent)?;
     let mcps = state
         .store
         .list_all_mcps_for_admin_catalog()
@@ -417,18 +404,15 @@ pub(super) async fn build_agent_mcp_bindings_response(
     }
     let mut items = mcps
         .into_iter()
-        .map(|mcp| {
-            let unavailable_reason = agent_mcp_unavailable_reason(&agent, &mcp);
-            AgentMcpBindingView {
-                mode: modes
-                    .get(mcp.id.as_str())
-                    .copied()
-                    .unwrap_or(MCP_BINDING_MODE_DISABLED)
-                    .to_string(),
-                bindable: unavailable_reason.is_none(),
-                unavailable_reason: unavailable_reason.map(str::to_string),
-                mcp,
-            }
+        .map(|mcp| AgentMcpBindingView {
+            mode: modes
+                .get(mcp.id.as_str())
+                .copied()
+                .unwrap_or(MCP_BINDING_MODE_DISABLED)
+                .to_string(),
+            bindable: true,
+            unavailable_reason: None,
+            mcp,
         })
         .collect::<Vec<_>>();
     items.sort_by(|left, right| {
@@ -445,177 +429,28 @@ pub(super) async fn build_agent_mcp_bindings_response(
     Ok(AgentMcpBindingsResponse { agent, items })
 }
 
-fn agent_supports_mcp(agent: &SystemAgentRecord) -> bool {
-    agent.service_name != "memory-engine"
-}
-
-const AGENT_MCP_UNAVAILABLE_DISABLED: &str = "agentMcpUnavailable.disabled";
-const AGENT_MCP_UNAVAILABLE_PRIVATE_SCOPE: &str = "agentMcpUnavailable.privateScope";
-const AGENT_MCP_UNAVAILABLE_LOCAL_CONNECTOR_SCOPE: &str = "agentMcpUnavailable.localConnectorScope";
-const AGENT_MCP_UNAVAILABLE_HOST_UNSUPPORTED: &str = "agentMcpUnavailable.hostUnsupported";
-const AGENT_MCP_UNAVAILABLE_PHASE_FORBIDS_BUILTIN: &str = "agentMcpUnavailable.phaseForbidsBuiltin";
-const AGENT_MCP_UNAVAILABLE_CLOUD_RUNTIME: &str = "agentMcpUnavailable.cloudRuntime";
-const AGENT_MCP_UNAVAILABLE_PLANNING_WRITES: &str = "agentMcpUnavailable.planningWrites";
-const AGENT_MCP_UNAVAILABLE_LOCAL_EXTERNAL_GLOBAL: &str = "agentMcpUnavailable.localExternalGlobal";
-
-fn agent_mcp_unavailable_reason(
-    agent: &SystemAgentRecord,
-    mcp: &McpRecord,
-) -> Option<&'static str> {
-    if !mcp.enabled {
-        return Some(AGENT_MCP_UNAVAILABLE_DISABLED);
-    }
-    if mcp_is_local_connector_scoped(mcp) {
-        return Some(AGENT_MCP_UNAVAILABLE_LOCAL_CONNECTOR_SCOPE);
-    }
-    if mcp.visibility == VISIBILITY_PRIVATE {
-        return Some(AGENT_MCP_UNAVAILABLE_PRIVATE_SCOPE);
-    }
-    if let Some(descriptor) = chatos_mcp::system_mcp_descriptor_for_record(mcp) {
-        let Some(host) = agent_mcp_host(agent) else {
-            if descriptor.key == chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog {
-                return Some(AGENT_MCP_UNAVAILABLE_HOST_UNSUPPORTED);
-            }
-            return None;
-        };
-        if !descriptor.supports_host(host) {
-            return Some(AGENT_MCP_UNAVAILABLE_HOST_UNSUPPORTED);
-        }
-        if descriptor
-            .embedded_kind
-            .is_some_and(|kind| !task_runner_agent_allows_builtin(agent.agent_key.as_str(), kind))
-        {
-            return Some(AGENT_MCP_UNAVAILABLE_PHASE_FORBIDS_BUILTIN);
-        }
-        return None;
-    }
-    let host = agent_mcp_host(agent)?;
-
-    if host == chatos_mcp::SystemMcpHost::LocalConnector {
-        return Some(AGENT_MCP_UNAVAILABLE_LOCAL_EXTERNAL_GLOBAL);
-    }
-    if host == chatos_mcp::SystemMcpHost::TaskRunner {
-        return cloud_task_runner_external_mcp_unavailable_reason(agent, mcp);
-    }
-    None
-}
-
-fn mcp_binding_sort_rank(item: &AgentMcpBindingView) -> (u8, u8, u8) {
+fn mcp_binding_sort_rank(item: &AgentMcpBindingView) -> (u8, u8) {
     let bound_rank = if item.mode == MCP_BINDING_MODE_DISABLED {
         1
     } else {
         0
     };
-    let bindable_rank = if item.bindable { 0 } else { 1 };
     let visibility_rank = match item.mcp.visibility.as_str() {
         VISIBILITY_SYSTEM_PRIVATE => 0,
         VISIBILITY_PUBLIC => 1,
         _ => 2,
     };
-    (bound_rank, bindable_rank, visibility_rank)
+    (bound_rank, visibility_rank)
 }
 
-fn mcp_is_local_connector_scoped(mcp: &McpRecord) -> bool {
-    mcp.source_kind == SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED
-        || matches!(
-            mcp.runtime.kind.as_str(),
-            RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
-                | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-                | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY
-        )
-        || mcp.runtime.local_connector.is_some()
-}
-
-fn cloud_task_runner_external_mcp_unavailable_reason(
-    agent: &SystemAgentRecord,
-    mcp: &McpRecord,
-) -> Option<&'static str> {
-    if !matches!(
-        mcp.runtime.kind.as_str(),
-        RUNTIME_KIND_HTTP | RUNTIME_KIND_STDIO_CLOUD
-    ) {
-        return Some(AGENT_MCP_UNAVAILABLE_CLOUD_RUNTIME);
+pub(super) fn ensure_managed_tool_plane(agent: &SystemAgentRecord) -> Result<(), ApiError> {
+    if agent.tool_plane.uses_managed_gateway() {
+        return Ok(());
     }
-    if task_runner_agent_is_planning_phase(agent.agent_key.as_str())
-        && mcp.security.allow_writes != Some(false)
-    {
-        return Some(AGENT_MCP_UNAVAILABLE_PLANNING_WRITES);
-    }
-    None
-}
-
-fn task_runner_agent_is_planning_phase(agent_key: &str) -> bool {
-    matches!(
-        agent_key,
-        "task_runner_plan_phase" | "task_runner_local_plan_phase"
-    )
-}
-
-fn agent_mcp_unavailable_message(reason: &str) -> &'static str {
-    match reason {
-        AGENT_MCP_UNAVAILABLE_DISABLED => "MCP is disabled",
-        AGENT_MCP_UNAVAILABLE_PRIVATE_SCOPE => {
-            "private MCPs are user scoped and cannot be saved as a global system-agent binding"
-        }
-        AGENT_MCP_UNAVAILABLE_LOCAL_CONNECTOR_SCOPE => {
-            "Local Connector MCPs are owner/device scoped and are merged at runtime"
-        }
-        AGENT_MCP_UNAVAILABLE_HOST_UNSUPPORTED => {
-            "the MCP does not support this agent runtime host"
-        }
-        AGENT_MCP_UNAVAILABLE_PHASE_FORBIDS_BUILTIN => {
-            "this Task Runner phase does not allow that builtin MCP"
-        }
-        AGENT_MCP_UNAVAILABLE_CLOUD_RUNTIME => {
-            "cloud Task Runner only supports HTTP or cloud stdio external MCPs"
-        }
-        AGENT_MCP_UNAVAILABLE_PLANNING_WRITES => {
-            "planning agents only allow external MCPs that explicitly disallow writes"
-        }
-        AGENT_MCP_UNAVAILABLE_LOCAL_EXTERNAL_GLOBAL => {
-            "Local Connector external MCPs cannot be saved as global bindings"
-        }
-        _ => "MCP is not bindable",
-    }
-}
-
-fn task_runner_agent_allows_builtin(
-    agent_key: &str,
-    kind: chatos_mcp_runtime::BuiltinMcpKind,
-) -> bool {
-    if matches!(
-        agent_key,
-        "task_runner_plan_phase" | "task_runner_local_plan_phase"
-    ) {
-        return !matches!(
-            kind,
-            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
-                | chatos_mcp_runtime::BuiltinMcpKind::TerminalController
-                | chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController
-        );
-    }
-    if matches!(
-        agent_key,
-        "task_runner_run_phase" | "task_runner_local_run_phase"
-    ) {
-        return !matches!(
-            kind,
-            chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController
-        );
-    }
-    true
-}
-
-fn agent_mcp_host(agent: &SystemAgentRecord) -> Option<chatos_mcp::SystemMcpHost> {
-    match agent.agent_key.as_str() {
-        "task_runner_plan_phase" | "task_runner_run_phase" => {
-            Some(chatos_mcp::SystemMcpHost::TaskRunner)
-        }
-        "task_runner_local_plan_phase" | "task_runner_local_run_phase" => {
-            Some(chatos_mcp::SystemMcpHost::LocalConnector)
-        }
-        _ => None,
-    }
+    Err(ApiError::conflict(format!(
+        "System agent {} does not use the managed MCP Tool Plane",
+        agent.agent_key,
+    )))
 }
 
 #[cfg(test)]

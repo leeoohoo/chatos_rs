@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -10,11 +10,8 @@ import {
   Descriptions,
   Empty,
   List,
-  Segmented,
-  Select,
   Space,
   Statistic,
-  Switch,
   Table,
   Tag,
   Typography,
@@ -22,18 +19,13 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../../api/client';
-import { McpPromptPreviewCard } from '../../components/McpPromptPreviewCard';
 import { useI18n } from '../../i18n/I18nProvider';
-import type { McpCatalogEntry, TaskBuiltinPromptMode } from '../../types';
+import type { McpCatalogEntry } from '../../types';
 import { MCP_CARD_STYLE } from './mcpCatalogPageUtils';
 
 export function BuiltinMcpCatalogTab() {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const navigate = useNavigate();
-  const [mcpEnabled, setMcpEnabled] = useState(true);
-  const [promptMode, setPromptMode] = useState<TaskBuiltinPromptMode>('effective');
-  const [promptLocale, setPromptLocale] = useState(locale);
-  const [selectedKinds, setSelectedKinds] = useState<string[]>([]);
   const catalogQuery = useQuery({
     queryKey: ['mcp-catalog'],
     queryFn: api.listMcpCatalog,
@@ -42,26 +34,6 @@ export function BuiltinMcpCatalogTab() {
     queryKey: ['remote-servers'],
     queryFn: api.listRemoteServers,
   });
-  const promptPreviewQuery = useQuery({
-    queryKey: ['mcp-prompt-preview', mcpEnabled, promptMode, promptLocale, selectedKinds],
-    queryFn: () =>
-      api.previewMcpPrompt({
-        enabled: mcpEnabled,
-        init_mode: 'full',
-        builtin_prompt_mode: promptMode,
-        builtin_prompt_locale: promptLocale,
-        enabled_builtin_kinds: selectedKinds.length ? selectedKinds : undefined,
-      }),
-  });
-  const kindOptions = useMemo(
-    () =>
-      (catalogQuery.data || []).map((entry) => ({
-        label: entry.kind,
-        value: entry.kind,
-        disabled: !entry.implemented,
-      })),
-    [catalogQuery.data],
-  );
   const remoteControllerEntry = useMemo(
     () =>
       (catalogQuery.data || []).find((entry) => entry.kind === 'RemoteConnectionController') ||
@@ -193,54 +165,6 @@ export function BuiltinMcpCatalogTab() {
               t('mcpCatalog.remoteDescriptionFallback')}
           </Descriptions.Item>
         </Descriptions>
-      </Space>
-
-      <Space direction="vertical" size="middle" style={MCP_CARD_STYLE}>
-        <Space direction="vertical" size={0}>
-          <Typography.Title level={5} style={{ margin: 0 }}>
-            {t('mcpCatalog.promptPreviewTitle')}
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            {t('mcpCatalog.promptPreviewSubtitle')}
-          </Typography.Text>
-        </Space>
-
-        <Space wrap>
-          <Space size={8}>
-            <Typography.Text type="secondary">{t('mcpCatalog.enableMcp')}</Typography.Text>
-            <Switch checked={mcpEnabled} onChange={setMcpEnabled} />
-          </Space>
-          <Segmented
-            value={promptMode}
-            onChange={(value) => setPromptMode(value as TaskBuiltinPromptMode)}
-            options={[
-              { label: 'effective', value: 'effective' },
-              { label: 'configured', value: 'configured' },
-            ]}
-          />
-          <Select
-            style={{ width: 140 }}
-            value={promptLocale}
-            onChange={setPromptLocale}
-            options={[
-              { label: t('mcp.promptLanguage.zhCN'), value: 'zh-CN' },
-              { label: t('mcp.promptLanguage.enUS'), value: 'en-US' },
-            ]}
-          />
-          <Select
-            mode="multiple"
-            allowClear
-            placeholder={t('mcpCatalog.kindsPlaceholder')}
-            style={{ minWidth: 320 }}
-            value={selectedKinds}
-            options={kindOptions}
-            onChange={(value) => setSelectedKinds(value)}
-          />
-        </Space>
-
-        {promptPreviewQuery.data ? (
-          <McpPromptPreviewCard preview={promptPreviewQuery.data} />
-        ) : null}
       </Space>
 
       <Table<McpCatalogEntry>

@@ -64,7 +64,6 @@ export interface MemoryAgentResponse {
   skills?: MemoryAgentSkillResponse[];
   skill_ids?: string[];
   default_skill_ids?: string[];
-  mcp_policy?: Record<string, unknown> | null;
   project_policy?: Record<string, unknown> | null;
   enabled?: boolean;
   created_at?: string;
@@ -95,7 +94,6 @@ export interface MemoryAgentRuntimeContextResponse {
   skill_ids?: string[];
   runtime_skills?: MemoryAgentRuntimeSkillSummaryResponse[];
   runtime_commands?: MemoryAgentRuntimeCommandSummaryResponse[];
-  mcp_policy?: Record<string, unknown> | null;
   project_policy?: Record<string, unknown> | null;
   updated_at?: string;
 }
@@ -109,7 +107,6 @@ export interface CreateAgentPayload {
   skills?: MemoryAgentSkillResponse[];
   skill_ids?: string[];
   default_skill_ids?: string[];
-  mcp_policy?: Record<string, unknown> | null;
   project_policy?: Record<string, unknown> | null;
   enabled?: boolean;
 }
@@ -122,7 +119,6 @@ export interface UpdateAgentPayload {
   skills?: MemoryAgentSkillResponse[];
   skill_ids?: string[];
   default_skill_ids?: string[];
-  mcp_policy?: Record<string, unknown> | null;
   project_policy?: Record<string, unknown> | null;
   enabled?: boolean;
 }
@@ -138,8 +134,6 @@ export interface AiCreateAgentPayload {
   skill_ids?: string[];
   skill_prompts?: string[];
   enabled?: boolean;
-  mcp_enabled?: boolean;
-  enabled_mcp_ids?: string[];
   project_id?: string;
   project_root?: string;
 }
@@ -268,15 +262,6 @@ export interface ConversationAssistantResponse {
         base_url?: string;
       };
     };
-  };
-}
-
-export interface ConversationMcpServersResponse {
-  data: {
-    mcp_servers: Array<{
-      name: string;
-      url: string;
-    }>;
   };
 }
 

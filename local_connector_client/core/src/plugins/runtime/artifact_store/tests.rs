@@ -104,6 +104,11 @@ fn fixture() -> (
         path: Some("/plugins/execute".to_string()),
         headers: BTreeMap::new(),
         body: json!({}),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let mut access = PluginArtifactUiAccess {
         run_id: "run-a".to_string(),

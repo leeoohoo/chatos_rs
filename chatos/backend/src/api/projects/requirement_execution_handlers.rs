@@ -11,7 +11,8 @@ use chatos_project_execution::{
     build_requirement_execution_planner_prompt, build_requirement_execution_user_message,
 };
 use chatos_project_execution::{
-    ExecutionPlanIdentity, ExecutionPlane, STATUS_STOPPED, STATUS_STOPPING,
+    requirement_execution_recovery_state, ExecutionPlanIdentity, ExecutionPlane, STATUS_STOPPED,
+    STATUS_STOPPING,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -26,13 +27,14 @@ use crate::utils::abort_registry;
 #[cfg(test)]
 use super::requirement_execution::WorkItemPlanItem;
 use super::requirement_execution::{
-    collect_requirement_execution_scope, load_execution_links_for_work_items,
-    load_requirement_execution_request_context, mark_execution_messages_for_stop,
-    parse_requirements, parse_work_items, project_plan_array, project_plan_value,
-    requirement_dependency_map, select_contact_runtime, sync_execution_link_status,
-    sync_requirement_execution_state, task_runner_callback_event_for_status,
-    task_runner_status_is_active, task_runner_status_is_cancelled, task_runner_status_is_success,
-    value_string, ExecutionLink, HandlerError,
+    apply_task_runner_task_snapshot, collect_requirement_execution_scope,
+    load_execution_links_for_work_items, load_requirement_execution_request_context,
+    mark_execution_messages_for_stop, parse_requirements, parse_work_items, project_plan_array,
+    project_plan_value, requirement_dependency_map, select_contact_runtime,
+    sync_execution_link_status, sync_requirement_execution_state,
+    task_runner_callback_event_for_status, task_runner_status_is_active,
+    task_runner_status_is_cancelled, task_runner_status_is_success, value_string, ExecutionLink,
+    HandlerError,
 };
 
 mod execute_planning;
@@ -41,20 +43,21 @@ mod plan_query;
 mod rerun_execution;
 mod rerun_support;
 
+pub(in crate::api::projects) use plan_query::repair_stale_cloud_execution_planner_message;
+pub(crate) use plan_query::{cloud_execution_planner_message_is_stale, execution_message_status};
+
 use execute_planning::execute_requirement_inner;
+#[cfg(test)]
+use execute_planning::prepare_requirement_planner_turn;
 use execution_dispatch::{
     confirm_requirement_execution_inner, mutate_requirement_execution_dispatch_inner,
 };
 #[cfg(test)]
 use plan_query::{
     cloud_execution_message_is_newer, cloud_execution_message_matches_scope,
-    cloud_execution_planner_message_is_stale, execution_message_is_stopped_terminal,
-    STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS,
+    execution_message_is_stopped_terminal, STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS,
 };
-use plan_query::{
-    execution_message_status, get_requirement_execution_plan_inner,
-    load_cloud_execution_source_message,
-};
+use plan_query::{get_requirement_execution_plan_inner, load_cloud_execution_source_message};
 use rerun_execution::rerun_requirement_execution_inner;
 #[cfg(test)]
 use rerun_support::{
@@ -405,10 +408,9 @@ async fn stop_requirement_execution_inner(
                 && link.source_user_message_id.as_deref() == Some(execution_group_id.as_str())
         });
     }
-    for link in links
-        .iter_mut()
-        .filter(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
-    {
+    // Retries reuse the Task Runner task id. Always reconcile the authoritative
+    // task snapshot so a cached failed link cannot hide a newly active retry.
+    for link in links.iter_mut() {
         let task = task_runner_api_client::get_task_runner_task(
             contact_runtime.task_runner_base_url.as_str(),
             contact_runtime.task_runner_agent_token.as_str(),
@@ -416,7 +418,7 @@ async fn stop_requirement_execution_inner(
         )
         .await
         .map_err(|err| HandlerError::bad_gateway("校验 Task Runner 任务状态失败", err))?;
-        link.task_runner_status = Some(task.status.clone());
+        apply_task_runner_task_snapshot(link, &task);
         sync_execution_link_status(
             cfg.project_service_base_url.as_str(),
             project_sync_secret.as_str(),
@@ -616,6 +618,16 @@ async fn stop_requirement_execution_inner(
         }
     }
 
+    let stopped_task_count = links.len();
+    let stopped_has_started_runs = links.iter().any(|link| link.task_runner_run_id.is_some());
+    let recovery = requirement_execution_recovery_state(
+        STATUS_STOPPED,
+        stopped_task_count,
+        stopped_has_started_runs,
+        precise_plan.is_some(),
+        discard_tasks,
+    );
+
     Ok(json!({
         "success": true,
         "status": STATUS_STOPPED,
@@ -630,6 +642,11 @@ async fn stop_requirement_execution_inner(
         "reset_work_item_ids": work_item_ids,
         "reset_requirement_ids": reset_requirement_ids,
         "discarded_tasks": discard_tasks,
+        "task_count": stopped_task_count,
+        "has_started_runs": stopped_has_started_runs,
+        "recovery_action": recovery.action,
+        "recovery_reason": recovery.reason,
+        "replace_previous_batch": recovery.replace_previous_batch,
         "cleanup": cleanup,
     }))
 }

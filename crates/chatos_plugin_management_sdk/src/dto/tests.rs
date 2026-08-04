@@ -4,9 +4,28 @@
 use super::*;
 
 #[test]
+fn agent_tool_plane_defaults_to_managed_and_serializes_stably() {
+    assert_eq!(AgentToolPlane::default(), AgentToolPlane::Managed);
+    assert!(AgentToolPlane::Managed.supports_tools());
+    assert!(AgentToolPlane::Managed.uses_managed_gateway());
+    assert!(AgentToolPlane::LocalOnly.supports_tools());
+    assert!(!AgentToolPlane::LocalOnly.uses_managed_gateway());
+    assert!(!AgentToolPlane::None.supports_tools());
+    assert!(!AgentToolPlane::None.uses_managed_gateway());
+    assert_eq!(
+        serde_json::to_value(AgentToolPlane::LocalOnly).expect("local tool plane JSON"),
+        serde_json::json!("local_only")
+    );
+    assert_eq!(
+        serde_json::to_value(AgentToolPlane::None).expect("tool plane JSON"),
+        serde_json::json!("none")
+    );
+}
+
+#[test]
 fn system_agent_keys_match_registry_keys() {
-    assert_eq!(SystemAgentKey::ALL.len(), 14);
-    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 56);
+    assert_eq!(SystemAgentKey::ALL.len(), 12);
+    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 48);
     assert_eq!(
         SystemAgentKey::ChatosConversationAgent.as_str(),
         "chatos_conversation_agent"
@@ -19,14 +38,8 @@ fn system_agent_keys_match_registry_keys() {
         SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
         "memory_engine_thread_repair_agent"
     );
-    assert_eq!(
-        SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
-        "task_runner_local_plan_phase"
-    );
-    assert_eq!(
-        SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
-        "task_runner_local_run_phase"
-    );
+    assert!(!SystemAgentKey::ALL.contains(&SystemAgentKey::TaskRunnerLocalPlanPhase));
+    assert!(!SystemAgentKey::ALL.contains(&SystemAgentKey::TaskRunnerLocalRunPhase));
 }
 
 #[test]

@@ -3,7 +3,7 @@
 
 import { useEffect } from 'react';
 import { ReloadOutlined, SaveOutlined } from '@ant-design/icons';
-import { App, Button, Descriptions, Form, InputNumber, Progress, Space, Typography } from 'antd';
+import { Alert, App, Button, Descriptions, Form, InputNumber, Progress, Space, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { sandboxesApi } from '../api/sandboxes';
@@ -57,6 +57,13 @@ export function PoolPage() {
       </div>
 
       <div className="surface">
+        <Alert
+          type="info"
+          showIcon
+          message={t('pool.capacityScopeTitle')}
+          description={t('pool.capacityScopeDescription')}
+          style={{ marginBottom: 18 }}
+        />
         <Progress percent={percent} status={percent >= 100 ? 'exception' : 'active'} />
         <Descriptions bordered column={2} style={{ marginTop: 18 }}>
           <Descriptions.Item label={t('common.backend')}>{data?.backend ?? '-'}</Descriptions.Item>

@@ -119,7 +119,7 @@ pub(in crate::api) async fn sync_get_project_runtime_environment(
         .list_project_runtime_environment_images(&project_id)
         .await
         .map_err(ApiError::bad_request)?;
-    if enforce_project_runtime_boundary(project.execution_plane, &mut environment, &mut images) {
+    if enforce_project_runtime_boundary(&project, &mut environment, &mut images) {
         environment = state
             .store
             .upsert_project_runtime_environment(&environment)

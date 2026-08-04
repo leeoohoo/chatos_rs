@@ -31,7 +31,11 @@ need_cmd() {
 }
 
 compose() {
-  local args=(-p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE")
+  local args=(-p "$COMPOSE_PROJECT_NAME")
+  local compose_file
+  for compose_file in "${COMPOSE_FILES[@]}"; do
+    args+=(-f "$compose_file")
+  done
   if [[ -f "$ENV_FILE" ]]; then
     args+=(--env-file "$ENV_FILE")
   fi
@@ -112,6 +116,7 @@ service_bins = {
     "project_management_service_backend",
     "plugin_management_service_backend",
     "local_connector_service_backend",
+    "mcp_management_service_backend",
     "sandbox_manager_service_backend",
     "task_runner_service_backend",
     "chat_app_server_rs",

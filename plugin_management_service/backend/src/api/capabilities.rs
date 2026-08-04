@@ -35,7 +35,7 @@ pub(super) async fn resolve_agent_capabilities(
     } else {
         user.effective_owner_user_id().to_string()
     };
-    resolve_agent_capabilities_for_owner(
+    let mut response = resolve_agent_capabilities_for_owner(
         &state,
         query.agent_key,
         owner_user_id,
@@ -48,8 +48,11 @@ pub(super) async fn resolve_agent_capabilities(
         },
         normalized(query.device_id.as_deref()),
     )
-    .await
-    .map(Json)
+    .await?;
+    for resolved in &mut response.mcps {
+        redact_mcp_runtime_secrets_for_user(&mut resolved.resource, &user);
+    }
+    Ok(Json(response))
 }
 
 pub(super) async fn resolve_agent_capabilities_internal(
@@ -101,11 +104,13 @@ async fn resolve_agent_capabilities_for_owner(
     if !agent.enabled {
         return Err(ApiError::bad_request("System agent is disabled"));
     }
+    ensure_agent_supports_tools(&agent)?;
     if let Some(gate) = plugin_component_gate(
         state,
         &agent.plugin_component,
         owner_user_id.as_str(),
         device_id.as_deref(),
+        runtime_context.runtime_provider.as_deref(),
     )
     .await?
     {
@@ -154,6 +159,7 @@ async fn resolve_agent_capabilities_for_owner(
                     &resource,
                     owner_user_id.as_str(),
                     device_id.as_deref(),
+                    runtime_context.runtime_provider.as_deref(),
                 )
                 .await?;
                 collect_local_connector_requirement_for_mcp(
@@ -163,6 +169,13 @@ async fn resolve_agent_capabilities_for_owner(
                     available,
                     reason.clone(),
                 );
+                let tool_snapshot = state
+                    .store
+                    .get_check(RESOURCE_KIND_MCP, resource.id.as_str())
+                    .await
+                    .map_err(ApiError::internal)?
+                    .map(|check| check.tool_snapshot)
+                    .unwrap_or_default();
                 if available || include_unavailable {
                     mcps.push(ResolvedMcp {
                         resource,
@@ -170,6 +183,7 @@ async fn resolve_agent_capabilities_for_owner(
                         available,
                         status,
                         reason,
+                        tool_snapshot,
                     });
                 }
             }
@@ -202,6 +216,7 @@ async fn resolve_agent_capabilities_for_owner(
                         &resource,
                         owner_user_id.as_str(),
                         device_id.as_deref(),
+                        runtime_context.runtime_provider.as_deref(),
                     )
                     .await?;
                 collect_local_connector_requirement_for_skill(
@@ -271,6 +286,7 @@ async fn resolve_agent_capabilities_for_owner(
                             &resource,
                             owner_user_id.as_str(),
                             device_id.as_deref(),
+                            runtime_context.runtime_provider.as_deref(),
                         )
                         .await?;
                     collect_local_connector_requirement_for_skill(
@@ -299,6 +315,7 @@ async fn resolve_agent_capabilities_for_owner(
                     binding,
                     owner_user_id.as_str(),
                     device_id.as_deref(),
+                    runtime_context.runtime_provider.as_deref(),
                 )
                 .await?
                 {
@@ -336,6 +353,7 @@ async fn resolve_agent_capabilities_for_owner(
                 &resource,
                 owner_user_id.as_str(),
                 device_id.as_deref(),
+                runtime_context.runtime_provider.as_deref(),
             )
             .await?;
             collect_local_connector_requirement_for_mcp(
@@ -345,6 +363,13 @@ async fn resolve_agent_capabilities_for_owner(
                 available,
                 reason.clone(),
             );
+            let tool_snapshot = state
+                .store
+                .get_check(RESOURCE_KIND_MCP, resource.id.as_str())
+                .await
+                .map_err(ApiError::internal)?
+                .map(|check| check.tool_snapshot)
+                .unwrap_or_default();
             if available || include_unavailable {
                 mcps.push(ResolvedMcp {
                     resource,
@@ -352,6 +377,7 @@ async fn resolve_agent_capabilities_for_owner(
                     available,
                     status,
                     reason,
+                    tool_snapshot,
                 });
             }
         }
@@ -386,6 +412,7 @@ async fn resolve_agent_capabilities_for_owner(
                     &resource,
                     owner_user_id.as_str(),
                     device_id.as_deref(),
+                    runtime_context.runtime_provider.as_deref(),
                 )
                 .await?;
             collect_local_connector_requirement_for_skill(
@@ -422,6 +449,16 @@ async fn resolve_agent_capabilities_for_owner(
         plugins,
         local_connector_requirements,
     })
+}
+
+fn ensure_agent_supports_tools(agent: &SystemAgentRecord) -> Result<(), ApiError> {
+    if agent.tool_plane.supports_tools() {
+        return Ok(());
+    }
+    Err(ApiError::conflict(format!(
+        "System agent {} does not expose an Agent Tool Plane",
+        agent.agent_key,
+    )))
 }
 
 fn binding_matches_runtime_context(

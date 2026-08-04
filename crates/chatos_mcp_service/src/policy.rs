@@ -5,6 +5,7 @@ pub const BUILTIN_KIND_CODE_MAINTAINER_READ: &str = "CodeMaintainerRead";
 pub const BUILTIN_KIND_CODE_MAINTAINER_WRITE: &str = "CodeMaintainerWrite";
 pub const BUILTIN_KIND_TERMINAL_CONTROLLER: &str = "TerminalController";
 pub const BUILTIN_KIND_BROWSER_TOOLS: &str = "BrowserTools";
+pub const BUILTIN_KIND_LOCAL_COMMAND_APPROVAL: &str = "LocalCommandApproval";
 
 pub const LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER: &str =
     "x-local-connector-enabled-builtin-kinds";
@@ -26,6 +27,7 @@ impl BuiltinHostBackend {
                         | BUILTIN_KIND_CODE_MAINTAINER_WRITE
                         | BUILTIN_KIND_TERMINAL_CONTROLLER
                         | BUILTIN_KIND_BROWSER_TOOLS
+                        | BUILTIN_KIND_LOCAL_COMMAND_APPROVAL
                 )
             ),
             Self::HarnessCode => matches!(
@@ -42,6 +44,7 @@ pub enum BuiltinToolAccess {
     CodeWrite,
     Terminal,
     Browser,
+    LocalCommandApproval,
 }
 
 impl BuiltinToolAccess {
@@ -51,6 +54,7 @@ impl BuiltinToolAccess {
             Self::CodeWrite => BUILTIN_KIND_CODE_MAINTAINER_WRITE,
             Self::Terminal => BUILTIN_KIND_TERMINAL_CONTROLLER,
             Self::Browser => BUILTIN_KIND_BROWSER_TOOLS,
+            Self::LocalCommandApproval => BUILTIN_KIND_LOCAL_COMMAND_APPROVAL,
         }
     }
 }
@@ -61,6 +65,7 @@ pub struct HostCapabilityPolicy {
     pub code_write: bool,
     pub terminal: bool,
     pub browser: bool,
+    pub local_command_approval: bool,
 }
 
 impl HostCapabilityPolicy {
@@ -89,6 +94,7 @@ impl HostCapabilityPolicy {
             }
             Some(BUILTIN_KIND_TERMINAL_CONTROLLER) => self.terminal = true,
             Some(BUILTIN_KIND_BROWSER_TOOLS) => self.browser = true,
+            Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL) => self.local_command_approval = true,
             _ => {}
         }
     }
@@ -99,6 +105,7 @@ impl HostCapabilityPolicy {
             Some(BUILTIN_KIND_CODE_MAINTAINER_WRITE) => self.code_write,
             Some(BUILTIN_KIND_TERMINAL_CONTROLLER) => self.terminal,
             Some(BUILTIN_KIND_BROWSER_TOOLS) => self.browser,
+            Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL) => self.local_command_approval,
             _ => false,
         }
     }
@@ -109,6 +116,7 @@ impl HostCapabilityPolicy {
             Some(BuiltinToolAccess::CodeWrite) => self.code_write,
             Some(BuiltinToolAccess::Terminal) => self.terminal,
             Some(BuiltinToolAccess::Browser) => self.browser,
+            Some(BuiltinToolAccess::LocalCommandApproval) => self.local_command_approval,
             None => false,
         }
     }
@@ -126,6 +134,9 @@ impl HostCapabilityPolicy {
         }
         if self.browser {
             out.push(BUILTIN_KIND_BROWSER_TOOLS);
+        }
+        if self.local_command_approval {
+            out.push(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL);
         }
         out
     }
@@ -179,6 +190,7 @@ pub fn normalize_builtin_kind_name(value: &str) -> Option<&'static str> {
         "codemaintainerwrite" => Some(BUILTIN_KIND_CODE_MAINTAINER_WRITE),
         "terminalcontroller" => Some(BUILTIN_KIND_TERMINAL_CONTROLLER),
         "browsertools" => Some(BUILTIN_KIND_BROWSER_TOOLS),
+        "localcommandapproval" => Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL),
         _ => None,
     }
 }
@@ -224,6 +236,7 @@ pub fn classify_builtin_tool(name: &str) -> Option<BuiltinToolAccess> {
         | "browser_inspect"
         | "browser_research"
         | "browser_vision" => Some(BuiltinToolAccess::Browser),
+        "approval_decision" => Some(BuiltinToolAccess::LocalCommandApproval),
         _ => None,
     }
 }
@@ -269,6 +282,9 @@ mod tests {
             ]
         );
         assert!(BuiltinHostBackend::LocalConnector.replaces_builtin_kind_name("browser_tools"));
+        assert!(
+            BuiltinHostBackend::LocalConnector.replaces_builtin_kind_name("local_command_approval")
+        );
     }
 
     #[test]
@@ -321,6 +337,10 @@ mod tests {
             classify_builtin_tool("browser_cdp_command"),
             Some(BuiltinToolAccess::Browser)
         );
+        assert_eq!(
+            classify_builtin_tool("approval_decision"),
+            Some(BuiltinToolAccess::LocalCommandApproval)
+        );
         assert_eq!(classify_builtin_tool("local_fs_read"), None);
     }
 
@@ -332,8 +352,9 @@ mod tests {
                 "CodeMaintainerRead",
                 "CodeMaintainerWrite",
                 "unknown",
+                "LocalCommandApproval",
             ]),
-            "CodeMaintainerWrite,CodeMaintainerRead"
+            "CodeMaintainerWrite,CodeMaintainerRead,LocalCommandApproval"
         );
     }
 }

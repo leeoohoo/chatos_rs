@@ -8,7 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::core::messages::{ensure_message_metadata_object, message_turn_id};
 use crate::core::time::now_rfc3339;
 use crate::modules::conversation_runtime::messages as conversation_messages;
-use crate::services::{chatos_sessions, project_management_api_client};
+use crate::services::{
+    chatos_sessions, project_management_api_client, task_runner_api_client::TaskRunnerTaskRecord,
+};
 
 use super::errors::HandlerError;
 use super::types::{ExecutionLink, WorkItemPlanItem};
@@ -98,6 +100,19 @@ pub(in crate::api::projects) async fn sync_execution_link_status(
     .await
     .map(|_| ())
     .map_err(|err| HandlerError::bad_gateway("同步项目任务 Task Runner 状态失败", err))
+}
+
+pub(in crate::api::projects) fn apply_task_runner_task_snapshot(
+    link: &mut ExecutionLink,
+    task: &TaskRunnerTaskRecord,
+) {
+    link.task_runner_status = Some(task.status.clone());
+    link.task_runner_run_id = task
+        .last_run_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
 }
 
 pub(in crate::api::projects) async fn sync_execution_message_task_tracking(
@@ -532,6 +547,29 @@ mod tests {
         assert_eq!(read_string_set(metadata.get("created_task_ids")).len(), 2);
         assert_eq!(read_string_set(metadata.get("terminal_task_ids")).len(), 1);
         assert!(read_string_set(metadata.get("running_task_ids")).contains("task-2"));
+    }
+
+    #[test]
+    fn task_snapshot_replaces_terminal_link_with_active_retry_run() {
+        let mut execution_link = link("task-1", "failed");
+        execution_link.task_runner_run_id = Some("run-failed".to_string());
+
+        apply_task_runner_task_snapshot(
+            &mut execution_link,
+            &TaskRunnerTaskRecord {
+                status: "running".to_string(),
+                last_run_id: Some("run-retry".to_string()),
+            },
+        );
+
+        assert_eq!(
+            execution_link.task_runner_status.as_deref(),
+            Some("running")
+        );
+        assert_eq!(
+            execution_link.task_runner_run_id.as_deref(),
+            Some("run-retry")
+        );
     }
 
     #[test]

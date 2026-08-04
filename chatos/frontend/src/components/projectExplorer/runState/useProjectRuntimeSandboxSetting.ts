@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../../i18n/I18nProvider';
 import type ApiClient from '../../../lib/api/client';
 import type { ProjectRuntimeEnvironmentResponse } from '../../../lib/api/client/types';
+import { isCloudProjectSource } from '../../../lib/domain/projectSource';
 import type { Project } from '../../../types';
 
 interface UseProjectRuntimeSandboxSettingOptions {
@@ -28,13 +29,8 @@ const getSandboxEnabled = (response: ProjectRuntimeEnvironmentResponse | null | 
   return null;
 };
 
-const sourceTypeForBoundary = (project: Project | null): string => (
-  (project?.sourceType || 'cloud').trim().toLowerCase()
-);
-
 export const isProjectRuntimeSandboxConfigurable = (project: Project | null): boolean => {
-  const sourceType = sourceTypeForBoundary(project);
-  return sourceType === 'local' || sourceType === 'local_connector';
+  return Boolean(project) && !isCloudProjectSource(project);
 };
 
 const formatSandboxSettingError = (fallback: string, error: unknown): string => {
@@ -52,7 +48,7 @@ export const useProjectRuntimeSandboxSetting = ({
   const { t } = useI18n();
   const sandboxToggleVisible = useMemo(
     () => Boolean(project?.id) && isProjectRuntimeSandboxConfigurable(project),
-    [project?.id, project?.sourceType],
+    [project?.id, project?.rootPath, project?.sourceType],
   );
   const [sandboxEnabled, setSandboxEnabled] = useState<boolean | null>(null);
   const [sandboxLoading, setSandboxLoading] = useState(false);

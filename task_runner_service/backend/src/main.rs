@@ -4,8 +4,11 @@
 use tracing_subscriber::EnvFilter;
 
 use task_runner_service_backend::{
-    build_router, load_task_runner_dotenv, scheduler::spawn_task_scheduler,
-    services::spawn_chatos_callback_reconciler, worker::spawn_task_worker, AppConfig, AppState,
+    build_router, load_task_runner_dotenv,
+    scheduler::spawn_task_scheduler,
+    services::{spawn_chatos_callback_queue_consumer, spawn_chatos_callback_reconciler},
+    worker::spawn_task_worker,
+    AppConfig, AppState,
 };
 
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -22,10 +25,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    chatos_service_runtime::apply_config_center_env("task-runner").await;
+    chatos_service_runtime::apply_config_center_env("task-runner")
+        .await
+        .map_err(|err| format!("apply managed config failed: {err}"))?;
     let mut config = AppConfig::from_env()?;
     resolve_downstream_services(&mut config).await;
     let app_state = AppState::new(config.clone()).await?;
+    tracing::info!(
+        run_dispatch_mode = app_state.task_queue_topology.run_dispatch_mode.as_str(),
+        callback_delivery_mode = app_state
+            .task_queue_topology
+            .callback_delivery_mode
+            .as_str(),
+        rabbitmq_enabled = app_state.task_queue_topology.uses_rabbitmq(),
+        rabbitmq_exchange = app_state.task_queue_topology.rabbitmq_exchange.as_str(),
+        run_dispatch_queue = app_state.task_queue_topology.run_dispatch_queue.as_str(),
+        callback_delivery_queue = app_state
+            .task_queue_topology
+            .callback_delivery_queue
+            .as_str(),
+        run_events_queue = app_state.task_queue_topology.run_events_queue.as_str(),
+        "task runner queue topology configured"
+    );
     let mut background_handles = Vec::new();
 
     if config.scheduler_enabled() {
@@ -43,10 +64,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    if config.chatos_callback_url.is_some() {
+    if config.callback_delivery_enabled() && config.chatos_callback_url.is_some() {
         background_handles.push(spawn_chatos_callback_reconciler(
             app_state.run_service.clone(),
         ));
+        if app_state.task_queue_topology.callback_delivery_mode
+            == task_runner_service_backend::platform_queue::TaskQueueMode::RabbitMq
+        {
+            background_handles.push(spawn_chatos_callback_queue_consumer(
+                config.clone(),
+                app_state.task_queue_topology.clone(),
+                app_state.run_service.clone(),
+            ));
+        }
     }
 
     if !config.api_enabled() {

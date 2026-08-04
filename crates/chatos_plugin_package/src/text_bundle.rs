@@ -40,7 +40,15 @@ pub fn build_cloud_component_bundles(
     let mut bundles = release
         .components
         .iter()
-        .filter(|component| component.execution_host != PluginExecutionHost::Local)
+        .filter(|component| {
+            component.execution_host != PluginExecutionHost::Local
+                && matches!(
+                    component.kind,
+                    PluginComponentKind::SkillCollection
+                        | PluginComponentKind::Command
+                        | PluginComponentKind::Agent
+                )
+        })
         .map(|component| {
             build_component_text_bundle(
                 release.plugin_id.as_str(),

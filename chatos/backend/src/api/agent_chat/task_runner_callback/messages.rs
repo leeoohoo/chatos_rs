@@ -354,6 +354,54 @@ pub(super) fn is_task_runner_terminal_event(event: &str) -> bool {
     )
 }
 
+pub(super) fn should_publish_task_runner_terminal_message(
+    payload: &TaskRunnerCallbackRequest,
+) -> bool {
+    if !is_task_runner_terminal_event(payload.event.as_str()) {
+        return false;
+    }
+    payload.event != "task.cancelled" || task_cancellation_is_user_visible(payload)
+}
+
+fn task_cancellation_is_user_visible(payload: &TaskRunnerCallbackRequest) -> bool {
+    if normalize_callback_value(payload.cancelled_because_task_id.as_deref()).is_some()
+        || !payload.replacement_task_ids.is_empty()
+        || cancellation_reason_describes_replacement(payload.cancel_reason.as_deref())
+        || cancellation_actor_is_program_managed(payload.cancelled_by_user_id.as_deref())
+        || cancellation_actor_is_program_managed(payload.cancelled_by_username.as_deref())
+        || cancellation_actor_is_program_managed(payload.cancelled_by_display_name.as_deref())
+    {
+        return false;
+    }
+    true
+}
+
+fn cancellation_actor_is_program_managed(value: Option<&str>) -> bool {
+    let Some(value) = normalize_callback_value(value).map(|value| value.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    value.starts_with("mcp-management:")
+        || value.starts_with("mcp-management-")
+        || value.contains("chatos_planning_agent")
+        || value.contains("project_requirement_execution_planner_agent")
+}
+
+fn cancellation_reason_describes_replacement(value: Option<&str>) -> bool {
+    let Some(value) = normalize_callback_value(value).map(|value| value.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    value.contains("重新执行前")
+        || value.contains("重新规划前")
+        || value.contains("替换旧")
+        || value.contains("旧执行计划")
+        || value.contains("replacement")
+        || value.contains("replan")
+        || value.contains("rerun")
+        || value.contains("supersed")
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct TaskRunnerCallbackContactDisplay {
     contact_id: Option<String>,

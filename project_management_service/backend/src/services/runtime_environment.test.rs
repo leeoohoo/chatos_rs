@@ -62,6 +62,43 @@ mod tests {
         }
     }
 
+    fn project(source_type: ProjectSourceType, root_path: Option<&str>) -> ProjectRecord {
+        ProjectRecord {
+            id: "project-1".to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: None,
+            owner_display_name: None,
+            name: "Project".to_string(),
+            root_path: root_path.map(ToOwned::to_owned),
+            git_url: None,
+            source_type,
+            execution_plane: ProjectExecutionPlane::Cloud,
+            cloud_import_source: CloudImportSource::Empty,
+            import_status: ProjectImportStatus::Ready,
+            source_git_url: None,
+            harness_space_identifier: Some("space-1".to_string()),
+            harness_repo_identifier: Some("repo-1".to_string()),
+            harness_repo_path: None,
+            harness_git_url: None,
+            harness_git_ssh_url: None,
+            harness_default_branch: Some("main".to_string()),
+            harness_provision_status: None,
+            harness_provision_error: None,
+            harness_provisioned_at: None,
+            import_error: None,
+            import_started_at: None,
+            import_finished_at: None,
+            description: None,
+            status: ProjectStatus::Active,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            archived_at: None,
+        }
+    }
+
     #[test]
     fn program_policy_allows_only_workspace_as_execution_target() {
         let mut application = runtime_image("api", "application", Some("FROM node:24\n"), None);
@@ -93,6 +130,31 @@ mod tests {
         assert_eq!(unverified.service_id, "api");
         assert_eq!(unverified.service_role, RuntimeServiceRole::Unknown);
         assert_eq!(unverified.mcp_policy, ProgramManagedMcpPolicy::default());
+    }
+
+    #[test]
+    fn empty_project_workspace_uses_a_runnable_build_and_test_baseline() {
+        assert_eq!(
+            workspace_runtime_features(&[], &empty_object()),
+            vec!["node@24".to_string(), "python@3.11".to_string()]
+        );
+    }
+
+    #[test]
+    fn explanatory_scan_summary_cannot_invent_a_runtime() {
+        assert_eq!(
+            workspace_runtime_features(
+                &[],
+                &serde_json::json!({
+                    "workspace_empty": true,
+                    "runtimes": [],
+                    "environment_variable_scan": {
+                        "summary": "未发现 Spring、Cargo.toml 或 Node.js 配置"
+                    }
+                }),
+            ),
+            vec!["node@24".to_string(), "python@3.11".to_string()]
+        );
     }
 
     #[test]
@@ -129,9 +191,10 @@ mod tests {
             None,
         );
         let mut images = vec![prototype, mdm];
+        let project = project(ProjectSourceType::Cloud, None);
 
         assert!(enforce_project_runtime_boundary(
-            ProjectExecutionPlane::Cloud,
+            &project,
             &mut environment,
             &mut images,
         ));
@@ -163,6 +226,50 @@ mod tests {
                 .mcp_policy,
             ProgramManagedMcpPolicy::workspace_target(),
         );
+    }
+
+    #[test]
+    fn project_boundary_repairs_ready_environment_with_not_runnable_reason() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::Ready,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: Some("运行环境已就绪".to_string()),
+            not_runnable_reason: Some("项目内容尚未生成".to_string()),
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut workspace = runtime_image("workspace", "workspace", None, None);
+        apply_program_managed_image_policy(&mut workspace);
+        workspace.image_id = Some("dev-node24".to_string());
+        workspace.status = "ready".to_string();
+        let mut images = vec![workspace];
+
+        assert!(enforce_project_runtime_boundary(
+            &project(ProjectSourceType::Cloud, None),
+            &mut environment,
+            &mut images,
+        ));
+        assert_eq!(
+            environment.status,
+            ProjectRuntimeEnvironmentStatus::NotRunnable
+        );
+        assert_eq!(
+            environment.analysis_summary.as_deref(),
+            Some("项目内容尚未生成")
+        );
+        assert!(environment.execution_service_id.is_none());
+        assert!(images.is_empty());
     }
 
     #[test]
@@ -358,9 +465,10 @@ mod tests {
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
         }];
+        let project = project(ProjectSourceType::Cloud, None);
 
         assert!(enforce_project_runtime_boundary(
-            ProjectExecutionPlane::Cloud,
+            &project,
             &mut environment,
             &mut images,
         ));
@@ -386,5 +494,99 @@ mod tests {
             .analysis_summary
             .as_deref()
             .is_some_and(|summary| summary.contains("工作区执行镜像")));
+    }
+
+    #[test]
+    fn local_project_keeps_local_runtime_providers_after_cloud_orchestration_cutover() {
+        let project = project(
+            ProjectSourceType::LocalConnector,
+            Some("local://connector/device-1/workspace-1/project"),
+        );
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: project.id.clone(),
+            status: ProjectRuntimeEnvironmentStatus::Ready,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::LocalConnector,
+            file_provider: RuntimeEnvironmentProvider::LocalConnector,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: None,
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut images = vec![runtime_image(
+            "workspace",
+            "workspace",
+            Some("FROM node:24"),
+            None,
+        )];
+        images[0].image_provider = RuntimeEnvironmentProvider::LocalConnector;
+
+        enforce_project_runtime_boundary(&project, &mut environment, &mut images);
+
+        assert_eq!(
+            environment.sandbox_provider,
+            RuntimeEnvironmentProvider::LocalConnector
+        );
+        assert_eq!(
+            environment.file_provider,
+            RuntimeEnvironmentProvider::LocalConnector
+        );
+        assert!(images.iter().all(|image| {
+            image.image_provider == RuntimeEnvironmentProvider::LocalConnector
+        }));
+    }
+
+    #[test]
+    fn local_project_discards_stale_cloud_sandbox_state_without_fallback() {
+        let project = project(
+            ProjectSourceType::LocalConnector,
+            Some("local://connector/device-1/workspace-1/project"),
+        );
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: project.id.clone(),
+            status: ProjectRuntimeEnvironmentStatus::Ready,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut images = vec![runtime_image(
+            "workspace",
+            "workspace",
+            Some("FROM node:24"),
+            None,
+        )];
+
+        assert!(enforce_project_runtime_boundary(
+            &project,
+            &mut environment,
+            &mut images,
+        ));
+        assert_eq!(
+            environment.sandbox_provider,
+            RuntimeEnvironmentProvider::None
+        );
+        assert_eq!(environment.file_provider, RuntimeEnvironmentProvider::None);
+        assert!(environment.execution_service_id.is_none());
+        assert!(images.is_empty());
     }
 }

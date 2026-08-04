@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chatos_project_execution::LOCAL_CONNECTOR_ROOT_PREFIX;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
@@ -26,6 +27,8 @@ pub mod plugins;
 mod process_lifetime;
 mod registration;
 mod relay;
+mod relay_signature;
+mod remote_control_auth;
 mod runtime;
 mod sandbox;
 mod secure_storage;
@@ -73,8 +76,6 @@ const MAX_LOCAL_MCP_READ_BYTES: u64 = 256 * 1024;
 const MAX_LOCAL_MCP_WRITE_BYTES: usize = 1024 * 1024;
 const MAX_LOCAL_MCP_SEARCH_RESULTS: usize = 500;
 const MAX_COMMAND_HISTORY_ENTRIES: usize = 1_000;
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
-
 pub async fn run_local_connector() -> Result<()> {
     let _process_lifetime = process_lifetime::attach_current_process_tree()
         .context("attach Local Connector Core to its process-tree job")?;
@@ -167,12 +168,21 @@ pub async fn run_local_connector() -> Result<()> {
     if let Err(err) = sandbox::docker::destroy_all_local_sandbox_containers().await {
         tracing_stdout(format!("stale local sandbox cleanup skipped: {err}").as_str());
     }
+    tokio::spawn(async {
+        let report = sandbox::docker::enforce_docker_build_cache_limit().await;
+        tracing_stdout(
+            format!(
+                "startup {}",
+                sandbox::docker::docker_maintenance_report_message(&report)
+            )
+            .as_str(),
+        );
+    });
     let _sandbox_lease_reaper =
         sandbox::lease::spawn_local_sandbox_lease_reaper(runtime.sandbox_runtime.clone());
     if let Some(refresh) = managed_requirements.background_refresh {
         refresh.spawn(runtime.http_client.clone());
     }
-    runtime.start_local_task_worker().await;
     let _plugin_auto_update_checker = api::spawn_plugin_auto_update_checker(runtime.clone());
     if let Err(err) = runtime.start_connector_if_configured().await {
         tracing_stdout(format!("start connector from saved config failed: {err}").as_str());

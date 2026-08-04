@@ -9,19 +9,17 @@ use crate::models::{
 };
 
 use super::chatos_async_planner::{
-    is_planner_required_builtin_kind, planner_root_create_request, planner_update_task_request,
-    require_chatos_async_source_context,
+    planner_root_create_request, planner_update_task_request, require_chatos_async_source_context,
 };
 use super::support::{
-    ensure_task_status_update_allowed_from_mcp, external_mcp_configs_for_user,
-    remove_internal_task_fields, task_creator_filter, task_for_external_mcp,
-    tasks_for_external_mcp,
+    ensure_task_status_update_allowed_from_mcp, task_creator_filter, task_for_agent_tool,
+    tasks_for_agent_tool, value_for_agent_tool,
 };
 use super::{
-    decode_args, reject_ai_execution_service_selection, text_result, BatchTaskDeleteArgs,
+    decode_args, reject_ai_runtime_config, text_result, BatchTaskDeleteArgs,
     BatchTaskStatusUpdateArgs, CancelTaskArgs, CreateProjectExecutionTasksArgs, CreateTaskArgs,
-    CreateTasksWithPrerequisitesArgs, ListAvailablePluginsArgs, McpRequestContext, McpToolProfile,
-    SetTaskPrerequisitesArgs, TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
+    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, SetTaskPrerequisitesArgs,
+    TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
 };
 
 impl TaskRunnerMcpService {
@@ -53,7 +51,7 @@ impl TaskRunnerMcpService {
                         ..TaskListFilters::default()
                     })
                     .await?;
-                Ok(text_result(tasks_for_external_mcp(tasks)))
+                Ok(text_result(tasks_for_agent_tool(tasks)))
             }
             "get_task" => {
                 let args: TaskIdArgs = decode_args(args)?;
@@ -64,7 +62,7 @@ impl TaskRunnerMcpService {
                         request_context,
                     )
                     .await?;
-                Ok(text_result(task_for_external_mcp(task)))
+                Ok(text_result(task_for_agent_tool(task)))
             }
             "get_task_stats" => {
                 let _ = decode_args::<Value>(args).ok();
@@ -101,7 +99,7 @@ impl TaskRunnerMcpService {
                             .get_task(existing.id.as_str())
                             .await?
                             .unwrap_or(existing);
-                        return Ok(text_result(task_for_external_mcp(task)));
+                        return Ok(text_result(task_for_agent_tool(task)));
                     }
                     if let Some(default_model_config_id) = request_context
                         .default_model_config_id
@@ -135,67 +133,7 @@ impl TaskRunnerMcpService {
                 } else {
                     task
                 };
-                Ok(text_result(task_for_external_mcp(task)))
-            }
-            "list_mcp_builtin_catalog" => {
-                let _ = decode_args::<Value>(args).ok();
-                let mut catalog = self.mcp_catalog_service.list_catalog();
-                let owner_user_id = current_user
-                    .effective_owner_user_id()
-                    .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
-                if let Some(policy) = self
-                    .task_service
-                    .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
-                    .await?
-                {
-                    let selectable = policy
-                        .selectable_builtin_kind_names()
-                        .into_iter()
-                        .collect::<std::collections::HashSet<_>>();
-                    catalog.retain(|item| selectable.contains(item.kind.as_str()));
-                } else if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
-                    catalog.retain(|item| !is_planner_required_builtin_kind(item.kind.as_str()));
-                }
-                Ok(text_result(json!(catalog)))
-            }
-            "list_external_mcp_configs" => {
-                let _ = decode_args::<Value>(args).ok();
-                let owner_user_id = current_user
-                    .effective_owner_user_id()
-                    .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
-                if let Some(policy) = self
-                    .task_service
-                    .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
-                    .await?
-                {
-                    Ok(text_result(json!(policy.selectable_external_mcp_views())))
-                } else {
-                    let configs = self
-                        .external_mcp_config_service
-                        .list_external_mcp_configs()
-                        .await?;
-                    Ok(text_result(json!(external_mcp_configs_for_user(
-                        configs,
-                        current_user
-                    ))))
-                }
-            }
-            "list_available_plugins" => {
-                let args: ListAvailablePluginsArgs = decode_args(args)?;
-                let owner_user_id = current_user
-                    .effective_owner_user_id()
-                    .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
-                let policy = self
-                    .task_service
-                    .resolve_task_runner_policy_for_agent_on_device(
-                        Some(current_user),
-                        Some(owner_user_id),
-                        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
-                        args.device_id,
-                    )
-                    .await?
-                    .ok_or_else(|| "Plugin Management policy is unavailable".to_string())?;
-                Ok(text_result(json!(policy.selectable_plugin_views())))
+                Ok(text_result(task_for_agent_tool(task)))
             }
             "create_tasks_with_prerequisites" => {
                 let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;
@@ -213,7 +151,10 @@ impl TaskRunnerMcpService {
             }
             "update_task" => {
                 let mut args: UpdateTaskArgs = decode_args(args)?;
-                reject_ai_execution_service_selection(args.patch.mcp_config.as_ref())?;
+                reject_ai_runtime_config(
+                    args.patch.mcp_config.as_ref(),
+                    args.patch.plugin_config.as_ref(),
+                )?;
                 if args.patch.status.is_some() {
                     ensure_task_status_update_allowed_from_mcp(current_user)?;
                 }
@@ -231,7 +172,7 @@ impl TaskRunnerMcpService {
                     .update_task(args.task_id.as_str(), args.patch, Some(current_user))
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
-                Ok(text_result(task_for_external_mcp(task)))
+                Ok(text_result(task_for_agent_tool(task)))
             }
             "set_task_prerequisites" => {
                 let args: SetTaskPrerequisitesArgs = decode_args(args)?;
@@ -250,7 +191,7 @@ impl TaskRunnerMcpService {
                     )
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
-                Ok(text_result(task_for_external_mcp(task)))
+                Ok(text_result(task_for_agent_tool(task)))
             }
             "cancel_task" => {
                 let args: CancelTaskArgs = decode_args(args)?;
@@ -266,7 +207,7 @@ impl TaskRunnerMcpService {
                     .cancel_task(task_id.as_str(), args.into_request(), Some(current_user))
                     .await?
                     .ok_or_else(|| format!("任务不存在: {task_id}"))?;
-                Ok(text_result(json!(result)))
+                Ok(text_result(value_for_agent_tool(json!(result))))
             }
             "wait_for_task_completion" => {
                 let _ = decode_args::<Value>(args).ok();
@@ -290,9 +231,7 @@ impl TaskRunnerMcpService {
                     .get_task_dependency_graph(args.task_id.as_str())
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
-                let mut value = json!(graph);
-                remove_internal_task_fields(&mut value);
-                Ok(text_result(value))
+                Ok(text_result(value_for_agent_tool(json!(graph))))
             }
             "delete_task" => {
                 let args: TaskIdArgs = decode_args(args)?;

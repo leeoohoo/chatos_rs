@@ -29,7 +29,19 @@ impl TaskRunnerMcpService {
                 tool.get("name")
                     .and_then(Value::as_str)
                     .is_some_and(|name| {
+                        // This descriptor is the control-plane catalog shared by
+                        // every ChatOS Agent binding. The request-scoped Task
+                        // Runner endpoint still applies the exact tool profile,
+                        // but the catalog must contain the union of tools that
+                        // any supported ChatOS planner profile can receive. If
+                        // it only advertises the ordinary async-planner subset,
+                        // MCP Management cannot grant the requirement execution
+                        // planner its dedicated materialization tool.
                         agent_tool_allowed_for_profile(name, McpToolProfile::ChatosAsyncPlanner)
+                            || agent_tool_allowed_for_profile(
+                                name,
+                                McpToolProfile::ProjectRequirementExecutionPlanner,
+                            )
                     })
             })
             .collect::<Vec<_>>();
@@ -132,23 +144,6 @@ impl TaskRunnerMcpService {
                     enrich_tool_schemas_for_async_planner(&mut tools, &[]);
                 }
             }
-        }
-        if current_user.is_admin() && tool_profile == McpToolProfile::Default {
-            return Ok(tools);
-        }
-        let owner_user_id = current_user
-            .effective_owner_user_id()
-            .ok_or_else(|| "current agent token is missing owner scope".to_string())?;
-        if let Some(policy) = self
-            .task_service
-            .resolve_task_runner_policy(Some(current_user), Some(owner_user_id))
-            .await?
-        {
-            restrict_task_capability_selection_schemas(
-                &mut tools,
-                policy.selectable_builtin_kind_names().as_slice(),
-                policy.selectable_external_mcp_ids().as_slice(),
-            );
         }
         Ok(tools
             .into_iter()

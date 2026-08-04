@@ -16,7 +16,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_official_website_dotenv();
     init_tracing();
 
-    chatos_service_runtime::apply_config_center_env("official-website").await;
+    chatos_service_runtime::apply_config_center_env("official-website")
+        .await
+        .map_err(|err| format!("apply managed config failed: {err}"))?;
     let config = AppConfig::from_env()?;
     let bind_addr = config.bind_addr();
     let app = router::build_router(config.clone());

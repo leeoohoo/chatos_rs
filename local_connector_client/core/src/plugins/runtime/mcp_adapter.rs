@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use chatos_mcp_runtime::{
-    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_stdio_call,
-    parse_tool_definition, McpStdioServer,
+    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_tool_call_cancellable,
+    jsonrpc_stdio_call, parse_tool_definition, McpStdioServer,
 };
 use chatos_plugin_management_sdk::{
     normalize_plugin_relative_path, normalized_plugin_manifest_sha256, parse_plugin_manifest,
@@ -33,6 +33,10 @@ use super::stdio_sandbox::{PluginStdioSandboxLauncher, PluginStdioSandboxRuntime
 use crate::plugins::{ActivePluginInstallation, PluginCredentialVault, PluginInstaller};
 
 mod preparation;
+mod validation;
+
+pub(super) use validation::load_verified_manifest;
+use validation::{validate_invocation_id, wait_for_invocation_cancellation};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_MCP_TOOLS: usize = 200;
@@ -40,6 +44,8 @@ const MAX_MCP_TOOL_SNAPSHOT_BYTES: usize = 512 * 1024;
 const MCP_TOOL_CALL_OPERATION: &str = "mcp_tools_call";
 const MCP_HEALTH_CHECK_OPERATION: &str = "mcp_health_check";
 const MCP_HEALTH_PROBE_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_ACTIVE_MCP_INVOCATIONS: usize = 64;
+const MAX_INVOCATION_ID_BYTES: usize = 256;
 const MCP_HEALTHY_STATUS: &str = "healthy";
 const MCP_DEGRADED_STATUS: &str = "degraded";
 
@@ -118,6 +124,20 @@ pub(super) struct PreparedPluginMcp {
     installer: PluginInstaller,
     health: Arc<Mutex<PluginMcpHealthState>>,
     health_probe_lock: Arc<tokio::sync::Mutex<()>>,
+    active_invocations: Arc<Mutex<std::collections::HashMap<String, ActivePluginMcpInvocation>>>,
+}
+
+#[derive(Clone)]
+struct ActivePluginMcpInvocation {
+    cancellation: CancellationToken,
+    identity: Arc<()>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PluginMcpInvocationCancelOutcome {
+    Cancelled,
+    CancelRequested,
+    InvocationNotFound,
 }
 
 impl std::fmt::Debug for PreparedPluginMcp {
@@ -173,19 +193,77 @@ impl PreparedPluginMcp {
         self.probe_health().await
     }
 
-    pub(super) async fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<Value> {
+    pub(super) async fn call_tool(
+        &self,
+        invocation_id: &str,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<Value> {
+        validate_invocation_id(invocation_id)?;
         self.ensure_recent_health().await?;
-        self.invoker
+        let active = ActivePluginMcpInvocation {
+            cancellation: CancellationToken::new(),
+            identity: Arc::new(()),
+        };
+        {
+            let mut invocations = self
+                .active_invocations
+                .lock()
+                .map_err(|_| anyhow!("Plugin MCP invocation state is unavailable"))?;
+            if invocations.len() >= MAX_ACTIVE_MCP_INVOCATIONS {
+                bail!("Plugin MCP active invocation capacity was reached");
+            }
+            if invocations.contains_key(invocation_id) {
+                bail!("Plugin MCP invocation id is already active");
+            }
+            invocations.insert(invocation_id.to_string(), active.clone());
+        }
+        let result = self
+            .invoker
             .call(
                 &self.transport,
                 "tools/call",
                 json!({"name": tool_name, "arguments": arguments}),
+                Some(active.cancellation.clone()),
             )
-            .await
+            .await;
+        if let Ok(mut invocations) = self.active_invocations.lock() {
+            if invocations
+                .get(invocation_id)
+                .is_some_and(|current| Arc::ptr_eq(&current.identity, &active.identity))
+            {
+                invocations.remove(invocation_id);
+            }
+        }
+        result
     }
 
     pub(super) fn cancel(&self) {
+        if let Ok(mut invocations) = self.active_invocations.lock() {
+            for invocation in invocations.drain().map(|(_, invocation)| invocation) {
+                invocation.cancellation.cancel();
+            }
+        }
         self.invoker.cancel(&self.transport);
+    }
+
+    pub(super) fn cancel_invocation(
+        &self,
+        invocation_id: &str,
+    ) -> Result<PluginMcpInvocationCancelOutcome> {
+        validate_invocation_id(invocation_id)?;
+        let active = self
+            .active_invocations
+            .lock()
+            .map_err(|_| anyhow!("Plugin MCP invocation state is unavailable"))?
+            .remove(invocation_id);
+        let Some(active) = active else {
+            return Ok(PluginMcpInvocationCancelOutcome::InvocationNotFound);
+        };
+        active.cancellation.cancel();
+        Ok(self
+            .invoker
+            .cancel_invocation(&self.transport, &active.cancellation))
     }
 
     async fn ensure_recent_health(&self) -> Result<()> {
@@ -213,7 +291,7 @@ impl PreparedPluginMcp {
     async fn probe_health(&self) -> Result<PluginMcpHealthSnapshot> {
         let healthy = match self
             .invoker
-            .call(&self.transport, "tools/list", json!({}))
+            .call(&self.transport, "tools/list", json!({}), None)
             .await
         {
             Ok(response) => {
@@ -325,9 +403,16 @@ pub(super) trait PluginMcpInvoker: Send + Sync {
         transport: &PreparedPluginMcpTransport,
         method: &str,
         params: Value,
+        invocation_cancellation: Option<CancellationToken>,
     ) -> Result<Value>;
 
     fn cancel(&self, transport: &PreparedPluginMcpTransport);
+
+    fn cancel_invocation(
+        &self,
+        transport: &PreparedPluginMcpTransport,
+        cancellation: &CancellationToken,
+    ) -> PluginMcpInvocationCancelOutcome;
 }
 
 #[derive(Debug)]
@@ -340,6 +425,7 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
         transport: &PreparedPluginMcpTransport,
         method: &str,
         params: Value,
+        invocation_cancellation: Option<CancellationToken>,
     ) -> Result<Value> {
         match transport {
             PreparedPluginMcpTransport::Stdio {
@@ -357,8 +443,12 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
                         .map_err(anyhow::Error::msg)
                 };
                 tokio::select! {
+                    biased;
                     _ = cancellation.cancelled() => {
                         bail!("Plugin MCP stdio request was cancelled")
+                    }
+                    _ = wait_for_invocation_cancellation(invocation_cancellation) => {
+                        bail!("Plugin MCP stdio invocation was cancelled")
                     }
                     result = request => result,
                 }
@@ -380,13 +470,34 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
                             format!("Bearer {}", token.as_str()),
                         );
                     }
-                    jsonrpc_http_call(url, Some(headers.as_map()), method, params, Some(*timeout))
+                    if method == "tools/call" {
+                        jsonrpc_http_tool_call_cancellable(
+                            url,
+                            Some(headers.as_map()),
+                            params,
+                            Some(*timeout),
+                        )
                         .await
                         .map_err(anyhow::Error::msg)
+                    } else {
+                        jsonrpc_http_call(
+                            url,
+                            Some(headers.as_map()),
+                            method,
+                            params,
+                            Some(*timeout),
+                        )
+                        .await
+                        .map_err(anyhow::Error::msg)
+                    }
                 };
                 tokio::select! {
+                    biased;
                     _ = cancellation.cancelled() => {
                         bail!("Plugin MCP HTTP request was cancelled")
+                    }
+                    _ = wait_for_invocation_cancellation(invocation_cancellation) => {
+                        bail!("Plugin MCP HTTP invocation was cancelled")
                     }
                     result = request => result,
                 }
@@ -405,6 +516,23 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
                 invalidate_stdio_session(server);
             }
             PreparedPluginMcpTransport::Http { cancellation, .. } => cancellation.cancel(),
+        }
+    }
+
+    fn cancel_invocation(
+        &self,
+        transport: &PreparedPluginMcpTransport,
+        cancellation: &CancellationToken,
+    ) -> PluginMcpInvocationCancelOutcome {
+        cancellation.cancel();
+        match transport {
+            PreparedPluginMcpTransport::Stdio { server, .. } => {
+                invalidate_stdio_session(server);
+                PluginMcpInvocationCancelOutcome::Cancelled
+            }
+            PreparedPluginMcpTransport::Http { .. } => {
+                PluginMcpInvocationCancelOutcome::CancelRequested
+            }
         }
     }
 }
@@ -604,7 +732,7 @@ impl PluginMcpAdapter {
         )?;
         let response = self
             .invoker
-            .call(&transport, "tools/list", json!({}))
+            .call(&transport, "tools/list", json!({}), None)
             .await
             .context("discover Plugin MCP tools")?;
         let tools = preparation::sanitize_tools(response, tool_allowlist, tool_blocklist)?;
@@ -653,33 +781,7 @@ impl PluginMcpAdapter {
             installer: self.installer.clone(),
             health: Arc::new(Mutex::new(PluginMcpHealthState::healthy())),
             health_probe_lock: Arc::new(tokio::sync::Mutex::new(())),
+            active_invocations: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })
     }
-}
-
-pub(super) fn load_verified_manifest(
-    installation: &ActivePluginInstallation,
-) -> Result<chatos_plugin_management_sdk::PluginManifest> {
-    let relative_path = [".chatos-plugin/plugin.json", ".codex-plugin/plugin.json"]
-        .into_iter()
-        .find(|path| installation.version.package_file_sha256.contains_key(*path))
-        .context("installed Plugin has no checksummed Manifest")?;
-    let path = installation.installation_path.join(relative_path);
-    let metadata = fs::symlink_metadata(path.as_path())
-        .with_context(|| format!("read installed Plugin Manifest metadata: {relative_path}"))?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() > MAX_MANIFEST_BYTES
-    {
-        bail!("installed Plugin Manifest is unsafe or exceeds its size limit");
-    }
-    let raw = fs::read_to_string(path.as_path()).context("read installed Plugin Manifest")?;
-    let source = plugin_manifest_source_from_path(Path::new(relative_path))
-        .context("derive installed Plugin Manifest source")?;
-    let manifest = parse_plugin_manifest(raw.as_str(), source)
-        .context("parse installed normalized Plugin Manifest")?;
-    if normalized_plugin_manifest_sha256(&manifest)? != installation.version.manifest_sha256 {
-        bail!("installed Plugin Manifest does not match the active signed Release");
-    }
-    Ok(manifest)
 }

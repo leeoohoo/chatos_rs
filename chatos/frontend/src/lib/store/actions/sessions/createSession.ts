@@ -55,7 +55,6 @@ export function createSessionCreateActions({
           requestedProjectId || fallbackScopedProjectId || null,
         );
         const stateBeforeCreate = get();
-        const shouldUseLocalRuntime = client.sessionScopeUsesLocalRuntime(effectiveProjectId);
         const selectedModelId = payloadObject.selectedModelId ?? stateBeforeCreate.selectedModelId ?? null;
         const contactAgentId = typeof payloadObject.contactAgentId === 'string'
           ? (payloadObject.contactAgentId.trim() || null)
@@ -72,15 +71,11 @@ export function createSessionCreateActions({
         if (contactId || contactAgentId) {
           const existingSession = contactId
             ? findBestMatchedSession(
-              (stateBeforeCreate.sessions || []).filter((session: Session) => (
-                client.sessionUsesLocalRuntime(session.id) === shouldUseLocalRuntime
-              )),
+              stateBeforeCreate.sessions || [],
               { id: contactId, agentId: contactAgentId || '' },
               effectiveProjectId,
             )
             : (stateBeforeCreate.sessions || []).find((session: Session) => (
-              client.sessionUsesLocalRuntime(session.id) === shouldUseLocalRuntime
-              &&
               matchSessionContactProjectScope(session, {
                 contactId,
                 contactAgentId,

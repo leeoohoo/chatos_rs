@@ -1,0 +1,301 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+routes:
+  # Public aliases must never become a tunnel into service-only endpoints.
+  - id: block-public-internal-api-aliases
+    priority: 1000
+    uris:
+      - /api/chatos/internal/*
+      - /api/user/internal/*
+      - /api/project/internal/*
+      - /api/plugin/internal/*
+      - /api/mcp/internal/*
+      - /api/mcp/api/internal/*
+    plugins:
+      request-id: &request_id
+        header_name: X-Request-Id
+        include_in_response: true
+        algorithm: uuid
+      fault-injection:
+        abort:
+          http_status: 404
+          body: '{"error":"route not found"}'
+
+  - id: chatos-api-alias
+    priority: 520
+    uri: /api/chatos/*
+    plugins:
+      request-id: *request_id
+      cors: &api_cors
+        allow_origins: "*"
+        allow_methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+        allow_headers: "Authorization,Content-Type,X-Request-Id,X-SSE-Ticket"
+        expose_headers: "X-Request-Id,Content-Disposition"
+        max_age: 3600
+        allow_credential: false
+      client-control: &api_body_limit
+        max_body_size: 134217728
+      limit-req: &api_ip_rate_limit
+        rate: 60
+        burst: 120
+        rejected_code: 429
+        rejected_msg: '{"error":"gateway rate limit exceeded"}'
+        key_type: var
+        key: remote_addr
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/chatos/?(.*)"
+          - "/api/$1"
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 300
+        read: 3600
+      nodes:
+        "chatos-backend:3997": 1
+
+  - id: chatos-health
+    priority: 600
+    uri: /api/chatos/health
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        uri: /health
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 10
+        read: 10
+      nodes:
+        "chatos-backend:3997": 1
+
+  - id: user-service-api
+    priority: 520
+    uri: /api/user/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/user/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 120
+        read: 120
+      nodes:
+        "user-service-backend:39190": 1
+
+  - id: project-service-api
+    priority: 520
+    uri: /api/project/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/project/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 600
+      nodes:
+        "project-management-backend:39210": 1
+
+  # Plugin catalog already owns the native /api/plugins namespace.
+  - id: plugin-catalog-api
+    priority: 540
+    uri: /api/plugins/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 300
+        read: 600
+      nodes:
+        "plugin-management-backend:39260": 1
+
+  # The broader alias exposes /api/mcps, /api/skills and admin plugin APIs.
+  - id: plugin-management-api
+    priority: 520
+    uri: /api/plugin/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/plugin/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 300
+        read: 600
+      nodes:
+        "plugin-management-backend:39260": 1
+
+  - id: mcp-protocol-api
+    priority: 560
+    uri: /api/mcp
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        uri: /mcp
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "mcp-management-service-backend:39280": 1
+
+  - id: local-connector-api
+    priority: 520
+    uri: /api/local/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/local/?(.*)"
+          - "/api/local-connectors/$1"
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "local-connector-service-backend:39230": 1
+
+  - id: task-runner-api
+    priority: 520
+    uri: /api/task/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/task/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "task-runner-backend:39090": 1
+
+  - id: memory-engine-api
+    priority: 520
+    uri: /api/memory/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/memory/?(.*)"
+          - "/api/memory-engine/v1/$1"
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 600
+      nodes:
+        "memory-engine-backend:7081": 1
+
+  - id: chatos-app
+    priority: 200
+    uri: /app/*
+    plugins:
+      request-id: *request_id
+      proxy-rewrite:
+        regex_uri:
+          - "^/app/?(.*)"
+          - "/$1"
+    upstream:
+      type: roundrobin
+      nodes:
+        "chatos-frontend:80": 1
+
+  # Compatibility route for the current ChatOS frontend while callers migrate
+  # to the explicit service aliases above.
+  - id: chatos-api-compat
+    priority: 100
+    uri: /api/*
+    plugins:
+      request-id: *request_id
+      cors: *api_cors
+      client-control: *api_body_limit
+      limit-req: *api_ip_rate_limit
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "chatos-backend:3997": 1
+
+  - id: official-website-site
+    priority: 50
+    uri: /site/*
+    plugins:
+      request-id: *request_id
+      proxy-rewrite:
+        regex_uri:
+          - "^/site/?(.*)"
+          - "/$1"
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-frontend:80": 1
+
+  - id: official-website-root
+    priority: 1
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-frontend:80": 1
+
+#END

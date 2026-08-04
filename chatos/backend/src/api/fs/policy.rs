@@ -20,6 +20,7 @@ pub(crate) const PATH_TRAVERSAL_BLOCKED: &str = "路径不能包含 ..";
 pub(crate) const ROOT_MUTATION_BLOCKED: &str = "不允许修改受控根目录";
 pub(crate) const WRITE_NOT_ALLOWED: &str = "当前目录不允许写入";
 pub(super) use self::policy_paths::normalize_path_for_compare;
+pub(crate) use self::policy_roots::user_path_component;
 
 #[derive(Debug, Clone)]
 pub(super) struct FsAllowedRoot {
@@ -167,20 +168,6 @@ impl FsPathPolicy {
             return Ok(resolved.to_string_lossy().to_string());
         }
         Ok(trimmed.to_string())
-    }
-
-    pub(crate) fn default_workspace_dir(&self) -> Option<&Path> {
-        self.roots
-            .iter()
-            .find(|root| root.kind == FsAllowedRootKind::Workspace)
-            .map(|root| root.path.as_path())
-    }
-
-    pub(crate) fn default_public_dir(&self) -> Option<&Path> {
-        self.roots
-            .iter()
-            .find(|root| root.kind == FsAllowedRootKind::Public)
-            .map(|root| root.path.as_path())
     }
 
     pub(crate) fn authorize_existing_path(

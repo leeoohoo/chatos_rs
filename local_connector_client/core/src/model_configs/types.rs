@@ -155,18 +155,6 @@ pub(crate) struct LocalModelSettings {
     #[serde(default = "default_model_request_max_retries")]
     pub(crate) model_request_max_retries: usize,
     #[serde(default)]
-    pub(crate) memory_summary_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(crate) memory_summary_thinking_level: Option<String>,
-    #[serde(default)]
-    pub(crate) project_management_agent_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(crate) project_management_agent_thinking_level: Option<String>,
-    #[serde(default)]
-    pub(crate) environment_initialization_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(crate) environment_initialization_thinking_level: Option<String>,
-    #[serde(default)]
     pub(crate) command_approval_model_config_id: Option<String>,
     #[serde(default)]
     pub(crate) command_approval_thinking_level: Option<String>,
@@ -182,12 +170,6 @@ impl Default for LocalModelSettings {
     fn default() -> Self {
         Self {
             model_request_max_retries: default_model_request_max_retries(),
-            memory_summary_model_config_id: None,
-            memory_summary_thinking_level: None,
-            project_management_agent_model_config_id: None,
-            project_management_agent_thinking_level: None,
-            environment_initialization_model_config_id: None,
-            environment_initialization_thinking_level: None,
             command_approval_model_config_id: None,
             command_approval_thinking_level: None,
             updated_at: None,

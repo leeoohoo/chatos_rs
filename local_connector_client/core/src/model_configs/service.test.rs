@@ -94,19 +94,17 @@ mod tests {
     }
 
     #[test]
-    fn deleting_environment_model_clears_environment_defaults() {
+    fn deleting_command_approval_model_clears_local_agent_defaults() {
         let mut settings = LocalModelSettings {
-            environment_initialization_model_config_id: Some("environment-model".to_string()),
-            environment_initialization_thinking_level: Some("high".to_string()),
+            command_approval_model_config_id: Some("approval-model".to_string()),
+            command_approval_thinking_level: Some("high".to_string()),
             ..Default::default()
         };
 
-        settings.clear_model_id("environment-model");
+        settings.clear_model_id("approval-model");
 
-        assert!(settings
-            .environment_initialization_model_config_id
-            .is_none());
-        assert!(settings.environment_initialization_thinking_level.is_none());
+        assert!(settings.command_approval_model_config_id.is_none());
+        assert!(settings.command_approval_thinking_level.is_none());
     }
 
     #[test]
@@ -225,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn reconciliation_rebinds_all_defaults_to_credentialed_replacement() {
+    fn reconciliation_rebinds_command_approval_default_to_credentialed_replacement() {
         let mut state =
             authenticated_state_with_model("gpt", Some("gpt"), "https://old.example.invalid/v1");
         state.model_configs.configs[0].id = "legacy-model".to_string();
@@ -238,40 +236,13 @@ mod tests {
         replacement.updated_at = "2026-07-17T00:00:00Z".to_string();
         state.model_configs.configs.push(replacement);
         state.model_configs.settings = LocalModelSettings {
-            memory_summary_model_config_id: Some("legacy-model".to_string()),
-            project_management_agent_model_config_id: Some("legacy-model".to_string()),
-            environment_initialization_model_config_id: Some("legacy-model".to_string()),
             command_approval_model_config_id: Some("legacy-model".to_string()),
             ..Default::default()
         };
 
         assert_eq!(
             repair_model_settings_with_credential_fallbacks(&mut state),
-            4
-        );
-        assert_eq!(
-            state
-                .model_configs
-                .settings
-                .memory_summary_model_config_id
-                .as_deref(),
-            Some("replacement-model")
-        );
-        assert_eq!(
-            state
-                .model_configs
-                .settings
-                .project_management_agent_model_config_id
-                .as_deref(),
-            Some("replacement-model")
-        );
-        assert_eq!(
-            state
-                .model_configs
-                .settings
-                .environment_initialization_model_config_id
-                .as_deref(),
-            Some("replacement-model")
+            1
         );
         assert_eq!(
             state

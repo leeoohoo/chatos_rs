@@ -3,18 +3,21 @@
 
 use std::collections::BTreeSet;
 
+use crate::models::{
+    now_rfc3339, TaskRunnerQueueStatsSnapshot, TaskRunnerRunStatsSnapshot,
+    TaskRunnerRuntimeStatsSnapshot, TaskRunnerSystemStatsResponse,
+};
 use serde::Serialize;
 
 use super::internal_auth::{
-    require_task_runner_internal_request, EXECUTION_OPTIONS_READ_SCOPE, PROJECT_SERVICE_CALLER,
+    require_task_runner_internal_request, EXECUTION_OPTIONS_READ_SCOPE, MCP_MANAGEMENT_CALLER,
+    PROJECT_SERVICE_CALLER, SYSTEM_STATS_READ_SCOPE,
 };
 use super::*;
 
 #[derive(Debug, Serialize)]
 pub(super) struct InternalExecutionOptionsResponse {
     pub model_config_ids: Vec<String>,
-    pub builtin_tool_ids: Vec<String>,
-    pub external_tool_ids: Vec<String>,
 }
 
 pub(super) async fn get_user_execution_options(
@@ -48,37 +51,75 @@ pub(super) async fn get_user_execution_options(
         .map(|model| model.id)
         .collect::<BTreeSet<_>>();
 
-    let mut builtin_tool_ids = BTreeSet::new();
-    for item in state.mcp_catalog_service.list_catalog() {
-        builtin_tool_ids.insert(item.kind);
-        if let Some(config_id) = item.config_id {
-            builtin_tool_ids.insert(config_id);
-        }
-    }
-
-    let external_tool_ids = state
-        .external_mcp_config_service
-        .list_external_mcp_configs()
-        .await
-        .map_err(ApiError::bad_request)?
-        .into_iter()
-        .filter(|config| config.enabled)
-        .filter(|config| {
-            owns_resource(
-                resource_owner_or_creator(
-                    config.owner_user_id.as_deref(),
-                    config.creator_user_id.as_deref(),
-                ),
-                owner_user_id,
-            )
-        })
-        .map(|config| config.id)
-        .collect::<BTreeSet<_>>();
-
     Ok(Json(InternalExecutionOptionsResponse {
         model_config_ids: model_config_ids.into_iter().collect(),
-        builtin_tool_ids: builtin_tool_ids.into_iter().collect(),
-        external_tool_ids: external_tool_ids.into_iter().collect(),
+    }))
+}
+
+pub(super) async fn get_system_stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<TaskRunnerSystemStatsResponse>, ApiError> {
+    require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
+        SYSTEM_STATS_READ_SCOPE,
+    )
+    .map_err(|err| ApiError {
+        status: err.status,
+        message: err.message,
+    })?;
+    let run_stats = state
+        .run_service
+        .execution_stats()
+        .await
+        .map_err(ApiError::internal)?;
+    let sse_ticket_stats = state.sse_tickets.stats();
+    Ok(Json(TaskRunnerSystemStatsResponse {
+        ok: true,
+        service: "task_runner_service_backend",
+        now: now_rfc3339(),
+        runtime: TaskRunnerRuntimeStatsSnapshot {
+            worker_claim_failures_total: state.runtime_stats.worker_claim_failures_total(),
+            active_run_event_streams: state.runtime_stats.active_run_event_streams(),
+            pending_sse_tickets: sse_ticket_stats.active_ticket_count,
+        },
+        queue: TaskRunnerQueueStatsSnapshot {
+            rabbitmq_enabled: state.task_queue_topology.uses_rabbitmq(),
+            run_dispatch_mode: state
+                .task_queue_topology
+                .run_dispatch_mode
+                .as_str()
+                .to_string(),
+            callback_delivery_mode: state
+                .task_queue_topology
+                .callback_delivery_mode
+                .as_str()
+                .to_string(),
+            run_events_publish_mode: state
+                .task_queue_topology
+                .run_events_publish_mode
+                .as_str()
+                .to_string(),
+            rabbitmq_exchange: state.task_queue_topology.rabbitmq_exchange.clone(),
+            run_dispatch_queue: state.task_queue_topology.run_dispatch_queue.clone(),
+            callback_delivery_queue: state.task_queue_topology.callback_delivery_queue.clone(),
+            run_events_queue: state.task_queue_topology.run_events_queue.clone(),
+        },
+        runs: TaskRunnerRunStatsSnapshot {
+            total: run_stats.total,
+            active: run_stats.active,
+            queued: run_stats.queued,
+            running: run_stats.running,
+            succeeded: run_stats.succeeded,
+            failed: run_stats.failed,
+            cancelled: run_stats.cancelled,
+            blocked: run_stats.blocked,
+            dispatch_paused: run_stats.dispatch_paused,
+            callback_pending: run_stats.callback_pending,
+            callback_enqueued: run_stats.callback_enqueued,
+        },
     }))
 }
 
@@ -89,23 +130,8 @@ fn owns_resource(owner_user_id: Option<&str>, expected_owner_user_id: &str) -> b
         == Some(expected_owner_user_id)
 }
 
-fn resource_owner_or_creator<'a>(
-    owner_user_id: Option<&'a str>,
-    creator_user_id: Option<&'a str>,
-) -> Option<&'a str> {
-    owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            creator_user_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -116,10 +142,10 @@ mod tests {
     use crate::auth::AuthService;
     use crate::config::{AppConfig, StoreMode};
     use crate::mcp_server::TaskRunnerMcpService;
-    use crate::models::{ExternalMcpConfigRecord, ModelConfigRecord};
+    use crate::models::ModelConfigRecord;
     use crate::services::{
-        ExternalMcpConfigService, McpCatalogService, ModelConfigService, RemoteServerService,
-        RunService, TaskProjectService, TaskService, ToolingStateService,
+        McpCatalogService, ModelConfigService, RemoteServerService, RunService, TaskProjectService,
+        TaskService, ToolingStateService,
     };
     use crate::store::AppStore;
 
@@ -138,11 +164,6 @@ mod tests {
                 .expect("execution options");
 
         assert_eq!(response.model_config_ids, vec!["model-owner"]);
-        assert!(response.builtin_tool_ids.iter().any(|id| !id.is_empty()));
-        assert_eq!(
-            response.external_tool_ids,
-            vec!["external-created-by-owner", "external-owner"]
-        );
     }
 
     #[tokio::test]
@@ -182,6 +203,57 @@ mod tests {
         let _ = get_user_execution_options(Path("owner-1".to_string()), State(state), headers)
             .await
             .expect("signed execution options request");
+    }
+
+    #[tokio::test]
+    async fn system_stats_returns_queue_run_and_runtime_counters() {
+        let state = test_state().await;
+        let queued_run = crate::models::TaskRunRecord::queued(
+            "run-queued".to_string(),
+            "task-queued".to_string(),
+            "model-owner".to_string(),
+            "thread-queued".to_string(),
+            serde_json::json!({}),
+            Vec::new(),
+            now_rfc3339(),
+        );
+        state
+            .run_service
+            .store()
+            .save_run(queued_run)
+            .await
+            .expect("save queued run");
+        state.sse_tickets.issue("test-access-token");
+        state.runtime_stats.record_worker_claim_failure();
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "internal-secret",
+            MCP_MANAGEMENT_CALLER,
+            super::super::internal_auth::TASK_RUNNER_TOKEN_AUDIENCE,
+            SYSTEM_STATS_READ_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-task-runner-caller",
+            HeaderValue::from_static(MCP_MANAGEMENT_CALLER),
+        );
+        headers.insert(
+            "x-task-runner-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+
+        let Json(response) = get_system_stats(State(state), headers)
+            .await
+            .expect("system stats");
+
+        assert!(response.ok);
+        assert_eq!(response.runtime.worker_claim_failures_total, 1);
+        assert_eq!(response.runtime.pending_sse_tickets, 1);
+        assert_eq!(response.runs.total, 1);
+        assert_eq!(response.runs.active, 1);
+        assert_eq!(response.runs.queued, 1);
+        assert_eq!(response.queue.run_dispatch_mode, "inline");
     }
 
     #[test]
@@ -237,48 +309,10 @@ mod tests {
             .save_model_config(model_config("model-disabled", Some("owner-1"), false))
             .await
             .expect("save disabled model");
-        store
-            .save_external_mcp_config(external_config(
-                "external-owner",
-                Some("owner-1"),
-                None,
-                true,
-            ))
-            .await
-            .expect("save owner external mcp");
-        store
-            .save_external_mcp_config(external_config(
-                "external-created-by-owner",
-                None,
-                Some("owner-1"),
-                true,
-            ))
-            .await
-            .expect("save creator external mcp");
-        store
-            .save_external_mcp_config(external_config(
-                "external-other",
-                Some("owner-2"),
-                None,
-                true,
-            ))
-            .await
-            .expect("save other external mcp");
-        store
-            .save_external_mcp_config(external_config(
-                "external-disabled",
-                Some("owner-1"),
-                None,
-                false,
-            ))
-            .await
-            .expect("save disabled external mcp");
-
         let auth_service = AuthService::new(config.clone(), store.clone());
         let task_service = TaskService::new(config.clone(), store.clone());
         let model_config_service = ModelConfigService::new(store.clone());
         let remote_server_service = RemoteServerService::new(store.clone());
-        let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
         let task_project_service = TaskProjectService::new(store.clone());
         let ask_user_prompt_service = AskUserPromptService::new(store.clone());
         let run_service = RunService::new(
@@ -292,18 +326,17 @@ mod tests {
         let task_runner_mcp_service = TaskRunnerMcpService::new(
             task_service.clone(),
             model_config_service.clone(),
-            external_mcp_config_service.clone(),
             run_service.clone(),
             ask_user_prompt_service.clone(),
-            mcp_catalog_service.clone(),
         );
+        let task_queue_topology = crate::platform_queue::TaskQueueTopology::inline_defaults();
 
         AppState {
             config,
+            task_queue_topology,
             task_service,
             model_config_service,
             remote_server_service,
-            external_mcp_config_service,
             task_project_service,
             run_service,
             ask_user_prompt_service,
@@ -312,6 +345,7 @@ mod tests {
             task_runner_mcp_service,
             auth_service,
             sse_tickets: crate::auth::SseTicketStore::default(),
+            runtime_stats: crate::state::TaskRunnerRuntimeStats::default(),
         }
     }
 
@@ -352,7 +386,13 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: Some("internal-secret".to_string()),
             chatos_internal_api_secret: Some("chatos-internal-secret".to_string()),
+            mcp_management_internal_api_secret: Some("internal-secret".to_string()),
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -388,34 +428,6 @@ mod tests {
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             enabled,
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-        }
-    }
-
-    fn external_config(
-        id: &str,
-        owner_user_id: Option<&str>,
-        creator_user_id: Option<&str>,
-        enabled: bool,
-    ) -> ExternalMcpConfigRecord {
-        ExternalMcpConfigRecord {
-            id: id.to_string(),
-            name: id.to_string(),
-            transport: "stdio".to_string(),
-            command: Some("echo".to_string()),
-            args: vec!["ok".to_string()],
-            url: None,
-            headers: BTreeMap::new(),
-            env: BTreeMap::new(),
-            cwd: None,
-            enabled,
-            creator_user_id: creator_user_id.map(ToOwned::to_owned),
-            creator_username: None,
-            creator_display_name: None,
-            owner_user_id: owner_user_id.map(ToOwned::to_owned),
-            owner_username: None,
-            owner_display_name: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         }

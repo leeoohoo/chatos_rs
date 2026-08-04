@@ -54,7 +54,7 @@ You can see:
 - Whether Okra needs more information or your confirmation
 - Success, stop, failure, and retry results
 
-Cloud tasks can continue after you leave the page. Local tasks require the desktop client's local runtime to remain online.
+Task lifecycles are managed in the cloud and can continue after you leave the page. Tasks that need local files, commands, plugins, MCP servers, or sandbox capabilities require the desktop client and Local Connector to remain online.
 
 ### Remember the project, not just one conversation
 
@@ -137,19 +137,19 @@ Okra does not force every project into the same working model.
 | Created from | A Git repository or ZIP archive | A local directory authorized in the desktop client |
 | Working environment | A cloud Git workspace and isolated runtime | A local workspace authorized by you |
 | Access | Browser or desktop client | Desktop client |
-| Task execution | Cloud background tasks | Local task service on the current device |
-| Project memory | Stored in the cloud | Stored on the current device |
+| Task orchestration | Cloud background tasks | Cloud orchestration with device capabilities invoked as needed |
+| Project memory | Stored in the cloud | Stored in the cloud |
 
-The execution location is explicit. A local project will not silently fall back to the cloud when the local service is unavailable, and a cloud project will not unexpectedly start running on your computer.
+Both project types use the same cloud business orchestration plane. MCP Management selects the tool execution location from Project Context; when a device capability is unavailable, the operation fails or waits explicitly instead of switching to a cloud filesystem or another device.
 
 ### Local projects and privacy
 
-Files, conversations, tasks, plans, and memory for a local project are managed by the desktop client's local runtime. Every project directory must be explicitly authorized by you.
+Project, session, message, task, requirement, memory, and Agent lifecycles are managed by cloud services. Files, Git, commands, local Skills/Plugins/MCP servers, sandboxes, and approvals still execute within the explicitly authorized device boundary.
 
 Keep in mind:
 
-- Okra Cloud does not store the absolute path of your local workspace.
-- A local project is not automatically copied to the cloud or written to both execution environments.
+- Okra Cloud stores only logical workspace and device routing identifiers, not the absolute path of your local workspace.
+- Cloud services are the single source of truth for business data; the client does not keep a second copy of sessions, tasks, or memory.
 - Content needed for AI inference may still be sent to the model provider you choose. Review that provider's data policy as well.
 - Control information such as your account, agent capabilities, model catalog, and system policies may synchronize with your account.
 - Terminal, file, and Git operations are restricted to the authorized workspace boundary.
@@ -174,7 +174,7 @@ Review background tasks, run history, human confirmations, tool status, successf
 
 ### Memory view
 
-Review conversation summaries and recallable memory, run retrospectives, and manage automatic summaries and Recalls for local projects.
+Review conversation summaries and recallable memory, run retrospectives, and manage automatic summaries and Recalls for projects.
 
 ### Agents and capabilities
 
@@ -195,7 +195,7 @@ Create agents, choose models, enable the tools and skills they need, and set def
 1. Download and install the Okra desktop connector from the Okra website.
 2. Sign in with the same account you use on the web.
 3. Add and authorize a local workspace.
-4. Configure the local model, tools, skills, and system permissions you need.
+4. Configure the local tools, Skills, Plugins, MCP servers, sandboxes, and approval permissions you need.
 5. Create a local project in the desktop client.
 
 Local projects are available only in the desktop client. Opening Okra in a regular browser does not grant it access to directories on your computer.
@@ -220,11 +220,11 @@ Yes. You can review tool activity, respond to confirmation requests, send additi
 
 ### Will a task continue after I close the page?
 
-Cloud background tasks can continue running. Tasks for a local project depend on the desktop client on the current device, so its local runtime must remain online.
+Task orchestration and business state continue in the cloud. When the next step for a local project needs local files, commands, or another device capability, the desktop client and Local Connector must be online.
 
 ### Can cloud and local projects switch automatically?
 
-No. They have different execution locations and data boundaries. Okra clearly indicates where the current project must run and does not switch silently.
+No. They have different file and tool execution boundaries while sharing cloud business orchestration. MCP Management fixes routing from Project Context and never silently switches to the wrong filesystem or device.
 
 ## Current Product Status
 
@@ -232,7 +232,7 @@ Okra is evolving quickly. Current limitations include:
 
 - Local projects require the desktop client.
 - Local projects do not yet support chat attachments or image/file attachments in additional guidance sent while a task is running.
-- Conversation data for cloud and local projects remains separate and is not migrated automatically.
+- Business history for local projects is stored in the cloud. Version 2.0.10 does not migrate historical sessions, tasks, or memory from the legacy client SQLite database.
 - Available desktop platforms, versions, and registration rules depend on the Okra deployment you use.
 
 ## Technical and Self-Hosting Reference
@@ -244,12 +244,12 @@ The following section is for maintainers who deploy, debug, or extend Okra. Regu
 
 ### Execution architecture
 
-Okra has two isolated execution planes:
+Okra uses one cloud business orchestration plane plus device-side capability executors:
 
-- Cloud Project: Chat OS Backend, Project Management, Task Runner, Memory Engine, Harness, and Sandbox Manager.
-- Local Connector Project: Local Connector Core in the desktop client. Project, conversation, task, memory, and event data is primarily stored in local SQLite.
-- The two planes share control-plane information such as users, agents, model catalogs, Plugin/Skill policies, and system configuration.
-- Neither plane silently falls back to the other. Invalid entry points return `local_runtime_required` or an equivalent local runtime error.
+- Project, conversation, task, requirement, memory, and Agent lifecycle data is authoritative in cloud services.
+- Local Connector Core only executes capabilities that must run on the user's device, including workspace files, Git, commands, local Skill/Plugin/MCP components, sandbox operations, and approvals.
+- MCP Management selects Local Connector, Harness, or Cloud Sandbox from Project Context for every Agent tool call.
+- Local Connector unavailability fails explicitly; it never moves a device-scoped operation to another execution host silently.
 
 ### Local data paths
 
@@ -257,10 +257,10 @@ The default Local Connector state paths are:
 
 ```text
 ~/.chatos/local_connector/state.json
-~/.chatos/local_connector/runtime.sqlite3
+~/.chatos/local_connector/connector-state.sqlite3
 ```
 
-Set `LOCAL_CONNECTOR_STATE_PATH` to change the state file location. The SQLite database is stored in the same directory.
+Set `LOCAL_CONNECTOR_STATE_PATH` to change the state file location. The SQLite database stores only connector control state in the same directory. Legacy `runtime.sqlite3` files are not migrated or used by 2.0.10.
 
 ### Start the self-hosted cloud stack
 
@@ -344,10 +344,10 @@ cd memory_engine/backend && cargo test
 
 - Deployment boundaries and ports: `docker/compose.yml`
 - Rust workspace: `Cargo.toml`
-- Cloud/local frontend routing: `chatos/frontend/src/lib/api/client/facades/`
+- Cloud business APIs and the local capability bridge: `chatos/frontend/src/lib/api/client/facades/`
 - Cloud execution boundary: `chatos/backend/src/core/project_execution.rs`
-- Local execution plane: `local_connector_client/core/src/local_runtime/`
-- Local SQLite schema: `local_connector_client/core/migrations/`
+- Local Connector capability executor: `local_connector_client/core/src/local_runtime/`
+- Local Connector control-state schema: `local_connector_client/core/migrations/`
 - Cloud Task Runner: `task_runner_service/backend/src/services/`
 - Project runtime environments: `project_management_service/backend/src/services/runtime_environment.rs`
 - Development and deployment commands: `Makefile`, `docker/deploy.sh`, and `scripts/local-dev-stack.sh`

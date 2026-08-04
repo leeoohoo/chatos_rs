@@ -10,9 +10,10 @@ use chatos_plugin_management_sdk::{
 use uuid::Uuid;
 
 use crate::local_runtime::storage::LocalDatabase;
+use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
 
 fn complete_bundle(version: i64) -> AgentPromptBundle {
-    let prompts = SystemAgentKey::ALL
+    let prompts = LOCAL_RUNTIME_AGENT_KEYS
         .into_iter()
         .flat_map(|agent| {
             AgentPromptVendor::ALL.into_iter().map(move |vendor| {
@@ -39,7 +40,7 @@ fn complete_capability_bundle(
     owner_user_id: &str,
     revision: &str,
 ) -> Vec<ResolvedAgentCapabilities> {
-    SystemAgentKey::ALL
+    LOCAL_RUNTIME_AGENT_KEYS
         .into_iter()
         .map(|agent_key| ResolvedAgentCapabilities {
             agent_key: agent_key.as_str().to_string(),
@@ -71,7 +72,7 @@ async fn installs_bundle_atomically_and_tracks_remote_updates() {
     let prompt = database
         .get_installed_agent_prompt(
             source,
-            SystemAgentKey::ChatosConversationAgent,
+            SystemAgentKey::LocalConnectorCommandApprovalAgent,
             AgentPromptVendor::Gpt,
         )
         .await
@@ -101,14 +102,14 @@ async fn installs_bundle_atomically_and_tracks_remote_updates() {
     assert!(sync.update_available);
     assert_eq!(
         sync.prompt_count,
-        (SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len()) as i64
+        (LOCAL_RUNTIME_AGENT_KEYS.len() * AgentPromptVendor::ALL.len()) as i64
     );
     assert_eq!(
         database
             .count_capability_snapshots("user-1")
             .await
             .expect("count capability snapshots"),
-        SystemAgentKey::ALL.len() as i64
+        LOCAL_RUNTIME_AGENT_KEYS.len() as i64
     );
 
     database.close().await;
@@ -138,7 +139,7 @@ async fn rejects_incomplete_configuration_bundle_without_replacing_last_valid_in
     let prompt = database
         .get_installed_agent_prompt(
             source,
-            SystemAgentKey::ChatosConversationAgent,
+            SystemAgentKey::LocalConnectorCommandApprovalAgent,
             AgentPromptVendor::Gpt,
         )
         .await
@@ -146,7 +147,10 @@ async fn rejects_incomplete_configuration_bundle_without_replacing_last_valid_in
         .expect("retained prompt exists");
     assert_eq!(prompt.bundle_version, 1);
     let retained = database
-        .get_capability_snapshot("user-1", SystemAgentKey::ChatosConversationAgent.as_str())
+        .get_capability_snapshot(
+            "user-1",
+            SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
+        )
         .await
         .expect("load retained capability")
         .expect("retained capability exists");

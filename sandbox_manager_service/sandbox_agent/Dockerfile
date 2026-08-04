@@ -60,6 +60,7 @@ FROM mcr.microsoft.com/devcontainers/base:dev-ubuntu-24.04
 
 ARG SANDBOX_FEATURES=java@21,node@24,rust@stable,go@1.26
 ARG SANDBOX_CUSTOM_SCRIPT_B64=
+ARG SANDBOX_PLAYWRIGHT_VERSION=1.55.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CHATOS_AGENT_HOST=0.0.0.0
@@ -68,6 +69,8 @@ ENV CHATOS_WORKSPACE=/workspace
 ENV DOTNET_ROOT=/usr/local/dotnet
 ENV JAVA_HOME=/usr/lib/jvm/default-jvm
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV RUSTUP_HOME=/opt/chatos/rustup
 ENV UV_INSTALL_DIR=/usr/local/bin
@@ -107,7 +110,7 @@ RUN set -eux; \
         *) echo "unsupported sandbox runtime: $runtime" >&2; exit 2 ;; \
       esac; \
     done; \
-    base_packages="bash ca-certificates cmake curl g++ gcc git gnupg jq make openssh-client pkg-config python3 python3-pip python3-venv ripgrep software-properties-common unzip wget xz-utils zip"; \
+    base_packages="bash ca-certificates cmake curl g++ gcc git gnupg jq make openssh-client pkg-config python3 python3-pip python3-venv ripgrep software-properties-common unzip wget xz-utils zip libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libxcb1 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libcairo2 libpango-1.0-0 libasound2t64"; \
     apt-get update; \
     apt-get install -y --no-install-recommends $base_packages; \
     apt-get clean; \
@@ -129,6 +132,10 @@ RUN set -eux; \
       curl -fsSL "https://deb.nodesource.com/setup_${node_major}.x" | bash -; \
       apt-get install -y --no-install-recommends nodejs; \
       npm install -g pnpm yarn; \
+      mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"; \
+      npx --yes "playwright@${SANDBOX_PLAYWRIGHT_VERSION}" install chromium; \
+      chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"; \
+      npm cache clean --force; \
       apt-get clean; \
       rm -rf /var/lib/apt/lists/*; \
     fi; \

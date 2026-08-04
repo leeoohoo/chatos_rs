@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[path = "runtime_context/mcp_management_gateway.rs"]
+mod mcp_management_gateway;
 #[path = "runtime_context/policy.rs"]
 mod policy;
-#[path = "runtime_context/project_mcp.rs"]
-mod project_mcp;
-#[path = "runtime_context/remote_server.rs"]
-mod remote_server;
 #[path = "runtime_context/support.rs"]
 mod support;
 #[path = "runtime_context/task_runner.rs"]
@@ -17,22 +15,19 @@ mod workspace;
 use std::sync::{Arc, Mutex};
 
 use chatos_agent::ChatosAgentProfile;
-use chatos_mcp_runtime::PROJECT_MANAGEMENT_MCP_ID;
-use chatos_plugin_management_sdk::CHATOS_TASK_RUNNER_MCP_RESOURCE_ID;
+use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
 use chatos_plugin_management_sdk::{PluginAgentSelection, PluginCommandInvocation};
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
-use self::policy::{merge_optional_system_prompts, resolve_chatos_mcp_policy};
-use self::project_mcp::build_project_management_mcp_runtime;
+use self::mcp_management_gateway::{resolve_mcp_management_gateway, McpManagementGatewayRequest};
+use self::policy::merge_optional_system_prompts;
 use self::support::{is_concrete_project_id, normalize_optional_text};
 use self::task_runner::{
-    build_contact_task_runner_runtime, normalize_plugin_agent_selection,
-    normalize_plugin_command_invocations, normalize_selected_plugin_ids,
-    ContactTaskRunnerRuntimeRequest,
+    normalize_plugin_agent_selection, normalize_plugin_command_invocations,
+    normalize_selected_plugin_ids,
 };
 use self::workspace::{authorize_runtime_workspace_dir, resolve_runtime_project_root};
-use crate::config::Config;
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
@@ -59,8 +54,6 @@ pub struct ConversationRuntimeRequest {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    pub plugin_device_id: Option<String>,
-    pub plugin_workspace_id: Option<String>,
     pub selected_plugin_ids: Vec<String>,
     pub plugin_command_invocations: Vec<PluginCommandInvocation>,
     pub plugin_agent_selection: Option<PluginAgentSelection>,
@@ -89,14 +82,13 @@ pub struct ResolvedConversationRuntimeContext {
     pub plugin_agent_selection_for_snapshot: Option<TurnRuntimeSnapshotPluginAgentSelectionDto>,
     pub resolved_project_id: Option<String>,
     pub resolved_project_name: Option<String>,
-    pub resolved_project_source_type: Option<String>,
     pub resolved_project_root: Option<String>,
-    pub local_project_workspace_root: Option<String>,
     pub default_remote_connection_id: Option<String>,
     pub workspace_root: Option<String>,
     pub mcp_enabled: bool,
     pub enabled_mcp_ids_for_snapshot: Vec<String>,
     pub mcp_server_bundle: McpServerBundle,
+    pub mcp_management_runtime_session: Option<McpManagementRuntimeSessionHandle>,
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
     pub runtime_error: Option<String>,
@@ -205,13 +197,8 @@ pub async fn resolve_runtime_context(
     .await;
     let resolved_project_id = resolved_project_runtime.project_id;
     let resolved_project_name = resolved_project_runtime.project_name;
-    let resolved_project_source_type = resolved_project_runtime.source_type;
-    let resolved_project_root = resolve_runtime_project_root(
-        effective_user_id.as_deref(),
-        resolved_project_runtime.project_root,
-    )
-    .await;
-    let local_project_workspace_root = resolved_project_root.local_workspace_root;
+    let resolved_project_root =
+        resolve_runtime_project_root(resolved_project_runtime.project_root).await;
     let resolved_project_root = resolved_project_root.logical_root;
 
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
@@ -223,8 +210,9 @@ pub async fn resolve_runtime_context(
 
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
     let mut runtime_error = None;
-    let mut capability_policy = None;
     let mut effective_mcp_resource_ids = Vec::new();
+    let mut gateway_provider_skills_prompt = None;
+    let mut mcp_management_runtime_session = None;
     let agent_profile =
         ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
     let normalized_selected_plugin_ids =
@@ -272,9 +260,6 @@ pub async fn resolve_runtime_context(
     };
 
     let requires_concrete_project = agent_profile.requires_concrete_project();
-    let has_concrete_project_scope = resolved_project_id
-        .as_deref()
-        .is_some_and(is_concrete_project_id);
     let task_runner_project_id = if requires_concrete_project {
         resolved_project_id
             .as_deref()
@@ -286,106 +271,50 @@ pub async fn resolve_runtime_context(
         runtime_error = Some("当前智能体运行需要先选择一个有效项目。".to_string());
     }
 
-    if runtime_error.is_none() {
-        let policy_result = resolve_chatos_mcp_policy(
+    let mcp_management_gateway = if runtime_error.is_none() {
+        match resolve_mcp_management_gateway(McpManagementGatewayRequest {
+            owner_user_id: effective_user_id.as_deref(),
             agent_profile,
-            effective_user_id.as_deref(),
-            has_concrete_project_scope,
-        )
-        .await;
-        match policy_result {
-            Ok(policy) => capability_policy = Some(policy),
-            Err(err) => {
-                warn!(
-                    session_id,
-                    plan_mode = req.plan_mode,
-                    detail = err.as_str(),
-                    "required task runner capability is unavailable"
-                );
-                runtime_error = Some(format!("Task Runner 能力配置不可用：{err}"));
-            }
-        }
-    }
-
-    if runtime_error.is_none() {
-        match build_contact_task_runner_runtime(ContactTaskRunnerRuntimeRequest {
-            effective_user_id: effective_user_id.as_deref(),
-            contact_id: runtime_metadata.contact_id.as_deref(),
-            contact_agent_id: contact_agent_id.as_deref(),
-            source_session_id: Some(session_id),
             project_id: task_runner_project_id,
-            workspace_dir: workspace_root
-                .as_deref()
-                .or(local_project_workspace_root.as_deref()),
-            remote_connection_id: default_remote_connection_id.as_deref(),
-            plugin_device_id: req.plugin_device_id.as_deref(),
-            plugin_workspace_id: req.plugin_workspace_id.as_deref(),
-            selected_plugin_ids: normalized_selected_plugin_ids.as_slice(),
-            plugin_command_invocations: normalized_plugin_command_invocations.as_slice(),
-            plugin_agent_selection: normalized_plugin_agent_selection.as_ref(),
-            conversation_turn_id: req.conversation_turn_id.as_deref(),
+            source_session_id: Some(session_id),
+            turn_id: req.conversation_turn_id.as_deref(),
             source_user_message_id: req.source_user_message_id.as_deref(),
-            model_config_id: req.model_config_id.as_deref(),
-            project_requirement_execution_task_ids: req
-                .project_requirement_execution_task_ids
-                .as_slice(),
-            locale: user_output_locale,
-            agent_profile,
+            contact_agent_id: contact_agent_id.as_deref(),
+            default_model_config_id: req.model_config_id.as_deref(),
+            expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
+            locale: Some(if user_output_locale.is_english() {
+                InternalContextLocale::ENGLISH_KEY
+            } else {
+                InternalContextLocale::DEFAULT_KEY
+            }),
         })
         .await
         {
-            Some(runtime) => {
-                http_servers.push(runtime.server);
-                effective_mcp_resource_ids.push(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID.to_string());
-            }
-            None => {
-                runtime_error =
-                    Some("当前对话缺少可用的 Task Runner 账号映射，无法启动智能体。".to_string());
-            }
-        }
-    }
-
-    if runtime_error.is_none() && has_concrete_project_scope {
-        match Config::try_get()
-            .map_err(|err| err.to_string())
-            .and_then(|cfg| {
-                build_project_management_mcp_runtime(
-                    cfg,
-                    effective_user_id.as_deref(),
-                    task_runner_project_id,
-                    agent_profile.requires_project_management_mcp(),
-                )
-            }) {
-            Ok(server) => {
-                http_servers.push(server);
-                effective_mcp_resource_ids.push(PROJECT_MANAGEMENT_MCP_ID.to_string());
-            }
+            Ok(gateway) => Some(gateway),
             Err(err) => {
-                runtime_error = Some(format!("Project Management MCP 配置不可用：{err}"));
+                runtime_error = Some(format!("MCP Management 运行会话不可用：{err}"));
+                None
             }
         }
+    } else {
+        None
+    };
+
+    if let Some(gateway) = mcp_management_gateway {
+        let (server, effective_mcp_ids, provider_skills_prompt, runtime_session) =
+            gateway.into_parts();
+        http_servers.push(server);
+        effective_mcp_resource_ids = effective_mcp_ids;
+        gateway_provider_skills_prompt = provider_skills_prompt;
+        mcp_management_runtime_session = Some(runtime_session);
     }
 
     if runtime_error.is_none() {
-        let locale = if user_output_locale.is_english() {
-            Some(InternalContextLocale::ENGLISH_KEY)
-        } else {
-            Some(InternalContextLocale::DEFAULT_KEY)
-        };
-        let provider_skills_prompt = capability_policy.as_ref().and_then(|policy| {
-            policy.compose_provider_skills_prompt(
-                effective_mcp_resource_ids.iter().map(String::as_str),
-                locale,
-            )
-        });
         contact_system_prompt =
-            merge_optional_system_prompts(contact_system_prompt, provider_skills_prompt);
+            merge_optional_system_prompts(contact_system_prompt, gateway_provider_skills_prompt);
     }
 
-    let enabled_mcp_ids_for_snapshot = http_servers
-        .iter()
-        .map(|server| server.name.clone())
-        .collect::<Vec<_>>();
+    let enabled_mcp_ids_for_snapshot = effective_mcp_resource_ids;
     let builtin_mcp_system_prompt =
         compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
     let use_tools =
@@ -413,14 +342,13 @@ pub async fn resolve_runtime_context(
         plugin_agent_selection_for_snapshot,
         resolved_project_id,
         resolved_project_name,
-        resolved_project_source_type,
         resolved_project_root,
-        local_project_workspace_root,
         default_remote_connection_id,
         workspace_root,
         mcp_enabled: true,
         enabled_mcp_ids_for_snapshot,
         mcp_server_bundle: (http_servers, stdio_servers, builtin_servers),
+        mcp_management_runtime_session,
         use_tools,
         memory_summary_prompt,
         runtime_error,

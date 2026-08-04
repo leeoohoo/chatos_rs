@@ -1,6 +1,6 @@
 # Rust Workspace 与依赖版本基线
 
-> 更新日期：2026-07-20
+> 更新日期：2026-08-01
 > 配套检查：`python scripts/check-rust-dependency-drift.py`
 
 ## 当前策略
@@ -21,9 +21,11 @@
 | `chatos/backend/Cargo.toml` | `0.8` | `0.7` | `2.8` |
 | `config_center_service/backend/Cargo.toml` | `0.8` | `0.7` | `2.8` |
 | `crates/chatos_ai_runtime/Cargo.toml` | `0.8` | - | - |
+| `crates/chatos_mcp_runtime/Cargo.toml` | `0.8` | - | - |
 | `crates/chatos_service_runtime/Cargo.toml` | `0.8` | - | - |
 | `local_connector_client/core/Cargo.toml` | `0.8` | `0.7` | `2.8`（仅真实插件运行时集成测试） |
 | `local_connector_service/backend/Cargo.toml` | `0.8` | `0.7` | `2.8` |
+| `mcp_management_service/backend/Cargo.toml` | `0.8` | `0.7` | `2.8` |
 | `memory_engine/backend/Cargo.toml` | `0.8` | `0.7` | `3` |
 | `official_website_service/backend/Cargo.toml` | `0.8` | `0.7` | - |
 | `plugin_management_service/backend/Cargo.toml` | `0.8` | `0.7` | `2.8` |

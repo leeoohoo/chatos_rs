@@ -9,6 +9,7 @@ start_backend() {
   local health_path="$4"
   local port="$5"
   local bin="${6:-}"
+  local env_overrides="${7:-}"
   local log_file pid_file
   local binary
   local -a cargo_args=(build --manifest-path "$manifest")
@@ -21,8 +22,12 @@ start_backend() {
   log_file="$(log_file_for "$name")"
   pid_file="$(pid_file_for "$name")"
   stop_service_pid "$name"
-  stop_port_if_needed "$port" "$name"
-  echo "[INFO] starting $name on 127.0.0.1:$port"
+  if [[ -n "$port" && "$port" != "-" ]]; then
+    stop_port_if_needed "$port" "$name"
+    echo "[INFO] starting $name on 127.0.0.1:$port"
+  else
+    echo "[INFO] starting $name without HTTP listener"
+  fi
   : >"$log_file"
   (
     cd "$ROOT_DIR"
@@ -32,12 +37,466 @@ start_backend() {
   spawned_pid="$(
     export CHATOS_SERVICE_NAME="$service_name"
     export CHATOS_SERVICE_ID="${service_name}-local"
-    export CHATOS_SERVICE_PORT="$port"
-    export CHATOS_SERVICE_HEALTH_PATH="$health_path"
+    export CHATOS_SERVICE_PORT="${port:-0}"
+    export CHATOS_SERVICE_HEALTH_PATH="${health_path:-/health}"
+    if [[ -n "$env_overrides" && "$env_overrides" != "-" ]]; then
+      # shellcheck disable=SC2086
+      export $env_overrides
+    fi
     spawn_detached "$ROOT_DIR" "$log_file" "$binary"
   )"
   echo "$spawned_pid" >"$pid_file"
-  wait_for_http "$name" "http://127.0.0.1:${port}${health_path}" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}" || true
+  if [[ -n "$port" && "$port" != "-" && -n "$health_path" && "$health_path" != "-" ]]; then
+    wait_for_http "$name" "http://127.0.0.1:${port}${health_path}" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
+  fi
+}
+
+ensure_local_dev_managed_runtime_config() {
+  local config_center_base_url="http://127.0.0.1:${CONFIG_CENTER_PORT}"
+  local environment="${CHATOS_ENV:-local}"
+  local catalog_file effective_file draft_file desired_file merge_file validation_file
+  local login_payload login_response token change_count
+
+  LOCAL_DEV_CONFIG_CHANGED=false
+
+  catalog_file="$(mktemp)"
+  effective_file="$(mktemp)"
+  draft_file="$(mktemp)"
+  desired_file="$(mktemp)"
+  merge_file="$(mktemp)"
+  validation_file="$(mktemp)"
+
+  login_payload="$(python3 - <<'PY'
+import json
+import os
+print(json.dumps({
+    "username": os.environ["CHATOS_ADMIN_USERNAME"],
+    "password": os.environ["CHATOS_ADMIN_PASSWORD"],
+}, separators=(",", ":")))
+PY
+  )"
+  if ! login_response="$(
+    curl -fsS \
+      -H "content-type: application/json" \
+      --data "$login_payload" \
+      "${config_center_base_url}/api/auth/login"
+  )"; then
+    echo "[ERROR] configuration center admin login failed during local-dev config synchronization" >&2
+    rm -f "$catalog_file" "$effective_file" "$draft_file" "$desired_file" "$merge_file" "$validation_file"
+    return 1
+  fi
+  token="$(printf '%s' "$login_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"
+
+  curl -fsS \
+    -H "authorization: Bearer $token" \
+    "${config_center_base_url}/api/config/v1/catalog" \
+    >"$catalog_file"
+  curl -fsS \
+    -H "authorization: Bearer $token" \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/effective" \
+    >"$effective_file"
+
+  python3 - "$catalog_file" "$effective_file" "$desired_file" <<'PY'
+import json
+import os
+import sys
+
+catalog_path, effective_path, desired_path = sys.argv[1:]
+with open(catalog_path, encoding="utf-8") as handle:
+    catalog = json.load(handle)
+with open(effective_path, encoding="utf-8") as handle:
+    effective = json.load(handle).get("values") or {}
+
+def parse_value(raw, value_type):
+    if value_type == "boolean":
+        normalized = raw.strip().lower()
+        if normalized not in {"true", "false"}:
+            raise ValueError(f"invalid boolean value: {raw}")
+        return normalized == "true"
+    if value_type in {"integer", "duration_ms", "bytes"}:
+        return int(raw)
+    if value_type in {"number", "float"}:
+        return float(raw)
+    if value_type in {"array", "object", "json"}:
+        return json.loads(raw)
+    return raw
+
+desired = {}
+for definition in catalog:
+    aliases = definition.get("env_aliases") or []
+    raw = next((os.environ.get(alias) for alias in aliases if os.environ.get(alias)), None)
+    if raw is None:
+        continue
+    desired[definition["key"]] = parse_value(raw, definition.get("value_type") or "string")
+
+rabbitmq_user = os.environ.get("RABBITMQ_DEFAULT_USER", "chatos")
+rabbitmq_password = os.environ.get("RABBITMQ_DEFAULT_PASS", "change_me_rabbitmq_password")
+rabbitmq_port = os.environ.get("RABBITMQ_PORT", "5672")
+rabbitmq_url = f"amqp://{rabbitmq_user}:{rabbitmq_password}@127.0.0.1:{rabbitmq_port}/%2f"
+desired.update({
+    "task_runner.queue.run_dispatch_mode": "rabbitmq",
+    "task_runner.queue.callback_delivery_mode": "rabbitmq",
+    "task_runner.queue.rabbitmq_url": rabbitmq_url,
+    "mcp_management.async_tool.dispatch_mode": "rabbitmq",
+    "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
+})
+
+legacy_user_service_secret = os.environ.get("USER_SERVICE_JWT_SECRET", "").strip()
+if legacy_user_service_secret:
+    previous_key = "user_service.security.previous_secret_keys"
+    existing = str(effective.get(previous_key) or "")
+    materials = []
+    for item in [*existing.replace(";", ",").split(","), legacy_user_service_secret]:
+        normalized = item.strip()
+        if normalized and normalized not in materials:
+            materials.append(normalized)
+    desired[previous_key] = ",".join(materials)
+
+changes = {key: value for key, value in desired.items() if effective.get(key) != value}
+with open(desired_path, "w", encoding="utf-8") as handle:
+    json.dump(changes, handle, separators=(",", ":"))
+PY
+  change_count="$(wc -c <"$desired_file" | tr -d ' ')"
+  if [[ "$change_count" == "2" ]]; then
+    echo "[INFO] configuration center already matches local-dev runtime settings"
+    rm -f "$catalog_file" "$effective_file" "$draft_file" "$desired_file" "$merge_file" "$validation_file"
+    return 0
+  fi
+
+  curl -fsS \
+    -H "authorization: Bearer $token" \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/draft" \
+    >"$draft_file"
+  python3 - "$draft_file" "$desired_file" >"$merge_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    response = json.load(handle)
+with open(sys.argv[2], encoding="utf-8") as handle:
+    desired = json.load(handle)
+changes = {}
+draft = response.get("draft")
+if isinstance(draft, dict) and isinstance(draft.get("changes"), dict):
+    changes.update(draft["changes"])
+changes.update(desired)
+print(json.dumps({"changes": changes}, separators=(",", ":")))
+PY
+  curl -fsS \
+    -X PUT \
+    -H "authorization: Bearer $token" \
+    -H "content-type: application/json" \
+    --data-binary "@$merge_file" \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/draft" \
+    >/dev/null
+  curl -fsS \
+    -X POST \
+    -H "authorization: Bearer $token" \
+    -H "content-type: application/json" \
+    --data '{}' \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/draft/validate" \
+    >"$validation_file"
+  if ! python3 - "$validation_file" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    result = json.load(handle)
+if not result.get("valid"):
+    print("; ".join(result.get("errors") or ["configuration validation failed"]), file=sys.stderr)
+    raise SystemExit(1)
+PY
+  then
+    rm -f "$catalog_file" "$effective_file" "$draft_file" "$desired_file" "$merge_file" "$validation_file"
+    return 1
+  fi
+  curl -fsS \
+    -X POST \
+    -H "authorization: Bearer $token" \
+    -H "content-type: application/json" \
+    --data '{"message":"Synchronize local-dev host runtime configuration"}' \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/draft/publish" \
+    >/dev/null
+  LOCAL_DEV_CONFIG_CHANGED=true
+  rm -f "$catalog_file" "$effective_file" "$draft_file" "$desired_file" "$merge_file" "$validation_file"
+  echo "[INFO] published local-dev host runtime settings to configuration center"
+}
+
+ensure_local_connector_control_plane_config() {
+  local config_center_base_url="http://127.0.0.1:${CONFIG_CENTER_PORT}"
+  local environment="${CHATOS_ENV:-local}"
+  local key_dir="$STATE_DIR/local-connector"
+  local key_path="$key_dir/relay-signing-key.pk8"
+  local key_id="${CHATOS_LOCAL_DEV_RELAY_SIGNING_KEY_ID:-relay-key-local-dev}"
+  local public_key snapshot_file draft_file merge_file token desired_json
+  local login_payload
+
+  mkdir -p "$key_dir"
+  if [[ ! -f "$key_path" ]]; then
+    echo "[INFO] generating local connector relay signing key"
+  fi
+  if ! public_key="$(
+    cargo run --quiet \
+      --manifest-path "$ROOT_DIR/local_connector_service/backend/Cargo.toml" \
+      --bin local_connector_dev_relay_keygen \
+      -- "$key_path"
+  )"; then
+    echo "[ERROR] generate local connector relay signing key failed" >&2
+    return 1
+  fi
+
+  desired_json="$(
+    python3 - "$key_path" "$key_id" "$public_key" <<'PY'
+import json
+import sys
+
+key_path, key_id, public_key = sys.argv[1:]
+print(json.dumps({
+    "local_connector.security.relay_signing.key_path": key_path,
+    "local_connector.security.relay_signing.key_id": key_id,
+    "local_connector.remote_control.require_signed_messages": True,
+    "local_connector.remote_control.signature_max_skew_seconds": 300,
+    "local_connector.remote_control.trusted_relay_public_keys": {
+        key_id: public_key,
+    },
+}, separators=(",", ":")))
+PY
+  )"
+
+  snapshot_file="$(mktemp)"
+  if curl -fsS \
+    -H "x-config-center-internal-secret: $CONFIG_CENTER_INTERNAL_API_SECRET" \
+    "${config_center_base_url}/internal/config/v1/snapshots/local-connector-service?environment=${environment}" \
+    >"$snapshot_file"; then
+    if python3 - "$snapshot_file" "$desired_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+desired = json.loads(sys.argv[2])
+values = snapshot.get("values") or {}
+matches = all(values.get(key) == value for key, value in desired.items())
+raise SystemExit(0 if matches else 1)
+PY
+    then
+      echo "[INFO] local connector managed config already matches local-dev relay settings"
+      rm -f "$snapshot_file"
+      return 0
+    fi
+  fi
+  rm -f "$snapshot_file"
+
+  login_payload="$(python3 - <<'PY'
+import json
+import os
+print(json.dumps({
+    "username": os.environ["CHATOS_ADMIN_USERNAME"],
+    "password": os.environ["CHATOS_ADMIN_PASSWORD"],
+}, separators=(",", ":")))
+PY
+  )"
+  token="$(
+    curl -fsS \
+      -H "content-type: application/json" \
+      --data "$login_payload" \
+      "${config_center_base_url}/api/auth/login" \
+      | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])'
+  )"
+
+  draft_file="$(mktemp)"
+  merge_file="$(mktemp)"
+  curl -fsS \
+    -H "authorization: Bearer $token" \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/draft" \
+    >"$draft_file"
+  python3 - "$draft_file" "$desired_json" >"$merge_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    response = json.load(handle)
+changes = {}
+draft = response.get("draft")
+if isinstance(draft, dict) and isinstance(draft.get("changes"), dict):
+    changes.update(draft["changes"])
+changes.update(json.loads(sys.argv[2]))
+print(json.dumps({"changes": changes}, separators=(",", ":")))
+PY
+  curl -fsS \
+    -X PUT \
+    -H "authorization: Bearer $token" \
+    -H "content-type: application/json" \
+    --data-binary "@$merge_file" \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/draft" \
+    >/dev/null
+  curl -fsS \
+    -X POST \
+    -H "authorization: Bearer $token" \
+    -H "content-type: application/json" \
+    --data '{"message":"Local dev bootstrap Local Connector relay trust"}' \
+    "${config_center_base_url}/api/config/v1/environments/${environment}/draft/publish" \
+    >/dev/null
+  rm -f "$draft_file" "$merge_file"
+  echo "[INFO] published local connector managed relay trust settings to configuration center"
+}
+
+ensure_managed_queue_consumers() {
+  local timeout_seconds="${CHATOS_LOCAL_DEV_QUEUE_TIMEOUT_SECONDS:-60}"
+  local elapsed=0
+  local queue_table
+  local rabbitmq_container="${COMPOSE_PROJECT_NAME}-rabbitmq-1"
+  local -a required_queues=(
+    "mcp_management.async.dispatch"
+    "task_runner.run.dispatch"
+    "task_runner.callback.delivery"
+  )
+
+  while (( elapsed < timeout_seconds )); do
+    queue_table="$(
+      docker exec "$rabbitmq_container" \
+        rabbitmqctl -q list_queues name consumers 2>/dev/null || true
+    )"
+    if python3 - "$queue_table" "${required_queues[@]}" <<'PY'
+import sys
+
+rows = {}
+for line in sys.argv[1].splitlines():
+    parts = line.split("\t")
+    if len(parts) == 2:
+        try:
+            rows[parts[0]] = int(parts[1])
+        except ValueError:
+            pass
+missing = [name for name in sys.argv[2:] if rows.get(name, 0) < 1]
+raise SystemExit(0 if not missing else 1)
+PY
+    then
+      echo "[OK] RabbitMQ managed queues have active consumers"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  echo "[ERROR] RabbitMQ managed queues did not acquire consumers within ${timeout_seconds}s" >&2
+  printf '%s\n' "$queue_table" >&2
+  return 1
+}
+
+ensure_task_runner_sandbox_base_image() {
+  local base_url="http://127.0.0.1:${SANDBOX_MANAGER_PORT}"
+  local image_id="${TASK_RUNNER_SANDBOX_BASE_IMAGE_ID:-default}"
+  local feature_list="${CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES:-}"
+  local timeout_seconds="${CHATOS_LOCAL_DEV_SANDBOX_IMAGE_TIMEOUT_SECONDS:-900}"
+  local catalog_file job_file jobs_file job_id built_image_id status error elapsed
+  catalog_file="$(mktemp)"
+  job_file="$(mktemp)"
+  jobs_file="$(mktemp)"
+
+  if ! curl -fsS \
+    -H "x-sandbox-operator-token: $SANDBOX_MANAGER_OPERATOR_TOKEN" \
+    "$base_url/api/sandbox-images" >"$catalog_file"; then
+    rm -f "$catalog_file" "$job_file" "$jobs_file"
+    echo "[ERROR] failed to inspect Sandbox Manager image catalog" >&2
+    return 1
+  fi
+  if python3 - "$catalog_file" "$image_id" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    catalog = json.load(handle)
+image_id = sys.argv[2]
+ready = any(
+    image.get("id") == image_id and image.get("initialized") is True
+    for image in catalog.get("images", [])
+)
+raise SystemExit(0 if ready else 1)
+PY
+  then
+    echo "[INFO] Task Runner sandbox base image is ready: $image_id"
+    rm -f "$catalog_file" "$job_file" "$jobs_file"
+    return 0
+  fi
+
+  if [[ -z "$feature_list" ]]; then
+    rm -f "$catalog_file" "$job_file" "$jobs_file"
+    echo "[ERROR] sandbox base image $image_id is missing and CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES is empty" >&2
+    return 1
+  fi
+
+  echo "[INFO] initializing Task Runner sandbox base image: $image_id"
+  if ! python3 - "$feature_list" <<'PY' | curl -fsS \
+    -H "content-type: application/json" \
+    -H "x-sandbox-operator-token: $SANDBOX_MANAGER_OPERATOR_TOKEN" \
+    --data-binary @- \
+    "$base_url/api/sandbox-images/initialize" >"$job_file"
+import json
+import sys
+
+features = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
+print(json.dumps({"features": features}, separators=(",", ":")))
+PY
+  then
+    rm -f "$catalog_file" "$job_file" "$jobs_file"
+    echo "[ERROR] failed to initialize Sandbox Manager image $image_id" >&2
+    return 1
+  fi
+
+  read -r job_id built_image_id < <(python3 - "$job_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    job = json.load(handle)
+print(job.get("id", ""), job.get("image_id", ""))
+PY
+  )
+  if [[ -z "$job_id" || "$built_image_id" != "$image_id" ]]; then
+    rm -f "$catalog_file" "$job_file" "$jobs_file"
+    echo "[ERROR] sandbox feature selection produced $built_image_id instead of configured image $image_id" >&2
+    return 1
+  fi
+
+  elapsed=0
+  while (( elapsed < timeout_seconds )); do
+    if ! curl -fsS \
+      -H "x-sandbox-operator-token: $SANDBOX_MANAGER_OPERATOR_TOKEN" \
+      "$base_url/api/sandbox-images/jobs" >"$jobs_file"; then
+      rm -f "$catalog_file" "$job_file" "$jobs_file"
+      echo "[ERROR] failed to inspect Sandbox Manager image job $job_id" >&2
+      return 1
+    fi
+    read -r status error < <(python3 - "$jobs_file" "$job_id" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    jobs = json.load(handle)
+job = next((item for item in jobs if item.get("id") == sys.argv[2]), {})
+error = str(job.get("error") or "").replace("\n", " ")
+print(job.get("status", "missing"), error)
+PY
+    )
+    case "$status" in
+      succeeded)
+        echo "[INFO] Task Runner sandbox base image initialized: $image_id"
+        rm -f "$catalog_file" "$job_file" "$jobs_file"
+        return 0
+        ;;
+      failed)
+        rm -f "$catalog_file" "$job_file" "$jobs_file"
+        echo "[ERROR] Sandbox Manager image build failed for $image_id: $error" >&2
+        return 1
+        ;;
+    esac
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  rm -f "$catalog_file" "$job_file" "$jobs_file"
+  echo "[ERROR] timed out waiting for Sandbox Manager image $image_id" >&2
+  return 1
 }
 
 ensure_frontend_dependencies() {
@@ -78,7 +537,7 @@ start_frontend() {
     spawn_detached "$ROOT_DIR/$app_dir" "$log_file" npm run dev -- --host 0.0.0.0 --port "$port" --strictPort
   )"
   echo "$spawned_pid" >"$pid_file"
-  wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}" || true
+  wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
 }
 
 cleanup_legacy_local_connector_client_state() {
@@ -97,6 +556,7 @@ start_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  prepare_local_dev_apisix_config
   cleanup_legacy_local_connector_client_state
   start_infra
   wait_for_consul
@@ -106,10 +566,26 @@ start_all() {
   deregister_local_dev_services
   register_local_dev_harness_service
 
-  local item name service_name package health_path port bin app_dir
+  local item name service_name package health_path port bin env_overrides app_dir
   for item in "${BACKEND_SERVICES[@]}"; do
-    IFS='|' read -r name service_name package health_path port bin <<<"$item"
-    start_backend "$name" "$service_name" "$package" "$health_path" "$port" "$bin"
+    IFS='|' read -r name service_name package health_path port bin env_overrides <<<"$item"
+    if [[ "$name" == "local-connector-service-backend" ]]; then
+      ensure_local_connector_control_plane_config
+    fi
+    start_backend "$name" "$service_name" "$package" "$health_path" "$port" "$bin" "$env_overrides"
+    if [[ "$name" == "user-service-backend" ]]; then
+      ensure_local_dev_managed_runtime_config
+      if [[ "$LOCAL_DEV_CONFIG_CHANGED" == "true" ]]; then
+        echo "[INFO] restarting user-service-backend after managed configuration publication"
+        start_backend "$name" "$service_name" "$package" "$health_path" "$port" "$bin" "$env_overrides"
+      fi
+    fi
+    if [[ "$name" == "sandbox-manager-backend" ]]; then
+      ensure_task_runner_sandbox_base_image
+    fi
+    if [[ "$name" == "task-runner-scheduler" ]]; then
+      ensure_managed_queue_consumers
+    fi
   done
   for item in "${FRONTEND_SERVICES[@]}"; do
     IFS='|' read -r name app_dir port <<<"$item"
@@ -129,9 +605,11 @@ stop_all() {
     stop_port_if_needed "$port" "$name"
   done
   for item in "${BACKEND_SERVICES[@]}"; do
-    IFS='|' read -r name unused unused unused port unused <<<"$item"
+    IFS='|' read -r name unused unused unused port unused unused <<<"$item"
     stop_service_pid "$name"
-    stop_port_if_needed "$port" "$name"
+    if [[ -n "$port" && "$port" != "-" ]]; then
+      stop_port_if_needed "$port" "$name"
+    fi
   done
   cleanup_local_dev_processes
   deregister_local_dev_services
@@ -139,11 +617,40 @@ stop_all() {
 
 status_all() {
   ensure_dirs
-  local item name port pid unused
+  local item name port pid unused container_status
   echo "[INFO] local dev stack status"
+  echo
+  echo "Docker infrastructure (compose project: $COMPOSE_PROJECT_NAME)"
+  for name in "${INFRA_SERVICES[@]}"; do
+    container_status="$(
+      docker ps -a \
+        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+        --filter "label=com.docker.compose.service=$name" \
+        --format '{{.Status}}' \
+        | head -n 1
+    )"
+    port="$(infra_service_host_port "$name" 2>/dev/null || printf '%s' '-')"
+    if [[ -n "$container_status" ]]; then
+      printf '  %-36s port=%-5s %s\n' "$name" "$port" "$container_status"
+    else
+      printf '  %-36s port=%-5s not created\n' "$name" "$port"
+    fi
+  done
+  echo
+  echo "Host-side services"
   for item in "${BACKEND_SERVICES[@]}"; do
-    IFS='|' read -r name unused unused unused port unused <<<"$item"
-    pid="$(pid_for_port "$port")"
+    IFS='|' read -r name unused unused unused port unused unused <<<"$item"
+    if [[ -n "$port" && "$port" != "-" ]]; then
+      pid="$(pid_for_port "$port")"
+    else
+      pid=""
+      if [[ -f "$(pid_file_for "$name")" ]]; then
+        pid="$(cat "$(pid_file_for "$name")")"
+        if ! kill -0 "$pid" 2>/dev/null; then
+          pid=""
+        fi
+      fi
+    fi
     if [[ -n "$pid" ]]; then
       printf '  %-36s port=%-5s running pid=%s\n' "$name" "$port" "$pid"
     else
@@ -180,6 +687,7 @@ print_urls() {
 [OK] Local dev stack startup requested.
 
 Main app:                 http://localhost:8088
+Unified gateway:          http://localhost:${APISIX_GATEWAY_PORT:-9080}
 Main backend:             http://localhost:3997
 Configuration Center:     http://localhost:39271
 Harness:                  http://localhost:3000
@@ -190,6 +698,7 @@ Project Management:       http://localhost:39211
 Plugin Management:        http://localhost:39261
 Sandbox Manager:          http://localhost:8096
 Local Connector Service:  http://localhost:39230
+MCP Management Service:   http://localhost:39280
 Official Website:         http://localhost:39251
 
 Status:  $0 status

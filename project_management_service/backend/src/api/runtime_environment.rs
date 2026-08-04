@@ -46,7 +46,7 @@ pub(in crate::api) async fn get_project_runtime_environment(
         .map_err(ApiError::bad_request)?;
     let mut environment_changed =
         replace_legacy_internal_routing_summary(&mut environment, images.as_slice());
-    if enforce_project_runtime_boundary(project.execution_plane, &mut environment, &mut images) {
+    if enforce_project_runtime_boundary(&project, &mut environment, &mut images) {
         environment_changed = true;
     }
     if refresh_project_runtime_compose_config(&project_id, &mut environment, images.as_slice())
@@ -135,16 +135,6 @@ pub(in crate::api) async fn update_project_runtime_environment_variables(
         environment,
         images,
     }))
-}
-
-fn ensure_cloud_agent_execution(project: &ProjectRecord) -> Result<(), ApiError> {
-    if project.execution_plane != ProjectExecutionPlane::LocalConnector {
-        return Ok(());
-    }
-    Err(ApiError::conflict(format!(
-        "local_runtime_required: project {} orchestration must run in the Local Connector client; cloud project agent execution is disabled",
-        project.id
-    )))
 }
 
 pub(in crate::api) async fn get_project_runtime_environment_progress_handler(
@@ -296,7 +286,6 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
 ) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
     let project = require_project_access(&state, &project_id, &user).await?;
     ensure_project_writable(&project)?;
-    ensure_cloud_agent_execution(&project)?;
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let analysis_requirement = normalize_analysis_requirement(payload.analysis_requirement)?;
     let selected_dependencies = normalize_selected_dependencies(payload.selected_dependencies)?;

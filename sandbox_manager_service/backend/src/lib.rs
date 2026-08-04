@@ -5,6 +5,7 @@ pub mod api;
 pub mod auth;
 pub mod backend;
 pub mod config;
+pub mod docker_maintenance;
 pub mod error;
 pub mod models;
 pub mod pool;

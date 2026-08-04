@@ -2,16 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { buildQuery } from './shared';
-import { getMcpConfigs } from './configs';
 import type {
   AiModelConfigResponse,
   ConversationAssistantResponse,
   ConversationDetailsResponse,
   ConversationMessageEnvelope,
   ConversationMessagesEnvelope,
-  ConversationMcpServersResponse,
   ConversationMessagePayload,
-  McpConfigResourceResponse,
   SessionResponse,
   SessionMessageResponse,
 } from './types';
@@ -91,67 +88,6 @@ export const getAssistant = async (
         },
       },
     };
-  }
-};
-
-export const getMcpServers = async (
-  request: ApiRequestFn,
-  _conversationId?: string,
-): Promise<ConversationMcpServersResponse> => {
-  try {
-    const mcpConfigs = await getMcpConfigs(request);
-    const enabledServers = mcpConfigs
-      .filter((config) => config.enabled)
-      .map((config) => ({
-        name: config.name,
-        url: config.command,
-      }));
-    return {
-      data: {
-        mcp_servers: enabledServers,
-      },
-    };
-  } catch (error) {
-    console.error('Failed to get MCP servers:', error);
-    return {
-      data: {
-        mcp_servers: [],
-      },
-    };
-  }
-};
-
-export const getMcpConfigResource = async (
-  request: ApiRequestFn,
-  configId: string
-): Promise<McpConfigResourceResponse> => {
-  try {
-    return await request<McpConfigResourceResponse>(`/mcp-configs/${configId}/resource/config`);
-  } catch (error) {
-    console.error('Failed to get MCP config resource:', error);
-    return { success: false, config: null };
-  }
-};
-
-export const getMcpConfigResourceByCommand = async (
-  request: ApiRequestFn,
-  data: {
-    type: 'stdio' | 'http';
-    command: string;
-    args?: string[] | null;
-    env?: Record<string, string> | null;
-    cwd?: string | null;
-    alias?: string | null;
-  }
-): Promise<McpConfigResourceResponse> => {
-  try {
-    return await request<McpConfigResourceResponse>(`/mcp-configs/resource/config`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  } catch (error) {
-    console.error('Failed to get MCP config resource by command:', error);
-    return { success: false, config: null };
   }
 };
 

@@ -19,8 +19,8 @@ use crate::state::AppState;
 
 use super::pagination::{mcp_list_page, paginated_list_payload};
 use super::{
-    decode_value, ensure_project_writable, ensure_requirement_mutable_for_mcp, normalized_optional,
-    require_project_access, require_requirement_in_project, tool_text_result,
+    agent_views, decode_value, ensure_project_writable, ensure_requirement_mutable_for_mcp,
+    normalized_optional, require_project_access, require_requirement_in_project, tool_text_result,
 };
 
 pub(super) async fn list_requirements(
@@ -49,6 +49,10 @@ pub(super) async fn list_requirements(
     if has_more {
         requirements.truncate(page.limit);
     }
+    let requirements = requirements
+        .iter()
+        .map(agent_views::requirement)
+        .collect::<Vec<_>>();
     Ok(tool_text_result(paginated_list_payload(
         requirements,
         page,
@@ -88,12 +92,12 @@ pub(super) async fn create_requirement(
                 source: args.source,
                 priority: args.priority,
                 status,
-                assignee_user_id: args.assignee_user_id,
+                assignee_user_id: None,
             },
             current_user,
         )
         .await?;
-    Ok(tool_text_result(json!(requirement)))
+    Ok(tool_text_result(agent_views::requirement(&requirement)))
 }
 
 pub(super) async fn update_requirement(
@@ -131,13 +135,16 @@ pub(super) async fn update_requirement(
             state
                 .store
                 .list_requirement_dependencies(&args.requirement_id)
-                .await?,
+                .await?
+                .iter()
+                .map(agent_views::requirement_dependency)
+                .collect::<Vec<_>>(),
         )
     } else {
         None
     };
     Ok(tool_text_result(json!({
-        "requirement": requirement,
+        "requirement": agent_views::requirement(&requirement),
         "dependencies": dependencies
     })))
 }
@@ -161,7 +168,7 @@ pub(super) async fn delete_requirement(
         .await?
         .ok_or_else(|| format!("需求不存在: {}", args.requirement_id))?;
     Ok(tool_text_result(json!({
-        "deleted_requirement": deleted
+        "deleted_requirement": agent_views::requirement(&deleted)
     })))
 }
 
@@ -186,5 +193,8 @@ pub(super) async fn set_requirement_dependencies(
         .store
         .list_requirement_dependencies(&args.requirement_id)
         .await?;
-    Ok(tool_text_result(json!(dependencies)))
+    Ok(tool_text_result(json!(dependencies
+        .iter()
+        .map(agent_views::requirement_dependency)
+        .collect::<Vec<_>>())))
 }

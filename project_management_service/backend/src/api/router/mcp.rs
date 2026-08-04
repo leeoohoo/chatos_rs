@@ -7,7 +7,8 @@ use axum::Json;
 use serde_json::Value;
 
 use crate::api::internal_auth::{
-    require_project_internal_request, CHATOS_CALLER, PROJECT_MCP_SCOPE, TASK_RUNNER_CALLER,
+    require_project_internal_request, CHATOS_CALLER, MCP_MANAGEMENT_CALLER, PROJECT_MCP_SCOPE,
+    TASK_RUNNER_CALLER,
 };
 use crate::api::ApiError;
 use crate::auth::{bearer_token_from_headers, verify_token_via_user_service, CurrentUser};
@@ -114,16 +115,32 @@ pub(super) async fn mcp_entrypoint(
             ));
         }
     };
-    let project_id = project_id_from_headers(&headers);
+    let project_id = match project_id_from_headers(&headers) {
+        Ok(value) => value,
+        Err(message) => {
+            return Json(mcp_server::jsonrpc_error_response(
+                StatusCode::FORBIDDEN,
+                id,
+                message,
+            ));
+        }
+    };
     Json(mcp_server::handle_jsonrpc(state, current_user, project_id, request).await)
 }
 
-fn project_id_from_headers(headers: &HeaderMap) -> Option<String> {
-    header_text(headers, "x-chatos-project-id")
-        .ok()
-        .flatten()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+fn project_id_from_headers(headers: &HeaderMap) -> Result<Option<String>, String> {
+    let chatos_project_id = header_text(headers, "x-chatos-project-id")?;
+    let mcp_management_project_id = header_text(headers, "x-mcp-management-project-id")?;
+    if let (Some(chatos_project_id), Some(mcp_management_project_id)) =
+        (&chatos_project_id, &mcp_management_project_id)
+    {
+        if chatos_project_id != mcp_management_project_id {
+            return Err(
+                "MCP Management project id does not match the project request header".to_string(),
+            );
+        }
+    }
+    Ok(mcp_management_project_id.or(chatos_project_id))
 }
 
 fn user_access_token_from_headers(headers: &HeaderMap) -> Result<Option<String>, String> {
@@ -165,6 +182,7 @@ fn task_runner_internal_mcp_user(
     config: &crate::config::AppConfig,
     headers: &HeaderMap,
 ) -> Result<Option<CurrentUser>, ApiError> {
+    let caller = header_text(headers, "x-project-service-caller").map_err(ApiError::bad_request)?;
     let has_internal_auth = [
         "x-project-service-caller",
         "x-project-service-internal-token",
@@ -178,9 +196,12 @@ fn task_runner_internal_mcp_user(
     require_project_internal_request(
         config,
         headers,
-        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER],
         PROJECT_MCP_SCOPE,
     )?;
+    if caller.as_deref() == Some(MCP_MANAGEMENT_CALLER) {
+        return mcp_management_internal_user(headers).map(Some);
+    }
     let task_profile = header_text(headers, "x-task-runner-task-profile")
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::forbidden("task runner MCP sync branch requires task profile"))?;
@@ -209,6 +230,36 @@ fn task_runner_internal_mcp_user(
         owner_username: Some(owner_username),
         owner_display_name: Some(owner_display_name),
     }))
+}
+
+fn mcp_management_internal_user(headers: &HeaderMap) -> Result<CurrentUser, ApiError> {
+    let owner_user_id = header_text(headers, "x-mcp-management-owner-user-id")
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::unauthorized("MCP Management owner user id is required"))?;
+    let agent_key = header_text(headers, "x-mcp-management-agent-key")
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::unauthorized("MCP Management Agent key is required"))?;
+    if !chatos_plugin_management_sdk::SystemAgentKey::ALL
+        .into_iter()
+        .any(|key| key.as_str() == agent_key)
+    {
+        return Err(ApiError::forbidden(
+            "MCP Management Agent key is not registered",
+        ));
+    }
+    header_text(headers, "x-mcp-management-session-id")
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::unauthorized("MCP Management session id is required"))?;
+    Ok(CurrentUser {
+        principal_type: "human_user".to_string(),
+        id: owner_user_id.clone(),
+        username: owner_user_id.clone(),
+        display_name: owner_user_id.clone(),
+        role: UserRole::Agent,
+        owner_user_id: Some(owner_user_id.clone()),
+        owner_username: Some(owner_user_id.clone()),
+        owner_display_name: Some(owner_user_id),
+    })
 }
 
 fn is_supported_task_runner_mcp_profile(value: &str) -> bool {
@@ -432,6 +483,62 @@ mod tests {
 
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
         assert_eq!(err.message, "task runner MCP missing owner user id");
+    }
+
+    #[test]
+    fn mcp_management_internal_mcp_user_accepts_signed_session_identity() {
+        let mut config = test_config();
+        config.require_signed_internal_requests = true;
+        config.internal_api_secrets.insert(
+            MCP_MANAGEMENT_CALLER.to_string(),
+            "a-long-mcp-management-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-mcp-management-secret",
+            MCP_MANAGEMENT_CALLER,
+            crate::api::internal_auth::PROJECT_SERVICE_TOKEN_AUDIENCE,
+            PROJECT_MCP_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-project-service-caller",
+            HeaderValue::from_static(MCP_MANAGEMENT_CALLER),
+        );
+        headers.insert(
+            "x-project-service-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+        headers.insert(
+            "x-mcp-management-owner-user-id",
+            HeaderValue::from_static("user-1"),
+        );
+        headers.insert(
+            "x-mcp-management-agent-key",
+            HeaderValue::from_static("task_runner_run_phase"),
+        );
+        headers.insert(
+            "x-mcp-management-session-id",
+            HeaderValue::from_static("session-1"),
+        );
+
+        let user = task_runner_internal_mcp_user(&config, &headers)
+            .expect("signed internal user")
+            .expect("present");
+        assert_eq!(user.id, "user-1");
+        assert_eq!(user.effective_owner_user_id(), Some("user-1"));
+    }
+
+    #[test]
+    fn mcp_management_project_headers_must_match() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-chatos-project-id", HeaderValue::from_static("project-1"));
+        headers.insert(
+            "x-mcp-management-project-id",
+            HeaderValue::from_static("project-2"),
+        );
+        assert!(project_id_from_headers(&headers).is_err());
     }
 
     fn test_config() -> AppConfig {

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use url::Url;
@@ -20,6 +22,13 @@ pub(crate) struct ClientConfig {
     pub(crate) workspace_path: Option<PathBuf>,
     pub(crate) workspace_alias: Option<String>,
     pub(crate) state_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteControlTrustConfig {
+    pub(crate) require_signed_messages: bool,
+    pub(crate) signature_max_skew: Duration,
+    pub(crate) trusted_relay_public_keys: HashMap<String, String>,
 }
 
 impl ClientConfig {
@@ -63,6 +72,28 @@ impl ClientConfig {
 
     pub(crate) fn ensure_remote_urls_allowed(&self) -> Result<()> {
         ensure_remote_url_allowed("cloud_base_url", self.cloud_base_url.as_str())
+    }
+}
+
+impl RemoteControlTrustConfig {
+    pub(crate) fn from_state(state: &LocalState) -> Result<Self> {
+        let bundle = state
+            .managed_runtime_config
+            .as_ref()
+            .ok_or_else(|| anyhow!("managed runtime config has not been synchronized"))?
+            .bundle
+            .remote_control_trust
+            .clone();
+        if bundle.require_signed_messages && bundle.trusted_relay_public_keys.is_empty() {
+            return Err(anyhow!(
+                "managed runtime config does not contain any trusted relay public keys"
+            ));
+        }
+        Ok(Self {
+            require_signed_messages: bundle.require_signed_messages,
+            signature_max_skew: Duration::from_secs(bundle.signature_max_skew_seconds),
+            trusted_relay_public_keys: bundle.trusted_relay_public_keys.into_iter().collect(),
+        })
     }
 }
 

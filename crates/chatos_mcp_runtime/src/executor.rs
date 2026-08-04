@@ -86,7 +86,7 @@ impl McpExecutor {
         self.unavailable_tools.clear();
         self.tool_metadata.clear();
         self.tool_aliases.clear();
-        self.register_http_tools().await;
+        self.register_http_tools().await?;
         self.register_stdio_tools().await;
         self.register_builtin_tools();
         self.apply_tool_allowlist()?;

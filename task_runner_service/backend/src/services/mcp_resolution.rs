@@ -2,10 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
-use chatos_mcp_service::{
-    split_builtin_kind_header, BuiltinHostBackend, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
-    LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
-};
+use chatos_mcp_service::BuiltinHostBackend;
 
 use crate::models::{
     TaskMcpConfig, TaskMcpHostedBuiltinRoute, TaskMcpRequiredBuiltinCapability,
@@ -76,52 +73,12 @@ pub(super) struct TaskMcpResolutionInput<'a> {
 pub(super) fn selected_builtin_kinds_from_config(
     mcp_config: &TaskMcpConfig,
 ) -> Vec<BuiltinMcpKind> {
-    let mut kinds = mcp_config
+    let kinds = mcp_config
         .enabled_builtin_kinds
         .iter()
         .filter_map(|value| builtin_kind_by_any(value))
         .collect::<Vec<_>>();
-    kinds.extend(hosted_builtin_kinds_from_config(mcp_config));
     complete_builtin_kind_dependencies(kinds)
-}
-
-fn hosted_builtin_kinds_from_config(mcp_config: &TaskMcpConfig) -> Vec<BuiltinMcpKind> {
-    let mut out = Vec::new();
-    for server in &mcp_config.ephemeral_http_servers {
-        push_hosted_builtin_kinds_from_header(
-            &mut out,
-            server
-                .headers
-                .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER),
-            BuiltinHostBackend::LocalConnector,
-        );
-        push_hosted_builtin_kinds_from_header(
-            &mut out,
-            server
-                .headers
-                .get(HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER),
-            BuiltinHostBackend::HarnessCode,
-        );
-    }
-    out
-}
-
-fn push_hosted_builtin_kinds_from_header(
-    out: &mut Vec<BuiltinMcpKind>,
-    raw: Option<&String>,
-    host: BuiltinHostBackend,
-) {
-    let Some(raw) = raw else {
-        return;
-    };
-    for value in split_builtin_kind_header(raw) {
-        let Some(kind) = builtin_kind_by_any(value) else {
-            continue;
-        };
-        if host.replaces_builtin_kind_name(kind.kind_name()) && !out.contains(&kind) {
-            out.push(kind);
-        }
-    }
 }
 
 pub(super) fn resolve_task_mcp(
@@ -209,6 +166,7 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
     }
 }
 
+#[cfg(test)]
 pub(super) fn hosted_builtin_kinds_for(
     resolution: &TaskMcpResolution,
     host: BuiltinHostBackend,
@@ -348,9 +306,6 @@ fn chatos_plan_profile_requirements() -> Vec<McpCapabilityRequirement> {
         AskUser,
         WebTools,
         BrowserTools,
-        MemorySkillReader,
-        MemoryCommandReader,
-        MemoryPluginReader,
     ]
     .into_iter()
     .map(|kind| {

@@ -4,6 +4,7 @@
 import { useCallback } from 'react';
 
 import { useApiClient } from '../../lib/api/ApiClientContext';
+import { isCloudProjectSource } from '../../lib/domain/projectSource';
 import type { Project } from '../../types';
 import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
 import { useProjectExplorerCodeNav } from './useProjectExplorerCodeNav';
@@ -36,7 +37,7 @@ export const useProjectExplorerViewModel = ({
     : state.workspaceTab;
   const filesTabActive = workspaceTab === 'files';
   const settingsTabActive = workspaceTab === 'settings';
-  const isCloudProject = project?.sourceType?.trim().toLowerCase() === 'cloud';
+  const cloudProjectSource = isCloudProjectSource(project);
   const { terminalUiEnabled } = useTerminalUiSetting();
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
@@ -82,14 +83,14 @@ export const useProjectExplorerViewModel = ({
   const runState = useProjectExplorerRunState({
     client,
     project,
-    enabled: settingsTabActive && !isCloudProject,
-    sandboxSettingEnabled: Boolean(project?.id) && !isCloudProject,
+    enabled: settingsTabActive && !cloudProjectSource,
+    sandboxSettingEnabled: Boolean(project?.id) && !cloudProjectSource,
     terminalUiEnabled,
   });
 
   const codeNav = useProjectExplorerCodeNav({
     client,
-    projectRootPath: isCloudProject ? null : project?.rootPath,
+    projectRootPath: cloudProjectSource ? null : project?.rootPath,
     selectedFilePath: state.selectedFile?.path || null,
     targetLine: search.previewTargetLine,
     openLocation: selection.openCodeNavLocation,

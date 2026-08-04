@@ -24,10 +24,6 @@ pub(crate) struct ChatStreamRequest {
     #[serde(alias = "workspaceRoot")]
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    #[serde(alias = "pluginDeviceId")]
-    pub plugin_device_id: Option<String>,
-    #[serde(alias = "pluginWorkspaceId")]
-    pub plugin_workspace_id: Option<String>,
     #[serde(default, alias = "selectedPluginIds")]
     pub selected_plugin_ids: Vec<String>,
     #[serde(default, alias = "pluginCommandInvocations")]

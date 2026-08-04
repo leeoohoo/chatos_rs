@@ -572,24 +572,6 @@ pub(crate) fn save_local_model_settings(
             "model_request_max_retries must be between 0 and 10"
         ));
     }
-    settings.memory_summary_model_config_id =
-        normalize_optional(settings.memory_summary_model_config_id.as_deref());
-    settings.memory_summary_thinking_level =
-        normalize_optional(settings.memory_summary_thinking_level.as_deref());
-    settings.project_management_agent_model_config_id =
-        normalize_optional(settings.project_management_agent_model_config_id.as_deref());
-    settings.project_management_agent_thinking_level =
-        normalize_optional(settings.project_management_agent_thinking_level.as_deref());
-    settings.environment_initialization_model_config_id = normalize_optional(
-        settings
-            .environment_initialization_model_config_id
-            .as_deref(),
-    );
-    settings.environment_initialization_thinking_level = normalize_optional(
-        settings
-            .environment_initialization_thinking_level
-            .as_deref(),
-    );
     settings.command_approval_model_config_id =
         normalize_optional(settings.command_approval_model_config_id.as_deref());
     settings.command_approval_thinking_level =
@@ -611,16 +593,11 @@ pub(crate) async fn sync_local_model_settings(
     let payload = json!({
         "user_id": owner_user_id,
         "model_request_max_retries": local.model_request_max_retries,
-        "memory_summary_model_config_id": local
-            .memory_summary_model_config_id
+        "command_approval_model_config_id": local
+            .command_approval_model_config_id
             .as_deref()
             .and_then(|id| server_model_id_for_local(state, id)),
-        "memory_summary_thinking_level": local.memory_summary_thinking_level,
-        "project_management_agent_model_config_id": local
-            .project_management_agent_model_config_id
-            .as_deref()
-            .and_then(|id| server_model_id_for_local(state, id)),
-        "project_management_agent_thinking_level": local.project_management_agent_thinking_level,
+        "command_approval_thinking_level": local.command_approval_thinking_level,
     });
     let _ = request_user_service_json::<Value, Value>(
         http_client,

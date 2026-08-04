@@ -158,9 +158,9 @@ static BUNDLED_PLUGIN_SPECS: [BundledPluginSpec; 12] = [
         "Connect and narrowly control explicitly authorized tabs from the user's existing Chrome session.",
         "Automation",
         &["internal_skill_chrome"],
-        "1.4.0",
-        "2026-07-25T07:00:00Z",
-        "chrome-1.4.0",
+        "1.5.0",
+        "2026-07-31T03:30:00Z",
+        "chrome-1.5.0",
     ),
     bundled_plugin_release(
         "computer-use",

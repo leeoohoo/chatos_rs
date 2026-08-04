@@ -39,6 +39,25 @@ impl TaskRunnerRuntimeSettings {
 
 #[cfg(feature = "managed-config")]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteControlTrustConfigBundle {
+    pub require_signed_messages: bool,
+    pub signature_max_skew_seconds: u64,
+    pub trusted_relay_public_keys: std::collections::BTreeMap<String, String>,
+}
+
+#[cfg(feature = "managed-config")]
+impl RemoteControlTrustConfigBundle {
+    pub fn defaults() -> Self {
+        Self {
+            require_signed_messages: true,
+            signature_max_skew_seconds: 300,
+            trusted_relay_public_keys: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+#[cfg(feature = "managed-config")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ManagedRuntimeConfigBundle {
     pub environment: String,
     pub revision: i64,
@@ -47,6 +66,7 @@ pub struct ManagedRuntimeConfigBundle {
     pub stale: bool,
     pub source: Option<String>,
     pub task_runner_runtime_settings: TaskRunnerRuntimeSettings,
+    pub remote_control_trust: RemoteControlTrustConfigBundle,
 }
 
 #[cfg(feature = "managed-config")]
@@ -62,6 +82,7 @@ impl ManagedRuntimeConfigBundle {
             stale: snapshot.stale,
             source: snapshot.source,
             task_runner_runtime_settings: settings,
+            remote_control_trust: RemoteControlTrustConfigBundle::defaults(),
         }
     }
 
@@ -74,7 +95,16 @@ impl ManagedRuntimeConfigBundle {
             stale: true,
             source: Some("defaults".to_string()),
             task_runner_runtime_settings: TaskRunnerRuntimeSettings::defaults(),
+            remote_control_trust: RemoteControlTrustConfigBundle::defaults(),
         }
+    }
+
+    pub fn with_remote_control_trust(
+        mut self,
+        remote_control_trust: RemoteControlTrustConfigBundle,
+    ) -> Self {
+        self.remote_control_trust = remote_control_trust;
+        self
     }
 }
 

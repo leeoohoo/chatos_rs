@@ -49,6 +49,7 @@ pub(in crate::api) async fn system_config_handler(
         .map_err(ApiError::bad_request)?;
     Ok(Json(system_config(
         &state.config,
+        &state.task_queue_topology,
         execution_timeout_ms,
         task_runner_runtime_settings,
         tool_result_model_budget_limits,
@@ -81,6 +82,7 @@ pub(in crate::api) async fn update_system_config_handler(
         .map_err(ApiError::bad_request)?;
     Ok(Json(system_config(
         &state.config,
+        &state.task_queue_topology,
         execution_timeout_ms,
         chatos_agent::TaskRunnerRuntimeSettings {
             max_iterations: settings.task_execution_max_iterations,

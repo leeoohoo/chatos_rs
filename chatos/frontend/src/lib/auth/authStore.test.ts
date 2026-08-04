@@ -10,6 +10,7 @@ const buildFakeAuthClient = () => ({
   setAccessToken: vi.fn(),
   getAccessToken: vi.fn(() => null),
   onAccessTokenRefresh: vi.fn(() => () => undefined),
+  onAuthenticationFailure: vi.fn(() => () => undefined),
   getMe: vi.fn(),
   login: vi.fn(),
   register: vi.fn(),

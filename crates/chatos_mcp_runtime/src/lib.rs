@@ -12,6 +12,7 @@ pub mod parallelism;
 pub mod registry;
 pub mod rpc;
 pub mod schema;
+pub mod stdio_policy;
 pub mod task_types;
 pub mod text;
 pub mod tool_call;
@@ -50,10 +51,14 @@ pub use executor::McpExecutor;
 pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
 pub use rpc::{
-    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_stdio_call,
-    list_tools_http, list_tools_stdio,
+    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_tool_call_cancellable,
+    jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout, list_tools_http, list_tools_stdio,
 };
 pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
+pub use stdio_policy::{
+    validate_stdio_arguments, validate_stdio_environment, validate_stdio_environment_name,
+    StdioPolicyViolation,
+};
 pub use task_types::TaskUpdatePatch;
 pub use text::{
     inject_agent_builder_args, to_text_and_structured_result,

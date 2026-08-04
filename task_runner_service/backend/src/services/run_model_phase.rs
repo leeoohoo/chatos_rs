@@ -15,10 +15,8 @@ use chatos_ai_runtime::{
     TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits,
     DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
-use chatos_mcp_runtime::{
-    builtin_servers_from_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
-    McpExecutorBuilder, McpHttpServer, McpStdioServer,
-};
+use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
+use chatos_mcp_runtime::{BuiltinMcpPromptLocale, McpExecutorBuilder};
 use memory_engine_sdk::ComposeContextPolicy;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -42,28 +40,23 @@ use super::stream_events::{
     append_pending_stream_event, flush_pending_stream_event, PendingRunStreamEvent,
 };
 use super::task_process_log::{
-    task_process_log_builtin_server, task_process_log_prefixed_input_items,
-    task_process_logging_enabled, TaskProcessLogBuiltinProvider,
-    TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
+    task_process_log_prefixed_input_items, task_process_logging_enabled,
 };
-use super::workspace_mcp::{
-    runtime_selected_builtin_kinds, runtime_selected_builtin_kinds_authoritative,
-    task_uses_harness_code,
-};
-use super::{
-    build_builtin_registry, summarized_report_content, DisabledBuiltinProvider, RunService,
-    TaskService,
-};
+use super::{summarized_report_content, RunService};
 
 mod callbacks;
 mod completion;
 mod setup;
+
+const HARNESS_MERGE_CONFLICT_MAX_RUNS: usize = 3;
+const SANDBOX_INFRASTRUCTURE_MAX_RETRIES: usize = 3;
 
 pub(in crate::services) struct PreparedModelExecution {
     agent: TaskRunnerAgent,
     run_spec: TaskRunSpec,
     runtime_config: TaskRuntimeConfig,
     mcp_builder: McpExecutorBuilder,
+    mcp_management_runtime_session: McpManagementRuntimeSessionHandle,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
     harness_run_context: Option<HarnessRunContext>,
@@ -204,6 +197,10 @@ impl RunService {
             });
         }
         cancel_prepared_plugin_sessions(plugin_sessions.as_slice()).await;
+        let sandbox_infrastructure_failure = report
+            .error
+            .as_deref()
+            .is_some_and(is_sandbox_infrastructure_failure);
         let sandbox_output = if let Some(context) = sandbox_context.as_ref() {
             self.release_sandbox(&run, context).await
         } else {
@@ -235,6 +232,9 @@ impl RunService {
         } else {
             None
         };
+        let harness_merge_conflict = harness_output
+            .as_ref()
+            .is_some_and(|output| output.status == "merge_conflict");
         self.finalize_model_phase(
             &task,
             &mut run,
@@ -247,5 +247,231 @@ impl RunService {
         if let Some(context) = harness_run_context.as_ref() {
             self.cleanup_harness_run_workspace(context);
         }
+        if harness_merge_conflict {
+            self.retry_after_harness_merge_conflict(&task, &run).await;
+        } else if sandbox_infrastructure_failure {
+            self.retry_after_sandbox_infrastructure_failure(&task, &run)
+                .await;
+        }
+    }
+
+    async fn retry_after_sandbox_infrastructure_failure(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+    ) {
+        let failed_run_count = match self.store.list_runs(Some(task.id.as_str())).await {
+            Ok(runs) => runs
+                .iter()
+                .filter(|run| {
+                    run.error_message
+                        .as_deref()
+                        .is_some_and(is_sandbox_infrastructure_failure)
+                })
+                .count(),
+            Err(error) => {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    error = error.as_str(),
+                    "failed to count sandbox infrastructure retries"
+                );
+                return;
+            }
+        };
+        if failed_run_count > SANDBOX_INFRASTRUCTURE_MAX_RETRIES {
+            let _ = self
+                .store
+                .append_run_event(TaskRunEventRecord::new(
+                    run.id.clone(),
+                    "sandbox_infrastructure_retry_exhausted",
+                    Some(format!(
+                        "沙箱基础设施连续失败 {failed_run_count} 次，停止自动重新执行"
+                    )),
+                    Some(json!({
+                        "failed_run_count": failed_run_count,
+                        "max_retries": SANDBOX_INFRASTRUCTURE_MAX_RETRIES,
+                    })),
+                ))
+                .await;
+            return;
+        }
+
+        match self.retry_run_automatically(run.id.as_str()).await {
+            Ok(Some(retry_run)) => {
+                let _ = self
+                    .store
+                    .append_run_event(TaskRunEventRecord::new(
+                        run.id.clone(),
+                        "sandbox_infrastructure_retry_queued",
+                        Some("检测到沙箱租约失效，已由程序申请新环境并重新执行原任务".to_string()),
+                        Some(json!({
+                            "retry_run_id": retry_run.id,
+                            "failed_run_count": failed_run_count,
+                            "max_retries": SANDBOX_INFRASTRUCTURE_MAX_RETRIES,
+                        })),
+                    ))
+                    .await;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    error = error.as_str(),
+                    "failed to queue automatic sandbox infrastructure retry"
+                );
+                let _ = self
+                    .store
+                    .append_run_event(TaskRunEventRecord::new(
+                        run.id.clone(),
+                        "sandbox_infrastructure_retry_failed",
+                        Some(format!("沙箱失效后自动重新执行原任务失败: {error}")),
+                        None,
+                    ))
+                    .await;
+            }
+        }
+    }
+
+    async fn retry_after_harness_merge_conflict(&self, task: &TaskRecord, run: &TaskRunRecord) {
+        let conflict_run_count = match self.store.list_runs(Some(task.id.as_str())).await {
+            Ok(runs) => runs
+                .iter()
+                .filter(|run| run_has_harness_merge_conflict(run))
+                .count(),
+            Err(error) => {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    error = error.as_str(),
+                    "failed to count Harness merge-conflict retries"
+                );
+                return;
+            }
+        };
+        if conflict_run_count >= HARNESS_MERGE_CONFLICT_MAX_RUNS {
+            let _ = self
+                .store
+                .append_run_event(TaskRunEventRecord::new(
+                    run.id.clone(),
+                    "harness_merge_conflict_retry_exhausted",
+                    Some(format!(
+                        "Harness 并发合并连续冲突 {conflict_run_count} 次，停止自动重试"
+                    )),
+                    Some(json!({
+                        "conflict_run_count": conflict_run_count,
+                        "max_conflict_runs": HARNESS_MERGE_CONFLICT_MAX_RUNS,
+                    })),
+                ))
+                .await;
+            return;
+        }
+
+        match self.retry_run_automatically(run.id.as_str()).await {
+            Ok(Some(retry_run)) => {
+                let _ = self
+                    .store
+                    .append_run_event(TaskRunEventRecord::new(
+                        run.id.clone(),
+                        "harness_merge_conflict_retry_queued",
+                        Some(
+                            "检测到并发合并冲突，已由程序基于最新 Harness 基线重新执行原任务"
+                                .to_string(),
+                        ),
+                        Some(json!({
+                            "retry_run_id": retry_run.id,
+                            "conflict_run_count": conflict_run_count,
+                            "max_conflict_runs": HARNESS_MERGE_CONFLICT_MAX_RUNS,
+                        })),
+                    ))
+                    .await;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    error = error.as_str(),
+                    "failed to queue automatic Harness merge-conflict retry"
+                );
+                let _ = self
+                    .store
+                    .append_run_event(TaskRunEventRecord::new(
+                        run.id.clone(),
+                        "harness_merge_conflict_retry_failed",
+                        Some(format!("自动重新执行原任务失败: {error}")),
+                        None,
+                    ))
+                    .await;
+            }
+        }
+    }
+}
+
+fn run_has_harness_merge_conflict(run: &TaskRunRecord) -> bool {
+    run.report
+        .as_ref()
+        .and_then(|report| report.pointer("/output/harness/status"))
+        .and_then(Value::as_str)
+        .is_some_and(|status| status == "merge_conflict")
+}
+
+fn is_sandbox_infrastructure_failure(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    (normalized.contains("sandbox manager lease is not runnable")
+        && (normalized.contains("destroyed") || normalized.contains("expired")))
+        || normalized.contains("sandbox infrastructure unavailable; the run must reacquire")
+}
+
+#[cfg(test)]
+mod harness_merge_retry_tests {
+    use super::{is_sandbox_infrastructure_failure, run_has_harness_merge_conflict};
+    use crate::models::TaskRunRecord;
+    use serde_json::json;
+
+    #[test]
+    fn detects_only_structured_harness_merge_conflicts() {
+        let now = crate::models::now_rfc3339();
+        let mut run = TaskRunRecord::queued(
+            "run-1".to_string(),
+            "task-1".to_string(),
+            "model-1".to_string(),
+            "memory-1".to_string(),
+            json!({}),
+            Vec::new(),
+            now,
+        );
+        run.report = Some(json!({
+            "output": {
+                "harness": {
+                    "status": "merge_conflict"
+                }
+            }
+        }));
+        assert!(run_has_harness_merge_conflict(&run));
+
+        run.report = Some(json!({
+            "output": {
+                "harness": {
+                    "status": "failed",
+                    "message": "merge conflict text is not a structured retry signal"
+                }
+            }
+        }));
+        assert!(!run_has_harness_merge_conflict(&run));
+    }
+
+    #[test]
+    fn detects_destroyed_or_expired_sandbox_infrastructure() {
+        assert!(is_sandbox_infrastructure_failure(
+            "Sandbox Manager lease is not runnable: destroyed"
+        ));
+        assert!(is_sandbox_infrastructure_failure(
+            "sandbox infrastructure unavailable; the run must reacquire its sandbox"
+        ));
+        assert!(!is_sandbox_infrastructure_failure(
+            "No such file or directory"
+        ));
     }
 }

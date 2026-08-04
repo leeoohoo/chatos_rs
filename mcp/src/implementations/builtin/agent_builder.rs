@@ -136,7 +136,6 @@ impl AgentBuilderService {
                     "role_definition": { "type": "string" },
                     "description": { "type": "string" },
                     "category": { "type": "string" },
-                    "user_id": { "type": "string" },
                     "enabled": { "type": "boolean" },
                     "skill_ids": { "type": "array", "items": { "type": "string" } },
                     "default_skill_ids": { "type": "array", "items": { "type": "string" } },
@@ -153,7 +152,6 @@ impl AgentBuilderService {
                             "additionalProperties": false
                         }
                     },
-                    "mcp_policy": { "type": "object" },
                     "project_policy": { "type": "object" }
                 },
                 "required": ["name", "role_definition"],
@@ -202,7 +200,6 @@ impl AgentBuilderService {
                             "additionalProperties": false
                         }
                     },
-                    "mcp_policy": { "type": "object" },
                     "project_policy": { "type": "object" }
                 },
                 "required": ["agent_id"],
@@ -337,7 +334,7 @@ fn contains_any(text: &str, patterns: &[&str]) -> bool {
 
 fn build_create_payload(args: Value, default_user_id: Option<&str>) -> Result<Value, String> {
     let mut payload = json!({
-        "user_id": optional_string(&args, "user_id").or_else(|| default_user_id.map(str::to_string)),
+        "user_id": default_user_id.map(str::to_string),
         "name": required_string(&args, "name")?,
         "description": optional_string(&args, "description"),
         "category": optional_string(&args, "category"),
@@ -345,7 +342,6 @@ fn build_create_payload(args: Value, default_user_id: Option<&str>) -> Result<Va
         "skills": optional_skill_array(&args, "skills"),
         "skill_ids": optional_string_array(&args, "skill_ids"),
         "default_skill_ids": optional_string_array(&args, "default_skill_ids"),
-        "mcp_policy": optional_object_value(&args, "mcp_policy"),
         "project_policy": optional_object_value(&args, "project_policy"),
         "enabled": args.get("enabled").and_then(Value::as_bool),
     });
@@ -362,7 +358,6 @@ fn build_update_payload(args: &Value) -> Value {
         "skills": optional_skill_array(args, "skills"),
         "skill_ids": optional_string_array(args, "skill_ids"),
         "default_skill_ids": optional_string_array(args, "default_skill_ids"),
-        "mcp_policy": optional_object_value(args, "mcp_policy"),
         "project_policy": optional_object_value(args, "project_policy"),
         "enabled": args.get("enabled").and_then(Value::as_bool),
     });
@@ -506,6 +501,23 @@ mod tests {
                 .and_then(Value::as_object)
                 .expect("tool properties");
             assert!(!properties.contains_key("plugin_sources"));
+            assert!(!properties.contains_key("mcp_policy"));
+            assert!(!properties.contains_key("user_id"));
         }
+    }
+
+    #[test]
+    fn create_payload_uses_the_bound_owner_instead_of_model_arguments() {
+        let payload = build_create_payload(
+            json!({
+                "user_id": "attacker",
+                "name": "Bound Agent",
+                "role_definition": "Stay within the owner boundary"
+            }),
+            Some("owner-1"),
+        )
+        .expect("create payload");
+
+        assert_eq!(payload["user_id"], "owner-1");
     }
 }

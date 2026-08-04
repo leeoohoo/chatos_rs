@@ -20,9 +20,10 @@ use crate::state::AppState;
 
 use super::pagination::{mcp_list_page, paginated_list_payload};
 use super::{
-    decode_value, ensure_project_task_mutable_for_mcp, ensure_project_writable,
+    agent_views, decode_value, ensure_project_task_mutable_for_mcp, ensure_project_writable,
     ensure_requirement_mutable_for_mcp, normalized_optional, require_project_access,
-    require_project_task_in_project, require_requirement_in_project, tool_text_result,
+    require_project_task_in_project, require_requirement_in_project,
+    resolve_project_task_ids_in_project, tool_text_result,
 };
 
 pub(super) async fn list_project_tasks(
@@ -63,6 +64,10 @@ pub(super) async fn list_project_tasks(
         items,
     )
     .await?;
+    let items = items
+        .iter()
+        .map(agent_views::project_task)
+        .collect::<Vec<_>>();
     Ok(tool_text_result(paginated_list_payload(
         items, page, has_more,
     )))
@@ -77,6 +82,12 @@ pub(super) async fn create_project_task(
     let args: CreateProjectTaskArgs = decode_value(arguments)?;
     let status = args.status.map(ProjectWorkItemStatus::from);
     ensure_project_task_create_status(status)?;
+    let prerequisite_project_task_ids = match args.prerequisite_project_task_ids {
+        Some(ids) => {
+            Some(resolve_project_task_ids_in_project(state, ids, project_id, current_user).await?)
+        }
+        None => None,
+    };
     let requirement =
         require_requirement_in_project(state, &args.requirement_id, project_id, current_user)
             .await?;
@@ -92,7 +103,7 @@ pub(super) async fn create_project_task(
                 description: args.description,
                 status,
                 priority: args.priority,
-                assignee_user_id: args.assignee_user_id,
+                assignee_user_id: None,
                 estimate_points: args.estimate_points,
                 due_at: args.due_at,
                 sort_order: args.sort_order,
@@ -102,17 +113,25 @@ pub(super) async fn create_project_task(
             current_user,
         )
         .await?;
-    let dependencies = if let Some(ids) = args.prerequisite_project_task_ids {
+    let dependencies = if let Some(ids) = prerequisite_project_task_ids {
         state
             .store
             .set_work_item_dependencies(&item.id, ids)
             .await?;
-        Some(state.store.list_work_item_dependencies(&item.id).await?)
+        Some(
+            state
+                .store
+                .list_work_item_dependencies(&item.id)
+                .await?
+                .iter()
+                .map(agent_views::project_task_dependency)
+                .collect::<Vec<_>>(),
+        )
     } else {
         None
     };
     Ok(tool_text_result(json!({
-        "project_task": item,
+        "project_task": agent_views::project_task(&item),
         "dependencies": dependencies
     })))
 }
@@ -124,6 +143,12 @@ pub(super) async fn update_project_task(
     arguments: Value,
 ) -> Result<Value, String> {
     let args: UpdateProjectTaskArgs = decode_value(arguments)?;
+    let prerequisite_project_task_ids = match args.prerequisite_project_task_ids {
+        Some(ids) => {
+            Some(resolve_project_task_ids_in_project(state, ids, project_id, current_user).await?)
+        }
+        None => None,
+    };
     let patch = UpdateProjectWorkItemRequest::from(args.patch);
     ensure_project_task_user_update_status(patch.status)?;
     if let Some(requirement_id) = normalized_optional(patch.requirement_id.clone()) {
@@ -150,7 +175,7 @@ pub(super) async fn update_project_task(
     if item.project_id != project_id {
         return Err("项目任务不能移动到其他项目".to_string());
     }
-    let dependencies = if let Some(ids) = args.prerequisite_project_task_ids {
+    let dependencies = if let Some(ids) = prerequisite_project_task_ids {
         state
             .store
             .set_work_item_dependencies(&args.project_task_id, ids)
@@ -159,13 +184,16 @@ pub(super) async fn update_project_task(
             state
                 .store
                 .list_work_item_dependencies(&args.project_task_id)
-                .await?,
+                .await?
+                .iter()
+                .map(agent_views::project_task_dependency)
+                .collect::<Vec<_>>(),
         )
     } else {
         None
     };
     Ok(tool_text_result(json!({
-        "project_task": item,
+        "project_task": agent_views::project_task(&item),
         "dependencies": dependencies
     })))
 }
@@ -193,7 +221,7 @@ pub(super) async fn delete_project_task(
         .await?
         .ok_or_else(|| format!("项目任务不存在: {}", args.project_task_id))?;
     Ok(tool_text_result(json!({
-        "deleted_project_task": deleted
+        "deleted_project_task": agent_views::project_task(&deleted)
     })))
 }
 
@@ -207,6 +235,13 @@ pub(super) async fn set_project_task_dependencies(
     let item =
         require_project_task_in_project(state, &args.project_task_id, project_id, current_user)
             .await?;
+    let prerequisite_project_task_ids = resolve_project_task_ids_in_project(
+        state,
+        args.prerequisite_project_task_ids,
+        project_id,
+        current_user,
+    )
+    .await?;
     ensure_project_task_mutable_for_mcp(&item)?;
     let requirement =
         require_requirement_in_project(state, &item.requirement_id, project_id, current_user)
@@ -216,11 +251,11 @@ pub(super) async fn set_project_task_dependencies(
     ensure_project_writable(&project)?;
     state
         .store
-        .set_work_item_dependencies(&args.project_task_id, args.prerequisite_project_task_ids)
+        .set_work_item_dependencies(&item.id, prerequisite_project_task_ids)
         .await?;
-    let dependencies = state
-        .store
-        .list_work_item_dependencies(&args.project_task_id)
-        .await?;
-    Ok(tool_text_result(json!(dependencies)))
+    let dependencies = state.store.list_work_item_dependencies(&item.id).await?;
+    Ok(tool_text_result(json!(dependencies
+        .iter()
+        .map(agent_views::project_task_dependency)
+        .collect::<Vec<_>>())))
 }

@@ -12,15 +12,18 @@ use serde_json::{json, Value};
 use crate::auth::SandboxAuthContext;
 use crate::error::ApiError;
 use crate::models::{
+    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCancelRequest,
+    CloudStdioMcpCancelResponse, CloudStdioMcpCloseRequest, CloudStdioMcpCloseResponse,
     CreateSandboxAccessClientRequest, CreateSandboxAccessClientResponse,
     CreateSandboxEnvironmentLeaseRequest, CreateSandboxLeaseRequest, CreateSandboxLeaseResponse,
     DeleteSandboxAccessClientResponse, DestroySandboxResponse, HeartbeatRequest, HeartbeatResponse,
     InitializeSandboxImageRequest, ListSandboxQuery, PoolStatusResponse,
     PrepareSandboxDependencyImagesRequest, PrepareSandboxDependencyImagesResponse,
-    ReleaseSandboxRequest, ReleaseSandboxResponse, RotateSandboxAccessClientKeyResponse,
-    SandboxAccessClientResponse, SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse,
-    SandboxEnvironmentLeaseResponse, SandboxEnvironmentStopRequest, SandboxEventRecord,
-    SandboxHealthResponse, SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
+    ReleaseSandboxRequest, ReleaseSandboxResponse, RenewSandboxEnvironmentLeaseRequest,
+    RotateSandboxAccessClientKeyResponse, SandboxAccessClientResponse,
+    SandboxEnvironmentExecRequest, SandboxEnvironmentExecResponse, SandboxEnvironmentLeaseResponse,
+    SandboxEnvironmentStopRequest, SandboxEventRecord, SandboxHealthResponse,
+    SandboxImageCatalogResponse, SandboxImageJobRecord, SandboxLeaseRecord,
     StartSandboxEnvironmentRequest, SystemConfigResponse, UpdatePoolConfigRequest,
     UpdateSandboxAccessClientRequest,
 };
@@ -264,6 +267,20 @@ pub async fn start_sandbox_environment(
     ))
 }
 
+pub async fn renew_sandbox_environment_lease(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    Json(input): Json<RenewSandboxEnvironmentLeaseRequest>,
+) -> Result<Json<SandboxEnvironmentLeaseResponse>, ApiError> {
+    Ok(Json(
+        state
+            .manager
+            .renew_environment_lease(&auth, environment_id.as_str(), input)
+            .await?,
+    ))
+}
+
 pub async fn get_sandbox_environment(
     Path(environment_id): Path<String>,
     State(state): State<AppState>,
@@ -312,6 +329,7 @@ pub async fn sandbox_environment_mcp_proxy(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
     Ok(Json(
         state
             .manager
@@ -319,7 +337,74 @@ pub async fn sandbox_environment_mcp_proxy(
                 &auth,
                 environment_id.as_str(),
                 header_text(&headers, "x-chatos-service-id").as_deref(),
+                binding.as_ref(),
                 payload,
+            )
+            .await?,
+    ))
+}
+
+pub async fn sandbox_environment_cloud_stdio_mcp_call(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCallRequest>,
+) -> Result<Json<CloudStdioMcpCallResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .environment_cloud_stdio_mcp_call(
+                &auth,
+                environment_id.as_str(),
+                header_text(&headers, "x-chatos-service-id").as_deref(),
+                binding.as_ref(),
+                input,
+            )
+            .await?,
+    ))
+}
+
+pub async fn sandbox_environment_cloud_stdio_mcp_cancel(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCancelRequest>,
+) -> Result<Json<CloudStdioMcpCancelResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .environment_cloud_stdio_mcp_cancel(
+                &auth,
+                environment_id.as_str(),
+                header_text(&headers, "x-chatos-service-id").as_deref(),
+                binding.as_ref(),
+                input,
+            )
+            .await?,
+    ))
+}
+
+pub async fn sandbox_environment_cloud_stdio_mcp_close(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCloseRequest>,
+) -> Result<Json<CloudStdioMcpCloseResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .environment_cloud_stdio_mcp_close(
+                &auth,
+                environment_id.as_str(),
+                header_text(&headers, "x-chatos-service-id").as_deref(),
+                binding.as_ref(),
+                input,
             )
             .await?,
     ))
@@ -369,14 +454,75 @@ pub async fn sandbox_mcp_proxy(
     Path(sandbox_id): Path<String>,
     State(state): State<AppState>,
     Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
     Json(input): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
     Ok(Json(
         state
             .manager
-            .mcp_proxy(&auth, sandbox_id.as_str(), input)
+            .mcp_proxy(&auth, sandbox_id.as_str(), binding.as_ref(), input)
             .await?,
     ))
+}
+
+pub async fn sandbox_cloud_stdio_mcp_call(
+    Path(sandbox_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCallRequest>,
+) -> Result<Json<CloudStdioMcpCallResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .cloud_stdio_mcp_call(&auth, sandbox_id.as_str(), binding.as_ref(), input)
+            .await?,
+    ))
+}
+
+pub async fn sandbox_cloud_stdio_mcp_cancel(
+    Path(sandbox_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCancelRequest>,
+) -> Result<Json<CloudStdioMcpCancelResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .cloud_stdio_mcp_cancel(&auth, sandbox_id.as_str(), binding.as_ref(), input)
+            .await?,
+    ))
+}
+
+pub async fn sandbox_cloud_stdio_mcp_close(
+    Path(sandbox_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<CloudStdioMcpCloseRequest>,
+) -> Result<Json<CloudStdioMcpCloseResponse>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .cloud_stdio_mcp_close(&auth, sandbox_id.as_str(), binding.as_ref(), input)
+            .await?,
+    ))
+}
+
+fn sandbox_mcp_runtime_binding(
+    headers: &HeaderMap,
+) -> Option<crate::service::SandboxMcpRuntimeBinding> {
+    Some(crate::service::SandboxMcpRuntimeBinding {
+        lease_id: header_text(headers, "x-chatos-sandbox-lease-id")?,
+        owner_user_id: header_text(headers, "x-mcp-management-owner-user-id")?,
+        project_id: header_text(headers, "x-mcp-management-project-id")?,
+        run_id: header_text(headers, "x-mcp-management-run-id")?,
+    })
 }
 
 pub async fn release_sandbox(

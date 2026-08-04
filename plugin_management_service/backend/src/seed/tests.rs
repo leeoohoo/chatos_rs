@@ -23,26 +23,6 @@ fn task_runner_cloud_run_phase_defaults_match_cloud_execution_plane() {
 }
 
 #[test]
-fn task_runner_local_run_phase_has_separate_execution_defaults() {
-    let cloud = task_runner_cloud_run_phase_optional_builtin_kinds()
-        .into_iter()
-        .map(|(kind, _)| kind)
-        .collect::<Vec<_>>();
-    let local = task_runner_local_run_phase_optional_builtin_kinds()
-        .into_iter()
-        .map(|(kind, _)| kind)
-        .collect::<Vec<_>>();
-
-    assert!(cloud.contains(&BuiltinMcpKind::Notepad));
-    assert!(cloud.contains(&BuiltinMcpKind::WebTools));
-    assert!(!local.contains(&BuiltinMcpKind::Notepad));
-    assert!(!local.contains(&BuiltinMcpKind::WebTools));
-    assert!(local.contains(&BuiltinMcpKind::TerminalController));
-    assert!(local.contains(&BuiltinMcpKind::BrowserTools));
-    assert!(!local.contains(&BuiltinMcpKind::RemoteConnectionController));
-}
-
-#[test]
 fn task_runner_cloud_plan_phase_excludes_mutating_engineering_tools() {
     let kinds = task_runner_cloud_plan_phase_builtin_kinds();
 
@@ -56,22 +36,22 @@ fn task_runner_cloud_plan_phase_excludes_mutating_engineering_tools() {
 }
 
 #[test]
-fn task_runner_local_plan_phase_has_separate_planning_defaults() {
-    let cloud = task_runner_cloud_plan_phase_builtin_kinds();
-    let local = task_runner_local_plan_phase_builtin_kinds();
+fn task_runner_planning_agent_owns_read_only_code_and_project_planning_capabilities() {
+    let required = task_runner_cloud_plan_phase_builtin_kinds()
+        .into_iter()
+        .filter(|kind| task_runner_cloud_plan_phase_required(*kind))
+        .collect::<Vec<_>>();
 
-    assert!(cloud.contains(&BuiltinMcpKind::WebTools));
-    assert!(cloud.contains(&BuiltinMcpKind::Notepad));
-    assert!(!local.contains(&BuiltinMcpKind::WebTools));
-    assert!(!local.contains(&BuiltinMcpKind::Notepad));
-    assert!(local.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(!local.contains(&BuiltinMcpKind::TaskManager));
-    assert!(local.contains(&BuiltinMcpKind::ProjectManagement));
-    assert!(local.contains(&BuiltinMcpKind::AskUser));
-    assert!(local.contains(&BuiltinMcpKind::BrowserTools));
-    assert!(!local.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(!local.contains(&BuiltinMcpKind::TerminalController));
-    assert!(!local.contains(&BuiltinMcpKind::RemoteConnectionController));
+    assert_eq!(
+        required,
+        vec![
+            BuiltinMcpKind::CodeMaintainerRead,
+            BuiltinMcpKind::ProjectManagement,
+            BuiltinMcpKind::AskUser,
+        ]
+    );
+    assert!(!required.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+    assert!(!required.contains(&BuiltinMcpKind::TerminalController));
 }
 
 #[test]
@@ -125,7 +105,7 @@ fn every_system_mcp_has_provider_skills() {
 }
 
 #[test]
-fn project_runtime_environment_skill_distinguishes_application_topology_from_base_sandbox() {
+fn project_runtime_environment_skill_distinguishes_application_topology_from_project_tools() {
     let skills = provider_skills_for_system_mcp(PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID)
         .and_then(|value| value.as_array().cloned())
         .expect("project runtime provider skill");
@@ -134,36 +114,73 @@ fn project_runtime_environment_skill_distinguishes_application_topology_from_bas
         .and_then(Value::as_str)
         .expect("instructions");
 
-    assert!(instructions.contains("项目运行环境状态不等于当前 Task Runner 基础执行沙箱状态"));
-    assert!(instructions.contains("不能仅因项目环境为 `pending` 而阻塞"));
-    assert!(instructions.contains("Project Gateway application target"));
+    assert!(instructions.contains("项目应用环境状态不等于当前项目文件和终端工具的可用状态"));
+    assert!(instructions.contains("不能仅因应用环境为 `pending` 而阻塞"));
+    assert!(instructions.contains("只有明确依赖项目应用服务"));
+    for forbidden in [
+        "Task Runner",
+        "沙箱",
+        "Harness",
+        "Local Connector",
+        "Provider",
+    ] {
+        assert!(!instructions.contains(forbidden), "{forbidden}");
+    }
 }
 
 #[test]
-fn legacy_chatos_plan_key_is_replaced_by_the_explicit_planning_role() {
+fn legacy_chatos_planning_agents_are_retired_in_favor_of_task_runner_plan_phase() {
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
+    assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_planning_agent"));
+    assert!(!system_agent_specs()
+        .iter()
+        .any(|(agent_key, _, _, _, _, _)| *agent_key == "chatos_planning_agent"));
     assert!(system_agent_specs()
         .iter()
-        .any(|(agent_key, _, _, _, _)| *agent_key == "chatos_planning_agent"));
+        .any(|(agent_key, _, _, _, _, _)| *agent_key == "task_runner_plan_phase"));
+}
+
+#[test]
+fn all_chatos_runtime_agents_receive_the_cloud_notepad_binding() {
+    assert_eq!(
+        CHATOS_NOTEPAD_AGENT_KEYS,
+        [
+            "chatos_conversation_agent",
+            "project_requirement_execution_planner_agent",
+        ]
+    );
+}
+
+#[test]
+fn only_the_conversation_agent_can_delegate_generic_task_runner_work() {
+    assert_eq!(CHATOS_TASK_RUNNER_AGENT_KEYS, ["chatos_conversation_agent"]);
+}
+
+#[test]
+fn project_management_agent_exposes_program_routed_environment_tools() {
+    assert_eq!(
+        PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS,
+        &[
+            (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
+            (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
+        ]
+    );
 }
 
 #[test]
 fn system_agent_registry_contains_all_runtime_roles() {
     let keys = system_agent_specs()
         .into_iter()
-        .map(|(agent_key, _, _, _, _)| agent_key)
+        .map(|(agent_key, _, _, _, _, _)| agent_key)
         .collect::<Vec<_>>();
 
     assert_eq!(
         keys,
         vec![
             "chatos_conversation_agent",
-            "chatos_planning_agent",
             "project_requirement_execution_planner_agent",
             "task_runner_plan_phase",
-            "task_runner_local_plan_phase",
             "task_runner_run_phase",
-            "task_runner_local_run_phase",
             "project_management_agent",
             "local_connector_command_approval_agent",
             "memory_engine_summary_agent",
@@ -173,6 +190,37 @@ fn system_agent_registry_contains_all_runtime_roles() {
             "memory_engine_thread_repair_agent",
         ]
     );
+}
+
+#[test]
+fn memory_generation_agents_are_registered_without_a_tool_plane() {
+    let no_tool_plane = system_agent_specs()
+        .into_iter()
+        .filter(|(_, _, _, _, _, tool_plane)| *tool_plane == AgentToolPlane::None)
+        .map(|(agent_key, _, _, _, _, _)| agent_key)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        no_tool_plane,
+        vec![
+            "memory_engine_summary_agent",
+            "memory_engine_rollup_agent",
+            "memory_engine_subject_memory_agent",
+            "memory_engine_memory_rollup_agent",
+            "memory_engine_thread_repair_agent",
+        ]
+    );
+}
+
+#[test]
+fn local_command_approval_agent_is_registered_with_a_local_only_tool_plane() {
+    let (_, _, _, _, _, tool_plane) = system_agent_specs()
+        .into_iter()
+        .find(|(agent_key, _, _, _, _, _)| *agent_key == "local_connector_command_approval_agent")
+        .expect("local approval agent must be registered");
+
+    assert_eq!(tool_plane, AgentToolPlane::LocalOnly);
+    assert!(!tool_plane.uses_managed_gateway());
 }
 
 #[test]
@@ -209,7 +257,7 @@ fn chatos_conversation_requires_task_runner_service_on_both_execution_planes() {
     assert!(chatos_mcp::system_mcp_descriptor(
         chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
     )
-    .supports_host(chatos_mcp::SystemMcpHost::LocalConnector));
+    .supports_implementation_host(chatos_mcp::SystemMcpHost::LocalConnector));
 }
 
 #[test]
@@ -220,8 +268,8 @@ fn task_process_log_is_a_seeded_task_runner_system_mcp() {
 
     assert_eq!(descriptor.resource_id, TASK_PROCESS_LOG_MCP_RESOURCE_ID);
     assert_eq!(descriptor.server_name, "task_run_process");
-    assert!(descriptor.supports_host(chatos_mcp::SystemMcpHost::TaskRunner));
-    assert!(descriptor.supports_host(chatos_mcp::SystemMcpHost::LocalConnector));
+    assert!(descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::TaskRunner));
+    assert!(descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::LocalConnector));
 
     let record = system_mcp_record(descriptor, "admin", "now").expect("system MCP record");
     assert_eq!(record.runtime.kind, RUNTIME_KIND_SYSTEM);

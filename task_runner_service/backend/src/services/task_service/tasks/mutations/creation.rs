@@ -57,8 +57,16 @@ impl TaskService {
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let plugin_config = input.plugin_config;
         let requested_mcp_config = input.mcp_config.unwrap_or_default();
-        ensure_legacy_skill_selection_not_written(&requested_mcp_config)?;
-        let mut mcp_config = sanitize_task_mcp_config(requested_mcp_config);
+        let mut mcp_config = TaskMcpConfig::default();
+        if let Some(requires_execution) = requested_mcp_config.requires_execution {
+            mcp_config.requires_execution = requires_execution;
+        }
+        if let Some(builtin_prompt_locale) =
+            normalized_optional(source_context.builtin_prompt_locale.clone())
+        {
+            mcp_config.builtin_prompt_locale = builtin_prompt_locale;
+        }
+        let mut mcp_config = sanitize_task_mcp_config(mcp_config);
         let agent_key = crate::models::task_runner_agent_key_for(
             task_profile.as_str(),
             mcp_config.requires_execution,
@@ -107,23 +115,14 @@ impl TaskService {
             )
             .await?;
         } else {
-            let centralized_policy = self
-                .validate_task_capability_selection_for_agent(
-                    &mcp_config,
-                    &plugin_config,
-                    creator,
-                    task_owner_user_id.as_deref(),
-                    agent_key,
-                )
-                .await?;
-            if !centralized_policy {
-                self.validate_task_external_mcp_configs(
-                    &mcp_config,
-                    creator,
-                    task_owner_user_id.as_deref(),
-                )
-                .await?;
-            }
+            self.validate_task_capability_selection_for_agent(
+                &mcp_config,
+                &plugin_config,
+                creator,
+                task_owner_user_id.as_deref(),
+                agent_key,
+            )
+            .await?;
             self.validate_task_ephemeral_http_servers(&mcp_config)?;
         }
         if let Some(policy) = self
@@ -251,7 +250,13 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

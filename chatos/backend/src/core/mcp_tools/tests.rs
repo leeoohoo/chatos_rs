@@ -29,18 +29,14 @@ fn build_function_tool_schema_matches_responses_shape() {
     );
     assert_eq!(schema.get("name").and_then(|v| v.as_str()), Some("search"));
     assert!(schema.get("function").is_none());
-    assert_eq!(
-        schema
-            .get("parameters")
-            .and_then(|v| v.get("required"))
-            .and_then(|v| v.as_array())
-            .map(|items| items.contains(&json!("q"))),
-        Some(true)
-    );
+    assert!(schema
+        .get("parameters")
+        .and_then(|v| v.get("required"))
+        .is_none());
 }
 
 #[test]
-fn normalize_json_schema_enforces_required_and_no_additional_properties() {
+fn normalize_json_schema_preserves_required_and_disallows_additional_properties() {
     let raw = json!({
         "properties": {
             "query": {"type": "string"},
@@ -60,8 +56,7 @@ fn normalize_json_schema_enforces_required_and_no_additional_properties() {
         .cloned()
         .unwrap_or_default();
 
-    assert!(required.contains(&json!("query")));
-    assert!(required.contains(&json!("nested")));
+    assert!(required.is_empty());
     assert_eq!(
         normalized
             .get("additionalProperties")
@@ -83,7 +78,7 @@ fn normalize_json_schema_enforces_required_and_no_additional_properties() {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    assert!(nested_required.contains(&json!("limit")));
+    assert!(nested_required.is_empty());
 }
 
 #[test]

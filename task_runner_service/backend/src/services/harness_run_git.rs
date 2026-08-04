@@ -24,7 +24,8 @@ use super::RunService;
 mod run_service;
 #[cfg(test)]
 pub(super) use run_service::{
-    commit_workspace_to_run_branch, create_snapshot_commit_and_push, promote_run_branch_to_base,
+    commit_workspace_to_run_branch, create_cloud_run_branch, create_snapshot_commit_and_push,
+    promote_run_branch_to_base,
 };
 
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(180);
@@ -162,6 +163,8 @@ pub(super) struct HarnessRunOutputReport {
     pub base_commit: String,
     #[serde(default)]
     pub result_commit: Option<String>,
+    #[serde(default)]
+    pub promoted_commit: Option<String>,
     pub status: String,
     #[serde(default)]
     pub message: Option<String>,
@@ -172,6 +175,7 @@ impl HarnessRunContext {
         &self,
         status: &str,
         result_commit: Option<String>,
+        promoted_commit: Option<String>,
         message: Option<String>,
     ) -> HarnessRunOutputReport {
         HarnessRunOutputReport {
@@ -183,6 +187,7 @@ impl HarnessRunContext {
             run_branch: self.run_branch.clone(),
             base_commit: self.base_commit.clone(),
             result_commit,
+            promoted_commit,
             status: status.to_string(),
             message,
         }

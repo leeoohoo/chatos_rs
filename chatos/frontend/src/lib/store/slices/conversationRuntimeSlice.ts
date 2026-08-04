@@ -14,7 +14,7 @@ export interface SessionChatState {
   streamingMessageId: string | null;
   activeTurnId: string | null;
   streamingPreviewText: string;
-  streamingTransport?: 'realtime' | 'sse' | 'local' | null;
+  streamingTransport?: 'realtime' | null;
   runtimeContextRefreshNonce?: number;
 }
 

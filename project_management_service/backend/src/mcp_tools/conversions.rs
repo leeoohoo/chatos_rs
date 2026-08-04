@@ -65,7 +65,7 @@ impl From<UpdateRequirementPatch> for UpdateRequirementRequest {
             source: value.source,
             priority: value.priority,
             status: value.status.map(RequirementStatus::from),
-            assignee_user_id: value.assignee_user_id,
+            assignee_user_id: None,
         }
     }
 }
@@ -78,7 +78,7 @@ impl From<UpdateProjectTaskPatch> for UpdateProjectWorkItemRequest {
             description: value.description,
             status: value.status.map(ProjectWorkItemStatus::from),
             priority: value.priority,
-            assignee_user_id: value.assignee_user_id,
+            assignee_user_id: None,
             estimate_points: value.estimate_points,
             due_at: value.due_at,
             sort_order: value.sort_order,

@@ -76,42 +76,18 @@ pub fn normalize_json_schema(schema: &Value) -> Value {
             return;
         };
 
-        let mut property_keys = Vec::new();
         if let Some(properties_value) = object.get_mut("properties") {
             if let Some(properties) = properties_value.as_object_mut() {
-                property_keys = properties.keys().cloned().collect();
                 for value in properties.values_mut() {
                     visit(value);
                 }
             }
         }
 
-        if !property_keys.is_empty() {
+        if object.contains_key("properties") {
             object
                 .entry("type".to_string())
                 .or_insert_with(|| Value::String("object".to_string()));
-
-            let mut required: Vec<String> = object
-                .get("required")
-                .and_then(Value::as_array)
-                .map(|array| {
-                    array
-                        .iter()
-                        .filter_map(|value| value.as_str().map(ToOwned::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            for key in property_keys {
-                if !required.iter().any(|current| current == &key) {
-                    required.push(key);
-                }
-            }
-
-            object.insert(
-                "required".to_string(),
-                Value::Array(required.into_iter().map(Value::String).collect()),
-            );
         }
 
         let is_object_schema = object
@@ -154,7 +130,7 @@ pub fn normalize_json_schema(schema: &Value) -> Value {
 mod tests {
     use serde_json::json;
 
-    use super::{parse_mcp_tool_definition, parse_tool_definition};
+    use super::{normalize_json_schema, parse_mcp_tool_definition, parse_tool_definition};
 
     #[test]
     fn generic_tool_definition_accepts_parameters_alias() {
@@ -179,5 +155,21 @@ mod tests {
             parsed.parameters,
             json!({"type": "object", "properties": {}, "required": []})
         );
+    }
+
+    #[test]
+    fn normalization_preserves_optional_tool_arguments() {
+        let normalized = normalize_json_schema(&json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"}
+            },
+            "required": ["path"]
+        }));
+
+        assert_eq!(normalized["required"], json!(["path"]));
+        assert_eq!(normalized["additionalProperties"], false);
     }
 }

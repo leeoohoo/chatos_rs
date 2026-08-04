@@ -123,10 +123,12 @@ impl TaskService {
         if let Some(schedule) = patch.schedule {
             task.schedule = sanitize_task_schedule_config(schedule, Some(&task.schedule))?;
         }
-        if let Some(mut mcp_config) = patch.mcp_config {
-            mcp_config = prepare_task_mcp_config_update(mcp_config, &task.mcp_config)?;
-            task.mcp_config = sanitize_task_mcp_config(mcp_config);
-            capability_boundary_changed = true;
+        if let Some(mcp_config) = patch.mcp_config {
+            if let Some(requires_execution) = mcp_config.requires_execution {
+                capability_boundary_changed |=
+                    task.mcp_config.requires_execution != requires_execution;
+                task.mcp_config.requires_execution = requires_execution;
+            }
         }
         if let Some(plugin_config) = patch.plugin_config {
             task.plugin_config = plugin_config;
@@ -210,77 +212,6 @@ impl TaskService {
         let saved = self.store.save_task(task).await?;
         self.hydrate_task_prerequisites(saved).await.map(Some)
     }
-
-    pub async fn update_task_mcp(
-        &self,
-        id: &str,
-        patch: UpdateTaskMcpRequest,
-        current_user: Option<&CurrentUser>,
-    ) -> Result<Option<TaskRecord>, String> {
-        let Some(mut task) = self.store.get_task(id).await? else {
-            return Ok(None);
-        };
-        if let Some(enabled) = patch.enabled {
-            task.mcp_config.enabled = enabled;
-        }
-        if let Some(init_mode) = patch.init_mode {
-            task.mcp_config.init_mode = init_mode;
-        }
-        if let Some(prompt_mode) = patch.builtin_prompt_mode {
-            task.mcp_config.builtin_prompt_mode = prompt_mode;
-        }
-        if let Some(prompt_locale) = patch.builtin_prompt_locale {
-            let normalized = prompt_locale.trim();
-            if !normalized.is_empty() {
-                task.mcp_config.builtin_prompt_locale = normalized.to_string();
-            }
-        }
-        if let Some(kinds) = patch.enabled_builtin_kinds {
-            task.mcp_config.enabled_builtin_kinds = normalize_builtin_kind_names(kinds);
-        }
-        if let Some(workspace_dir) = patch.workspace_dir {
-            task.mcp_config.workspace_dir = normalized_optional(Some(workspace_dir));
-        }
-        if let Some(default_remote_server_id) = patch.default_remote_server_id {
-            task.mcp_config.default_remote_server_id =
-                normalized_optional(Some(default_remote_server_id));
-        }
-        if let Some(external_mcp_config_ids) = patch.external_mcp_config_ids {
-            task.mcp_config.external_mcp_config_ids = external_mcp_config_ids;
-        }
-        task.mcp_config = sanitize_task_mcp_config(task.mcp_config);
-        let task_owner_user_id = task_owner_or_creator(&task);
-        let agent_key = crate::models::task_runner_agent_key_for(
-            task.task_profile.as_str(),
-            task.mcp_config.requires_execution,
-        );
-        self.validate_task_mcp_config_for_agent(
-            &task.mcp_config,
-            &task.plugin_config,
-            current_user,
-            task_owner_user_id,
-            agent_key,
-        )
-        .await?;
-        if let Some(policy) = self
-            .resolve_task_runner_policy_for_agent_on_device(
-                current_user,
-                task_owner_user_id,
-                agent_key,
-                task.plugin_config
-                    .device_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string),
-            )
-            .await?
-        {
-            task.mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
-        }
-        task.updated_at = now_rfc3339();
-        Ok(Some(self.store.save_task(task).await?))
-    }
 }
 
 fn task_owner_or_creator(task: &TaskRecord) -> Option<&str> {
@@ -336,7 +267,13 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

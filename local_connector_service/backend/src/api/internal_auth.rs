@@ -15,14 +15,14 @@ pub(super) const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 pub(super) const PLUGIN_UI_READ_SCOPE: &str = "plugin.ui.read";
 pub(super) const PLUGIN_ARTIFACT_READ_SCOPE: &str = "plugin.artifact.read";
 pub(super) const PLUGIN_ARTIFACT_WRITE_SCOPE: &str = "plugin.artifact.write";
-pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
 pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
+pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
 
 const CHATOS_CALLER: &str = "chatos-backend";
 const TASK_RUNNER_CALLER: &str = "task-runner";
 const PROJECT_SERVICE_CALLER: &str = "project-service";
-const MEMORY_ENGINE_CALLER: &str = "memory-engine";
+const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 
 pub(super) fn internal_service_user_from_request(
     config: &AppConfig,
@@ -49,59 +49,43 @@ pub(super) fn internal_service_user_from_request(
                 "Local Connector caller is required for signed internal requests",
             ));
         }
-        None if config.require_signed_internal_requests => {
+        None => {
             return Err(ApiError::unauthorized(
-                "signed Local Connector internal API token is required",
+                "Local Connector caller is required for internal API requests",
             ));
         }
-        None => "legacy-service",
     };
-    if caller != "legacy-service" && !access.allowed_callers.contains(&caller) {
+    if !access.allowed_callers.contains(&caller) {
         return Err(ApiError::forbidden(
             "caller service is not allowed for this Local Connector operation",
         ));
     }
 
-    if caller == "legacy-service" {
-        let expected = config
-            .legacy_internal_api_secret
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| ApiError::unauthorized("Local Connector internal API is disabled"))?;
-        require_legacy_secret(legacy_secret, expected)?;
+    let expected = config
+        .internal_api_secrets
+        .get(caller)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::unauthorized("Local Connector internal API is disabled for caller")
+        })?;
+    if let Some(token) = token {
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            expected,
+            caller,
+            TOKEN_AUDIENCE,
+            access.scope,
+        )
+        .map_err(|_| ApiError::unauthorized("invalid Local Connector internal API token"))?;
     } else {
-        let expected = config
-            .internal_api_secrets
-            .get(caller)
-            .map(String::as_str)
-            .or_else(|| {
-                (!config.require_signed_internal_requests)
-                    .then_some(config.legacy_internal_api_secret.as_deref())
-                    .flatten()
-            })
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ApiError::unauthorized("Local Connector internal API is disabled for caller")
-            })?;
-        if let Some(token) = token {
-            chatos_service_runtime::verify_internal_service_token(
-                token,
-                expected,
-                caller,
-                TOKEN_AUDIENCE,
-                access.scope,
-            )
-            .map_err(|_| ApiError::unauthorized("invalid Local Connector internal API token"))?;
-        } else {
-            if config.require_signed_internal_requests {
-                return Err(ApiError::unauthorized(
-                    "signed Local Connector internal API token is required",
-                ));
-            }
-            require_legacy_secret(legacy_secret, expected)?;
+        if config.require_signed_internal_requests {
+            return Err(ApiError::unauthorized(
+                "signed Local Connector internal API token is required",
+            ));
         }
+        require_legacy_secret(legacy_secret, expected)?;
     }
 
     let owner_user_id = header_text(headers, "x-local-connector-owner-user-id")
@@ -129,7 +113,7 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
     match (method, parts.as_slice()) {
         (&Method::POST, ["api", "local-connectors", "relay", _, "mcp"]) => Some(InternalAccess {
             scope: MCP_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER],
+            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER],
         }),
         (
             &Method::POST,
@@ -143,7 +127,7 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             ["api", "local-connectors", "relay", _, "plugins", "prepare" | "execute" | "cancel"],
         ) => Some(InternalAccess {
             scope: PLUGIN_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER],
+            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER],
         }),
         (&Method::POST, ["api", "local-connectors", "relay", _, "plugins", "ui", "assets"]) => {
             Some(InternalAccess {
@@ -165,18 +149,45 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             scope: PLUGIN_ARTIFACT_WRITE_SCOPE,
             allowed_callers: &[CHATOS_CALLER],
         }),
-        (&Method::GET, ["api", "local-connectors", "model-runtime", _]) => Some(InternalAccess {
-            scope: MODEL_RUNTIME_READ_SCOPE,
-            allowed_callers: &[
-                CHATOS_CALLER,
-                TASK_RUNNER_CALLER,
-                PROJECT_SERVICE_CALLER,
-                MEMORY_ENGINE_CALLER,
-            ],
-        }),
         (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
             scope: SANDBOX_ROUTING_READ_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
+            allowed_callers: &[
+                TASK_RUNNER_CALLER,
+                PROJECT_SERVICE_CALLER,
+                MCP_MANAGEMENT_CALLER,
+            ],
+        }),
+        (&Method::GET, ["api", "local-connectors", "system", "stats"]) => Some(InternalAccess {
+            scope: SYSTEM_STATS_READ_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER, CHATOS_CALLER],
+        }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "sandbox-facade", _, "api", "local", "sandbox", "images", "mcp"],
+        ) => Some(InternalAccess {
+            scope: SANDBOX_SERVICE_SCOPE,
+            allowed_callers: &[
+                TASK_RUNNER_CALLER,
+                PROJECT_SERVICE_CALLER,
+                MCP_MANAGEMENT_CALLER,
+            ],
+        }),
+        (&Method::GET, ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _]) => {
+            Some(InternalAccess {
+                scope: SANDBOX_SERVICE_SCOPE,
+                allowed_callers: &[
+                    TASK_RUNNER_CALLER,
+                    PROJECT_SERVICE_CALLER,
+                    MCP_MANAGEMENT_CALLER,
+                ],
+            })
+        }
+        (
+            &Method::POST,
+            ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _, "mcp"],
+        ) => Some(InternalAccess {
+            scope: SANDBOX_SERVICE_SCOPE,
+            allowed_callers: &[MCP_MANAGEMENT_CALLER],
         }),
         (_, ["api", "local-connectors", "sandbox-facade", _, ..]) => Some(InternalAccess {
             scope: SANDBOX_SERVICE_SCOPE,
@@ -206,6 +217,19 @@ pub(super) fn require_chatos_service_caller(user: &CurrentUser) -> Result<(), Ap
     }
     Err(ApiError::forbidden(
         "Plugin UI asset relay is restricted to ChatOS backend",
+    ))
+}
+
+pub(super) fn require_mcp_management_service_caller(user: &CurrentUser) -> Result<(), ApiError> {
+    let owner_user_id = user.owner_user_id.as_deref().unwrap_or_default();
+    if user.principal_type == "service"
+        && !owner_user_id.is_empty()
+        && user.user_id == format!("service:{MCP_MANAGEMENT_CALLER}:{owner_user_id}")
+    {
+        return Ok(());
+    }
+    Err(ApiError::forbidden(
+        "Local Sandbox MCP execution is restricted to MCP Management Service",
     ))
 }
 
@@ -277,7 +301,7 @@ mod tests {
             &config,
             &headers,
             &Method::GET,
-            "/api/local-connectors/model-runtime/model-1",
+            "/api/local-connectors/devices",
         )
         .is_err());
     }
@@ -305,6 +329,113 @@ mod tests {
             "/api/local-connectors/devices",
         )
         .is_err());
+    }
+
+    #[test]
+    fn mcp_management_tokens_are_limited_to_mcp_plugin_and_sandbox_tool_relays() {
+        let mut config = test_config();
+        config.require_signed_internal_requests = true;
+        config.internal_api_secrets.insert(
+            MCP_MANAGEMENT_CALLER.to_string(),
+            "a-long-mcp-management-local-connector-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-mcp-management-local-connector-secret",
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            MCP_RELAY_SCOPE,
+            60,
+        )
+        .expect("issue MCP Management token");
+        let headers = signed_headers(MCP_MANAGEMENT_CALLER, token.as_str());
+        let user = internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .expect("matching MCP relay request")
+        .expect("service user");
+        assert_eq!(user.user_id, "service:mcp-management-service:user-1");
+
+        let plugin_token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-mcp-management-local-connector-secret",
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            PLUGIN_RELAY_SCOPE,
+            60,
+        )
+        .expect("issue Plugin relay token");
+        let plugin_headers = signed_headers(MCP_MANAGEMENT_CALLER, plugin_token.as_str());
+        let plugin_user = internal_service_user_from_request(
+            &config,
+            &plugin_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/plugins/prepare",
+        )
+        .expect("matching Plugin relay request")
+        .expect("service user");
+        assert_eq!(plugin_user.owner_user_id.as_deref(), Some("user-1"));
+        assert!(internal_service_user_from_request(
+            &config,
+            &plugin_headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .is_err());
+
+        let sandbox_token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-mcp-management-local-connector-secret",
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            SANDBOX_SERVICE_SCOPE,
+            60,
+        )
+        .expect("issue Sandbox service token");
+        let sandbox_headers = signed_headers(MCP_MANAGEMENT_CALLER, sandbox_token.as_str());
+        let sandbox_user = internal_service_user_from_request(
+            &config,
+            &sandbox_headers,
+            &Method::POST,
+            "/api/local-connectors/sandbox-facade/pairing-1/api/local/sandbox/images/mcp",
+        )
+        .expect("matching Sandbox image facade request")
+        .expect("service user");
+        assert_eq!(sandbox_user.owner_user_id.as_deref(), Some("user-1"));
+        for (method, path) in [
+            (
+                Method::GET,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1/mcp",
+            ),
+        ] {
+            internal_service_user_from_request(&config, &sandbox_headers, &method, path)
+                .expect("matching Local Sandbox runtime request")
+                .expect("service user");
+        }
+        assert!(internal_service_user_from_request(
+            &config,
+            &sandbox_headers,
+            &Method::POST,
+            "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
+        )
+        .is_err());
+
+        for (method, path) in [
+            (
+                Method::POST,
+                "/api/local-connectors/relay/device-1/terminal/exec",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/relay/device-1/skills/execute",
+            ),
+        ] {
+            assert!(internal_service_user_from_request(&config, &headers, &method, path).is_err());
+        }
     }
 
     #[test]
@@ -533,12 +664,8 @@ mod tests {
             plugin_hook_relay_request_timeout: Duration::from_secs(1),
             sandbox_image_relay_request_timeout: Duration::from_secs(1),
             public_base_url: None,
-            legacy_internal_api_secret: Some("legacy-local-connector-secret".to_string()),
             internal_api_secrets: HashMap::new(),
             require_signed_internal_requests: false,
-            memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
-            memory_engine_operator_token: None,
-            memory_engine_request_timeout: Duration::from_secs(1),
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),

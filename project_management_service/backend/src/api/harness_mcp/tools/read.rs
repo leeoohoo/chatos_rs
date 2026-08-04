@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use super::super::client::{
     fetch_harness_content, list_harness_paths, read_harness_file, read_harness_file_for_preview,
-    HarnessDirContent, HarnessFile,
+    HarnessContentInfo, HarnessDirContent, HarnessFile,
 };
 use super::super::path_policy::{
     optional_repo_path, path_matches_scope, path_name, required_file_path,
@@ -165,15 +165,7 @@ pub(in super::super) async fn tool_list_dir(
         .entries
         .into_iter()
         .take(max_entries)
-        .map(|entry| {
-            json!({
-                "name": if entry.name.is_empty() { path_name(entry.path.as_str()) } else { entry.name },
-                "path": entry.path,
-                "type": entry.kind,
-                "size": entry.size,
-                "mtime_ms": 0
-            })
-        })
+        .map(directory_entry_payload)
         .collect::<Vec<_>>();
     Ok(tool_text_result(json!({ "entries": entries })))
 }
@@ -332,20 +324,24 @@ async fn directory_listing_payload(ctx: &HarnessMcpContext, path: &str) -> Resul
         .entries
         .into_iter()
         .take(MISSING_FILE_DIRECTORY_ENTRY_LIMIT)
-        .map(|entry| {
-            json!({
-                "name": if entry.name.is_empty() { path_name(entry.path.as_str()) } else { entry.name },
-                "path": entry.path,
-                "type": entry.kind,
-                "size": entry.size,
-                "mtime_ms": 0
-            })
-        })
+        .map(directory_entry_payload)
         .collect::<Vec<_>>();
     Ok(json!({
         "path": path,
         "entries": entries
     }))
+}
+
+fn directory_entry_payload(entry: HarnessContentInfo) -> Value {
+    json!({
+        "name": if entry.name.is_empty() { path_name(entry.path.as_str()) } else { entry.name },
+        "path": entry.path,
+        "type": entry.kind,
+        // Harness omits sizes from directory listings. Preserve that as null
+        // instead of presenting an unknown file size as a real zero-byte file.
+        "size": entry.size,
+        "mtime_ms": 0
+    })
 }
 
 fn candidate_paths_for_missing_file(paths: Vec<String>, requested_path: &str) -> Vec<String> {
@@ -454,6 +450,20 @@ fn truncate_search_text(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_entry_without_harness_size_stays_unknown() {
+        let entry: HarnessContentInfo = serde_json::from_value(json!({
+            "type": "file",
+            "name": "README.md",
+            "path": "README.md"
+        }))
+        .expect("directory entry");
+
+        let payload = directory_entry_payload(entry);
+
+        assert!(payload["size"].is_null());
+    }
 
     #[test]
     fn file_payload_does_not_expose_storage_backend_details() {

@@ -12,24 +12,41 @@ use chatos_service_runtime::{
     build_http_client, classify_http_request_error, http_client_builder, HttpClientTimeouts,
     HttpRequestErrorKind,
 };
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
 use crate::auth::{SandboxAuthContext, SCOPE_MCP_CALL, SCOPE_MCP_TOOLS};
 use crate::error::ApiError;
-use crate::models::SandboxLeaseRecord;
+use crate::models::{
+    CloudStdioMcpCallRequest, CloudStdioMcpCallResponse, CloudStdioMcpCancelRequest,
+    CloudStdioMcpCancelResponse, CloudStdioMcpCloseRequest, CloudStdioMcpCloseResponse,
+    SandboxLeaseRecord,
+};
 
 use super::SandboxManager;
 
 const SANDBOX_AGENT_MCP_TIMEOUT: Duration = Duration::from_secs(135);
+const SANDBOX_AGENT_CLOUD_STDIO_TIMEOUT: Duration = Duration::from_secs(10 * 60 + 15);
+const TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
+
+#[derive(Debug, Clone)]
+pub struct SandboxMcpRuntimeBinding {
+    pub lease_id: String,
+    pub owner_user_id: String,
+    pub project_id: String,
+    pub run_id: String,
+}
 
 impl SandboxManager {
     pub async fn mcp_proxy(
         &self,
         auth: &SandboxAuthContext,
         sandbox_id: &str,
+        binding: Option<&SandboxMcpRuntimeBinding>,
         mut payload: Value,
     ) -> Result<Value, ApiError> {
         let record = self.require_sandbox(sandbox_id).await?;
+        validate_mcp_runtime_binding(auth, &record, binding)?;
         strip_ungrantable_command_permission_requests(&mut payload);
         authorize_mcp_proxy_payload(auth, &record, &payload)?;
         let agent_endpoint = self.agent_endpoint_for(&record).await?;
@@ -41,7 +58,70 @@ impl SandboxManager {
         Ok(response)
     }
 
-    async fn agent_endpoint_for(&self, record: &SandboxLeaseRecord) -> Result<String, ApiError> {
+    pub async fn cloud_stdio_mcp_call(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+        binding: Option<&SandboxMcpRuntimeBinding>,
+        input: CloudStdioMcpCallRequest,
+    ) -> Result<CloudStdioMcpCallResponse, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        validate_cloud_stdio_runtime_binding(auth, &record, binding)?;
+        let agent_endpoint = self.agent_endpoint_for(&record).await?;
+        let agent_token = self.agent_token_for_record(&record);
+        cloud_stdio_agent_proxy(
+            agent_endpoint.as_str(),
+            agent_token.as_str(),
+            "/internal/cloud-stdio-mcp/call",
+            &input,
+        )
+        .await
+    }
+
+    pub async fn cloud_stdio_mcp_close(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+        binding: Option<&SandboxMcpRuntimeBinding>,
+        input: CloudStdioMcpCloseRequest,
+    ) -> Result<CloudStdioMcpCloseResponse, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        validate_cloud_stdio_runtime_binding(auth, &record, binding)?;
+        let agent_endpoint = self.agent_endpoint_for(&record).await?;
+        let agent_token = self.agent_token_for_record(&record);
+        cloud_stdio_agent_proxy(
+            agent_endpoint.as_str(),
+            agent_token.as_str(),
+            "/internal/cloud-stdio-mcp/close",
+            &input,
+        )
+        .await
+    }
+
+    pub async fn cloud_stdio_mcp_cancel(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+        binding: Option<&SandboxMcpRuntimeBinding>,
+        input: CloudStdioMcpCancelRequest,
+    ) -> Result<CloudStdioMcpCancelResponse, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        validate_cloud_stdio_runtime_binding(auth, &record, binding)?;
+        let agent_endpoint = self.agent_endpoint_for(&record).await?;
+        let agent_token = self.agent_token_for_record(&record);
+        cloud_stdio_agent_proxy(
+            agent_endpoint.as_str(),
+            agent_token.as_str(),
+            "/internal/cloud-stdio-mcp/cancel",
+            &input,
+        )
+        .await
+    }
+
+    pub(in crate::service::manager) async fn agent_endpoint_for(
+        &self,
+        record: &SandboxLeaseRecord,
+    ) -> Result<String, ApiError> {
         if let Some(endpoint) = record
             .agent_endpoint
             .clone()
@@ -69,6 +149,43 @@ impl SandboxManager {
             .ok_or_else(|| ApiError::bad_request("sandbox agent endpoint is not available"))?;
         validate_http_agent_endpoint(endpoint)
     }
+}
+
+pub(in crate::service::manager) fn validate_cloud_stdio_runtime_binding(
+    auth: &SandboxAuthContext,
+    record: &SandboxLeaseRecord,
+    binding: Option<&SandboxMcpRuntimeBinding>,
+) -> Result<(), ApiError> {
+    if auth.system_client_id() != Some("mcp-management-service") {
+        return Err(ApiError::forbidden(
+            "cloud stdio MCP proxy is restricted to MCP Management",
+        ));
+    }
+    auth.ensure_lease_access(record, SCOPE_MCP_CALL)?;
+    validate_mcp_runtime_binding(auth, record, binding)
+}
+
+pub(in crate::service::manager) fn validate_mcp_runtime_binding(
+    auth: &SandboxAuthContext,
+    record: &SandboxLeaseRecord,
+    binding: Option<&SandboxMcpRuntimeBinding>,
+) -> Result<(), ApiError> {
+    if auth.system_client_id() != Some("mcp-management-service") {
+        return Ok(());
+    }
+    let binding = binding.ok_or_else(|| {
+        ApiError::bad_request("MCP Management sandbox runtime binding headers are required")
+    })?;
+    if record.id != binding.lease_id
+        || record.tenant_id != binding.owner_user_id
+        || record.project_id != binding.project_id
+        || record.run_id != binding.run_id
+    {
+        return Err(ApiError::forbidden(
+            "MCP Management sandbox runtime binding does not match the lease",
+        ));
+    }
+    Ok(())
 }
 
 fn strip_ungrantable_command_permission_requests(payload: &mut Value) {
@@ -241,7 +358,8 @@ pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
     payload: Value,
 ) -> Result<Value, ApiError> {
     let url = format!("{}/mcp", agent_endpoint.trim_end_matches('/'));
-    let client = http_client_builder(HttpClientTimeouts::new(SANDBOX_AGENT_MCP_TIMEOUT))
+    let request_timeout = sandbox_agent_mcp_timeout(&payload);
+    let client = http_client_builder(HttpClientTimeouts::new(request_timeout))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|err| ApiError::internal(format!("build MCP proxy client failed: {err}")))?;
@@ -288,6 +406,104 @@ pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
             "sandbox_mcp_proxy_invalid_json",
             format!(
                 "MCP proxy returned invalid JSON: {err}; body={}",
+                preview_text(&body)
+            ),
+        )
+    })
+}
+
+fn sandbox_agent_mcp_timeout(payload: &Value) -> Duration {
+    terminal_wait_timeout_ms(payload)
+        .map(|timeout_ms| {
+            Duration::from_millis(timeout_ms.saturating_add(TERMINAL_WAIT_TRANSPORT_GRACE_MS))
+        })
+        .unwrap_or(SANDBOX_AGENT_MCP_TIMEOUT)
+        .max(SANDBOX_AGENT_MCP_TIMEOUT)
+}
+
+fn terminal_wait_timeout_ms(payload: &Value) -> Option<u64> {
+    match payload {
+        Value::Array(items) => items.iter().filter_map(terminal_wait_timeout_ms).max(),
+        Value::Object(_) => {
+            if payload.get("method").and_then(Value::as_str) != Some("tools/call") {
+                return None;
+            }
+            let tool_name = payload.pointer("/params/name").and_then(Value::as_str)?;
+            let arguments = payload.pointer("/params/arguments").unwrap_or(&Value::Null);
+            let is_wait = tool_name == "process_wait"
+                || tool_name.ends_with("_process_wait")
+                || ((tool_name == "process" || tool_name.ends_with("_process"))
+                    && arguments.get("action").and_then(Value::as_str) == Some("wait"));
+            is_wait.then(|| chatos_mcp::resolve_wait_timeout_ms(arguments))
+        }
+        _ => None,
+    }
+}
+
+pub(in crate::service::manager) async fn cloud_stdio_agent_proxy<I, O>(
+    agent_endpoint: &str,
+    agent_token: &str,
+    path: &str,
+    input: &I,
+) -> Result<O, ApiError>
+where
+    I: Serialize + ?Sized,
+    O: DeserializeOwned,
+{
+    let url = format!("{}{}", agent_endpoint.trim_end_matches('/'), path);
+    let client = http_client_builder(HttpClientTimeouts::new(SANDBOX_AGENT_CLOUD_STDIO_TIMEOUT))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|err| {
+            ApiError::internal(format!("build cloud stdio proxy client failed: {err}"))
+        })?;
+    let response = client
+        .post(url.as_str())
+        .bearer_auth(agent_token.trim())
+        .json(input)
+        .send()
+        .await
+        .map_err(|err| {
+            let status = if classify_http_request_error(&err) == HttpRequestErrorKind::Timeout {
+                StatusCode::GATEWAY_TIMEOUT
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            ApiError::with_code(
+                status,
+                "sandbox_cloud_stdio_proxy_request_failed",
+                format!("cloud stdio MCP proxy request failed: {err}"),
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
+        return Err(ApiError::with_code(
+            StatusCode::BAD_GATEWAY,
+            "sandbox_cloud_stdio_proxy_http_error",
+            format!(
+                "cloud stdio MCP proxy returned HTTP {status}: {}",
+                preview_text(&body)
+            ),
+        ));
+    }
+    let body = read_response_text_limited(response, JSON_BODY_LIMIT_BYTES)
+        .await
+        .map_err(|err| {
+            ApiError::with_code(
+                StatusCode::BAD_GATEWAY,
+                "sandbox_cloud_stdio_proxy_response_failed",
+                format!("cloud stdio MCP proxy response read failed: {err}"),
+            )
+        })?;
+    serde_json::from_str(body.as_str()).map_err(|err| {
+        ApiError::with_code(
+            StatusCode::BAD_GATEWAY,
+            "sandbox_cloud_stdio_proxy_invalid_json",
+            format!(
+                "cloud stdio MCP proxy returned invalid JSON: {err}; body={}",
                 preview_text(&body)
             ),
         )
@@ -378,6 +594,57 @@ mod tests {
     }
 
     #[test]
+    fn mcp_management_proxy_requires_exact_runtime_binding() {
+        let auth = SandboxAuthContext::System(SandboxSystemClient {
+            client_id: "mcp-management-service".to_string(),
+            scopes: vec![SCOPE_MCP_CALL.to_string()],
+            allowed_tenant_ids: vec!["*".to_string()],
+            allowed_project_ids: vec!["*".to_string()],
+            allowed_tools: vec!["*".to_string()],
+            max_lease_ttl_seconds: 3_600,
+        });
+        let binding = SandboxMcpRuntimeBinding {
+            lease_id: "lease-1".to_string(),
+            owner_user_id: "tenant-1".to_string(),
+            project_id: "project-1".to_string(),
+            run_id: "run-1".to_string(),
+        };
+        validate_mcp_runtime_binding(&auth, &lease_record(), Some(&binding)).unwrap();
+
+        let mut mismatched = binding;
+        mismatched.run_id = "another-run".to_string();
+        let error = validate_mcp_runtime_binding(&auth, &lease_record(), Some(&mismatched))
+            .expect_err("mismatched runtime binding must be rejected");
+        assert_eq!(error.status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn cloud_stdio_proxy_is_restricted_to_mcp_management() {
+        let binding = SandboxMcpRuntimeBinding {
+            lease_id: "lease-1".to_string(),
+            owner_user_id: "tenant-1".to_string(),
+            project_id: "project-1".to_string(),
+            run_id: "run-1".to_string(),
+        };
+        let task_runner = system_auth(&[SCOPE_MCP_CALL], &["*"]);
+        let error =
+            validate_cloud_stdio_runtime_binding(&task_runner, &lease_record(), Some(&binding))
+                .expect_err("Task Runner must not send cloud stdio execution config");
+        assert_eq!(error.status, StatusCode::FORBIDDEN);
+
+        let mcp_management = SandboxAuthContext::System(SandboxSystemClient {
+            client_id: "mcp-management-service".to_string(),
+            scopes: vec![SCOPE_MCP_CALL.to_string()],
+            allowed_tenant_ids: vec!["*".to_string()],
+            allowed_project_ids: vec!["*".to_string()],
+            allowed_tools: vec!["*".to_string()],
+            max_lease_ttl_seconds: 3_600,
+        });
+        validate_cloud_stdio_runtime_binding(&mcp_management, &lease_record(), Some(&binding))
+            .unwrap();
+    }
+
+    #[test]
     fn mcp_proxy_enforces_tools_call_tool_policy() {
         let auth = system_auth(&[SCOPE_MCP_CALL], &["read_file_raw"]);
         let allowed = json!({
@@ -464,5 +731,29 @@ mod tests {
             .expect("properties");
         assert!(properties.contains_key("command"));
         assert!(!properties.contains_key("additionalPermissions"));
+    }
+
+    #[test]
+    fn mcp_proxy_timeout_tracks_terminal_wait_request() {
+        let wait = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "call-1",
+            "method": "tools/call",
+            "params": {
+                "name": "process_wait",
+                "arguments": {"timeout_ms": 600_000}
+            }
+        });
+        let poll = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "call-2",
+            "method": "tools/call",
+            "params": {"name": "process_poll", "arguments": {}}
+        });
+        assert_eq!(
+            sandbox_agent_mcp_timeout(&wait),
+            Duration::from_millis(615_000)
+        );
+        assert_eq!(sandbox_agent_mcp_timeout(&poll), SANDBOX_AGENT_MCP_TIMEOUT);
     }
 }

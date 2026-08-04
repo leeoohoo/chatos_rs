@@ -175,30 +175,6 @@ pub(super) fn credential_replacement_id(
 }
 
 pub(super) fn repair_model_settings_with_credential_fallbacks(state: &mut LocalState) -> usize {
-    let memory = credential_replacement_id(
-        state,
-        state
-            .model_configs
-            .settings
-            .memory_summary_model_config_id
-            .as_deref(),
-    );
-    let project_management = credential_replacement_id(
-        state,
-        state
-            .model_configs
-            .settings
-            .project_management_agent_model_config_id
-            .as_deref(),
-    );
-    let environment = credential_replacement_id(
-        state,
-        state
-            .model_configs
-            .settings
-            .environment_initialization_model_config_id
-            .as_deref(),
-    );
     let command_approval = credential_replacement_id(
         state,
         state
@@ -209,24 +185,6 @@ pub(super) fn repair_model_settings_with_credential_fallbacks(state: &mut LocalS
     );
 
     let mut repaired = 0;
-    if let Some(id) = memory {
-        state.model_configs.settings.memory_summary_model_config_id = Some(id);
-        repaired += 1;
-    }
-    if let Some(id) = project_management {
-        state
-            .model_configs
-            .settings
-            .project_management_agent_model_config_id = Some(id);
-        repaired += 1;
-    }
-    if let Some(id) = environment {
-        state
-            .model_configs
-            .settings
-            .environment_initialization_model_config_id = Some(id);
-        repaired += 1;
-    }
     if let Some(id) = command_approval {
         state
             .model_configs
@@ -249,19 +207,6 @@ pub(super) fn optional_text_update(draft: Option<&str>, existing: Option<&str>) 
 
 impl LocalModelSettings {
     pub(super) fn clear_model_id(&mut self, local_model_config_id: &str) {
-        if self.memory_summary_model_config_id.as_deref() == Some(local_model_config_id) {
-            self.memory_summary_model_config_id = None;
-            self.memory_summary_thinking_level = None;
-        }
-        if self.project_management_agent_model_config_id.as_deref() == Some(local_model_config_id) {
-            self.project_management_agent_model_config_id = None;
-            self.project_management_agent_thinking_level = None;
-        }
-        if self.environment_initialization_model_config_id.as_deref() == Some(local_model_config_id)
-        {
-            self.environment_initialization_model_config_id = None;
-            self.environment_initialization_thinking_level = None;
-        }
         if self.command_approval_model_config_id.as_deref() == Some(local_model_config_id) {
             self.command_approval_model_config_id = None;
             self.command_approval_thinking_level = None;

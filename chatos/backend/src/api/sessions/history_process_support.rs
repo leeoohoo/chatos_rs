@@ -70,14 +70,16 @@ pub(super) fn is_task_runner_async_plan_summary_message(message: &Message) -> bo
         .and_then(|value| value.get("message_kind"))
         .and_then(Value::as_str)
         .map(str::trim);
+    let has_user_visible_summary = message_has_text_content(message)
+        && extract_message_tool_calls_for_display(message).is_empty();
     if message_kind.is_some_and(|value| value == TASK_RUNNER_ASYNC_PLAN_SUMMARY_MESSAGE_KIND) {
-        return true;
+        return has_user_visible_summary;
     }
     if message_kind.is_some() {
         return false;
     }
 
-    is_task_runner_async_plan_mode && message_has_text_content(message)
+    is_task_runner_async_plan_mode && has_user_visible_summary
 }
 
 pub(super) fn normalize_task_runner_async_user_status_for_display(
@@ -189,7 +191,11 @@ pub(crate) fn reconcile_contact_async_user_status_for_display(
         {
             Some("completed" | "succeeded") => Some("completed"),
             Some("failed" | "blocked") => Some("failed"),
-            Some("cancelled" | "canceled" | "running") => Some("cancelled"),
+            Some("cancelled" | "canceled") => Some("cancelled"),
+            // A persisted running snapshot with no active in-process turn means the
+            // backend stopped before it could publish a terminal event. Treat that
+            // as an interrupted failure; it was not a user cancellation.
+            Some("running") => Some("failed"),
             _ => None,
         }
     };

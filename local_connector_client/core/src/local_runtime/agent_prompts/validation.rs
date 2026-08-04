@@ -5,8 +5,10 @@ use std::collections::HashSet;
 
 use anyhow::{bail, Result};
 use chatos_plugin_management_sdk::{
-    validate_agent_prompt_checksum, AgentPromptBundle, AgentPromptVendor, SystemAgentKey,
+    validate_agent_prompt_checksum, AgentPromptBundle, AgentPromptVendor,
 };
+
+use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
 
 const MAX_AGENT_PROMPT_BYTES: usize = 64 * 1024;
 
@@ -14,7 +16,7 @@ pub(super) fn validate_bundle(bundle: &AgentPromptBundle) -> Result<()> {
     if bundle.bundle_version <= 0 {
         bail!("Agent Prompt Bundle version is invalid");
     }
-    let expected = SystemAgentKey::ALL
+    let expected = LOCAL_RUNTIME_AGENT_KEYS
         .into_iter()
         .flat_map(|agent| {
             AgentPromptVendor::ALL
@@ -75,7 +77,7 @@ mod tests {
     use super::*;
 
     fn complete_bundle() -> AgentPromptBundle {
-        let prompts = SystemAgentKey::ALL
+        let prompts = LOCAL_RUNTIME_AGENT_KEYS
             .into_iter()
             .flat_map(|agent| {
                 AgentPromptVendor::ALL.into_iter().map(move |vendor| {

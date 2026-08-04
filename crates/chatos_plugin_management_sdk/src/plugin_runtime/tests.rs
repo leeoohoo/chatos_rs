@@ -1,12 +1,60 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
+
 use super::{
+    BeginPluginCloudOAuthAuthorizationRequest, BeginPluginCloudOAuthAuthorizationResponse,
     PluginArtifactCreateRequest, PluginArtifactReadMode, PluginArtifactReadRequest,
     PluginArtifactUpdateRequest, PluginUiBridgeMethod, PluginUiBridgeRequest,
-    UpdateUserPluginPreferenceResponse, UserPluginPreferenceRecord,
-    PLUGIN_UI_BRIDGE_REQUEST_MESSAGE_TYPE_V1,
+    ResolvedPluginMcpCloudCredentials, UpdateUserPluginPreferenceResponse,
+    UserPluginPreferenceRecord, PLUGIN_UI_BRIDGE_REQUEST_MESSAGE_TYPE_V1,
 };
+
+#[test]
+fn resolved_cloud_credentials_debug_output_is_redacted() {
+    let resolved = ResolvedPluginMcpCloudCredentials {
+        credential_snapshot_sha256: "a".repeat(64),
+        headers: BTreeMap::from([(
+            "authorization".to_string(),
+            "Bearer top-secret-token".to_string(),
+        )]),
+        environment: BTreeMap::from([("API_TOKEN".to_string(), "top-secret-token".to_string())]),
+        oauth_connection_id: Some("oauth-1".to_string()),
+    };
+    let debug = format!("{resolved:?}");
+    assert!(!debug.contains("top-secret-token"));
+    assert!(debug.contains("header_count"));
+    assert!(debug.contains("environment_count"));
+}
+
+#[test]
+fn cloud_oauth_authorization_debug_output_redacts_client_secret() {
+    let request = BeginPluginCloudOAuthAuthorizationRequest {
+        provider: "figma".to_string(),
+        scopes: vec!["files:read".to_string()],
+        authorization_server: None,
+        client_id: Some("client-1".to_string()),
+        client_secret: Some("top-secret-client-value".to_string()),
+        token_endpoint_auth_method: Some("client_secret_basic".to_string()),
+    };
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("top-secret-client-value"));
+    assert!(debug.contains("[redacted]"));
+}
+
+#[test]
+fn cloud_oauth_authorization_response_debug_output_redacts_state_url() {
+    let response = BeginPluginCloudOAuthAuthorizationResponse {
+        flow_id: "flow-1".to_string(),
+        authorization_url: "https://auth.example.com/authorize?state=top-secret-state".to_string(),
+        callback_origin: "https://plugins.example.com".to_string(),
+        expires_at: "2026-08-01T00:10:00Z".to_string(),
+    };
+    let debug = format!("{response:?}");
+    assert!(!debug.contains("top-secret-state"));
+    assert!(debug.contains("[redacted]"));
+}
 
 #[test]
 fn preference_update_response_preserves_the_authoritative_disable_transition() {

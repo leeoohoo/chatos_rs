@@ -17,12 +17,12 @@ pub mod guidance;
 pub mod memory_compat;
 #[path = "conversation_runtime/messages.rs"]
 pub mod messages;
+#[path = "conversation_runtime/project_execution_planner.rs"]
+mod project_execution_planner;
 #[path = "conversation_runtime/review_repair.rs"]
 pub mod review_repair;
 #[path = "conversation_runtime/runtime_context.rs"]
 pub mod runtime_context;
-#[path = "conversation_runtime/session_mcp_servers.rs"]
-pub mod session_mcp_servers;
 #[path = "conversation_runtime/session_scope.rs"]
 pub mod session_scope;
 #[path = "conversation_runtime/sessions.rs"]

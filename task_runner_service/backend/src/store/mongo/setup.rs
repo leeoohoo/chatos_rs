@@ -20,8 +20,6 @@ impl MongoStore {
             model_configs: database.collection::<ModelConfigRecord>("model_configs"),
             runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
             remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
-            external_mcp_configs: database
-                .collection::<ExternalMcpConfigRecord>("external_mcp_configs"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
             ask_user_prompts: database.collection::<AskUserPromptRecord>("ask_user_prompts"),
@@ -130,25 +128,6 @@ impl MongoStore {
         self.ensure_index(&self.remote_servers, doc! { "task_id": 1 }, false)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "updated_at": -1 }, false)
-            .await?;
-
-        self.ensure_index(&self.external_mcp_configs, doc! { "id": 1 }, true)
-            .await?;
-        self.ensure_index(&self.external_mcp_configs, doc! { "enabled": 1 }, false)
-            .await?;
-        self.ensure_index(
-            &self.external_mcp_configs,
-            doc! { "creator_user_id": 1 },
-            false,
-        )
-        .await?;
-        self.ensure_index(
-            &self.external_mcp_configs,
-            doc! { "owner_user_id": 1 },
-            false,
-        )
-        .await?;
-        self.ensure_index(&self.external_mcp_configs, doc! { "updated_at": -1 }, false)
             .await?;
 
         self.ensure_index(&self.runs, doc! { "id": 1 }, true)
@@ -291,6 +270,37 @@ impl MongoStore {
             if is_mongo_active_run_index_conflict(&err.to_string()) {
                 warn!(
                     "skipping active task run unique index creation due to existing duplicate active runs: {}",
+                    err
+                );
+            } else {
+                return Err(err.to_string());
+            }
+        }
+
+        let create_execution_lane_index = self
+            .runs
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "execution_lane_key": 1 })
+                    .options(
+                        IndexOptions::builder()
+                            .name(Some(ACTIVE_EXECUTION_LANE_UNIQUE_INDEX_NAME.to_string()))
+                            .unique(true)
+                            .partial_filter_expression(doc! {
+                                "status": "running",
+                                "execution_lane_key": { "$type": "string" }
+                            })
+                            .build(),
+                    )
+                    .build(),
+                None,
+            )
+            .await;
+
+        if let Err(err) = create_execution_lane_index {
+            if is_mongo_active_run_index_conflict(&err.to_string()) {
+                warn!(
+                    "skipping active execution lane unique index creation due to existing duplicate running lanes: {}",
                     err
                 );
             } else {

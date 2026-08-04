@@ -5,7 +5,6 @@ import { useCallback } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
-import { isLocalRuntimeSessionId } from '../../lib/api/localRuntime';
 import { countPendingReviewRepairMessages } from '../../lib/domain/reviewRepair';
 import type {
   Message,
@@ -150,36 +149,14 @@ export const useChatInterfaceController = ({
     try {
       await flushRuntimeSettings?.();
       await sendMessage(content, attachments, runtimeOptions);
-      if (currentSession?.id) {
-        void refreshReviewRepairStatus(currentSession.id)
-          .then(async (status) => {
-            if (!isLocalRuntimeSessionId(currentSession.id) || status.running) {
-              return;
-            }
-            markContactMemoryContextStale(currentSession.id);
-            hydrateContactMemoryContextFromCache(currentSession.id);
-            if (sessionSummaryPaneVisible) {
-              await loadSessionMemorySummaries(currentSession.id, true);
-            }
-          })
-          .catch((statusError) => {
-            console.error('Failed to refresh review repair status after send:', statusError);
-          });
-      }
       onMessageSend?.(content, attachments);
     } catch (error) {
       console.error('Failed to send message:', error);
     }
   }, [
     flushRuntimeSettings,
-    currentSession?.id,
-    hydrateContactMemoryContextFromCache,
-    loadSessionMemorySummaries,
-    markContactMemoryContextStale,
     onMessageSend,
-    refreshReviewRepairStatus,
     sendMessage,
-    sessionSummaryPaneVisible,
   ]);
 
   const handleComposerRemoteConnectionChange = useCallback((connectionId: string | null) => {

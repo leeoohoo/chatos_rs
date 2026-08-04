@@ -33,6 +33,7 @@ pub fn start(state: Arc<AppState>) {
 
         loop {
             ticker.tick().await;
+            let tick_started_at = time::Instant::now();
 
             if let Err(err) = control_plane::fail_stale_running_job_runs(&state.pool, 300).await {
                 warn!("[MEMORY-ENGINE-WORKER] stale job cleanup failed: {}", err);
@@ -48,6 +49,9 @@ pub fn start(state: Arc<AppState>) {
                 subject_memory_task,
                 reconcile_task
             );
+            state
+                .runtime_stats
+                .record_worker_tick(tick_started_at.elapsed());
         }
     });
 }

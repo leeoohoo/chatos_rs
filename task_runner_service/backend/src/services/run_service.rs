@@ -2,11 +2,31 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::ChatosCallbackDeliveryStatus;
+use crate::platform_queue::{TaskQueueMode, TaskQueueTopology};
+use tracing::warn;
 
-const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(120);
+const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(5);
+const MAX_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(30);
+const MAX_WORKER_CLAIM_ATTEMPTS: i64 = 3;
 const WORKER_CLAIM_EXPIRED_ERROR: &str = "worker claim expired";
 const CANCEL_REQUESTED_CLAIM_EXPIRED_REASON: &str =
     "run cancellation requested before worker claim expired";
+
+#[derive(Debug, Clone, Default)]
+pub struct RunExecutionStats {
+    pub total: usize,
+    pub active: usize,
+    pub queued: usize,
+    pub running: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+    pub blocked: usize,
+    pub dispatch_paused: usize,
+    pub callback_pending: usize,
+    pub callback_enqueued: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RejectedRunClaimHeartbeatAction {
@@ -16,10 +36,9 @@ pub(crate) enum RejectedRunClaimHeartbeatAction {
 }
 
 pub(crate) fn worker_claim_expiry_grace(claim_ttl: Duration) -> Duration {
-    claim_ttl
-        .checked_mul(2)
-        .unwrap_or(Duration::MAX)
-        .max(MIN_WORKER_CLAIM_EXPIRY_GRACE)
+    let proportional =
+        Duration::from_millis((claim_ttl.as_millis() / 10).min(u64::MAX as u128) as u64);
+    proportional.clamp(MIN_WORKER_CLAIM_EXPIRY_GRACE, MAX_WORKER_CLAIM_EXPIRY_GRACE)
 }
 
 impl RunService {
@@ -31,9 +50,11 @@ impl RunService {
     ) -> Self {
         Self {
             config,
+            task_queue_topology: TaskQueueTopology::inline_defaults(),
             store,
             plugin_management_client: None,
             ask_user_prompt_service,
+            runtime_stats: crate::state::TaskRunnerRuntimeStats::default(),
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
@@ -42,15 +63,19 @@ impl RunService {
 
     pub(crate) fn new_with_plugin_management(
         config: AppConfig,
+        task_queue_topology: TaskQueueTopology,
         store: AppStore,
         ask_user_prompt_service: AskUserPromptService,
         plugin_management_client: PluginManagementClient,
+        runtime_stats: crate::state::TaskRunnerRuntimeStats,
     ) -> Self {
         Self {
             config,
+            task_queue_topology,
             store,
             plugin_management_client: Some(plugin_management_client),
             ask_user_prompt_service,
+            runtime_stats,
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
@@ -152,6 +177,60 @@ impl RunService {
         self.store.list_runs(task_id).await
     }
 
+    pub async fn execution_stats(&self) -> Result<RunExecutionStats, String> {
+        let mut stats = RunExecutionStats::default();
+        for run in self.store.list_runs(None).await? {
+            stats.total = stats.total.saturating_add(1);
+            if run.dispatch_paused {
+                stats.dispatch_paused = stats.dispatch_paused.saturating_add(1);
+            }
+            if let Some(callback) = run.chatos_callback_delivery.as_ref() {
+                match callback.status {
+                    ChatosCallbackDeliveryStatus::Pending => {
+                        stats.callback_pending = stats.callback_pending.saturating_add(1);
+                    }
+                    ChatosCallbackDeliveryStatus::Enqueued => {
+                        stats.callback_enqueued = stats.callback_enqueued.saturating_add(1);
+                    }
+                    ChatosCallbackDeliveryStatus::Delivered
+                    | ChatosCallbackDeliveryStatus::Skipped => {}
+                }
+            }
+            match run.status {
+                TaskRunStatus::Queued => {
+                    stats.queued = stats.queued.saturating_add(1);
+                    stats.active = stats.active.saturating_add(1);
+                }
+                TaskRunStatus::Running => {
+                    stats.running = stats.running.saturating_add(1);
+                    stats.active = stats.active.saturating_add(1);
+                }
+                TaskRunStatus::Succeeded => {
+                    stats.succeeded = stats.succeeded.saturating_add(1);
+                }
+                TaskRunStatus::Failed => {
+                    stats.failed = stats.failed.saturating_add(1);
+                }
+                TaskRunStatus::Cancelled => {
+                    stats.cancelled = stats.cancelled.saturating_add(1);
+                }
+                TaskRunStatus::Blocked => {
+                    stats.blocked = stats.blocked.saturating_add(1);
+                }
+            }
+        }
+        Ok(stats)
+    }
+
+    pub fn runtime_stats(&self) -> &crate::state::TaskRunnerRuntimeStats {
+        &self.runtime_stats
+    }
+
+    #[cfg(test)]
+    pub(crate) fn store(&self) -> &AppStore {
+        &self.store
+    }
+
     pub async fn list_runs_filtered(
         &self,
         filters: RunListFilters,
@@ -208,6 +287,26 @@ impl RunService {
             .await
     }
 
+    pub async fn claim_queued_run_by_id(
+        &self,
+        run_id: &str,
+        worker_id: &str,
+        claim_ttl: Duration,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        let claim_token = Uuid::new_v4().to_string();
+        let claim_until = (chrono::Utc::now()
+            + chrono::Duration::from_std(claim_ttl).map_err(|err| err.to_string())?)
+        .to_rfc3339();
+        self.store
+            .claim_queued_run_by_id(
+                run_id,
+                worker_id,
+                claim_token.as_str(),
+                claim_until.as_str(),
+            )
+            .await
+    }
+
     pub async fn renew_run_claim(
         &self,
         run: &TaskRunRecord,
@@ -220,30 +319,48 @@ impl RunService {
         let claim_until = (chrono::Utc::now()
             + chrono::Duration::from_std(claim_ttl).map_err(|err| err.to_string())?)
         .to_rfc3339();
-        self.store
+        let renewed = self
+            .store
             .renew_run_claim(&run.id, worker_id, claim_token, claim_until.as_str())
-            .await
+            .await?;
+        if renewed {
+            if let Err(error) = self.renew_active_sandbox_lease(run.id.as_str()).await {
+                warn!(
+                    run_id = run.id.as_str(),
+                    error = error.as_str(),
+                    "task runner failed to renew active sandbox lease"
+                );
+            }
+        }
+        Ok(renewed)
     }
 
-    pub async fn fail_expired_run_claims(&self, claim_ttl: Duration) -> Result<usize, String> {
+    pub async fn reconcile_expired_run_claims(&self, claim_ttl: Duration) -> Result<usize, String> {
         let now = now_rfc3339();
         let expiry_cutoff = (chrono::Utc::now()
             - chrono::Duration::from_std(worker_claim_expiry_grace(claim_ttl))
                 .map_err(|err| err.to_string())?)
         .to_rfc3339();
-        let failed_runs = self
+        let reconciled_runs = self
             .store
-            .fail_expired_run_claims(expiry_cutoff.as_str(), now.as_str())
+            .reconcile_expired_run_claims(
+                expiry_cutoff.as_str(),
+                now.as_str(),
+                MAX_WORKER_CLAIM_ATTEMPTS,
+            )
             .await?;
-        for run in &failed_runs {
+        for run in &reconciled_runs {
             self.store.signal_local_run_abort(run.id.as_str());
             let cancelled_after_request = run.status == TaskRunStatus::Cancelled;
+            let requeued_after_interruption = run.status == TaskRunStatus::Queued;
             if let Err(err) = self
                 .ask_user_prompt_service
                 .cancel_pending_prompts_for_run(
                     run.id.as_str(),
                     if cancelled_after_request {
                         CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
+                    } else if requeued_after_interruption {
+                        "run execution was interrupted and automatically requeued"
                     } else {
                         WORKER_CLAIM_EXPIRED_ERROR
                     },
@@ -260,6 +377,8 @@ impl RunService {
                 if task.last_run_id.as_deref() == Some(run.id.as_str()) {
                     task.status = if cancelled_after_request {
                         TaskStatus::Cancelled
+                    } else if requeued_after_interruption {
+                        TaskStatus::Queued
                     } else {
                         TaskStatus::Failed
                     };
@@ -273,6 +392,8 @@ impl RunService {
                     run.id.clone(),
                     if cancelled_after_request {
                         "run.cancel_requested.claim_expired"
+                    } else if requeued_after_interruption {
+                        "run.claim.expired.requeued"
                     } else {
                         "run.claim.expired"
                     }
@@ -281,10 +402,14 @@ impl RunService {
                     Some(serde_json::json!({
                         "reason": if cancelled_after_request {
                             CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
+                        } else if requeued_after_interruption {
+                            "worker_claim_expired_requeued"
                         } else {
                             "worker_claim_expired"
                         },
                         "previous_worker_id": run.worker_id,
+                        "attempt": run.attempt,
+                        "max_attempts": MAX_WORKER_CLAIM_ATTEMPTS,
                     })),
                 ))
                 .await?;
@@ -295,11 +420,20 @@ impl RunService {
                     "failed to release sandboxes after worker claim expired"
                 );
             }
-            self.try_send_terminal_callback(run.task_id.as_str(), run)
-                .await;
+            if !requeued_after_interruption {
+                self.try_send_terminal_callback(run.task_id.as_str(), run)
+                    .await;
+            } else if let Err(err) = self.enqueue_run_dispatch_if_needed(run).await {
+                warn!(
+                    run_id = run.id.as_str(),
+                    task_id = run.task_id.as_str(),
+                    error = err.as_str(),
+                    "failed to re-enqueue recovered run dispatch"
+                );
+            }
         }
         self.store.refresh_runtime_guards().await?;
-        Ok(failed_runs.len())
+        Ok(reconciled_runs.len())
     }
 
     pub(crate) fn signal_local_run_abort(&self, run_id: &str) {
@@ -457,6 +591,65 @@ impl RunService {
     pub async fn list_run_events(&self, run_id: &str) -> Result<Vec<TaskRunEventRecord>, String> {
         self.store.list_run_events(run_id).await
     }
+
+    pub async fn list_run_events_after(
+        &self,
+        run_id: &str,
+        after_created_at: Option<&str>,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<TaskRunEventRecord>, String> {
+        self.store
+            .list_run_events_after(run_id, after_created_at, after_id, limit)
+            .await
+    }
+
+    pub(crate) fn run_dispatch_mode(&self) -> TaskQueueMode {
+        self.task_queue_topology.run_dispatch_mode
+    }
+
+    pub(crate) fn task_queue_topology(&self) -> &TaskQueueTopology {
+        &self.task_queue_topology
+    }
+
+    pub(crate) async fn enqueue_run_dispatch_if_needed(
+        &self,
+        run: &TaskRunRecord,
+    ) -> Result<bool, String> {
+        if run.dispatch_paused
+            || self.task_queue_topology.run_dispatch_mode != TaskQueueMode::RabbitMq
+        {
+            return Ok(false);
+        }
+        crate::run_dispatch_queue::enqueue_run_dispatch(&self.task_queue_topology, run.id.as_str())
+            .await?;
+        Ok(true)
+    }
+
+    pub(crate) async fn enqueue_queued_runs_for_tasks(
+        &self,
+        task_ids: &[String],
+    ) -> Result<usize, String> {
+        if self.task_queue_topology.run_dispatch_mode != TaskQueueMode::RabbitMq {
+            return Ok(0);
+        }
+        let mut enqueued = 0usize;
+        for task_id in task_ids {
+            let runs = self.store.list_runs(Some(task_id.as_str())).await?;
+            for run in runs {
+                if run.status != TaskRunStatus::Queued || run.dispatch_paused {
+                    continue;
+                }
+                crate::run_dispatch_queue::enqueue_run_dispatch(
+                    &self.task_queue_topology,
+                    run.id.as_str(),
+                )
+                .await?;
+                enqueued += 1;
+            }
+        }
+        Ok(enqueued)
+    }
 }
 
 #[cfg(test)]
@@ -464,10 +657,10 @@ mod worker_claim_tests {
     use super::*;
 
     #[test]
-    fn claim_expiry_grace_is_at_least_two_lease_periods() {
+    fn claim_expiry_grace_is_a_small_clock_skew_window() {
         assert_eq!(
             worker_claim_expiry_grace(Duration::from_secs(120)),
-            Duration::from_secs(240)
+            Duration::from_secs(12)
         );
     }
 
@@ -476,6 +669,14 @@ mod worker_claim_tests {
         assert_eq!(
             worker_claim_expiry_grace(Duration::from_secs(30)),
             MIN_WORKER_CLAIM_EXPIRY_GRACE
+        );
+    }
+
+    #[test]
+    fn long_claim_ttl_caps_expiry_grace() {
+        assert_eq!(
+            worker_claim_expiry_grace(Duration::from_secs(600)),
+            MAX_WORKER_CLAIM_EXPIRY_GRACE
         );
     }
 }

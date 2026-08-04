@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type { McpCatalogEntry } from './mcp';
-
 export type TaskStatus =
   | 'draft'
   | 'ready'
@@ -34,15 +32,6 @@ export interface TaskMcpConfig {
   external_mcp_config_ids: string[];
   selected_skill_ids: string[];
   skill_policy_revision?: string | null;
-}
-
-export interface SelectableTaskExternalMcp {
-  id: string;
-  name: string;
-  display_name: string;
-  description?: string | null;
-  runtime_kind: string;
-  visibility: string;
 }
 
 export interface SelectedTaskPlugin {
@@ -81,9 +70,7 @@ export interface SelectableTaskPluginAgent {
   description?: string | null;
   base_agent:
     | 'task_runner_plan_phase'
-    | 'task_runner_local_plan_phase'
-    | 'task_runner_run_phase'
-    | 'task_runner_local_run_phase';
+    | 'task_runner_run_phase';
   allowed_tools?: string[];
   max_iterations: number;
 }
@@ -128,12 +115,8 @@ export interface TaskPluginConnectorsResponse {
 export interface TaskCapabilityCatalogResponse {
   agent_key:
     | 'task_runner_plan_phase'
-    | 'task_runner_local_plan_phase'
-    | 'task_runner_run_phase'
-    | 'task_runner_local_run_phase';
+    | 'task_runner_run_phase';
   policy_revision: string;
-  selectable_builtin_mcps: McpCatalogEntry[];
-  selectable_external_mcps: SelectableTaskExternalMcp[];
   selectable_plugins: SelectableTaskPlugin[];
 }
 
@@ -256,7 +239,7 @@ export interface CreateTaskPayload {
   task_profile?: TaskProfile;
   schedule?: TaskScheduleConfig;
   plugin_config?: TaskPluginConfig;
-  mcp_config?: TaskMcpConfig;
+  mcp_config?: Pick<TaskMcpConfig, 'requires_execution'>;
   prerequisite_task_ids?: string[];
 }
 

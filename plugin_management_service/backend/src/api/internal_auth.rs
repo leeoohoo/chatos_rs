@@ -12,6 +12,7 @@ pub(super) const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
 pub(super) const PLUGIN_INSTALL_MANAGE_SCOPE: &str = "plugin.install.manage";
 pub(super) const PLUGIN_OAUTH_MANAGE_SCOPE: &str = "plugin.oauth.manage";
 pub(super) const PLUGIN_CLOUD_READ_SCOPE: &str = "plugin.cloud.read";
+pub(super) const PLUGIN_CLOUD_CREDENTIALS_RESOLVE_SCOPE: &str = "plugin.cloud.credentials.resolve";
 
 pub(super) fn require_local_connector_internal_request(
     state: &AppState,
@@ -67,7 +68,15 @@ pub(super) fn require_internal_api_secret(
             INTERNAL_TOKEN_AUDIENCE,
             required_scope,
         )
-        .map_err(|_| ApiError::unauthorized("invalid plugin management internal API token"))?;
+        .map_err(|error| {
+            tracing::warn!(
+                caller_service,
+                required_scope,
+                error = error.as_str(),
+                "plugin management internal token verification failed"
+            );
+            ApiError::unauthorized("invalid plugin management internal API token")
+        })?;
         return Ok(());
     }
     if state.config.require_signed_internal_requests {

@@ -32,6 +32,19 @@ impl PluginRuntimeHost {
             .skill_loader
             .active_component_kind(plugin_id.as_str(), component_key.as_str())
             .map_err(|error| (409, error.to_string()))?;
+        let catalog_only = optional_body_bool(&request.body, "catalog_only")?.unwrap_or(false);
+        if catalog_only
+            && !matches!(
+                component_kind,
+                PluginComponentKind::Command | PluginComponentKind::Agent
+            )
+        {
+            return Err((
+                400,
+                "catalog_only is supported only for Plugin Command and Agent components"
+                    .to_string(),
+            ));
+        }
         let adapter_session_id = Uuid::new_v4().to_string();
         let (skills, agents, commands, hooks, ui, native_skill, mcp, version, operations) =
             match component_kind {
@@ -230,7 +243,7 @@ impl PluginRuntimeHost {
                         release_id.as_str(),
                         artifact_sha256.as_str(),
                     )?;
-                    if command.requires_confirmation {
+                    if command.requires_confirmation && !catalog_only {
                         let state = self.state_snapshot().await?;
                         let mut approval_args = vec![plugin_id.clone(), component_key.clone()];
                         if let Some(arguments) = command.arguments.as_ref() {
@@ -322,7 +335,11 @@ impl PluginRuntimeHost {
                         None,
                         None,
                         version,
-                        Vec::new(),
+                        if catalog_only {
+                            vec![COMMAND_INVOKE_OPERATION]
+                        } else {
+                            Vec::new()
+                        },
                     )
                 }
                 PluginComponentKind::Agent => {
@@ -352,7 +369,11 @@ impl PluginRuntimeHost {
                         None,
                         None,
                         version,
-                        Vec::new(),
+                        if catalog_only {
+                            vec![AGENT_APPLY_OPERATION]
+                        } else {
+                            Vec::new()
+                        },
                     )
                 }
                 PluginComponentKind::HookSet => {

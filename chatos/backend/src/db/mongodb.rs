@@ -10,21 +10,23 @@ use mongodb::{Client, IndexModel};
 use super::types::{Database, MongoConfig};
 
 pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
-    let connection_string = if let Some(conn) = cfg.connection_string.clone() {
-        conn
-    } else {
-        let host = cfg.host.clone().unwrap_or_else(|| "localhost".to_string());
-        let port = cfg.port.unwrap_or(27017);
-        let database = cfg.database.clone().unwrap_or_else(|| "chatos".to_string());
-        let cred = match (&cfg.username, &cfg.password) {
-            (Some(u), Some(p)) => format!("{}:{}@", urlencoding::encode(u), urlencoding::encode(p)),
-            _ => "".to_string(),
-        };
-        format!("mongodb://{}{}:{}/{}", cred, host, port, database)
-    };
+    let connection_string = cfg
+        .connection_string
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "MONGODB_CONNECTION_STRING is required from configuration center".to_string()
+        })?;
+    let db_name = cfg
+        .database
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "MONGODB_DB is required from configuration center".to_string())?;
 
     let mut options =
-        ClientOptions::parse_with_resolver_config(&connection_string, ResolverConfig::cloudflare())
+        ClientOptions::parse_with_resolver_config(connection_string, ResolverConfig::cloudflare())
             .await
             .map_err(|e| format!("mongodb parse options failed: {e}"))?;
     if let Some(max_pool) = cfg.max_pool_size {
@@ -43,8 +45,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
 
     let client =
         Client::with_options(options).map_err(|e| format!("mongodb client failed: {e}"))?;
-    let db_name = cfg.database.clone().unwrap_or_else(|| "chatos".to_string());
-    let db = client.database(&db_name);
+    let db = client.database(db_name);
 
     let collections = vec![
         "users",
@@ -53,11 +54,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "chatos_contacts",
         "chatos_memory_projects",
         "chatos_project_agent_links",
-        "mcp_configs",
         "mcp_change_logs",
         "task_manager_tasks",
         "ask_user_prompt_requests",
-        "mcp_config_profiles",
         "system_contexts",
         "applications",
         "project_run_catalogs",
@@ -65,9 +64,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "terminals",
         "remote_connections",
         "terminal_logs",
-        "mcp_config_applications",
         "system_context_applications",
-        "session_mcp_servers",
         "session_runtime_settings",
         "user_settings",
     ];

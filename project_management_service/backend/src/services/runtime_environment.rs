@@ -6,6 +6,10 @@ use crate::store::AppStore;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod boundary;
+
+pub use boundary::enforce_project_runtime_boundary;
+
 pub const WORKSPACE_EXECUTION_SERVICE_ID: &str = "workspace";
 
 pub async fn ensure_runtime_environment_for_project(
@@ -174,148 +178,6 @@ pub fn replace_legacy_internal_routing_summary(
     true
 }
 
-pub fn enforce_project_runtime_boundary(
-    execution_plane: ProjectExecutionPlane,
-    environment: &mut ProjectRuntimeEnvironmentRecord,
-    images: &mut Vec<ProjectRuntimeEnvironmentImageRecord>,
-) -> bool {
-    let mut changed = false;
-    if execution_plane == ProjectExecutionPlane::Cloud && environment.sandbox_enabled {
-        if environment.sandbox_provider != RuntimeEnvironmentProvider::CloudSandboxManager {
-            environment.sandbox_provider = RuntimeEnvironmentProvider::CloudSandboxManager;
-            changed = true;
-        }
-        if environment.file_provider != RuntimeEnvironmentProvider::Harness {
-            environment.file_provider = RuntimeEnvironmentProvider::Harness;
-            changed = true;
-        }
-    }
-
-    let legacy_target = images
-        .iter()
-        .find(|image| {
-            image.service_role == RuntimeServiceRole::Application
-                && image.mcp_policy.attachment == RuntimeMcpAttachment::WorkspaceGatewayTarget
-        })
-        .cloned();
-    if ensure_workspace_execution_record(environment, images, legacy_target.as_ref()) {
-        changed = true;
-    }
-
-    let mut workspace_image_reset = false;
-    for image in images.iter_mut() {
-        let mut image_changed = apply_program_managed_image_policy(image);
-        let wrong_provider = execution_plane == ProjectExecutionPlane::Cloud
-            && image.image_provider != RuntimeEnvironmentProvider::CloudSandboxManager;
-        if wrong_provider {
-            image.image_provider = RuntimeEnvironmentProvider::CloudSandboxManager;
-            changed = true;
-            image_changed = true;
-        }
-        if wrong_provider && image.service_role == RuntimeServiceRole::Workspace {
-            image.image_id = None;
-            image.image_ref = None;
-            image.status = "planned".to_string();
-            image.error = None;
-            workspace_image_reset = true;
-            changed = true;
-            image_changed = true;
-        }
-        if image_changed {
-            changed = true;
-            image.updated_at = now_rfc3339();
-        }
-    }
-
-    let workspace_requires_build = images.iter().any(|image| {
-        image.service_role == RuntimeServiceRole::Workspace
-            && (image
-                .image_id
-                .as_deref()
-                .or(image.image_ref.as_deref())
-                .is_none_or(|value| value.trim().is_empty())
-                || !matches!(
-                    image.status.trim().to_ascii_lowercase().as_str(),
-                    "ready" | "available" | "local" | "succeeded" | "completed" | "running"
-                ))
-    });
-    if workspace_requires_build
-        && !matches!(
-            environment.status,
-            ProjectRuntimeEnvironmentStatus::Disabled
-                | ProjectRuntimeEnvironmentStatus::Analyzing
-                | ProjectRuntimeEnvironmentStatus::NotRunnable
-                | ProjectRuntimeEnvironmentStatus::Failed
-                | ProjectRuntimeEnvironmentStatus::PendingImageBuild
-        )
-    {
-        environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
-        if environment.analysis_summary.is_none() {
-            environment.analysis_summary =
-                Some("项目组件和依赖拓扑已保留，等待生成唯一工作区执行镜像。".to_string());
-        }
-        changed = true;
-    }
-
-    let execution_service_id = images
-        .iter()
-        .find(|image| image.service_role == RuntimeServiceRole::Workspace)
-        .map(|image| image.service_id.clone());
-    if environment.execution_service_id != execution_service_id {
-        environment.execution_service_id = execution_service_id;
-        changed = true;
-    }
-    for image in images.iter_mut() {
-        let desired_policy = if image.service_role == RuntimeServiceRole::Workspace {
-            ProgramManagedMcpPolicy::workspace_target()
-        } else {
-            ProgramManagedMcpPolicy::default()
-        };
-        if image.mcp_policy != desired_policy {
-            image.mcp_policy = desired_policy;
-            image.updated_at = now_rfc3339();
-            changed = true;
-        }
-    }
-
-    if workspace_image_reset
-        && !matches!(
-            environment.status,
-            ProjectRuntimeEnvironmentStatus::Disabled
-                | ProjectRuntimeEnvironmentStatus::Analyzing
-                | ProjectRuntimeEnvironmentStatus::NotRunnable
-                | ProjectRuntimeEnvironmentStatus::Failed
-        )
-    {
-        environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
-        let missing_variables = environment
-            .environment_variables
-            .iter()
-            .filter(|record| {
-                record.required
-                    && record
-                        .effective_value
-                        .as_deref()
-                        .is_none_or(|value| value.trim().is_empty())
-            })
-            .map(|record| record.name.as_str())
-            .collect::<Vec<_>>();
-        environment.analysis_summary = Some(if missing_variables.is_empty() {
-            "运行环境分析和服务计划已保留；原有 Local Connector 工作区镜像记录已作废，请生成云端工作区执行镜像。"
-                .to_string()
-        } else {
-            format!(
-                "运行环境分析和服务计划已保留；原有 Local Connector 工作区镜像记录已作废，请先生成云端工作区执行镜像。镜像生成后仍需补充运行参数：{}。",
-                missing_variables.join(", ")
-            )
-        });
-    }
-    if changed {
-        environment.updated_at = now_rfc3339();
-    }
-    changed
-}
-
 pub fn apply_program_managed_image_policy(
     image: &mut ProjectRuntimeEnvironmentImageRecord,
 ) -> bool {
@@ -436,13 +298,12 @@ pub fn workspace_runtime_features(
     images: &[ProjectRuntimeEnvironmentImageRecord],
     detected_stack: &Value,
 ) -> Vec<String> {
+    const EMPTY_PROJECT_BOOTSTRAP_FEATURES: [&str; 2] = ["node@24", "python@3.11"];
     const ORDERED_RUNTIMES: [&str; 10] = [
         "java", "node", "python", "rust", "go", "dotnet", "php", "ruby", "gcc", "clang",
     ];
     let mut selected = BTreeMap::<&'static str, String>::new();
-    let mut evidence = serde_json::to_string(detected_stack)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let mut evidence = detected_stack_runtime_evidence(detected_stack);
     for image in images.iter().filter(|image| {
         matches!(
             image.service_role,
@@ -497,10 +358,44 @@ pub fn workspace_runtime_features(
                 .or_insert_with(|| feature.to_string());
         }
     }
-    ORDERED_RUNTIMES
+    let selected = ORDERED_RUNTIMES
         .into_iter()
         .filter_map(|runtime| selected.get(runtime).cloned())
-        .collect()
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return EMPTY_PROJECT_BOOTSTRAP_FEATURES
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect();
+    }
+    selected
+}
+
+fn detected_stack_runtime_evidence(detected_stack: &Value) -> String {
+    const RUNTIME_EVIDENCE_KEYS: [&str; 12] = [
+        "analysis_requirement",
+        "application_entrypoints",
+        "build_manifests",
+        "build_tools",
+        "frameworks",
+        "languages",
+        "package_managers",
+        "project_type",
+        "runtime",
+        "runtimes",
+        "stack",
+        "technology_stack",
+    ];
+    let Some(object) = detected_stack.as_object() else {
+        return String::new();
+    };
+    RUNTIME_EVIDENCE_KEYS
+        .into_iter()
+        .filter_map(|key| object.get(key))
+        .filter_map(|value| serde_json::to_string(value).ok())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 fn canonical_workspace_runtime(value: &str) -> Option<(&'static str, String)> {

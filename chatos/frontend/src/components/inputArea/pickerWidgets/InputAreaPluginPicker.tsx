@@ -203,7 +203,7 @@ export const InputAreaPluginPicker = ({
                                 <span>{component.available ? 'ready' : component.status}</span>
                                 <span>
                                   {component.prepare_provider === 'task_runner_cloud'
-                                    ? 'Task Runner Cloud'
+                                    ? '云端任务'
                                     : 'Local Connector'}
                                 </span>
                                 {component.requires_workspace ? <span>需要工作区</span> : null}

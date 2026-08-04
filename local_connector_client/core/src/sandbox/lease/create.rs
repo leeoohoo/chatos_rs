@@ -232,20 +232,7 @@ async fn select_local_sandbox_image_ref(
 }
 
 fn local_sandbox_lease_response(lease: &LocalSandboxLease) -> Value {
-    json!({
-        "lease_id": lease.id,
-        "sandbox_id": lease.sandbox_id,
-        "backend_id": lease.backend_id,
-        "image_id": lease.image_id,
-        "image_ref": lease.image_ref,
-        "status": lease.status,
-        "agent_endpoint": lease.agent_endpoint,
-        "agent_token": lease.agent_token,
-        "run_workspace": lease.run_workspace,
-        "expires_at": lease.expires_at,
-        "effective_policy": lease.effective_policy,
-        "effective_permissions": lease.effective_permissions,
-    })
+    super::cloud_safe_local_sandbox_lease(lease)
 }
 
 #[derive(Debug, Clone)]

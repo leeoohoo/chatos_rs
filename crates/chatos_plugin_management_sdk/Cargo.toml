@@ -20,3 +20,4 @@ hex = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time"] }
 urlencoding = "2"
+zeroize = "1"

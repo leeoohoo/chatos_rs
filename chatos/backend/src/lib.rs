@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 
 use tokio::signal;
 use tracing::{error, info, warn};
@@ -38,7 +38,9 @@ pub async fn run_server_from_env() -> Result<(), String> {
     // backend explicitly before any request can create or verify a token.
     let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
 
-    chatos_service_runtime::apply_config_center_env("chatos-backend").await;
+    chatos_service_runtime::apply_config_center_env("chatos-backend")
+        .await
+        .map_err(|err| format!("apply managed config failed: {err}"))?;
     let cfg = config::Config::init_global()?;
     logger::init_logger(cfg).map_err(|err| format!("Failed to init logger: {err}"))?;
 
@@ -53,16 +55,10 @@ pub async fn run_server_from_env() -> Result<(), String> {
 
     let app = api::router().map_err(|err| format!("Failed to build API router: {err}"))?;
 
-    let host = match cfg.host.parse::<IpAddr>() {
-        Ok(host) => host,
-        Err(err) => {
-            warn!(
-                "Invalid HOST value '{}': {}. Falling back to 0.0.0.0",
-                cfg.host, err
-            );
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-        }
-    };
+    let host = cfg
+        .host
+        .parse::<IpAddr>()
+        .map_err(|err| format!("Invalid HOST value '{}': {}", cfg.host, err))?;
     let addr = SocketAddr::new(host, cfg.port);
     info!("Server running on http://{}", addr);
 

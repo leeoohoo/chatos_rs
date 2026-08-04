@@ -120,7 +120,7 @@ fn local_api_app(runtime: LocalRuntime, desktop_auth_token: Option<String>) -> R
 
 fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> {
     let protected = Router::new()
-        .merge(crate::local_runtime::api::router())
+        .merge(crate::local_runtime::api::connector_capability_router())
         .route("/api/local/status", get(local_status))
         .route("/api/local/auth/login", post(local_login))
         .route("/api/local/auth/register", post(local_register))

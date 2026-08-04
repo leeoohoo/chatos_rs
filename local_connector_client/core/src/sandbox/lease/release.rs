@@ -43,7 +43,7 @@ pub(crate) async fn release_local_sandbox(
             json!({ "error": "lease_id does not match sandbox" }),
         ));
     }
-    let (output_workspace, change_manifest, diff_summary, output_error) = if input.export_result {
+    let (_output_workspace, change_manifest, diff_summary, output_error) = if input.export_result {
         match export_local_sandbox_output(&lease) {
             Ok(manifest) => {
                 let output_workspace = manifest
@@ -53,9 +53,19 @@ pub(crate) async fn release_local_sandbox(
                 let summary = manifest
                     .get("counts")
                     .map(summarize_local_sandbox_manifest_counts);
-                (output_workspace, Some(manifest), summary, None)
+                (
+                    output_workspace,
+                    Some(super::redact_local_output_manifest(manifest)),
+                    summary,
+                    None,
+                )
             }
-            Err(err) => (None, None, None, Some(err.to_string())),
+            Err(_err) => (
+                None,
+                None,
+                None,
+                Some("local sandbox output export failed".to_string()),
+            ),
         }
     } else {
         (None, None, None, None)
@@ -83,7 +93,7 @@ pub(crate) async fn release_local_sandbox(
         json!({
             "ok": true,
             "status": lease.status,
-            "output_workspace": output_workspace,
+            "output_workspace": null,
             "diff_summary": diff_summary,
             "output_error": output_error,
             "change_manifest": change_manifest,

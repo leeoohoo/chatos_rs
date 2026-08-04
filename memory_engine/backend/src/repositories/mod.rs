@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod control_plane;
+pub mod observability;
 pub mod records;
 pub mod sources;
 pub mod subject_memories;

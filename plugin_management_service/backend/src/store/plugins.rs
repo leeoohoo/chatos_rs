@@ -2,6 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
+
+mod user_state;
 
 impl AppStore {
     pub async fn delete_plugin_bindings_for_agent(&self, agent_key: &str) -> Result<(), String> {
@@ -352,6 +355,36 @@ impl AppStore {
         Ok(release)
     }
 
+    pub async fn list_plugin_releases_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<PluginReleaseRecord>, String> {
+        let ids: Vec<String> = ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let releases: Vec<PluginReleaseRecord> = self
+            .plugin_releases
+            .find(doc! { "id": { "$in": ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut ready = Vec::with_capacity(releases.len());
+        for release in releases {
+            if self.plugin_release_is_ready(release.id.as_str()).await? {
+                ready.push(release);
+            }
+        }
+        Ok(ready)
+    }
+
     pub async fn get_plugin_release_any_state(
         &self,
         id: &str,
@@ -524,126 +557,18 @@ impl AppStore {
         Ok(())
     }
 
-    pub async fn list_plugin_installations(
+    pub async fn get_plugin_mcp_cloud_runtime_bundle(
         &self,
-        owner_user_id: &str,
-        device_id: &str,
-    ) -> Result<Vec<PluginInstallationRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "active": -1, "last_checked_at": -1 })
-            .build();
-        self.plugin_installations
-            .find(
-                doc! { "owner_user_id": owner_user_id, "device_id": device_id },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn get_plugin_installation(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
         plugin_id: &str,
-    ) -> Result<Option<PluginInstallationRecord>, String> {
-        self.plugin_installations
-            .find_one(
-                doc! {
-                    "owner_user_id": owner_user_id,
-                    "device_id": device_id,
-                    "plugin_id": plugin_id,
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_plugin_installation(
-        &self,
-        record: &PluginInstallationRecord,
-    ) -> Result<(), String> {
-        self.plugin_installations
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn get_user_plugin_preference(
-        &self,
-        owner_user_id: &str,
-        plugin_id: &str,
-    ) -> Result<Option<UserPluginPreferenceRecord>, String> {
-        self.plugin_preferences
-            .find_one(
-                doc! { "owner_user_id": owner_user_id, "plugin_id": plugin_id },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_user_plugin_preference(
-        &self,
-        record: &UserPluginPreferenceRecord,
-    ) -> Result<(), String> {
-        self.plugin_preferences
-            .replace_one(
-                doc! { "owner_user_id": &record.owner_user_id, "plugin_id": &record.plugin_id },
-                record,
-                upsert_options(),
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn list_plugin_oauth_connections(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-        plugin_id: &str,
-    ) -> Result<Vec<PluginOAuthConnectionRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "provider": 1, "component_key": 1 })
-            .build();
-        self.plugin_oauth_connections
-            .find(
-                doc! {
-                    "owner_user_id": owner_user_id,
-                    "device_id": device_id,
-                    "plugin_id": plugin_id,
-                },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn get_plugin_oauth_connection(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-        plugin_id: &str,
+        release_id: &str,
         component_key: &str,
-        provider: &str,
-    ) -> Result<Option<PluginOAuthConnectionRecord>, String> {
-        self.plugin_oauth_connections
+    ) -> Result<Option<PluginMcpCloudRuntimeBundle>, String> {
+        self.plugin_mcp_cloud_runtime_bundles
             .find_one(
                 doc! {
-                    "owner_user_id": owner_user_id,
-                    "device_id": device_id,
                     "plugin_id": plugin_id,
-                    "component_key": component_key,
-                    "provider": provider,
+                    "release_id": release_id,
+                    "component.component_key": component_key,
                 },
                 None,
             )
@@ -651,58 +576,52 @@ impl AppStore {
             .map_err(|err| err.to_string())
     }
 
-    pub async fn replace_plugin_oauth_connection(
+    pub async fn list_plugin_mcp_cloud_runtime_bundles(
         &self,
-        record: &PluginOAuthConnectionRecord,
-    ) -> Result<(), String> {
-        self.plugin_oauth_connections
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn insert_plugin_audit(&self, record: &PluginAuditLogRecord) -> Result<(), String> {
-        self.plugin_audit_logs
-            .insert_one(record, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn list_plugin_audit(
-        &self,
-        query: &PluginAuditQuery,
-    ) -> Result<ListResponse<PluginAuditLogRecord>, String> {
-        let mut filter = doc! {};
-        for (field, value) in [
-            ("plugin_id", query.plugin_id.as_deref()),
-            ("owner_user_id", query.owner_user_id.as_deref()),
-            ("device_id", query.device_id.as_deref()),
-            ("event", query.event.as_deref()),
-        ] {
-            if let Some(value) = normalized(value) {
-                filter.insert(field, value);
-            }
-        }
-        let total = self
-            .plugin_audit_logs
-            .count_documents(filter.clone(), None)
-            .await
-            .map_err(|err| err.to_string())?;
+        plugin_id: &str,
+        release_id: &str,
+    ) -> Result<Vec<PluginMcpCloudRuntimeBundle>, String> {
         let options = FindOptions::builder()
-            .sort(doc! { "created_at": -1 })
-            .limit(Some(query.limit.unwrap_or(100).clamp(1, 500)))
-            .skip(query.offset)
+            .sort(doc! { "component.component_key": 1 })
             .build();
-        let items = self
-            .plugin_audit_logs
-            .find(filter, options)
+        self.plugin_mcp_cloud_runtime_bundles
+            .find(
+                doc! { "plugin_id": plugin_id, "release_id": release_id },
+                options,
+            )
             .await
             .map_err(|err| err.to_string())?
             .try_collect()
             .await
-            .map_err(|err| err.to_string())?;
-        Ok(ListResponse { items, total })
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn insert_plugin_mcp_cloud_runtime_bundles(
+        &self,
+        records: &[PluginMcpCloudRuntimeBundle],
+    ) -> Result<(), String> {
+        for record in records {
+            if let Some(existing) = self
+                .get_plugin_mcp_cloud_runtime_bundle(
+                    record.plugin_id.as_str(),
+                    record.release_id.as_str(),
+                    record.component.component_key.as_str(),
+                )
+                .await?
+            {
+                if existing != *record {
+                    return Err(format!(
+                        "immutable Plugin MCP cloud runtime Bundle conflict: {}/{}/{}",
+                        record.plugin_id, record.release_id, record.component.component_key
+                    ));
+                }
+                continue;
+            }
+            self.plugin_mcp_cloud_runtime_bundles
+                .insert_one(record, None)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
     }
 }

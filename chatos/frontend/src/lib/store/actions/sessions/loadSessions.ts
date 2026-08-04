@@ -139,12 +139,9 @@ export function createLoadSessionActions({
         const executeLoad = async (): Promise<{ contacts: ContactRecord[]; sessions: Session[] }> => {
           const contacts = await get().loadContacts();
           const memoryContacts = toMemoryContacts(contacts, userId);
-          const requestProjectId = client.sessionScopeUsesLocalRuntime(projectId)
-            ? projectId
-            : undefined;
           const rawSessions = await client.getSessions(
             userId,
-            requestProjectId,
+            projectId,
             { limit: options.limit, offset: options.offset },
           );
           const sessions = Array.isArray(rawSessions)

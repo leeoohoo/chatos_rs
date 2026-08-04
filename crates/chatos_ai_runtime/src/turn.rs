@@ -88,7 +88,6 @@ impl ContextualTurnRunner {
             prefixed_input_items.as_slice(),
             current_input_items.as_slice(),
             &model_request.input,
-            user_record.is_some(),
         );
 
         if let Some(user_record) = user_record.take() {
@@ -120,7 +119,6 @@ impl ContextualTurnRunner {
         prefixed_input_items: &[Value],
         current_input_items: &[Value],
         fallback_input: &Value,
-        user_record_is_persisted: bool,
     ) -> Option<IterativeContextRefresh> {
         if self.memory_composer.is_none()
             || memory_scope.is_none()
@@ -131,9 +129,10 @@ impl ContextualTurnRunner {
             return None;
         }
 
-        let sticky_input_items = if user_record_is_persisted {
-            sticky_current_input_items(current_input_items)
-        } else if current_input_items.is_empty() {
+        // The current turn is the authoritative task contract. Memory context is
+        // supplemental and can be empty or summarized, so never rely on
+        // recomposition to restore the current task.
+        let sticky_input_items = if current_input_items.is_empty() {
             input_value_to_items(fallback_input.clone())
         } else {
             current_input_items.to_vec()
@@ -150,14 +149,6 @@ impl ContextualTurnRunner {
             .with_context_overflow_recovery(self.context_overflow_recovery.clone()),
         )
     }
-}
-
-fn sticky_current_input_items(current_input_items: &[Value]) -> Vec<Value> {
-    current_input_items
-        .iter()
-        .filter(|item| item.get("role").and_then(Value::as_str) != Some("user"))
-        .cloned()
-        .collect()
 }
 
 impl RuntimeTurnSpec {
@@ -359,8 +350,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        build_contextual_input, input_value_to_items, sticky_current_input_items, user_text_item,
-        ContextualTurnRequest, RuntimeTurnSpec,
+        build_contextual_input, input_value_to_items, user_text_item, ContextualTurnRequest,
+        RuntimeTurnSpec,
     };
     use crate::{
         AiRuntime, AiRuntimeOptions, AiTurnStatus, MemoryContextComposer, MemoryScope,
@@ -497,27 +488,9 @@ mod tests {
             &[json!({"role":"system","content":"prefix"})],
             &[json!({"role":"user","content":"current"})],
             &Value::Null,
-            true,
         );
 
         assert!(refresh.is_some());
-    }
-
-    #[test]
-    fn persisted_user_record_keeps_current_system_facts_sticky_only() {
-        let items = vec![
-            json!({"role":"system","content":"current run sandbox is ready"}),
-            json!({"role":"user","content":"execute the task"}),
-        ];
-
-        let sticky = sticky_current_input_items(items.as_slice());
-
-        assert_eq!(sticky.len(), 1);
-        assert_eq!(sticky[0]["role"].as_str(), Some("system"));
-        assert_eq!(
-            sticky[0]["content"].as_str(),
-            Some("current run sandbox is ready")
-        );
     }
 
     #[test]
@@ -537,7 +510,6 @@ mod tests {
             &[json!({"role":"system","content":"prefix"})],
             &[json!({"role":"user","content":"current"})],
             &Value::Null,
-            true,
         );
 
         assert!(refresh.is_none());

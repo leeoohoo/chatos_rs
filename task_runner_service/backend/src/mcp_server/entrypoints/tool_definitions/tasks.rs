@@ -61,30 +61,6 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             create_task_schema(),
         ),
         tool_definition(
-            "list_mcp_builtin_catalog",
-            "List builtin MCP capabilities that can be enabled for newly created Task Runner tasks, including use cases, capabilities, and current tool names.",
-            empty_object_schema(),
-        ),
-        tool_definition(
-            "list_external_mcp_configs",
-            "List enabled external MCP configs visible to the current authenticated user. Use the returned id values as external_mcp_config_ids when a new task needs those external tools.",
-            empty_object_schema(),
-        ),
-        tool_definition(
-            "list_available_plugins",
-            "List Plugins enabled for the current user. Without a device it returns cloud-ready components; with a device it also resolves local and locally executed portable components. Use returned id values as selected_plugins when creating execution tasks.",
-            required_object_schema(
-                json!({
-                    "device_id": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Optional exact Local Connector device id for local Plugin availability."
-                    }
-                }),
-                &[],
-            ),
-        ),
-        tool_definition(
             "create_tasks_with_prerequisites",
             "Create multiple internal asynchronous tasks for the current user and project, connecting prerequisite edges with temporary client_ref values plus existing prerequisite_task_ids. Project and execution context are attached automatically. Use this for investigation, implementation and review stages instead of asking the user to provide the project again.",
             create_tasks_with_prerequisites_schema(),

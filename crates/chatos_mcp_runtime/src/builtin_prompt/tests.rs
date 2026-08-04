@@ -56,6 +56,10 @@ fn agent_builder_has_runtime_guidance() {
     assert_eq!(info.requested_builtin_server_names, vec!["agent_builder"]);
     assert_eq!(info.active_builtin_server_names, vec!["agent_builder"]);
     assert!(info.omitted_builtin_server_names.is_empty());
+    let prompt = info.prompt.expect("agent builder prompt");
+    assert!(!prompt.contains("Plugin Management"));
+    assert!(!prompt.contains("设备"));
+    assert!(!prompt.contains("执行位置"));
 }
 
 #[test]
@@ -94,6 +98,8 @@ fn keeps_browser_and_web_sections_together_in_stable_order() {
         .expect("web section");
     assert!(browser_idx < web_idx);
     assert!(prompt.contains("只要问题和当前浏览器页有关"));
+    assert!(!prompt.contains("Local Connector"));
+    assert!(!prompt.contains("设备端"));
 }
 
 #[test]

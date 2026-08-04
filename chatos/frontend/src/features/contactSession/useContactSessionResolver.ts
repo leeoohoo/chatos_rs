@@ -44,8 +44,6 @@ interface SessionResolverApiClient {
     sessionId: string,
     params?: { limit?: number; offset?: number; compact?: boolean },
   ) => Promise<unknown[]>;
-  sessionScopeUsesLocalRuntime?: (projectId?: string | null) => boolean;
-  sessionUsesLocalRuntime?: (sessionId?: string | null) => boolean;
 }
 
 interface UseContactSessionResolverOptions {
@@ -125,12 +123,10 @@ export const useContactSessionResolver = ({
     sessionId: string,
     projectId?: string | null,
   ): boolean => {
-    if (!apiClient?.sessionScopeUsesLocalRuntime || !apiClient.sessionUsesLocalRuntime) {
-      return true;
-    }
-    return apiClient.sessionUsesLocalRuntime(sessionId)
-      === apiClient.sessionScopeUsesLocalRuntime(resolveProjectId(projectId));
-  }, [apiClient, resolveProjectId]);
+    void sessionId;
+    void projectId;
+    return true;
+  }, []);
 
   const isSessionIdStillMatched = useCallback((
     sessionId: string,

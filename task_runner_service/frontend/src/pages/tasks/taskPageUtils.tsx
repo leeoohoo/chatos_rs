@@ -8,7 +8,6 @@ import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   CreateTaskPayload,
   RemoteServerRecord,
-  TaskBuiltinPromptMode,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
@@ -40,12 +39,6 @@ export type TaskFormValues = {
   requiresExecution: boolean;
   prerequisite_task_ids?: string[];
   tagsText?: string;
-  mcpEnabled: boolean;
-  builtinPromptMode: TaskBuiltinPromptMode;
-  builtinPromptLocale: string;
-  enabledBuiltinKinds: string[];
-  defaultRemoteServerId?: string;
-  externalMcpConfigIds?: string[];
   pluginDeviceId?: string;
   pluginWorkspaceId?: string;
   selectedPluginIds?: string[];
@@ -64,7 +57,6 @@ export type RunTaskFormValues = {
 };
 
 export function buildCreateTaskFormValues(
-  locale: string,
   routeProjectId?: string,
 ): TaskFormValues {
   return {
@@ -79,12 +71,6 @@ export function buildCreateTaskFormValues(
     requiresExecution: true,
     prerequisite_task_ids: [],
     tagsText: '',
-    mcpEnabled: true,
-    builtinPromptMode: 'effective',
-    builtinPromptLocale: locale,
-    enabledBuiltinKinds: [],
-    defaultRemoteServerId: undefined,
-    externalMcpConfigIds: [],
     pluginDeviceId: undefined,
     pluginWorkspaceId: undefined,
     selectedPluginIds: [],
@@ -110,12 +96,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     requiresExecution: task.mcp_config.requires_execution ?? true,
     prerequisite_task_ids: task.prerequisite_task_ids || [],
     tagsText: task.tags.join(', '),
-    mcpEnabled: task.mcp_config.enabled,
-    builtinPromptMode: task.mcp_config.builtin_prompt_mode,
-    builtinPromptLocale: task.mcp_config.builtin_prompt_locale,
-    enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
-    defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
-    externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
     pluginDeviceId: task.plugin_config?.device_id || undefined,
     pluginWorkspaceId: task.plugin_config?.workspace_id || undefined,
     selectedPluginIds:
@@ -158,10 +138,6 @@ export function buildTaskPayload(
   if (!schedule) {
     return null;
   }
-
-  const enabledBuiltinKinds = completeEnabledBuiltinKindDependencies(
-    values.enabledBuiltinKinds,
-  );
 
   const selectedPluginIds = values.selectedPluginIds || [];
   const selectedPluginIdSet = new Set(selectedPluginIds);
@@ -225,15 +201,7 @@ export function buildTaskPayload(
       command_invocations: commandInvocations,
     },
     mcp_config: {
-      enabled: values.mcpEnabled,
       requires_execution: values.requiresExecution,
-      init_mode: 'full',
-      builtin_prompt_mode: values.builtinPromptMode,
-      builtin_prompt_locale: values.builtinPromptLocale,
-      enabled_builtin_kinds: enabledBuiltinKinds,
-      default_remote_server_id: values.defaultRemoteServerId,
-      external_mcp_config_ids: values.externalMcpConfigIds || [],
-      selected_skill_ids: [],
     },
   };
 }
@@ -293,9 +261,6 @@ function normalizeTaskProjectId(value?: string | null): string {
   return trimmed && trimmed !== '0' ? trimmed : '-1';
 }
 
-export const CODE_MAINTAINER_READ_KIND = 'CodeMaintainerRead';
-export const CODE_MAINTAINER_WRITE_KIND = 'CodeMaintainerWrite';
-export const PROJECT_MANAGEMENT_KIND = 'ProjectManagement';
 export const taskProfileValues: TaskProfile[] = ['default', 'chatos_plan'];
 
 export const taskProfileColorMap: Record<TaskProfile, string> = {
@@ -312,26 +277,6 @@ export function taskProfileLabel(
     return t('tasks.profile.chatosPlan');
   }
   return t('tasks.profile.default');
-}
-
-export function completeEnabledBuiltinKindDependencies(values?: string[]): string[] {
-  const out: string[] = [];
-  (values || []).forEach((value) => {
-    const trimmed = value.trim();
-    if (trimmed && trimmed !== PROJECT_MANAGEMENT_KIND && !out.includes(trimmed)) {
-      out.push(trimmed);
-    }
-  });
-
-  if (
-    out.includes(CODE_MAINTAINER_WRITE_KIND) &&
-    !out.includes(CODE_MAINTAINER_READ_KIND)
-  ) {
-    const writeIndex = out.indexOf(CODE_MAINTAINER_WRITE_KIND);
-    out.splice(writeIndex >= 0 ? writeIndex : out.length, 0, CODE_MAINTAINER_READ_KIND);
-  }
-
-  return out;
 }
 
 export const statusColorMap: Record<TaskStatus, string> = {

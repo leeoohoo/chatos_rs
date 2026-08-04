@@ -11,8 +11,6 @@ pub mod chat_context;
 pub mod chat_runtime;
 pub mod chat_stream;
 pub mod internal_context_locale;
-pub mod mcp_args;
-pub mod mcp_config_access;
 pub mod mcp_runtime;
 pub mod mcp_tools;
 pub mod messages;

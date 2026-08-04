@@ -97,8 +97,8 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
         .iter()
         .find(|spec| spec.name == "chrome")
         .expect("Chrome spec");
-    assert_eq!(chrome.release_version, "1.4.0");
-    assert_eq!(chrome.artifact_revision, "chrome-1.4.0");
+    assert_eq!(chrome.release_version, "1.5.0");
+    assert_eq!(chrome.artifact_revision, "chrome-1.5.0");
     let computer_use = bundled_plugin_specs()
         .iter()
         .find(|spec| spec.name == "computer-use")
@@ -112,17 +112,14 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
     let (release, snapshots, bundles, catalog) =
         bundled_ponytail_release().expect("bundled Ponytail Release");
 
-    assert_eq!(BUNDLED_MARKETPLACE_REVISION, "2026-07-30.1");
-    assert_eq!(
-        BUNDLED_PONYTAIL_AGENT_KEYS,
-        ["task_runner_run_phase", "task_runner_local_run_phase"]
-    );
+    assert_eq!(BUNDLED_MARKETPLACE_REVISION, "2026-08-01.1");
+    assert_eq!(BUNDLED_PONYTAIL_AGENT_KEYS, ["task_runner_run_phase"]);
     assert_eq!(release.plugin_id, BUNDLED_PONYTAIL_PLUGIN_ID);
     assert_eq!(release.version, BUNDLED_PONYTAIL_VERSION);
     assert_eq!(release.artifact_sha256, BUNDLED_PONYTAIL_ARTIFACT_SHA256);
     assert_eq!(
         release.signature.manifest_sha256,
-        "c1064afe7ff35eae42730d23efaa6b891f3f26ce797c5c83117e58c59e6159c8"
+        "c3a7ff8dde9806732bd088a859e5861da6b07ab23e588723924b4fbe5fcbb138"
     );
     verify_plugin_release_signature(
         PluginReleaseVerificationContext {
@@ -138,7 +135,7 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
     )
     .expect("bundled Ponytail Release signature");
 
-    assert_eq!(release.components.len(), 11);
+    assert_eq!(release.components.len(), 8);
     assert_eq!(snapshots.len(), release.components.len());
     assert_eq!(bundles.len(), release.components.len());
     assert!(release
@@ -167,7 +164,7 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
             .iter()
             .filter(|component| component.kind == PluginComponentKind::Agent)
             .count(),
-        6
+        3
     );
     assert!(bundles.iter().all(|bundle| {
         plugin_cloud_bundle_sha256(bundle).is_ok_and(|sha256| sha256 == bundle.bundle_sha256)
@@ -307,8 +304,8 @@ fn bundled_releases_have_stable_component_and_content_snapshots() {
         (
             "chrome",
             (
-                "dfcc537cd752da9dedf21bb12ff98cf09d7b7e04d818393526e5e42a957204df",
-                "840ca2f841353ae6be6995eda720ce1639067ec95c64eec2e52e76972bcf5e12",
+                "901daf87ce441562b4ac01c8c06e2515d887fca6839bea6b256a08459b28e314",
+                "04898fd5970dfa23a83599279a2e6425eacf82b92b78bf83864e78c4b890c58c",
             ),
         ),
         (

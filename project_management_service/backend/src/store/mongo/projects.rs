@@ -312,7 +312,7 @@ mod execution_plane_tests {
     use super::*;
 
     #[test]
-    fn project_source_type_selects_execution_plane() {
+    fn every_project_source_uses_cloud_orchestration() {
         assert_eq!(ProjectSourceType::default(), ProjectSourceType::Cloud);
         assert_eq!(
             ProjectExecutionPlane::default(),
@@ -324,11 +324,11 @@ mod execution_plane_tests {
         );
         assert_eq!(
             ProjectSourceType::Local.execution_plane(),
-            ProjectExecutionPlane::LocalConnector
+            ProjectExecutionPlane::Cloud
         );
         assert_eq!(
             ProjectSourceType::LocalConnector.execution_plane(),
-            ProjectExecutionPlane::LocalConnector
+            ProjectExecutionPlane::Cloud
         );
     }
 }

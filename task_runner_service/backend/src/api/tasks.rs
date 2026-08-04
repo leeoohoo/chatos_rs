@@ -20,7 +20,7 @@ pub(super) use self::memory::{
 pub(super) use self::mutations::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
     delete_task, get_task, get_task_mcp_resolution, preview_task_mcp_prompt, record_task_process,
-    update_task, update_task_mcp,
+    update_task,
 };
 
 #[derive(Debug, Default, Deserialize)]

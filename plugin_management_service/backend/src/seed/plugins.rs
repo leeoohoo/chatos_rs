@@ -26,19 +26,21 @@ mod specs;
 
 use specs::*;
 
+mod signing;
+use signing::*;
+
 const BUNDLED_MARKETPLACE_ID: &str = "chatos-bundled";
 const BUNDLED_PUBLISHER_ID: &str = "chatos";
 const BUNDLED_KEY_ID: &str = "chatos-bundled-attestation-v1";
 const BUNDLED_SIGNING_SEED_CONTEXT: &[u8] = b"chatos-bundled-attestation-seed-v1";
 const PENDING_LICENSE_ID: &str = "LicenseRef-Pending-Redistribution-Review";
-const BUNDLED_MARKETPLACE_REVISION: &str = "2026-07-30.1";
+const BUNDLED_MARKETPLACE_REVISION: &str = "2026-08-01.1";
 pub(super) const BUNDLED_PONYTAIL_PLUGIN_ID: &str = "bundled-plugin-ponytail";
-pub(super) const BUNDLED_PONYTAIL_AGENT_KEYS: [&str; 2] =
-    ["task_runner_run_phase", "task_runner_local_run_phase"];
-const BUNDLED_PONYTAIL_VERSION: &str = "4.8.4-chatos.1";
-const BUNDLED_PONYTAIL_RELEASE_EPOCH: &str = "2026-07-30T00:00:00Z";
+pub(super) const BUNDLED_PONYTAIL_AGENT_KEYS: [&str; 1] = ["task_runner_run_phase"];
+const BUNDLED_PONYTAIL_VERSION: &str = "4.8.4-chatos.2";
+const BUNDLED_PONYTAIL_RELEASE_EPOCH: &str = "2026-08-01T00:00:00Z";
 const BUNDLED_PONYTAIL_ARTIFACT_SHA256: &str =
-    "3bd6748852f863788e725a1bfac49d491d5ba305c9808cf59afa0cea457a5e11";
+    "f79450f32f69fe2e23f145717e8dc381ecf42a9b72fd2cc1c8ec1194715820b1";
 
 pub(super) async fn seed_bundled_plugins(
     store: &AppStore,
@@ -769,78 +771,6 @@ fn validate_plugin_specs(skills: &HashMap<String, SkillRecord>) -> Result<(), St
         ));
     }
     Ok(())
-}
-
-fn bundled_release_signature(
-    plugin_id: &str,
-    version: &str,
-    manifest_sha256: String,
-    artifact_sha256: &str,
-    signed_at: &str,
-) -> Result<PluginReleaseSignature, String> {
-    let keypair = bundled_signing_keypair()?;
-    let mut signature = PluginReleaseSignature {
-        key_id: BUNDLED_KEY_ID.to_string(),
-        publisher_id: BUNDLED_PUBLISHER_ID.to_string(),
-        algorithm: PLUGIN_SIGNATURE_ALGORITHM_ED25519.to_string(),
-        marketplace_id: BUNDLED_MARKETPLACE_ID.to_string(),
-        signature_base64: String::new(),
-        signed_at: signed_at.to_string(),
-        manifest_sha256,
-    };
-    let payload = plugin_release_signing_payload(
-        PluginReleaseVerificationContext {
-            plugin_id,
-            version,
-            marketplace_id: BUNDLED_MARKETPLACE_ID,
-            publisher_id: BUNDLED_PUBLISHER_ID,
-            artifact_sha256,
-        },
-        &signature,
-    )
-    .map_err(|err| err.to_string())?;
-    signature.signature_base64 = STANDARD.encode(keypair.sign(payload.as_slice()).as_ref());
-    Ok(signature)
-}
-
-fn bundled_signing_key() -> Result<SigningKeyRef, String> {
-    let keypair = bundled_signing_keypair()?;
-    Ok(SigningKeyRef {
-        key_id: BUNDLED_KEY_ID.to_string(),
-        publisher_id: BUNDLED_PUBLISHER_ID.to_string(),
-        algorithm: PLUGIN_SIGNATURE_ALGORITHM_ED25519.to_string(),
-        public_key_base64: STANDARD.encode(keypair.public_key().as_ref()),
-        usages: vec![PLUGIN_SIGNING_KEY_USAGE_RELEASE.to_string()],
-        valid_from: BUNDLED_RELEASE_EPOCH.to_string(),
-        valid_until: None,
-        revoked_at: None,
-    })
-}
-
-fn bundled_signing_keypair() -> Result<Ed25519KeyPair, String> {
-    // This deterministic key only attests compile-time bundled content. Network artifacts are
-    // never allowed to inherit the bundled marketplace trust scope.
-    let seed = Sha256::digest(BUNDLED_SIGNING_SEED_CONTEXT);
-    Ed25519KeyPair::from_seed_unchecked(seed.as_slice())
-        .map_err(|_| "construct deterministic bundled Plugin attestation key failed".to_string())
-}
-
-fn bundled_plugin_id(name: &str) -> String {
-    format!("bundled-plugin-{name}")
-}
-
-fn bundled_release_id(name: &str, version: &str) -> String {
-    let version = version
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    format!("bundled-release-{name}-{version}")
 }
 
 #[cfg(test)]

@@ -1,24 +1,23 @@
 # API Path Baseline
 
-main_backend_endpoint_count=259
-total_endpoint_count=259
+main_backend_endpoint_count=261
+total_endpoint_count=261
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
 DELETE /api/ai-model-configs/{config_id}
 DELETE /api/ai-model-providers/{provider_id}
 DELETE /api/contacts/{contact_id}
-DELETE /api/conversations/{conversation_id}/mcp-servers/{mcp_config_id}
 DELETE /api/conversations/{conversation_id}/summaries
 DELETE /api/conversations/{conversation_id}/summaries/{summary_id}
 DELETE /api/conversations/{id}
-DELETE /api/mcp-configs/{config_id}
 DELETE /api/memory-agents/{agent_id}
 DELETE /api/memory/v1/messages/{message_id}
 DELETE /api/memory/v1/sessions/{session_id}
 DELETE /api/memory/v1/sessions/{session_id}/messages
 DELETE /api/memory/v1/sessions/{session_id}/summaries/{summary_id}
 DELETE /api/messages/{id}
+DELETE /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}
 DELETE /api/notepad/folders
 DELETE /api/notepad/notes/{note_id}
 DELETE /api/projects/{id}
@@ -53,7 +52,6 @@ GET /api/contacts/{contact_id}/project-memories/{project_id}
 GET /api/contacts/{contact_id}/projects
 GET /api/conversations
 GET /api/conversations/{conversation_id}/compact-history
-GET /api/conversations/{conversation_id}/mcp-servers
 GET /api/conversations/{conversation_id}/messages
 GET /api/conversations/{conversation_id}/review-repair
 GET /api/conversations/{conversation_id}/runtime-settings
@@ -79,8 +77,6 @@ GET /api/git/summary
 GET /api/local-connectors/devices
 GET /api/local-connectors/fs/list
 GET /api/local-connectors/workspaces
-GET /api/mcp-configs
-GET /api/mcp-configs/{config_id}/resource/config
 GET /api/memory-agents
 GET /api/memory-agents/{agent_id}
 GET /api/memory-agents/{agent_id}/runtime-context
@@ -102,6 +98,9 @@ GET /api/messages/{message_id}/task-runner/graph/runs/{run_id}
 GET /api/messages/{message_id}/task-runner/runs/{run_id}
 GET /api/messages/{message_id}/task-runner/runs/{run_id}/output/changes
 GET /api/messages/{message_id}/task-runner/runs/{run_id}/output/diff
+GET /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/assets/{*asset_path}
+GET /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts
+GET /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts/{artifact_id}
 GET /api/messages/{message_id}/task-runner/tasks/{task_id}
 GET /api/notepad/folders
 GET /api/notepad/init
@@ -109,12 +108,15 @@ GET /api/notepad/notes
 GET /api/notepad/notes/{note_id}
 GET /api/notepad/search
 GET /api/notepad/tags
+GET /api/plugin-artifacts/workbench/{session_id}/{artifact_id}/download
+GET /api/plugin-ui/workbench/{session_id}/{*asset_path}
 GET /api/projects
 GET /api/projects/{id}
 GET /api/projects/{id}/contacts
 GET /api/projects/{id}/contacts/lock
 GET /api/projects/{id}/plan
 GET /api/projects/{id}/requirements/{requirement_id}/documents
+GET /api/projects/{id}/requirements/{requirement_id}/execution-plan
 GET /api/projects/{id}/requirements/{requirement_id}/work-items
 GET /api/projects/{id}/run/catalog
 GET /api/projects/{id}/run/environment
@@ -127,13 +129,10 @@ GET /api/remote-connections/{id}
 GET /api/remote-connections/{id}/sftp/list
 GET /api/remote-connections/{id}/sftp/transfer/{transfer_id}
 GET /api/remote-connections/{id}/ws
-GET /api/skills
-GET /api/skills/plugins
-GET /api/skills/plugins/detail
-GET /api/skills/{skill_id}
 GET /api/system-context/active
 GET /api/system-contexts
 GET /api/task-manager/tasks
+GET /api/task-runner/available-plugins
 GET /api/terminals
 GET /api/terminals/{id}
 GET /api/terminals/{id}/history
@@ -178,7 +177,6 @@ POST /api/code-nav/document-symbols
 POST /api/code-nav/references
 POST /api/contacts
 POST /api/conversations
-POST /api/conversations/{conversation_id}/mcp-servers
 POST /api/conversations/{conversation_id}/messages
 POST /api/conversations/{conversation_id}/review-repair
 POST /api/conversations/{conversation_id}/task-runner/active-message-tasks
@@ -203,8 +201,6 @@ POST /api/git/unstage
 POST /api/local-connectors/fs/mkdir
 POST /api/local-connectors/projects
 POST /api/local-connectors/terminal/exec
-POST /api/mcp-configs
-POST /api/mcp-configs/resource/config
 POST /api/memory-agents
 POST /api/memory/project-agent-links/sync
 POST /api/memory/projects/sync
@@ -213,12 +209,18 @@ POST /api/memory/v1/sessions
 POST /api/memory/v1/sessions/{session_id}/messages
 POST /api/memory/v1/sessions/{session_id}/messages/batch
 POST /api/messages
+POST /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions
+POST /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts
+POST /api/messages/{message_id}/task-runner/runs/{run_id}/retry
 POST /api/notepad/folders
 POST /api/notepad/notes
-POST /api/projects
 POST /api/projects/cloud
 POST /api/projects/{id}/contacts
+POST /api/projects/{id}/requirements/{requirement_id}/confirm-execution
 POST /api/projects/{id}/requirements/{requirement_id}/execute
+POST /api/projects/{id}/requirements/{requirement_id}/pause
+POST /api/projects/{id}/requirements/{requirement_id}/rerun
+POST /api/projects/{id}/requirements/{requirement_id}/resume
 POST /api/projects/{id}/requirements/{requirement_id}/stop
 POST /api/projects/{id}/run/analyze
 POST /api/projects/{id}/run/default
@@ -236,8 +238,6 @@ POST /api/remote-connections/{id}/sftp/transfer/start
 POST /api/remote-connections/{id}/sftp/transfer/{transfer_id}/cancel
 POST /api/remote-connections/{id}/sftp/upload
 POST /api/remote-connections/{id}/test
-POST /api/skills/import-git
-POST /api/skills/plugins/install
 POST /api/system-contexts
 POST /api/system-contexts/ai/evaluate
 POST /api/system-contexts/ai/generate
@@ -247,15 +247,17 @@ POST /api/task-manager/tasks/{task_id}/complete
 POST /api/terminals
 POST /api/terminals/dispatch-command
 POST /api/terminals/{id}/interrupt
+POST /internal/mcp-management/mcp/browser_tools/sessions/{session_id}/close
+POST /internal/mcp-management/mcp/{system_key}
 PUT /api/ai-model-configs/{config_id}
 PUT /api/ai-model-providers/{provider_id}
 PUT /api/ai-model-settings
 PUT /api/conversations/{conversation_id}/runtime-settings
 PUT /api/conversations/{id}
-PUT /api/mcp-configs/{config_id}
 PUT /api/memory/v1/sessions/{session_id}/messages/{message_id}/sync
 PUT /api/memory/v1/sessions/{session_id}/sync
 PUT /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/{turn_id}/sync
+PUT /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts/{artifact_id}
 PUT /api/projects/{id}
 PUT /api/projects/{id}/run/environment
 PUT /api/projects/{id}/runtime-environment/settings

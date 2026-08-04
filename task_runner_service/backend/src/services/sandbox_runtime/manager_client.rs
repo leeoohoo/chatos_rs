@@ -16,13 +16,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::AppConfig;
 use crate::models::{RunOutputChangeManifest, TaskRecord, TaskRunRecord};
 
 use super::workspace::{
     copy_workspace_to_sandbox, sandbox_baseline_workspace, write_generated_config_files,
 };
 use super::{SandboxEnvironmentPlan, SandboxRuntimeContext};
+
+mod auth;
 #[derive(Debug, Serialize)]
 struct CreateSandboxLeaseRequest {
     tenant_id: String,
@@ -56,6 +57,12 @@ struct StartSandboxEnvironmentRequest<'a> {
     services: &'a [super::SandboxEnvironmentServicePlan],
 }
 
+#[derive(Debug, Serialize)]
+struct RenewSandboxEnvironmentLeaseRequest<'a> {
+    lease_id: &'a str,
+    ttl_seconds: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateSandboxLeaseResponse {
     pub(super) lease_id: String,
@@ -69,7 +76,6 @@ pub(super) struct CreateSandboxLeaseResponse {
     #[serde(default)]
     pub(super) status: Option<String>,
     pub(super) agent_endpoint: Option<String>,
-    pub(super) agent_token: Option<String>,
     pub(super) run_workspace: String,
     pub(super) expires_at: String,
     #[serde(default)]
@@ -102,8 +108,6 @@ struct SandboxEnvironmentLeaseResponse {
     #[serde(default)]
     services: Vec<SandboxEnvironmentServiceResponse>,
     #[serde(default)]
-    agent_token: Option<String>,
-    #[serde(default)]
     effective_policy: Option<EffectiveSandboxPolicy>,
     #[serde(default)]
     effective_permissions: Option<EffectivePermissionSnapshot>,
@@ -127,7 +131,6 @@ impl SandboxEnvironmentLeaseResponse {
                 .or_else(|| execution.and_then(|service| service.backend_id.clone())),
             status: Some(self.status),
             agent_endpoint: execution.and_then(|service| service.agent_endpoint.clone()),
-            agent_token: self.agent_token,
             run_workspace: self.run_workspace,
             expires_at: self.expires_at,
             last_error: None,
@@ -258,6 +261,24 @@ pub(super) struct ReleaseSandboxResponse {
     pub(super) change_manifest: Option<RunOutputChangeManifest>,
 }
 
+impl ReleaseSandboxResponse {
+    pub(super) fn redact_local_paths(&mut self) {
+        self.output_workspace = None;
+        if self.output_error.is_some() {
+            self.output_error = Some("local sandbox output export failed".to_string());
+        }
+        if let Some(manifest) = self.change_manifest.as_mut() {
+            manifest.output_workspace = None;
+            manifest.manifest_path = None;
+            for file in &mut manifest.files {
+                file.diff_available = false;
+                file.diff_ref = None;
+            }
+            manifest.counts.diff_available = 0;
+        }
+    }
+}
+
 pub(super) struct SandboxHealthResult {
     pub(super) ok: bool,
     pub(super) message: String,
@@ -272,8 +293,15 @@ pub(super) struct SandboxManagerClient {
 
 #[derive(Debug, Clone)]
 pub(super) struct SandboxManagerAuth {
-    pub(super) client_id: String,
     pub(super) client_key: String,
+    mode: SandboxManagerAuthMode,
+    owner_user_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SandboxManagerAuthMode {
+    Cloud,
+    LocalConnector,
 }
 
 impl SandboxManagerClient {
@@ -326,7 +354,7 @@ impl SandboxManagerClient {
             ttl_seconds,
             policy,
         };
-        let idempotency_key = format!("sandbox-lease:{}", run.id);
+        let idempotency_key = sandbox_lease_idempotency_key("sandbox-lease", run);
         let url = format!("{}/api/sandboxes/leases", self.base_url);
         for attempt in 0..6 {
             let response = self
@@ -383,7 +411,7 @@ impl SandboxManagerClient {
             )?
             .header(
                 "x-idempotency-key",
-                format!("sandbox-environment-lease:{}", run.id),
+                sandbox_lease_idempotency_key("sandbox-environment-lease", run),
             )
             .json(&payload)
             .send()
@@ -618,6 +646,32 @@ impl SandboxManagerClient {
         Ok(SandboxHealthResult { ok, message, raw })
     }
 
+    pub(super) async fn renew_environment_lease(
+        &self,
+        context: &SandboxRuntimeContext,
+        ttl_seconds: u64,
+    ) -> Result<String, String> {
+        if !context.is_environment {
+            return Ok(context.expires_at.clone());
+        }
+        let payload = RenewSandboxEnvironmentLeaseRequest {
+            lease_id: context.lease_id.as_str(),
+            ttl_seconds,
+        };
+        let response = self
+            .apply_auth(self.client.post(format!(
+                "{}/api/sandbox-environments/{}/renew",
+                self.base_url, context.sandbox_id
+            )))?
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox environment renewal failed: {err}"))?;
+        let renewed: SandboxEnvironmentLeaseResponse =
+            decode_success_json(response, "sandbox environment renewal request").await?;
+        Ok(renewed.expires_at)
+    }
+
     pub(super) async fn release(
         &self,
         context: &SandboxRuntimeContext,
@@ -692,6 +746,22 @@ impl SandboxManagerClient {
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder, String> {
         if let Some(auth) = self.auth.as_ref() {
+            if auth.mode == SandboxManagerAuthMode::LocalConnector {
+                let owner_user_id = auth.owner_user_id.as_deref().ok_or_else(|| {
+                    "Local Connector sandbox auth is missing owner user id".to_string()
+                })?;
+                let token = chatos_service_runtime::issue_internal_service_token(
+                    auth.client_key.as_str(),
+                    "task-runner",
+                    "local-connector-service",
+                    "sandbox.service",
+                    60,
+                )?;
+                return Ok(request
+                    .header("x-local-connector-caller", "task-runner")
+                    .header("x-local-connector-internal-token", token)
+                    .header("x-local-connector-owner-user-id", owner_user_id));
+            }
             let token = chatos_service_runtime::issue_internal_service_token(
                 auth.client_key.as_str(),
                 "task-runner",
@@ -706,6 +776,10 @@ impl SandboxManagerClient {
             Ok(request)
         }
     }
+}
+
+fn sandbox_lease_idempotency_key(prefix: &str, run: &TaskRunRecord) -> String {
+    format!("{prefix}:{}:attempt:{}", run.id, run.attempt.max(1))
 }
 
 async fn read_error_body(response: reqwest::Response) -> String {
@@ -724,21 +798,6 @@ where
     read_response_json_limited::<T>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| format!("decode {label} response failed: {err}"))
-}
-
-impl SandboxManagerAuth {
-    pub(super) fn from_config(config: &AppConfig) -> Option<Self> {
-        match (
-            config.sandbox_manager_client_id.clone(),
-            config.sandbox_manager_client_key.clone(),
-        ) {
-            (Some(_client_id), Some(client_key)) => Some(Self {
-                client_id: "task-runner".to_string(),
-                client_key,
-            }),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

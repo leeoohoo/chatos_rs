@@ -3,8 +3,9 @@
 
 use axum::http::StatusCode;
 use chatos_project_execution::{
-    read_planning_feedback_history, ExecutionPlanIdentity, ExecutionPlane, STATUS_PAUSED,
-    STATUS_PLANNING, STATUS_PLANNING_STARTED, STATUS_STOPPED, STATUS_STOPPING,
+    read_planning_feedback_history, requirement_execution_recovery_state,
+    requirement_execution_status_is_stopped_terminal, ExecutionPlanIdentity, ExecutionPlane,
+    STATUS_PAUSED, STATUS_PLANNING, STATUS_PLANNING_STARTED, STATUS_STOPPED, STATUS_STOPPING,
 };
 use serde_json::{json, Value};
 
@@ -91,6 +92,9 @@ pub(super) async fn get_requirement_execution_plan_inner(
                     "requirement_id": requirement_id,
                     "conversation_id": identity.conversation_id,
                     "execution_group_id": identity.execution_group_id,
+                    "recovery_action": "none",
+                    "recovery_reason": "source_missing",
+                    "replace_previous_batch": false,
                 }));
             }
             Err(error) => return Err(error),
@@ -125,6 +129,9 @@ pub(super) async fn get_requirement_execution_plan_inner(
             "execution_plane": ExecutionPlane::Cloud.as_str(),
             "project_id": context.project.id,
             "requirement_id": requirement_id,
+            "recovery_action": "none",
+            "recovery_reason": "source_missing",
+            "replace_previous_batch": false,
         }));
     };
     let current_links = links
@@ -257,7 +264,7 @@ pub(super) async fn load_cloud_execution_source_message(
     Ok(message)
 }
 
-pub(super) fn execution_message_status(message: &crate::models::message::Message) -> String {
+pub(crate) fn execution_message_status(message: &crate::models::message::Message) -> String {
     let task_runner = message
         .metadata
         .as_ref()
@@ -284,10 +291,7 @@ pub(super) fn execution_message_is_stopped_terminal(
 }
 
 pub(super) fn execution_status_is_stopped_terminal(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        STATUS_STOPPED | "cancelled" | "canceled"
-    )
+    requirement_execution_status_is_stopped_terminal(status)
 }
 
 fn execution_status_is_stop_locked(status: &str) -> bool {
@@ -341,6 +345,15 @@ fn build_cloud_execution_plan_response(
         .or_else(|| value_string(execution.unwrap_or(&Value::Null), "failure_reason"));
     let failed_at = value_string(task_runner.unwrap_or(&Value::Null), "failed_at")
         .or_else(|| value_string(execution.unwrap_or(&Value::Null), "failed_at"));
+    let task_count = links.len();
+    let has_started_runs = links.iter().any(|link| link.task_runner_run_id.is_some());
+    let recovery = requirement_execution_recovery_state(
+        status.as_str(),
+        task_count,
+        has_started_runs,
+        true,
+        false,
+    );
     json!({
         "found": true,
         "execution_plane": ExecutionPlane::Cloud.as_str(),
@@ -360,8 +373,11 @@ fn build_cloud_execution_plan_response(
         "status": status,
         "confirmation_status": confirmation_status,
         "execution_paused": execution_paused,
-        "task_count": links.len(),
-        "has_started_runs": links.iter().any(|link| link.task_runner_run_id.is_some()),
+        "task_count": task_count,
+        "has_started_runs": has_started_runs,
+        "recovery_action": recovery.action,
+        "recovery_reason": recovery.reason,
+        "replace_previous_batch": recovery.replace_previous_batch,
         "failure_kind": failure_kind,
         "failure_reason": failure_reason,
         "failed_at": failed_at,
@@ -381,7 +397,7 @@ fn is_cloud_execution_planner_status_pending(status: &str) -> bool {
     )
 }
 
-pub(super) fn cloud_execution_planner_message_is_stale(
+pub(crate) fn cloud_execution_planner_message_is_stale(
     message: &crate::models::message::Message,
     has_execution_links: bool,
     now: chrono::DateTime<chrono::Utc>,
@@ -399,7 +415,7 @@ pub(super) fn cloud_execution_planner_message_is_stale(
         >= STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS
 }
 
-async fn repair_stale_cloud_execution_planner_message(
+pub(crate) async fn repair_stale_cloud_execution_planner_message(
     mut message: crate::models::message::Message,
     no_execution_links: bool,
 ) -> Result<crate::models::message::Message, HandlerError> {

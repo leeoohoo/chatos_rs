@@ -18,18 +18,17 @@ use super::{
     delete_managed_requirements_assignment, delete_managed_requirements_policy,
     delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
     get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
-    get_managed_memory_policy, get_managed_requirements, health_handler, heartbeat_device,
-    list_devices, list_local_mcps, list_managed_requirements_assignments,
-    list_managed_requirements_policies, list_plugin_install_sources, list_project_bindings,
-    list_sandbox_pairings, list_user_skills, list_workspaces, mcp_relay, memory_engine_proxy,
-    plugin_artifact_create_relay, plugin_artifact_list_relay, plugin_artifact_read_relay,
-    plugin_artifact_update_relay, plugin_cancel_relay, plugin_execute_relay, plugin_prepare_relay,
-    plugin_ui_asset_relay, proxy_plugin_release_artifact, require_auth,
-    resolve_local_command_approval_capabilities, resolve_local_runtime_capabilities,
-    resolve_model_runtime, revoke_device, sandbox_facade_path, sandbox_facade_root,
-    skill_cancel_relay, skill_execute_relay, skill_prepare_relay, sync_user_skill_inventory,
-    terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
-    update_local_mcp, update_local_mcp_status, update_managed_requirements_assignment,
+    get_managed_requirements, health_handler, heartbeat_device, list_devices, list_local_mcps,
+    list_managed_requirements_assignments, list_managed_requirements_policies,
+    list_plugin_install_sources, list_project_bindings, list_sandbox_pairings, list_user_skills,
+    list_workspaces, mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
+    plugin_artifact_read_relay, plugin_artifact_update_relay, plugin_cancel_relay,
+    plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
+    proxy_plugin_release_artifact, require_auth, resolve_local_runtime_capabilities, revoke_device,
+    sandbox_facade_path, sandbox_facade_root, skill_cancel_relay, skill_execute_relay,
+    skill_prepare_relay, sync_user_skill_inventory, system_stats_handler, terminal_exec_relay,
+    terminal_input_relay, terminal_session_create_relay, terminal_ws_relay, update_local_mcp,
+    update_local_mcp_status, update_managed_requirements_assignment,
     update_managed_requirements_policy, update_plugin_preference, update_project_binding,
     update_sandbox_pairing, update_user_skill_preference, update_workspace,
     user_service_protected_proxy, user_service_public_proxy, AuthState,
@@ -85,6 +84,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/local-connectors/devices/{id}/connect",
             get(connect_device),
+        )
+        .route(
+            "/api/local-connectors/system/stats",
+            get(system_stats_handler),
         )
         .route(
             "/api/local-connectors/workspaces",
@@ -144,14 +147,6 @@ pub fn build_router(state: AppState) -> Router {
         )
         .merge(plugin_artifact_routes())
         .route(
-            "/api/local-connectors/model-runtime/{model_config_id}",
-            get(resolve_model_runtime),
-        )
-        .route(
-            "/api/plugin-management/agent-capabilities/local-command-approval",
-            get(resolve_local_command_approval_capabilities),
-        )
-        .route(
             "/api/plugin-management/agent-capabilities/{agent_key}",
             get(resolve_local_runtime_capabilities),
         )
@@ -162,10 +157,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/plugin-management/agent-prompts/bundle",
             get(get_agent_prompt_bundle),
-        )
-        .route(
-            "/api/local-connectors/config/memory-policy",
-            get(get_managed_memory_policy),
         )
         .route(
             "/api/local-connectors/config/runtime",
@@ -203,10 +194,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/plugin-management/skills/{skill_id}/preference",
             put(update_user_skill_preference),
-        )
-        .route(
-            "/api/local-connectors/memory-engine/{*path}",
-            any(memory_engine_proxy),
         )
         .route(
             "/api/local-connectors/relay/{device_id}/terminal/exec",

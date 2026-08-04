@@ -6,7 +6,8 @@ use tracing::{info, warn};
 
 use crate::error_policy::{
     handle_transient_retry_with_abort, is_context_length_exceeded_error,
-    is_missing_tool_call_error, is_request_body_too_large_error, should_retry_without_stream,
+    is_missing_tool_call_error, is_request_body_too_large_error, is_response_parse_error,
+    is_upstream_connection_interrupted_error, should_retry_without_stream,
 };
 use crate::traits::ModelRequest;
 use crate::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
@@ -17,8 +18,20 @@ use super::options::AiRuntimeOptions;
 pub(super) enum ModelRequestErrorAction {
     ReplayMissingToolTurn(Value),
     ContextRecovered,
-    RetryRequest { disable_stream: bool },
+    RetryRequest {
+        disable_stream: bool,
+        downgrade_thinking: bool,
+    },
     Fail(String),
+}
+
+pub(super) fn downgraded_thinking_level(level: Option<&str>) -> Option<String> {
+    match level.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("xhigh" | "max") => Some("high".to_string()),
+        Some("high") => Some("medium".to_string()),
+        Some("medium") => Some("low".to_string()),
+        _ => None,
+    }
 }
 
 pub(super) async fn handle_model_request_error(
@@ -98,6 +111,8 @@ pub(super) async fn handle_model_request_error(
         Ok(true) => {
             return Ok(ModelRequestErrorAction::RetryRequest {
                 disable_stream: provider_stream && should_retry_without_stream(err.as_str()),
+                downgrade_thinking: is_response_parse_error(err.as_str())
+                    || is_upstream_connection_interrupted_error(err.as_str()),
             });
         }
         Ok(false) => {}

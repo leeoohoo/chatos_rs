@@ -107,7 +107,7 @@ pub(in super::super) fn resolved_command_plugin(requires_confirmation: bool) -> 
                     "description": "Review the current change",
                     "argumentHint": "[path]",
                     "requiresConfirmation": {requires_confirmation},
-                    "targetAgent": "task_runner_local_run_phase",
+                    "targetAgent": "task_runner_run_phase",
                     "allowedTools": ["browser_tools_browser_snapshot"]
                 }}],
                 "interface": {{

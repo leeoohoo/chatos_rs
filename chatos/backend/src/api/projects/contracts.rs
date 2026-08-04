@@ -17,18 +17,8 @@ pub(super) struct ProjectQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct CreateProjectRequest {
-    pub(super) name: Option<String>,
-    pub(super) root_path: Option<String>,
-    pub(super) git_url: Option<String>,
-    pub(super) description: Option<String>,
-    pub(super) user_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct UpdateProjectRequest {
     pub(super) name: Option<String>,
-    pub(super) root_path: Option<String>,
     pub(super) git_url: Option<String>,
     pub(super) description: Option<String>,
 }
@@ -37,14 +27,6 @@ pub(super) struct UpdateProjectRequest {
 pub(super) struct ProjectContactsQuery {
     pub(super) limit: Option<i64>,
     pub(super) offset: Option<i64>,
-    #[serde(default)]
-    pub(super) local_runtime: bool,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct LocalProjectRequestQuery {
-    #[serde(default)]
-    pub(super) local_runtime: bool,
 }
 
 #[derive(Debug, Deserialize)]

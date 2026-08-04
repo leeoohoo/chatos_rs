@@ -8,11 +8,11 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use chatos_mcp::{
-    build_shared_builtin_tool_service, AskUserOptions, AskUserService, AskUserStoreRef,
-    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
-    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef,
-    SharedBuiltinToolService, TerminalControllerOptions, TerminalControllerService,
-    TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+    build_shared_builtin_tool_service, AgentBuilderOptions, AgentBuilderService, AskUserOptions,
+    AskUserService, AskUserStoreRef, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
+    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
+    RemoteConnectionControllerStoreRef, SharedBuiltinToolService, TerminalControllerOptions,
+    TerminalControllerService, TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };
 use chatos_mcp_runtime::{
     builtin_kind_by_any, BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer,
@@ -33,7 +33,6 @@ mod registry;
 
 pub(super) use self::builders::build_task_runner_builtin_provider;
 use self::project_management::{ProjectManagementBuiltinService, ProjectManagementOptions};
-pub(super) use self::provider::DisabledBuiltinProvider;
 pub(super) use self::registry::build_builtin_registry;
 
 #[cfg(test)]
@@ -93,7 +92,13 @@ mod tests {
             chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
             local_connector_internal_api_secret: None,
+            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_service_request_timeout: Duration::from_millis(5_000),
+            plugin_relay_request_timeout: Duration::from_millis(60_000),
+            plugin_hook_relay_timeout: Duration::from_millis(330_000),
+            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -107,7 +112,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_controller_uses_server_workspace_dir() {
+    async fn terminal_controller_hides_server_workspace_dir() {
         let default_workspace = unique_temp_dir("default");
         let task_workspace = unique_temp_dir("task");
         std::fs::create_dir_all(&default_workspace).expect("create default workspace");
@@ -134,7 +139,6 @@ mod tests {
 
         let provider =
             build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
-                .expect("build provider")
                 .expect("terminal provider");
         let tools = provider.list_tools();
         let execute = tools
@@ -146,7 +150,8 @@ mod tests {
             .and_then(Value::as_str)
             .expect("tool description");
 
-        assert!(description.contains("/workspace"));
+        assert!(description.contains("current project workspace"));
+        assert!(!description.contains("/workspace"));
         assert!(!description.contains(task_workspace.to_string_lossy().as_ref()));
         assert!(!description.contains(default_workspace.to_string_lossy().as_ref()));
     }
@@ -181,7 +186,6 @@ mod tests {
 
         let provider =
             build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
-                .expect("build provider")
                 .expect("project management provider");
         let tools = provider.list_tools();
 

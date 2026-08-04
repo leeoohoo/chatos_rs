@@ -70,25 +70,22 @@ describe('requirement execution process phase', () => {
 
   it('starts a fresh plan after the previous stopped batch was discarded', () => {
     expect(shouldReplaceRequirementExecutionBatch({
-      phase: 'stopped',
       planDiscarded: true,
-      taskCount: 3,
+      replacePreviousBatch: true,
     })).toBe(false);
     expect(shouldReplaceRequirementExecutionBatch({
-      phase: 'stopped',
       planDiscarded: false,
-      taskCount: 0,
+      replacePreviousBatch: false,
     })).toBe(false);
     expect(shouldReplaceRequirementExecutionBatch({
-      phase: 'stopped',
       planDiscarded: false,
-      taskCount: 3,
+      replacePreviousBatch: true,
     })).toBe(true);
   });
 
-  it('renders a stopped Task Runner as static instead of active', () => {
+  it('renders a stopped execution as static instead of active', () => {
     expect(runnerProcessEntryForPhase('stopped')).toEqual({
-      title: 'Task Runner 执行已取消',
+      title: '本次执行已取消',
       detail: '当前批次已经整体取消，不会继续调度或执行后续任务',
       state: 'stopped',
     });
@@ -125,7 +122,7 @@ describe('requirement execution process phase', () => {
       taskStatuses: ['running', 'queued'],
     })).toBe('paused');
     expect(runnerProcessEntryForPhase('paused')).toEqual({
-      title: 'Task Runner 已暂停调度',
+      title: '后续任务已暂停',
       detail: '运行中的节点可正常收尾，但不会启动新的节点',
       state: 'active',
     });
@@ -159,37 +156,43 @@ describe('requirement execution process phase', () => {
       actuallyStarted: true,
       hasActiveRuns: false,
       phase: 'stopped',
+      recoveryAction: 'rerun',
     })).toEqual({ canRegenerate: false, canRevise: true, canRerun: true });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: true,
       phase: 'stopped',
+      recoveryAction: 'rerun',
     })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: false,
       phase: 'failed',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: false,
       hasActiveRuns: false,
       phase: 'failed',
+      recoveryAction: 'regenerate',
     })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: true,
       phase: 'running',
+      recoveryAction: 'none',
     })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: false,
       phase: 'completed',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
   });
 
   it('keeps a completed batch as history when feedback starts a new plan', () => {
@@ -201,6 +204,10 @@ describe('requirement execution process phase', () => {
       phase: 'awaiting_confirmation',
       replacePreviousBatch: true,
     })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'running',
+      replacePreviousBatch: true,
+    })).toBe(false);
   });
 
   it('restores a persisted cloud or local planning batch for reopening from Plan', () => {
@@ -216,6 +223,9 @@ describe('requirement execution process phase', () => {
         status: 'awaiting_confirmation',
         has_started_runs: false,
         execution_paused: true,
+        recovery_action: 'none',
+        recovery_reason: 'not_recoverable_in_current_state',
+        replace_previous_batch: true,
         planning_feedback: '再拆分接口',
         planning_feedback_history: ['先补测试', '再拆分接口'],
       },
@@ -229,6 +239,51 @@ describe('requirement execution process phase', () => {
       planningFeedbackHistory: ['先补测试', '再拆分接口'],
       hasStartedRuns: false,
       executionPaused: true,
+      recoveryAction: 'none',
+      recoveryReason: 'not_recoverable_in_current_state',
+      replacePreviousBatch: true,
+    });
+  });
+
+  it('normalizes stale stopped zero-task recovery payloads into regenerate', () => {
+    expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: true,
+      hasActiveRuns: false,
+      phase: 'stopped',
+      recoveryAction: 'regenerate',
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
+
+    expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: true,
+      hasActiveRuns: false,
+      phase: 'stopped',
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+
+    const process = buildRequirementExecutionProcess({
+      projectId: 'project-1',
+      requirement: { id: 'requirement-1', title: 'Requirement 1' },
+      response: {
+        found: true,
+        execution_plane: 'cloud',
+        conversation_id: 'conversation-1',
+        execution_group_id: 'execution-group-stopped',
+        message_id: 'message-stopped',
+        status: 'stopped',
+        task_count: 0,
+        has_started_runs: false,
+        recovery_action: 'none',
+        recovery_reason: 'not_recoverable_in_current_state',
+        replace_previous_batch: true,
+      },
+    });
+
+    expect(process).toMatchObject({
+      serverStatus: 'stopped',
+      taskCount: 0,
+      hasStartedRuns: false,
+      recoveryAction: 'regenerate',
+      replacePreviousBatch: true,
     });
   });
 

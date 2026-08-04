@@ -19,6 +19,7 @@ LOCAL_BUILD_SERVICES=(
   project-management-backend
   plugin-management-backend
   local-connector-service-backend
+  mcp-management-service-backend
   sandbox-manager-backend
   task-runner-backend
   chatos-backend
@@ -273,23 +274,28 @@ PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET|change_me_plugin_management_ta
 PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_project_service_secret
 PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_local_connector_secret
 PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_plugin_management_memory_engine_secret
+PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET|change_me_plugin_management_mcp_management_secret
 TASK_RUNNER_CHATOS_CALLBACK_SECRET|change_me_chatos_task_runner_secret
 CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_chatos_project_service_secret
 TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_task_runner_project_service_secret
 PROJECT_SERVICE_SELF_INTERNAL_API_SECRET|change_me_project_service_self_secret
+MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_mcp_management_project_service_secret
+MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET|change_me_mcp_management_task_runner_secret
 CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_chatos_local_connector_secret
 TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_task_runner_local_connector_secret
 PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_project_service_local_connector_secret
-MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_memory_engine_local_connector_secret
+MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_mcp_management_local_connector_secret
+MCP_MANAGEMENT_INTERNAL_API_SECRET|change_me_mcp_management_internal_secret
+MCP_MANAGEMENT_RUNTIME_GRANT_SECRET|change_me_mcp_management_runtime_grant_secret
 CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_chatos_memory_engine_secret
 TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_task_runner_memory_engine_secret
 PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_project_service_memory_engine_secret
 USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_user_service_memory_engine_secret
-LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_local_connector_memory_engine_secret
 SANDBOX_MANAGER_OPERATOR_TOKEN|chatos-sandbox-manager-dev-operator-token
 SANDBOX_MANAGER_AGENT_TOKEN_SECRET|chatos-sandbox-agent-dev-secret
 TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_task_runner_sandbox_manager_secret
 PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_project_service_sandbox_manager_secret
+MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_mcp_management_sandbox_manager_secret
 EOF
 
   if (( failures > 0 )); then
@@ -302,7 +308,7 @@ print_urls() {
   local frontend_port main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
   local plugin_management_frontend_port sandbox_manager_frontend_port local_connector_service_port
-  local official_website_frontend_port config_center_frontend_port
+  local official_website_frontend_port config_center_frontend_port mcp_management_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
   frontend_port="$(env_value FRONTEND_PORT 8088)"
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
@@ -317,6 +323,7 @@ print_urls() {
   plugin_management_frontend_port="$(env_value PLUGIN_MANAGEMENT_FRONTEND_PORT 39261)"
   sandbox_manager_frontend_port="$(env_value SANDBOX_MANAGER_FRONTEND_PORT 8096)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
+  mcp_management_port="$(env_value MCP_MANAGEMENT_PORT 39280)"
   official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
   config_center_frontend_port="$(env_value CONFIG_CENTER_FRONTEND_PORT 39271)"
   cat <<EOF
@@ -336,6 +343,7 @@ Plugin Management:        http://localhost:${plugin_management_frontend_port}
 Configuration Center:     http://localhost:${config_center_frontend_port}
 Sandbox Manager:          http://localhost:${sandbox_manager_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
+MCP Management Service:   http://localhost:${mcp_management_port}
 Official Website:         http://localhost:${official_website_frontend_port}
 
 Logs:    $0 logs
@@ -376,6 +384,35 @@ pull_prebuilt_images() {
   fi
 }
 
+sandbox_manager_requested() {
+  if [[ $# -eq 0 ]]; then
+    return 0
+  fi
+  local service
+  for service in "$@"; do
+    if [[ "$service" == "sandbox-manager-backend" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_sandbox_manager_docker_runtime() {
+  local buildkit_image="moby/buildkit:buildx-stable-1"
+  if ! docker image inspect "$buildkit_image" >/dev/null 2>&1; then
+    echo "[INFO] pulling Sandbox Manager BuildKit runtime image"
+    docker pull "$buildkit_image"
+  fi
+  echo "[INFO] starting Sandbox Manager Docker socket proxy"
+  compose up -d --no-build --pull missing sandbox-docker-socket-proxy
+}
+
+ensure_sandbox_manager_docker_runtime_if_requested() {
+  if sandbox_manager_requested "$@"; then
+    ensure_sandbox_manager_docker_runtime
+  fi
+}
+
 clean_dangling_images() {
   echo "[INFO] removing dangling Docker images (<none>:<none>)"
   docker image prune -f
@@ -391,19 +428,47 @@ clean_dangling_images_if_enabled() {
   clean_dangling_images
 }
 
+clean_build_cache() {
+  local max_used_space
+  local reserved_space
+  local timeout
+  max_used_space="$(env_value CHATOS_DOCKER_BUILD_CACHE_MAX_USED_SPACE 32gb)"
+  reserved_space="$(env_value CHATOS_DOCKER_BUILD_CACHE_RESERVED_SPACE 8gb)"
+  timeout="$(env_value CHATOS_DOCKER_BUILD_CACHE_TIMEOUT 180s)"
+  echo "[INFO] enforcing Docker BuildKit cache limit: max=$max_used_space reserved=$reserved_space"
+  docker builder prune --force --all \
+    --max-used-space "$max_used_space" \
+    --reserved-space "$reserved_space" \
+    --timeout "$timeout"
+}
+
+clean_build_cache_if_enabled() {
+  if ! env_flag_enabled CHATOS_DOCKER_PRUNE_BUILD_CACHE true; then
+    return 0
+  fi
+  clean_build_cache
+}
+
+clean_docker_artifacts_if_enabled() {
+  clean_dangling_images_if_enabled
+  clean_build_cache_if_enabled
+}
+
 start_from_prebuilt_images() {
   pull_prebuilt_images "$@"
+  ensure_sandbox_manager_docker_runtime_if_requested "$@"
   echo "[INFO] starting Chat OS cloud services from prebuilt images"
   compose up -d --no-build --remove-orphans "$@"
-  clean_dangling_images_if_enabled
+  clean_docker_artifacts_if_enabled
   print_urls
 }
 
 start_from_local_build() {
   build_local_images "$@"
+  ensure_sandbox_manager_docker_runtime_if_requested "$@"
   echo "[INFO] starting Chat OS cloud services from local build"
   compose_build up -d --no-build --remove-orphans "$@"
-  clean_dangling_images_if_enabled
+  clean_docker_artifacts_if_enabled
   print_urls
 }
 
@@ -427,6 +492,7 @@ restart_without_refresh() {
 rebuild_services() {
   local services=("$@")
   build_local_images "${services[@]}"
+  ensure_sandbox_manager_docker_runtime_if_requested "${services[@]}"
   if [[ ${#services[@]} -eq 0 ]]; then
     echo "[INFO] starting Chat OS cloud services from rebuilt local images"
     compose_build up -d --no-build --remove-orphans
@@ -434,7 +500,7 @@ rebuild_services() {
     echo "[INFO] recreating selected Chat OS services from rebuilt local images"
     compose_build up -d --no-build --pull never --no-deps --force-recreate "${services[@]}"
   fi
-  clean_dangling_images_if_enabled
+  clean_docker_artifacts_if_enabled
   print_urls
 }
 
@@ -510,7 +576,7 @@ case "$ACTION" in
   build)
     shift || true
     build_local_images "$@"
-    clean_dangling_images_if_enabled
+    clean_docker_artifacts_if_enabled
     ;;
   down|stop)
     compose down --remove-orphans
@@ -532,6 +598,9 @@ case "$ACTION" in
   clean-images|prune-images)
     clean_dangling_images
     ;;
+  clean-build-cache|prune-build-cache)
+    clean_build_cache
+    ;;
   services)
     compose_build config --services
     ;;
@@ -539,11 +608,12 @@ case "$ACTION" in
     print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|services|build-services|validate-plugin-ui-origin] [service...]" >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin] [service...]" >&2
     echo "  up/restart pull prebuilt images by default." >&2
     echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
     echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
     echo "  clean-images removes dangling <none>:<none> images." >&2
+    echo "  clean-build-cache enforces the configured BuildKit cache size limit." >&2
     echo "  service names can be listed with: $0 services" >&2
     echo "  buildable service names can be listed with: $0 build-services" >&2
     echo "  Plugin UI origins can be checked without Docker using: $0 validate-plugin-ui-origin" >&2

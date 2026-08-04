@@ -39,12 +39,12 @@ export const RequirementExecutionStartingModal: React.FC<{
                 {starting
                   ? <LoaderCircle className="h-4 w-4 animate-spin" />
                   : <Play className="h-4 w-4" />}
-                {starting ? '正在建立规划上下文' : '等待用户开始生成执行流程'}
+                {starting ? '正在准备执行计划' : '等待开始生成执行计划'}
               </div>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {starting
-                  ? '规划 Agent 正在创建会话并读取需求、项目任务和技术文档，Task Runner 尚未启动。'
-                  : '点击“开始生成执行流程”后只会启动规划 Agent；Task Runner 仍需在完整 DAG 生成后由你点击“执行”。'}
+                  ? '正在读取需求、项目任务和技术文档，并整理完整的任务依赖关系。'
+                  : '点击“开始生成执行计划”后会先整理任务和依赖关系；检查无误后，再由你确认开始执行。'}
               </p>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -63,10 +63,10 @@ export const RequirementExecutionStartingModal: React.FC<{
                   </span>
                   <div>
                     <div className="text-xs font-medium text-foreground">
-                      {starting ? '执行规划请求已接受' : '等待启动规划 Agent'}
+                      {starting ? '执行计划请求已接受' : '等待开始生成计划'}
                     </div>
                     <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                      {starting ? '正在建立规划批次标识' : '尚未创建规划会话或执行任务'}
+                      {starting ? '正在准备本次执行计划' : '尚未创建本次执行任务'}
                     </div>
                   </div>
                 </li>
@@ -90,11 +90,11 @@ export const RequirementExecutionStartingModal: React.FC<{
                 value={planningFeedback}
                 disabled={starting}
                 onChange={(event) => setPlanningFeedback(event.target.value)}
-                placeholder="输入希望项目 Agent 遵循的规划要求，例如：先补测试，再拆分接口；把部署放到最后……"
+                placeholder="输入希望执行计划遵循的要求，例如：先补测试，再拆分接口；把部署放到最后……"
                 className="min-h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:cursor-wait disabled:bg-muted/40"
               />
               <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                这段内容会随首次规划请求一起发送给项目 Agent；留空也可以开始。
+                这段内容会用于调整本次执行计划；留空也可以开始。
               </div>
             </div>
           </aside>
@@ -105,7 +105,7 @@ export const RequirementExecutionStartingModal: React.FC<{
                 <GitBranch className="h-4 w-4" />
                 实时执行流程图
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">Agent 创建第一个任务后，流程图会立即在这里更新。</p>
+              <p className="mt-1 text-xs text-muted-foreground">创建第一个任务后，流程图会立即在这里更新。</p>
             </div>
             <div className="flex min-h-0 flex-1 items-center justify-center p-6">
               <div className="max-w-sm rounded-lg border border-dashed border-border bg-muted/10 px-6 py-8 text-center">
@@ -117,15 +117,15 @@ export const RequirementExecutionStartingModal: React.FC<{
                 </div>
                 <div className="mt-1 text-xs leading-5 text-muted-foreground">
                   {starting
-                    ? '这里只展示规划结果，不会提前启动任何 task run。'
-                    : '用户明确开始后，规划 Agent 创建的任务节点才会显示在这里。'}
+                    ? '这里只展示计划结果，不会提前启动任务。'
+                    : '你开始生成计划后，新增的任务节点会显示在这里。'}
                 </div>
               </div>
             </div>
             <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-muted/10 px-4 py-3">
               <span className="text-xs text-muted-foreground">
                 {starting
-                  ? '正在生成 DAG；此阶段不会启动 Task Runner。'
+                  ? '正在生成任务依赖图；此阶段不会启动执行。'
                   : '开始生成与最终执行是两个独立操作。'}
               </span>
               <div className="flex items-center gap-2">
@@ -138,7 +138,7 @@ export const RequirementExecutionStartingModal: React.FC<{
                   {starting
                     ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                     : <Play className="h-3.5 w-3.5" />}
-                  {starting ? '正在生成执行流程' : '开始生成执行流程'}
+                  {starting ? '正在生成执行计划' : '开始生成执行计划'}
                 </button>
                 <button
                   type="button"

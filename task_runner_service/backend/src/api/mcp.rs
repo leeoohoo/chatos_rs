@@ -5,11 +5,21 @@ use super::core::{bearer_token_from_headers, current_user_from_user_service_toke
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
+use std::sync::Arc;
+
+use super::internal_auth::{
+    require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
+    MCP_TOOLS_LIST_SCOPE,
+};
+
+mod headers;
+use headers::*;
 
 const PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES: usize = 1024 * 1024;
 const PLUGIN_SELECTION_HEADER_LIMIT_BYTES: usize = 16 * 1024;
@@ -19,6 +29,7 @@ const PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES: usize =
     PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES.div_ceil(3) * 4;
 const PLUGIN_COMMAND_INVOCATION_MAX_ITEMS: usize = 64;
 const PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES: usize = 16 * 1024;
+const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct PluginConnectorDeviceView {
@@ -61,47 +72,34 @@ pub(super) async fn list_task_capability_catalog(
     );
     let policy = state
         .task_service
-        .resolve_task_runner_policy_for_agent_on_device(
+        .resolve_task_runner_policy_for_agent_runtime(
             Some(&user),
             Some(owner_user_id),
             agent_key,
             query.device_id.clone(),
+            query.runtime_provider.clone(),
         )
         .await
         .map_err(ApiError::bad_gateway)?
         .ok_or_else(|| ApiError::internal("plugin management policy resolver is unavailable"))?;
-    let selectable_builtin_kinds = policy
-        .selectable_builtin_kind_names()
-        .into_iter()
-        .collect::<std::collections::HashSet<_>>();
-    let selectable_builtin_mcps = state
-        .mcp_catalog_service
-        .list_catalog()
-        .into_iter()
-        .filter(|item| selectable_builtin_kinds.contains(item.kind.as_str()))
-        .collect::<Vec<_>>();
     Ok(Json(json!({
         "agent_key": agent_key.as_str(),
         "policy_revision": policy.policy_revision(),
-        "selectable_builtin_mcps": selectable_builtin_mcps,
-        "selectable_external_mcps": policy.selectable_external_mcp_views(),
         "selectable_plugins": policy.selectable_plugin_views(),
     })))
 }
 
-pub(super) async fn list_plugin_connectors() -> Result<Json<Value>, ApiError> {
+pub(super) async fn list_plugin_connectors(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, ApiError> {
     let access_token = crate::auth::get_current_access_token()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiError::unauthorized("current user access token is unavailable"))?;
-    let base_url = crate::services::plugin_relay_base_url().map_err(ApiError::bad_gateway)?;
-    let timeout_ms = std::env::var("TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(10_000)
-        .clamp(1_000, 30_000);
+    let base_url =
+        crate::services::plugin_relay_base_url(&state.config).map_err(ApiError::bad_gateway)?;
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .timeout(state.config.plugin_connector_discovery_timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| {
@@ -318,432 +316,367 @@ pub(super) async fn mcp_entrypoint(
     )
 }
 
-async fn downstream_access_token_from_headers(
-    config: &crate::config::AppConfig,
-    headers: &HeaderMap,
-    agent_access_token: &str,
-    agent_user: &CurrentUser,
-) -> Result<String, ApiError> {
-    let Some(user_access_token) = user_access_token_from_headers(headers)? else {
-        return Ok(agent_access_token.to_string());
-    };
-    let user = current_user_from_user_service_token(config, user_access_token.as_str()).await?;
-    ensure_same_owner_scope(agent_user, &user)?;
-    Ok(user_access_token)
-}
-
-fn user_access_token_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
-    for key in [
-        "x-chatos-user-authorization",
-        "x-user-service-authorization",
-        "x-chatos-user-token",
-    ] {
-        let Some(value) = header_text(headers, key) else {
-            continue;
-        };
-        let token = if let Some(token) = value.strip_prefix("Bearer ").map(str::trim) {
-            token
-        } else if let Some(token) = value.strip_prefix("bearer ").map(str::trim) {
-            token
-        } else {
-            value.as_str()
-        };
-        if token.is_empty() {
-            continue;
-        }
-        return Ok(Some(token.to_string()));
-    }
-    Ok(None)
-}
-
-fn ensure_same_owner_scope(agent_user: &CurrentUser, user: &CurrentUser) -> Result<(), ApiError> {
-    let agent_owner = agent_user
-        .effective_owner_user_id()
-        .ok_or_else(|| ApiError::unauthorized("agent token missing owner scope"))?;
-    let user_owner = user
-        .effective_owner_user_id()
-        .ok_or_else(|| ApiError::unauthorized("user token missing owner scope"))?;
-    if agent_owner == user_owner {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden(
-            "agent token and user token owner scope do not match",
-        ))
-    }
-}
-
-fn mcp_request_context_from_headers(headers: &HeaderMap) -> Result<McpRequestContext, String> {
-    Ok(McpRequestContext {
-        project_id: header_text(headers, "x-chatos-project-id")
-            .or_else(|| header_text(headers, "x-task-runner-project-id")),
-        source_session_id: header_text(headers, "x-chatos-session-id")
-            .or_else(|| header_text(headers, "x-chatos-conversation-id")),
-        source_turn_id: header_text(headers, "x-chatos-turn-id"),
-        source_user_message_id: header_text(headers, "x-chatos-user-message-id"),
-        default_model_config_id: header_text(headers, "x-task-runner-default-model-config-id"),
-        workspace_dir: header_text(headers, "x-task-runner-workspace-dir")
-            .or_else(|| header_text(headers, "x-chatos-workspace-dir"))
-            .or_else(|| header_text(headers, "x-chatos-workspace-root")),
-        remote_server_config: header_text(headers, "x-task-runner-remote-server-config")
-            .or_else(|| header_text(headers, "x-task-runner-remote-server-json")),
-        tool_profile: header_text(headers, "x-task-runner-tool-profile"),
-        task_profile: header_text(headers, "x-task-runner-task-profile"),
-        builtin_prompt_locale: header_text(headers, "x-task-runner-builtin-prompt-locale")
-            .or_else(|| header_text(headers, "x-chatos-internal-context-locale")),
-        chatos_plan_mode: header_bool(headers, "x-chatos-plan-mode"),
-        expected_project_task_ids: header_csv_set(
-            headers,
-            "x-task-runner-expected-project-task-ids",
-        ),
-        plugin_config_override: plugin_config_override_from_headers(headers)?,
-    })
+#[derive(Debug, Clone)]
+struct McpManagementBinding {
+    owner_user_id: String,
+    agent_key: chatos_plugin_management_sdk::SystemAgentKey,
+    session_id: String,
+    session_expires_at_unix: i64,
+    project_id: String,
+    run_id: Option<String>,
+    turn_id: Option<String>,
+    task_id: Option<String>,
+    source_session_id: Option<String>,
+    source_user_message_id: Option<String>,
+    default_model_config_id: Option<String>,
+    task_profile: Option<String>,
+    expected_project_task_ids: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum HeaderSelectedPlugin {
-    Id(String),
-    Ref(chatos_plugin_management_sdk::SelectedPluginRef),
+#[serde(deny_unknown_fields)]
+struct BoundTaskProcessLogArgs {
+    #[serde(default)]
+    operation: crate::models::TaskProcessLogOperation,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    heading: Option<String>,
 }
 
-fn plugin_config_override_from_headers(
-    headers: &HeaderMap,
-) -> Result<Option<chatos_plugin_management_sdk::TaskPluginConfig>, String> {
-    let device_id = header_text(headers, "x-task-runner-plugin-device-id");
-    let workspace_id = header_text(headers, "x-task-runner-plugin-workspace-id");
-    let selected_plugins_header = header_text(headers, "x-task-runner-selected-plugins");
-    let command_invocations_header =
-        header_text(headers, "x-task-runner-plugin-command-invocations");
-    if device_id.is_none()
-        && workspace_id.is_none()
-        && selected_plugins_header.is_none()
-        && command_invocations_header.is_none()
-    {
-        return Ok(None);
-    }
-
-    let selected_plugins = match selected_plugins_header {
-        Some(value) => {
-            if value.len() > PLUGIN_SELECTION_HEADER_LIMIT_BYTES {
-                return Err(format!(
-                    "x-task-runner-selected-plugins exceeds {PLUGIN_SELECTION_HEADER_LIMIT_BYTES} bytes"
-                ));
-            }
-            let decoded = serde_json::from_str::<Vec<HeaderSelectedPlugin>>(value.as_str())
-                .map_err(|error| format!("invalid x-task-runner-selected-plugins JSON: {error}"))?;
-            if decoded.len() > PLUGIN_SELECTION_MAX_ITEMS {
-                return Err(format!(
-                    "x-task-runner-selected-plugins exceeds {PLUGIN_SELECTION_MAX_ITEMS} items"
-                ));
-            }
-            normalize_header_selected_plugins(decoded)
-        }
-        None => Vec::new(),
-    };
-    let command_invocations = match command_invocations_header {
-        Some(value) => decode_header_plugin_command_invocations(value.as_str())?,
-        None => Vec::new(),
-    };
-
-    Ok(Some(chatos_plugin_management_sdk::TaskPluginConfig {
-        device_id,
-        workspace_id,
-        selected_plugins,
-        command_invocations,
-    }))
-}
-
-fn decode_header_plugin_command_invocations(
-    value: &str,
-) -> Result<Vec<chatos_plugin_management_sdk::PluginCommandInvocation>, String> {
-    if value.len() > PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES {
-        return Err(format!(
-            "x-task-runner-plugin-command-invocations exceeds {PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES} encoded bytes"
-        ));
-    }
-    let payload = if value.trim_start().starts_with('[') {
-        value.as_bytes().to_vec()
+pub(super) async fn mcp_management_entrypoint(
+    Path(system_key): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<JsonRpcRequest>,
+) -> Json<JsonRpcResponse> {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    let required_scope = if request.method == chatos_mcp_service::METHOD_TOOLS_LIST {
+        MCP_TOOLS_LIST_SCOPE
     } else {
-        URL_SAFE_NO_PAD.decode(value.as_bytes()).map_err(|error| {
-            format!("invalid x-task-runner-plugin-command-invocations base64: {error}")
-        })?
+        MCP_TOOLS_CALL_SCOPE
     };
-    if payload.len() > PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES {
-        return Err(format!(
-            "x-task-runner-plugin-command-invocations exceeds {PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES} decoded bytes"
+    if let Err(error) = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[MCP_MANAGEMENT_CALLER],
+        required_scope,
+    ) {
+        return Json(task_runner_mcp_error(id, -32001, error.message));
+    }
+    let binding = match mcp_management_binding_from_headers(&headers) {
+        Ok(binding) => binding,
+        Err(message) => return Json(task_runner_mcp_error(id, -32602, message)),
+    };
+    let system_key = match system_key.parse::<chatos_plugin_management_sdk::SystemMcpKey>() {
+        Ok(system_key) => system_key,
+        Err(message) => return Json(task_runner_mcp_error(id, -32602, message)),
+    };
+    if request.method == chatos_mcp_service::METHOD_TOOLS_LIST {
+        return Json(match system_key {
+            chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService => {
+                dispatch_bound_task_runner_tool(&state, request, &binding).await
+            }
+            _ => task_runner_mcp_error(
+                id,
+                -32601,
+                "Task Runner internal MCP Provider only exposes dynamic tools/list for Task Runner Service MCP",
+            ),
+        });
+    }
+    if request.method != chatos_mcp_service::METHOD_TOOLS_CALL {
+        return Json(task_runner_mcp_error(
+            id,
+            -32601,
+            "Task Runner internal MCP Provider only accepts tools/call",
         ));
     }
-    let decoded = serde_json::from_slice::<
-        Vec<chatos_plugin_management_sdk::PluginCommandInvocation>,
-    >(payload.as_slice())
-    .map_err(|error| format!("invalid x-task-runner-plugin-command-invocations JSON: {error}"))?;
-    if decoded.len() > PLUGIN_COMMAND_INVOCATION_MAX_ITEMS {
-        return Err(format!(
-            "x-task-runner-plugin-command-invocations exceeds {PLUGIN_COMMAND_INVOCATION_MAX_ITEMS} items"
-        ));
-    }
-    normalize_header_plugin_command_invocations(decoded)
+    let response = match system_key {
+        chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService => {
+            dispatch_bound_task_runner_tool(&state, request, &binding).await
+        }
+        chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog => {
+            dispatch_bound_task_process_log(&state, request, &binding).await
+        }
+        chatos_plugin_management_sdk::SystemMcpKey::AskUser => {
+            dispatch_bound_ask_user(&state, request, &binding).await
+        }
+        _ => task_runner_mcp_error(
+            id,
+            -32602,
+            "Task Runner internal MCP Provider does not own this System MCP",
+        ),
+    };
+    Json(response)
 }
 
-fn normalize_header_plugin_command_invocations(
-    values: Vec<chatos_plugin_management_sdk::PluginCommandInvocation>,
-) -> Result<Vec<chatos_plugin_management_sdk::PluginCommandInvocation>, String> {
-    let mut seen = HashSet::new();
-    values
-        .into_iter()
-        .map(|value| {
-            let plugin_id = value.plugin_id.trim().to_string();
-            let command_id = value.command_id.trim().to_string();
-            if plugin_id.is_empty() || command_id.is_empty() {
-                return Err(
-                    "Plugin Command invocation requires non-empty plugin_id and command_id"
-                        .to_string(),
-                );
+async fn dispatch_bound_task_runner_tool(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
+    if !matches!(
+        binding.agent_key,
+        SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosPlanningAgent
+            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+    ) {
+        return task_runner_mcp_error(
+            request.id.unwrap_or(Value::Null),
+            -32001,
+            "configured Agent is not allowed to use Task Runner Service MCP",
+        );
+    }
+    let current_user = CurrentUser {
+        id: format!("mcp-management:{}", binding.session_id),
+        username: format!("mcp-management-{}", binding.agent_key.as_str()),
+        display_name: format!("MCP Management {}", binding.agent_key.as_str()),
+        role: crate::models::UserRole::Agent,
+        owner_user_id: Some(binding.owner_user_id.clone()),
+        owner_username: None,
+        owner_display_name: None,
+    };
+    let is_requirement_planner =
+        binding.agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent;
+    let is_chatos_plan = binding
+        .task_profile
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN));
+    let request_context = McpRequestContext {
+        project_id: Some(binding.project_id.clone()),
+        source_session_id: binding.source_session_id.clone(),
+        source_turn_id: binding.turn_id.clone(),
+        source_user_message_id: binding.source_user_message_id.clone(),
+        default_model_config_id: binding.default_model_config_id.clone(),
+        workspace_dir: None,
+        remote_server_config: None,
+        tool_profile: Some(
+            if is_requirement_planner {
+                "project_requirement_execution_planner"
+            } else {
+                "chatos_async_planner"
             }
-            if plugin_id.contains('\0') || command_id.contains('\0') {
-                return Err("Plugin Command invocation identity contains NUL bytes".to_string());
-            }
-            if !seen.insert((plugin_id.clone(), command_id.clone())) {
-                return Err(format!(
-                    "Plugin Command invocation is duplicated: {plugin_id}:{command_id}"
-                ));
-            }
-            let arguments = value
-                .arguments
+            .to_string(),
+        ),
+        task_profile: binding.task_profile.clone(),
+        builtin_prompt_locale: None,
+        chatos_plan_mode: is_chatos_plan,
+        expected_project_task_ids: binding.expected_project_task_ids.clone(),
+        plugin_config_override: None,
+    };
+    state
+        .task_runner_mcp_service
+        .handle_jsonrpc(request, current_user, request_context)
+        .await
+}
+
+async fn dispatch_bound_task_process_log(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    use chatos_plugin_management_sdk::SystemAgentKey;
+
+    let id = request.id.unwrap_or(Value::Null);
+    if !matches!(
+        binding.agent_key,
+        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
+    ) {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "configured Agent is not allowed to use Task Process Log MCP",
+        );
+    }
+    let Some(task_id) = binding.task_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Task Process Log requires bound task_id");
+    };
+    let Some(run_id) = binding.run_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Task Process Log requires bound run_id");
+    };
+    let name = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if name != Some("record_process") {
+        return task_runner_mcp_error(id, -32602, "Task Process Log tool was not found");
+    }
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let input = match serde_json::from_value::<BoundTaskProcessLogArgs>(arguments) {
+        Ok(input) => input,
+        Err(error) => {
+            return task_runner_mcp_error(
+                id,
+                -32602,
+                format!("invalid Task Process Log arguments: {error}"),
+            )
+        }
+    };
+    let run = match state.run_service.get_run(run_id).await {
+        Ok(Some(run)) => run,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner run was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if run.task_id != task_id {
+        return task_runner_mcp_error(id, -32001, "bound run does not belong to bound task");
+    }
+    if run.status != crate::models::TaskRunStatus::Running {
+        return task_runner_mcp_error(id, -32001, "bound Task Runner run is no longer active");
+    }
+    let task = match state.task_service.get_task(task_id).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner task was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if !task_matches_mcp_management_binding(&task, binding)
+        || !task_matches_bound_agent(&task, binding.agent_key)
+    {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "bound task does not match MCP Management owner, project, run, or Agent scope",
+        );
+    }
+    let updated = match state
+        .task_service
+        .record_task_process(
+            task_id,
+            crate::models::RecordTaskProcessRequest {
+                operation: input.operation,
+                content: input.content,
+                heading: input.heading,
+            },
+        )
+        .await
+    {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner task was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    JsonRpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: Some(task_runner_mcp_text_result(json!({
+            "recorded": true,
+            "task_id": updated.id,
+            "run_id": run_id,
+            "process_log_chars": updated
+                .process_log
                 .as_deref()
-                .map(str::trim)
-                .filter(|arguments| !arguments.is_empty());
-            if arguments.is_some_and(|arguments| {
-                arguments.contains('\0')
-                    || arguments.len() > PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES
-            }) {
-                return Err(format!(
-                    "Plugin Command arguments exceed {PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES} bytes or contain NUL"
-                ));
-            }
-            Ok(chatos_plugin_management_sdk::PluginCommandInvocation {
-                plugin_id,
-                command_id,
-                arguments: arguments.map(str::to_string),
-            })
-        })
-        .collect()
+                .map(|value| value.chars().count())
+                .unwrap_or_default(),
+            "updated_at": updated.updated_at,
+        }))),
+        error: None,
+    }
 }
 
-fn normalize_header_selected_plugins(
-    values: Vec<HeaderSelectedPlugin>,
-) -> Vec<chatos_plugin_management_sdk::SelectedPluginRef> {
-    let mut seen = HashSet::new();
-    values
-        .into_iter()
-        .filter_map(|value| {
-            let mut selected = match value {
-                HeaderSelectedPlugin::Id(plugin_id) => {
-                    chatos_plugin_management_sdk::SelectedPluginRef {
-                        plugin_id,
-                        selected_skill_ids: Vec::new(),
-                        selected_command_ids: Vec::new(),
-                        selected_agent_ids: Vec::new(),
-                    }
-                }
-                HeaderSelectedPlugin::Ref(value) => value,
-            };
-            selected.plugin_id = selected.plugin_id.trim().to_string();
-            if selected.plugin_id.is_empty() || !seen.insert(selected.plugin_id.clone()) {
-                return None;
-            }
-            selected.selected_skill_ids = normalize_header_ids(selected.selected_skill_ids);
-            selected.selected_command_ids = normalize_header_ids(selected.selected_command_ids);
-            selected.selected_agent_ids = normalize_header_ids(selected.selected_agent_ids);
-            Some(selected)
-        })
-        .collect()
-}
+async fn dispatch_bound_ask_user(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    use chatos_plugin_management_sdk::SystemAgentKey;
 
-fn normalize_header_ids(values: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    values
-        .into_iter()
-        .filter_map(|value| {
-            let value = value.trim().to_string();
-            (!value.is_empty() && seen.insert(value.clone())).then_some(value)
-        })
-        .collect()
-}
-
-fn header_csv_set(headers: &HeaderMap, key: &'static str) -> std::collections::BTreeSet<String> {
-    header_text(headers, key)
-        .into_iter()
-        .flat_map(|value| {
-            value
-                .split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
-    headers
-        .get(key)
-        .and_then(|value| value.to_str().ok())
+    let id = request.id.unwrap_or(Value::Null);
+    if !matches!(
+        binding.agent_key,
+        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
+    ) {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "configured Agent is not allowed to use Task Runner Ask User MCP",
+        );
+    }
+    let Some(task_id) = binding.task_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound task_id");
+    };
+    let Some(run_id) = binding.run_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound run_id");
+    };
+    let run = match state.run_service.get_run(run_id).await {
+        Ok(Some(run)) => run,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner run was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if run.task_id != task_id {
+        return task_runner_mcp_error(id, -32001, "bound run does not belong to bound task");
+    }
+    if run.status != crate::models::TaskRunStatus::Running {
+        return task_runner_mcp_error(id, -32001, "bound Task Runner run is no longer active");
+    }
+    let task = match state.task_service.get_task(task_id).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return task_runner_mcp_error(id, -32000, "bound Task Runner task was not found")
+        }
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if !task_matches_mcp_management_binding(&task, binding)
+        || !task_matches_bound_agent(&task, binding.agent_key)
+    {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "bound task does not match MCP Management owner, project, run, or Agent scope",
+        );
+    }
+    let prompt_timeout_ms = match bound_ask_user_prompt_timeout_ms(binding) {
+        Ok(timeout_ms) => timeout_ms,
+        Err(message) => return task_runner_mcp_error(id, -32001, message),
+    };
+    let service = match AskUserService::new(AskUserOptions {
+        server_name: chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::AskUser,
+        )
+        .server_name
+        .to_string(),
+        prompt_timeout_ms,
+        store: AskUserStoreRef::new(Arc::new(state.ask_user_prompt_service.clone())),
+    }) {
+        Ok(service) => service,
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn header_bool(headers: &HeaderMap, key: &'static str) -> bool {
-    headers
-        .get(key)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .filter(|name| !name.is_empty())
+    else {
+        return task_runner_mcp_error(id, -32602, "Ask User tool name is required");
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    match service.call_tool(name, arguments, Some(task_id), Some(run_id), None) {
+        Ok(result) => JsonRpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(result),
+            error: None,
+        },
+        Err(error) => task_runner_mcp_error(id, -32000, error),
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_context_reads_inherited_model_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-task-runner-default-model-config-id",
-            " model-selected ".parse().expect("valid header"),
-        );
-
-        let context = mcp_request_context_from_headers(&headers).expect("valid context");
-
-        assert_eq!(
-            context.default_model_config_id.as_deref(),
-            Some("model-selected")
-        );
-    }
-
-    #[test]
-    fn request_context_reads_exact_project_task_scope_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-task-runner-expected-project-task-ids",
-            " task-b,task-a,task-a ".parse().expect("valid header"),
-        );
-
-        let context = mcp_request_context_from_headers(&headers).expect("valid context");
-
-        assert_eq!(
-            context.expected_project_task_ids,
-            std::collections::BTreeSet::from(["task-a".to_string(), "task-b".to_string()])
-        );
-    }
-
-    #[test]
-    fn request_context_reads_and_normalizes_user_plugin_selection() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-task-runner-plugin-device-id",
-            " device-1 ".parse().expect("valid header"),
-        );
-        headers.insert(
-            "x-task-runner-plugin-workspace-id",
-            " workspace-1 ".parse().expect("valid header"),
-        );
-        headers.insert(
-            "x-task-runner-selected-plugins",
-            r#"["plugin-a",{"plugin_id":" plugin-a ","selected_skill_ids":[],"selected_command_ids":[]},{"plugin_id":"plugin-b","selected_skill_ids":[" skill-1 ","skill-1"],"selected_command_ids":[" review ","review"]}]"#
-                .parse()
-                .expect("valid header"),
-        );
-        let command_invocations = serde_json::to_vec(&vec![
-            chatos_plugin_management_sdk::PluginCommandInvocation {
-                plugin_id: " plugin-b ".to_string(),
-                command_id: " review ".to_string(),
-                arguments: Some(" 检查中文参数 ".to_string()),
-            },
-        ])
-        .expect("serialize command invocations");
-        headers.insert(
-            "x-task-runner-plugin-command-invocations",
-            URL_SAFE_NO_PAD
-                .encode(command_invocations)
-                .parse()
-                .expect("valid header"),
-        );
-
-        let context = mcp_request_context_from_headers(&headers).expect("valid context");
-        let config = context
-            .plugin_config_override
-            .expect("plugin config override");
-
-        assert_eq!(config.device_id.as_deref(), Some("device-1"));
-        assert_eq!(config.workspace_id.as_deref(), Some("workspace-1"));
-        assert_eq!(config.selected_plugins.len(), 2);
-        assert_eq!(config.selected_plugins[0].plugin_id, "plugin-a");
-        assert_eq!(
-            config.selected_plugins[1].selected_skill_ids,
-            vec!["skill-1".to_string()]
-        );
-        assert_eq!(
-            config.selected_plugins[1].selected_command_ids,
-            vec!["review".to_string()]
-        );
-        assert_eq!(
-            config.command_invocations,
-            vec![chatos_plugin_management_sdk::PluginCommandInvocation {
-                plugin_id: "plugin-b".to_string(),
-                command_id: "review".to_string(),
-                arguments: Some("检查中文参数".to_string()),
-            }]
-        );
-    }
-
-    #[test]
-    fn request_context_rejects_invalid_plugin_selection_json() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-task-runner-selected-plugins",
-            "not-json".parse().expect("valid header"),
-        );
-
-        let error = mcp_request_context_from_headers(&headers).expect_err("invalid context");
-
-        assert!(error.contains("invalid x-task-runner-selected-plugins JSON"));
-    }
-
-    #[test]
-    fn request_context_rejects_duplicate_plugin_command_invocations() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-task-runner-plugin-command-invocations",
-            r#"[{"plugin_id":"plugin-a","command_id":"review","arguments":null},{"plugin_id":" plugin-a ","command_id":" review ","arguments":"src"}]"#
-                .parse()
-                .expect("valid header"),
-        );
-
-        let error = mcp_request_context_from_headers(&headers).expect_err("invalid context");
-
-        assert!(error.contains("Plugin Command invocation is duplicated"));
-    }
-
-    #[test]
-    fn request_context_rejects_oversized_plugin_command_arguments() {
-        let payload = serde_json::to_string(&vec![
-            chatos_plugin_management_sdk::PluginCommandInvocation {
-                plugin_id: "plugin-a".to_string(),
-                command_id: "review".to_string(),
-                arguments: Some("a".repeat(PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES + 1)),
-            },
-        ])
-        .expect("serialize command invocations");
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-task-runner-plugin-command-invocations",
-            payload.parse().expect("valid header"),
-        );
-
-        let error = mcp_request_context_from_headers(&headers).expect_err("invalid context");
-
-        assert!(error.contains("Plugin Command arguments exceed"));
-    }
-}
+mod tests;

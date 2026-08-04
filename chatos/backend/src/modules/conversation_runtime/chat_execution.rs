@@ -21,7 +21,10 @@ use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::ai_settings::request_body_limit_bytes_from_settings;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::models::project::PUBLIC_PROJECT_ID;
+use crate::modules::conversation_runtime::project_execution_planner::{
+    materialization_succeeded as project_execution_planner_terminal_tool_succeeded,
+    FINALIZATION_PROMPT as PROJECT_EXECUTION_PLANNER_FINALIZATION_PROMPT,
+};
 use crate::modules::conversation_runtime::task_board::{
     build_task_turn_follow_up_directive, build_task_turn_follow_up_message,
     build_task_turn_review_retry_guidance, parse_task_turn_review_outcome,
@@ -62,6 +65,7 @@ pub struct ChatosAgentExecutionOptions {
     shared_runtime_callbacks: RuntimeCallbacks,
     shared_runtime_lifecycle: Arc<dyn RuntimeLifecycleHook>,
     task_turn: Arc<Mutex<TaskTurnLifecycleState>>,
+    project_requirement_execution_planner: bool,
 }
 
 #[async_trait]
@@ -90,6 +94,7 @@ impl ChatosStreamRuntime for AgentAiServer {
             shared_runtime_callbacks,
             shared_runtime_lifecycle,
             task_turn,
+            project_requirement_execution_planner,
         } = options;
         let turn_id = normalize_turn_id(Some(turn_id.as_str()));
         let hidden_turn = persisted_user_message_metadata
@@ -129,6 +134,16 @@ impl ChatosStreamRuntime for AgentAiServer {
         );
         let abort_checker = Arc::new(|session_id: &str| abort_registry::is_aborted(session_id));
         let abort_token = abort_registry::abort_token_for_turn(conversation_id, turn_id.as_deref());
+        let shared_runtime_callbacks =
+            track_project_planning_integrity(shared_runtime_callbacks, Arc::clone(&task_turn));
+        let shared_runtime_callbacks = if project_requirement_execution_planner {
+            track_project_execution_planner_completion(
+                shared_runtime_callbacks,
+                Arc::clone(&task_turn),
+            )
+        } else {
+            shared_runtime_callbacks
+        };
         let runtime_options = AiRuntimeOptions::new(Some(conversation_id.to_string()), turn_id)
             .with_caller_model_runtime(Some(shared_model_config.to_tool_caller_model_runtime()))
             .with_abort_checker(Some(abort_checker))
@@ -254,6 +269,266 @@ struct TaskTurnLifecycleState {
     review_attempted: bool,
     review_last_outcome: Option<TaskTurnReviewOutcome>,
     continuation_history: Vec<Value>,
+    project_execution_plan_materialized: bool,
+    project_planning_integrity_guard: bool,
+    project_planning_write_failures: Vec<String>,
+    project_planning_repair_rounds: usize,
+    project_planning_repair_mutation_succeeded: bool,
+    project_planning_pending_dependency_batch_signature: Option<String>,
+    project_planning_dependency_write_cycle: Vec<String>,
+    project_planning_last_verified_dependency_cycle: Vec<String>,
+    project_planning_force_finalization: bool,
+}
+
+const MAX_PROJECT_PLANNING_REPAIR_ROUNDS: usize = 3;
+const PROJECT_PLANNING_LOOP_FINALIZATION_PROMPT: &str = "[Project Planning Finalization]\nThe program detected that an identical project-task dependency mutation batch succeeded repeatedly and an authoritative dependency-graph read completed afterward. Do not call any more tools. Summarize the latest verified project state for the user. Do not claim work that is absent from the latest graph; if anything remains incomplete, state the concrete gap instead of attempting another identical write.";
+
+fn is_project_planning_mutation_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "project_management_service_initialize_project"
+            | "project_management_service_create_requirement"
+            | "project_management_service_update_requirement"
+            | "project_management_service_delete_requirement"
+            | "project_management_service_set_requirement_dependencies"
+            | "project_management_service_upsert_requirement_technical_document"
+            | "project_management_service_create_project_task"
+            | "project_management_service_update_project_task"
+            | "project_management_service_delete_project_task"
+            | "project_management_service_set_project_task_dependencies"
+    )
+}
+
+fn successful_tool_result(result: &Value, expected_name: &str) -> bool {
+    result.get("name").and_then(Value::as_str) == Some(expected_name)
+        && result.get("success").and_then(Value::as_bool) == Some(true)
+        && result.get("is_error").and_then(Value::as_bool) != Some(true)
+}
+
+fn planning_failure_summary(result: &Value) -> Option<String> {
+    let name = result.get("name").and_then(Value::as_str)?;
+    if !is_project_planning_mutation_tool(name)
+        || (result.get("success").and_then(Value::as_bool) == Some(true)
+            && result.get("is_error").and_then(Value::as_bool) != Some(true))
+    {
+        return None;
+    }
+    let detail = result
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("项目规划写入失败");
+    Some(format!(
+        "{name}: {}",
+        detail.chars().take(500).collect::<String>()
+    ))
+}
+
+fn canonical_json_signature(value: &Value) -> String {
+    match value {
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(canonical_json_signature)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Value::Object(object) => {
+            let mut entries = object.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            format!(
+                "{{{}}}",
+                entries
+                    .into_iter()
+                    .map(|(key, value)| format!(
+                        "{}:{}",
+                        serde_json::to_string(key).unwrap_or_else(|_| key.clone()),
+                        canonical_json_signature(value)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        _ => value.to_string(),
+    }
+}
+
+fn project_dependency_write_batch_signature(tool_calls: &Value) -> Option<String> {
+    let mut signatures = tool_calls
+        .as_array()?
+        .iter()
+        .filter_map(|call| {
+            let function = call.get("function").unwrap_or(call);
+            if function.get("name").and_then(Value::as_str)
+                != Some("project_management_service_set_project_task_dependencies")
+            {
+                return None;
+            }
+            let arguments = function
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let arguments = arguments
+                .as_str()
+                .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                .unwrap_or(arguments);
+            Some(canonical_json_signature(&arguments))
+        })
+        .collect::<Vec<_>>();
+    if signatures.is_empty() {
+        return None;
+    }
+    signatures.sort();
+    Some(signatures.join("\n"))
+}
+
+fn verified_dependency_cycle_repeats(signatures: &[String]) -> bool {
+    let mut unique = signatures.to_vec();
+    unique.sort();
+    unique.dedup();
+    unique.len() < signatures.len()
+}
+
+fn track_project_planning_integrity(
+    mut callbacks: RuntimeCallbacks,
+    state: Arc<Mutex<TaskTurnLifecycleState>>,
+) -> RuntimeCallbacks {
+    let downstream_start = callbacks.on_tools_start.clone();
+    callbacks.on_tools_start = Some(Arc::new({
+        let state = Arc::clone(&state);
+        move |payload| {
+            if let Ok(mut state) = state.lock() {
+                if state.project_planning_integrity_guard {
+                    state.project_planning_pending_dependency_batch_signature =
+                        project_dependency_write_batch_signature(&payload);
+                }
+            }
+            if let Some(callback) = downstream_start.as_ref() {
+                callback(payload);
+            }
+        }
+    }));
+    let downstream_end = callbacks.on_tools_end.clone();
+    callbacks.on_tools_end = Some(Arc::new(move |payload| {
+        let tool_results = payload
+            .get("tool_results")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if let Ok(mut state) = state.lock() {
+            if state.project_planning_integrity_guard {
+                let dependency_batch_signature = state
+                    .project_planning_pending_dependency_batch_signature
+                    .take();
+                let failures = tool_results
+                    .iter()
+                    .filter_map(planning_failure_summary)
+                    .collect::<Vec<_>>();
+                if !failures.is_empty() {
+                    state.project_planning_write_failures = failures;
+                    state.project_planning_repair_mutation_succeeded = false;
+                    state.project_planning_dependency_write_cycle.clear();
+                } else {
+                    if let Some(signature) = dependency_batch_signature.as_ref() {
+                        let successful_dependency_writes = tool_results
+                            .iter()
+                            .filter(|result| {
+                                successful_tool_result(
+                                    result,
+                                    "project_management_service_set_project_task_dependencies",
+                                )
+                            })
+                            .count();
+                        let expected_dependency_writes = signature.lines().count();
+                        if successful_dependency_writes == expected_dependency_writes {
+                            state
+                                .project_planning_dependency_write_cycle
+                                .push(signature.clone());
+                        }
+                    }
+
+                    let graph_verified_in_later_batch = dependency_batch_signature.is_none()
+                        && tool_results.iter().any(|result| {
+                            successful_tool_result(
+                                result,
+                                "project_management_service_get_project_dependency_graph",
+                            )
+                        });
+                    if graph_verified_in_later_batch
+                        && !state.project_planning_dependency_write_cycle.is_empty()
+                    {
+                        let repeated_within_cycle = verified_dependency_cycle_repeats(
+                            state.project_planning_dependency_write_cycle.as_slice(),
+                        );
+                        let mut verified_cycle =
+                            state.project_planning_dependency_write_cycle.clone();
+                        verified_cycle.sort();
+                        verified_cycle.dedup();
+                        let repeated_verified_cycle = !state
+                            .project_planning_last_verified_dependency_cycle
+                            .is_empty()
+                            && state.project_planning_last_verified_dependency_cycle
+                                == verified_cycle;
+                        state.project_planning_force_finalization =
+                            repeated_within_cycle || repeated_verified_cycle;
+                        state.project_planning_last_verified_dependency_cycle = verified_cycle;
+                        state.project_planning_dependency_write_cycle.clear();
+                    }
+
+                    if !state.project_planning_write_failures.is_empty() {
+                        let verified_after_prior_repair = state
+                            .project_planning_repair_mutation_succeeded
+                            && tool_results.iter().any(|result| {
+                                successful_tool_result(
+                                    result,
+                                    "project_management_service_get_project_dependency_graph",
+                                )
+                            });
+                        if verified_after_prior_repair {
+                            state.project_planning_write_failures.clear();
+                            state.project_planning_repair_mutation_succeeded = false;
+                        } else if tool_results.iter().any(|result| {
+                            result
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .is_some_and(is_project_planning_mutation_tool)
+                                && result.get("success").and_then(Value::as_bool) == Some(true)
+                                && result.get("is_error").and_then(Value::as_bool) != Some(true)
+                        }) {
+                            // Verification must happen in a later tool batch so a dependency-graph
+                            // read cannot race a parallel repair mutation in the same batch.
+                            state.project_planning_repair_mutation_succeeded = true;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(callback) = downstream_end.as_ref() {
+            callback(payload);
+        }
+    }));
+    callbacks
+}
+
+fn track_project_execution_planner_completion(
+    mut callbacks: RuntimeCallbacks,
+    state: Arc<Mutex<TaskTurnLifecycleState>>,
+) -> RuntimeCallbacks {
+    let downstream = callbacks.on_tools_end.clone();
+    callbacks.on_tools_end = Some(Arc::new(move |payload| {
+        if project_execution_planner_terminal_tool_succeeded(&payload) {
+            if let Ok(mut state) = state.lock() {
+                state.project_execution_plan_materialized = true;
+                state.mode = None;
+            }
+        }
+        if let Some(callback) = downstream.as_ref() {
+            callback(payload);
+        }
+    }));
+    callbacks
 }
 
 impl ChatosRuntimeLifecycleHook {
@@ -354,6 +629,38 @@ impl ChatosRuntimeLifecycleHook {
             reason: "task_review_retry".to_string(),
         })
     }
+
+    fn repair_failed_project_planning_writes(
+        &self,
+        context: &RuntimeFinalResponseContext,
+    ) -> Result<Option<RuntimeFinalResponseAction>, String> {
+        let mut state = self.task_turn_state()?;
+        if !state.project_planning_integrity_guard
+            || state.project_planning_write_failures.is_empty()
+        {
+            return Ok(None);
+        }
+        if state.project_planning_repair_rounds >= MAX_PROJECT_PLANNING_REPAIR_ROUNDS {
+            let failures = state.project_planning_write_failures.join(" | ");
+            return Err(format!(
+                "项目规划仍有未修复的写入失败，不能标记为完成：{failures}"
+            ));
+        }
+
+        state.project_planning_repair_rounds += 1;
+        let guidance = if state.project_planning_repair_mutation_succeeded {
+            "[Project Planning Integrity Guard]\n程序检测到此前失败的规划写入已有修复动作，但尚未通过后续权威依赖图验证。不要总结完成。现在重新读取项目任务和项目依赖图；若仍有缺口，继续修复。只有验证结果与最终总结一致后才能结束本轮。"
+        } else {
+            "[Project Planning Integrity Guard]\n程序检测到本轮至少一个项目规划写入失败。不要总结完成，也不要重构、缩写或猜测任何 ID。先重新读取权威项目任务和依赖图，复制工具返回的精确 ID，修复所有失败写入；修复后必须在下一批工具调用中再次读取项目依赖图验证。"
+        };
+        let input_items = Self::continue_with_response(&mut state, &context.response, guidance);
+        drop(state);
+        self.emit_task_turn_thinking(TaskTurnFollowUpMode::ContinueExecution);
+        Ok(Some(RuntimeFinalResponseAction::Continue {
+            input_items,
+            reason: "project_planning_integrity_repair".to_string(),
+        }))
+    }
 }
 
 #[async_trait]
@@ -362,7 +669,7 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
         &self,
         _context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
-        let input_items =
+        let mut input_items =
             crate::services::runtime_guidance_input::load_runtime_guidance_input_items(
                 Some(self.session_id.as_str()),
                 Some(self.turn_id.as_str()),
@@ -372,20 +679,49 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
                 &self.callbacks,
             )
             .await;
-        let review_mode = matches!(
-            self.task_turn_state()?.mode,
-            Some(TaskTurnFollowUpMode::ReviewExecution)
-        );
+        let state = self.task_turn_state()?;
+        let project_execution_plan_materialized = state.project_execution_plan_materialized;
+        let project_planning_force_finalization = state.project_planning_force_finalization
+            && state.project_planning_write_failures.is_empty();
+        let review_mode = matches!(state.mode, Some(TaskTurnFollowUpMode::ReviewExecution));
+        drop(state);
+        if project_execution_plan_materialized {
+            input_items.push(system_input_item(
+                PROJECT_EXECUTION_PLANNER_FINALIZATION_PROMPT,
+            ));
+        }
+        if project_planning_force_finalization {
+            input_items.push(system_input_item(PROJECT_PLANNING_LOOP_FINALIZATION_PROMPT));
+        }
         Ok(RuntimeBeforeModelRequest::unchanged()
             .with_input_items(input_items)
             .with_stream_output(!review_mode)
-            .with_tools_enabled(!review_mode))
+            .with_tools_enabled(
+                !review_mode
+                    && !project_execution_plan_materialized
+                    && !project_planning_force_finalization,
+            ))
     }
 
     async fn after_final_response(
         &self,
         context: RuntimeFinalResponseContext,
     ) -> Result<RuntimeFinalResponseAction, String> {
+        if self.task_turn_state()?.project_execution_plan_materialized {
+            self.task_turn_state()?.mode = None;
+            return Ok(RuntimeFinalResponseAction::Accept);
+        }
+        if {
+            let state = self.task_turn_state()?;
+            state.project_planning_force_finalization
+                && state.project_planning_write_failures.is_empty()
+        } {
+            self.task_turn_state()?.mode = None;
+            return Ok(RuntimeFinalResponseAction::Accept);
+        }
+        if let Some(action) = self.repair_failed_project_planning_writes(&context)? {
+            return Ok(action);
+        }
         if matches!(
             self.task_turn_state()?.mode,
             Some(TaskTurnFollowUpMode::ReviewExecution)
@@ -457,6 +793,11 @@ fn task_turn_review_metadata(state: &TaskTurnLifecycleState) -> Value {
             "attempted": state.review_attempted,
             "outcome": outcome,
             "rounds": state.follow_up_rounds,
+        },
+        "project_planning_integrity": {
+            "guarded": state.project_planning_integrity_guard,
+            "pending_write_failure_count": state.project_planning_write_failures.len(),
+            "repair_rounds": state.project_planning_repair_rounds,
         }
     })
 }
@@ -541,7 +882,7 @@ pub async fn prepare_mcp_execution(
     turn_id: &str,
     runtime_context: &mut ResolvedConversationRuntimeContext,
     use_codex_gateway_mcp_passthrough: bool,
-) -> PreparedMcpExecution {
+) -> Result<PreparedMcpExecution, String> {
     let started_at = Instant::now();
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
     let http_server_count = http_servers.len();
@@ -550,11 +891,12 @@ pub async fn prepare_mcp_execution(
     let mut executor =
         AgentMcpToolExecute::new(http_servers, stdio_servers, builtin_servers.clone());
     if runtime_context.use_tools {
-        let _ = if use_codex_gateway_mcp_passthrough {
+        let init_result = if use_codex_gateway_mcp_passthrough {
             executor.init_builtin_only().await
         } else {
             executor.init().await
         };
+        init_result.map_err(|error| format!("initialize MCP Management tools failed: {error}"))?;
     }
 
     let unavailable_tools = executor.get_unavailable_tools();
@@ -590,12 +932,12 @@ pub async fn prepare_mcp_execution(
     }
     let tool_metadata = executor.tool_metadata().clone();
 
-    PreparedMcpExecution {
+    Ok(PreparedMcpExecution {
         executor,
         unavailable_tools,
         prefixed_input_items,
         tool_metadata,
-    }
+    })
 }
 
 pub fn effective_codex_gateway_mcp_passthrough(
@@ -605,7 +947,8 @@ pub fn effective_codex_gateway_mcp_passthrough(
     model_runtime.use_codex_gateway_mcp_passthrough
         && !runtime_context.project_requirement_execution_planner
         && runtime_context.mcp_server_bundle.0.iter().all(|server| {
-            server.header_provider.is_none()
+            server.name != "mcp_management"
+                && server.header_provider.is_none()
                 && !server
                     .headers
                     .as_ref()
@@ -623,63 +966,23 @@ fn push_optional_system_prompt(items: &mut Vec<Value>, content: Option<&str>) {
 fn build_workspace_global_prompt(
     runtime_context: &ResolvedConversationRuntimeContext,
 ) -> Option<String> {
-    let workspace_root = normalize_prompt_text(runtime_context.workspace_root.as_deref());
-    let project_root = normalize_prompt_text(runtime_context.resolved_project_root.as_deref());
-    let project_id = normalize_prompt_text(runtime_context.resolved_project_id.as_deref())
-        .filter(|value| *value != PUBLIC_PROJECT_ID);
-    let project_name = normalize_prompt_text(runtime_context.resolved_project_name.as_deref());
-    let project_source =
-        normalize_prompt_text(runtime_context.resolved_project_source_type.as_deref());
-    if workspace_root.is_none()
-        && project_root.is_none()
-        && project_id.is_none()
-        && project_name.is_none()
-    {
-        return None;
-    }
+    let project_name = normalize_prompt_text(runtime_context.resolved_project_name.as_deref())?;
 
     let mut lines = if runtime_context.internal_context_locale.is_english() {
         vec!["[Current Project And Runtime Context]".to_string()]
     } else {
         vec!["[当前项目与运行上下文]".to_string()]
     };
-    if let Some(project_name) = project_name {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current project name: {project_name}")
-        } else {
-            format!("当前项目名称：{project_name}")
-        });
-    }
-    if let Some(project_id) = project_id {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current project id: {project_id}")
-        } else {
-            format!("当前项目 ID：{project_id}")
-        });
-    }
-    if let Some(project_source) = project_source {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current project source type: {project_source}")
-        } else {
-            format!("当前项目来源类型：{project_source}")
-        });
-    }
-    if let Some(workspace_root) = workspace_root {
-        lines.push(if runtime_context.internal_context_locale.is_english() {
-            format!("Current workspace root: {workspace_root}")
-        } else {
-            format!("当前工作目录：{workspace_root}")
-        });
-    }
-    if let Some(project_root) = project_root {
-        if Some(project_root) != normalize_prompt_text(runtime_context.workspace_root.as_deref()) {
-            lines.push(if runtime_context.internal_context_locale.is_english() {
-                format!("Current project root: {project_root}")
-            } else {
-                format!("当前项目目录：{project_root}")
-            });
-        }
-    }
+    lines.push(if runtime_context.internal_context_locale.is_english() {
+        format!("Current project name: {project_name}")
+    } else {
+        format!("当前项目名称：{project_name}")
+    });
+    lines.push(if runtime_context.internal_context_locale.is_english() {
+        "All project tool routing is already bound by the program. Do not ask for or infer provider, device, workspace, sandbox, lease, or connector identifiers.".to_string()
+    } else {
+        "所有项目工具路由均已由程序绑定。不得向用户索取或自行猜测 Provider、设备、Workspace、Sandbox、租约或 Connector 标识。".to_string()
+    });
     Some(lines.join("\n"))
 }
 
@@ -716,13 +1019,15 @@ pub fn build_agent_chat_options(
     prefixed_input_items: Vec<Value>,
     input: ChatExecutionInput,
 ) -> ChatosAgentExecutionOptions {
-    let use_codex_gateway_mcp_passthrough =
-        effective_codex_gateway_mcp_passthrough(model_runtime, runtime_context);
     let mut shared_runtime_callbacks = shared_runtime_callbacks_from_chatos(&input.callbacks);
     if !model_runtime.effective_reasoning {
         shared_runtime_callbacks.on_thinking = None;
     }
-    let task_turn = Arc::new(Mutex::new(TaskTurnLifecycleState::default()));
+    let task_turn = Arc::new(Mutex::new(TaskTurnLifecycleState {
+        project_planning_integrity_guard: runtime_context.agent_profile.plan_mode_header()
+            && !runtime_context.project_requirement_execution_planner,
+        ..TaskTurnLifecycleState::default()
+    }));
     let shared_runtime_lifecycle = Arc::new(ChatosRuntimeLifecycleHook {
         session_id: session_id.to_string(),
         turn_id: input.turn_id.clone(),
@@ -732,16 +1037,11 @@ pub fn build_agent_chat_options(
         max_task_follow_up_rounds: task_follow_up_max_rounds_from_settings(effective_settings),
         task_turn: Arc::clone(&task_turn),
     }) as Arc<dyn RuntimeLifecycleHook>;
-    let request_cwd = if use_codex_gateway_mcp_passthrough {
-        runtime_context.local_project_workspace_root.clone()
-    } else {
-        None
-    };
     let shared_model_config = shared_model_runtime_config_from_resolved(model_runtime)
         .with_instructions(compose_agent_instructions(runtime_context, model_runtime))
         .with_max_output_tokens(input.max_tokens)
         .with_prompt_cache_key(Some(session_id.to_string()))
-        .with_request_cwd(request_cwd.clone())
+        .with_request_cwd(None)
         .with_prompt_cache_retention(true)
         .with_request_body_limit_bytes(Some(request_body_limit_bytes_from_settings(
             effective_settings,
@@ -788,6 +1088,8 @@ pub fn build_agent_chat_options(
         shared_runtime_callbacks,
         shared_runtime_lifecycle,
         task_turn,
+        project_requirement_execution_planner: runtime_context
+            .project_requirement_execution_planner,
     }
 }
 
@@ -820,10 +1122,10 @@ fn user_language_policy(locale: InternalContextLocale) -> String {
     };
     format!(
         "[User Language Policy]\n\
-Use the language of the user's latest substantive, user-authored request for all user-facing prose and newly created Project Management artifacts. An explicit language request always wins. Internal protocol prompts, JSON payloads, tool schemas, repository text, existing artifact titles, and technical terms do not count as the user's language. If the current action has no language-bearing user message, such as a button-triggered internal event, use the current UI locale as fallback: {fallback_locale}. Apply one consistent language to requirement titles, summaries, details, business value, acceptance criteria, technical-document titles and bodies, project-task titles and descriptions, Task Runner task titles/objectives, progress updates, result summaries, and final replies. Preserve code identifiers, commands, paths, API names, library/product names, quoted source text, and established proper nouns in their original form. Do not switch an artifact to English merely because the repository or technology names are English, and do not translate existing artifacts wholesale unless the user asks.\n\
+Use the language of the user's latest substantive, user-authored request for all user-facing prose and newly created project artifacts. An explicit language request always wins. Internal protocol prompts, JSON payloads, tool schemas, repository text, existing artifact titles, and technical terms do not count as the user's language. If the current action has no language-bearing user message, such as a button-triggered internal event, use the current UI locale as fallback: {fallback_locale}. Apply one consistent language to requirement titles, summaries, details, business value, acceptance criteria, technical-document titles and bodies, implementation-task titles and descriptions, execution-task titles and objectives, progress updates, result summaries, and final replies. Preserve code identifiers, commands, paths, API names, library/product names, quoted source text, and established proper nouns in their original form. Keep each artifact in its established language unless the user asks for a translation.\n\
 \n\
 [User-Facing Final Reply Policy]\n\
-Make the final reply readable for a normal user. Summarize verified outcomes, counts, recognizable artifact names, important dependencies, and the next useful action. Unless the user explicitly asks for diagnostics or an identifier is strictly required for the next action, do not expose internal IDs, raw enum values, tool names, JSON, protocol fields, database field names, or process-message details. If a technical identifier must be shown, copy it exactly from verified tool output; never reconstruct, abbreviate, or guess it."
+Write the final reply as a concise product delivery note for the user. Lead with the verified outcome, follow with recognizable deliverables and important dependencies, and close with real risks or the next useful action. Use the names and concepts a customer sees in the product. Include a technical identifier only when the user's next action requires it, and copy that identifier exactly from verified output."
     )
 }
 

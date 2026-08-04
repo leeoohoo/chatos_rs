@@ -2,6 +2,7 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 ARG DOCKER_CLI_VERSION=27.5.1
+ARG DOCKER_BUILDX_VERSION=0.20.0
 
 FROM rust:1.94.0-bookworm AS builder
 
@@ -12,7 +13,7 @@ ENV CARGO_HTTP_TIMEOUT=600
 ENV CARGO_TARGET_DIR=/tmp/chatos-target
 ENV RUSTUP_TOOLCHAIN=1.94.0
 
-RUN mkdir -p /root/.cargo \
+RUN mkdir -p "$CARGO_HOME" \
     && printf '%s\n' \
       '[source.crates-io]' \
       'replace-with = "rsproxy-sparse"' \
@@ -22,7 +23,7 @@ RUN mkdir -p /root/.cargo \
       '' \
       '[net]' \
       'git-fetch-with-cli = true' \
-      > /root/.cargo/config.toml
+      > "$CARGO_HOME/config.toml"
 
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
@@ -68,10 +69,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && mkdir -p /out \
     && cp "$CARGO_TARGET_DIR/release/$BIN_NAME" /out/service
 
-FROM debian:bookworm-slim AS runtime-base
+FROM debian:bookworm-slim AS runtime-deps
 
 ARG BIN_NAME
 ARG DOCKER_CLI_VERSION
+ARG DOCKER_BUILDX_VERSION
+ARG AGENT_BROWSER_VERSION=0.31.2
+ARG NODE_VERSION=24.4.1
 
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
@@ -88,15 +92,42 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
         openssh-client \
         ripgrep \
         tzdata \
+    && if [ "$BIN_NAME" = "chat_app_server_rs" ]; then \
+         apt-get install -y --no-install-recommends chromium xz-utils \
+         && node_arch="$(dpkg --print-architecture)" \
+         && case "$node_arch" in \
+              amd64) node_arch=x64 ;; \
+              arm64) node_arch=arm64 ;; \
+              *) echo "unsupported Node.js architecture: $node_arch" >&2; exit 1 ;; \
+            esac \
+         && node_archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+         && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}" -o "/tmp/${node_archive}" \
+         && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/node-shasums.txt \
+         && grep "  ${node_archive}$" /tmp/node-shasums.txt > /tmp/node-sha256.txt \
+         && (cd /tmp && sha256sum -c node-sha256.txt) \
+         && tar -xJf "/tmp/${node_archive}" -C /usr/local --strip-components=1 \
+         && rm -f "/tmp/${node_archive}" /tmp/node-shasums.txt /tmp/node-sha256.txt \
+         && npm install --global "agent-browser@${AGENT_BROWSER_VERSION}"; \
+       fi \
     && if [ "$BIN_NAME" = "sandbox_manager_service_backend" ]; then \
          docker_arch="$(dpkg --print-architecture)" \
          && curl -fsSL \
            "https://download.docker.com/linux/debian/dists/bookworm/pool/stable/${docker_arch}/docker-ce-cli_${DOCKER_CLI_VERSION}-1~debian.12~bookworm_${docker_arch}.deb" \
            -o /tmp/docker-ce-cli.deb \
-         && apt-get install -y --no-install-recommends /tmp/docker-ce-cli.deb \
-         && rm -f /tmp/docker-ce-cli.deb; \
+         && curl -fsSL \
+           "https://download.docker.com/linux/debian/dists/bookworm/pool/stable/${docker_arch}/docker-buildx-plugin_${DOCKER_BUILDX_VERSION}-1~debian.12~bookworm_${docker_arch}.deb" \
+           -o /tmp/docker-buildx-plugin.deb \
+         && apt-get install -y --no-install-recommends \
+           /tmp/docker-ce-cli.deb \
+           /tmp/docker-buildx-plugin.deb \
+         && rm -f /tmp/docker-ce-cli.deb /tmp/docker-buildx-plugin.deb; \
        fi \
     && rm -rf /var/lib/apt/lists/*
+
+ENV AGENT_BROWSER_BIN=/usr/local/bin/agent-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+
+FROM runtime-deps AS runtime-base
 
 COPY --from=builder /out/service /usr/local/bin/chatos-service
 COPY docker/entrypoint-rust-service.sh /usr/local/bin/chatos-rust-service-entrypoint

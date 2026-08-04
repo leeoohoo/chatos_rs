@@ -61,6 +61,7 @@ pub(super) async fn dispatch_model_request(
         "supports_responses": request.supports_responses,
         "request_attempt": request_attempt,
         "stream": provider_stream,
+        "thinking_level": request.thinking_level.clone(),
         "connection_mode": if force_identity_encoding { "isolated_retry" } else { "pooled" },
         "read_timeout_seconds": request_handler.read_timeout_seconds(),
     });

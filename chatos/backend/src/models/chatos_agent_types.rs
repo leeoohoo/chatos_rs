@@ -87,7 +87,6 @@ pub struct ChatosAgentDto {
     pub skill_ids: Vec<String>,
     #[serde(default)]
     pub default_skill_ids: Vec<String>,
-    pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub enabled: bool,
     pub created_at: String,
@@ -116,7 +115,6 @@ pub struct ChatosAgentRuntimeContextDto {
     pub runtime_skills: Vec<ChatosAgentRuntimeSkillSummaryDto>,
     #[serde(default)]
     pub runtime_commands: Vec<ChatosAgentRuntimeCommandSummaryDto>,
-    pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub updated_at: String,
 }
@@ -134,7 +132,6 @@ pub struct CreateChatosAgentRequest {
     pub skills: Option<Vec<ChatosAgentSkillDto>>,
     pub skill_ids: Option<Vec<String>>,
     pub default_skill_ids: Option<Vec<String>>,
-    pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub enabled: Option<bool>,
 }
@@ -149,7 +146,6 @@ pub struct UpdateChatosAgentRequest {
     pub skills: Option<Vec<ChatosAgentSkillDto>>,
     pub skill_ids: Option<Vec<String>>,
     pub default_skill_ids: Option<Vec<String>>,
-    pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub enabled: Option<bool>,
 }

@@ -106,6 +106,13 @@ impl SandboxPrincipal {
 }
 
 impl SandboxAuthContext {
+    pub fn system_client_id(&self) -> Option<&str> {
+        match self {
+            Self::System(client) => Some(client.client_id.as_str()),
+            _ => None,
+        }
+    }
+
     pub fn require_admin(&self) -> Result<(), ApiError> {
         match self {
             Self::Disabled | Self::Operator => Ok(()),
@@ -237,6 +244,23 @@ impl SandboxAuthContext {
                 ensure_user_owns_tenant(principal, record.tenant_id.as_str())
             }
         }
+    }
+
+    pub fn ensure_lease_renewal_allowed(
+        &self,
+        record: &SandboxLeaseRecord,
+        ttl_seconds: u64,
+    ) -> Result<(), ApiError> {
+        self.ensure_lease_access(record, SCOPE_LEASE_CREATE)?;
+        if let Self::System(client) = self {
+            if ttl_seconds > client.max_lease_ttl_seconds {
+                return Err(ApiError::forbidden(format!(
+                    "ttl_seconds exceeds client policy: requested={ttl_seconds}, max={}",
+                    client.max_lease_ttl_seconds
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub fn ensure_tool_allowed(&self, tool_name: &str) -> Result<(), ApiError> {
@@ -423,6 +447,13 @@ fn authenticate_internal_service(
             SCOPE_IMAGES_READ,
         ],
         "project-service" => vec![SCOPE_IMAGES_READ, SCOPE_IMAGES_WRITE],
+        "mcp-management-service" => vec![
+            SCOPE_LEASE_READ,
+            SCOPE_MCP_TOOLS,
+            SCOPE_MCP_CALL,
+            SCOPE_IMAGES_READ,
+            SCOPE_IMAGES_WRITE,
+        ],
         _ => {
             return Err(ApiError::forbidden(
                 "caller service is not allowed for Sandbox Manager",

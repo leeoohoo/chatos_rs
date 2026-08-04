@@ -25,15 +25,16 @@ impl TaskService {
         let Some(task) = self.get_task_with_aligned_memory_tenant(id).await? else {
             return Ok(None);
         };
+        let memory_thread_id = self.resolve_task_memory_thread_id(&task).await?;
         let client = self.require_memory_client()?;
         let thread = client
-            .get_thread(&task.memory_thread_id, Some(&task.tenant_id))
+            .get_thread(&memory_thread_id, Some(&task.tenant_id))
             .await?;
 
         let total_record_count = if thread.is_some() {
             client
                 .count_thread_records(
-                    &task.memory_thread_id,
+                    &memory_thread_id,
                     &SdkCountThreadRecordsRequest {
                         tenant_id: task.tenant_id.clone(),
                         role: None,
@@ -53,7 +54,7 @@ impl TaskService {
                         tenant_id: task.tenant_id.clone(),
                         subject_id: Some(task.subject_id.clone()),
                         related_subject_ids: None,
-                        thread_id: task.memory_thread_id.clone(),
+                        thread_id: memory_thread_id.clone(),
                         policy: Some(sanitize_task_memory_context_policy(options)),
                     })
                     .await?,
@@ -64,7 +65,7 @@ impl TaskService {
 
         Ok(Some(TaskMemoryContextResponse {
             task_id: task.id,
-            memory_thread_id: task.memory_thread_id,
+            memory_thread_id,
             tenant_id: task.tenant_id,
             subject_id: task.subject_id,
             thread,
@@ -81,9 +82,10 @@ impl TaskService {
         let Some(task) = self.get_task_with_aligned_memory_tenant(id).await? else {
             return Ok(None);
         };
+        let memory_thread_id = self.resolve_task_memory_thread_id(&task).await?;
         let client = self.require_memory_client()?;
         let thread = client
-            .get_thread(&task.memory_thread_id, Some(&task.tenant_id))
+            .get_thread(&memory_thread_id, Some(&task.tenant_id))
             .await?;
         let options = sanitize_task_memory_records_options(options);
         let limit = options.limit.unwrap_or(50);
@@ -93,7 +95,7 @@ impl TaskService {
         let Some(thread) = thread else {
             return Ok(Some(TaskMemoryRecordsResponse {
                 task_id: task.id,
-                memory_thread_id: task.memory_thread_id,
+                memory_thread_id,
                 tenant_id: task.tenant_id,
                 subject_id: task.subject_id,
                 thread: None,
@@ -111,7 +113,7 @@ impl TaskService {
 
         let page = client
             .list_thread_records_page(
-                &task.memory_thread_id,
+                &memory_thread_id,
                 &SdkListThreadRecordsRequest {
                     tenant_id: task.tenant_id.clone(),
                     role: options.role.clone(),
@@ -126,7 +128,7 @@ impl TaskService {
 
         Ok(Some(TaskMemoryRecordsResponse {
             task_id: task.id,
-            memory_thread_id: task.memory_thread_id,
+            memory_thread_id,
             tenant_id: task.tenant_id,
             subject_id: task.subject_id,
             thread: Some(thread),
@@ -149,13 +151,14 @@ impl TaskService {
         let Some(task) = self.get_task_with_aligned_memory_tenant(id).await? else {
             return Ok(None);
         };
+        let memory_thread_id = self.resolve_task_memory_thread_id(&task).await?;
         let client = self.require_memory_client()?;
         let result = client
-            .run_thread_repair_summary(&task.memory_thread_id, &task.tenant_id)
+            .run_thread_repair_summary(&memory_thread_id, &task.tenant_id)
             .await?;
         Ok(Some(TaskMemorySummaryResponse {
             task_id: task.id,
-            memory_thread_id: task.memory_thread_id,
+            memory_thread_id,
             tenant_id: task.tenant_id,
             requested_at: now_rfc3339(),
             result,
@@ -184,5 +187,23 @@ impl TaskService {
         save_task_if_tenant_aligned(&self.store, task)
             .await
             .map(Some)
+    }
+
+    async fn resolve_task_memory_thread_id(&self, task: &TaskRecord) -> Result<String, String> {
+        let Some(last_run_id) = task
+            .last_run_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(task.memory_thread_id.clone());
+        };
+        let Some(run) = self.store.get_run(last_run_id).await? else {
+            return Ok(task.memory_thread_id.clone());
+        };
+        if run.task_id != task.id {
+            return Ok(task.memory_thread_id.clone());
+        }
+        Ok(run.memory_thread_id)
     }
 }

@@ -271,7 +271,7 @@ export const RequirementExecutionActionDialogs: React.FC<{
         tone="red"
       >
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          系统会立即取消当前规划 Agent，并删除这个执行批次已经创建的 Task Runner 任务、运行记录和关联链接。
+          系统会立即停止当前计划生成，并删除这个执行批次已经创建的任务、运行记录和关联链接。
         </p>
         <p className="mt-2 text-xs leading-5 text-muted-foreground">
           项目需求、项目任务和技术文档不会被删除。之后仍可重新发起规划。
@@ -292,7 +292,7 @@ export const RequirementExecutionActionDialogs: React.FC<{
         tone="amber"
       >
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          系统会复制当前完整 DAG 并立即执行新副本。新批次创建成功后，会删除旧批次的任务、运行记录、沙箱、临时分支、worktree 和本地临时目录。
+          系统会复制当前完整执行流程并立即运行新副本。新批次创建成功后，会删除旧批次的任务、运行记录、执行环境和临时工作区。
         </p>
         <p className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
           此清理操作不可撤销，但项目需求和流程替换记录会保留。

@@ -12,7 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_project_service_dotenv();
     init_tracing();
 
-    chatos_service_runtime::apply_config_center_env("project-service").await;
+    chatos_service_runtime::apply_config_center_env("project-service")
+        .await
+        .map_err(|err| format!("apply managed config failed: {err}"))?;
     let mut config = AppConfig::from_env()?;
     resolve_downstream_services(&mut config).await;
     let bind_addr = config.bind_addr();

@@ -21,6 +21,7 @@ mod tests {
 
     use super::{
         attach_user_history_process_metadata, ensure_message_turn_id,
+        is_task_runner_async_plan_summary_message,
         reconcile_contact_async_user_status_for_display, strip_assistant_for_compact_history,
     };
     use crate::models::message::Message;
@@ -164,7 +165,30 @@ mod tests {
     }
 
     #[test]
-    fn orphaned_running_chat_turn_is_displayed_as_cancelled() {
+    fn tool_call_iteration_is_not_a_completed_plan_summary() {
+        let mut assistant = build_message("assistant", "");
+        assistant.message_mode = Some("task_runner_async_plan".to_string());
+        assistant.tool_calls = Some(json!([{
+            "id": "call-1",
+            "type": "function",
+            "function": {
+                "name": "project_management_service_list_project_tasks",
+                "arguments": "{}"
+            }
+        }]));
+        assistant.metadata = Some(json!({
+            "response_status": "tool_calls",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "message_kind": "plan_summary"
+            }
+        }));
+
+        assert!(!is_task_runner_async_plan_summary_message(&assistant));
+    }
+
+    #[test]
+    fn orphaned_running_chat_turn_is_displayed_as_failed() {
         let mut user = build_message("user", "hello");
         user.metadata = Some(json!({
             "conversation_turn_id": "turn-orphaned",
@@ -182,7 +206,7 @@ mod tests {
                 .and_then(|value| value.get("task_runner_async"))
                 .and_then(|value| value.get("overall_status"))
                 .and_then(Value::as_str),
-            Some("cancelled")
+            Some("failed")
         );
     }
 

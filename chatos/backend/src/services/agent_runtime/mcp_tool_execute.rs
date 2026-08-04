@@ -83,7 +83,7 @@ impl McpToolExecute {
 #[cfg(test)]
 mod tests {
     use super::McpToolExecute;
-    use crate::services::builtin_mcp::BuiltinMcpKind;
+    use crate::services::mcp_loader::BuiltinMcpKind;
     use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
     use crate::services::mcp_tool_execute_shared::test_support::{
         assert_parallel_policy_allows_read_only_safe_batch,
@@ -106,7 +106,11 @@ mod tests {
                 name: "alpha_http".to_string(),
                 url: "http://127.0.0.1:9000/mcp".to_string(),
                 headers: None,
+                timeout_ms: None,
+                tool_timeout_ms: std::collections::HashMap::new(),
                 allowed_tool_names: None,
+                preserve_tool_names: false,
+                fail_on_unavailable: false,
                 header_provider: None,
             }],
             vec![McpStdioServer {

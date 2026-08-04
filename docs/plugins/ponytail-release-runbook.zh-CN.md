@@ -1,6 +1,6 @@
 # Ponytail ChatOS Release 发布手册
 
-Ponytail 适配包位于 `plugins/ponytail`，版本为 `4.8.4-chatos.1`。它是 schema v2 Portable Prompt Plugin：包含一个 Skill、四个 Command 和 Cloud/Local 各三档 Agent Profile，不包含 Hook、MCP、Node 进程、状态文件、OAuth 或运行时权限。
+Ponytail 适配包位于 `plugins/ponytail`，版本为 `4.8.4-chatos.2`。它是 schema v2 Portable Prompt Plugin：包含一个 Skill、四个 Command 和三档统一 Task Runner Agent Profile，不包含 Hook、MCP、Node 进程、状态文件、OAuth 或运行时权限；本地/云端执行位置由 Runtime Context 决定，不再复制 Local Agent Profile。
 
 ## 0. 默认 `chatos-bundled` 交付
 
@@ -9,7 +9,7 @@ ChatOS 默认启动 seed 会把 Ponytail 作为 `bundled-plugin-ponytail` 写入
 - 编译时嵌入并校验 Manifest、精确 checksums、SPDX SBOM 和全部 Prompt 文件；
 - 生成不可变 Release、11 个 component snapshot 和 11 个 canonical Cloud Bundle；
 - 先以 `ready=false` 落库，全部校验和持久化完成后再切换为 `ready=true`；
-- 绑定到 `task_runner_run_phase` 和 `task_runner_local_run_phase`，因此普通云端/本地执行任务可以发现它；
+- 绑定到统一的 `task_runner_run_phase`；云端/本地项目的实际组件执行位置由 Runtime Context 与 MCP Management 路由决定；
 - 首次为 seed System Admin 创建启用偏好，尊重后续人工禁用，不在重启时重新开启；
 - 其他用户在“插件目录”启用后，即可在 ChatOS 普通任务的 Plugin Picker 中选择。
 
@@ -40,7 +40,7 @@ node scripts/package-plugin-release.mjs --verify plugins/ponytail
 
 ```bash
 node scripts/package-plugin-release.mjs --package plugins/ponytail \
-  --output /tmp/ponytail-4.8.4-chatos.1.zip
+  --output /tmp/ponytail-4.8.4-chatos.2.zip
 ```
 
 脚本会固定 ZIP 文件时间和排序，输出：

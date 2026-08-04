@@ -1,13 +1,46 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use reqwest::StatusCode;
+use serde::Deserialize;
+
 use super::*;
 use crate::models::{TaskProjectRecord, PUBLIC_PROJECT_ID};
 use crate::services::project_management_api_client::{
     self, ProjectRuntimeEnvironmentImage, ProjectSandboxRuntimeSettings,
 };
+use chatos_project_execution::{parse_local_connector_workspace_root, LocalConnectorWorkspaceRef};
+use chatos_sandbox_contract::{
+    ApprovalPolicy, ApprovalReviewer, EffectiveSandboxPolicy, PermissionProfileId,
+    SandboxBackendKind, SandboxLeasePolicyRequest,
+};
 
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
+#[derive(Debug, Deserialize)]
+struct LocalConnectorSandboxPairing {
+    id: String,
+    device_id: String,
+    workspace_id: String,
+    enabled: bool,
+    #[serde(default)]
+    sandbox_mode: String,
+    #[serde(default)]
+    sandbox_readiness: String,
+    #[serde(default)]
+    permission_profile_id: String,
+    #[serde(default)]
+    approval_policy: String,
+    #[serde(default)]
+    approval_reviewer: String,
+    #[serde(default)]
+    policy_revision: Option<String>,
+}
+
+#[derive(Debug)]
+struct LocalConnectorResolvedSandboxRoute {
+    base_url: String,
+    pairing_id: String,
+    policy: SandboxLeasePolicyRequest,
+}
 
 impl RunService {
     pub(crate) async fn validate_sandbox_route_for_task(
@@ -21,28 +54,17 @@ impl RunService {
         &self,
         task: &TaskRecord,
     ) -> Result<SandboxTaskRoute, String> {
-        if let Some(base_url) = task
+        if task
             .mcp_config
             .sandbox_manager_base_url
             .as_deref()
             .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .is_some_and(|value| !value.is_empty())
         {
-            let base_url = base_url.trim_end_matches('/').to_string();
-            if is_local_connector_sandbox_manager(base_url.as_str()) {
-                return Err(
-                    "Local Connector Sandbox is unavailable in cloud Task Runner".to_string(),
-                );
-            }
-            let auth = sandbox_auth_for_task(&self.config, task, base_url.as_str())?;
-            return Ok(SandboxTaskRoute {
-                base_url,
-                auth,
-                image_id: Some(base_sandbox_image_id_for_task(task)?),
-                environment_plan: None,
-                provider: "task_override".to_string(),
-                policy: task.mcp_config.sandbox_policy_request(),
-            });
+            return Err(
+                "sandbox_manager_base_url is program-managed and cannot be overridden per task"
+                    .to_string(),
+            );
         }
 
         let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
@@ -56,6 +78,7 @@ impl RunService {
                 image_id: Some(base_sandbox_image_id_for_task(task)?),
                 environment_plan: None,
                 provider: "cloud_sandbox_manager".to_string(),
+                local_connector_pairing_id: None,
                 policy: task.mcp_config.sandbox_policy_request(),
             });
         }
@@ -71,36 +94,43 @@ impl RunService {
             project_id.as_str(),
         )
         .await?;
-        let local_project = project_uses_local_runtime(&project);
         let task_policy = task.mcp_config.sandbox_policy_request();
-        let (base_url, provider, policy) = if local_project {
-            return Err(
-                "local_runtime_required: Local Connector 项目不能进入云端 Sandbox".to_string(),
-            );
+        let local_project = local_connector_project_ref(&project)?;
+        let (base_url, provider, local_connector_pairing_id, policy) = if let Some(project_ref) =
+            local_project.as_ref()
+        {
+            let resolved =
+                resolve_local_connector_sandbox_route(&self.config, task, &project, project_ref)
+                    .await?;
+            (
+                resolved.base_url,
+                "local_connector".to_string(),
+                Some(resolved.pairing_id),
+                resolved.policy,
+            )
         } else {
             (
                 self.effective_sandbox_manager_base_url().await?,
                 "cloud_sandbox_manager".to_string(),
+                None,
                 task_policy,
             )
         };
-        let environment_plan = if runtime_topology_v2_enabled() {
+        let environment_plan = if local_project.is_none() && runtime_topology_v2_enabled() {
             sandbox_environment_plan_for_task(task, &runtime, provider.as_str())?
         } else {
             None
         };
-        // Keep the resolved workspace/base image even when topology v2 is selected.
-        // The environment plan may be stale or temporarily unbuildable after a previous
-        // task changes the repository. Generic implementation tasks must still be able to
-        // enter a plain execution sandbox and repair the project instead of failing before
-        // the model gets any tools. `create_lease` ignores this value while the environment
-        // plan succeeds and uses it only for the guarded fallback path.
-        let image_id = sandbox_image_id_for_task(
-            task,
-            &runtime,
-            provider.as_str(),
-            crate::config::configured_sandbox_base_image_id().as_str(),
-        )?;
+        let image_id = if local_project.is_some() {
+            local_sandbox_image_id_for_task(task, &runtime)?
+        } else {
+            sandbox_image_id_for_task(
+                task,
+                &runtime,
+                provider.as_str(),
+                crate::config::configured_sandbox_base_image_id().as_str(),
+            )?
+        };
         let auth = sandbox_auth_for_task(&self.config, task, base_url.as_str())?;
         Ok(SandboxTaskRoute {
             base_url,
@@ -108,6 +138,7 @@ impl RunService {
             image_id,
             environment_plan,
             provider,
+            local_connector_pairing_id,
             policy,
         })
     }
@@ -128,13 +159,12 @@ fn runtime_topology_v2_enabled_from_value(value: Option<&str>) -> bool {
     )
 }
 
+#[cfg(test)]
 pub(super) fn sandbox_environment_fallback_allowed(
-    task: &TaskRecord,
-    route: &SandboxTaskRoute,
+    _task: &TaskRecord,
+    _route: &SandboxTaskRoute,
 ) -> bool {
-    route.environment_plan.is_some()
-        && route.image_id.is_some()
-        && normalized_execution_service_id(task).is_none_or(|service_id| service_id == "workspace")
+    false
 }
 
 fn sandbox_environment_plan_for_task(
@@ -145,6 +175,7 @@ fn sandbox_environment_plan_for_task(
     if !task.mcp_config.requires_execution {
         return Ok(None);
     }
+    ensure_project_runtime_ready(runtime)?;
     let global_environment = json_object_to_string_map(&runtime.environment.env_vars);
     let mut services = Vec::new();
     let mut workspace_service_ids = Vec::new();
@@ -220,7 +251,7 @@ fn sandbox_environment_plan_for_task(
                 "execution_service_id is not the ready project workspace: {requested}"
             ));
         }
-        return Ok(None);
+        return Err("project runtime environment has no ready workspace image".to_string());
     }
     if workspace_service_ids.len() != 1 {
         return Err("project runtime must contain exactly one ready workspace service".to_string());
@@ -291,11 +322,25 @@ fn merged_environment(
     global: &std::collections::BTreeMap<String, String>,
     service: &serde_json::Value,
 ) -> std::collections::BTreeMap<String, String> {
-    let mut environment = global.clone();
+    let expanded_global = global
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.clone(),
+                expand_environment_value(value.as_str(), global),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut environment = expanded_global.clone();
     environment.extend(
         json_object_to_string_map(service)
             .into_iter()
-            .map(|(name, value)| (name, expand_environment_value(value.as_str(), global))),
+            .map(|(name, value)| {
+                (
+                    name,
+                    expand_environment_value(value.as_str(), &expanded_global),
+                )
+            }),
     );
     environment
 }
@@ -367,10 +412,59 @@ fn sandbox_image_id_for_task(
     if !task.mcp_config.requires_execution {
         return Ok(Some(normalize_base_image_id(base_image_id)));
     }
-    match sandbox_image_id_for_runtime(runtime, provider, normalized_execution_service_id(task))? {
-        Some(image_id) => Ok(Some(image_id)),
-        None => Ok(Some(normalize_base_image_id(base_image_id))),
+    ensure_project_runtime_ready(runtime)?;
+    sandbox_image_id_for_runtime(runtime, provider, normalized_execution_service_id(task))?
+        .map(Some)
+        .ok_or_else(|| "project runtime environment has no ready workspace image".to_string())
+}
+
+fn ensure_project_runtime_ready(runtime: &ProjectSandboxRuntimeSettings) -> Result<(), String> {
+    if !runtime.environment.sandbox_enabled {
+        return Err("project sandbox environment is disabled".to_string());
     }
+    if let Some(reason) = runtime
+        .environment
+        .not_runnable_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+    {
+        return Err(format!(
+            "project sandbox environment is not runnable: {reason}"
+        ));
+    }
+    let status = runtime.environment.status.trim().to_ascii_lowercase();
+    if status != "ready" {
+        return Err(format!(
+            "project sandbox environment is not ready: status={}",
+            if status.is_empty() {
+                "pending"
+            } else {
+                status.as_str()
+            }
+        ));
+    }
+    Ok(())
+}
+
+fn local_sandbox_image_id_for_task(
+    task: &TaskRecord,
+    runtime: &ProjectSandboxRuntimeSettings,
+) -> Result<Option<String>, String> {
+    if !task.mcp_config.requires_execution {
+        return Ok(Some(normalize_base_image_id(
+            crate::config::configured_sandbox_base_image_id().as_str(),
+        )));
+    }
+    sandbox_image_id_for_runtime(
+        runtime,
+        "local_connector",
+        normalized_execution_service_id(task),
+    )?
+    .map(Some)
+    .ok_or_else(|| {
+        "Local Connector project has no ready program-managed local workspace image".to_string()
+    })
 }
 
 fn sandbox_image_id_for_runtime(
@@ -489,19 +583,182 @@ fn runtime_image_is_program_managed_target(image: &ProjectRuntimeEnvironmentImag
         && image.mcp_policy.terminal
 }
 
-fn project_uses_local_runtime(project: &TaskProjectRecord) -> bool {
+fn local_connector_project_ref(
+    project: &TaskProjectRecord,
+) -> Result<Option<LocalConnectorWorkspaceRef>, String> {
     let source_type = project
         .source_type
         .as_deref()
         .map(str::trim)
         .unwrap_or_default();
-    source_type.eq_ignore_ascii_case("local")
+    let local_source = source_type.eq_ignore_ascii_case("local")
         || source_type.eq_ignore_ascii_case("local_connector")
         || project
             .root_path
             .as_deref()
             .map(str::trim)
-            .is_some_and(|root| root.starts_with(LOCAL_CONNECTOR_ROOT_PREFIX))
+            .is_some_and(|root| {
+                root.starts_with(chatos_project_execution::LOCAL_CONNECTOR_ROOT_PREFIX)
+            });
+    if !local_source {
+        return Ok(None);
+    }
+    let root_path = project
+        .root_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "Local Connector project is missing its managed workspace root".to_string()
+        })?;
+    parse_local_connector_workspace_root(root_path)
+        .map(Some)
+        .ok_or_else(|| "Local Connector project workspace root is invalid".to_string())
+}
+
+fn local_connector_policy_for_pairing(
+    task: &TaskRecord,
+    pairing: &LocalConnectorSandboxPairing,
+) -> Result<SandboxLeasePolicyRequest, String> {
+    let maximum = EffectiveSandboxPolicy {
+        sandbox_mode: parse_sandbox_backend_kind(pairing.sandbox_mode.as_str())?,
+        permission_profile_id: parse_permission_profile_id(pairing.permission_profile_id.as_str())?,
+        approval_policy: parse_approval_policy(pairing.approval_policy.as_str())?,
+        approval_reviewer: parse_approval_reviewer(pairing.approval_reviewer.as_str())?,
+        policy_revision: pairing
+            .policy_revision
+            .as_deref()
+            .and_then(normalized_text)
+            .map(ToOwned::to_owned),
+        additional_writable_roots: Vec::new(),
+    };
+    let mut requested = task.mcp_config.sandbox_policy_request();
+    // Pairing/backend selection is a control-plane decision, never a model/task choice.
+    requested.sandbox_mode = Some(maximum.sandbox_mode);
+    let effective = EffectiveSandboxPolicy::resolve_no_broader_than(&requested, &maximum);
+    Ok(SandboxLeasePolicyRequest {
+        sandbox_mode: Some(effective.sandbox_mode),
+        permission_profile_id: Some(effective.permission_profile_id),
+        approval_policy: Some(effective.approval_policy),
+        approval_reviewer: Some(effective.approval_reviewer),
+        policy_revision: effective.policy_revision,
+        additional_writable_roots: effective.additional_writable_roots,
+    })
+}
+
+fn parse_sandbox_backend_kind(value: &str) -> Result<SandboxBackendKind, String> {
+    value
+        .parse::<SandboxBackendKind>()
+        .map_err(|_| "Local Connector sandbox pairing has an invalid sandbox_mode".to_string())
+}
+
+fn parse_permission_profile_id(value: &str) -> Result<PermissionProfileId, String> {
+    value.parse::<PermissionProfileId>().map_err(|_| {
+        "Local Connector sandbox pairing has an invalid permission_profile_id".to_string()
+    })
+}
+
+fn parse_approval_policy(value: &str) -> Result<ApprovalPolicy, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "never" => Ok(ApprovalPolicy::Never),
+        "on_request" => Ok(ApprovalPolicy::OnRequest),
+        _ => Err("Local Connector sandbox pairing has an invalid approval_policy".to_string()),
+    }
+}
+
+fn parse_approval_reviewer(value: &str) -> Result<ApprovalReviewer, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto_review" => Ok(ApprovalReviewer::AutoReview),
+        "user" => Ok(ApprovalReviewer::User),
+        _ => Err("Local Connector sandbox pairing has an invalid approval_reviewer".to_string()),
+    }
+}
+
+async fn resolve_local_connector_sandbox_route(
+    config: &crate::config::AppConfig,
+    task: &TaskRecord,
+    project: &TaskProjectRecord,
+    project_ref: &LocalConnectorWorkspaceRef,
+) -> Result<LocalConnectorResolvedSandboxRoute, String> {
+    let owner_user_id = task_owner_user_id(task)
+        .ok_or_else(|| "Local Connector sandbox routing requires task owner user id".to_string())?;
+    let project_owner_user_id = project
+        .owner_user_id
+        .as_deref()
+        .and_then(normalized_text)
+        .ok_or_else(|| "Local Connector project owner is not initialized".to_string())?;
+    if project_owner_user_id != owner_user_id {
+        return Err("Local Connector task and project owners do not match".to_string());
+    }
+    let secret = local_connector_internal_secret(config)?;
+    let token = chatos_service_runtime::issue_internal_service_token(
+        secret.as_str(),
+        "task-runner",
+        "local-connector-service",
+        "sandbox-routing.read",
+        60,
+    )?;
+    let service_base = local_connector_service_base_url(config)?;
+    let response = reqwest::Client::builder()
+        .timeout(local_connector_service_request_timeout(config))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|err| format!("build Local Connector sandbox routing client failed: {err}"))?
+        .get(format!(
+            "{}/api/local-connectors/sandbox-pairings",
+            service_base.trim_end_matches('/')
+        ))
+        .query(&[
+            ("active_only", "true"),
+            ("device_id", project_ref.device_id.as_str()),
+            ("workspace_id", project_ref.workspace_id.as_str()),
+        ])
+        .header("x-local-connector-caller", "task-runner")
+        .header("x-local-connector-internal-token", token)
+        .header("x-local-connector-owner-user-id", owner_user_id)
+        .send()
+        .await
+        .map_err(|err| format!("query Local Connector sandbox pairing failed: {err}"))?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(
+            "no active Local Connector sandbox pairing was found for this project".to_string(),
+        );
+    }
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "query Local Connector sandbox pairing returned HTTP {status}: {detail}"
+        ));
+    }
+    let pairing = response
+        .json::<Vec<LocalConnectorSandboxPairing>>()
+        .await
+        .map_err(|err| format!("decode Local Connector sandbox pairing failed: {err}"))?
+        .into_iter()
+        .find(|pairing| {
+            pairing.enabled
+                && pairing.device_id == project_ref.device_id
+                && pairing.workspace_id == project_ref.workspace_id
+                && pairing.sandbox_readiness.trim().eq_ignore_ascii_case("ready")
+        })
+        .ok_or_else(|| {
+            "no enabled, ready, and online Local Connector sandbox pairing was found for this project"
+                .to_string()
+        })?;
+    let pairing_id = normalized_text(pairing.id.as_str())
+        .ok_or_else(|| "Local Connector sandbox pairing id is empty".to_string())?
+        .to_string();
+    let base_url = format!(
+        "{}/api/local-connectors/sandbox-facade/{}",
+        service_base.trim_end_matches('/'),
+        urlencoding::encode(pairing_id.as_str())
+    );
+    Ok(LocalConnectorResolvedSandboxRoute {
+        base_url,
+        pairing_id,
+        policy: local_connector_policy_for_pairing(task, &pairing)?,
+    })
 }
 
 fn sandbox_auth_for_task(
@@ -510,342 +767,47 @@ fn sandbox_auth_for_task(
     base_url: &str,
 ) -> Result<Option<SandboxManagerAuth>, String> {
     if is_local_connector_sandbox_manager(base_url) {
-        return Err("Local Connector Sandbox is unavailable in cloud Task Runner".to_string());
+        let owner_user_id = task_owner_user_id(task).ok_or_else(|| {
+            "Local Connector sandbox auth requires task owner user id".to_string()
+        })?;
+        return Ok(Some(SandboxManagerAuth::local_connector(
+            local_connector_internal_secret(config)?,
+            owner_user_id.to_string(),
+        )));
     }
-    let _ = task;
     Ok(SandboxManagerAuth::from_config(config))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::services::project_management_api_client::{
-        ProjectRuntimeEnvironmentMcpPolicy, ProjectRuntimeEnvironmentSettings,
-    };
-
-    fn image(
-        service_role: &str,
-        attachment: &str,
-        filesystem: bool,
-        terminal: bool,
-    ) -> ProjectRuntimeEnvironmentImage {
-        ProjectRuntimeEnvironmentImage {
-            environment_key: "services/api".to_string(),
-            service_id: "services-api".to_string(),
-            display_name: "API".to_string(),
-            service_role: service_role.to_string(),
-            mcp_policy: ProjectRuntimeEnvironmentMcpPolicy {
-                managed_by: "system".to_string(),
-                attachment: attachment.to_string(),
-                filesystem,
-                terminal,
-            },
-            image_id: Some("image-1".to_string()),
-            image_ref: None,
-            image_provider: "cloud_sandbox_manager".to_string(),
-            status: "ready".to_string(),
-            dockerfile: Some("FROM alpine\n".to_string()),
-            env_vars: serde_json::json!({}),
-        }
-    }
-
-    #[test]
-    fn only_system_managed_workspace_targets_are_routable() {
-        assert!(runtime_image_is_program_managed_target(&image(
-            "workspace",
-            "workspace_gateway_target",
-            true,
-            true,
-        )));
-        assert!(!runtime_image_is_program_managed_target(&image(
-            "application",
-            "project_gateway_target",
-            true,
-            true,
-        )));
-        assert!(!runtime_image_is_program_managed_target(&image(
-            "application",
-            "none",
-            false,
-            false,
-        )));
-    }
-
-    #[test]
-    fn project_workspace_is_used_without_task_level_selection() {
-        let mut workspace = image("workspace", "workspace_gateway_target", true, true);
-        workspace.environment_key = "workspace".to_string();
-        workspace.service_id = "workspace".to_string();
-        workspace.display_name = "Project Workspace".to_string();
-        workspace.dockerfile = None;
-        let mut api = image("application", "none", false, false);
-        api.image_id = None;
-        let runtime = ProjectSandboxRuntimeSettings {
-            environment: ProjectRuntimeEnvironmentSettings {
-                sandbox_enabled: true,
-                status: "ready".to_string(),
-                execution_service_id: Some("workspace".to_string()),
-                env_vars: serde_json::json!({}),
-                generated_config_files: Vec::new(),
-            },
-            images: vec![api, workspace],
-        };
-
-        assert_eq!(
-            sandbox_image_id_for_runtime(&runtime, "cloud_sandbox_manager", None)
-                .expect("project workspace image"),
-            Some("image-1".to_string())
-        );
-    }
-
-    #[test]
-    fn environment_plan_contains_only_workspace_and_dependencies() {
-        let mut workspace = image("workspace", "workspace_gateway_target", true, true);
-        workspace.environment_key = "workspace".to_string();
-        workspace.service_id = "workspace".to_string();
-        workspace.display_name = "Project Workspace".to_string();
-        workspace.dockerfile = None;
-        let mut application = image("application", "none", false, false);
-        application.image_id = None;
-        let mut artifact = image("artifact", "none", false, false);
-        artifact.service_id = "web-prototype".to_string();
-        artifact.image_id = None;
-        let mut dependency = image("dependency", "none", false, false);
-        dependency.environment_key = "postgresql".to_string();
-        dependency.service_id = "postgresql".to_string();
-        dependency.image_id = None;
-        dependency.image_ref = Some("postgres:16-alpine".to_string());
-        dependency.dockerfile = None;
-        let runtime = ProjectSandboxRuntimeSettings {
-            environment: ProjectRuntimeEnvironmentSettings {
-                sandbox_enabled: true,
-                status: "ready".to_string(),
-                execution_service_id: Some("workspace".to_string()),
-                env_vars: serde_json::json!({}),
-                generated_config_files: Vec::new(),
-            },
-            images: vec![workspace, application, artifact, dependency],
-        };
-        let mut task = task();
-        task.mcp_config.requires_execution = true;
-
-        let plan = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
-            .expect("workspace plan")
-            .expect("environment topology");
-        assert_eq!(plan.execution_service_id, "workspace");
-        assert_eq!(
-            plan.services
-                .iter()
-                .map(|service| service.service_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["workspace", "postgresql"]
-        );
-    }
-
-    #[test]
-    fn runtime_topology_v2_feature_flag_defaults_on_and_can_fail_back() {
-        assert!(runtime_topology_v2_enabled_from_value(None));
-        assert!(runtime_topology_v2_enabled_from_value(Some("true")));
-        assert!(!runtime_topology_v2_enabled_from_value(Some("false")));
-        assert!(!runtime_topology_v2_enabled_from_value(Some("0")));
-    }
-
-    #[test]
-    fn workspace_route_can_fall_back_but_business_service_cannot() {
-        let mut task = task();
-        task.mcp_config.requires_execution = true;
-        let route = SandboxTaskRoute {
-            base_url: "http://sandbox.example".to_string(),
-            auth: None,
-            image_id: Some("dev-node24".to_string()),
-            environment_plan: Some(SandboxEnvironmentPlan {
-                execution_service_id: "workspace".to_string(),
-                services: Vec::new(),
-                generated_config_files: Vec::new(),
-            }),
-            provider: "cloud_sandbox_manager".to_string(),
-            policy: task.mcp_config.sandbox_policy_request(),
-        };
-
-        assert!(sandbox_environment_fallback_allowed(&task, &route));
-
-        task.mcp_config.execution_service_id = Some("workspace".to_string());
-        assert!(sandbox_environment_fallback_allowed(&task, &route));
-
-        task.mcp_config.execution_service_id = Some("api".to_string());
-        assert!(!sandbox_environment_fallback_allowed(&task, &route));
-    }
-
-    #[test]
-    fn code_or_terminal_execution_without_workspace_uses_configured_base_image() {
-        let runtime = ProjectSandboxRuntimeSettings {
-            environment: ProjectRuntimeEnvironmentSettings {
-                sandbox_enabled: true,
-                status: "pending".to_string(),
-                execution_service_id: None,
-                env_vars: serde_json::json!({}),
-                generated_config_files: Vec::new(),
-            },
-            images: Vec::new(),
-        };
-        let mut task = task();
-        task.mcp_config.requires_execution = true;
-
-        assert!(
-            sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
-                .expect("empty project runtime must fall back")
-                .is_none()
-        );
-        assert_eq!(
-            sandbox_image_id_for_task(&task, &runtime, "cloud_sandbox_manager", "dev-java21",)
-                .expect("configured base image"),
-            Some("dev-java21".to_string())
-        );
-    }
-
-    #[test]
-    fn explicit_business_service_execution_is_rejected() {
-        let runtime = ProjectSandboxRuntimeSettings {
-            environment: ProjectRuntimeEnvironmentSettings {
-                sandbox_enabled: true,
-                status: "pending".to_string(),
-                execution_service_id: None,
-                env_vars: serde_json::json!({}),
-                generated_config_files: Vec::new(),
-            },
-            images: Vec::new(),
-        };
-        let mut task = task();
-        task.mcp_config.requires_execution = true;
-        task.mcp_config.execution_service_id = Some("services-api".to_string());
-
-        let error = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
-            .expect_err("business service must not become execution target");
-        assert!(error.contains("services-api"));
-        assert!(error.contains("not the ready project workspace"));
-    }
-
-    #[test]
-    fn dependency_services_do_not_serialize_an_mcp_policy() {
-        let mut workspace = image("workspace", "workspace_gateway_target", true, true);
-        workspace.environment_key = "workspace".to_string();
-        workspace.service_id = "workspace".to_string();
-        workspace.display_name = "Project Workspace".to_string();
-        workspace.dockerfile = None;
-        let mut dependency = image("dependency", "none", false, false);
-        dependency.environment_key = "postgresql".to_string();
-        dependency.service_id = "postgresql".to_string();
-        dependency.display_name = "PostgreSQL".to_string();
-        dependency.image_id = None;
-        dependency.image_ref = Some("postgres:16-alpine".to_string());
-        dependency.dockerfile = None;
-        let runtime = ProjectSandboxRuntimeSettings {
-            environment: ProjectRuntimeEnvironmentSettings {
-                sandbox_enabled: true,
-                status: "ready".to_string(),
-                execution_service_id: Some("workspace".to_string()),
-                env_vars: serde_json::json!({}),
-                generated_config_files: Vec::new(),
-            },
-            images: vec![workspace, dependency],
-        };
-        let mut task = task();
-        task.mcp_config.requires_execution = true;
-        task.mcp_config.execution_service_id = Some("workspace".to_string());
-
-        let plan = sandbox_environment_plan_for_task(&task, &runtime, "cloud_sandbox_manager")
-            .expect("environment plan")
-            .expect("environment topology");
-        let services = serde_json::to_value(plan.services).expect("serialize services");
-        let dependency = services
-            .as_array()
-            .and_then(|items| {
-                items.iter().find(|item| {
-                    item.get("service_role").and_then(Value::as_str) == Some("dependency")
-                })
-            })
-            .expect("dependency service");
-        assert!(dependency.get("mcp_policy").is_none());
-    }
-
-    #[test]
-    fn service_environment_templates_resolve_from_project_values() {
-        let global = json_object_to_string_map(&serde_json::json!({
-            "POSTGRES_DB": "mdm_service",
-            "POSTGRES_USER": "mdm_service",
-            "POSTGRES_PASSWORD": "generated-secret",
-        }));
-        let environment = merged_environment(
-            &global,
-            &serde_json::json!({
-                "POSTGRES_DB": "${POSTGRES_DB:-app}",
-                "POSTGRES_USER": "${POSTGRES_USER}",
-                "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
-                "DATABASE_URL": "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgresql:5432/${POSTGRES_DB}",
-                "UNRESOLVED": "${MISSING_VALUE}",
-            }),
-        );
-
-        assert_eq!(
-            environment.get("POSTGRES_DB").map(String::as_str),
-            Some("mdm_service")
-        );
-        assert_eq!(
-            environment.get("POSTGRES_USER").map(String::as_str),
-            Some("mdm_service")
-        );
-        assert_eq!(
-            environment.get("POSTGRES_PASSWORD").map(String::as_str),
-            Some("generated-secret")
-        );
-        assert_eq!(
-            environment.get("DATABASE_URL").map(String::as_str),
-            Some("postgresql://mdm_service:generated-secret@postgresql:5432/mdm_service")
-        );
-        assert_eq!(
-            environment.get("UNRESOLVED").map(String::as_str),
-            Some("${MISSING_VALUE}")
-        );
-    }
-
-    fn task() -> TaskRecord {
-        TaskRecord {
-            id: "task-1".to_string(),
-            title: "Task".to_string(),
-            description: None,
-            objective: "Test sandbox routing".to_string(),
-            input_payload: None,
-            status: crate::models::TaskStatus::Ready,
-            priority: 0,
-            tags: Vec::new(),
-            default_model_config_id: None,
-            memory_thread_id: "task-task-1".to_string(),
-            tenant_id: "tenant-1".to_string(),
-            subject_id: "user-1".to_string(),
-            project_id: "project-1".to_string(),
-            task_profile: crate::models::default_task_profile(),
-            creator_user_id: None,
-            creator_username: None,
-            creator_display_name: None,
-            owner_user_id: None,
-            owner_username: None,
-            owner_display_name: None,
-            result_summary: None,
-            process_log: None,
-            last_run_id: None,
-            schedule: crate::models::TaskScheduleConfig::default(),
-            parent_task_id: None,
-            source_run_id: None,
-            source_session_id: None,
-            source_turn_id: None,
-            source_user_message_id: None,
-            prerequisite_task_ids: Vec::new(),
-            task_tool_state: crate::models::TaskToolState::default(),
-            plugin_config: Default::default(),
-            mcp_config: crate::models::TaskMcpConfig::default(),
-            created_at: "2026-07-19T00:00:00Z".to_string(),
-            updated_at: "2026-07-19T00:00:00Z".to_string(),
-            deleted_at: None,
-        }
-    }
+fn local_connector_service_base_url(config: &crate::config::AppConfig) -> Result<String, String> {
+    config
+        .local_connector_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .map(|value| value.trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL is required from configuration center for local sandbox routing"
+                .to_string()
+        })
 }
+
+fn local_connector_service_request_timeout(
+    config: &crate::config::AppConfig,
+) -> std::time::Duration {
+    config.local_connector_service_request_timeout
+}
+
+fn local_connector_internal_secret(config: &crate::config::AppConfig) -> Result<String, String> {
+    config
+        .local_connector_internal_api_secret
+        .clone()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required for local sandbox routing"
+                .to_string()
+        })
+}
+
+#[cfg(test)]
+mod tests;

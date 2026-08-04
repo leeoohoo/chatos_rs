@@ -24,6 +24,16 @@ pub(crate) struct RelayRequest {
     pub(crate) headers: BTreeMap<String, String>,
     #[serde(default)]
     pub(crate) body: Value,
+    #[serde(default)]
+    pub(crate) platform_signature: Option<String>,
+    #[serde(default)]
+    pub(crate) platform_signature_key_id: Option<String>,
+    #[serde(default)]
+    pub(crate) platform_signature_alg: Option<String>,
+    #[serde(default)]
+    pub(crate) platform_timestamp: Option<i64>,
+    #[serde(default)]
+    pub(crate) platform_nonce: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

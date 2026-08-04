@@ -30,11 +30,23 @@ pub use chatos_plugin_management_sdk::{
 };
 const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "chatos_plan_agent",
+    "chatos_planning_agent",
     "chatos_async_planner",
     "chatos_chat_runtime",
     "project_environment_agent",
     "local_connector_client_agent",
+    "task_runner_local_plan_phase",
+    "task_runner_local_run_phase",
     "memory_engine_context_agent",
+];
+const CHATOS_NOTEPAD_AGENT_KEYS: &[&str] = &[
+    "chatos_conversation_agent",
+    "project_requirement_execution_planner_agent",
+];
+const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &["chatos_conversation_agent"];
+const PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS: &[(&str, i64)] = &[
+    (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
+    (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
 ];
 
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
@@ -195,7 +207,7 @@ fn provider_skills_for_builtin_mcp(kind: BuiltinMcpKind) -> Value {
 }
 
 async fn seed_agents(store: &AppStore) -> Result<(), String> {
-    for (agent_key, display_name, service_name, description, include_user_resources) in
+    for (agent_key, display_name, service_name, description, include_user_resources, tool_plane) in
         system_agent_specs()
     {
         if let Some(mut existing) = store.get_agent(agent_key).await? {
@@ -224,6 +236,10 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
                 existing.include_user_resources = include_user_resources;
                 changed = true;
             }
+            if existing.tool_plane != tool_plane {
+                existing.tool_plane = tool_plane;
+                changed = true;
+            }
             if changed {
                 existing.updated_at = now_rfc3339();
                 store.replace_agent(&existing).await?;
@@ -241,6 +257,7 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
             enabled: true,
             managed_by: "system".to_string(),
             include_user_resources,
+            tool_plane,
             plugin_component: PluginComponentOwnership::default(),
             created_at: now.clone(),
             updated_at: now,
@@ -250,7 +267,14 @@ async fn seed_agents(store: &AppStore) -> Result<(), String> {
     Ok(())
 }
 
-fn system_agent_specs() -> Vec<(&'static str, &'static str, &'static str, &'static str, bool)> {
+fn system_agent_specs() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    bool,
+    AgentToolPlane,
+)> {
     chatos_agent::system_agent_catalog()
         .iter()
         .map(|descriptor| {
@@ -260,13 +284,22 @@ fn system_agent_specs() -> Vec<(&'static str, &'static str, &'static str, &'stat
                 descriptor.service_name,
                 descriptor.description,
                 descriptor.include_user_resources,
+                descriptor.tool_plane,
             )
         })
         .collect()
 }
 
 async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    for agent_key in ["chatos_conversation_agent", "chatos_planning_agent"] {
+    for descriptor in chatos_agent::system_agent_catalog()
+        .iter()
+        .filter(|descriptor| !descriptor.tool_plane.uses_managed_gateway())
+    {
+        store
+            .delete_bindings_for_agent(descriptor.key.as_str())
+            .await?;
+    }
+    for agent_key in CHATOS_TASK_RUNNER_AGENT_KEYS {
         seed_agent_mcp_binding(
             store,
             admin_user_id,
@@ -276,17 +309,15 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
             10,
         )
         .await?;
-        // Project management is selected by the concrete project runtime, not
-        // globally. Keeping this optional lets cloud and Local Connector use
-        // the same policy record without exposing project-scoped tools in an
-        // unscoped conversation.
-        seed_agent_mcp_binding(
+    }
+    for agent_key in ["chatos_conversation_agent"] {
+        // ChatOS never writes project planning artifacts directly. Plan mode
+        // submits a program-managed chatos_plan task through Task Runner; the
+        // Task Runner planning Agent owns Project Management writes.
+        remove_seed_binding_for_all_system_scopes(
             store,
-            admin_user_id,
             agent_key,
             builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
-            false,
-            20,
         )
         .await?;
     }
@@ -309,18 +340,23 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         20,
     )
     .await?;
-    for (agent_key, kinds) in [
-        (
-            "task_runner_plan_phase",
-            task_runner_cloud_plan_phase_builtin_kinds(),
-        ),
-        (
-            "task_runner_local_plan_phase",
-            task_runner_local_plan_phase_builtin_kinds(),
-        ),
-    ] {
+    for agent_key in CHATOS_NOTEPAD_AGENT_KEYS {
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            agent_key,
+            builtin_resource_id(BuiltinMcpKind::Notepad).as_str(),
+            false,
+            30,
+        )
+        .await?;
+    }
+    for (agent_key, kinds) in [(
+        "task_runner_plan_phase",
+        task_runner_cloud_plan_phase_builtin_kinds(),
+    )] {
         for (index, kind) in kinds.into_iter().enumerate() {
-            let required = matches!(kind, BuiltinMcpKind::AskUser);
+            let required = task_runner_cloud_plan_phase_required(kind);
             let resource_id = builtin_resource_id(kind);
             seed_agent_mcp_binding(
                 store,
@@ -333,15 +369,9 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
             .await?;
         }
     }
-    for (agent_key, kind, required, priority) in [
-        ("task_runner_run_phase", BuiltinMcpKind::AskUser, true, 20),
-        (
-            "task_runner_local_run_phase",
-            BuiltinMcpKind::AskUser,
-            true,
-            20,
-        ),
-    ] {
+    for (agent_key, kind, required, priority) in
+        [("task_runner_run_phase", BuiltinMcpKind::AskUser, true, 20)]
+    {
         let resource_id = builtin_resource_id(kind);
         seed_agent_mcp_binding(
             store,
@@ -353,12 +383,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         )
         .await?;
     }
-    for agent_key in [
-        "task_runner_plan_phase",
-        "task_runner_local_plan_phase",
-        "task_runner_run_phase",
-        "task_runner_local_run_phase",
-    ] {
+    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
         seed_agent_mcp_binding(
             store,
             admin_user_id,
@@ -375,36 +400,12 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
     )
     .await?;
-    remove_seed_binding_for_all_system_scopes(
-        store,
-        "task_runner_local_run_phase",
-        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
-    )
-    .await?;
-    remove_seed_binding_for_all_system_scopes(
-        store,
-        "task_runner_local_plan_phase",
-        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
-    )
-    .await?;
     for (kind, priority) in task_runner_cloud_run_phase_optional_builtin_kinds() {
         let resource_id = builtin_resource_id(kind);
         seed_agent_mcp_binding(
             store,
             admin_user_id,
             "task_runner_run_phase",
-            resource_id.as_str(),
-            false,
-            priority,
-        )
-        .await?;
-    }
-    for (kind, priority) in task_runner_local_run_phase_optional_builtin_kinds() {
-        let resource_id = builtin_resource_id(kind);
-        seed_agent_mcp_binding(
-            store,
-            admin_user_id,
-            "task_runner_local_run_phase",
             resource_id.as_str(),
             false,
             priority,
@@ -440,12 +441,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         .await?;
     }
     let catalog = internal_skill_catalog()?;
-    for agent_key in [
-        "task_runner_plan_phase",
-        "task_runner_local_plan_phase",
-        "task_runner_run_phase",
-        "task_runner_local_run_phase",
-    ] {
+    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
         for (index, item) in catalog.skills.iter().enumerate() {
             seed_agent_resource_binding(
                 store,
@@ -459,34 +455,32 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
             .await?;
         }
     }
-    remove_seed_binding(
-        store,
-        "project_management_agent",
-        builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
-    )
-    .await?;
     // These bindings mirror fixed tool executors in the current service code.
-    seed_agent_mcp_binding(
-        store,
-        admin_user_id,
-        "project_management_agent",
-        builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead).as_str(),
-        true,
-        10,
-    )
-    .await?;
     for (resource_id, priority) in [
-        (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
-        (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
+        (builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead), 10),
+        (builtin_resource_id(BuiltinMcpKind::ProjectManagement), 15),
     ] {
-        seed_agent_mcp_binding_with_conditions(
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            "project_management_agent",
+            resource_id.as_str(),
+            true,
+            priority,
+        )
+        .await?;
+    }
+    // Capability selection only decides which tools this Agent owns. MCP Management
+    // resolves the actual Project Service, Local Connector, or cloud Sandbox provider
+    // from the authoritative Project Execution Context for each Runtime Session.
+    for (resource_id, priority) in PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS {
+        seed_agent_mcp_binding(
             store,
             admin_user_id,
             "project_management_agent",
             resource_id,
             true,
-            priority,
-            cloud_runtime_binding_conditions(),
+            *priority,
         )
         .await?;
     }
@@ -512,18 +506,6 @@ fn cloud_runtime_binding_conditions() -> BindingConditions {
         runtime_provider: Some("cloud".to_string()),
         ..BindingConditions::default()
     }
-}
-
-async fn remove_seed_binding(
-    store: &AppStore,
-    agent_key: &str,
-    resource_id: &str,
-) -> Result<(), String> {
-    let id = format!(
-        "{agent_key}__{}__{resource_id}",
-        BINDING_SCOPE_SYSTEM_REQUIRED
-    );
-    store.delete_binding(id.as_str()).await
 }
 
 async fn remove_seed_binding_for_all_system_scopes(
@@ -696,17 +678,6 @@ fn task_runner_cloud_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, 
     ]
 }
 
-fn task_runner_local_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {
-    use BuiltinMcpKind::*;
-    vec![
-        (CodeMaintainerRead, 100),
-        (CodeMaintainerWrite, 110),
-        (TerminalController, 120),
-        (ProjectManagement, 130),
-        (BrowserTools, 170),
-    ]
-}
-
 fn task_runner_cloud_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
     use BuiltinMcpKind::*;
     vec![
@@ -722,9 +693,13 @@ fn task_runner_cloud_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
     ]
 }
 
-fn task_runner_local_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
-    use BuiltinMcpKind::*;
-    vec![CodeMaintainerRead, ProjectManagement, AskUser, BrowserTools]
+fn task_runner_cloud_plan_phase_required(kind: BuiltinMcpKind) -> bool {
+    matches!(
+        kind,
+        BuiltinMcpKind::CodeMaintainerRead
+            | BuiltinMcpKind::ProjectManagement
+            | BuiltinMcpKind::AskUser
+    )
 }
 
 #[cfg(test)]

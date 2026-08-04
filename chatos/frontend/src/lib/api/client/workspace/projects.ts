@@ -33,16 +33,6 @@ export const listProjects = (request: ApiRequestFn, userId?: string): Promise<Pr
   return request<ProjectResponse[]>(`/projects${query}`);
 };
 
-export const createProject = (
-  request: ApiRequestFn,
-  data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string },
-): Promise<ProjectResponse> => {
-  return request<ProjectResponse>('/projects', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-};
-
 export const createCloudProject = (
   request: ApiRequestFn,
   data: FormData,
@@ -56,7 +46,7 @@ export const createCloudProject = (
 export const updateProject = (
   request: ApiRequestFn,
   id: string,
-  data: { name?: string; root_path?: string; git_url?: string; description?: string },
+  data: { name?: string; git_url?: string; description?: string },
 ): Promise<ProjectResponse> => {
   return request<ProjectResponse>(`/projects/${id}`, {
     method: 'PUT',
@@ -382,12 +372,10 @@ export const listProjectContacts = (
     request: ApiRequestFn,
     projectId: string,
     paging?: ContactPaging,
-    localRuntime = false,
 ): Promise<ProjectContactLinkResponse[]> => {
   const query = buildQuery({
     limit: paging?.limit,
     offset: paging?.offset,
-    local_runtime: localRuntime || undefined,
   });
   return request<ProjectContactLinkResponse[]>(`/projects/${encodeURIComponent(projectId)}/contacts${query}`);
 };
@@ -395,11 +383,9 @@ export const listProjectContacts = (
 export const getProjectContactLock = (
   request: ApiRequestFn,
   projectId: string,
-  localRuntime = false,
 ): Promise<ProjectContactLockResponse> => {
-  const query = buildQuery({ local_runtime: localRuntime || undefined });
   return request<ProjectContactLockResponse>(
-    `/projects/${encodeURIComponent(projectId)}/contacts/lock${query}`,
+    `/projects/${encodeURIComponent(projectId)}/contacts/lock`,
   );
 };
 
@@ -407,10 +393,8 @@ export const addProjectContact = (
   request: ApiRequestFn,
   projectId: string,
   data: { contact_id: string },
-  localRuntime = false,
 ): Promise<ProjectContactLinkResponse> => {
-  const query = buildQuery({ local_runtime: localRuntime || undefined });
-  return request<ProjectContactLinkResponse>(`/projects/${encodeURIComponent(projectId)}/contacts${query}`, {
+  return request<ProjectContactLinkResponse>(`/projects/${encodeURIComponent(projectId)}/contacts`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -420,11 +404,9 @@ export const removeProjectContact = (
   request: ApiRequestFn,
   projectId: string,
   contactId: string,
-  localRuntime = false,
 ): Promise<DeleteSuccessResponse> => {
-  const query = buildQuery({ local_runtime: localRuntime || undefined });
   return request<DeleteSuccessResponse>(
-    `/projects/${encodeURIComponent(projectId)}/contacts/${encodeURIComponent(contactId)}${query}`,
+    `/projects/${encodeURIComponent(projectId)}/contacts/${encodeURIComponent(contactId)}`,
     { method: 'DELETE' },
   );
 };

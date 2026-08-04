@@ -7,6 +7,24 @@ pub(super) fn required_text(value: Option<&str>, field: &str) -> Result<String, 
     normalized(value).ok_or_else(|| ApiError::bad_request(format!("{field} is required")))
 }
 
+pub(super) fn redact_mcp_runtime_secrets(record: &mut McpRecord) {
+    record.runtime.headers.clear();
+    record.runtime.env.clear();
+    record.runtime.args.clear();
+    if let Some(url) = record.runtime.url.as_deref() {
+        if let Ok(mut url) = reqwest::Url::parse(url) {
+            url.set_query(None);
+            record.runtime.url = Some(url.to_string());
+        }
+    }
+}
+
+pub(super) fn redact_mcp_runtime_secrets_for_user(record: &mut McpRecord, user: &CurrentUser) {
+    if !user.is_super_admin() && record.owner_user_id != user.effective_owner_user_id() {
+        redact_mcp_runtime_secrets(record);
+    }
+}
+
 pub(super) fn normalize_visibility(
     value: Option<&str>,
     user: &CurrentUser,
@@ -229,24 +247,35 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
             ));
         }
         RUNTIME_KIND_HTTP => {
-            if runtime
+            let url = runtime
                 .url
                 .as_deref()
                 .and_then(|value| normalized(Some(value)))
-                .is_none()
+                .ok_or_else(|| ApiError::bad_request("HTTP MCP requires url"))?;
+            let url = reqwest::Url::parse(url.as_str())
+                .map_err(|_| ApiError::bad_request("HTTP MCP url is invalid"))?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
             {
-                return Err(ApiError::bad_request("HTTP MCP requires url"));
+                return Err(ApiError::bad_request(
+                    "HTTP MCP url must use HTTPS without credentials or fragments",
+                ));
             }
+            validate_external_http_headers(&runtime.headers)?;
         }
         RUNTIME_KIND_STDIO_CLOUD => {
-            if runtime
+            let command = runtime
                 .command
                 .as_deref()
                 .and_then(|value| normalized(Some(value)))
-                .is_none()
-            {
-                return Err(ApiError::bad_request("stdio MCP requires command"));
-            }
+                .ok_or_else(|| ApiError::bad_request("stdio MCP requires command"))?;
+            validate_cloud_stdio_command(command.as_str(), runtime.args.as_slice())?;
+            validate_cloud_stdio_arguments(runtime.args.as_slice())?;
+            validate_cloud_stdio_environment(&runtime.env)?;
+            validate_cloud_stdio_cwd(runtime.cwd.as_deref())?;
         }
         RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
         | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
@@ -255,6 +284,159 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
             return Err(ApiError::bad_request(
                 "runtime.kind must be system, http, stdio_cloud, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
             ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_cloud_stdio_command(command: &str, args: &[String]) -> Result<(), ApiError> {
+    if command.len() > 256
+        || command
+            .chars()
+            .any(|character| matches!(character, '/' | '\\' | '\0'))
+        || matches!(command, "." | "..")
+    {
+        return Err(ApiError::bad_request(
+            "stdio MCP command must be a PATH-resolved executable name",
+        ));
+    }
+    let shell = command.trim_end_matches(".exe").to_ascii_lowercase();
+    let is_shell = matches!(
+        shell.as_str(),
+        "sh" | "bash" | "dash" | "zsh" | "ksh" | "fish" | "cmd" | "powershell" | "pwsh"
+    );
+    let invokes_inline_command = args.iter().any(|arg| {
+        matches!(
+            arg.trim().to_ascii_lowercase().as_str(),
+            "-c" | "/c" | "-command" | "-encodedcommand"
+        )
+    });
+    if is_shell && invokes_inline_command {
+        return Err(ApiError::bad_request(
+            "stdio MCP shell inline command execution is forbidden",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_cloud_stdio_arguments(args: &[String]) -> Result<(), ApiError> {
+    chatos_mcp_runtime::validate_stdio_arguments(args)
+        .map_err(|_| ApiError::bad_request("stdio MCP arguments exceed the supported limits"))
+}
+
+fn validate_cloud_stdio_environment(
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<(), ApiError> {
+    chatos_mcp_runtime::validate_stdio_environment(env).map_err(|error| match error {
+        chatos_mcp_runtime::StdioPolicyViolation::EnvironmentLimits => {
+            ApiError::bad_request("stdio MCP environment exceeds the supported limits")
+        }
+        chatos_mcp_runtime::StdioPolicyViolation::EnvironmentEntry
+        | chatos_mcp_runtime::StdioPolicyViolation::Arguments => ApiError::bad_request(
+            "stdio MCP environment contains an invalid or Host-controlled entry",
+        ),
+    })
+}
+
+fn validate_cloud_stdio_cwd(cwd: Option<&str>) -> Result<(), ApiError> {
+    let Some(cwd) = cwd.and_then(|value| normalized(Some(value))) else {
+        return Ok(());
+    };
+    let path = std::path::Path::new(cwd.as_str());
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(ApiError::bad_request(
+            "stdio MCP cwd must remain relative to the sandbox workspace",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_mcp_security(
+    runtime: &McpRuntime,
+    security: &ResourceSecurity,
+) -> Result<(), ApiError> {
+    for (field, values) in [
+        ("allowed_tool_names", security.allowed_tool_names.as_slice()),
+        ("blocked_tool_names", security.blocked_tool_names.as_slice()),
+    ] {
+        if values.len() > 512
+            || values
+                .iter()
+                .any(|value| value.trim().is_empty() || value.trim().len() > 256)
+        {
+            return Err(ApiError::bad_request(format!(
+                "MCP security {field} contains an invalid tool policy"
+            )));
+        }
+    }
+    if matches!(
+        runtime.kind.as_str(),
+        RUNTIME_KIND_HTTP | RUNTIME_KIND_STDIO_CLOUD
+    ) && !security.allow_writes.unwrap_or(false)
+        && security.allowed_tool_names.is_empty()
+    {
+        return Err(ApiError::bad_request(
+            "read-only remote MCP requires allowed_tool_names",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_external_http_headers(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<(), ApiError> {
+    if headers.len() > 64
+        || headers
+            .iter()
+            .map(|(name, value)| name.len().saturating_add(value.len()))
+            .sum::<usize>()
+            > 32 * 1024
+    {
+        return Err(ApiError::bad_request(
+            "HTTP MCP headers exceed the supported limits",
+        ));
+    }
+    for (name, value) in headers {
+        let name = reqwest::header::HeaderName::from_bytes(name.trim().as_bytes())
+            .map_err(|_| ApiError::bad_request("HTTP MCP headers contain an invalid name"))?;
+        reqwest::header::HeaderValue::from_str(value)
+            .map_err(|_| ApiError::bad_request("HTTP MCP headers contain an invalid value"))?;
+        if matches!(
+            name.as_str(),
+            "accept"
+                | "connection"
+                | "content-length"
+                | "content-type"
+                | "host"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+                | "x-local-connector-internal-scope"
+                | "x-local-connector-internal-secret"
+                | "x-local-connector-internal-token"
+                | "x-project-service-internal-scope"
+                | "x-project-service-internal-token"
+                | "x-project-service-sync-secret"
+                | "x-sandbox-client-key"
+                | "x-sandbox-internal-scope"
+                | "x-sandbox-internal-token"
+        ) {
+            return Err(ApiError::bad_request(format!(
+                "HTTP MCP header {} is managed or unsafe",
+                name.as_str()
+            )));
         }
     }
     Ok(())

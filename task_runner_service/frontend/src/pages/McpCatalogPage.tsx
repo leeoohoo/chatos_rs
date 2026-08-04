@@ -12,15 +12,9 @@ import {
 import { api } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
 import { BuiltinMcpCatalogTab } from './mcpCatalog/BuiltinMcpCatalogTab';
-import { ExternalMcpConfigTab } from './mcpCatalog/ExternalMcpConfigTab';
 import { ExternalMcpServerCard } from './mcpCatalog/ExternalMcpServerCard';
-import type { AuthUser } from '../types';
 
-interface McpCatalogPageProps {
-  currentUser: AuthUser;
-}
-
-export function McpCatalogPage({ currentUser }: McpCatalogPageProps) {
+export function McpCatalogPage() {
   const { t } = useI18n();
   const serverInfoQuery = useQuery({
     queryKey: ['mcp-server-info'],
@@ -60,15 +54,6 @@ export function McpCatalogPage({ currentUser }: McpCatalogPageProps) {
             label: t('mcpCatalog.tab.builtin'),
             children: <BuiltinMcpCatalogTab />,
           },
-          ...(currentUser.role === 'admin'
-            ? [
-                {
-                  key: 'external-configs',
-                  label: t('mcpCatalog.tab.externalConfigs'),
-                  children: <ExternalMcpConfigTab />,
-                },
-              ]
-            : []),
         ]}
       />
     </Space>

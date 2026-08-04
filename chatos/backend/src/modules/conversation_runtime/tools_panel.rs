@@ -1,25 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
-
 use serde::Serialize;
 use serde_json::Value;
-
-use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
-use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
-use crate::core::mcp_tools::ToolInfo;
-use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute as AgentMcpToolExecute;
-
-use super::snapshot::build_builtin_mcp_debug_payload;
-use super::user_context::load_runtime_user_context;
-
-#[derive(Debug)]
-struct RuntimeMcpDebugContext {
-    locale: InternalContextLocale,
-    mcp_server_bundle: McpServerBundle,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeMcpServerCounts {
@@ -36,106 +19,77 @@ pub struct RuntimeMcpToolsPanel {
     pub unavailable_count: usize,
     pub servers: RuntimeMcpServerCounts,
     pub builtin_mcp_prompt_debug: Value,
+    pub owner: &'static str,
+    pub service: &'static str,
+    pub runtime_scoped: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeMcpStatusPanel {
     pub servers: RuntimeMcpServerCounts,
     pub builtin_mcp_prompt_debug: Value,
+    pub owner: &'static str,
+    pub service: &'static str,
+    pub runtime_scoped: bool,
 }
 
-pub async fn build_agent_tools_panel(user_id: &str) -> Result<RuntimeMcpToolsPanel, String> {
-    let runtime_context = load_runtime_mcp_debug_context(Some(user_id.to_string())).await;
-    let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle;
-    let server_counts = RuntimeMcpServerCounts {
-        http: http_servers.len(),
-        stdio: stdio_servers.len(),
-        builtin: builtin_servers.len(),
-    };
-    let mut exec = AgentMcpToolExecute::new(
-        http_servers.clone(),
-        stdio_servers.clone(),
-        builtin_servers.clone(),
-    );
-    exec.init().await?;
-
-    let tools = exec.get_tools();
-    let unavailable_tools = exec.get_unavailable_tools();
-    Ok(build_runtime_mcp_tools_panel(
-        builtin_servers.as_slice(),
-        exec.tool_metadata(),
-        tools,
-        unavailable_tools,
-        server_counts,
-        runtime_context.locale,
-    ))
+/// Tool catalogs are bound to an immutable MCP Management Runtime Session.
+/// A user-global preview must not initialize the retired direct MCP loaders.
+pub async fn build_agent_tools_panel(_user_id: &str) -> Result<RuntimeMcpToolsPanel, String> {
+    Ok(RuntimeMcpToolsPanel {
+        tools: Vec::new(),
+        count: 0,
+        unavailable_tools: Vec::new(),
+        unavailable_count: 0,
+        servers: empty_server_counts(),
+        builtin_mcp_prompt_debug: runtime_scoped_debug_payload(),
+        owner: "mcp_management_service",
+        service: "runtime_session",
+        runtime_scoped: true,
+    })
 }
 
-pub async fn load_agent_status_runtime_panel(user_id: Option<String>) -> RuntimeMcpStatusPanel {
-    let runtime_context = load_runtime_mcp_debug_context(user_id).await;
-    let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle;
+pub async fn load_agent_status_runtime_panel(_user_id: Option<String>) -> RuntimeMcpStatusPanel {
     RuntimeMcpStatusPanel {
-        servers: RuntimeMcpServerCounts {
-            http: http_servers.len(),
-            stdio: stdio_servers.len(),
-            builtin: builtin_servers.len(),
-        },
-        builtin_mcp_prompt_debug: build_builtin_mcp_debug_payload(
-            builtin_servers.as_slice(),
-            &HashMap::<String, ToolInfo>::new(),
-            &[],
-            None,
-            runtime_context.locale,
-        ),
+        servers: empty_server_counts(),
+        builtin_mcp_prompt_debug: runtime_scoped_debug_payload(),
+        owner: "mcp_management_service",
+        service: "runtime_session",
+        runtime_scoped: true,
     }
 }
 
-async fn load_runtime_mcp_debug_context(user_id: Option<String>) -> RuntimeMcpDebugContext {
-    let user_context = load_runtime_user_context(user_id, "").await;
-    let mcp_server_bundle = load_mcp_servers_by_selection(
-        user_context.effective_user_id.clone(),
-        false,
-        Vec::new(),
-        None,
-        None,
-    )
-    .await;
-
-    RuntimeMcpDebugContext {
-        locale: user_context.internal_context_locale,
-        mcp_server_bundle,
+fn empty_server_counts() -> RuntimeMcpServerCounts {
+    RuntimeMcpServerCounts {
+        http: 0,
+        stdio: 0,
+        builtin: 0,
     }
 }
 
-fn build_runtime_mcp_tools_panel(
-    builtin_servers: &[crate::services::mcp_loader::McpBuiltinServer],
-    tool_metadata: &HashMap<String, ToolInfo>,
-    tools: Vec<Value>,
-    unavailable_tools: Vec<Value>,
-    servers: RuntimeMcpServerCounts,
-    locale: InternalContextLocale,
-) -> RuntimeMcpToolsPanel {
-    let composed_prompt = compose_effective_builtin_mcp_system_prompt(
-        builtin_servers,
-        tool_metadata,
-        unavailable_tools.as_slice(),
-        locale,
-    )
-    .unwrap_or_default();
-    let builtin_mcp_prompt_debug = build_builtin_mcp_debug_payload(
-        builtin_servers,
-        tool_metadata,
-        unavailable_tools.as_slice(),
-        Some(composed_prompt.as_str()),
-        locale,
-    );
+fn runtime_scoped_debug_payload() -> Value {
+    serde_json::json!({
+        "source": "mcp_management_runtime_session",
+        "runtime_scoped": true,
+        "message": "The effective tool catalog is available only after resolving an immutable MCP Management Runtime Session."
+    })
+}
 
-    RuntimeMcpToolsPanel {
-        count: tools.len(),
-        unavailable_count: unavailable_tools.len(),
-        tools,
-        unavailable_tools,
-        servers,
-        builtin_mcp_prompt_debug,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn global_tools_panel_does_not_initialize_direct_mcp_servers() {
+        let panel = build_agent_tools_panel("user-1")
+            .await
+            .expect("runtime-scoped panel");
+
+        assert!(panel.tools.is_empty());
+        assert_eq!(panel.service, "runtime_session");
+        assert!(panel.runtime_scoped);
+        assert_eq!(panel.servers.http, 0);
+        assert_eq!(panel.servers.stdio, 0);
+        assert_eq!(panel.servers.builtin, 0);
     }
 }

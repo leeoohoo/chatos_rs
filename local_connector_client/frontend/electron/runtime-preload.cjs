@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('chatosLocalRuntime', {
   authenticateDesktopTicket: (ticket) => (
     ipcRenderer.invoke('local-connector:desktop-ticket-authenticate', ticket)
   ),
+  openSettings: () => ipcRenderer.invoke('local-connector:settings-open'),
 });

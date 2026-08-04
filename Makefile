@@ -6,7 +6,7 @@ SHELL := /bin/bash
 .PHONY: help dev docker-up docker-fast docker-dev docker-rebuild docker-restart docker-restart-fast docker-restart-dev docker-build docker-clean-images docker-down docker-reset docker-logs docker-ps docker-config
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
 .PHONY: local-connector-client local-connector-client-status local-connector-client-stop
-.PHONY: build build-rust build-frontends test smoke smoke-repo verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
+.PHONY: build build-rust build-frontends test smoke smoke-repo smoke-cloud-mcp smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
 .PHONY: test-chat-app-server test-chat-app test-user-service
 .PHONY: type-check-user-service-frontend
 
@@ -33,6 +33,8 @@ help:
 	@echo "  make build                  # build Rust services and frontends"
 	@echo "  make test                   # run repo checks and focused tests"
 	@echo "  make smoke                  # run lightweight repo checks"
+	@echo "  make smoke-cloud-mcp        # run live cloud MCP Management integration smoke"
+	@echo "  make smoke-local-project-entry # verify Config Center -> ChatOS local-project UI switch"
 	@echo "  make verify-fast            # run repository quality policies and Rust lint"
 	@echo "  make verify                 # run full Rust and frontend verification"
 
@@ -125,6 +127,12 @@ test: smoke test-chat-app-server test-chat-app test-user-service
 
 smoke: smoke-repo
 
+smoke-cloud-mcp:
+	@bash scripts/smoke-mcp-management-cloud.sh
+
+smoke-local-project-entry:
+	@bash scripts/smoke-local-project-entry-config.sh
+
 verify-fast:
 	@bash scripts/verify-repository.sh fast
 
@@ -140,10 +148,14 @@ check-frontends:
 smoke-repo:
 	@bash scripts/check_api_surface.sh
 	@bash scripts/check_api_path_baseline.sh
+	@python3 scripts/check-agent-tool-plane-boundaries.py
 	@bash scripts/check-hotspot-line-budgets.sh
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
 	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
+	@bash -n scripts/smoke-mcp-management-cloud.sh scripts/smoke-mcp-management-cloud-discovery.sh
+	@bash -n scripts/smoke-local-project-entry-config.sh
 	@docker compose -f docker/compose.yml config >/dev/null
 	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
 	@bash scripts/check-large-files.sh --fail

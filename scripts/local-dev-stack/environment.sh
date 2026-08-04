@@ -37,6 +37,8 @@ export_local_env() {
   export MONGODB_HOST="${MONGODB_HOST:-127.0.0.1}"
   export MONGODB_PORT="$mongo_port"
   export MONGODB_AUTH_SOURCE="${MONGODB_AUTH_SOURCE:-admin}"
+  export MONGODB_CONNECTION_STRING="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/chatos?authSource=admin"
+  export MONGODB_DB="${MONGODB_DB:-chatos}"
 
   export CHATOS_ADMIN_USERNAME="${CHATOS_ADMIN_USERNAME:-admin}"
   export CHATOS_ADMIN_PASSWORD="${CHATOS_ADMIN_PASSWORD:-admin123456}"
@@ -50,20 +52,38 @@ export_local_env() {
   export CHATOS_TASK_RUNNER_INTERNAL_API_SECRET="${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}"
   export PLUGIN_MANAGEMENT_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_internal_secret}"
   export PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}"
+  export PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}"
   export TASK_RUNNER_CHATOS_CALLBACK_SECRET="${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-change_me_chatos_task_runner_secret}"
   export CHATOS_PROJECT_SERVICE_SYNC_SECRET="${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}"
   export CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET="${CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_project_service_secret}"
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET="${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}"
   export PROJECT_SERVICE_SELF_INTERNAL_API_SECRET="${PROJECT_SERVICE_SELF_INTERNAL_API_SECRET:-change_me_project_service_self_secret}"
+  export MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET="${MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_mcp_management_project_service_secret}"
+  export MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET="${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}"
+  export MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS:-180000}"
+  export MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
+  export MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET="${MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET:-change_me_mcp_management_chatos_secret}"
+  export MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
+  export MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS:-120000}"
   export CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}"
   export TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}"
   export PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}"
-  export MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_memory_engine_local_connector_secret}"
+  export MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}"
+  export MCP_MANAGEMENT_INTERNAL_API_SECRET="${MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_mcp_management_internal_secret}"
+  export MCP_MANAGEMENT_RUNTIME_GRANT_SECRET="${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}"
+  export MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET="${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}"
+  export MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS="${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}"
+  export MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET="${MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_mcp_management_sandbox_manager_secret}"
+  export MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS:-180000}"
+  export TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}"
+  export TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS="${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
+  export CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}"
+  export CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS="${CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
+  export PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}"
   export CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET="${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}"
   export TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET="${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}"
   export PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET="${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}"
   export USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET="${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}"
-  export LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET="${LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_local_connector_memory_engine_secret}"
   export MEMORY_ENGINE_OPERATOR_TOKEN="${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}"
   export SANDBOX_MANAGER_OPERATOR_TOKEN="${SANDBOX_MANAGER_OPERATOR_TOKEN:-chatos-sandbox-manager-dev-operator-token}"
   export TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET="${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}"
@@ -82,8 +102,16 @@ export_local_env() {
   export PLUGIN_MANAGEMENT_SERVICE_HOST="${PLUGIN_MANAGEMENT_SERVICE_HOST:-0.0.0.0}"
   export PLUGIN_MANAGEMENT_SERVICE_PORT="${PLUGIN_MANAGEMENT_SERVICE_PORT:-39260}"
   export PLUGIN_MANAGEMENT_SERVICE_URL="${PLUGIN_MANAGEMENT_SERVICE_URL:-http://127.0.0.1:${PLUGIN_MANAGEMENT_SERVICE_PORT}}"
+  export PLUGIN_MANAGEMENT_PUBLIC_BASE_URL="${PLUGIN_MANAGEMENT_PUBLIC_BASE_URL:-http://127.0.0.1:${PLUGIN_MANAGEMENT_SERVICE_PORT}}"
+  export PLUGIN_MANAGEMENT_FRONTEND_ORIGIN="${PLUGIN_MANAGEMENT_FRONTEND_ORIGIN:-http://127.0.0.1:${PLUGIN_MANAGEMENT_FRONTEND_PORT:-39261}}"
+  export PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS="${PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS:-600}"
+  export PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS="${PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS:-90}"
+  export PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS="${PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS:-15000}"
+  export PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES="${PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES:-262144}"
   export LOCAL_CONNECTOR_SERVICE_HOST="${LOCAL_CONNECTOR_SERVICE_HOST:-0.0.0.0}"
   export LOCAL_CONNECTOR_SERVICE_PORT="${LOCAL_CONNECTOR_SERVICE_PORT:-39230}"
+  export MCP_MANAGEMENT_HOST="${MCP_MANAGEMENT_HOST:-0.0.0.0}"
+  export MCP_MANAGEMENT_PORT="${MCP_MANAGEMENT_PORT:-39280}"
   export SANDBOX_MANAGER_HOST="${SANDBOX_MANAGER_HOST:-0.0.0.0}"
   export SANDBOX_MANAGER_PORT="${SANDBOX_MANAGER_PORT:-8095}"
   export TASK_RUNNER_HOST="${TASK_RUNNER_HOST:-0.0.0.0}"
@@ -104,7 +132,9 @@ export_local_env() {
   export LOCAL_CONNECTOR_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/local_connector_service?authSource=admin"
   export SANDBOX_MANAGER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/sandbox_manager_service?authSource=admin"
   export TASK_RUNNER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/task_runner_service?authSource=admin"
+  export MCP_MANAGEMENT_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/mcp_management_service?authSource=admin"
   export LEGACY_AUTH_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin"
+  export LEGACY_AUTH_MONGODB_DATABASE="${LEGACY_AUTH_MONGODB_DATABASE:-legacy_auth}"
 
   export MEMORY_ENGINE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export CONFIG_CENTER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
@@ -127,6 +157,14 @@ export_local_env() {
   export LOCAL_CONNECTOR_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export LOCAL_CONNECTOR_PUBLIC_BASE_URL="http://127.0.0.1:${LOCAL_CONNECTOR_SERVICE_PORT}"
   export LOCAL_CONNECTOR_INTERNAL_API_SECRET="${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}"
+  export MCP_MANAGEMENT_PUBLIC_BASE_URL="http://127.0.0.1:${MCP_MANAGEMENT_PORT}"
+  export MCP_MANAGEMENT_SERVICE_BASE_URL="http://127.0.0.1:${MCP_MANAGEMENT_PORT}"
+  export MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL="http://127.0.0.1:${PLUGIN_MANAGEMENT_SERVICE_PORT}"
+  export MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
+  export MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
+  export MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL="http://127.0.0.1:${BACKEND_PORT}"
+  export MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL="http://127.0.0.1:${LOCAL_CONNECTOR_SERVICE_PORT}"
+  export MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL="http://127.0.0.1:${SANDBOX_MANAGER_PORT}"
   export SANDBOX_MANAGER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export SANDBOX_MANAGER_SYSTEM_CLIENT_ID="${SANDBOX_MANAGER_SYSTEM_CLIENT_ID:-}"
   export SANDBOX_MANAGER_SYSTEM_CLIENT_KEY="${SANDBOX_MANAGER_SYSTEM_CLIENT_KEY:-}"
@@ -139,30 +177,122 @@ export_local_env() {
     export SANDBOX_MANAGER_DOCKER_HOST="${SANDBOX_MANAGER_DOCKER_HOST:-${DOCKER_HOST:-}}"
   fi
   export TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-mongo}"
+  # Do not inject a local default for TASK_RUNNER_WORKER_CONCURRENCY here.
+  # Task Runner loads the authoritative value from Configuration Center at
+  # startup unless the operator explicitly exports an environment override.
   export TASK_RUNNER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET="$TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET"
   export TASK_RUNNER_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_BASE_URL"
   export TASK_RUNNER_SANDBOX_MANAGER_BASE_URL="http://127.0.0.1:${SANDBOX_MANAGER_PORT}"
-  export TASK_RUNNER_SANDBOX_BASE_IMAGE_ID="${TASK_RUNNER_SANDBOX_BASE_IMAGE_ID:-dev-java21}"
+  # Empty cloud projects need a bootstrap image before their project-specific
+  # runtime can be inferred from repository files. Keep the local-dev baseline
+  # useful for frontend and scripting tasks, and let services.sh verify/build it
+  # before Task Runner starts.
+  export TASK_RUNNER_SANDBOX_BASE_IMAGE_ID="${TASK_RUNNER_SANDBOX_BASE_IMAGE_ID:-dev-node24-python3.11}"
+  export CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES="${CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES:-node@24,python@3.11}"
   export TASK_RUNNER_CHATOS_CALLBACK_URL="http://127.0.0.1:${BACKEND_PORT}/api/agent/chat/task-runner/callback"
   export CHATOS_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export CHATOS_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
   export CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET="$CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET"
   export CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL="http://127.0.0.1:${LOCAL_CONNECTOR_SERVICE_PORT}"
-  export HARNESS_PROVISIONING_ENABLED="${CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED:-true}"
-  export HARNESS_BASE_URL="${CHATOS_LOCAL_DEV_HARNESS_BASE_URL:-http://127.0.0.1:3000}"
+  export USER_SERVICE_HARNESS_PROVISIONING_ENABLED="${CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED:-true}"
+  export USER_SERVICE_HARNESS_BASE_URL="${CHATOS_LOCAL_DEV_HARNESS_BASE_URL:-http://127.0.0.1:3000}"
   export OFFICIAL_WEBSITE_STATUS_HOST="${OFFICIAL_WEBSITE_STATUS_HOST:-127.0.0.1}"
 }
 
 ensure_dirs() {
-  mkdir -p "$LOG_DIR" "$PID_DIR" "$STATE_DIR/task-runner" "$STATE_DIR/chatos" "$STATE_DIR/sandboxes" "$STATE_DIR/docker-public-config"
+  mkdir -p \
+    "$LOG_DIR" \
+    "$PID_DIR" \
+    "$STATE_DIR/task-runner" \
+    "$STATE_DIR/chatos" \
+    "$STATE_DIR/sandboxes" \
+    "$STATE_DIR/docker-public-config" \
+    "$STATE_DIR/local-connector"
+}
+
+prepare_local_dev_apisix_config() {
+  local source_config="$ROOT_DIR/docker/apisix/apisix.yaml"
+  local target_config="$CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH"
+  if [[ ! -f "$source_config" ]]; then
+    echo "[ERROR] APISIX route config is missing: $source_config" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$target_config")"
+  sed \
+    -e 's/"chatos-backend:3997"/"host.docker.internal:3997"/g' \
+    -e 's/"user-service-backend:39190"/"host.docker.internal:39190"/g' \
+    -e 's/"project-management-backend:39210"/"host.docker.internal:39210"/g' \
+    -e 's/"plugin-management-backend:39260"/"host.docker.internal:39260"/g' \
+    -e 's/"mcp-management-service-backend:39280"/"host.docker.internal:39280"/g' \
+    -e 's/"local-connector-service-backend:39230"/"host.docker.internal:39230"/g' \
+    -e 's/"task-runner-backend:39090"/"host.docker.internal:39090"/g' \
+    -e 's/"memory-engine-backend:7081"/"host.docker.internal:7081"/g' \
+    -e 's/"chatos-frontend:80"/"host.docker.internal:8088"/g' \
+    -e 's/"official-website-frontend:80"/"host.docker.internal:39251"/g' \
+    "$source_config" >"$target_config"
+}
+
+infra_service_host_port() {
+  case "$1" in
+    consul)
+      printf '%s\n' "${CONSUL_HTTP_PORT:-8500}"
+      ;;
+    mongodb)
+      printf '%s\n' "${MONGODB_HOST_PORT:-27018}"
+      ;;
+    rabbitmq)
+      printf '%s\n' "${RABBITMQ_PORT:-5672}"
+      ;;
+    valkey)
+      printf '%s\n' "${VALKEY_PORT:-6379}"
+      ;;
+    harness)
+      printf '%s\n' "${HARNESS_PORT:-3000}"
+      ;;
+    apisix-gateway)
+      printf '%s\n' "${APISIX_GATEWAY_PORT:-9080}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+reuse_running_infra_service() {
+  local service="$1"
+  local match
+  match="$(
+    docker ps \
+      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service" \
+      --format '{{.Names}}' \
+      | head -n 1
+  )"
+  if [[ -n "$match" ]]; then
+    echo "[INFO] reusing $COMPOSE_PROJECT_NAME infrastructure container for $service: $match"
+    return 0
+  fi
+  return 1
 }
 
 start_infra() {
   need_cmd docker
-  echo "[INFO] starting local-dev infrastructure containers: ${INFRA_SERVICES[*]}"
-  compose up -d "${INFRA_SERVICES[@]}"
+  local service
+  local -a services_to_start=()
+  for service in "${INFRA_SERVICES[@]}"; do
+    if reuse_running_infra_service "$service"; then
+      continue
+    fi
+    services_to_start+=("$service")
+  done
+  if [[ ${#services_to_start[@]} -eq 0 ]]; then
+    echo "[INFO] reusing existing local-dev infrastructure containers"
+    return 0
+  fi
+  echo "[INFO] starting local-dev infrastructure containers: ${services_to_start[*]}"
+  compose up -d "${services_to_start[@]}"
 }
 
 stop_docker_app_services() {
@@ -199,6 +329,7 @@ managed = {
     "project-service",
     "plugin-management-service",
     "local-connector-service",
+    "mcp-management-service",
     "sandbox-manager",
     "task-runner",
     "chatos-backend",

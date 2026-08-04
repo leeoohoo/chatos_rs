@@ -37,6 +37,14 @@ pub fn spawn_chatos_callback_reconciler(run_service: RunService) -> JoinHandle<(
     })
 }
 
+pub fn spawn_chatos_callback_queue_consumer(
+    config: AppConfig,
+    task_queue_topology: crate::platform_queue::TaskQueueTopology,
+    run_service: RunService,
+) -> JoinHandle<()> {
+    super::publisher::spawn_chatos_callback_queue_consumer(config, task_queue_topology, run_service)
+}
+
 impl RunService {
     pub async fn reconcile_pending_chatos_callbacks(&self) -> Result<usize, String> {
         self.reconcile_pending_chatos_callbacks_with_force(false)

@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+services:
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-rabbitmq:3.13-management-alpine}
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-chatos}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-change_me_rabbitmq_password}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:-/}
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${RABBITMQ_PORT:-5672}:5672"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - cloud
+
+  valkey:
+    image: ${VALKEY_IMAGE:-valkey/valkey:8-alpine}
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - exec valkey-server --appendonly yes --requirepass "$${VALKEY_PASSWORD}"
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-change_me_valkey_password}
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${VALKEY_PORT:-6379}:6379"
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${VALKEY_PASSWORD}\" valkey-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - cloud
+
+  apisix-gateway:
+    image: ${APISIX_IMAGE:-apache/apisix:3.11.0-debian}
+    restart: unless-stopped
+    ports:
+      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${APISIX_GATEWAY_PORT:-9080}:9080"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${APISIX_CONTROL_PORT:-9092}:9092"
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    networks:
+      - cloud
+
+  local-connector-service-backend:
+    environment:
+      LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
+
+  project-management-backend:
+    environment:
+      PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
+
+  memory-engine-backend:
+    environment:
+      MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
+
+  mcp-management-service-backend:
+    environment:
+      MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
+      MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS: ${MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS:-chatos-backend,task-runner,project-service,mcp-management-service}
+
+  task-runner-backend:
+    environment:
+      TASK_RUNNER_RABBITMQ_URL: ${TASK_RUNNER_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-chatos}:${RABBITMQ_DEFAULT_PASS:-change_me_rabbitmq_password}@rabbitmq:5672/${RABBITMQ_AMQP_VHOST:-%2f}}
+      TASK_RUNNER_RUN_DISPATCH_MODE: ${TASK_RUNNER_RUN_DISPATCH_MODE:-rabbitmq}
+      TASK_RUNNER_CALLBACK_DELIVERY_MODE: ${TASK_RUNNER_CALLBACK_DELIVERY_MODE:-rabbitmq}
+      TASK_RUNNER_RABBITMQ_EXCHANGE: ${TASK_RUNNER_RABBITMQ_EXCHANGE:-task_runner}
+      TASK_RUNNER_RUN_DISPATCH_QUEUE: ${TASK_RUNNER_RUN_DISPATCH_QUEUE:-task_runner.run.dispatch}
+      TASK_RUNNER_CALLBACK_DELIVERY_QUEUE: ${TASK_RUNNER_CALLBACK_DELIVERY_QUEUE:-task_runner.callback.delivery}
+      TASK_RUNNER_RUN_EVENTS_QUEUE: ${TASK_RUNNER_RUN_EVENTS_QUEUE:-task_runner.run.events}
+
+  task-runner-worker:
+    environment:
+      TASK_RUNNER_RABBITMQ_URL: ${TASK_RUNNER_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-chatos}:${RABBITMQ_DEFAULT_PASS:-change_me_rabbitmq_password}@rabbitmq:5672/${RABBITMQ_AMQP_VHOST:-%2f}}
+      TASK_RUNNER_RUN_DISPATCH_MODE: ${TASK_RUNNER_RUN_DISPATCH_MODE:-rabbitmq}
+      TASK_RUNNER_CALLBACK_DELIVERY_MODE: ${TASK_RUNNER_CALLBACK_DELIVERY_MODE:-rabbitmq}
+      TASK_RUNNER_RABBITMQ_EXCHANGE: ${TASK_RUNNER_RABBITMQ_EXCHANGE:-task_runner}
+      TASK_RUNNER_RUN_DISPATCH_QUEUE: ${TASK_RUNNER_RUN_DISPATCH_QUEUE:-task_runner.run.dispatch}
+      TASK_RUNNER_CALLBACK_DELIVERY_QUEUE: ${TASK_RUNNER_CALLBACK_DELIVERY_QUEUE:-task_runner.callback.delivery}
+      TASK_RUNNER_RUN_EVENTS_QUEUE: ${TASK_RUNNER_RUN_EVENTS_QUEUE:-task_runner.run.events}
+
+  task-runner-scheduler:
+    environment:
+      TASK_RUNNER_RABBITMQ_URL: ${TASK_RUNNER_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-chatos}:${RABBITMQ_DEFAULT_PASS:-change_me_rabbitmq_password}@rabbitmq:5672/${RABBITMQ_AMQP_VHOST:-%2f}}
+      TASK_RUNNER_RUN_DISPATCH_MODE: ${TASK_RUNNER_RUN_DISPATCH_MODE:-rabbitmq}
+      TASK_RUNNER_CALLBACK_DELIVERY_MODE: ${TASK_RUNNER_CALLBACK_DELIVERY_MODE:-rabbitmq}
+      TASK_RUNNER_RABBITMQ_EXCHANGE: ${TASK_RUNNER_RABBITMQ_EXCHANGE:-task_runner}
+      TASK_RUNNER_RUN_DISPATCH_QUEUE: ${TASK_RUNNER_RUN_DISPATCH_QUEUE:-task_runner.run.dispatch}
+      TASK_RUNNER_CALLBACK_DELIVERY_QUEUE: ${TASK_RUNNER_CALLBACK_DELIVERY_QUEUE:-task_runner.callback.delivery}
+      TASK_RUNNER_RUN_EVENTS_QUEUE: ${TASK_RUNNER_RUN_EVENTS_QUEUE:-task_runner.run.events}
+
+volumes:
+  rabbitmq-data:
+  valkey-data:

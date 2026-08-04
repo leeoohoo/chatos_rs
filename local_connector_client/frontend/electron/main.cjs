@@ -605,7 +605,7 @@ app.whenReady().then(async () => {
     return requestDesktopSystemPermission(String(permissionId || ''));
   });
   ipcMain.handle('local-connector:settings-open', (event) => {
-    if (!isTrustedLocalEvent(event)) {
+    if (!isTrustedLocalEvent(event) && !isTrustedRuntimeEvent(event)) {
       return false;
     }
     openSettingsView();

@@ -96,6 +96,11 @@ pub(super) async fn terminal_exec_relay(
             "timeout_ms": timeout_ms,
             "source": normalize_optional_text(req.source),
         }),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
 
     let response = dispatch_relay(&state, request, relay_timeout).await?;
@@ -127,6 +132,11 @@ pub(super) async fn terminal_session_create_relay(
             "cols": req.cols.unwrap_or(80).max(1),
             "rows": req.rows.unwrap_or(24).max(1),
         }),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
 
     let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
@@ -158,6 +168,11 @@ pub(super) async fn terminal_input_relay(
             "data": data,
             "command": normalize_optional_text(req.command),
         }),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
 
     send_relay(&state, request).await?;
@@ -226,6 +241,11 @@ async fn handle_terminal_relay_socket(
             "cols": cols,
             "rows": rows,
         }),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     let create_response =
         dispatch_relay(&state, create_request, state.config.relay_request_timeout).await;
@@ -506,6 +526,11 @@ async fn send_terminal_control(
         path: format!("/terminal/{message_type}"),
         headers: BTreeMap::new(),
         body,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     send_relay(state, request).await.is_ok()
 }

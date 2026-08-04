@@ -23,41 +23,19 @@ pub struct SystemMcpDescriptor {
     pub category: Option<&'static str>,
     pub owner_service: &'static str,
     pub backend: SystemMcpBackend,
-    pub supported_hosts: &'static [SystemMcpHost],
+    /// Hosts that contain a concrete provider implementation for this system MCP.
+    /// Agent runtime routing is owned by MCP Management Service.
+    pub implementation_hosts: &'static [SystemMcpHost],
     pub embedded_kind: Option<BuiltinMcpKind>,
 }
 
 impl SystemMcpDescriptor {
-    pub fn supports_host(self, host: SystemMcpHost) -> bool {
-        self.supported_hosts.contains(&host)
+    pub fn supports_implementation_host(self, host: SystemMcpHost) -> bool {
+        self.implementation_hosts.contains(&host)
     }
 
     pub const fn is_embedded(self) -> bool {
         matches!(self.backend, SystemMcpBackend::Embedded)
-    }
-
-    pub fn host_priority(self, host: SystemMcpHost) -> Option<u16> {
-        if !self.supports_host(host) {
-            return None;
-        }
-        if host == SystemMcpHost::LocalConnector {
-            return Some(match self.key {
-                SystemMcpKey::CodeMaintainerRead => 10,
-                SystemMcpKey::CodeMaintainerWrite => 20,
-                SystemMcpKey::TerminalController => 30,
-                SystemMcpKey::BrowserTools => 40,
-                SystemMcpKey::AskUser => 60,
-                SystemMcpKey::ProjectManagement => 70,
-                SystemMcpKey::TaskProcessLog => 75,
-                SystemMcpKey::TaskRunnerService => 80,
-                SystemMcpKey::LocalCommandApproval => 90,
-                _ => 1_000,
-            });
-        }
-        SYSTEM_MCP_CATALOG
-            .iter()
-            .position(|descriptor| descriptor.key == self.key)
-            .map(|index| (index as u16 + 1) * 10)
     }
 }
 
@@ -94,7 +72,7 @@ macro_rules! embedded_descriptor {
             category: Some("builtin"),
             owner_service: $owner,
             backend: SystemMcpBackend::Embedded,
-            supported_hosts: $hosts,
+            implementation_hosts: $hosts,
             embedded_kind: Some(BuiltinMcpKind::$kind),
         }
     };
@@ -145,28 +123,34 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         TASK_AND_LOCAL_HOSTS,
         ProjectManagement
     ),
-    embedded_descriptor!(
-        Notepad,
-        "builtin_notepad",
-        "notepad",
-        "Notepad (Builtin)",
-        "Persistent agent notepad tools.",
-        true,
-        "shared",
-        CHATOS_TASK_HOSTS,
-        Notepad
-    ),
-    embedded_descriptor!(
-        AgentBuilder,
-        "builtin_agent_builder",
-        "agent_builder",
-        "Agent Builder (Builtin)",
-        "Agent configuration and skill composition tools.",
-        true,
-        "chatos",
-        CHATOS_HOST,
-        AgentBuilder
-    ),
+    SystemMcpDescriptor {
+        key: SystemMcpKey::Notepad,
+        resource_id: "builtin_notepad",
+        server_name: "notepad",
+        display_name: "Notepad (Builtin)",
+        description: "Persistent agent notepad tools backed by the cloud ChatOS user store.",
+        allow_writes: true,
+        tags: &["system", "builtin"],
+        category: Some("builtin"),
+        owner_service: "chatos",
+        backend: SystemMcpBackend::ServiceHttp,
+        implementation_hosts: CHATOS_TASK_HOSTS,
+        embedded_kind: Some(BuiltinMcpKind::Notepad),
+    },
+    SystemMcpDescriptor {
+        key: SystemMcpKey::AgentBuilder,
+        resource_id: "builtin_agent_builder",
+        server_name: "agent_builder",
+        display_name: "Agent Builder (Builtin)",
+        description: "Owner-scoped agent configuration and skill composition tools.",
+        allow_writes: true,
+        tags: &["system", "builtin"],
+        category: Some("builtin"),
+        owner_service: "chatos",
+        backend: SystemMcpBackend::ServiceHttp,
+        implementation_hosts: CHATOS_HOST,
+        embedded_kind: Some(BuiltinMcpKind::AgentBuilder),
+    },
     embedded_descriptor!(
         AskUser,
         "builtin_ask_user",
@@ -200,17 +184,20 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         CHATOS_TASK_HOSTS,
         WebTools
     ),
-    embedded_descriptor!(
-        BrowserTools,
-        "builtin_browser_tools",
-        "browser_tools",
-        "Browser Tools (Builtin)",
-        "Interactive browser automation tools.",
-        true,
-        "shared",
-        CHATOS_TASK_LOCAL_HOSTS,
-        BrowserTools
-    ),
+    SystemMcpDescriptor {
+        key: SystemMcpKey::BrowserTools,
+        resource_id: "builtin_browser_tools",
+        server_name: "browser_tools",
+        display_name: "Browser Tools (Builtin)",
+        description: "Interactive browser automation tools.",
+        allow_writes: true,
+        tags: &["system", "builtin"],
+        category: Some("builtin"),
+        owner_service: "chatos",
+        backend: SystemMcpBackend::ServiceHttp,
+        implementation_hosts: CHATOS_TASK_LOCAL_HOSTS,
+        embedded_kind: Some(BuiltinMcpKind::BrowserTools),
+    },
     embedded_descriptor!(
         MemorySkillReader,
         "system_builtin_memory_skill_reader",
@@ -255,7 +242,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("project_environment"),
         owner_service: "sandbox_manager_service",
         backend: SystemMcpBackend::HostAdapter,
-        supported_hosts: PROJECT_AND_SANDBOX_HOSTS,
+        implementation_hosts: PROJECT_AND_SANDBOX_HOSTS,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -270,7 +257,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("project_environment"),
         owner_service: "project_management_service",
         backend: SystemMcpBackend::HostAdapter,
-        supported_hosts: PROJECT_SERVICE_HOST,
+        implementation_hosts: PROJECT_SERVICE_HOST,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -285,7 +272,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("task_runner"),
         owner_service: "project_management_service",
         backend: SystemMcpBackend::ServiceHttp,
-        supported_hosts: TASK_RUNNER_HOST,
+        implementation_hosts: TASK_RUNNER_HOST,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -299,7 +286,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("local_connector"),
         owner_service: "local_connector_client",
         backend: SystemMcpBackend::HostAdapter,
-        supported_hosts: LOCAL_CONNECTOR_HOST,
+        implementation_hosts: LOCAL_CONNECTOR_HOST,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -314,7 +301,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("task_runner"),
         owner_service: "task_runner_service",
         backend: SystemMcpBackend::RunScopedBuiltin,
-        supported_hosts: TASK_AND_LOCAL_HOSTS,
+        implementation_hosts: TASK_AND_LOCAL_HOSTS,
         embedded_kind: None,
     },
     SystemMcpDescriptor {
@@ -328,7 +315,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         category: Some("chatos"),
         owner_service: "task_runner_service",
         backend: SystemMcpBackend::ServiceDynamic,
-        supported_hosts: CHATOS_AND_LOCAL_HOSTS,
+        implementation_hosts: CHATOS_AND_LOCAL_HOSTS,
         embedded_kind: None,
     },
 ];
@@ -455,8 +442,42 @@ mod tests {
 
         assert_eq!(descriptor.key, SystemMcpKey::TaskProcessLog);
         assert_eq!(descriptor.backend, SystemMcpBackend::RunScopedBuiltin);
-        assert!(descriptor.supports_host(SystemMcpHost::TaskRunner));
-        assert!(descriptor.supports_host(SystemMcpHost::LocalConnector));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
+    }
+
+    #[test]
+    fn notepad_is_owned_by_the_chatos_cloud_service() {
+        let descriptor = system_mcp_descriptor(SystemMcpKey::Notepad);
+
+        assert_eq!(descriptor.owner_service, "chatos");
+        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
+        assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::Notepad));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::Chatos));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
+    }
+
+    #[test]
+    fn agent_builder_is_owned_by_the_chatos_cloud_service() {
+        let descriptor = system_mcp_descriptor(SystemMcpKey::AgentBuilder);
+
+        assert_eq!(descriptor.owner_service, "chatos");
+        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
+        assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::AgentBuilder));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::Chatos));
+        assert!(!descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
+    }
+
+    #[test]
+    fn browser_tools_use_chatos_cloud_service_with_local_connector_compatibility() {
+        let descriptor = system_mcp_descriptor(SystemMcpKey::BrowserTools);
+
+        assert_eq!(descriptor.owner_service, "chatos");
+        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
+        assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::BrowserTools));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::Chatos));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
     }
 
     #[test]

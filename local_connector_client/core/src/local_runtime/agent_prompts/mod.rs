@@ -9,11 +9,10 @@ use chatos_plugin_management_sdk::{
     validate_agent_prompt_checksum, AgentPromptVendor, SystemAgentKey,
 };
 use serde::Serialize;
-use std::time::Duration;
-use tokio::task::JoinHandle;
 
 use crate::config::ClientConfig;
 use crate::local_runtime::storage::LocalAgentPromptRecord;
+use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
 use crate::LocalRuntime;
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,8 +45,8 @@ pub(crate) async fn agent_prompt_status(runtime: &LocalRuntime) -> Result<LocalA
             .as_deref()
             .is_some_and(|source| state.source_instance_id == source)
     });
-    let expected_prompt_count = SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len();
-    let expected_capability_count = SystemAgentKey::ALL.len();
+    let expected_prompt_count = LOCAL_RUNTIME_AGENT_KEYS.len() * AgentPromptVendor::ALL.len();
+    let expected_capability_count = LOCAL_RUNTIME_AGENT_KEYS.len();
     let owner_user_id = current_owner_user_id(runtime).await;
     let (capability_count, capability_set_complete) = match owner_user_id.as_deref() {
         Some(owner_user_id) => {
@@ -148,22 +147,6 @@ pub(crate) async fn update_agent_prompt_bundle(
     agent_prompt_status(runtime).await
 }
 
-pub(crate) async fn load_installed_agent_prompt(
-    runtime: &LocalRuntime,
-    agent_key: SystemAgentKey,
-    vendor: AgentPromptVendor,
-) -> Result<LocalAgentPromptRecord> {
-    let config = require_current_config(runtime).await?;
-    let source = prompt_source_instance_id(&config);
-    load_installed_agent_prompt_from_database(
-        runtime.local_database()?,
-        source.as_str(),
-        agent_key,
-        vendor,
-    )
-    .await
-}
-
 pub(crate) async fn load_installed_agent_prompt_from_database(
     database: &crate::local_runtime::LocalDatabase,
     source_instance_id: &str,
@@ -214,33 +197,4 @@ async fn require_current_config(runtime: &LocalRuntime) -> Result<ClientConfig> 
 
 fn prompt_source_instance_id(config: &ClientConfig) -> String {
     config.cloud_base_url.trim_end_matches('/').to_string()
-}
-
-pub(crate) fn spawn_agent_prompt_update_checker(runtime: LocalRuntime) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            if current_config(&runtime).await.is_none() {
-                break;
-            }
-            if let Err(error) = check_agent_prompt_updates(&runtime).await {
-                crate::tracing_stdout(
-                    format!("background Agent Prompt update check failed: {error}").as_str(),
-                );
-            }
-            if let Err(error) = crate::local_runtime::sync_managed_memory_policy(&runtime).await {
-                crate::tracing_stdout(
-                    format!("background managed Memory Policy sync failed: {error}").as_str(),
-                );
-            }
-            if let Err(error) = crate::local_runtime::sync_managed_runtime_config(&runtime).await {
-                crate::tracing_stdout(
-                    format!("background managed runtime config sync failed: {error}").as_str(),
-                );
-            }
-        }
-    })
 }

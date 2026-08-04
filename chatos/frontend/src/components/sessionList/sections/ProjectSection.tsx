@@ -4,7 +4,7 @@
 import React from 'react';
 import { Cloud, FolderOpen } from 'lucide-react';
 import { useI18n } from '../../../i18n/I18nProvider';
-import { isCloudProject } from '../../../lib/domain/projectExecution';
+import { isCloudProjectSource } from '../../../lib/domain/projectSource';
 import { cn } from '../../../lib/utils';
 import type { Project } from '../../../types';
 import { DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
@@ -68,8 +68,8 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
           ) : (
             <div className="p-2 space-y-1">
               {projects.map((project) => {
-                const cloudProject = isCloudProject(project);
-                const projectTypeLabel = cloudProject
+                const cloudProjectSource = isCloudProjectSource(project);
+                const projectTypeLabel = cloudProjectSource
                   ? t('session.cloudProject')
                   : t('session.localProject');
                 return (
@@ -89,12 +89,12 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                       <span
                         className={cn(
                           'flex h-5 w-5 shrink-0 items-center justify-center',
-                          cloudProject ? 'text-sky-600' : 'text-emerald-600',
+                          cloudProjectSource ? 'text-sky-600' : 'text-emerald-600',
                         )}
                         title={projectTypeLabel}
                         aria-label={projectTypeLabel}
                       >
-                        {cloudProject ? (
+                        {cloudProjectSource ? (
                           <Cloud className="h-4 w-4" aria-hidden="true" />
                         ) : (
                           <FolderOpen className="h-4 w-4" aria-hidden="true" />

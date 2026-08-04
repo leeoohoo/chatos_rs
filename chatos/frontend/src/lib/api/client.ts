@@ -17,15 +17,8 @@ import type {
   ConversationMessagePayload,
   WebSocketTicketResponse,
 } from './client/types';
-import {
-  assertCloudSessionOperation,
-  isLocalRuntimeSessionId,
-  localRuntimeBridgeAvailable,
-  LocalRuntimeClient,
-} from './localRuntime';
+import { LocalRuntimeClient } from './localRuntime';
 import * as workspaceApi from './client/workspace';
-import { resolveProjectExecutionPlane, type ProjectExecutionPlane } from '../domain/projectExecution';
-import type { Project } from '../../types';
 
 // Dev 环境默认直连后端，避免本地代理异常导致 /api 404。
 // 可通过 VITE_API_BASE_URL 显式覆盖（例如 https://your.domain/api）。
@@ -37,8 +30,8 @@ class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
   private readonly localRuntime = new LocalRuntimeClient();
-  private readonly projectExecutionPlanes = new Map<string, ProjectExecutionPlane>();
   private tokenRefreshListeners = new Set<(token: string) => void>();
+  private authenticationFailureListeners = new Set<() => void>();
   private readonly requestFn: workspaceApi.ApiRequestFn = (endpoint, options) => this.request(endpoint, options);
 
   constructor(baseUrl: string = API_BASE_URL) {
@@ -53,55 +46,8 @@ class ApiClient {
     return this.requestFn;
   }
 
-  registerProjectExecution(project: Project): ProjectExecutionPlane {
-    const plane = resolveProjectExecutionPlane(project);
-    if (project.id.trim()) {
-      this.projectExecutionPlanes.set(project.id.trim(), plane);
-    }
-    return plane;
-  }
-
-  registerLocalProjectExecution(projectId: string): void {
-    const normalizedProjectId = projectId.trim();
-    if (normalizedProjectId) {
-      this.projectExecutionPlanes.set(normalizedProjectId, 'local_connector');
-    }
-  }
-
-  projectUsesLocalRuntime(projectId?: string | null): boolean {
-    const projectIdValue = String(projectId || '').trim();
-    return projectIdValue.length > 0
-      && this.projectExecutionPlanes.get(projectIdValue) === 'local_connector';
-  }
-
-  sessionScopeUsesLocalRuntime(projectId?: string | null): boolean {
-    if (!localRuntimeBridgeAvailable()) {
-      return false;
-    }
-    const projectIdValue = String(projectId || '').trim();
-    if (!projectIdValue || projectIdValue === '-1' || projectIdValue === '0') {
-      return true;
-    }
-    return this.projectExecutionPlanes.get(projectIdValue) !== 'cloud';
-  }
-
-  sessionUsesLocalRuntime(sessionId?: string | null): boolean {
-    return isLocalRuntimeSessionId(sessionId);
-  }
-
-  assertCloudSessionOperation(sessionId: string | null | undefined, operation: string): void {
-    assertCloudSessionOperation(sessionId, operation);
-  }
-
   getLocalRuntimeClient(): LocalRuntimeClient {
     return this.localRuntime;
-  }
-
-  async prepareProjectRuntime(project: Project): Promise<void> {
-    if (this.registerProjectExecution(project) !== 'local_connector') {
-      return;
-    }
-    await this.localRuntime.prepareProject(project);
   }
 
   setAccessToken(token?: string | null): void {
@@ -127,6 +73,25 @@ class ApiClient {
   onAccessTokenRefresh(listener: (token: string) => void): () => void {
     this.tokenRefreshListeners.add(listener);
     return () => this.tokenRefreshListeners.delete(listener);
+  }
+
+  onAuthenticationFailure(listener: () => void): () => void {
+    this.authenticationFailureListeners.add(listener);
+    return () => this.authenticationFailureListeners.delete(listener);
+  }
+
+  private invalidateAccessToken(): void {
+    if (!this.accessToken) {
+      return;
+    }
+    this.accessToken = null;
+    this.authenticationFailureListeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (error) {
+        console.error('Authentication failure listener failed:', error);
+      }
+    });
   }
 
   private applyRefreshedAccessToken(response: Response): void {
@@ -163,6 +128,9 @@ class ApiClient {
     try {
       const response = await fetch(url, config);
       this.applyRefreshedAccessToken(response);
+      if (response.status === 401) {
+        this.invalidateAccessToken();
+      }
       const text = await response.text();
       let parsedBody: unknown = null;
 
@@ -236,7 +204,6 @@ export const apiClient = new ApiClient();
 export const conversationsApi = {
   getDetails: (conversationId: string) => apiClient.getConversationDetails(conversationId),
   getAssistant: (conversationId: string) => apiClient.getAssistant(conversationId),
-  getMcpServers: (conversationId?: string) => apiClient.getMcpServers(conversationId),
   saveMessage: (conversationId: string, message: ConversationMessagePayload) => apiClient.saveMessage(conversationId, message),
   getMessages: (conversationId: string, params?: { limit?: number; offset?: number }) => apiClient.getMessages(conversationId, params),
   addMessage: (conversationId: string, message: ConversationMessagePayload) => apiClient.addMessage(conversationId, message),

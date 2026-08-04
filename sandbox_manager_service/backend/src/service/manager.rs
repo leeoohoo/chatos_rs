@@ -30,6 +30,8 @@ mod lease_inputs;
 mod leases;
 mod mcp_proxy;
 
+pub(crate) use mcp_proxy::SandboxMcpRuntimeBinding;
+
 #[derive(Clone)]
 pub struct SandboxManager {
     config: AppConfig,

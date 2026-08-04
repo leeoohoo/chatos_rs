@@ -66,7 +66,6 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
         normalized.skills,
         normalized.skill_ids,
         normalized.default_skill_ids,
-        payload.mcp_policy.clone(),
         payload.project_policy.clone(),
         payload.enabled.unwrap_or(true),
     );
@@ -143,7 +142,6 @@ pub async fn update_agent(
         skills: normalized.skills,
         skill_ids,
         default_skill_ids,
-        mcp_policy: payload.mcp_policy.clone().or(existing.mcp_policy),
         project_policy: payload.project_policy.clone().or(existing.project_policy),
         enabled: payload.enabled.unwrap_or(existing.enabled),
         created_at: existing.created_at,
@@ -195,7 +193,6 @@ fn agent_to_dto(agent: Agent) -> ChatosAgentDto {
         skills: dto_skills_from_agent(agent.skills.as_slice()),
         skill_ids: agent.skill_ids,
         default_skill_ids: agent.default_skill_ids,
-        mcp_policy: agent.mcp_policy,
         project_policy: agent.project_policy,
         enabled: agent.enabled,
         created_at: agent.created_at,

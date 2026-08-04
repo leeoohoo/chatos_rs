@@ -213,6 +213,7 @@ export interface SystemAgentRecord extends PluginComponentOwnership {
   enabled: boolean;
   managed_by: string;
   include_user_resources: boolean;
+  tool_plane: 'managed' | 'local_only' | 'none';
   created_at: string;
   updated_at: string;
 }

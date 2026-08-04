@@ -31,7 +31,6 @@ pub(super) async fn build_agent_runtime_context(
         skill_ids: runtime_skill_ids,
         runtime_skills,
         runtime_commands: Vec::new(),
-        mcp_policy: agent.mcp_policy.clone(),
         project_policy: agent.project_policy.clone(),
         updated_at: agent.updated_at.clone(),
     })
@@ -102,7 +101,6 @@ mod tests {
             }],
             skill_ids: vec!["legacy-skill".to_string(), "inline-review".to_string()],
             default_skill_ids: vec!["legacy-skill".to_string()],
-            mcp_policy: None,
             project_policy: None,
             enabled: true,
             created_at: "2026-07-28T00:00:00Z".to_string(),

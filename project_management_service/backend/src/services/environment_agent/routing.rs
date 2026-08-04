@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::fs;
-use std::path::Path;
-
+pub(super) use chatos_project_execution::{
+    parse_local_connector_workspace_root as parse_local_connector_project_root,
+    LocalConnectorWorkspaceRef as LocalConnectorProjectRef,
+};
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
@@ -18,16 +19,19 @@ use crate::models::{
     RuntimeEnvironmentProvider,
 };
 
-use super::LOCAL_CONNECTOR_ROOT_PREFIX;
-
 #[derive(Debug)]
-pub(super) enum RoutingDecision {
-    Ready(RoutingPlan),
+pub(super) enum RuntimeEnvironmentDecision {
+    Ready(RuntimeEnvironmentPlan),
     Stop(StopDecision),
 }
 
+/// Business plan persisted on the project runtime environment.
+///
+/// This describes where the project workspace and its eventual runtime live. It
+/// is not an MCP Provider route: MCP Management consumes the normalized Project
+/// Execution Context and owns the actual tool Provider selection.
 #[derive(Debug)]
-pub(super) struct RoutingPlan {
+pub(super) struct RuntimeEnvironmentPlan {
     pub(super) file_provider: RuntimeEnvironmentProvider,
     pub(super) sandbox_provider: RuntimeEnvironmentProvider,
 }
@@ -40,23 +44,23 @@ pub(super) struct StopDecision {
     pub(super) last_error: Option<String>,
 }
 
-pub(super) async fn resolve_runtime_environment_routing(
+pub(super) async fn resolve_runtime_environment_plan(
     project: &ProjectRecord,
     config: &AppConfig,
     user_access_token: Option<&str>,
-) -> RoutingDecision {
+) -> RuntimeEnvironmentDecision {
     match project.source_type {
-        ProjectSourceType::Cloud => resolve_cloud_routing(project),
+        ProjectSourceType::Cloud => resolve_cloud_plan(project),
         ProjectSourceType::Local | ProjectSourceType::LocalConnector => {
-            resolve_local_routing(project, config, user_access_token).await
+            resolve_local_plan(project, config, user_access_token).await
         }
     }
 }
 
-fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
+fn resolve_cloud_plan(project: &ProjectRecord) -> RuntimeEnvironmentDecision {
     match project.import_status {
         ProjectImportStatus::Pending | ProjectImportStatus::Importing => {
-            return RoutingDecision::Stop(StopDecision {
+            return RuntimeEnvironmentDecision::Stop(StopDecision {
                 status: ProjectRuntimeEnvironmentStatus::Pending,
                 summary: "云端项目代码仍在导入中，导入完成后再执行运行环境初始化。".to_string(),
                 not_runnable_reason: None,
@@ -70,7 +74,7 @@ fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .unwrap_or("云端项目导入失败");
-            return RoutingDecision::Stop(not_runnable(format!(
+            return RuntimeEnvironmentDecision::Stop(not_runnable(format!(
                 "云端项目导入失败，暂时不具备运行环境初始化条件：{reason}"
             )));
         }
@@ -83,7 +87,7 @@ fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
         .filter(|value| !value.is_empty())
         .is_none()
     {
-        return RoutingDecision::Stop(not_runnable(
+        return RuntimeEnvironmentDecision::Stop(not_runnable(
             "云端项目缺少 Harness 仓库信息，无法通过 Harness MCP 读取项目文件。",
         ));
     }
@@ -91,64 +95,54 @@ fn resolve_cloud_routing(project: &ProjectRecord) -> RoutingDecision {
     // whether its Harness repository is still empty. Task Runner runs may add
     // code later, so the environment agent must inspect the current repository
     // instead of permanently short-circuiting on creation-time metadata.
-    RoutingDecision::Ready(RoutingPlan {
+    RuntimeEnvironmentDecision::Ready(RuntimeEnvironmentPlan {
         file_provider: RuntimeEnvironmentProvider::Harness,
         sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
     })
 }
 
-async fn resolve_local_routing(
+async fn resolve_local_plan(
     project: &ProjectRecord,
     config: &AppConfig,
     user_access_token: Option<&str>,
-) -> RoutingDecision {
+) -> RuntimeEnvironmentDecision {
     let Some(root_path) = project
         .root_path
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return RoutingDecision::Stop(not_runnable("本地项目缺少根目录，无法读取项目文件。"));
-    };
-    let local_connector_ref = parse_local_connector_project_root(root_path);
-    if root_path.starts_with(LOCAL_CONNECTOR_ROOT_PREFIX) && local_connector_ref.is_none() {
-        return RoutingDecision::Stop(not_runnable(
-            "本地项目的 Local Connector 根目录格式不正确，无法读取项目文件。",
+        return RuntimeEnvironmentDecision::Stop(not_runnable(
+            "本地项目缺少根目录，无法读取项目文件。",
         ));
-    }
-    if local_connector_ref.is_none() {
-        let path = Path::new(root_path);
-        if !path.exists() {
-            return RoutingDecision::Stop(not_runnable("本地项目根目录不存在，无法读取项目文件。"));
-        }
-        if !path.is_dir() {
-            return RoutingDecision::Stop(not_runnable(
-                "本地项目根目录不是目录，无法读取项目文件。",
-            ));
-        }
-        if directory_is_effectively_empty(path) {
-            return RoutingDecision::Stop(not_runnable(
-                "本地项目根目录为空，暂无可分析的项目文件。",
-            ));
-        }
-    }
+    };
+    let Some(local_connector_ref) = parse_local_connector_project_root(root_path) else {
+        return RuntimeEnvironmentDecision::Stop(not_runnable(
+            "本地项目必须使用 Local Connector 管理的逻辑 Workspace；服务器不会读取客户端绝对路径。",
+        ));
+    };
 
     let sandbox_provider = match choose_sandbox_provider(
         config,
         user_access_token,
-        local_connector_ref.as_ref(),
+        Some(&local_connector_ref),
     )
     .await
     {
-        Ok(provider) => provider,
+        Ok(Some(provider)) => provider,
+        Ok(None) => {
+            return RuntimeEnvironmentDecision::Stop(waiting_for_local_sandbox(
+                "等待该 Workspace 的 Local Connector Sandbox pairing 启用并上线；系统不会回退到 Cloud Sandbox。",
+            ));
+        }
         Err(err) => {
-            return RoutingDecision::Stop(failed_stop(
-                "检查本地沙箱可用性失败，无法确定运行环境镜像 MCP。",
+            return RuntimeEnvironmentDecision::Stop(failed_stop(
+                "检查本地沙箱可用性失败，无法确定运行环境镜像后端。",
                 err,
             ));
         }
     };
-    RoutingDecision::Ready(RoutingPlan {
+    RuntimeEnvironmentDecision::Ready(RuntimeEnvironmentPlan {
         file_provider: RuntimeEnvironmentProvider::LocalConnector,
         sandbox_provider,
     })
@@ -158,78 +152,12 @@ async fn choose_sandbox_provider(
     config: &AppConfig,
     user_access_token: Option<&str>,
     project_ref: Option<&LocalConnectorProjectRef>,
-) -> Result<RuntimeEnvironmentProvider, String> {
+) -> Result<Option<RuntimeEnvironmentProvider>, String> {
     if has_enabled_local_sandbox_pairing(config, user_access_token, project_ref).await? {
-        Ok(RuntimeEnvironmentProvider::LocalConnector)
+        Ok(Some(RuntimeEnvironmentProvider::LocalConnector))
     } else {
-        Ok(RuntimeEnvironmentProvider::CloudSandboxManager)
+        Ok(None)
     }
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct LocalConnectorProjectRef {
-    pub(super) device_id: String,
-    pub(super) workspace_id: String,
-    pub(super) relative_path: Option<String>,
-}
-
-pub(super) fn parse_local_connector_project_root(
-    project_root: &str,
-) -> Option<LocalConnectorProjectRef> {
-    let rest = project_root
-        .trim()
-        .strip_prefix(LOCAL_CONNECTOR_ROOT_PREFIX)?;
-    let mut parts = rest.splitn(3, '/');
-    let device_id = normalize_non_empty(parts.next())?;
-    let workspace_id = normalize_non_empty(parts.next())?;
-    let relative_path = match parts.next() {
-        Some(path) => Some(decode_local_connector_relative_path(path)?),
-        None => None,
-    };
-    Some(LocalConnectorProjectRef {
-        device_id,
-        workspace_id,
-        relative_path,
-    })
-}
-
-fn decode_local_connector_relative_path(path: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    for part in path.split('/').filter(|part| !part.trim().is_empty()) {
-        let decoded = urlencoding::decode(part).ok()?.into_owned();
-        parts.push(decoded);
-    }
-    let joined = parts.join("/");
-    normalize_local_relative_path(joined.as_str()).filter(|path| local_relative_path_is_safe(path))
-}
-
-fn normalize_local_relative_path(value: &str) -> Option<String> {
-    let value = value.trim().replace('\\', "/");
-    let value = value.trim_matches('/');
-    if value.is_empty() || value == "." {
-        return None;
-    }
-    let parts = value
-        .split('/')
-        .map(str::trim)
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("/"))
-    }
-}
-
-fn local_relative_path_is_safe(path: &str) -> bool {
-    let path = path.trim();
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.starts_with('\\')
-        && path.split('/').all(|part| {
-            let part = part.trim();
-            !part.is_empty() && part != "." && part != ".."
-        })
 }
 
 async fn has_enabled_local_sandbox_pairing(
@@ -334,19 +262,7 @@ fn local_sandbox_pairing_is_ready(pairing: &LocalConnectorSandboxPairing) -> boo
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.eq_ignore_ascii_case("ready"))
-        .unwrap_or(true)
-}
-
-fn directory_is_effectively_empty(path: &Path) -> bool {
-    let Ok(mut entries) = fs::read_dir(path) else {
-        return false;
-    };
-    entries.all(|entry| {
-        entry
-            .ok()
-            .and_then(|entry| entry.file_name().into_string().ok())
-            .is_some_and(|name| matches!(name.as_str(), ".git" | ".DS_Store"))
-    })
+        .unwrap_or(false)
 }
 
 fn not_runnable(message: impl Into<String>) -> StopDecision {
@@ -355,6 +271,15 @@ fn not_runnable(message: impl Into<String>) -> StopDecision {
         status: ProjectRuntimeEnvironmentStatus::NotRunnable,
         summary: message.clone(),
         not_runnable_reason: Some(message),
+        last_error: None,
+    }
+}
+
+fn waiting_for_local_sandbox(message: impl Into<String>) -> StopDecision {
+    StopDecision {
+        status: ProjectRuntimeEnvironmentStatus::Pending,
+        summary: message.into(),
+        not_runnable_reason: None,
         last_error: None,
     }
 }
@@ -380,13 +305,6 @@ fn truncate_detail(value: &str, max_chars: usize) -> String {
     output
 }
 
-fn normalize_non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 pub(super) fn provider_label(provider: RuntimeEnvironmentProvider) -> &'static str {
     match provider {
         RuntimeEnvironmentProvider::None => "none",
@@ -404,8 +322,8 @@ mod tests {
     fn cloud_project_created_empty_still_inspects_current_harness_repository() {
         let project = cloud_project(Some("repo"));
         assert!(matches!(
-            resolve_cloud_routing(&project),
-            RoutingDecision::Ready(RoutingPlan {
+            resolve_cloud_plan(&project),
+            RuntimeEnvironmentDecision::Ready(RuntimeEnvironmentPlan {
                 file_provider: RuntimeEnvironmentProvider::Harness,
                 sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
             })
@@ -416,12 +334,27 @@ mod tests {
     fn cloud_project_without_harness_repository_remains_not_runnable() {
         let project = cloud_project(None);
         assert!(matches!(
-            resolve_cloud_routing(&project),
-            RoutingDecision::Stop(StopDecision {
+            resolve_cloud_plan(&project),
+            RuntimeEnvironmentDecision::Stop(StopDecision {
                 status: ProjectRuntimeEnvironmentStatus::NotRunnable,
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn local_sandbox_pairing_requires_explicit_ready_state() {
+        let mut pairing = LocalConnectorSandboxPairing {
+            id: Some("pairing-1".to_string()),
+            device_id: "device-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            enabled: true,
+            sandbox_readiness: None,
+            facade_base_url: None,
+        };
+        assert!(!local_sandbox_pairing_is_ready(&pairing));
+        pairing.sandbox_readiness = Some("ready".to_string());
+        assert!(local_sandbox_pairing_is_ready(&pairing));
     }
 
     fn cloud_project(harness_repo_identifier: Option<&str>) -> ProjectRecord {

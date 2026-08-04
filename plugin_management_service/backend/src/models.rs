@@ -10,23 +10,26 @@ mod plugins;
 pub use plugins::*;
 
 pub use chatos_plugin_management_sdk::{
-    AgentBindingRecord, BindingConditions,
+    AgentBindingRecord, AgentToolPlane, BeginPluginCloudOAuthAuthorizationRequest,
+    BeginPluginCloudOAuthAuthorizationResponse, BindingConditions,
     LocalConnectorMcpStatusBatchRequest as LocalConnectorMcpStatusBatchPayload,
     LocalConnectorMcpStatusItem, LocalConnectorMcpStatusRequest as LocalConnectorMcpStatusPayload,
     LocalConnectorMcpSyncRequest as LocalConnectorMcpSyncPayload, LocalConnectorRef,
     LocalConnectorRequirement, LocalConnectorSkillInventoryItem,
     LocalConnectorSkillInventoryRequest as LocalConnectorSkillInventoryPayload, McpProviderSkill,
     McpRecord, McpRuntime, PluginAuditLogRecord, PluginAvailabilityStatus, PluginCatalogDocument,
-    PluginCatalogRecord, PluginCloudComponentBundle, PluginComponentKind, PluginComponentOwnership,
+    PluginCatalogRecord, PluginCloudComponentBundle, PluginCloudCredentialMetadata,
+    PluginCloudOAuthConnectionRecord, PluginComponentKind, PluginComponentOwnership,
     PluginComponentSnapshot, PluginComponentStatus, PluginExecutionHost, PluginInstallStatus,
     PluginInstallationRecord, PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifest,
     PluginManifestSource, PluginMarketplaceRecord, PluginOAuthConnectionRecord,
     PluginOAuthStatusSyncPayload, PluginPublisher, PluginReleaseRecord, PluginReleaseSignature,
     PluginRequirementStatus, ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
+    ResolvePluginMcpCloudCredentialsRequest,
     ResolvedAgentCapabilities as RuntimeCapabilitiesResponse, ResolvedMcp, ResolvedPlugin,
-    ResolvedPluginComponent, ResolvedSkill, ResourceCheckRecord, ResourceMetadata,
-    ResourceSecurity, SigningKeyRef, SkillContent, SkillInstallationRecord, SkillRecord,
-    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
+    ResolvedPluginComponent, ResolvedPluginMcpCloudCredentials, ResolvedSkill, ResourceCheckRecord,
+    ResourceMetadata, ResourceSecurity, SigningKeyRef, SkillContent, SkillInstallationRecord,
+    SkillRecord, UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
     UpdateUserSkillPreferenceRequest as UpdateUserSkillPreferencePayload,
     UserPluginPreferenceRecord, UserSkillCatalogItem, UserSkillCatalogResponse,
 };
@@ -172,6 +175,8 @@ pub struct SystemAgentRecord {
     pub managed_by: String,
     #[serde(default)]
     pub include_user_resources: bool,
+    #[serde(default)]
+    pub tool_plane: AgentToolPlane,
     #[serde(flatten, default)]
     pub plugin_component: PluginComponentOwnership,
     pub created_at: String,

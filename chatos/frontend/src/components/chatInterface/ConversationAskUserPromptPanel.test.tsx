@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../../i18n/I18nProvider';
 import { ApiClientProvider } from '../../lib/api/ApiClientContext';
 import type { AskUserPromptRecord } from '../../lib/api/client/types';
+import { useConversationAskUserPromptRealtime } from '../../lib/realtime/useConversationAskUserPromptRealtime';
 import ConversationAskUserPromptPanel from './ConversationAskUserPromptPanel';
 
 vi.mock('../../lib/realtime/useConversationAskUserPromptRealtime', () => ({
@@ -17,13 +18,13 @@ vi.mock('../../lib/realtime/useConversationAskUserPromptRealtime', () => ({
 
 const buildChoicePrompt = (): AskUserPromptRecord => ({
   id: 'prompt-1',
-  conversation_id: 'lc_session_ask_user',
+  conversation_id: 'cloud_session_ask_user',
   conversation_turn_id: 'turn-1',
   kind: 'choice',
   status: 'pending',
   prompt: {
-    title: '确认创建本地任务',
-    message: 'Task Manager 准备创建 3 个本地任务，是否继续？',
+    title: '确认创建任务',
+    message: 'Task Manager 准备创建 3 个任务，是否继续？',
     allow_cancel: true,
     payload: {
       choice: {
@@ -42,7 +43,7 @@ const buildChoicePrompt = (): AskUserPromptRecord => ({
 const renderPanel = (client: Record<string, unknown>) => render(
   <ApiClientProvider client={client as never}>
     <I18nProvider>
-      <ConversationAskUserPromptPanel sessionId="lc_session_ask_user" />
+      <ConversationAskUserPromptPanel sessionId="cloud_session_ask_user" />
     </I18nProvider>
   </ApiClientProvider>,
 );
@@ -50,9 +51,10 @@ const renderPanel = (client: Record<string, unknown>) => render(
 describe('ConversationAskUserPromptPanel', () => {
   afterEach(() => {
     cleanup();
+    vi.clearAllMocks();
   });
 
-  it('keeps a local choice selected when polling refreshes the same prompt', async () => {
+  it('keeps a choice selected when realtime refreshes the same cloud prompt', async () => {
     const listAskUserPrompts = vi
       .fn()
       .mockResolvedValueOnce({ prompts: [buildChoicePrompt()] })
@@ -68,10 +70,14 @@ describe('ConversationAskUserPromptPanel', () => {
     fireEvent.click(confirmChoice);
     expect(confirmChoice).toBeChecked();
 
+    const realtimeCalls = vi.mocked(useConversationAskUserPromptRealtime).mock.calls;
+    const realtimeOptions = realtimeCalls[realtimeCalls.length - 1]?.[0];
+    expect(realtimeOptions).toBeDefined();
     await act(async () => {
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 1100);
-      });
+      await realtimeOptions?.onEvent({
+        prompt_id: 'prompt-1',
+        status: 'pending',
+      } as never);
     });
 
     await waitFor(() => expect(listAskUserPrompts).toHaveBeenCalledTimes(2));
@@ -100,6 +106,6 @@ describe('ConversationAskUserPromptPanel', () => {
 
     await waitFor(() => expect(listAskUserPrompts).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(/Task Runner request failed/)).not.toBeInTheDocument();
-    expect(screen.queryByText('确认创建本地任务')).not.toBeInTheDocument();
+    expect(screen.queryByText('确认创建任务')).not.toBeInTheDocument();
   });
 });

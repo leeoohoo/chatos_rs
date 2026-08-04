@@ -2,23 +2,28 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::panic::AssertUnwindSafe;
 
 use axum::http::StatusCode;
 use chatos_project_execution::{
     append_planning_feedback, build_requirement_execution_planner_prompt,
     build_requirement_execution_user_message, executing_requirement_ids,
-    format_planning_feedback_history, read_planning_feedback_history, select_pending_work_items,
-    sort_work_items_for_planning, ExecutionPlanIdentity, ExecutionPlane,
-    NEXT_ACTION_PREVIEW_AND_CONFIRM, STATUS_PLANNING_STARTED,
+    format_planning_feedback_history, read_planning_feedback_history,
+    select_unblocked_pending_work_items, sort_work_items_for_planning, ExecutionPlanIdentity,
+    ExecutionPlane, NEXT_ACTION_PREVIEW_AND_CONFIRM, RECOVERY_ACTION_NONE, STATUS_PLANNING_STARTED,
 };
+use futures::FutureExt;
 use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::api::chat_stream_common::ChatStreamRequest;
 use crate::core::auth::AuthUser;
+use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
+use crate::modules::conversation_runtime::guidance;
 use crate::services::{access_token_scope, project_management_api_client};
+use crate::utils::abort_registry;
 
 use super::super::requirement_execution::{
     add_requirement_work_item_dependencies, collect_requirement_execution_scope,
@@ -174,14 +179,22 @@ pub(super) async fn execute_requirement_inner(
         &requirement_dependency_map,
     )?;
     let mut dependency_map = work_item_dependency_map(&dependency_graph);
-    let mut selected_work_items =
-        select_pending_work_items(all_work_items.as_slice(), &requirement_scope);
+    let pending_work_items = chatos_project_execution::select_pending_work_items(
+        all_work_items.as_slice(),
+        &requirement_scope,
+    );
     add_requirement_work_item_dependencies(
         &mut dependency_map,
-        &selected_work_items,
+        &pending_work_items,
         &requirement_dependency_map,
         &requirement_scope,
     );
+    let mut selected_work_items = select_unblocked_pending_work_items(
+        all_work_items.as_slice(),
+        &requirement_scope,
+        &dependency_map,
+    )
+    .map_err(HandlerError::bad_request)?;
     let creation_order = topological_work_item_order(&selected_work_items, &dependency_map)?;
     sort_work_items_for_planning(selected_work_items.as_mut_slice());
     if selected_work_items.is_empty() {
@@ -198,6 +211,12 @@ pub(super) async fn execute_requirement_inner(
         &contact_runtime,
     )
     .await?;
+    ensure_project_runtime_environment_initialization(
+        cfg.project_service_base_url.as_str(),
+        access_token.as_str(),
+        project.id.as_str(),
+    )
+    .await?;
     let requirement_documents = load_requirement_documents_for_scope(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
@@ -205,7 +224,6 @@ pub(super) async fn execute_requirement_inner(
     )
     .await?;
     let planner_prompt = build_requirement_execution_planner_prompt(
-        ExecutionPlane::Cloud,
         project.id.as_str(),
         &root_requirement,
         &requirement_items,
@@ -284,8 +302,6 @@ pub(super) async fn execute_requirement_inner(
         project_root: Some(project.root_path.clone()),
         workspace_root: Some(project.root_path.clone()),
         remote_connection_id: None,
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugin_ids: Vec::new(),
         plugin_command_invocations: Vec::new(),
         plugin_agent_selection: None,
@@ -312,21 +328,18 @@ pub(super) async fn execute_requirement_inner(
         session_id: session.id.clone(),
         task_runner_base_url: contact_runtime.task_runner_base_url.clone(),
     };
+    prepare_requirement_planner_turn(session.id.as_str(), execution_group_id.as_str());
     access_token_scope::spawn_with_current_access_token(async move {
-        run_chat_usecase(RunChatUsecaseInput {
-            sender: None,
-            req: chat_req,
-            persisted_user_message_content: Some(user_visible_content),
-            persisted_user_message_metadata,
-        })
+        run_requirement_planner_background_job(
+            RunChatUsecaseInput {
+                sender: None,
+                req: chat_req,
+                persisted_user_message_content: Some(user_visible_content),
+                persisted_user_message_metadata,
+            },
+            recovery,
+        )
         .await;
-        if let Err(err) = reconcile_requirement_planner_outcome(recovery).await {
-            warn!(
-                error = err.error.as_str(),
-                detail = err.detail.as_deref().unwrap_or_default(),
-                "failed to reconcile requirement execution planner outcome"
-            );
-        }
     });
 
     Ok(json!({
@@ -344,6 +357,9 @@ pub(super) async fn execute_requirement_inner(
         "planning_feedback_history": planning_feedback_history,
         "confirmation_status": STATUS_PLANNING_STARTED,
         "has_started_runs": false,
+        "recovery_action": RECOVERY_ACTION_NONE,
+        "recovery_reason": "not_recoverable_in_current_state",
+        "replace_previous_batch": true,
         "conversation_id": session.id,
         "message_id": execution_group_id.clone(),
         "message": message,
@@ -351,6 +367,228 @@ pub(super) async fn execute_requirement_inner(
         "planner_agent_key": "project_requirement_execution_planner_agent",
         "plan_mode_enabled": false,
     }))
+}
+
+pub(super) fn prepare_requirement_planner_turn(session_id: &str, execution_group_id: &str) {
+    abort_registry::reset_turn(session_id, Some(execution_group_id));
+    guidance::register_active_turn(session_id, execution_group_id);
+}
+
+async fn run_requirement_planner_background_job(
+    input: RunChatUsecaseInput,
+    recovery: RequirementPlannerRecovery,
+) {
+    let panic_detail = AssertUnwindSafe(run_chat_usecase(input))
+        .catch_unwind()
+        .await
+        .err()
+        .map(|payload| panic_payload_to_string(payload.as_ref()));
+    if let Some(detail) = panic_detail.as_deref() {
+        warn!(
+            session_id = recovery.session_id.as_str(),
+            execution_group_id = recovery.execution_group_id.as_str(),
+            panic = detail,
+            "requirement execution planner background task panicked"
+        );
+        if let Err(err) = set_task_runner_async_overall_status_for_session(
+            recovery.session_id.as_str(),
+            recovery.execution_group_id.as_str(),
+            "failed",
+        )
+        .await
+        {
+            warn!(
+                session_id = recovery.session_id.as_str(),
+                execution_group_id = recovery.execution_group_id.as_str(),
+                error = err.as_str(),
+                "failed to persist planner failure status after panic"
+            );
+        }
+    }
+    if let Err(err) = reconcile_requirement_planner_outcome(recovery).await {
+        warn!(
+            error = err.error.as_str(),
+            detail = err.detail.as_deref().unwrap_or_default(),
+            panic = panic_detail.as_deref().unwrap_or_default(),
+            "failed to reconcile requirement execution planner outcome"
+        );
+    }
+}
+
+fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "non-string panic payload".to_string()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RuntimeEnvironmentInitializationAction {
+    None,
+    Analyze,
+    GenerateImage(String),
+}
+
+fn runtime_environment_initialization_action(
+    current: &Value,
+) -> RuntimeEnvironmentInitializationAction {
+    let status = current
+        .get("environment")
+        .and_then(|environment| environment.get("status"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_lowercase);
+    match status.as_deref() {
+        Some("ready" | "analyzing") => RuntimeEnvironmentInitializationAction::None,
+        Some("pending_image_build") => current
+            .get("images")
+            .and_then(Value::as_array)
+            .and_then(|images| {
+                images.iter().find_map(|image| {
+                    let is_workspace = image
+                        .get("service_role")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.eq_ignore_ascii_case("workspace"));
+                    let is_planned = image
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.eq_ignore_ascii_case("planned"));
+                    (is_workspace && is_planned)
+                        .then(|| image.get("id").and_then(Value::as_str))
+                        .flatten()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                })
+            })
+            .map(RuntimeEnvironmentInitializationAction::GenerateImage)
+            .unwrap_or(RuntimeEnvironmentInitializationAction::None),
+        _ => RuntimeEnvironmentInitializationAction::Analyze,
+    }
+}
+
+async fn ensure_project_runtime_environment_initialization(
+    project_service_base_url: &str,
+    access_token: &str,
+    project_id: &str,
+) -> Result<(), HandlerError> {
+    let current = project_management_api_client::get_project_service_runtime_environment(
+        project_service_base_url,
+        access_token,
+        project_id,
+    )
+    .await
+    .map_err(|err| HandlerError::bad_gateway("读取项目运行环境失败", err))?;
+    match runtime_environment_initialization_action(&current) {
+        RuntimeEnvironmentInitializationAction::None => Ok(()),
+        RuntimeEnvironmentInitializationAction::GenerateImage(image_record_id) => {
+            project_management_api_client::generate_project_service_runtime_environment_image(
+                project_service_base_url,
+                access_token,
+                project_id,
+                image_record_id.as_str(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|err| HandlerError::bad_gateway("启动项目执行环境镜像生成失败", err))
+        }
+        RuntimeEnvironmentInitializationAction::Analyze => {
+            project_management_api_client::analyze_project_service_runtime_environment(
+                project_service_base_url,
+                access_token,
+                project_id,
+                &project_management_api_client::AnalyzeProjectRuntimeEnvironmentRequest::default(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|err| HandlerError::bad_gateway("启动项目运行环境初始化失败", err))
+        }
+    }
+}
+
+#[cfg(test)]
+mod runtime_environment_tests {
+    use serde_json::json;
+
+    use super::{
+        runtime_environment_initialization_action, RuntimeEnvironmentInitializationAction,
+    };
+
+    #[test]
+    fn ready_or_active_runtime_environment_waits_for_completion() {
+        assert_eq!(
+            runtime_environment_initialization_action(&json!({
+                "environment": { "status": "ready" },
+            })),
+            RuntimeEnvironmentInitializationAction::None
+        );
+        assert_eq!(
+            runtime_environment_initialization_action(&json!({
+                "environment": { "status": "ANALYZING" },
+            })),
+            RuntimeEnvironmentInitializationAction::None
+        );
+        assert_eq!(
+            runtime_environment_initialization_action(&json!({
+                "environment": { "status": "pending_image_build" },
+                "images": [{
+                    "id": "workspace-image",
+                    "service_role": "workspace",
+                    "status": "building",
+                }],
+            })),
+            RuntimeEnvironmentInitializationAction::None
+        );
+    }
+
+    #[test]
+    fn planned_workspace_image_starts_generation() {
+        assert_eq!(
+            runtime_environment_initialization_action(&json!({
+                "environment": { "status": "pending_image_build" },
+                "images": [{
+                    "id": "workspace-image",
+                    "service_role": "workspace",
+                    "status": "planned",
+                }],
+            })),
+            RuntimeEnvironmentInitializationAction::GenerateImage("workspace-image".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_pending_or_failed_runtime_environment_starts_analysis() {
+        for current in [
+            json!({}),
+            json!({ "environment": { "status": "pending" } }),
+            json!({ "environment": { "status": "failed" } }),
+            json!({ "environment": { "status": "not_runnable" } }),
+        ] {
+            assert_eq!(
+                runtime_environment_initialization_action(&current),
+                RuntimeEnvironmentInitializationAction::Analyze
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod panic_payload_tests {
+    use super::panic_payload_to_string;
+
+    #[test]
+    fn panic_payload_stringifies_common_payload_types() {
+        let owned = "owned panic".to_string();
+        assert_eq!(panic_payload_to_string(&owned), "owned panic");
+        assert_eq!(panic_payload_to_string(&"static panic"), "static panic");
+        assert_eq!(
+            panic_payload_to_string(&42usize),
+            "non-string panic payload"
+        );
+    }
 }
 
 async fn load_requirement_documents_for_scope(

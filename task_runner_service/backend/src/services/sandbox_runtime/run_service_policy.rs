@@ -108,7 +108,12 @@ impl RunService {
                 return Err(err);
             }
         };
-        let workspace_root = sandbox_workspace_root(effective_workspace_dir)?;
+        let local_connector_route = route.provider == "local_connector";
+        let workspace_root = if local_connector_route {
+            std::path::PathBuf::from("local-connector-workspace")
+        } else {
+            sandbox_workspace_root(effective_workspace_dir)?
+        };
         let base_url = route.base_url.clone();
         let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
         let client = SandboxManagerClient::new(base_url, route.auth.clone())?;
@@ -145,52 +150,6 @@ impl RunService {
             .await
         {
             Ok(response) => response,
-            Err(environment_error)
-                if routing::sandbox_environment_fallback_allowed(task, &route) =>
-            {
-                self.append_sandbox_event(
-                    run,
-                    "sandbox_environment_fallback",
-                    "项目运行环境暂时无法启动，已切换到基础执行沙箱继续修复",
-                    Some(json!({
-                        "provider": route.provider.as_str(),
-                        "fallback_image_id": route.image_id.as_deref(),
-                        "environment_error": environment_error,
-                    })),
-                )
-                .await;
-                match client
-                    .create_lease(
-                        task,
-                        run,
-                        workspace_root.as_path(),
-                        ttl_seconds,
-                        route.image_id.as_deref(),
-                        None,
-                        effective_workspace_dir,
-                        route.policy.clone(),
-                    )
-                    .await
-                {
-                    Ok(response) => response,
-                    Err(fallback_error) => {
-                        let err = format!(
-                            "project environment start failed and base sandbox fallback failed: {fallback_error}"
-                        );
-                        self.append_sandbox_event(
-                            run,
-                            "sandbox_failed",
-                            format!("申请基础执行沙箱失败: {fallback_error}"),
-                            Some(json!({
-                                "environment_error": environment_error,
-                                "fallback_image_id": route.image_id.as_deref(),
-                            })),
-                        )
-                        .await;
-                        return Err(err);
-                    }
-                }
-            }
             Err(err) => {
                 self.append_sandbox_event(
                     run,
@@ -277,7 +236,11 @@ impl RunService {
             response,
             workspace_root.as_path(),
             client.base_url.as_str(),
-            client.auth.clone(),
+            route.provider.as_str(),
+            route.local_connector_pairing_id.clone(),
+            task_owner_user_id(task)
+                .ok_or_else(|| "sandbox runtime requires task owner user id".to_string())?
+                .to_string(),
         ) {
             Ok(context) => context,
             Err(err) => {
@@ -292,24 +255,31 @@ impl RunService {
             }
         };
 
-        let baseline_workspace = match sandbox_baseline_workspace(&context.run_workspace) {
-            Ok(path) => path,
-            Err(err) => {
-                let _ = client.release(&context, true, true).await;
-                self.append_sandbox_event(
-                    run,
-                    "sandbox_failed",
-                    format!("准备沙箱 baseline 路径失败: {err}"),
-                    Some(context.to_metadata()),
-                )
-                .await;
-                return Err(err);
+        let baseline_workspace = if local_connector_route {
+            None
+        } else {
+            match sandbox_baseline_workspace(&context.run_workspace) {
+                Ok(path) => Some(path),
+                Err(err) => {
+                    let _ = client.release(&context, true, true).await;
+                    self.append_sandbox_event(
+                        run,
+                        "sandbox_failed",
+                        format!("准备沙箱 baseline 路径失败: {err}"),
+                        Some(context.to_metadata()),
+                    )
+                    .await;
+                    return Err(err);
+                }
             }
         };
-        if !context.is_environment {
-            if let Err(err) =
-                copy_workspace_to_sandbox(effective_workspace_dir, baseline_workspace.as_str())
-            {
+        if !local_connector_route && !context.is_environment {
+            if let Err(err) = copy_workspace_to_sandbox(
+                effective_workspace_dir,
+                baseline_workspace
+                    .as_deref()
+                    .expect("cloud sandbox baseline path"),
+            ) {
                 let _ = client.release(&context, true, true).await;
                 self.append_sandbox_event(
                     run,

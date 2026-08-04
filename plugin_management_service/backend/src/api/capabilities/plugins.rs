@@ -15,8 +15,16 @@ pub(super) async fn availability_for_mcp_with_plugin_gate(
     resource: &McpRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<(bool, String, Option<String>), ApiError> {
-    match plugin_component_gate(state, &resource.plugin_component, owner_user_id, device_id).await?
+    match plugin_component_gate(
+        state,
+        &resource.plugin_component,
+        owner_user_id,
+        device_id,
+        runtime_provider,
+    )
+    .await?
     {
         Some(gate) if !gate.available => Ok((false, "plugin_unavailable".to_string(), gate.reason)),
         _ => super::availability_for_mcp(state, resource).await,
@@ -28,6 +36,7 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     resource: &SkillRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<
     (
         bool,
@@ -37,7 +46,14 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     ),
     ApiError,
 > {
-    match plugin_component_gate(state, &resource.plugin_component, owner_user_id, device_id).await?
+    match plugin_component_gate(
+        state,
+        &resource.plugin_component,
+        owner_user_id,
+        device_id,
+        runtime_provider,
+    )
+    .await?
     {
         Some(gate) if !gate.available => {
             Ok((false, "plugin_unavailable".to_string(), gate.reason, None))
@@ -51,6 +67,7 @@ pub(super) async fn resolve_plugin_binding(
     binding: AgentBindingRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<Option<ResolvedPlugin>, ApiError> {
     let Some(catalog) = state
         .store
@@ -100,7 +117,7 @@ pub(super) async fn resolve_plugin_binding(
             .map_err(ApiError::internal)?,
         None => Vec::new(),
     };
-    let cloud_bundle_keys = match release.as_ref() {
+    let mut cloud_bundle_keys = match release.as_ref() {
         Some(release) => state
             .store
             .list_plugin_cloud_component_bundles(catalog.id.as_str(), release.id.as_str())
@@ -111,7 +128,26 @@ pub(super) async fn resolve_plugin_binding(
             .collect::<HashSet<_>>(),
         None => HashSet::new(),
     };
-    let auth_connection_ids = match installation.as_ref() {
+    if let Some(release) = release.as_ref() {
+        let runtime_bundles = state
+            .store
+            .list_plugin_mcp_cloud_runtime_bundles(catalog.id.as_str(), release.id.as_str())
+            .await
+            .map_err(ApiError::internal)?;
+        for bundle in runtime_bundles {
+            if component_snapshots.iter().any(|snapshot| {
+                snapshot.plugin_id == bundle.plugin_id
+                    && snapshot.release_id == bundle.release_id
+                    && snapshot.component == bundle.component
+                    && snapshot.content_sha256 == bundle.bundle_sha256
+                    && chatos_plugin_management_sdk::plugin_mcp_cloud_runtime_bundle_sha256(&bundle)
+                        .is_ok_and(|sha256| sha256 == bundle.bundle_sha256)
+            }) {
+                cloud_bundle_keys.insert(bundle.component.component_key.clone());
+            }
+        }
+    }
+    let mut auth_connection_ids = match installation.as_ref() {
         Some(installation) => state
             .store
             .list_plugin_oauth_connections(
@@ -129,6 +165,34 @@ pub(super) async fn resolve_plugin_binding(
             .collect(),
         None => Vec::new(),
     };
+    if let Some(release) = release.as_ref() {
+        auth_connection_ids.extend(
+            state
+                .store
+                .list_plugin_cloud_oauth_connections(
+                    owner_user_id,
+                    catalog.id.as_str(),
+                    release.id.as_str(),
+                )
+                .await
+                .map_err(ApiError::internal)?
+                .into_iter()
+                .filter(|record| {
+                    record.connection.connected
+                        && !record.connection.needs_auth
+                        && (record.connection.refreshable
+                            || record.connection.expires_at.as_deref().is_none_or(|value| {
+                                chrono::DateTime::parse_from_rfc3339(value).is_ok_and(|expiry| {
+                                    expiry.timestamp() > chrono::Utc::now().timestamp()
+                                })
+                            }))
+                })
+                .map(|record| record.connection.id),
+        );
+    }
+    auth_connection_ids.sort();
+    auth_connection_ids.dedup();
+    let portable_uses_local = portable_uses_local(runtime_provider, binding.agent_key.as_str());
     Ok(Some(resolve_plugin_records(
         catalog,
         release,
@@ -139,6 +203,7 @@ pub(super) async fn resolve_plugin_binding(
         auth_connection_ids,
         device_id,
         &cloud_bundle_keys,
+        portable_uses_local,
     )))
 }
 
@@ -147,6 +212,7 @@ pub(super) async fn plugin_component_gate(
     ownership: &PluginComponentOwnership,
     owner_user_id: &str,
     device_id: Option<&str>,
+    runtime_provider: Option<&str>,
 ) -> Result<Option<PluginComponentGate>, ApiError> {
     if !ownership.managed_by_plugin {
         return Ok(None);
@@ -174,7 +240,8 @@ pub(super) async fn plugin_component_gate(
         created_at: String::new(),
         updated_at: String::new(),
     };
-    let Some(resolved) = resolve_plugin_binding(state, binding, owner_user_id, device_id).await?
+    let Some(resolved) =
+        resolve_plugin_binding(state, binding, owner_user_id, device_id, runtime_provider).await?
     else {
         return Ok(Some(PluginComponentGate {
             available: false,
@@ -219,9 +286,8 @@ fn resolve_plugin_records(
     auth_connection_ids: Vec<String>,
     device_id: Option<&str>,
     cloud_bundle_keys: &HashSet<String>,
+    portable_uses_local: bool,
 ) -> ResolvedPlugin {
-    let portable_uses_local = binding.agent_key == "task_runner_local_plan_phase"
-        || binding.agent_key == "task_runner_local_run_phase";
     let component_result = resolve_components(
         release.as_ref(),
         installation.as_ref(),
@@ -428,6 +494,16 @@ fn resolve_plugin_records(
     }
 }
 
+fn portable_uses_local(runtime_provider: Option<&str>, agent_key: &str) -> bool {
+    let _ = agent_key;
+    matches!(
+        runtime_provider
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        Some("local_connector")
+    )
+}
+
 fn resolve_components(
     release: Option<&PluginReleaseRecord>,
     installation: Option<&PluginInstallationRecord>,
@@ -513,7 +589,7 @@ fn resolve_components(
                         component: component.clone(),
                         available: false,
                         status: PluginAvailabilityStatus::Unavailable,
-                        reason: Some("immutable cloud Prompt Bundle is missing".to_string()),
+                        reason: Some("immutable cloud runtime Bundle is missing".to_string()),
                     }
                 };
             }

@@ -61,9 +61,15 @@ pub(super) fn build_compact_history_messages_from_turn_slices_with_process(
             process_message_count,
             final_assistant_message_id,
         );
+        let task_runner_async_turn_completed = recovered_plan_summary.is_some()
+            || final_assistant
+                .as_ref()
+                .is_some_and(is_task_runner_async_plan_summary_message)
+            || final_assistant_is_callback
+            || !recovered_callback_updates.is_empty();
         normalize_task_runner_async_user_status_for_display(
             &mut user_message,
-            final_assistant.is_some(),
+            task_runner_async_turn_completed,
         );
         compact.push(user_message);
 

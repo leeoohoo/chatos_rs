@@ -4,24 +4,17 @@
 use super::*;
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    MemoryContextComposer, RuntimeBeforeModelRequest, RuntimeIterationContext,
-    RuntimeLifecycleHook, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
-    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+    RuntimeBeforeModelRequest, RuntimeIterationContext, RuntimeLifecycleHook,
+    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
+    TaskExecutionReviewTrigger,
 };
-use std::time::Duration;
-
-const TASK_RUNNER_REVIEW_TRIGGER_REASON: &str = "task_runner_execution_review_checkpoint";
 
 struct TaskRunnerLifecycleHook {
     finalization: TaskFinalizationLifecycleHook,
     progress: Arc<TaskExecutionProgressState>,
+    active_review: parking_lot::Mutex<Option<TaskExecutionReviewCheckpoint>>,
     store: crate::store::AppStore,
     run_id: String,
-    memory_composer: Option<MemoryContextComposer>,
-    memory_scope: Option<MemoryScope>,
-    tool_result_model_budget_limits: ToolResultModelBudgetLimits,
-    active_summary_poll_interval: Duration,
-    active_summary_poll_timeout: Duration,
 }
 
 impl TaskRunnerLifecycleHook {
@@ -30,104 +23,38 @@ impl TaskRunnerLifecycleHook {
         progress: Arc<TaskExecutionProgressState>,
         store: crate::store::AppStore,
         run_id: String,
-        memory_composer: Option<MemoryContextComposer>,
-        memory_scope: Option<MemoryScope>,
-        tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     ) -> Self {
         Self {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
             progress,
+            active_review: parking_lot::Mutex::new(None),
             store,
             run_id,
-            memory_composer,
-            memory_scope,
-            tool_result_model_budget_limits,
-            active_summary_poll_interval: Duration::from_secs(10),
-            active_summary_poll_timeout: Duration::from_secs(120),
         }
     }
 
-    async fn checkpoint_input_items(
-        &self,
-        checkpoint: TaskExecutionReviewCheckpoint,
-    ) -> Vec<Value> {
-        let mut payload = json!({
+    fn record_review_checkpoint(&self, checkpoint: TaskExecutionReviewCheckpoint) {
+        let payload = json!({
             "iteration": checkpoint.iteration,
             "trigger": checkpoint.trigger.as_str(),
             "read_only_iterations": checkpoint.read_only_iterations,
             "missing_read_failures": checkpoint.missing_read_failures,
+            "checkpoints_since_action": checkpoint.checkpoints_since_action,
             "policy": {
                 "read_only_iterations": checkpoint.policy.read_only_iterations,
                 "missing_read_failures": checkpoint.policy.missing_read_failures,
                 "repeat_interval_iterations": checkpoint.policy.repeat_interval_iterations,
-            }
+            },
+            "context_action": "persistent_guidance",
+            "disabled_tool_names": [],
+            "review_contract": "evidence_driven_next_action",
         });
-        let summary_error = if let (Some(composer), Some(scope)) =
-            (self.memory_composer.as_ref(), self.memory_scope.as_ref())
-        {
-            self.store.append_run_event_sync(TaskRunEventRecord::new(
-                self.run_id.clone(),
-                "execution_review_summary_started",
-                Some("检测到疑似偏航，正在先复盘历史动作并刷新上下文".to_string()),
-                Some(payload.clone()),
-            ));
-            match self.run_active_summary_and_refresh(composer, scope).await {
-                Ok(items) => {
-                    payload["refreshed_memory_item_count"] = json!(items.len());
-                    self.store.append_run_event_sync(TaskRunEventRecord::new(
-                        self.run_id.clone(),
-                        "execution_review_summary_completed",
-                        Some("自动复盘完成，已把刷新后的上下文交给下一次模型请求".to_string()),
-                        Some(payload.clone()),
-                    ));
-                    let mut input_items = vec![checkpoint_guidance_message(checkpoint, true, None)];
-                    input_items.extend(items);
-                    return input_items;
-                }
-                Err(err) => err,
-            }
-        } else {
-            "Memory Engine 未配置，无法刷新复盘摘要".to_string()
-        };
-
-        payload["summary_error"] = json!(summary_error);
         self.store.append_run_event_sync(TaskRunEventRecord::new(
             self.run_id.clone(),
-            "execution_review_summary_failed",
-            Some("自动复盘刷新失败，已注入偏航校准提示并继续执行".to_string()),
+            "execution_review_checkpoint",
+            Some("已进入证据驱动的工程决策复盘".to_string()),
             Some(payload),
         ));
-        vec![checkpoint_guidance_message(
-            checkpoint,
-            false,
-            Some(summary_error.as_str()),
-        )]
-    }
-
-    async fn run_active_summary_and_refresh(
-        &self,
-        composer: &MemoryContextComposer,
-        scope: &MemoryScope,
-    ) -> Result<Vec<Value>, String> {
-        let initial = composer
-            .run_active_summary(scope, Some(TASK_RUNNER_REVIEW_TRIGGER_REASON))
-            .await?;
-        let status = composer
-            .wait_for_active_summary_completion(
-                scope,
-                initial,
-                self.active_summary_poll_interval,
-                self.active_summary_poll_timeout,
-            )
-            .await?;
-        if status.failed {
-            return Err(status
-                .error_message
-                .unwrap_or_else(|| "active summary failed".to_string()));
-        }
-        composer
-            .compose_input_items_with_budget(scope, Some(self.tool_result_model_budget_limits))
-            .await
     }
 }
 
@@ -144,69 +71,65 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
             return Ok(before);
         }
 
-        let Some(checkpoint) = self.progress.should_trigger_review(iteration) else {
-            return Ok(before);
-        };
-        let items = self.checkpoint_input_items(checkpoint).await;
-        before.input_items.extend(items);
-        self.store.append_run_event_sync(TaskRunEventRecord::new(
-            self.run_id.clone(),
-            "execution_review_checkpoint",
-            Some("检测到疑似偏航，已触发历史动作复盘并继续执行".to_string()),
-            Some(json!({
-                "iteration": iteration,
-                "trigger": checkpoint.trigger.as_str(),
-                "read_only_iterations": checkpoint.read_only_iterations,
-                "missing_read_failures": checkpoint.missing_read_failures,
-                "policy": {
-                    "read_only_iterations": checkpoint.policy.read_only_iterations,
-                    "missing_read_failures": checkpoint.policy.missing_read_failures,
-                    "repeat_interval_iterations": checkpoint.policy.repeat_interval_iterations,
-                },
-                "disabled_tool_names": [],
-            })),
-        ));
+        let detected_checkpoint = self.progress.should_trigger_review(iteration);
+        if let Some(checkpoint) = detected_checkpoint {
+            self.record_review_checkpoint(checkpoint);
+        }
+        if let Some(checkpoint) =
+            persistent_review_checkpoint(&self.active_review, detected_checkpoint)
+        {
+            // Keep the decision contract present after each tool result. Otherwise a bounded
+            // locate/edit action can return to an unconstrained exploration loop on the next turn.
+            before
+                .input_items
+                .push(checkpoint_guidance_message(checkpoint));
+        }
         Ok(before)
     }
 }
 
-fn checkpoint_guidance_message(
-    checkpoint: TaskExecutionReviewCheckpoint,
-    memory_refreshed: bool,
-    summary_error: Option<&str>,
-) -> Value {
-    let trigger = match checkpoint.trigger {
-        TaskExecutionReviewTrigger::ReadOnlyLoop => "连续多轮只读/观察，没有真实工程改动",
-        TaskExecutionReviewTrigger::MissingTargetedReads => {
-            "连续读取不存在的精确文件路径，疑似路径假设错误或相对路径理解错误"
-        }
-        TaskExecutionReviewTrigger::PlaceholderProgressWrite => {
-            "写入了 progress/unlock/placeholder 这类不能解决任务本身的占位文件"
-        }
+fn persistent_review_checkpoint(
+    active_review: &parking_lot::Mutex<Option<TaskExecutionReviewCheckpoint>>,
+    detected_checkpoint: Option<TaskExecutionReviewCheckpoint>,
+) -> Option<TaskExecutionReviewCheckpoint> {
+    let mut active_review = active_review.lock();
+    if let Some(checkpoint) = detected_checkpoint {
+        *active_review = Some(checkpoint);
+    }
+    *active_review
+}
+
+fn checkpoint_guidance_message(checkpoint: TaskExecutionReviewCheckpoint) -> Value {
+    let decision_focus = match checkpoint.trigger {
+        TaskExecutionReviewTrigger::ReadOnlyLoop =>
+            "归并现有文件与命令证据：如果它们已覆盖全部硬性验收项就 COMPLETE；否则锁定依赖顺序中第一项未满足要求，并选择 IMPLEMENT 或 VERIFY。",
+        TaskExecutionReviewTrigger::MissingTargetedReads =>
+            "已有工具结果否定了当前路径假设。选择 LOCATE，只执行一次限定目录、关键词和预期命中的定位动作；定位成功后直接转入 IMPLEMENT。",
+        TaskExecutionReviewTrigger::PlaceholderProgressWrite =>
+            "占位产物不是验收证据。忽略它并锁定第一项真实业务缺口；修改对应项目文件，或在既有证据完整时 COMPLETE。",
+        TaskExecutionReviewTrigger::StaleProjectWrite =>
+            "已有失败结果表明最近一次代码写入未生效。选择 IMPLEMENT，把最近一次成功读取的目标内容作为权威版本，直接生成基于该文本的精确编辑；写入成功后转入必要验证。",
     };
-    let memory_state = if memory_refreshed {
-        "已先触发历史动作复盘，并已把复盘后的 Memory 上下文刷新进本次请求。"
-    } else {
-        "尝试触发历史动作复盘但未能刷新 Memory；仍需立刻基于已有上下文自我校准。"
-    };
-    let error_detail = summary_error
-        .map(|error| format!("\n- 复盘刷新错误：{error}"))
-        .unwrap_or_default();
     json!({
         "role": "system",
         "content": format!(
-            "[Task Runner 自动复盘 checkpoint]\n\
-             检测原因：{trigger}。\n\
-             {memory_state}{error_detail}\n\
+            "[工程决策复盘]\n\
+             你现在承担工程复盘决策角色。当前上下文已经提供任务目标、验收标准、已读取文件、已执行命令及其结果。你的职责是依据这些证据替执行过程选定并推进下一步，而不是评价先前行为、提醒发生了重复，或输出复盘说明。\n\
+             本次决策重点：{decision_focus}\n\
              \n\
-             现在先在心里复盘：用户目标是什么、当前已经做了哪些真实动作、哪些动作偏离航线、真实路径/工具结果已经证明了什么。\n\
-             然后继续执行，不要因为这次 checkpoint 自行退出、不要把它当成权限限制、不要要求用户替你改代码。\n\
-             工具没有被禁用；如果文件不存在，把它当作路径证据，不要重复读同一个不存在路径。所有 Harness/代码工具路径都按仓库根目录相对路径理解，没有隐式 cwd。\n\
-             不要创建 TASK_RUNNER_PROGRESS_NOTE、unlock、placeholder、probe 之类的假进展文件；只有修改真实项目文件、运行必要验证、或给出有证据的终态结论才算进展。\n\
-             当前计数：read_only_iterations={}, missing_read_failures={}。"
-            ,
-            checkpoint.read_only_iterations,
-            checkpoint.missing_read_failures
+             请在内部完成决策，不向用户展示分析草稿：\n\
+             1. 重建验收契约：从任务目标和验收标准中提取硬性要求，使用现有文件内容、函数实现、命令、退出码和错误结果逐项判断。每个结论都必须有具体证据；没有证据的要求视为未满足。\n\
+             2. 选择依赖顺序中第一项未满足要求。若有多个候选，选择一次动作最能直接关闭的缺口；若没有缺口且必要验证已通过，选择 COMPLETE。\n\
+             3. 只选择一种状态：\n\
+                - IMPLEMENT：已确认存在实现缺口。指令必须点明目标文件或函数、要修改的行为以及修改后的完成判据；下一步直接修改真实项目文件。\n\
+                - LOCATE：只有现有证据无法定位真实实现时才能选择。指令必须限定一次目录列举或文本搜索的范围、关键词和期望定位结果。\n\
+                - VERIFY：实现证据已存在，但最近一次真实修改之后仍缺一项必要验证。指令必须给出唯一的验证命令和明确通过条件。\n\
+                - COMPLETE：全部硬性验收项已有代码证据，且相关必要验证已经通过。立即停止调用工具并输出最终结果。\n\
+                - BLOCKED：只有外部输入、权限或服务状态确实阻止继续时才能选择。指令必须引用具体失败证据并说明需要什么变化；不得用 BLOCKED 代替困难实现。\n\
+             4. 在内部形成唯一指令：`状态 + 证据依据 + 未满足的验收项 + 目标文件/函数或唯一命令 + 具体动作 + 完成判据`。若已有证据足以定位修改点，直接编辑；若已有成功结果足以证明验证项，直接采用该结果。\n\
+             5. 做出判断后，下一条可见输出只能是执行该指令的一次工具调用，或 COMPLETE/BLOCKED 对应的最终结论；禁止输出批评、警告、过程复述或“需要继续检查”之类没有动作参数的文字。\n\
+             6. 工具结果返回后继续使用同一决策契约：完成判据满足就进入 VERIFY 或 COMPLETE；失败就引用新失败的具体原因给出纠正后的 IMPLEMENT、LOCATE、VERIFY 或 BLOCKED 动作，不得只报告失败。\n\
+             7. 相同代码状态下，已经成功的等价命令结果就是有效证据；除非代码发生变化或验证目标不同，不得重复运行或仅改写命令形式。工具始终完整可用，不得创建假进展文件或要求用户代为完成工程动作。"
         ),
     })
 }
@@ -255,13 +178,6 @@ impl RunService {
                 progress,
                 self.store.clone(),
                 run.id.clone(),
-                self.config
-                    .memory_client()
-                    .ok()
-                    .flatten()
-                    .map(MemoryContextComposer::from_client),
-                run_spec.memory_scope.clone(),
-                tool_result_model_budget_limits,
             ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))
@@ -640,6 +556,101 @@ fn redact_all_values(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn review_checkpoint(trigger: TaskExecutionReviewTrigger) -> TaskExecutionReviewCheckpoint {
+        TaskExecutionReviewCheckpoint {
+            iteration: 24,
+            trigger,
+            read_only_iterations: 24,
+            missing_read_failures: 2,
+            checkpoints_since_action: 3,
+            policy: TaskExecutionReviewPolicy::default(),
+        }
+    }
+
+    #[test]
+    fn checkpoint_guidance_requires_one_actionable_review_decision() {
+        let guidance = checkpoint_guidance_message(review_checkpoint(
+            TaskExecutionReviewTrigger::ReadOnlyLoop,
+        ));
+        let content = guidance["content"].as_str().expect("guidance content");
+
+        for expected in [
+            "IMPLEMENT",
+            "LOCATE",
+            "VERIFY",
+            "COMPLETE",
+            "BLOCKED",
+            "状态 + 证据依据 + 未满足的验收项",
+            "目标文件/函数或唯一命令 + 具体动作 + 完成判据",
+            "每个结论都必须有具体证据",
+            "下一条可见输出只能是执行该指令的一次工具调用",
+            "失败就引用新失败的具体原因给出纠正后的",
+            "工具始终完整可用",
+        ] {
+            assert!(content.contains(expected), "missing {expected}");
+        }
+        for forbidden in [
+            "第 3 次",
+            "当前计数",
+            "连续多轮只读/观察",
+            "你又在重复",
+            "工具已临时关闭",
+        ] {
+            assert!(!content.contains(forbidden), "unexpected {forbidden}");
+        }
+        assert!(!content.contains("关闭观察类工具"));
+    }
+
+    #[test]
+    fn review_contract_persists_and_accepts_newer_checkpoint_evidence() {
+        let active_review = parking_lot::Mutex::new(None);
+        assert!(persistent_review_checkpoint(&active_review, None).is_none());
+
+        let first = review_checkpoint(TaskExecutionReviewTrigger::ReadOnlyLoop);
+        assert_eq!(
+            persistent_review_checkpoint(&active_review, Some(first)),
+            Some(first)
+        );
+        assert_eq!(
+            persistent_review_checkpoint(&active_review, None),
+            Some(first)
+        );
+
+        let newer = review_checkpoint(TaskExecutionReviewTrigger::StaleProjectWrite);
+        assert_eq!(
+            persistent_review_checkpoint(&active_review, Some(newer)),
+            Some(newer)
+        );
+        assert_eq!(
+            persistent_review_checkpoint(&active_review, None),
+            Some(newer)
+        );
+    }
+
+    #[test]
+    fn missing_path_review_directs_a_bounded_location_step() {
+        let guidance = checkpoint_guidance_message(review_checkpoint(
+            TaskExecutionReviewTrigger::MissingTargetedReads,
+        ));
+        let content = guidance["content"].as_str().expect("guidance content");
+
+        assert!(content.contains("已有工具结果否定了当前路径假设"));
+        assert!(content.contains("只执行一次限定目录、关键词和预期命中的定位动作"));
+    }
+
+    #[test]
+    fn stale_write_review_directs_an_exact_rebased_edit() {
+        let guidance = checkpoint_guidance_message(review_checkpoint(
+            TaskExecutionReviewTrigger::StaleProjectWrite,
+        ));
+        let content = guidance["content"].as_str().expect("guidance content");
+
+        assert!(content.contains("最近一次代码写入未生效"));
+        assert!(content.contains("最近一次成功读取的目标内容作为权威版本"));
+        assert!(content.contains("直接生成基于该文本的精确编辑"));
+        assert!(content.contains("写入成功后转入必要验证"));
+    }
 
     #[test]
     fn browser_session_event_is_extracted_from_nested_tool_result() {

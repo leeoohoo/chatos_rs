@@ -417,7 +417,7 @@ export function ModelConfigPanel() {
                 </select>
               </label>
               <label>
-                系统 Agent Prompt
+                命令审批 Prompt
                 <select
                   value={draft.prompt_vendor || defaultPromptVendor(draft.provider)}
                   onChange={(event) => updateDraft({

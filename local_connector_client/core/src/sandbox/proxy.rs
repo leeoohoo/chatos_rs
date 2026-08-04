@@ -48,6 +48,7 @@ pub(crate) async fn proxy_local_sandbox_mcp(
         }
     };
     let lease = require_local_sandbox_lease(sandbox_runtime, sandbox_id).await?;
+    validate_mcp_management_lease_identity(request, &lease)?;
     let mut forwarded_body = request.body.clone();
     if let Some(tool_call) = tool_call.as_ref() {
         if let Some(response) = approve_sandbox_tool_call(
@@ -101,6 +102,71 @@ pub(crate) async fn proxy_local_sandbox_mcp(
             .await;
     }
     Ok(result)
+}
+
+fn validate_mcp_management_lease_identity(
+    request: &RelayRequest,
+    lease: &LocalSandboxLease,
+) -> Result<()> {
+    let owner_user_id = request
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("sandbox MCP request is missing owner identity"))?;
+    let lease_id = required_relay_header(request, "x-chatos-sandbox-lease-id")?;
+    let project_id = required_relay_header(request, "x-mcp-management-project-id")?;
+    let run_id = required_relay_header(request, "x-mcp-management-run-id")?;
+    validate_lease_identity(
+        owner_user_id,
+        lease_id,
+        project_id,
+        run_id,
+        lease.tenant_id.as_str(),
+        lease.id.as_str(),
+        lease.project_id.as_str(),
+        lease.run_id.as_str(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_lease_identity(
+    owner_user_id: &str,
+    lease_id: &str,
+    project_id: &str,
+    run_id: &str,
+    expected_owner_user_id: &str,
+    expected_lease_id: &str,
+    expected_project_id: &str,
+    expected_run_id: &str,
+) -> Result<()> {
+    if owner_user_id != expected_owner_user_id
+        || lease_id != expected_lease_id
+        || project_id != expected_project_id
+        || run_id != expected_run_id
+    {
+        return Err(anyhow!(
+            "sandbox MCP request identity does not match the local lease"
+        ));
+    }
+    Ok(())
+}
+
+fn required_relay_header<'a>(request: &'a RelayRequest, name: &str) -> Result<&'a str> {
+    request
+        .headers
+        .get(name)
+        .or_else(|| {
+            request
+                .headers
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value)
+        })
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("sandbox MCP request is missing required header {name}"))
 }
 
 async fn approve_sandbox_tool_call(
@@ -370,4 +436,43 @@ fn sandbox_response_headers(headers: &reqwest::header::HeaderMap) -> BTreeMap<St
             value.to_str().ok().map(|value| (key, value.to_string()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_mcp_identity_is_bound_to_owner_lease_project_and_run() {
+        validate_lease_identity(
+            "user-1",
+            "lease-1",
+            "project-1",
+            "run-1",
+            "user-1",
+            "lease-1",
+            "project-1",
+            "run-1",
+        )
+        .expect("exact identity must be accepted");
+
+        for actual in [
+            ("user-2", "lease-1", "project-1", "run-1"),
+            ("user-1", "lease-2", "project-1", "run-1"),
+            ("user-1", "lease-1", "project-2", "run-1"),
+            ("user-1", "lease-1", "project-1", "run-2"),
+        ] {
+            assert!(validate_lease_identity(
+                actual.0,
+                actual.1,
+                actual.2,
+                actual.3,
+                "user-1",
+                "lease-1",
+                "project-1",
+                "run-1",
+            )
+            .is_err());
+        }
+    }
 }

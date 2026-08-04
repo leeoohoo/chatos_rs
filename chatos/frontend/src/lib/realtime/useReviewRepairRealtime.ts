@@ -7,7 +7,7 @@ import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../api/client';
 import { useRealtimeConnectionState, useRealtimeEvent, useRealtimeTopic } from './RealtimeProvider';
 import type { RealtimeEventEnvelope, ReviewRepairRealtimePayload } from './types';
-import { useLocalReviewRepairPolling } from './useLocalReviewRepairPolling';
+import { useReviewRepairPolling } from './useReviewRepairPolling';
 
 const REVIEW_REPAIR_STATUS_CACHE_TTL_MS = 1000;
 
@@ -357,8 +357,8 @@ export const useReviewRepairRealtime = ({
     triggerFailed,
   ]);
 
-  useLocalReviewRepairPolling({
-    enabled,
+  useReviewRepairPolling({
+    enabled: enabled && connectionState !== 'connected',
     running: reviewRepairRunning,
     sessionId,
     refreshStatus: refreshReviewRepairStatus,

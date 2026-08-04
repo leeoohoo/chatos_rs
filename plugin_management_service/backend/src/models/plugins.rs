@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use mongodb::bson::DateTime as BsonDateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    PluginAvailabilityStatus, PluginCatalogDocument, PluginComponentStatus, PluginInstallStatus,
-    PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifestSource, PluginPublisher,
-    PluginReleaseSignature, PluginRequirementStatus, SigningKeyRef,
+    PluginAvailabilityStatus, PluginCatalogDocument, PluginCatalogRecord,
+    PluginCloudCredentialMetadata, PluginCloudOAuthConnectionRecord, PluginComponentStatus,
+    PluginInstallStatus, PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifestSource,
+    PluginPublisher, PluginReleaseSignature, PluginRequirementStatus, SigningKeyRef,
 };
 
 pub const PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY: &str = "official_registry";
@@ -33,6 +35,14 @@ pub const PLUGIN_AUDIT_REVOKE_RELEASE: &str = "release.revoke";
 pub const PLUGIN_AUDIT_SYNC_INSTALLATION: &str = "installation.sync";
 pub const PLUGIN_AUDIT_UPDATE_PREFERENCE: &str = "preference.update";
 pub const PLUGIN_AUDIT_SYNC_OAUTH: &str = "oauth.sync";
+pub const PLUGIN_AUDIT_UPSERT_CLOUD_CREDENTIAL: &str = "cloud_credential.upsert";
+pub const PLUGIN_AUDIT_DELETE_CLOUD_CREDENTIAL: &str = "cloud_credential.delete";
+pub const PLUGIN_AUDIT_UPSERT_CLOUD_OAUTH: &str = "cloud_oauth.upsert";
+pub const PLUGIN_AUDIT_DELETE_CLOUD_OAUTH: &str = "cloud_oauth.delete";
+pub const PLUGIN_AUDIT_BEGIN_CLOUD_OAUTH: &str = "cloud_oauth.begin";
+pub const PLUGIN_AUDIT_COMPLETE_CLOUD_OAUTH: &str = "cloud_oauth.complete";
+pub const PLUGIN_AUDIT_REFRESH_CLOUD_OAUTH: &str = "cloud_oauth.refresh";
+pub const PLUGIN_AUDIT_REAUTHORIZE_CLOUD_OAUTH: &str = "cloud_oauth.reauthorize";
 
 pub const PLUGIN_PUBLISHER_STATUS_PENDING: &str = "pending";
 pub const PLUGIN_PUBLISHER_STATUS_APPROVED: &str = "approved";
@@ -42,6 +52,9 @@ pub const PLUGIN_PUBLISHER_STATUS_SUSPENDED: &str = "suspended";
 pub const PLUGIN_PUBLISHER_DECISION_APPROVE: &str = "approve";
 pub const PLUGIN_PUBLISHER_DECISION_REJECT: &str = "reject";
 pub const PLUGIN_PUBLISHER_DECISION_SUSPEND: &str = "suspend";
+
+pub const PLUGIN_RUNTIME_TARGET_CLOUD: &str = "cloud";
+pub const PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR: &str = "local_connector";
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PluginCatalogQuery {
@@ -63,6 +76,90 @@ pub struct PluginInstalledQuery {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PluginOAuthQuery {
     pub device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginCloudCredentialQuery {
+    pub release_id: String,
+    pub component_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpsertPluginCloudCredentialPayload {
+    pub value: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpsertPluginCloudOAuthPayload {
+    pub provider: String,
+    pub resource: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub access_token: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub account_display: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudCredential {
+    #[serde(flatten)]
+    pub metadata: PluginCloudCredentialMetadata,
+    pub encrypted_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudOAuthConnection {
+    #[serde(flatten)]
+    pub connection: PluginCloudOAuthConnectionRecord,
+    #[serde(default)]
+    pub encrypted_access_token: Option<String>,
+    #[serde(default)]
+    pub encrypted_refresh_token: Option<String>,
+    #[serde(default)]
+    pub oauth_client: Option<StoredPluginCloudOAuthClient>,
+    #[serde(default)]
+    pub refresh_lease_id: Option<String>,
+    #[serde(default)]
+    pub refresh_lease_expires_at: Option<BsonDateTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudOAuthClient {
+    pub authorization_server: String,
+    pub token_endpoint: String,
+    pub client_id: String,
+    pub token_endpoint_auth_method: String,
+    #[serde(default)]
+    pub encrypted_client_secret: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredPluginCloudOAuthAuthorizationSession {
+    pub id: String,
+    pub state_sha256: String,
+    pub owner_user_id: String,
+    pub plugin_id: String,
+    pub release_id: String,
+    pub component_key: String,
+    pub provider: String,
+    pub resource: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub authorization_server: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub client_id: String,
+    pub token_endpoint_auth_method: String,
+    #[serde(default)]
+    pub encrypted_client_secret: Option<String>,
+    pub encrypted_code_verifier: String,
+    pub redirect_uri: String,
+    pub created_at: String,
+    pub expires_at: BsonDateTime,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -162,6 +259,14 @@ pub struct PluginCatalogPayload {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub license: PluginLicenseMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCatalogListItem {
+    #[serde(flatten)]
+    pub catalog: PluginCatalogRecord,
+    #[serde(default)]
+    pub runtime_targets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

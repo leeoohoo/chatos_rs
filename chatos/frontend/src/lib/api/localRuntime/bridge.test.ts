@@ -33,7 +33,7 @@ describe('requestLocalRuntime authentication readiness', () => {
     window.chatosLocalRuntime = { apiRequest };
 
     const responsePromise = requestLocalRuntime<{ items: string[] }>(
-      '/api/local/runtime/projects',
+      '/api/local/runtime/fs/entries?path=.',
     );
     await vi.advanceTimersByTimeAsync(100);
 
@@ -52,7 +52,7 @@ describe('requestLocalRuntime authentication readiness', () => {
     });
     window.chatosLocalRuntime = { apiRequest };
 
-    await expect(requestLocalRuntime('/api/local/runtime/projects')).rejects.toMatchObject({
+    await expect(requestLocalRuntime('/api/local/runtime/fs/entries?path=.')).rejects.toMatchObject({
       status: 409,
       code: 'workspace_conflict',
     } satisfies Partial<ApiRequestError>);

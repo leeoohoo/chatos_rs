@@ -6,11 +6,7 @@ use crate::state::AppState;
 use crate::user_model_runtime_client::resolve_default_environment_initialization_model_runtime;
 use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest, PROJECT_ENVIRONMENT_AGENT};
 use chatos_ai_runtime::ModelRuntimeConfig;
-use chatos_mcp_runtime::BuiltinMcpKind;
-use chatos_plugin_management_sdk::{
-    ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities, SystemAgentKey,
-    PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
-};
+use chatos_mcp_runtime::McpExecutor;
 use serde_json::{json, Value};
 
 use super::runtime_environment::{
@@ -18,7 +14,7 @@ use super::runtime_environment::{
 };
 
 mod agent_prompt;
-mod inspection;
+mod mcp_management_gateway;
 mod mcp_servers;
 mod memory;
 mod progress;
@@ -28,20 +24,21 @@ mod tool_provider;
 pub use self::progress::get_project_runtime_environment_progress;
 
 use self::agent_prompt::resolve_project_environment_agent_prompt;
-use self::inspection::{inspect_local_project, LocalProjectInspection};
+use self::mcp_management_gateway::resolve_project_environment_mcp;
 use self::mcp_servers::{
-    build_project_environment_mcp_executor, create_sandbox_image_from_plan,
-    ensure_agent_required_tools_available, get_local_project_compose_environment_status,
-    get_sandbox_image_catalog, prepare_sandbox_dependency_images,
-    restart_local_project_compose_environment, start_local_project_compose_environment,
-    stop_local_project_compose_environment,
+    create_sandbox_image_from_plan, ensure_agent_required_tools_available,
+    get_local_project_compose_environment_status, get_sandbox_image_catalog,
+    prepare_sandbox_dependency_images, restart_local_project_compose_environment,
+    start_local_project_compose_environment, stop_local_project_compose_environment,
 };
 use self::memory::{build_project_agent_memory, ProjectAgentMemory};
 use self::routing::{
-    resolve_runtime_environment_routing, RoutingDecision, RoutingPlan, StopDecision,
+    resolve_runtime_environment_plan, RuntimeEnvironmentDecision, RuntimeEnvironmentPlan,
+    StopDecision,
 };
-
-const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
+pub(crate) use self::tool_provider::{
+    ensure_project_environment_agent_run, ProjectEnvironmentToolProvider,
+};
 const CLOUD_SANDBOX_IMAGE_MCP_PATH: &str = "/api/sandbox-images/mcp";
 const LOCAL_SANDBOX_IMAGE_MCP_PATH: &str = "/api/local/sandbox/images/mcp";
 const PROJECT_COMPOSE_FILE_PATH: &str = ".chatos/runtime-environment/docker-compose.chatos.yml";
@@ -92,6 +89,80 @@ pub(crate) fn refresh_project_runtime_compose_config(
             )
         });
     Ok(previous != current)
+}
+
+#[cfg(test)]
+mod compose_refresh_tests {
+    use super::*;
+
+    fn dependency_image(environment_key: &str) -> ProjectRuntimeEnvironmentImageRecord {
+        let now = "2026-08-02T00:00:00Z".to_string();
+        let mut image = ProjectRuntimeEnvironmentImageRecord {
+            id: format!("image-{environment_key}"),
+            project_id: "project-1".to_string(),
+            environment_key: environment_key.to_string(),
+            environment_type: "service".to_string(),
+            display_name: environment_key.to_string(),
+            service_id: String::new(),
+            service_role: RuntimeServiceRole::Unknown,
+            source_root: ".".to_string(),
+            component_kind: "service".to_string(),
+            startup_command: None,
+            test_command: None,
+            depends_on: Vec::new(),
+            auto_start: true,
+            mcp_policy: ProgramManagedMcpPolicy::default(),
+            image_id: None,
+            image_ref: None,
+            image_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            features: empty_array(),
+            ports: empty_array(),
+            env_vars: empty_object(),
+            dockerfile: None,
+            custom_build_script: None,
+            status: "ready".to_string(),
+            error: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        crate::services::runtime_environment::apply_program_managed_image_policy(&mut image);
+        image
+    }
+
+    #[test]
+    fn dependency_only_bootstrap_does_not_require_an_application_compose_plan() {
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: "project-1".to_string(),
+            status: ProjectRuntimeEnvironmentStatus::PendingImageBuild,
+            sandbox_enabled: true,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: serde_json::json!([
+                {"type": "postgres"},
+                {"type": "redis"}
+            ]),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "2026-08-02T00:00:00Z".to_string(),
+            updated_at: "2026-08-02T00:00:00Z".to_string(),
+        };
+        let images = vec![dependency_image("postgres"), dependency_image("redis")];
+
+        assert!(!refresh_project_runtime_compose_config(
+            "project-1",
+            &mut environment,
+            images.as_slice(),
+        )
+        .expect("dependency-only bootstrap must not require a phantom application"));
+        assert!(environment.generated_config_files.is_empty());
+    }
 }
 
 mod runtime;

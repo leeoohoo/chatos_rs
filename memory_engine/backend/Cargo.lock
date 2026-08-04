@@ -373,6 +373,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "urlencoding",
+ "zeroize",
 ]
 
 [[package]]

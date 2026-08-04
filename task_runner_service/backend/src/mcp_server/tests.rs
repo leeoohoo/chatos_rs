@@ -4,8 +4,7 @@
 use super::chatos_async_planner;
 use super::support::{
     agent_tool_allowed, create_task_schema, enrich_tool_schemas_with_model_configs,
-    filter_model_configs_for_user, model_configs_for_user, normalize_mcp_builtin_kind_names,
-    task_mcp_config_schema, update_task_schema,
+    filter_model_configs_for_user, model_configs_for_user, update_task_schema,
 };
 use super::{CreateTaskArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 use crate::ask_user_prompt_service::AskUserPromptService;
@@ -13,13 +12,10 @@ use crate::auth::CurrentUser;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     ChatosSyncedModelConfigRequest, CreateTaskProjectRequest, CreateTaskRequest, ModelConfigRecord,
-    TaskMcpConfig, TaskScheduleMode, TaskSourceContext, TaskStatus, UpdateTaskRequest, UserRole,
-    PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    TaskMcpConfig, TaskMcpRequestConfig, TaskScheduleMode, TaskSourceContext, TaskStatus,
+    UpdateTaskRequest, UserRole, PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
-use crate::services::{
-    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService,
-    TaskProjectService, TaskService,
-};
+use crate::services::{ModelConfigService, RunService, TaskProjectService, TaskService};
 use crate::store::AppStore;
 use axum::{
     extract::{Path, State},
@@ -52,10 +48,7 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         subject_id: None,
         schedule: None,
         plugin_config: Default::default(),
-        mcp_config: Some(TaskMcpConfig {
-            enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
-            ..TaskMcpConfig::default()
-        }),
+        mcp_config: None,
         prerequisite_task_ids: None,
     }
 }
@@ -71,20 +64,15 @@ async fn test_mcp_service_with_config(
     let store = AppStore::new(&config).await.expect("store");
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
-    let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone());
-    let mcp_catalog_service =
-        McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());
     let task_project_service = TaskProjectService::new(store);
     (
         TaskRunnerMcpService::new(
             task_service.clone(),
             model_config_service,
-            external_mcp_config_service,
             run_service,
             ask_user_prompt_service,
-            mcp_catalog_service,
         ),
         task_service,
         task_project_service,
@@ -109,6 +97,10 @@ async fn test_project_sync_server() -> (String, CapturedProjectSyncCalls) {
         .route(
             "/api/chatos-sync/projects/{project_id}",
             get(get_project_sync_record),
+        )
+        .route(
+            "/api/chatos-sync/projects/{project_id}/runtime-environment",
+            get(get_project_runtime_environment),
         )
         .with_state(calls.clone());
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -159,6 +151,43 @@ async fn get_project_sync_record(
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
         "archived_at": null
+    }))
+}
+
+async fn get_project_runtime_environment(
+    Path(_project_id): Path<String>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    assert_project_service_internal_headers(&headers, "project.read");
+    Json(json!({
+        "environment": {
+            "sandbox_enabled": true,
+            "status": "ready",
+            "not_runnable_reason": null,
+            "execution_service_id": "workspace",
+            "env_vars": {},
+            "generated_config_files": []
+        },
+        "images": [
+            {
+                "environment_key": "workspace",
+                "service_id": "workspace",
+                "display_name": "Workspace",
+                "service_role": "workspace",
+                "mcp_policy": {
+                    "managed_by": "system",
+                    "attachment": "workspace_gateway_target",
+                    "filesystem": true,
+                    "terminal": true
+                },
+                "image_id": "test-workspace-image",
+                "image_ref": null,
+                "image_provider": "cloud_sandbox_manager",
+                "status": "ready",
+                "dockerfile": null,
+                "env_vars": {}
+            }
+        ]
     }))
 }
 
@@ -215,7 +244,13 @@ fn test_config() -> AppConfig {
         chatos_callback_secret: None,
         internal_api_secret: None,
         chatos_internal_api_secret: None,
+        mcp_management_internal_api_secret: None,
         local_connector_internal_api_secret: None,
+        local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+        local_connector_service_request_timeout: Duration::from_millis(5_000),
+        plugin_relay_request_timeout: Duration::from_millis(60_000),
+        plugin_hook_relay_timeout: Duration::from_millis(330_000),
+        plugin_connector_discovery_timeout: Duration::from_millis(10_000),
         callback_timeout: Duration::from_millis(1000),
         admin_username: "admin".to_string(),
         admin_password: "admin".to_string(),

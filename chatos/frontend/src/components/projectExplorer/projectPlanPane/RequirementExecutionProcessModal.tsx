@@ -82,6 +82,7 @@ export const RequirementExecutionProcessModal: React.FC<{
   );
   const [planDiscarded, setPlanDiscarded] = useState(Boolean(process.tasksDiscarded));
   const [executionConfirmed, setExecutionConfirmed] = useState(false);
+  const [runtimeEnvironmentStatus, setRuntimeEnvironmentStatus] = useState('pending');
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -90,18 +91,10 @@ export const RequirementExecutionProcessModal: React.FC<{
   const pollingRef = useRef(false);
   const rerunningRef = useRef(false);
   const activeExecutionGroupIdRef = useRef(process.executionGroupId);
-  const stoppedExecutionGroupIdsRef = useRef(new Set<string>(
-    isStoppedExecutionStatus(process.serverStatus) ? [process.executionGroupId] : [],
-  ));
 
   useEffect(() => {
     const stopped = isStoppedExecutionStatus(process.serverStatus);
     activeExecutionGroupIdRef.current = process.executionGroupId;
-    if (stopped) {
-      stoppedExecutionGroupIdsRef.current.add(process.executionGroupId);
-    } else {
-      stoppedExecutionGroupIdsRef.current.delete(process.executionGroupId);
-    }
     setLiveProcess(process);
     setMessage(withProcessStatus(
       process.initialMessage || createFallbackMessage(process),
@@ -111,6 +104,7 @@ export const RequirementExecutionProcessModal: React.FC<{
     setPlanStopped(stopped);
     setPlanDiscarded(Boolean(process.tasksDiscarded));
     setExecutionConfirmed(Boolean(process.hasStartedRuns));
+    setRuntimeEnvironmentStatus('pending');
     setActionError(null);
     setActionMessage(null);
     setSyncError(null);
@@ -180,10 +174,12 @@ export const RequirementExecutionProcessModal: React.FC<{
     && allTasks.length > 0
     && !actuallyStarted
     && phase !== 'stopped';
+  const runtimeEnvironmentReady = runtimeEnvironmentStatus === 'ready';
   const recoveryActions = resolveRequirementExecutionRecoveryActions({
     actuallyStarted,
     hasActiveRuns,
     phase,
+    recoveryAction: liveProcess.recoveryAction,
   });
   const graphCancellationSettling = isRequirementExecutionCancellationSettling({
     hasActiveRuns,
@@ -191,12 +187,36 @@ export const RequirementExecutionProcessModal: React.FC<{
   });
   const cancellationSettling = graphCancellationSettling || rerunCancellationSettling;
   const rerunBusy = rerunning || rerunCancellationSettling;
-  const canRegenerate = recoveryActions.canRegenerate && !planDiscarded;
+  const canRegenerate = recoveryActions.canRegenerate && !cancellationSettling;
   const canRevise = recoveryActions.canRevise;
   const canRerun = recoveryActions.canRerun
-    && allTasks.length > 0
-    && !planDiscarded
     && !cancellationSettling;
+
+  useEffect(() => {
+    if (!graphReady || actuallyStarted) return undefined;
+    let cancelled = false;
+    const refreshRuntimeEnvironment = async () => {
+      try {
+        const response = await apiClient.getProjectRuntimeEnvironment(liveProcess.projectId);
+        if (cancelled) return;
+        const nextStatus = readText(response.environment?.status).toLowerCase() || 'pending';
+        setRuntimeEnvironmentStatus(nextStatus);
+      } catch (err) {
+        if (cancelled) return;
+        setRuntimeEnvironmentStatus('unavailable');
+        setActionError(err instanceof Error ? err.message : '读取项目执行环境失败');
+      }
+    };
+    void refreshRuntimeEnvironment();
+    const timer = window.setInterval(
+      () => void refreshRuntimeEnvironment(),
+      REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
+    );
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [actuallyStarted, apiClient, graphReady, liveProcess.projectId]);
   const showRerunAction = canRerun || rerunBusy;
   const terminal = ['completed', 'failed', 'stopped'].includes(phase)
     && !hasActiveRuns
@@ -249,7 +269,6 @@ export const RequirementExecutionProcessModal: React.FC<{
       });
       if (
         activeExecutionGroupIdRef.current !== requestedExecutionGroupId
-        || stoppedExecutionGroupIdsRef.current.has(requestedExecutionGroupId)
       ) {
         return;
       }
@@ -260,7 +279,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     } catch (err) {
       if (
         activeExecutionGroupIdRef.current === requestedExecutionGroupId
-        && !stoppedExecutionGroupIdsRef.current.has(requestedExecutionGroupId)
         && !isPendingRequirementExecutionPlanError(err)
       ) {
         setSyncError(err instanceof Error ? err.message : '读取规划批次状态失败');
@@ -369,6 +387,10 @@ export const RequirementExecutionProcessModal: React.FC<{
       setActionError('完整流程图尚未生成，或者当前批次已经存在运行记录');
       return;
     }
+    if (!runtimeEnvironmentReady) {
+      setActionError('项目执行环境仍在初始化，请稍后再试');
+      return;
+    }
     setConfirming(true);
     setActionError(null);
     setActionMessage(null);
@@ -394,7 +416,7 @@ export const RequirementExecutionProcessModal: React.FC<{
       setMessage(withProcessStatus(message, next));
       setExecutionConfirmed(true);
       onProcessChange(next);
-      setActionMessage('已确认执行。正式用户消息现在才会显示到会话，Task Runner 开始运行。');
+      setActionMessage('已确认执行，任务将按照依赖顺序开始运行。');
       await refreshSessionById(liveProcess.conversationId);
       await syncSessionMessagesInBackground(liveProcess.conversationId);
       await refreshAll(false);
@@ -440,7 +462,7 @@ export const RequirementExecutionProcessModal: React.FC<{
         ? (runningTaskCount > 0
           ? `已暂停后续调度；${runningTaskCount} 个已运行任务仍会继续完成。`
           : '已暂停后续调度，不会启动新的任务节点。')
-        : '已继续调度，Task Runner 将按照依赖顺序启动后续任务。');
+        : '已继续调度，后续任务将按照依赖顺序启动。');
       await refreshAll(false);
     } catch (err) {
       setActionError(err instanceof Error
@@ -468,7 +490,7 @@ export const RequirementExecutionProcessModal: React.FC<{
     setMessage(withProcessStatus(message, stoppingProcess));
     onProcessChange(stoppingProcess);
     try {
-      await apiClient.stopProjectRequirementExecution(
+      const response = await apiClient.stopProjectRequirementExecution(
         liveProcess.projectId,
         liveProcess.requirement.id,
         {
@@ -478,8 +500,12 @@ export const RequirementExecutionProcessModal: React.FC<{
           ...(discardTasks ? { discard_tasks: true } : {}),
         },
       );
-      stoppedExecutionGroupIdsRef.current.add(liveProcess.executionGroupId);
-      const next = {
+      const next = buildRequirementExecutionProcess({
+        fallback: liveProcess,
+        projectId: liveProcess.projectId,
+        requirement: liveProcess.requirement,
+        response,
+      }) || {
         ...liveProcess,
         serverStatus: 'stopped',
         executionPaused: false,
@@ -492,7 +518,7 @@ export const RequirementExecutionProcessModal: React.FC<{
       setSyncError(null);
       onProcessChange(next);
       setActionMessage(discardTasks
-        ? '规划已停止，本批次创建的 Task Runner 任务和关联记录已删除。'
+        ? '规划已停止，本批次创建的执行任务和关联记录已删除。'
         : '当前执行已整体取消。');
       await reloadGraph();
     } catch (err) {
@@ -531,9 +557,8 @@ export const RequirementExecutionProcessModal: React.FC<{
     setActionMessage(null);
     try {
       const replacePreviousBatch = shouldReplaceRequirementExecutionBatch({
-        phase,
         planDiscarded,
-        taskCount: allTasks.length,
+        replacePreviousBatch: liveProcess.replacePreviousBatch,
       });
       if (shouldStopRequirementExecutionBeforeReplacement({
         phase,
@@ -579,7 +604,6 @@ export const RequirementExecutionProcessModal: React.FC<{
       next.executionPaused = false;
       setFeedback('');
       activeExecutionGroupIdRef.current = next.executionGroupId;
-      stoppedExecutionGroupIdsRef.current.delete(next.executionGroupId);
       setLiveProcess(next);
       setMessage(withProcessStatus(next.initialMessage || createFallbackMessage(next), next));
       setPlanStopped(false);
@@ -589,7 +613,7 @@ export const RequirementExecutionProcessModal: React.FC<{
       setActionError(null);
       setActionMessage(normalizedFeedback
         ? '已接收你的意见，正在重新生成执行流程。'
-        : '已重新启动规划 Agent，正在生成新的执行流程。');
+        : '已重新开始规划，正在生成新的执行流程。');
       onProcessChange(next);
     } catch (err) {
       setActionError(err instanceof Error
@@ -640,7 +664,6 @@ export const RequirementExecutionProcessModal: React.FC<{
       setRerunConfirmOpen(false);
       setFeedback('');
       activeExecutionGroupIdRef.current = next.executionGroupId;
-      stoppedExecutionGroupIdsRef.current.delete(next.executionGroupId);
       setLiveProcess(next);
       setMessage(withProcessStatus(next.initialMessage || createFallbackMessage(next), next));
       setPlanStopped(false);
@@ -749,6 +772,8 @@ export const RequirementExecutionProcessModal: React.FC<{
               executionPaused={Boolean(liveProcess.executionPaused)}
               graphReady={graphReady}
               hasActiveRuns={hasActiveRuns}
+              runtimeEnvironmentReady={runtimeEnvironmentReady}
+              runtimeEnvironmentStatus={runtimeEnvironmentStatus}
               onClose={onClose}
               onCancelRequirementExecution={() => void stopCurrentBatch(false)}
               onConfirmExecution={() => void confirmExecution()}

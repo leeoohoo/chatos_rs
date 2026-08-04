@@ -2,10 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::services::workspace_mcp::{
-    task_with_runtime_mcp_routing, task_with_runtime_mcp_routing_authoritative,
-};
-
 impl RunService {
     pub(super) async fn queue_dependency_run(
         &self,
@@ -45,15 +41,6 @@ impl RunService {
         let mut runtime_task = task.clone();
         if let Some(policy) = capability_policy.as_ref() {
             policy.apply_to_task(&mut runtime_task)?;
-            runtime_task = task_with_runtime_mcp_routing_authoritative(
-                &self.config,
-                &self.store,
-                runtime_task,
-            )
-            .await?;
-        } else {
-            runtime_task =
-                task_with_runtime_mcp_routing(&self.config, &self.store, runtime_task).await?;
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
@@ -85,7 +72,7 @@ impl RunService {
             "started_as_prerequisite": true,
         });
         let now = now_rfc3339();
-        let run = TaskRunRecord::queued(
+        let mut run = TaskRunRecord::queued(
             run_id.clone(),
             task.id.clone(),
             model_config_id.clone(),
@@ -94,6 +81,7 @@ impl RunService {
             plugin_snapshots,
             now,
         );
+        run.execution_lane_key = task.execution_lane_key();
         self.store.save_run(run.clone()).await?;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
             if task_record.status != TaskStatus::Cancelled {
@@ -116,6 +104,14 @@ impl RunService {
                 None,
             ))
             .await?;
+        if let Err(err) = self.enqueue_run_dispatch_if_needed(&run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                task_id = task.id.as_str(),
+                error = err.as_str(),
+                "failed to enqueue prerequisite run for rabbitmq dispatch"
+            );
+        }
 
         Ok(run)
     }

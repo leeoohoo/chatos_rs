@@ -25,8 +25,6 @@ impl ChatosAgentProfile {
     pub fn from_flags(plan_mode: bool, project_requirement_execution_planner: bool) -> Self {
         let key = if project_requirement_execution_planner {
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        } else if plan_mode {
-            SystemAgentKey::ChatosPlanningAgent
         } else {
             SystemAgentKey::ChatosConversationAgent
         };
@@ -138,7 +136,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolves_conversation_planning_and_requirement_profiles() {
+    fn plan_mode_reuses_the_conversation_caller_and_selects_the_task_profile() {
         let conversation = ChatosAgentProfile::from_flags(false, false);
         assert_eq!(conversation.key(), SystemAgentKey::ChatosConversationAgent);
         assert!(!conversation.requires_concrete_project());
@@ -149,7 +147,7 @@ mod tests {
         assert_eq!(conversation.task_runner_task_profile(), None);
 
         let planning = ChatosAgentProfile::from_flags(true, false);
-        assert_eq!(planning.key(), SystemAgentKey::ChatosPlanningAgent);
+        assert_eq!(planning.key(), SystemAgentKey::ChatosConversationAgent);
         assert!(planning.requires_concrete_project());
         assert_eq!(
             planning.task_runner_task_profile(),

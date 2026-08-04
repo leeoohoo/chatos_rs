@@ -93,7 +93,7 @@ async fn client_for_service(caller_service: &str) -> Result<PluginManagementClie
         return Ok(client);
     }
 
-    let config = PluginManagementClientConfig::from_env(caller_service).await;
+    let config = PluginManagementClientConfig::from_env(caller_service).await?;
     let new_client = PluginManagementClient::new(config).map_err(|error| error.to_string())?;
     let clients = CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut clients = clients

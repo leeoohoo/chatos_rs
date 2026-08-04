@@ -177,6 +177,8 @@ const HIGHLIGHT_LANGUAGE_OPTIMIZE_DEPS = [
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // Relative assets keep both direct local access and the gateway's /app/ mount working.
+  base: './',
   plugins: [react()],
   build: {
     modulePreload: {

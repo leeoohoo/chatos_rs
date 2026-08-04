@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::projects::requirement_execution_handlers::rerun_support::execution_batch_has_started_active_tasks;
     use chatos_project_execution::RequirementPlanItem;
 
     #[test]
@@ -47,6 +48,24 @@ mod tests {
         .expect("request should deserialize");
 
         assert_eq!(request.model_config_id.as_deref(), Some("model-selected"));
+    }
+
+    #[test]
+    fn new_requirement_planner_turn_does_not_inherit_previous_cancellation() {
+        let session_id = "requirement-planner-reset-session";
+        abort_registry::clear(session_id);
+        abort_registry::reset_turn(session_id, Some("old-turn"));
+        assert!(abort_registry::abort_turn(session_id, Some("old-turn")));
+        assert!(abort_registry::is_aborted(session_id));
+
+        prepare_requirement_planner_turn(session_id, "new-turn");
+
+        assert!(!abort_registry::is_aborted(session_id));
+        let token = abort_registry::abort_token_for_turn(session_id, Some("new-turn"))
+            .expect("new planner turn token");
+        assert!(!token.is_cancelled());
+        assert!(abort_registry::abort_token_for_turn(session_id, Some("old-turn")).is_none());
+        abort_registry::clear(session_id);
     }
 
     #[test]
@@ -222,6 +241,19 @@ mod tests {
     }
 
     #[test]
+    fn started_active_batch_cannot_be_implicitly_cancelled_by_replanning() {
+        let mut running = execution_link_with_status("running");
+        running.task_runner_run_id = Some("run-1".to_string());
+        let waiting = execution_link_with_status("ready");
+
+        assert!(execution_batch_has_started_active_tasks(&[running, waiting]));
+        assert!(!execution_batch_has_started_active_tasks(&[
+            execution_link_with_status("ready"),
+            execution_link_with_status("pending"),
+        ]));
+    }
+
+    #[test]
     fn failed_links_without_stop_intent_are_not_replacement_ready() {
         let mut message = crate::models::message::Message::new(
             "session-1".to_string(),
@@ -267,7 +299,6 @@ mod tests {
             is_planning_task: true,
         };
         let prompt = build_requirement_execution_planner_prompt(
-            ExecutionPlane::Cloud,
             "project-1",
             &requirement,
             std::slice::from_ref(&requirement),
@@ -286,9 +317,9 @@ mod tests {
         assert!(prompt.contains("create_project_execution_tasks"));
         assert!(prompt.contains("project-task-1"));
         assert!(prompt.contains("model-selected"));
-        assert!(prompt.contains("execution_plane"));
-        assert!(prompt.contains("cloud"));
-        assert!(prompt.contains("严禁跨 execution_plane"));
+        assert!(!prompt.contains("execution_plane"));
+        assert!(!prompt.contains("local_connector"));
+        assert!(prompt.contains("运行路由由系统自动完成"));
     }
 
     #[test]

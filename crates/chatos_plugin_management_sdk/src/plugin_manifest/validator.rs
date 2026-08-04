@@ -28,6 +28,9 @@ use super::validation_support::{
 use super::PluginManifestValidationIssue;
 use crate::SystemAgentKey;
 
+mod stdio;
+use stdio::*;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginManifestValidationError {
     pub issues: Vec<PluginManifestValidationIssue>,
@@ -215,16 +218,14 @@ pub fn validate_plugin_manifest(
         if let Some(target_agent) = command.target_agent.as_deref() {
             if ![
                 SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-                SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
                 SystemAgentKey::TaskRunnerRunPhase.as_str(),
-                SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
             ]
             .contains(&target_agent)
             {
                 issue(
                     &mut issues,
                     format!("commands[{index}].target_agent").as_str(),
-                    "target agent must be task_runner_plan_phase, task_runner_local_plan_phase, task_runner_run_phase, or task_runner_local_run_phase",
+                    "target agent must be task_runner_plan_phase or task_runner_run_phase",
                 );
             }
         }
@@ -284,16 +285,14 @@ pub fn validate_plugin_manifest(
         }
         if ![
             SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
-            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
         ]
         .contains(&agent.base_agent.as_str())
         {
             issue(
                 &mut issues,
                 format!("agents[{index}].base_agent").as_str(),
-                "base agent must be task_runner_plan_phase, task_runner_local_plan_phase, task_runner_run_phase, or task_runner_local_run_phase",
+                "base agent must be task_runner_plan_phase or task_runner_run_phase",
             );
         }
         validate_allowed_tools(
@@ -409,7 +408,9 @@ fn validate_execution_policy(
 
     for (component_key, kind) in &kinds {
         let host = manifest.execution.host_for(component_key);
-        if host != PluginExecutionHost::Local && !matches!(*kind, "skill" | "command" | "agent") {
+        if host != PluginExecutionHost::Local
+            && !matches!(*kind, "skill" | "command" | "agent" | "mcp_server")
+        {
             issue(
                 issues,
                 "execution",
@@ -419,21 +420,28 @@ fn validate_execution_policy(
     }
 
     for (index, permission) in manifest.permissions.iter().enumerate() {
-        let targets_cloud_component = if permission.components.is_empty() {
+        let cloud_targets = if permission.components.is_empty() {
             kinds
                 .keys()
-                .any(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+                .filter(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
         } else {
             permission
                 .components
                 .iter()
-                .any(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+                .filter(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
         };
-        if targets_cloud_component {
+        let targets_non_mcp_cloud_component = cloud_targets
+            .iter()
+            .any(|key| kinds.get(*key).copied() != Some("mcp_server"));
+        if targets_non_mcp_cloud_component {
             issue(
                 issues,
                 format!("permissions[{index}]").as_str(),
-                "cloud and portable components must not request runtime permissions",
+                "cloud and portable prompt components must not request runtime permissions",
             );
         }
     }
@@ -782,53 +790,5 @@ fn validate_permissions(
                 );
             }
         }
-    }
-}
-
-fn validate_stdio_command(
-    index: usize,
-    command: &str,
-    args: &[String],
-    issues: &mut Vec<PluginManifestValidationIssue>,
-) {
-    let field = format!("mcpServers[{index}].command");
-    if command.trim().is_empty() {
-        issue(issues, field.as_str(), "command cannot be empty");
-        return;
-    }
-    if command.contains('/') {
-        if let Err(message) = normalize_plugin_relative_path(command) {
-            issue(issues, field.as_str(), message);
-        }
-    } else if !command
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
-        issue(
-            issues,
-            field.as_str(),
-            "command must be a signed relative path or reviewed command identifier",
-        );
-    }
-
-    let shell = command
-        .rsplit('/')
-        .next()
-        .unwrap_or(command)
-        .to_ascii_lowercase();
-    let has_shell_eval = match shell.as_str() {
-        "sh" | "bash" | "zsh" => args.iter().any(|arg| arg == "-c"),
-        "cmd" | "cmd.exe" => args.iter().any(|arg| arg.eq_ignore_ascii_case("/c")),
-        "powershell" | "powershell.exe" | "pwsh" => args
-            .iter()
-            .any(|arg| matches!(arg.to_ascii_lowercase().as_str(), "-command" | "-c")),
-        _ => false,
-    };
-    if has_shell_eval {
-        issue(
-            issues,
-            field.as_str(),
-            "generic shell evaluation is not allowed for plugin MCP entrypoints",
-        );
     }
 }

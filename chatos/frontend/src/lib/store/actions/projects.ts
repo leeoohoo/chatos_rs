@@ -148,7 +148,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
     if (!normalizedProjectId) {
       return;
     }
-    client.registerProjectExecution(project);
     getOrCreateClientCacheState(client).detailCache.set(normalizedProjectId, {
       project,
       stale: false,
@@ -243,7 +242,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         });
         return null;
       }
-      client.registerProjectExecution(project);
       upsertProjectCaches(project);
       set((state: ChatStoreDraft) => {
         state.projects = upsertProject(state.projects, project);
@@ -311,28 +309,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       }
     },
 
-    createProject: async (name: string, rootPath: string, description?: string, gitUrl?: string) => {
-      const uid = getUserIdParam();
-      const payload = {
-        name,
-        root_path: rootPath,
-        git_url: gitUrl?.trim() || undefined,
-        description: description?.trim() || undefined,
-        user_id: uid,
-      };
-      const created = await client.createProject(payload);
-      const project = normalizeProject(created);
-      upsertProjectCaches(project);
-      set((state: ChatStoreDraft) => {
-        state.projects = upsertProject(state.projects, project);
-        state.currentProjectId = project.id;
-        state.currentProject = project;
-        state.activePanel = 'project';
-      });
-      localStorage.setItem(`lastProjectId_${uid}`, project.id);
-      return project;
-    },
-
     createCloudProject: async (input: {
       name: string;
       gitUrl?: string;
@@ -368,9 +344,8 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
 
     updateProject: async (projectId: string, updates: Partial<Project>) => {
       try {
-        const payload: { name?: string; root_path?: string; git_url?: string; description?: string } = {};
+        const payload: { name?: string; git_url?: string; description?: string } = {};
         if (updates.name !== undefined) payload.name = updates.name;
-        if (updates.rootPath !== undefined) payload.root_path = updates.rootPath;
         if (updates.gitUrl !== undefined) payload.git_url = updates.gitUrl ?? '';
         if (updates.description !== undefined) payload.description = updates.description || undefined;
         const updated = await client.updateProject(projectId, payload);
@@ -421,7 +396,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         if (!project) {
           project = await loadProjectDetail(normalizedProjectId);
         }
-        await client.prepareProjectRuntime(project);
         const uid = getUserIdParam();
         set((state: ChatStoreDraft) => {
           state.projects = upsertProject(state.projects, project);

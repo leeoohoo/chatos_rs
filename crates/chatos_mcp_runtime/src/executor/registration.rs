@@ -26,10 +26,15 @@ impl McpExecutor {
         server_header_provider: Option<std::sync::Arc<dyn crate::McpHttpHeaderProvider>>,
         server_timeout: Option<Duration>,
         server_config: Option<McpStdioServer>,
+        preserve_tool_name: bool,
         def: ParsedToolDefinition,
         tool: Value,
     ) {
-        let public_name = self.reserve_tool_name(public_server_name, def.name.as_str());
+        let public_name = if preserve_tool_name {
+            self.reserve_upstream_tool_name(server_name, def.name.as_str())
+        } else {
+            self.reserve_tool_name(public_server_name, def.name.as_str())
+        };
         self.register_tool_aliases(server_name, def.name.as_str(), public_name.as_str());
         if public_server_name != server_name {
             self.register_tool_aliases(public_server_name, def.name.as_str(), public_name.as_str());
@@ -78,6 +83,33 @@ impl McpExecutor {
             counter += 1;
         }
     }
+    fn reserve_upstream_tool_name(&self, server_name: &str, tool_name: &str) -> String {
+        let upstream = tool_name.trim();
+        if !upstream.is_empty() && !self.tool_metadata.contains_key(upstream) {
+            return upstream.to_string();
+        }
+        let fallback = if upstream.is_empty() {
+            "tool"
+        } else {
+            upstream
+        };
+        let hashed = format!(
+            "{}_{:08x}",
+            fallback,
+            stable_tool_name_hash(server_name, tool_name)
+        );
+        if !self.tool_metadata.contains_key(hashed.as_str()) {
+            return hashed;
+        }
+        let mut counter = 2usize;
+        loop {
+            let candidate = format!("{hashed}_{counter}");
+            if !self.tool_metadata.contains_key(candidate.as_str()) {
+                return candidate;
+            }
+            counter += 1;
+        }
+    }
     fn register_tool_aliases(&mut self, server_name: &str, tool_name: &str, public_name: &str) {
         let legacy = legacy_prefixed_tool_name(server_name, tool_name);
         if legacy != public_name {
@@ -86,10 +118,11 @@ impl McpExecutor {
                 .or_insert_with(|| public_name.to_string());
         }
     }
-    pub(in crate::executor) async fn register_http_tools(&mut self) {
+    pub(in crate::executor) async fn register_http_tools(&mut self) -> Result<(), String> {
         let server_count = self.http_servers.len();
         let mut ordered = (0..server_count).map(|_| None).collect::<Vec<_>>();
         let mut joins = JoinSet::new();
+        let mut fatal_errors = Vec::new();
         for (index, server) in self.http_servers.clone().into_iter().enumerate() {
             joins.spawn(async move {
                 let tools = match server.resolved_headers().await {
@@ -140,8 +173,9 @@ impl McpExecutor {
                                 Some(server.url.clone()),
                                 server.headers.clone(),
                                 server.header_provider.clone(),
-                                server.timeout_duration(),
+                                server.tool_timeout_duration(def.name.as_str()),
                                 None,
+                                server.preserve_tool_names,
                                 def,
                                 tool,
                             );
@@ -149,6 +183,12 @@ impl McpExecutor {
                     }
                 }
                 Err(err) => {
+                    if server.fail_on_unavailable {
+                        fatal_errors.push(format!(
+                            "required HTTP MCP server {} is unavailable: {err}",
+                            server.name
+                        ));
+                    }
                     warn!(
                         server_name = server.name.as_str(),
                         server_url = server.url.as_str(),
@@ -162,6 +202,11 @@ impl McpExecutor {
                     ));
                 }
             }
+        }
+        if fatal_errors.is_empty() {
+            Ok(())
+        } else {
+            Err(fatal_errors.join("; "))
         }
     }
     pub(in crate::executor) async fn register_stdio_tools(&mut self) {
@@ -198,6 +243,7 @@ impl McpExecutor {
                                 None,
                                 None,
                                 Some(server.clone()),
+                                false,
                                 def,
                                 tool,
                             );
@@ -249,6 +295,7 @@ impl McpExecutor {
                         None,
                         None,
                         None,
+                        false,
                         def,
                         tool,
                     );
@@ -307,6 +354,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             ParsedToolDefinition {
                 name: "read_file_raw".to_string(),
                 description: "Read file".to_string(),
@@ -330,5 +378,46 @@ mod tests {
             .expect("tool metadata");
         assert_eq!(metadata.server_name, "local_connector");
         assert_eq!(metadata.original_name, "read_file_raw");
+    }
+
+    #[test]
+    fn preserved_http_tool_name_keeps_gateway_namespace_without_double_prefix() {
+        let mut executor = McpExecutor::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+
+        executor.register_available_tool(
+            "mcp_management",
+            "mcp_management",
+            "http",
+            Some("http://127.0.0.1:39280/mcp".to_string()),
+            None,
+            None,
+            None,
+            None,
+            true,
+            ParsedToolDefinition {
+                name: "code_maintainer_read_read_file".to_string(),
+                description: "Read file".to_string(),
+                parameters: json!({"type": "object"}),
+            },
+            json!({"name": "code_maintainer_read_read_file"}),
+        );
+
+        assert_eq!(
+            executor.available_tools()[0]
+                .get("name")
+                .and_then(|value| value.as_str()),
+            Some("code_maintainer_read_read_file")
+        );
+        let metadata = executor
+            .tool_metadata()
+            .get("code_maintainer_read_read_file")
+            .expect("tool metadata");
+        assert_eq!(metadata.server_name, "mcp_management");
+        assert_eq!(metadata.original_name, "code_maintainer_read_read_file");
     }
 }

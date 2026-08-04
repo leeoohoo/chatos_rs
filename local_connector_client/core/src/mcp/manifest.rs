@@ -182,10 +182,6 @@ impl LocalMcpManifestRecord {
             && self.last_check_status == "available"
             && self.plugin_mcp_id.is_some()
     }
-
-    pub(crate) fn is_locally_executable(&self) -> bool {
-        self.enabled && self.last_check_status == "available"
-    }
 }
 
 pub(crate) fn current_owner_user_id(state: &LocalState) -> Option<&str> {

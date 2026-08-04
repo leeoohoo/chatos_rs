@@ -10,10 +10,14 @@ use crate::services::ai_common::normalize_turn_id;
 use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
 use serde_json::Value;
+use tracing::warn;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_execution::init_chatos_stream_agent;
-use super::chat_runner::{build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput};
+use super::chat_runner::{
+    build_chat_event_sink, run_bootstrapped_chat, run_bootstrapped_project_planning,
+    BootstrappedChatInput, BootstrappedProjectPlanningInput,
+};
 use super::guidance;
 
 pub struct RunChatUsecaseInput {
@@ -42,6 +46,12 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         None,
     );
     if let Err(err) = Config::try_get() {
+        warn!(
+            session_id = session_id.as_str(),
+            turn_id = initial_turn_id.as_deref().unwrap_or_default(),
+            error = err.as_str(),
+            "run_chat_usecase aborted before execution because runtime config is not initialized"
+        );
         send_error_event(
             &initial_sink,
             format!("服务配置未初始化: {err}").as_str(),
@@ -65,6 +75,12 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
     let model_runtime = match resolve_chat_model_runtime(&req, "gpt-4o", true).await {
         Ok(runtime) => runtime,
         Err(err) => {
+            warn!(
+                session_id = session_id.as_str(),
+                turn_id = initial_turn_id.as_deref().unwrap_or_default(),
+                error = err.as_str(),
+                "run_chat_usecase aborted before execution because model runtime resolution failed"
+            );
             send_error_event(
                 &initial_sink,
                 format!("解析模型配置失败: {err}").as_str(),
@@ -82,6 +98,21 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         &model_runtime,
     ))
     .await;
+    if req.plan_mode {
+        run_bootstrapped_project_planning(BootstrappedProjectPlanningInput {
+            sender,
+            user_id: req.user_id.clone(),
+            project_id: req.project_id.clone(),
+            session_id: &session_id,
+            content: &content,
+            persisted_user_message_content,
+            persisted_user_message_metadata,
+            model_runtime: &model_runtime,
+            bootstrap,
+        })
+        .await;
+        return;
+    }
     let agent = init_chatos_stream_agent(&model_runtime, bootstrap.runtime_context.agent_profile);
     run_bootstrapped_chat(BootstrappedChatInput {
         sender: sender.clone(),
@@ -119,8 +150,6 @@ fn build_common_bootstrap_input(
         project_root: req.project_root.clone(),
         workspace_root: req.workspace_root.clone(),
         remote_connection_id: req.remote_connection_id.clone(),
-        plugin_device_id: req.plugin_device_id.clone(),
-        plugin_workspace_id: req.plugin_workspace_id.clone(),
         selected_plugin_ids: req.selected_plugin_ids.clone(),
         plugin_command_invocations: req.plugin_command_invocations.clone(),
         plugin_agent_selection: req.plugin_agent_selection.clone(),

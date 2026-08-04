@@ -4,8 +4,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use chatos_service_runtime::{
-    env_bool_strict as read_bool_env, env_text as read_env, validate_production_secret,
-    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
+    env_text as read_env, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
 };
 
 #[derive(Debug, Clone)]
@@ -76,108 +75,80 @@ impl AppConfig {
                 .map_err(|err| format!("invalid USER_SERVICE_PORT: {err}"))?,
             database_url,
             mongodb_database,
-            jwt_secret: read_env("USER_SERVICE_JWT_SECRET")
-                .unwrap_or_else(|| "change_me_user_service_secret".to_string()),
-            jwt_issuer: read_env("USER_SERVICE_JWT_ISSUER")
-                .unwrap_or_else(|| "user_service".to_string()),
-            user_service_audience: read_env("USER_SERVICE_USER_AUDIENCE")
-                .unwrap_or_else(|| "user_service".to_string()),
-            task_runner_audience: read_env("USER_SERVICE_TASK_RUNNER_AUDIENCE")
-                .unwrap_or_else(|| "task_runner".to_string()),
-            user_access_ttl_seconds: read_env("USER_SERVICE_USER_ACCESS_TTL_SECONDS")
-                .unwrap_or_else(|| "43200".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_USER_ACCESS_TTL_SECONDS: {err}"))?,
-            task_runner_access_ttl_seconds: read_env("USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS")
-                .unwrap_or_else(|| "3600".to_string())
-                .parse()
-                .map_err(|err| {
-                    format!("invalid USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS: {err}")
-                })?,
-            super_admin_username: read_env("USER_SERVICE_SUPER_ADMIN_USERNAME")
-                .or_else(|| read_env("CHATOS_ADMIN_USERNAME"))
-                .unwrap_or_else(|| "admin".to_string()),
-            super_admin_password: read_env("USER_SERVICE_SUPER_ADMIN_PASSWORD")
-                .or_else(|| read_env("CHATOS_ADMIN_PASSWORD"))
-                .unwrap_or_else(|| "admin123456".to_string()),
-            super_admin_display_name: read_env("USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME")
-                .or_else(|| read_env("CHATOS_ADMIN_DISPLAY_NAME"))
-                .unwrap_or_else(|| "System Admin".to_string()),
-            memory_engine_base_url: read_env("MEMORY_ENGINE_BASE_URL"),
-            memory_engine_operator_token: Some(
-                read_env("USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET")
-                    .or_else(|| read_env("MEMORY_ENGINE_OPERATOR_TOKEN"))
-                    .unwrap_or_else(|| DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN.to_string()),
+            jwt_secret: require_config_center_secret("USER_SERVICE_JWT_SECRET")?,
+            jwt_issuer: require_config_center_text("USER_SERVICE_JWT_ISSUER")?,
+            user_service_audience: require_config_center_text("USER_SERVICE_USER_AUDIENCE")?,
+            task_runner_audience: require_config_center_text("USER_SERVICE_TASK_RUNNER_AUDIENCE")?,
+            user_access_ttl_seconds: require_config_center_i64(
+                "USER_SERVICE_USER_ACCESS_TTL_SECONDS",
+            )?,
+            task_runner_access_ttl_seconds: require_config_center_i64(
+                "USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS",
+            )?,
+            super_admin_username: require_config_center_text("USER_SERVICE_SUPER_ADMIN_USERNAME")?,
+            super_admin_password: require_config_center_secret(
+                "USER_SERVICE_SUPER_ADMIN_PASSWORD",
+            )?,
+            super_admin_display_name: require_config_center_text(
+                "USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME",
+            )?,
+            memory_engine_base_url: optional_config_center_text(
+                "USER_SERVICE_MEMORY_ENGINE_BASE_URL",
             ),
-            task_runner_base_url: read_env("TASK_RUNNER_BASE_URL")
-                .or_else(|| read_env("CHATOS_TASK_RUNNER_BASE_URL")),
-            task_runner_callback_secret: read_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET")
-                .or_else(|| read_env("CHATOS_TASK_RUNNER_CALLBACK_SECRET")),
-            downstream_request_timeout_ms: read_env("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS")
-                .unwrap_or_else(|| "5000".to_string())
-                .parse()
-                .map_err(|err| {
-                    format!("invalid USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS: {err}")
-                })?,
-            harness_provisioning_enabled: read_bool_env("HARNESS_PROVISIONING_ENABLED", false)?,
-            harness_base_url: read_env("HARNESS_BASE_URL"),
-            harness_synthetic_email_domain: read_env("HARNESS_SYNTHETIC_EMAIL_DOMAIN")
-                .unwrap_or_else(|| "chatos.local".to_string()),
-            harness_space_prefix: read_env("HARNESS_SPACE_PREFIX")
-                .unwrap_or_else(|| "u-".to_string()),
-            harness_request_timeout_ms: read_env("HARNESS_REQUEST_TIMEOUT_MS")
-                .unwrap_or_else(|| "5000".to_string())
-                .parse()
-                .map_err(|err| format!("invalid HARNESS_REQUEST_TIMEOUT_MS: {err}"))?,
-            harness_project_pat_prefix: read_env("HARNESS_PROJECT_PAT_PREFIX")
-                .unwrap_or_else(|| "chatos-project-import".to_string()),
-            user_service_internal_api_secret: read_env(
+            memory_engine_operator_token: Some(require_config_center_secret(
+                "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            )?),
+            task_runner_base_url: optional_config_center_text("USER_SERVICE_TASK_RUNNER_BASE_URL"),
+            task_runner_callback_secret: optional_config_center_text(
+                "USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET",
+            ),
+            downstream_request_timeout_ms: require_config_center_i64(
+                "USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS",
+            )?
+            .max(300),
+            harness_provisioning_enabled: require_config_center_bool(
+                "USER_SERVICE_HARNESS_PROVISIONING_ENABLED",
+            )?,
+            harness_base_url: optional_config_center_text("USER_SERVICE_HARNESS_BASE_URL"),
+            harness_synthetic_email_domain: require_config_center_text(
+                "USER_SERVICE_HARNESS_SYNTHETIC_EMAIL_DOMAIN",
+            )?,
+            harness_space_prefix: require_config_center_text("USER_SERVICE_HARNESS_SPACE_PREFIX")?,
+            harness_request_timeout_ms: require_config_center_i64(
+                "USER_SERVICE_HARNESS_REQUEST_TIMEOUT_MS",
+            )?
+            .max(300),
+            harness_project_pat_prefix: require_config_center_text(
+                "USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX",
+            )?,
+            user_service_internal_api_secret: Some(require_config_center_secret(
                 "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
-            )
-            .or_else(|| read_env("USER_SERVICE_INTERNAL_API_SECRET"))
-            .or_else(|| read_env("CHATOS_USER_SERVICE_INTERNAL_SECRET")),
-            smtp_host: read_env("USER_SERVICE_SMTP_HOST"),
-            smtp_port: read_env("USER_SERVICE_SMTP_PORT")
-                .unwrap_or_else(|| "587".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_SMTP_PORT: {err}"))?,
-            smtp_username: read_env("USER_SERVICE_SMTP_USERNAME"),
-            smtp_password: read_env("USER_SERVICE_SMTP_PASSWORD"),
-            email_from: read_env("USER_SERVICE_EMAIL_FROM"),
-            email_from_name: read_env("USER_SERVICE_EMAIL_FROM_NAME")
-                .unwrap_or_else(|| "Chat OS".to_string()),
-            registration_code_ttl_seconds: read_env("USER_SERVICE_REGISTER_CODE_TTL_SECONDS")
-                .unwrap_or_else(|| "600".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_TTL_SECONDS: {err}"))?,
-            registration_code_resend_seconds: read_env("USER_SERVICE_REGISTER_CODE_RESEND_SECONDS")
-                .unwrap_or_else(|| "60".to_string())
-                .parse()
-                .map_err(|err| {
-                    format!("invalid USER_SERVICE_REGISTER_CODE_RESEND_SECONDS: {err}")
-                })?,
-            registration_code_hourly_limit: read_env("USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT")
-                .unwrap_or_else(|| "5".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT: {err}"))?,
-            registration_code_max_attempts: read_env("USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS")
-                .unwrap_or_else(|| "5".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS: {err}"))?,
-            login_max_failed_attempts: read_env("USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS")
-                .unwrap_or_else(|| "5".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS: {err}"))?,
-            login_failure_window_seconds: read_env("USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS")
-                .unwrap_or_else(|| "300".to_string())
-                .parse()
-                .map_err(|err| {
-                    format!("invalid USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS: {err}")
-                })?,
-            login_lockout_seconds: read_env("USER_SERVICE_LOGIN_LOCKOUT_SECONDS")
-                .unwrap_or_else(|| "300".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_LOGIN_LOCKOUT_SECONDS: {err}"))?,
+            )?),
+            smtp_host: optional_config_center_text("USER_SERVICE_SMTP_HOST"),
+            smtp_port: require_config_center_u16("USER_SERVICE_SMTP_PORT")?,
+            smtp_username: optional_config_center_text("USER_SERVICE_SMTP_USERNAME"),
+            smtp_password: optional_config_center_text("USER_SERVICE_SMTP_PASSWORD"),
+            email_from: optional_config_center_text("USER_SERVICE_EMAIL_FROM"),
+            email_from_name: require_config_center_text("USER_SERVICE_EMAIL_FROM_NAME")?,
+            registration_code_ttl_seconds: require_config_center_i64(
+                "USER_SERVICE_REGISTER_CODE_TTL_SECONDS",
+            )?,
+            registration_code_resend_seconds: require_config_center_i64(
+                "USER_SERVICE_REGISTER_CODE_RESEND_SECONDS",
+            )?,
+            registration_code_hourly_limit: require_config_center_i64(
+                "USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT",
+            )?,
+            registration_code_max_attempts: require_config_center_i64(
+                "USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS",
+            )?,
+            login_max_failed_attempts: require_config_center_i64(
+                "USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS",
+            )?,
+            login_failure_window_seconds: require_config_center_i64(
+                "USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS",
+            )?,
+            login_lockout_seconds: require_config_center_i64("USER_SERVICE_LOGIN_LOCKOUT_SECONDS")?,
         };
 
         validate_login_throttle_config(&config)?;
@@ -208,6 +179,30 @@ impl AppConfig {
                 "change_me_project_service_user_service_secret",
             ],
         )?;
+        if config.task_runner_base_url.is_some()
+            && config
+                .task_runner_callback_secret
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+        {
+            return Err(
+                "USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET is required when USER_SERVICE_TASK_RUNNER_BASE_URL is configured"
+                    .to_string(),
+            );
+        }
+        if config.harness_provisioning_enabled
+            && config
+                .harness_base_url
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+        {
+            return Err(
+                "USER_SERVICE_HARNESS_BASE_URL is required when USER_SERVICE_HARNESS_PROVISIONING_ENABLED is true"
+                    .to_string(),
+            );
+        }
 
         Ok(config)
     }
@@ -232,6 +227,43 @@ fn validate_login_throttle_config(config: &AppConfig) -> Result<(), String> {
 
 pub fn load_user_service_dotenv() {
     chatos_service_runtime::load_service_dotenv(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+}
+
+fn require_config_center_secret(key: &str) -> Result<String, String> {
+    read_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
+}
+
+fn require_config_center_text(key: &str) -> Result<String, String> {
+    read_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
+}
+
+fn optional_config_center_text(key: &str) -> Option<String> {
+    read_env(key)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn require_config_center_i64(key: &str) -> Result<i64, String> {
+    require_config_center_text(key)?
+        .parse()
+        .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn require_config_center_u16(key: &str) -> Result<u16, String> {
+    require_config_center_text(key)?
+        .parse()
+        .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn require_config_center_bool(key: &str) -> Result<bool, String> {
+    match require_config_center_text(key)?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(format!("invalid {key}: expected true/false")),
+    }
 }
 
 fn mongodb_database_from_url(url: &str) -> Option<String> {

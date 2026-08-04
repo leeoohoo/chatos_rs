@@ -54,7 +54,7 @@ Okra 可以进入正确的工程环境，而不是让你不断复制粘贴代码
 - 是否需要你补充信息或确认操作
 - 成功、停止、失败与重试结果
 
-云端任务可以在你离开页面后继续运行。本地任务则需要桌面客户端的本地运行服务保持在线。
+任务生命周期由云端持续管理，因此离开页面后仍可继续。使用本机文件、命令、Plugin、MCP 或沙箱能力的任务，需要桌面客户端和 Local Connector 保持在线。
 
 ### 记住项目，而不是只记住一轮聊天
 
@@ -137,19 +137,19 @@ Okra 不要求所有项目都使用同一种工作方式。
 | 创建方式 | Git 仓库或 ZIP | 桌面客户端中授权本机目录 |
 | 工作环境 | 云端 Git 工作区与隔离运行环境 | 用户授权的本机工作区 |
 | 使用入口 | 浏览器或桌面客户端 | 桌面客户端 |
-| 任务运行 | 云端后台任务 | 当前设备上的本地任务服务 |
-| 项目记忆 | 保存在云端 | 保存在当前设备 |
+| 任务编排 | 云端后台任务 | 云端编排，按需调用当前设备能力 |
+| 项目记忆 | 保存在云端 | 保存在云端 |
 
-项目的执行位置是明确的。一个本地项目不会因为本机服务不可用而偷偷改成云端执行，云端项目也不会临时切到你的电脑上运行。
+两类项目共享同一套云端业务编排。工具的执行位置由 MCP Management 根据 Project Context 明确选择；本机能力不可用时会明确失败或等待，不会偷偷切换到云端文件系统或其他设备。
 
 ### 关于本地项目与隐私
 
-本地项目的文件、会话、任务、计划和记忆由桌面客户端的本地执行服务管理，项目目录必须由你明确授权。
+本地项目的 Project、Session、Message、Task、Requirement、Memory 和 Agent 生命周期由云端服务管理；文件、Git、命令、本地 Skill/Plugin/MCP、沙箱和审批仍在你明确授权的设备边界内执行。
 
 需要注意：
 
-- Okra 云端不会保存你的本机绝对路径。
-- 本地项目不会自动复制成云端项目，也不会与云端项目双写。
+- Okra 云端只保存 Workspace 和设备路由所需的逻辑标识，不保存你的本机绝对路径。
+- 项目业务数据以云端为唯一事实来源，不在客户端保存另一份 Session、Task 或 Memory 数据。
 - AI 工作时，完成推理所需的内容仍可能发送给你所选择的模型供应商；请同时了解该供应商的数据政策。
 - 账号、智能体能力、模型目录和系统策略等控制信息可以随账号同步。
 - 终端、文件和 Git 操作只能在已授权的工作区边界内进行。
@@ -174,7 +174,7 @@ Okra 不要求所有项目都使用同一种工作方式。
 
 ### 记忆视图
 
-查看会话摘要和可召回记忆，执行复盘，并管理本地项目的自动摘要与 Recall。
+查看会话摘要和可召回记忆，执行复盘，并管理项目的自动摘要与 Recall。
 
 ### 智能体与能力设置
 
@@ -195,7 +195,7 @@ Okra 不要求所有项目都使用同一种工作方式。
 1. 从 Okra 官网下载并安装 Okra 桌面连接器。
 2. 使用与 Web 端相同的账号登录。
 3. 添加并授权一个本机工作区。
-4. 配置本机模型以及需要使用的工具、技能和系统权限。
+4. 配置需要使用的本地工具、Skill、Plugin、MCP、沙箱和审批权限。
 5. 在桌面端创建本地项目。
 
 本地项目只能在桌面客户端中使用。直接在普通浏览器中打开 Okra，不会获得访问本机目录的能力。
@@ -220,11 +220,11 @@ Okra 不要求所有项目都使用同一种工作方式。
 
 ### 关闭页面后任务还会继续吗？
 
-云端后台任务可以继续运行。本地项目的任务依赖当前设备上的桌面客户端，因此需要保持本地运行服务在线。
+任务编排和业务状态会在云端继续运行。若本地项目的下一步需要访问本机文件、命令或其他设备能力，桌面客户端和 Local Connector 必须在线。
 
 ### 云端项目和本地项目可以自动互相切换吗？
 
-不会。两种项目拥有不同的执行位置和数据边界。系统会明确提示当前项目需要在哪一端运行，不会静默切换。
+不会。两种项目拥有不同的文件与工具执行边界，但共享云端业务编排。MCP Management 会根据 Project Context 固定路由，不会静默切换到错误的文件系统或设备。
 
 ## 当前产品状态
 
@@ -232,7 +232,7 @@ Okra 仍在快速迭代。当前需要留意：
 
 - 本地项目必须使用桌面客户端。
 - 本地项目暂不支持对话附件，也暂不支持在任务运行过程中附带图片或文件进行补充引导。
-- 云端项目和本地项目的会话数据彼此独立，不会自动迁移。
+- 本地项目的业务历史保存在云端；2.0.10 不迁移旧客户端 SQLite 中的历史会话、任务和记忆。
 - 可公开下载的桌面平台、版本和注册规则以对应部署的 Okra 官网为准。
 
 ## 技术与自部署参考
@@ -244,12 +244,12 @@ Okra 仍在快速迭代。当前需要留意：
 
 ### 执行架构
 
-Okra 使用两套隔离的执行平面：
+Okra 使用一套云端业务编排平面，并按需调用设备侧能力执行器：
 
-- Cloud Project：由 Chat OS Backend、Project Management、Task Runner、Memory Engine、Harness 和 Sandbox Manager 运行。
-- Local Connector Project：由桌面客户端中的 Local Connector Core 运行，项目、会话、任务、记忆和事件主要写入本机 SQLite。
-- 两边共享用户、智能体、模型目录、Plugin/Skill 策略和系统配置等控制面信息。
-- 两个执行平面不会在失败时静默回退；错误入口会返回 `local_runtime_required` 或本地运行时错误。
+- Project、Session、Task、Requirement、Memory 和 Agent 生命周期全部以云端服务为事实数据源。
+- Local Connector Core 只执行必须在用户设备完成的 Workspace 文件、Git、命令、本地 Skill/Plugin/MCP、沙箱和审批能力。
+- Agent 工具调用统一由 MCP Management 根据 Project Context 选择 Local Connector、Harness 或 Cloud Sandbox。
+- Local Connector 不可用时明确失败，不会把设备侧操作静默切换到其他执行位置。
 
 ### 本地数据位置
 
@@ -257,10 +257,10 @@ Local Connector 默认状态路径：
 
 ```text
 ~/.chatos/local_connector/state.json
-~/.chatos/local_connector/runtime.sqlite3
+~/.chatos/local_connector/connector-state.sqlite3
 ```
 
-可通过 `LOCAL_CONNECTOR_STATE_PATH` 更改状态文件位置；SQLite 会保存在同一目录。
+可通过 `LOCAL_CONNECTOR_STATE_PATH` 更改状态文件位置；SQLite 只保存 Connector 控制状态并位于同一目录。2.0.10 不迁移、也不再使用旧 `runtime.sqlite3`。
 
 ### 启动自托管云端栈
 
@@ -344,10 +344,10 @@ cd memory_engine/backend && cargo test
 
 - 部署边界与端口：`docker/compose.yml`
 - Rust workspace：`Cargo.toml`
-- Cloud/Local 前端路由：`chatos/frontend/src/lib/api/client/facades/`
+- 云端业务 API 与本地能力桥：`chatos/frontend/src/lib/api/client/facades/`
 - 云端执行边界：`chatos/backend/src/core/project_execution.rs`
-- 本地执行平面：`local_connector_client/core/src/local_runtime/`
-- 本地 SQLite Schema：`local_connector_client/core/migrations/`
+- Local Connector 能力执行器：`local_connector_client/core/src/local_runtime/`
+- Local Connector 控制状态 Schema：`local_connector_client/core/migrations/`
 - 云端 Task Runner：`task_runner_service/backend/src/services/`
 - 项目运行环境：`project_management_service/backend/src/services/runtime_environment.rs`
 - 开发与部署命令：`Makefile`、`docker/deploy.sh`、`scripts/local-dev-stack.sh`

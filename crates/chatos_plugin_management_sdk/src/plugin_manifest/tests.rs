@@ -127,13 +127,17 @@ fn schema_v2_requires_explicit_valid_execution_policy() {
 }
 
 #[test]
-fn schema_v2_rejects_cloud_runtime_components_and_permissions() {
+fn schema_v2_allows_cloud_mcp_runtime_but_keeps_prompt_permissions_local() {
     let mut mcp = schema_v2_prompt_manifest();
     mcp["execution"]["defaultHost"] = json!("cloud");
     mcp["mcpServers"] = json!({
         "remote": {"type": "http", "url": "https://mcp.example.com"}
     });
-    assert!(parse_plugin_manifest(mcp.to_string().as_str(), PluginManifestSource::Chatos).is_err());
+    mcp["permissions"] = json!([{
+        "permission": "network.domain:mcp.example.com",
+        "components": ["remote"]
+    }]);
+    assert!(parse_plugin_manifest(mcp.to_string().as_str(), PluginManifestSource::Chatos).is_ok());
 
     let mut permission = schema_v2_prompt_manifest();
     permission["execution"]["defaultHost"] = json!("cloud");

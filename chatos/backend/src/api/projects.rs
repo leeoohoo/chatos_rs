@@ -17,12 +17,27 @@ mod run_handlers;
 mod runtime_environment_handlers;
 mod session_resolver;
 
+pub(crate) use self::requirement_execution_handlers::{
+    cloud_execution_planner_message_is_stale, execution_message_status,
+};
+
+pub(crate) async fn repair_stale_cloud_execution_planner_message_for_reconciler(
+    message: crate::models::message::Message,
+    no_execution_links: bool,
+) -> Result<crate::models::message::Message, String> {
+    self::requirement_execution_handlers::repair_stale_cloud_execution_planner_message(
+        message,
+        no_execution_links,
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))
+}
+
 use self::contact_handlers::{
     add_project_contact, get_project_contact_lock, list_project_contacts, remove_project_contact,
 };
 use self::crud_handlers::{
-    create_cloud_project, create_project, delete_project, get_project, list_projects,
-    update_project,
+    create_cloud_project, delete_project, get_project, list_projects, update_project,
 };
 use self::plan_handlers::{
     get_project_plan, list_requirement_documents, list_requirement_work_items,
@@ -44,7 +59,7 @@ use self::runtime_environment_handlers::{
 
 pub fn router() -> Router {
     Router::new()
-        .route("/api/projects", get(list_projects).post(create_project))
+        .route("/api/projects", get(list_projects))
         .route("/api/projects/cloud", post(create_cloud_project))
         .route(
             "/api/projects/{id}",

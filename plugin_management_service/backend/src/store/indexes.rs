@@ -220,6 +220,64 @@ impl AppStore {
         )
         .await?;
 
+        create_unique_index(
+            &self.plugin_mcp_cloud_runtime_bundles,
+            doc! { "plugin_id": 1, "release_id": 1, "component.component_key": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_mcp_cloud_runtime_bundles,
+            doc! { "release_id": 1, "component.execution_host": 1 },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_cloud_credentials, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_cloud_credentials,
+            doc! {
+                "owner_user_id": 1,
+                "plugin_id": 1,
+                "release_id": 1,
+                "component_key": 1,
+                "secret_name": 1,
+            },
+        )
+        .await?;
+
+        create_unique_index(&self.plugin_cloud_oauth_connections, doc! { "id": 1 }).await?;
+        create_unique_index(
+            &self.plugin_cloud_oauth_connections,
+            doc! {
+                "owner_user_id": 1,
+                "plugin_id": 1,
+                "release_id": 1,
+                "component_key": 1,
+                "provider": 1,
+                "resource": 1,
+            },
+        )
+        .await?;
+
+        create_unique_index(
+            &self.plugin_cloud_oauth_authorizations,
+            doc! { "state_sha256": 1 },
+        )
+        .await?;
+        self.plugin_cloud_oauth_authorizations
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! { "expires_at": 1 })
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .expire_after(std::time::Duration::from_secs(0))
+                            .build(),
+                    )
+                    .build(),
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+
         create_unique_index(&self.plugin_oauth_connections, doc! { "id": 1 }).await?;
         create_unique_index(
             &self.plugin_oauth_connections,

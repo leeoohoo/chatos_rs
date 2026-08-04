@@ -50,4 +50,21 @@ describe('ApiClient surface header', () => {
     expect(requestedHeaders(fetchMock).get('X-Requested-With'))
       .toBe('local-connector-desktop');
   });
+
+  it('invalidates the active session when an authenticated request returns 401', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: '登录状态无效或已过期' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new ApiClient('https://api.example.com/api');
+    const onAuthenticationFailure = vi.fn();
+    client.setAccessToken('expired-token');
+    client.onAuthenticationFailure(onAuthenticationFailure);
+
+    await expect(client.issueWebSocketTicket()).rejects.toMatchObject({ status: 401 });
+
+    expect(client.getAccessToken()).toBeNull();
+    expect(onAuthenticationFailure).toHaveBeenCalledTimes(1);
+  });
 });

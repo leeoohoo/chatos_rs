@@ -7,7 +7,6 @@ import dayjs from 'dayjs';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  ExternalMcpConfigRecord,
   TaskMcpConfig,
   TaskRecord,
   TaskScheduleConfig,
@@ -34,7 +33,6 @@ type BuildTaskTableColumnsParams = {
   navigate: (to: string) => void;
   modelNameMap: Map<string, string>;
   projectNameMap: Map<string, string>;
-  externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
   pendingPromptCountByTaskId: Map<string, number>;
   scheduleModeLabels: Record<TaskScheduleMode, string>;
   taskRowRemoteActivityByTaskId: Map<string, TaskRowRemoteActivity>;
@@ -51,7 +49,6 @@ export function buildTaskTableColumns({
   navigate,
   modelNameMap,
   projectNameMap,
-  externalMcpConfigMap,
   pendingPromptCountByTaskId,
   scheduleModeLabels,
   taskRowRemoteActivityByTaskId,
@@ -217,31 +214,15 @@ export function buildTaskTableColumns({
       dataIndex: 'mcp_config',
       width: 220,
       render: (mcpConfig: TaskMcpConfig) => {
-        const builtinCount = mcpConfig.enabled_builtin_kinds.length;
-        const externalConfigIds = mcpConfig.external_mcp_config_ids || [];
-        const visibleExternalConfigs = externalConfigIds.slice(0, 2);
-        const hiddenExternalCount = Math.max(
-          externalConfigIds.length - visibleExternalConfigs.length,
-          0,
-        );
+        const resolvedCount =
+          mcpConfig.enabled_builtin_kinds.length +
+          (mcpConfig.external_mcp_config_ids || []).length;
         return (
           <Space size={[4, 4]} wrap>
-            <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
-              {mcpConfig.enabled ? t('common.enabled') : t('common.disabled')}
+            <Tag color="processing">{t('tasks.mcpProgramManaged')}</Tag>
+            <Tag color={resolvedCount ? 'blue' : undefined}>
+              {t('tasks.mcpResolvedCount', { count: resolvedCount })}
             </Tag>
-            <Tag>{t('tasks.mcpBuiltinCount', { count: builtinCount })}</Tag>
-            <Tag color={externalConfigIds.length ? 'blue' : undefined}>
-              {t('tasks.mcpExternalCount', { count: externalConfigIds.length })}
-            </Tag>
-            {visibleExternalConfigs.map((configId) => {
-              const config = externalMcpConfigMap.get(configId);
-              return (
-                <Tag key={configId} color={config?.enabled === false ? 'default' : 'cyan'}>
-                  {config?.name || configId}
-                </Tag>
-              );
-            })}
-            {hiddenExternalCount > 0 ? <Tag>+{hiddenExternalCount}</Tag> : null}
           </Space>
         );
       },

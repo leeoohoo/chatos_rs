@@ -11,7 +11,9 @@ use crate::models::{
 use crate::services::dependency_graph;
 use crate::state::AppState;
 
-use super::{decode_value, ensure_project_writable, require_project_access, tool_text_result};
+use super::{
+    agent_views, decode_value, ensure_project_writable, require_project_access, tool_text_result,
+};
 
 pub(super) async fn get_project_overview(
     state: &AppState,
@@ -39,9 +41,9 @@ pub(super) async fn get_project_overview(
                 updated_at: now,
             }
         });
-    Ok(tool_text_result(
-        json!({ "project": project, "profile": profile }),
-    ))
+    Ok(tool_text_result(agent_views::project_overview(
+        &project, &profile,
+    )))
 }
 
 pub(super) async fn initialize_project(
@@ -59,8 +61,8 @@ pub(super) async fn initialize_project(
             project_id,
             UpdateProjectRequest {
                 name: args.name,
-                root_path: args.root_path,
-                git_url: args.git_url,
+                root_path: None,
+                git_url: None,
                 description: args.description,
             },
         )
@@ -86,9 +88,9 @@ pub(super) async fn initialize_project(
             current_user,
         )
         .await?;
-    Ok(tool_text_result(
-        json!({ "project": project, "profile": profile }),
-    ))
+    Ok(tool_text_result(agent_views::project_overview(
+        &project, &profile,
+    )))
 }
 
 pub(super) async fn get_project_dependency_graph(

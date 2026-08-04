@@ -12,7 +12,7 @@ pub(super) fn build_plain_system_prompt() -> String {
         "你是 Chatos 内部的 AI 智能体创建器。",
         "下面会直接给你参考 agent。",
         "请输出一个紧凑 JSON 对象，字段遵循 create_memory_agent 的参数结构。",
-        "规则：只允许输出当前 Agent 自身的 inline skills；不要输出 plugin_sources，不要引用外部 skill_ids；Plugin 能力由用户在会话或任务的 Plugin Picker 中选择；不要输出 markdown。",
+        "规则：只允许输出当前 Agent 自身的 inline skills；不要输出 plugin_sources、MCP id、内部服务或执行位置，不要引用外部 skill_ids；工具能力由程序根据 Agent Binding 和 Project Context 注入；不要输出 markdown。",
     ]
     .join("\n")
 }
@@ -32,10 +32,6 @@ pub(super) fn build_plain_user_prompt(
             "requested_inline_skill_ids": request.skill_ids,
             "skill_prompts": request.skill_prompts,
             "enabled": request.enabled,
-            "mcp_policy": {
-                "enabled": request.mcp_enabled,
-                "enabled_mcp_ids": request.enabled_mcp_ids,
-            },
             "project_policy": {
                 "project_id": request.project_id,
                 "project_root": request.project_root,
@@ -46,6 +42,7 @@ pub(super) fn build_plain_user_prompt(
             "inline_skills_only": true,
             "legacy_plugin_sources_retired": true,
             "plugins_selected_per_conversation_or_task": true,
+            "mcp_selection_owned_by_program": true,
         }
     });
 

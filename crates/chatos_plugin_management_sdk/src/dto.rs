@@ -25,6 +25,33 @@ pub const TASK_PROCESS_LOG_MCP_RESOURCE_ID: &str = "system_mcp_task_process_log"
 pub const SYSTEM_MCP_RUNTIME_KIND: &str = "system";
 pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentToolPlane {
+    #[default]
+    Managed,
+    LocalOnly,
+    None,
+}
+
+impl AgentToolPlane {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Managed => "managed",
+            Self::LocalOnly => "local_only",
+            Self::None => "none",
+        }
+    }
+
+    pub const fn supports_tools(self) -> bool {
+        matches!(self, Self::Managed | Self::LocalOnly)
+    }
+
+    pub const fn uses_managed_gateway(self) -> bool {
+        matches!(self, Self::Managed)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemMcpKey {
@@ -137,14 +164,12 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 12] = [
         Self::ChatosConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
         Self::TaskRunnerPlanPhase,
-        Self::TaskRunnerLocalPlanPhase,
         Self::TaskRunnerRunPhase,
-        Self::TaskRunnerLocalRunPhase,
         Self::ProjectManagementAgent,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
@@ -476,6 +501,8 @@ pub struct ResolvedMcp {
     pub available: bool,
     pub status: String,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub tool_snapshot: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

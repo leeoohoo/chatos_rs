@@ -364,6 +364,55 @@ async fn respects_selected_builtin_kind_header() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn local_command_approval_tool_validates_and_returns_structured_decision() {
+    let root = temp_test_dir("local-command-approval-tool");
+    let project = root.join("apps").join("web");
+    fs::create_dir_all(project.as_path()).expect("create project");
+    let workspace = test_workspace(root.as_path());
+    let state = test_state_with_workspace(workspace);
+    let mut request = request_with_cwd_and_builtin_kinds("apps/web", "LocalCommandApproval");
+    let recorder = CommandHistoryRecorder {
+        state_path: root.join("state.json"),
+        state: Arc::new(RwLock::new(state.clone())),
+    };
+
+    let tools = local_mcp_builtin_compatible_tools(&request, &state).expect("list tools");
+    assert_eq!(
+        tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        vec!["approval_decision"]
+    );
+
+    request.body = json!({
+        "jsonrpc": "2.0",
+        "id": "decision-1",
+        "method": "tools/call",
+        "params": {
+            "name": "approval_decision",
+            "arguments": {
+                "decision": "deny",
+                "reason": "command escapes the project workspace"
+            }
+        }
+    });
+    let response = handle_mcp_body(&request, &state, &recorder)
+        .await
+        .expect("approval decision response");
+    assert_eq!(
+        response.pointer("/result/_structured_result/decision"),
+        Some(&json!("deny"))
+    );
+    assert_eq!(
+        response.pointer("/result/_structured_result/reason"),
+        Some(&json!("command escapes the project workspace"))
+    );
+
+    fs::remove_dir_all(root.as_path()).expect("cleanup");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn lifecycle_starts_and_cleans_task_terminal() {
     let root = temp_test_dir("lifecycle-terminal");
     let project = root.join("apps").join("web");

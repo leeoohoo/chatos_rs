@@ -19,10 +19,6 @@ interface SessionResourcesApiClient {
     contactId: string,
     params?: { limit?: number; offset?: number },
   ) => Promise<unknown[]>;
-  getConversationMemoryRecalls: (
-    sessionId: string,
-    params?: { limit?: number },
-  ) => Promise<unknown[]>;
 }
 
 interface UseChatInterfaceSessionResourcesParams {

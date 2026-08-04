@@ -10,6 +10,7 @@ import type {
   ProjectRuntimeEnvironmentProgressResponse,
   ProjectRuntimeEnvironmentResponse,
 } from '../../lib/api/client/types';
+import { isCloudProjectSource } from '../../lib/domain/projectSource';
 import { cn } from '../../lib/utils';
 import {
   actionNoticeForRuntimeStatus,
@@ -35,6 +36,7 @@ interface CloudProjectRuntimeEnvironmentPanelProps {
   projectId: string;
   projectName: string;
   projectSourceType?: string | null;
+  projectRootPath?: string | null;
 }
 
 
@@ -42,11 +44,15 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   projectId,
   projectName,
   projectSourceType,
+  projectRootPath,
 }) => {
   const { t } = useI18n();
   const client = useApiClient();
-  const isCloudProject = projectSourceType?.trim().toLowerCase() === 'cloud';
-  const ProjectSourceIcon = isCloudProject ? Cloud : HardDrive;
+  const cloudProjectSource = isCloudProjectSource({
+    sourceType: projectSourceType,
+    rootPath: projectRootPath || '',
+  });
+  const ProjectSourceIcon = cloudProjectSource ? Cloud : HardDrive;
   const [response, setResponse] = useState<ProjectRuntimeEnvironmentResponse | null>(null);
   const [progress, setProgress] = useState<ProjectRuntimeEnvironmentProgressResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -128,7 +134,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
     setProgress(null);
     setActionNotice({
       tone: 'info',
-      message: isCloudProject
+      message: cloudProjectSource
         ? t('cloudRuntime.imageBuildSubmitted')
         : t('cloudRuntime.localBuildSubmitted'),
     });
@@ -166,7 +172,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
     } finally {
       setBuildingImageId(null);
     }
-  }, [client, isCloudProject, projectId, t]);
+  }, [client, cloudProjectSource, projectId, t]);
 
   const environment = environmentRecord(response);
   const environmentData = asRecord(environment);
@@ -300,7 +306,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <ProjectSourceIcon
-              className={cn('h-4 w-4', isCloudProject ? 'text-sky-600' : 'text-emerald-600')}
+              className={cn('h-4 w-4', cloudProjectSource ? 'text-sky-600' : 'text-emerald-600')}
               aria-hidden="true"
             />
             <h2 className="truncate text-base font-semibold text-foreground">
@@ -315,7 +321,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
         <div className="flex shrink-0 items-center gap-2">
           <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
             <span>
-              {isCloudProject
+              {cloudProjectSource
                 ? t('cloudRuntime.sandboxFixed')
                 : t('cloudRuntime.sandboxEnabled')}
             </span>
@@ -325,7 +331,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
               disabled
               readOnly
               className="peer sr-only"
-              aria-label={isCloudProject
+              aria-label={cloudProjectSource
                 ? t('cloudRuntime.sandboxFixed')
                 : t('cloudRuntime.sandboxEnabled')}
             />
@@ -353,7 +359,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
             )}
             {analyzing || backendBusy
               ? backendBuilding
-                ? isCloudProject
+                ? cloudProjectSource
                   ? t('cloudRuntime.preparingAllImages')
                   : t('cloudRuntime.localBuilding')
                 : t('cloudRuntime.analyzing')
@@ -652,7 +658,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
 
       <CloudRuntimeImagePlans
         images={images}
-        isCloudProject={isCloudProject}
+        isCloudProject={cloudProjectSource}
         buildingImageId={buildingImageId || (backendBuilding ? '__local_environment__' : null)}
         onGenerateImage={(imageId) => void generateRuntimeImage(imageId)}
       />

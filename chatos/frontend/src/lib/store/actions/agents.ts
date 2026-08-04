@@ -31,8 +31,6 @@ interface AiCreateAgentActionPayload {
   skill_ids?: string[];
   skill_prompts?: string[];
   enabled?: boolean;
-  mcp_enabled?: boolean;
-  enabled_mcp_ids?: string[];
   project_id?: string;
   project_root?: string;
 }
@@ -155,7 +153,6 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
           })).filter((skill) => skill.id && skill.name && skill.content) : [],
           skill_ids: Array.isArray(agent.skills) ? agent.skills.map((skill) => String(skill?.id || '').trim()).filter(Boolean) : [],
           default_skill_ids: Array.isArray(agent.skills) ? agent.skills.map((skill) => String(skill?.id || '').trim()).filter(Boolean) : [],
-          mcp_policy: agent.mcp_policy ?? null,
           project_policy: agent.project_policy ?? null,
           enabled: agent.enabled !== false,
         });
@@ -187,7 +184,6 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
             name: String(skill?.name || '').trim(),
             content: String(skill?.content || '').trim(),
           })).filter((skill) => skill.id && skill.name && skill.content) : [],
-          mcp_policy: agent.mcp_policy ?? null,
           project_policy: agent.project_policy ?? null,
           enabled: agent.enabled !== false,
         });
@@ -242,7 +238,6 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
         skill_ids: Array.isArray(payload.skill_ids) ? payload.skill_ids : [],
         default_skill_ids: Array.isArray(payload.skill_ids) ? payload.skill_ids : [],
         plugin_sources: [],
-        mcp_policy: null,
         project_policy: null,
         ui_status: 'creating',
         createdAt: new Date(),
@@ -267,8 +262,6 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
           skill_ids: payload.skill_ids,
           skill_prompts: payload.skill_prompts,
           enabled: payload.enabled,
-          mcp_enabled: payload.mcp_enabled,
-          enabled_mcp_ids: payload.enabled_mcp_ids,
           project_id: payload.project_id,
           project_root: payload.project_root,
         });

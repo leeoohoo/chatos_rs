@@ -12,9 +12,6 @@ pub struct ChatRuntimeMetadata {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    pub mcp_enabled: Option<bool>,
-    #[serde(default)]
-    pub enabled_mcp_ids: Vec<String>,
     pub auto_create_task: Option<bool>,
 }
 
@@ -44,38 +41,6 @@ pub fn metadata_bool(metadata: Option<&Value>, path: &[&str]) -> Option<bool> {
     cursor.as_bool()
 }
 
-pub fn metadata_string_list(metadata: Option<&Value>, path: &[&str]) -> Vec<String> {
-    let mut cursor = match metadata {
-        Some(value) => value,
-        None => return Vec::new(),
-    };
-    for key in path {
-        let Some(next) = cursor.get(*key) else {
-            return Vec::new();
-        };
-        cursor = next;
-    }
-    let Some(items) = cursor.as_array() else {
-        return Vec::new();
-    };
-
-    let mut out = Vec::new();
-    for item in items {
-        let Some(raw) = item.as_str() else {
-            continue;
-        };
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if out.iter().any(|existing: &String| existing == trimmed) {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    out
-}
-
 fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
     paths
         .iter()
@@ -86,20 +51,6 @@ fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<
     paths
         .iter()
         .find_map(|path| metadata_bool_with_source(metadata, path))
-}
-
-fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Vec<String> {
-    paths
-        .iter()
-        .find_map(|path| {
-            let values = metadata_string_list_with_source(metadata, path);
-            if values.is_empty() {
-                None
-            } else {
-                Some(values)
-            }
-        })
-        .unwrap_or_default()
 }
 
 fn with_source_metadata_prefix<'a>(path: &'a [&'a str]) -> Vec<&'a str> {
@@ -121,15 +72,6 @@ fn metadata_bool_with_source(metadata: Option<&Value>, path: &[&str]) -> Option<
         let source_path = with_source_metadata_prefix(path);
         metadata_bool(metadata, source_path.as_slice())
     })
-}
-
-fn metadata_string_list_with_source(metadata: Option<&Value>, path: &[&str]) -> Vec<String> {
-    let values = metadata_string_list(metadata, path);
-    if !values.is_empty() {
-        return values;
-    }
-    let source_path = with_source_metadata_prefix(path);
-    metadata_string_list(metadata, source_path.as_slice())
 }
 
 impl ChatRuntimeMetadata {
@@ -191,20 +133,6 @@ impl ChatRuntimeMetadata {
                 &[
                     &["chat_runtime", "remote_connection_id"],
                     &["chat_runtime", "remoteConnectionId"],
-                ],
-            ),
-            mcp_enabled: metadata_bool_aliases(
-                metadata,
-                &[
-                    &["chat_runtime", "mcp_enabled"],
-                    &["chat_runtime", "mcpEnabled"],
-                ],
-            ),
-            enabled_mcp_ids: metadata_string_list_aliases(
-                metadata,
-                &[
-                    &["chat_runtime", "enabled_mcp_ids"],
-                    &["chat_runtime", "enabledMcpIds"],
                 ],
             ),
             auto_create_task: metadata_bool_aliases(

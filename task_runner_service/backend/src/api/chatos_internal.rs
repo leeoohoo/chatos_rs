@@ -336,6 +336,7 @@ where
 fn trim_run_for_chatos_detail(
     mut run: crate::models::TaskRunRecord,
 ) -> crate::models::TaskRunRecord {
+    run.execution_lane_key = None;
     run.chatos_callback_delivery = None;
     redact_plugin_command_arguments(&mut run.input_snapshot);
     run.input_snapshot = truncate_run_input_snapshot_for_chatos(run.input_snapshot);
@@ -899,6 +900,22 @@ async fn confirm_chatos_project_execution(
     let already_confirmed = tasks
         .iter()
         .any(|task| task.last_run_id.is_some() || task.status != TaskStatus::Ready);
+    if !already_confirmed {
+        for task in tasks
+            .iter()
+            .filter(|task| task.mcp_config.requires_execution)
+        {
+            state
+                .run_service
+                .validate_sandbox_route_for_task(task)
+                .await
+                .map_err(|error| {
+                    InternalApiError::conflict(format!(
+                        "project sandbox environment must be ready before execution: {error}"
+                    ))
+                })?;
+        }
+    }
     let started_runs = if already_confirmed {
         let mut existing_runs = Vec::new();
         for run_id in tasks.iter().filter_map(|task| task.last_run_id.as_deref()) {

@@ -162,7 +162,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
           ...(confirmationState.contactId ? { contact_id: confirmationState.contactId } : {}),
         },
       );
-      setConfirmationMessage('已确认执行，Task Runner 正在按流程图从根任务开始运行。');
+      setConfirmationMessage('已确认执行，任务正在按流程图从起始节点开始运行。');
       await reloadGraph();
     } catch (err) {
       setConfirmationError(err instanceof Error ? err.message : '确认执行失败');
@@ -319,7 +319,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
                   <div className="min-w-0">
                     <div className="text-sm font-semibold">执行计划已完整生成，尚未开始执行</div>
                     <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                      请先检查下面的完整 DAG。只有点击“确认执行”后，Task Runner 才会开始运行根任务。
+                      请先检查下面的完整任务依赖图。只有点击“确认执行”后，任务才会从起始节点开始运行。
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -354,18 +354,18 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
               && ['planning', 'pending', 'processing'].includes(confirmationState.overallStatus) ? (
                 <div className="mb-3 flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-200">
                   <LoaderCircle className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
-                  <span>Agent 正在生成完整执行任务图。生成完成前不会启动 Task Runner。</span>
+                  <span>正在生成完整执行任务图。生成完成前不会启动任务。</span>
                 </div>
               ) : confirmationState.isProjectExecution
                 && (planStopped || confirmationState.overallStatus === 'stopped') ? (
                   <div className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                    执行计划已放弃，Task Runner 未启动。你可以回到需求页面重新生成。
+                    执行计划已放弃，任务未启动。你可以回到需求页面重新生成。
                   </div>
                 ) : confirmationState.isProjectExecution
                 && ['failed', 'error', 'cancelled', 'canceled']
                   .includes(confirmationState.overallStatus) ? (
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
-                    <span>执行计划没有完整生成，Task Runner 未启动。</span>
+                    <span>执行计划没有完整生成，任务未启动。</span>
                     <button
                       type="button"
                       className="rounded-md border border-red-300 bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-red-100 disabled:cursor-wait disabled:opacity-60"
@@ -379,7 +379,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
                 && (confirmationState.hasStartedTasks || confirmationMessage) ? (
                   <div className="mb-3 flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>{confirmationMessage || '执行计划已确认，Task Runner 正在按依赖顺序运行。'}</span>
+                    <span>{confirmationMessage || '执行计划已确认，任务正在按依赖顺序运行。'}</span>
                   </div>
                 ) : null}
 

@@ -42,6 +42,11 @@ fn test_context() -> (PathBuf, LocalState, RelayRequest) {
         path: Some("/skills/execute".to_string()),
         headers: BTreeMap::new(),
         body: Value::Null,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
     };
     (root, state, request)
 }

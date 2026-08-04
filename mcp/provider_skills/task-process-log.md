@@ -1,14 +1,14 @@
-# Task Process Log MCP
+# 任务过程记录工具
 
-This is a run-scoped system MCP exposed only inside the current Task Runner execution. Use `task_run_process_record_process` to leave short visible breadcrumbs that help the user and later reviewers understand what happened during the run.
+使用 `task_run_process_record_process` 留下简短、用户可见的执行记录，帮助用户和后续复核者理解当前任务发生了什么。
 
-Good entries include:
+适合记录：
 
-- the approach selected before making changes;
-- a concrete root cause or important observation;
-- existing code or platform capability that was reused;
-- a verification result;
-- a blocker that still needs user input or external state;
-- the next useful step.
+- 修改前选定的实施方式；
+- 已确认的共享根因或关键事实；
+- 复用的现有代码或能力；
+- 一项验证结果；
+- 仍需要用户输入或外部状态的阻塞；
+- 下一步有价值的动作。
 
-Keep entries concise and user-safe. Do not write hidden chain-of-thought, secrets, credentials, raw command dumps, large file contents, or unrelated drafts. This MCP records the current task's visible process log only; it is not a replacement for making code changes, running checks, or returning the final answer.
+记录应简洁且适合展示。不要写隐藏推理、秘密、凭据、原始命令长输出、大段文件内容或无关草稿。过程记录不能代替真实修改、必要验证或最终答案。

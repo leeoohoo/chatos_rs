@@ -2,15 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
-use chatos_service_runtime::{
-    env_flag, is_production_environment, validate_production_secret,
-    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
-};
+use chatos_service_runtime::{parse_bool_text, validate_production_secret};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -23,12 +20,8 @@ pub struct AppConfig {
     pub plugin_hook_relay_request_timeout: Duration,
     pub sandbox_image_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
-    pub legacy_internal_api_secret: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
-    pub memory_engine_base_url: String,
-    pub memory_engine_operator_token: Option<String>,
-    pub memory_engine_request_timeout: Duration,
     pub require_device_connect_signature: bool,
     pub allow_device_connect_query_token: bool,
     pub device_connect_signature_max_skew: Duration,
@@ -41,70 +34,32 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
-        let host = std::env::var("LOCAL_CONNECTOR_SERVICE_HOST")
-            .ok()
-            .and_then(|value| value.parse::<IpAddr>().ok())
-            .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
-        let port = std::env::var("LOCAL_CONNECTOR_SERVICE_PORT")
-            .ok()
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(39230);
-        let timeout_ms = std::env::var("LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS")
-            .ok()
-            .or_else(|| std::env::var("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS").ok())
-            .or_else(|| std::env::var("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS").ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(5_000)
-            .max(300);
-        let relay_timeout_ms = std::env::var("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(30_000)
-            .max(1_000);
+        let host = required_text("LOCAL_CONNECTOR_SERVICE_HOST")?
+            .parse::<IpAddr>()
+            .map_err(|err| {
+                format!("LOCAL_CONNECTOR_SERVICE_HOST must be a valid ip address: {err}")
+            })?;
+        let port = required_u16("LOCAL_CONNECTOR_SERVICE_PORT")?;
+        let timeout_ms = required_u64("LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
+        let relay_timeout_ms = required_u64("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS")?.max(1_000);
         let plugin_hook_relay_timeout_ms =
-            std::env::var("LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS")
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(5 * 60 * 1_000 + 15_000)
+            required_u64("LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS")?
                 .clamp(30_000, 10 * 60 * 1_000);
         let sandbox_image_relay_timeout_ms =
-            std::env::var("LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS")
-                .ok()
-                .or_else(|| std::env::var("SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS").ok())
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(2 * 60 * 60 * 1_000)
-                .max(10_000);
-        let memory_timeout_ms = std::env::var("LOCAL_CONNECTOR_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")
-            .ok()
-            .or_else(|| std::env::var("MEMORY_ENGINE_REQUEST_TIMEOUT_MS").ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(30_000)
-            .max(1_000);
+            required_u64("LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS")?.max(10_000);
         let signature_skew_seconds =
-            normalized_env("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(300)
-                .clamp(30, 3600);
+            required_u64("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")?.clamp(30, 3600);
         let active_session_lease_ttl_seconds =
-            normalized_env("LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(90)
-                .clamp(30, 600);
+            required_u64("LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS")?.clamp(30, 600);
         let managed_requirements_bundle_ttl_seconds =
-            normalized_env("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS")
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(24 * 60 * 60)
+            required_u64("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS")?
                 .clamp(300, 7 * 24 * 60 * 60);
 
         let config = Self {
             host,
             port,
-            database_url: normalized_env("LOCAL_CONNECTOR_DATABASE_URL")
-                .unwrap_or_else(default_database_url),
-            user_service_base_url: normalized_env("LOCAL_CONNECTOR_USER_SERVICE_BASE_URL")
-                .or_else(|| normalized_env("CHATOS_USER_SERVICE_BASE_URL"))
-                .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
-                .unwrap_or_else(default_user_service_base_url),
+            database_url: required_text("LOCAL_CONNECTOR_DATABASE_URL")?,
+            user_service_base_url: required_text("LOCAL_CONNECTOR_USER_SERVICE_BASE_URL")?,
             user_service_request_timeout: Duration::from_millis(timeout_ms),
             relay_request_timeout: Duration::from_millis(relay_timeout_ms),
             plugin_hook_relay_request_timeout: Duration::from_millis(plugin_hook_relay_timeout_ms),
@@ -112,42 +67,27 @@ impl AppConfig {
                 sandbox_image_relay_timeout_ms,
             ),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
-            legacy_internal_api_secret: normalized_env("LOCAL_CONNECTOR_INTERNAL_API_SECRET"),
             internal_api_secrets: caller_internal_api_secrets(),
-            require_signed_internal_requests: env_flag(
+            require_signed_internal_requests: required_managed_bool(
                 "LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-                is_production_environment(),
-            ),
-            memory_engine_base_url: normalize_memory_engine_base_url(
-                normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_BASE_URL")
-                    .or_else(|| normalized_env("MEMORY_ENGINE_BASE_URL"))
-                    .unwrap_or_else(default_memory_engine_base_url),
-            ),
-            memory_engine_operator_token: normalized_env(
-                "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            )
-            .or_else(|| normalized_env("LOCAL_CONNECTOR_MEMORY_ENGINE_OPERATOR_TOKEN"))
-            .or_else(|| normalized_env("MEMORY_ENGINE_OPERATOR_TOKEN")),
-            memory_engine_request_timeout: Duration::from_millis(memory_timeout_ms),
-            require_device_connect_signature: env_flag(
+            )?,
+            require_device_connect_signature: required_managed_bool(
                 "LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE",
-                true,
-            ),
-            allow_device_connect_query_token: env_flag(
+            )?,
+            allow_device_connect_query_token: required_managed_bool(
                 "LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN",
-                false,
-            ),
+            )?,
             device_connect_signature_max_skew: Duration::from_secs(signature_skew_seconds),
             active_session_lease_ttl: Duration::from_secs(active_session_lease_ttl_seconds),
-            managed_requirements_toml_path: normalized_env(
+            managed_requirements_toml_path: optional_text(
                 "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH",
             )
             .map(PathBuf::from),
-            managed_requirements_signing_key_path: normalized_env(
+            managed_requirements_signing_key_path: optional_text(
                 "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH",
             )
             .map(PathBuf::from),
-            managed_requirements_signing_key_id: normalized_env(
+            managed_requirements_signing_key_id: optional_text(
                 "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID",
             ),
             managed_requirements_bundle_ttl: Duration::from_secs(
@@ -160,7 +100,7 @@ impl AppConfig {
                 "chatos-backend",
                 "task-runner",
                 "project-service",
-                "memory-engine",
+                "mcp-management-service",
             ] {
                 if !config.internal_api_secrets.contains_key(caller) {
                     return Err(format!(
@@ -168,20 +108,6 @@ impl AppConfig {
                     ));
                 }
             }
-        }
-        if config.legacy_internal_api_secret.is_some() {
-            validate_production_secret(
-                "LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-                config.legacy_internal_api_secret.as_deref(),
-                &[
-                    "chatos-local-connector-dev-secret",
-                    "change_me_task_runner_internal_secret",
-                    "change_me_chatos_local_connector_secret",
-                    "change_me_task_runner_local_connector_secret",
-                    "change_me_project_service_local_connector_secret",
-                    "change_me_memory_engine_local_connector_secret",
-                ],
-            )?;
         }
         for (caller, secret) in &config.internal_api_secrets {
             validate_production_secret(
@@ -193,21 +119,10 @@ impl AppConfig {
                     "change_me_chatos_local_connector_secret",
                     "change_me_task_runner_local_connector_secret",
                     "change_me_project_service_local_connector_secret",
-                    "change_me_memory_engine_local_connector_secret",
+                    "change_me_mcp_management_local_connector_secret",
                 ],
             )?;
         }
-        if is_production_environment() || config.memory_engine_operator_token.is_some() {
-            validate_production_secret(
-                "LOCAL_CONNECTOR_MEMORY_ENGINE_INTERNAL_API_SECRET",
-                config.memory_engine_operator_token.as_deref(),
-                &[
-                    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
-                    "change_me_local_connector_memory_engine_secret",
-                ],
-            )?;
-        }
-
         Ok(config)
     }
 
@@ -228,7 +143,7 @@ impl AppConfig {
         let mut internal_api_secrets = HashMap::new();
         internal_api_secrets.insert("chatos-backend".to_string(), secret.to_string());
         Self {
-            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            host: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             port: 0,
             database_url: "memory://plugin-artifact-relay-test".to_string(),
             user_service_base_url: "http://127.0.0.1.invalid".to_string(),
@@ -237,12 +152,8 @@ impl AppConfig {
             plugin_hook_relay_request_timeout: Duration::from_secs(2),
             sandbox_image_relay_request_timeout: Duration::from_secs(2),
             public_base_url: None,
-            legacy_internal_api_secret: None,
             internal_api_secrets,
             require_signed_internal_requests: true,
-            memory_engine_base_url: "http://127.0.0.1.invalid/api/memory-engine/v1".to_string(),
-            memory_engine_operator_token: None,
-            memory_engine_request_timeout: Duration::from_secs(1),
             require_device_connect_signature: true,
             allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),
@@ -270,8 +181,8 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
             "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         ),
         (
-            "memory-engine",
-            "MEMORY_ENGINE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+            "mcp-management-service",
+            "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()
@@ -285,43 +196,32 @@ pub fn load_local_connector_dotenv() {
     chatos_service_runtime::load_service_dotenv(Path::new(env!("CARGO_MANIFEST_DIR")));
 }
 
-fn default_database_url() -> String {
-    "mongodb://admin:admin@127.0.0.1:27018/local_connector_service?authSource=admin".to_string()
+fn required_text(key: &str) -> Result<String, String> {
+    normalized_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
 }
 
-fn default_user_service_base_url() -> String {
-    let host = normalized_env("USER_SERVICE_HOST")
-        .map(|value| match value.as_str() {
-            "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
-            _ => value,
-        })
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-    let port = normalized_env("USER_SERVICE_PORT")
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(39190);
-    format!("http://{host}:{port}")
+fn required_u64(key: &str) -> Result<u64, String> {
+    let value = required_text(key)?;
+    value
+        .parse::<u64>()
+        .map_err(|err| format!("{key} must be a valid integer: {err}"))
 }
 
-fn default_memory_engine_base_url() -> String {
-    let host = normalized_env("MEMORY_ENGINE_HOST")
-        .map(|value| match value.as_str() {
-            "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
-            _ => value,
-        })
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-    let port = normalized_env("MEMORY_ENGINE_PORT")
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(7081);
-    format!("http://{host}:{port}/api/memory-engine/v1")
+fn required_u16(key: &str) -> Result<u16, String> {
+    let value = required_text(key)?;
+    value
+        .parse::<u16>()
+        .map_err(|err| format!("{key} must be a valid integer: {err}"))
 }
 
-fn normalize_memory_engine_base_url(mut base_url: String) -> String {
-    while base_url.ends_with('/') {
-        base_url.pop();
-    }
-    if base_url.ends_with("/api/memory-engine/v1") || base_url.contains("/api/memory-engine/") {
-        base_url
-    } else {
-        format!("{base_url}/api/memory-engine/v1")
-    }
+fn optional_text(key: &str) -> Option<String> {
+    normalized_env(key)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn required_managed_bool(key: &str) -> Result<bool, String> {
+    let value = normalized_env(key)
+        .ok_or_else(|| format!("{key} is required from configuration center"))?;
+    parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
 }

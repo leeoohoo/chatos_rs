@@ -1,52 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-export interface McpConfigCreatePayload {
-  id: string;
-  name: string;
-  command: string;
-  type: 'http' | 'stdio';
-  args?: string[] | null;
-  env?: Record<string, string> | null;
-  cwd?: string | null;
-  enabled: boolean;
-  user_id?: string;
-}
-
-export interface McpConfigUpdatePayload {
-  id?: string;
-  name?: string;
-  command?: string;
-  type?: 'http' | 'stdio';
-  args?: string[] | null;
-  env?: Record<string, string> | null;
-  cwd?: string | null;
-  enabled?: boolean;
-  userId?: string;
-}
-
-export interface McpConfigResponse {
-  id: string;
-  name: string;
-  display_name?: string | null;
-  displayName?: string | null;
-  command: string;
-  type: 'http' | 'stdio';
-  args?: string[] | null;
-  env?: Record<string, string> | null;
-  cwd?: string | null;
-  enabled?: boolean;
-  readonly?: boolean;
-  builtin?: boolean;
-  config?: Record<string, unknown> | null;
-  user_id?: string | null;
-  userId?: string | null;
-  created_at?: string;
-  createdAt?: string;
-  updated_at?: string;
-  updatedAt?: string;
-}
-
 export interface AiModelConfigCreatePayload {
   id: string;
   name: string;
@@ -329,10 +283,4 @@ export interface ApplicationResponse {
   enabled?: boolean;
   created_at?: string;
   updated_at?: string;
-}
-
-export interface McpConfigResourceResponse {
-  success: boolean;
-  config: Record<string, unknown> | null;
-  alias?: string;
 }

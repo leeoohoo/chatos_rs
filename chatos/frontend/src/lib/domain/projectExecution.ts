@@ -33,7 +33,3 @@ export const resolveProjectExecutionPlane = (
 
   return 'cloud';
 };
-
-export const isCloudProject = (
-  project: Pick<Project, 'executionPlane' | 'sourceType' | 'rootPath'>,
-): boolean => resolveProjectExecutionPlane(project) === 'cloud';

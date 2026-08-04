@@ -196,54 +196,6 @@ pub(crate) fn local_mcp_terminal_project_id(request: &RelayRequest) -> Option<St
         .or_else(|| Some(request.workspace_id.clone()))
 }
 
-pub(crate) fn local_terminal_controller_context_for_task_run(
-    root: &Path,
-    owner_user_id: &str,
-    run_id: &str,
-    timeout_ms: u64,
-) -> TerminalControllerContext {
-    TerminalControllerContext {
-        root: root.to_path_buf(),
-        user_id: Some(owner_user_id.to_string()),
-        project_id: Some(run_id.to_string()),
-        idle_timeout_ms: 1_000,
-        max_wait_ms: timeout_ms,
-        max_output_chars: MAX_TERMINAL_OUTPUT_BYTES,
-    }
-}
-
-pub(crate) async fn kill_local_terminal_sessions_for_task_run(
-    run_id: &str,
-) -> std::result::Result<Value, String> {
-    let sessions = {
-        let registry = local_mcp_terminal_registry().sessions.read().await;
-        registry.values().cloned().collect::<Vec<_>>()
-    };
-    for session in sessions {
-        let meta = session.meta.lock().await.clone();
-        if meta.project_id.as_deref() != Some(run_id) {
-            continue;
-        }
-        let context = local_terminal_controller_context_for_task_run(
-            Path::new(meta.root.as_str()),
-            meta.user_id.as_deref().unwrap_or_default(),
-            run_id,
-            30_000,
-        );
-        return LocalConnectorTerminalControllerStore
-            .kill_sessions_for_context(context)
-            .await;
-    }
-    Ok(json!({
-        "ok": true,
-        "total": 0,
-        "killed": 0,
-        "already_exited": 0,
-        "terminal_ids": [],
-        "errors": [],
-    }))
-}
-
 pub(crate) fn local_terminal_controller_service_for_root(
     root: &Path,
     request: &RelayRequest,
@@ -285,6 +237,11 @@ mod tests {
                 ("x-task-runner-run-id".to_string(), "run-1".to_string()),
             ]),
             body: json!({}),
+            platform_signature: None,
+            platform_signature_key_id: None,
+            platform_signature_alg: None,
+            platform_timestamp: None,
+            platform_nonce: None,
         };
         assert_eq!(
             local_mcp_terminal_project_id(&request).as_deref(),

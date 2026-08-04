@@ -15,7 +15,6 @@ import dayjs from 'dayjs';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  ExternalMcpConfigRecord,
   PaginatedResponse,
   RemoteServerRecord,
   TaskRecord,
@@ -69,7 +68,6 @@ type TaskDetailDrawerProps = {
   projectNameMap: Map<string, string>;
   taskSummaryMap: Map<string, string>;
   remoteServerMap: Map<string, RemoteServerRecord>;
-  externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
   taskStatusLabel: (status: TaskStatus) => string;
   onClose: () => void;
   onEditTask: (task: TaskRecord) => void;
@@ -109,7 +107,6 @@ export function TaskDetailDrawer({
   projectNameMap,
   taskSummaryMap,
   remoteServerMap,
-  externalMcpConfigMap,
   taskStatusLabel,
   onClose,
   onEditTask,
@@ -239,21 +236,8 @@ export function TaskDetailDrawer({
                   task.mcp_config.default_remote_server_id
                 : t('tasks.modelUnbound')}
             </Descriptions.Item>
-            <Descriptions.Item label={t('tasks.detail.externalMcpConfigs')}>
-              {task.mcp_config.external_mcp_config_ids?.length ? (
-                <Space wrap>
-                  {task.mcp_config.external_mcp_config_ids.map((configId) => {
-                    const config = externalMcpConfigMap.get(configId);
-                    return (
-                      <Tag key={configId} color={config?.enabled === false ? 'default' : 'blue'}>
-                        {config?.name || configId}
-                      </Tag>
-                    );
-                  })}
-                </Space>
-              ) : (
-                t('common.noData')
-              )}
+            <Descriptions.Item label={t('tasks.detail.mcpManagement')}>
+              <Tag color="processing">{t('tasks.mcpProgramManaged')}</Tag>
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.pluginTarget')}>
               {task.plugin_config?.device_id ? (

@@ -19,5 +19,9 @@ pub(super) async fn get_managed_runtime_config(
             "Managed runtime config sync requires a human user",
         ));
     }
-    Ok(Json(state.managed_runtime_config_bundle().await))
+    state
+        .managed_runtime_config_bundle()
+        .await
+        .map(Json)
+        .map_err(ApiError::internal)
 }

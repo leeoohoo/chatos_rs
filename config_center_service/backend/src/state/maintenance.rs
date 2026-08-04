@@ -2,6 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::catalog::{
+    DEFAULT_LOCAL_RABBITMQ_URL, TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY, TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
+};
 
 impl AppState {
     pub(super) async fn audit(
@@ -92,29 +96,8 @@ impl AppState {
         }
 
         let definitions = self.store.list_definitions().await?;
-        for active in self.store.list_active_releases().await? {
-            let Some(release) = self.store.get_release(active.release_id.as_str()).await? else {
-                continue;
-            };
-            if let Err(err) = self
-                .publish_consul(
-                    active.environment.as_str(),
-                    active.revision,
-                    &definitions,
-                    &release.values,
-                )
-                .await
-            {
-                if self.config.consul_required {
-                    return Err(err);
-                }
-                tracing::warn!(
-                    environment = active.environment.as_str(),
-                    error = err.as_str(),
-                    "failed to republish Consul after removing user preferences"
-                );
-            }
-        }
+        self.republish_active_releases_to_consul(&definitions, "remove user preferences")
+            .await?;
         Ok(())
     }
 
@@ -175,29 +158,8 @@ impl AppState {
             }
         }
 
-        for active in self.store.list_active_releases().await? {
-            let Some(release) = self.store.get_release(active.release_id.as_str()).await? else {
-                continue;
-            };
-            if let Err(err) = self
-                .publish_consul(
-                    active.environment.as_str(),
-                    active.revision,
-                    &definitions,
-                    &release.values,
-                )
-                .await
-            {
-                if self.config.consul_required {
-                    return Err(err);
-                }
-                tracing::warn!(
-                    environment = active.environment.as_str(),
-                    error = err.as_str(),
-                    "failed to republish Consul after consolidating Agent configuration"
-                );
-            }
-        }
+        self.republish_active_releases_to_consul(&definitions, "consolidate Agent configuration")
+            .await?;
 
         tracing::info!(
             key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
@@ -291,6 +253,932 @@ impl AppState {
             }
         }
 
+        for mut draft in self.store.list_drafts().await? {
+            let changed = migrate_task_runner_queue_mode_draft(
+                &mut draft.changes,
+                TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
+            ) | migrate_task_runner_queue_mode_draft(
+                &mut draft.changes,
+                TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
+            ) | ensure_root_vhost_rabbitmq_url(
+                &mut draft.changes,
+                TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
+                task_runner_defaults
+                    .get(TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY)
+                    .unwrap_or(&json!(DEFAULT_LOCAL_RABBITMQ_URL)),
+            );
+            if changed {
+                draft.validation_status = "pending".to_string();
+                draft.validation_errors.clear();
+                draft.updated_at = Utc::now().to_rfc3339();
+                self.store.save_draft(&draft).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Task Runner runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            key = TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
+            fallback_key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
+            environment_mode_key = TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
+            run_dispatch_mode_key = TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
+            callback_delivery_mode_key = TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
+            "Task Runner runtime configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_mcp_management_runtime_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = mcp_management_service_default_values(&definitions);
+        if defaults.len() != 37 {
+            return Err(
+                "MCP Management runtime configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_mcp_management_runtime_values(&mut release.values, &defaults);
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "mcp-management-service" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_mcp_management_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        for mut draft in self.store.list_drafts().await? {
+            if ensure_root_vhost_rabbitmq_url(
+                &mut draft.changes,
+                MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
+                defaults
+                    .get(MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY)
+                    .unwrap_or(&json!(DEFAULT_LOCAL_RABBITMQ_URL)),
+            ) {
+                draft.validation_status = "pending".to_string();
+                draft.validation_errors.clear();
+                draft.updated_at = Utc::now().to_rfc3339();
+                self.store.save_draft(&draft).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add MCP Management runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            dispatch_mode_key = MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
+            internal_secret_key = MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+            allowed_callers_key = MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY,
+            rabbitmq_url_key = MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
+            dispatch_queue_key = MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
+            "MCP Management runtime configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_local_connector_runtime_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = local_connector_service_runtime_default_values(&definitions);
+        if defaults.is_empty() {
+            return Err(
+                "Local Connector runtime configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys =
+                ensure_local_connector_runtime_values(&mut release.values, &defaults);
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                defaults
+                    .iter()
+                    .map(|(key, fallback)| {
+                        (
+                            key.clone(),
+                            release
+                                .values
+                                .get(key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone()),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "local-connector-service" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_local_connector_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Local Connector runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            user_service_base_url_key = LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            public_base_url_key = LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
+            relay_timeout_key = LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            sandbox_image_timeout_key =
+                LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "Local Connector runtime configuration is present in releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_sandbox_manager_pool_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = sandbox_manager_pool_default_values(&definitions);
+        if defaults.len() != 2 {
+            return Err(
+                "Sandbox Manager pool configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_sandbox_manager_pool_values(&mut release.values, &defaults);
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "sandbox-manager" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_sandbox_manager_pool_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Sandbox Manager pool configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            max_active_key = SANDBOX_MANAGER_POOL_MAX_ACTIVE_CONFIG_KEY,
+            max_pending_key = SANDBOX_MANAGER_POOL_MAX_PENDING_CONFIG_KEY,
+            "Sandbox Manager pool configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_sandbox_manager_runtime_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = sandbox_manager_runtime_default_values(&definitions);
+        if defaults.len() != 19 {
+            return Err(
+                "Sandbox Manager runtime configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys =
+                ensure_sandbox_manager_runtime_values(&mut release.values, &defaults);
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "sandbox-manager" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_sandbox_manager_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Sandbox Manager runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            require_auth_key = SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY,
+            user_service_base_url_key = SANDBOX_MANAGER_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            user_service_timeout_key = SANDBOX_MANAGER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "Sandbox Manager runtime configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_memory_engine_runtime_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = memory_engine_runtime_default_values(&definitions);
+        if defaults.len() != 19 {
+            return Err(
+                "memory engine runtime configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_memory_engine_runtime_values(&mut release.values, &defaults);
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "memory-engine" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_memory_engine_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Memory Engine runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            user_service_base_url_key = MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            user_service_timeout_key = MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "Memory Engine runtime configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_internal_request_security_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = internal_request_security_default_values(&definitions);
+        if defaults.len() != 60 {
+            return Err(
+                "internal request security configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys =
+                ensure_internal_request_security_values(&mut release.values, &defaults);
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if ![
+                "local-connector-service",
+                "mcp-management-service",
+                "plugin-management-service",
+                "project-service",
+                "memory-engine",
+                "sandbox-manager",
+                "task-runner",
+                "chatos-backend",
+                "user-service",
+            ]
+            .contains(&snapshot.service_name.as_str())
+            {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_internal_request_security_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add internal request security configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            local_connector_key = LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+            mcp_management_key = MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+            project_service_key = PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+            memory_engine_key = MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+            sandbox_manager_key = SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+            "Internal request security configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_user_service_smtp_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = user_service_smtp_default_values(&definitions);
+        if defaults.len() != 6 {
+            return Err("user service SMTP configuration definitions are incomplete".to_string());
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_user_service_smtp_values(&mut release.values, &defaults);
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "user-service" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_user_service_smtp_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add User Service SMTP configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            smtp_host_key = USER_SERVICE_SMTP_HOST_CONFIG_KEY,
+            smtp_port_key = USER_SERVICE_SMTP_PORT_CONFIG_KEY,
+            smtp_username_key = USER_SERVICE_SMTP_USERNAME_CONFIG_KEY,
+            email_from_key = USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
+            email_from_name_key = USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY,
+            "User Service SMTP configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_user_service_runtime_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = user_service_runtime_default_values(&definitions);
+        if defaults.len() != 25 {
+            return Err(
+                "user service runtime configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_user_service_runtime_values(&mut release.values, &defaults);
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "user-service" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_user_service_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add User Service runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            memory_engine_base_url_key = USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            task_runner_base_url_key = USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+            harness_enabled_key = USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
+            "User Service runtime configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_project_service_runtime_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = project_service_runtime_default_values(&definitions);
+        if defaults.is_empty() {
+            return Err(
+                "Project Service runtime configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys =
+                ensure_project_service_runtime_values(&mut release.values, &defaults);
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                defaults
+                    .iter()
+                    .map(|(key, fallback)| {
+                        (
+                            key.clone(),
+                            release
+                                .values
+                                .get(key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone()),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "project-service" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_project_service_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Project Service runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            user_service_base_url_key = PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            local_connector_base_url_key =
+                PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            memory_engine_base_url_key = PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            sandbox_manager_base_url_key = PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+            task_runner_base_url_key = PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+            "Project Service runtime configuration is present in releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_plugin_management_runtime_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = plugin_management_service_runtime_default_values(&definitions);
+        if defaults.is_empty() {
+            return Err(
+                "Plugin Management runtime configuration definitions are incomplete".to_string(),
+            );
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys =
+                ensure_plugin_management_runtime_values(&mut release.values, &defaults);
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                defaults
+                    .iter()
+                    .map(|(key, fallback)| {
+                        (
+                            key.clone(),
+                            release
+                                .values
+                                .get(key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone()),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            let release_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let snapshot_defaults = plugin_management_snapshot_default_values(
+                &release_defaults,
+                snapshot.service_name.as_str(),
+            );
+            let changed =
+                !ensure_plugin_management_runtime_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add Plugin Management runtime configuration",
+        )
+        .await?;
+
+        tracing::info!(
+            user_service_base_url_key = PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            task_runner_base_url_key = PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+            oauth_public_base_url_key = PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
+            catalog_request_timeout_key = PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            shared_service_url_key = SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
+            shared_request_timeout_key = SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "Plugin Management runtime configuration is present in releases and snapshots"
+        );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_chatos_ui_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = chatos_service_default_values(&definitions);
+        if defaults.is_empty() {
+            return Err("ChatOS runtime configuration definitions are incomplete".to_string());
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_chatos_runtime_values(&mut release.values, &defaults);
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                defaults
+                    .iter()
+                    .map(|(key, fallback)| {
+                        (
+                            key.clone(),
+                            release
+                                .values
+                                .get(key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone()),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            if snapshot.service_name != "chatos-backend" {
+                continue;
+            }
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_chatos_runtime_values(&mut snapshot.values, &snapshot_defaults).is_empty();
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if changed || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(&definitions, "add ChatOS UI configuration")
+            .await?;
+
+        tracing::info!(
+            key = CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY,
+            user_service_base_url_key = CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            project_service_base_url_key = CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
+            task_runner_base_url_key = CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+            memory_engine_base_url_key = CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            "ChatOS runtime configuration is present in releases and snapshots"
+        );
+        Ok(())
+    }
+
+    async fn republish_active_releases_to_consul(
+        &self,
+        definitions: &[ConfigDefinitionRecord],
+        maintenance_action: &str,
+    ) -> Result<(), String> {
         for active in self.store.list_active_releases().await? {
             let Some(release) = self.store.get_release(active.release_id.as_str()).await? else {
                 continue;
@@ -299,7 +1187,7 @@ impl AppState {
                 .publish_consul(
                     active.environment.as_str(),
                     active.revision,
-                    &definitions,
+                    definitions,
                     &release.values,
                 )
                 .await
@@ -309,18 +1197,12 @@ impl AppState {
                 }
                 tracing::warn!(
                     environment = active.environment.as_str(),
+                    maintenance_action,
                     error = err.as_str(),
-                    "failed to republish Consul after adding Task Runner max-iterations configuration"
+                    "failed to republish Consul after configuration maintenance"
                 );
             }
         }
-
-        tracing::info!(
-            key = TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
-            fallback_key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
-            environment_mode_key = TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
-            "Task Runner runtime configuration is present in configuration center releases and snapshots"
-        );
         Ok(())
     }
 }

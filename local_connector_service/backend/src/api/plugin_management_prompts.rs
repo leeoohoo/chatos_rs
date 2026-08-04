@@ -3,7 +3,10 @@
 
 use axum::extract::State;
 use axum::{Extension, Json};
-use chatos_plugin_management_sdk::{AgentPromptBundle, AgentPromptBundleManifest};
+use chatos_plugin_management_sdk::{
+    AgentPromptBundle, AgentPromptBundleManifest, AgentPromptVendor, ResolveAgentPromptRequest,
+    SystemAgentKey,
+};
 
 use crate::models::CurrentUser;
 use crate::state::AppState;
@@ -28,12 +31,35 @@ pub(super) async fn get_agent_prompt_bundle(
     Extension(user): Extension<CurrentUser>,
 ) -> Result<Json<AgentPromptBundle>, ApiError> {
     require_human_user(&user)?;
-    state
+    let manifest = state
         .plugin_management_client
-        .get_agent_prompt_bundle_for_service()
+        .get_agent_prompt_bundle_manifest_for_service()
         .await
-        .map(Json)
-        .map_err(plugin_management_error)
+        .map_err(plugin_management_error)?;
+    let mut prompts = Vec::with_capacity(AgentPromptVendor::ALL.len());
+    for vendor in AgentPromptVendor::ALL {
+        let prompt = state
+            .plugin_management_client
+            .resolve_agent_prompt_for_service(&ResolveAgentPromptRequest {
+                agent_key: SystemAgentKey::LocalConnectorCommandApprovalAgent,
+                vendor,
+            })
+            .await
+            .map_err(plugin_management_error)?;
+        if prompt.agent_key != SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str()
+            || prompt.vendor != vendor
+        {
+            return Err(ApiError::service_unavailable(
+                "Plugin Management returned a mismatched local approval Agent Prompt",
+            ));
+        }
+        prompts.push(prompt);
+    }
+    Ok(Json(AgentPromptBundle {
+        bundle_version: manifest.bundle_version,
+        updated_at: manifest.updated_at,
+        prompts,
+    }))
 }
 
 fn require_human_user(user: &CurrentUser) -> Result<(), ApiError> {

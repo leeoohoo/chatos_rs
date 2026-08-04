@@ -213,15 +213,11 @@ pub(super) async fn backfill_agent_prompt_versions(store: &AppStore) -> Result<(
     Ok(())
 }
 
-fn baseline_prompts() -> [(&'static str, &'static str); 14] {
+fn baseline_prompts() -> [(&'static str, &'static str); 11] {
     [
         (
             "chatos_conversation_agent",
             include_str!("../../seed_data/agent_prompts/chatos_conversation_agent.md"),
-        ),
-        (
-            "chatos_planning_agent",
-            include_str!("../../seed_data/agent_prompts/chatos_planning_agent.md"),
         ),
         (
             "project_requirement_execution_planner_agent",
@@ -234,15 +230,7 @@ fn baseline_prompts() -> [(&'static str, &'static str); 14] {
             include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
         ),
         (
-            "task_runner_local_plan_phase",
-            include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
-        ),
-        (
             "task_runner_run_phase",
-            include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
-        ),
-        (
-            "task_runner_local_run_phase",
             include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
         ),
         (
@@ -283,7 +271,7 @@ mod tests {
     #[test]
     fn baseline_catalog_covers_all_system_agents() {
         let prompts = baseline_prompts();
-        assert_eq!(prompts.len(), 14);
+        assert_eq!(prompts.len(), chatos_agent::system_agent_catalog().len());
         assert!(prompts
             .iter()
             .all(|(_, content)| !content.trim().is_empty()));
@@ -294,12 +282,9 @@ mod tests {
         let prompts = baseline_prompts();
         for agent_key in [
             "chatos_conversation_agent",
-            "chatos_planning_agent",
             "project_requirement_execution_planner_agent",
             "task_runner_plan_phase",
-            "task_runner_local_plan_phase",
             "task_runner_run_phase",
-            "task_runner_local_run_phase",
         ] {
             let content = prompts
                 .iter()
@@ -308,28 +293,45 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing prompt: {agent_key}"));
             assert!(content.contains("用户语言") || content.contains("用户当前语言"));
             assert!(content.contains("代码标识符"));
-            if agent_key == "chatos_planning_agent" {
-                assert!(content.contains("内部 ID"));
-                assert!(content.contains("普通用户"));
-                assert!(content.contains("临时操作约束"));
-                assert!(content.contains("is_planning_task"));
-                assert!(content.contains("定量约束"));
-                assert!(content.contains("逐项核对数量"));
-                assert!(content.contains("不得用重复需求、重复文档或重复任务凑数量"));
+            if agent_key == "task_runner_plan_phase" {
+                assert!(content.contains("你是项目规划助手"));
+                assert!(content.contains("源码修改、构建、测试、部署和环境启动由后续执行阶段承接"));
+                assert!(content.contains("当前项目的身份和名称属于用户已确认的上下文"));
+                assert!(content.contains("使用工具真实返回的标识建立依赖关系"));
+                assert!(content.contains("在项目空间中真实创建或更新规划产物"));
+                assert!(content.contains("一份非空技术文档"));
+                assert!(content.contains("重新读取需求、技术文档和任务依赖图"));
+                assert!(content.contains("作为独立的项目资料直接交付给用户"));
+                assert!(content.contains("只描述项目自身的业务目标"));
+                assert!(content.contains("脱离当前会话后仍能自然阅读"));
+                assert!(content.contains("没有额外业务信息时留空"));
+                assert!(content.contains("最终回执控制在三段以内"));
+                assert!(content.contains("直接陈述交付结果"));
             }
-            if agent_key == "task_runner_plan_phase" || agent_key == "task_runner_local_plan_phase"
-            {
-                assert!(content.contains("不得执行工程实现"));
-                assert!(content.contains("不得创建、修改、移动或删除项目文件"));
-                assert!(content.contains("不得运行终端命令"));
-            }
-            if agent_key == "task_runner_run_phase" || agent_key == "task_runner_local_run_phase" {
-                assert!(content.contains("自动收集沙箱输出"));
-                assert!(content.contains("逐个复制"));
+            if agent_key == "task_runner_run_phase" {
+                assert!(content.contains("都针对同一个当前项目工作区"));
+                assert!(content.contains("自动收集工作区输出"));
+                assert!(content.contains("重复复制"));
                 assert!(content.contains("及时收口任务"));
-                assert!(content.contains("容量受限的内存盘"));
+                assert!(content.contains("任务未涉及的层不需要机械遍历"));
+                assert!(content.contains("全部硬性验收项已有直接证据"));
+                assert!(content.contains("立即停止继续读取"));
+                assert!(content.contains("第一项未满足要求"));
+                assert!(content.contains("具体文件、函数、命令、退出码或失败结果"));
+                assert!(content.contains("状态、证据依据、未满足验收项、目标位置或唯一命令"));
+                assert!(content.contains("下一条可见输出只能是执行该指令的一次工具调用"));
+                assert!(content.contains("引用新失败的具体原因给出纠正后的动作"));
+                assert!(content.contains("补丁上下文过期或精确编辑匹配失败"));
+                assert!(content.contains("最近一次成功读取的目标内容"));
+                assert!(!content.contains("第 3 次复盘"));
+                assert!(content.contains("`/tmp` 和用户主目录容量受限"));
                 assert!(content.contains(".chatos/tmp"));
                 assert!(content.contains("不得写入项目依赖清单"));
+                assert!(!content.contains("Provider"));
+                assert!(!content.contains("Harness"));
+                assert!(!content.contains("Local Connector"));
+                assert!(!content.contains("沙箱"));
+                assert!(!content.contains("在至少一次成功的真实项目修改发生前不得输出最终答案"));
             }
         }
     }

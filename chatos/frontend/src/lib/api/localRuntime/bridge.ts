@@ -12,6 +12,7 @@ declare global {
     chatosLocalRuntime?: {
       apiRequest: (request: LocalRuntimeBridgeRequest) => Promise<LocalRuntimeBridgeResponse>;
       authenticateDesktopTicket?: (ticket: string) => Promise<unknown>;
+      openSettings?: () => Promise<boolean>;
     };
   }
 }

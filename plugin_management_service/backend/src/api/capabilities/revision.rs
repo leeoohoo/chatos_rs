@@ -10,8 +10,11 @@ pub(super) fn capability_policy_revision(
     plugins: &[ResolvedPlugin],
 ) -> String {
     let mut revision_parts = vec![format!(
-        "agent:{}:{}:{}",
-        agent.agent_key, agent.enabled, agent.updated_at
+        "agent:{}:{}:{}:{}",
+        agent.agent_key,
+        agent.enabled,
+        agent.tool_plane.as_str(),
+        agent.updated_at
     )];
     revision_parts.extend(mcps.iter().map(|item| {
         format!(

@@ -102,18 +102,6 @@ impl RunService {
             .await;
             return;
         }
-        let routed_task =
-            task_with_runtime_mcp_routing_authoritative(&self.config, &self.store, task.clone())
-                .await;
-        let task = match routed_task {
-            Ok(task) => task,
-            Err(err) => {
-                self.finish_failed_before_execution(&task, &mut run, ".", err)
-                    .await;
-                return;
-            }
-        };
-
         let input = StartTaskRunRequest {
             model_config_id: Some(run.model_config_id.clone()),
             prompt_override: run
@@ -190,6 +178,14 @@ impl RunService {
         task: &TaskRecord,
     ) -> Result<(), String> {
         ensure_task_thread_for_config(&self.config, task).await
+    }
+
+    pub(in crate::services) async fn ensure_run_thread(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+    ) -> Result<(), String> {
+        super::super::task_threads::ensure_run_thread_for_config(&self.config, task, run).await
     }
 
     async fn finish_claimed_run_without_task(&self, run: &mut TaskRunRecord, message: String) {

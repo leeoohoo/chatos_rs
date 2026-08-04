@@ -5,6 +5,8 @@ import type {
   ProjectRequirementExecuteResponse,
   ProjectRequirementExecutionPlanResponse,
   ProjectRequirementResponse,
+  ProjectRequirementStopResponse,
+  RequirementExecutionRecoveryAction,
 } from '../../../lib/api/client/types';
 import { ApiRequestError } from '../../../lib/api/client/shared';
 import { normalizeRawMessages } from '../../../lib/domain/messages';
@@ -26,13 +28,20 @@ export interface RequirementExecutionProcess {
   planningFeedbackHistory?: string[];
   serverStatus?: string | null;
   confirmationStatus?: string | null;
+  taskCount?: number | null;
   hasStartedRuns?: boolean;
   executionPaused?: boolean;
   tasksDiscarded?: boolean;
+  recoveryAction?: RequirementExecutionRecoveryAction | null;
+  recoveryReason?: string | null;
+  replacePreviousBatch?: boolean;
   initialMessage?: Message | null;
 }
 
-type ExecutionResponse = ProjectRequirementExecuteResponse | ProjectRequirementExecutionPlanResponse;
+type ExecutionResponse =
+  | ProjectRequirementExecuteResponse
+  | ProjectRequirementExecutionPlanResponse
+  | ProjectRequirementStopResponse;
 
 const readTextList = (value: unknown): string[] => (
   Array.isArray(value)
@@ -66,17 +75,88 @@ export const isRequirementExecutionRerunCancellationSettlingError = (error: unkn
 };
 
 export const shouldReplaceRequirementExecutionBatch = ({
-  phase,
   planDiscarded,
-  taskCount,
+  replacePreviousBatch,
 }: {
-  phase: RequirementExecutionProcessPhase;
   planDiscarded: boolean;
-  taskCount: number;
+  replacePreviousBatch?: boolean;
 }): boolean => (
   !planDiscarded
-  && !(phase === 'stopped' && taskCount === 0)
+  && Boolean(replacePreviousBatch)
 );
+
+const readRecoveryAction = (value: unknown): RequirementExecutionRecoveryAction | null => {
+  const action = readText(value).trim().toLowerCase();
+  return action === 'none' || action === 'rerun' || action === 'regenerate'
+    ? action
+    : null;
+};
+
+const readNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const responseHasField = (
+  response: ExecutionResponse,
+  snakeKey: string,
+  camelKey: string,
+): boolean => (
+  Object.prototype.hasOwnProperty.call(response, snakeKey)
+  || Object.prototype.hasOwnProperty.call(response, camelKey)
+);
+
+const readResponseField = (
+  response: ExecutionResponse,
+  snakeKey: string,
+  camelKey: string,
+): unknown => {
+  const record = response as Record<string, unknown>;
+  return record[snakeKey] ?? record[camelKey];
+};
+
+const normalizeRequirementExecutionRecoveryAction = ({
+  discardedTasks,
+  explicitAction,
+  hasStartedRuns,
+  status,
+  taskCount,
+}: {
+  discardedTasks?: boolean;
+  explicitAction: RequirementExecutionRecoveryAction | null;
+  hasStartedRuns: boolean;
+  status: string;
+  taskCount: number | null;
+}): RequirementExecutionRecoveryAction | null => {
+  const normalizedStatus = status.trim().toLowerCase();
+  if (normalizedStatus === 'stopping') {
+    return explicitAction || 'none';
+  }
+  const canDeriveFromServerSummary = taskCount !== null;
+  if (
+    canDeriveFromServerSummary
+    && ['stopped', 'cancelled', 'canceled'].includes(normalizedStatus)
+  ) {
+    if (discardedTasks || taskCount === 0) {
+      return 'regenerate';
+    }
+    return 'rerun';
+  }
+  if (
+    canDeriveFromServerSummary
+    && normalizedStatus === 'failed'
+    && !hasStartedRuns
+  ) {
+    return 'regenerate';
+  }
+  return explicitAction;
+};
 
 export const shouldStopRequirementExecutionBeforeReplacement = ({
   phase,
@@ -86,8 +166,7 @@ export const shouldStopRequirementExecutionBeforeReplacement = ({
   replacePreviousBatch: boolean;
 }): boolean => (
   replacePreviousBatch
-  && phase !== 'stopped'
-  && phase !== 'completed'
+  && ['awaiting_confirmation', 'failed'].includes(phase)
 );
 
 export const shouldShowCancelRequirementExecution = ({
@@ -176,10 +255,33 @@ export const buildRequirementExecutionProcess = ({
     planningFeedbackHistory.push(latestPlanningFeedback);
   }
   const responseExecutionPaused = response.execution_paused ?? response.executionPaused;
+  const responseTasksDiscarded = 'discarded_tasks' in response || 'discardedTasks' in response
+    ? response.discarded_tasks ?? response.discardedTasks
+    : undefined;
+  const taskCount = responseHasField(response, 'task_count', 'taskCount')
+    ? readNumber(readResponseField(response, 'task_count', 'taskCount'))
+    : fallback?.taskCount ?? null;
+  const hasStartedRuns = response.has_started_runs
+    ?? response.hasStartedRuns
+    ?? fallback?.hasStartedRuns
+    ?? false;
   const metadataExecutionPaused = normalizedMessage
     ?.metadata
     ?.task_runner_async
     ?.execution_paused;
+  const responseStatus = readText(response.status) || fallback?.serverStatus || '';
+  const explicitRecoveryAction = readRecoveryAction(response.recovery_action)
+    || readRecoveryAction(response.recoveryAction)
+    || null;
+  const recoveryAction = normalizeRequirementExecutionRecoveryAction({
+    discardedTasks: typeof responseTasksDiscarded === 'boolean'
+      ? responseTasksDiscarded
+      : fallback?.tasksDiscarded,
+    explicitAction: explicitRecoveryAction,
+    hasStartedRuns,
+    status: responseStatus,
+    taskCount,
+  });
   return {
     requirement,
     projectId,
@@ -215,16 +317,23 @@ export const buildRequirementExecutionProcess = ({
       || readText(response.confirmationStatus)
       || fallback?.confirmationStatus
       || null,
-    hasStartedRuns: response.has_started_runs
-      ?? response.hasStartedRuns
-      ?? fallback?.hasStartedRuns
-      ?? false,
+    taskCount,
+    hasStartedRuns,
     executionPaused: typeof responseExecutionPaused === 'boolean'
       ? responseExecutionPaused
       : typeof metadataExecutionPaused === 'boolean'
         ? metadataExecutionPaused
         : fallback?.executionPaused ?? false,
-    tasksDiscarded: fallback?.tasksDiscarded ?? false,
+    tasksDiscarded: typeof responseTasksDiscarded === 'boolean'
+      ? responseTasksDiscarded
+      : fallback?.tasksDiscarded ?? false,
+    recoveryAction,
+    recoveryReason: readText(response.recovery_reason)
+      || readText(response.recoveryReason)
+      || null,
+    replacePreviousBatch: response.replace_previous_batch
+      ?? response.replacePreviousBatch
+      ?? false,
     initialMessage: normalizedMessage || fallback?.initialMessage || null,
   };
 };

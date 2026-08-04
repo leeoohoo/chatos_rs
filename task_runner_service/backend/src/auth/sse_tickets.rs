@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const SSE_TICKET_TTL_SECONDS: i64 = 60;
@@ -19,6 +20,11 @@ pub struct SseTicketRecord {
 #[derive(Debug, Clone, Default)]
 pub struct SseTicketStore {
     tickets: Arc<RwLock<BTreeMap<String, SseTicketRecord>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SseTicketStoreStats {
+    pub active_ticket_count: usize,
 }
 
 impl SseTicketStore {
@@ -52,6 +58,15 @@ impl SseTicketStore {
             return None;
         }
         Some(record)
+    }
+
+    pub fn stats(&self) -> SseTicketStoreStats {
+        let now = Utc::now().timestamp();
+        let mut tickets = self.tickets.write();
+        tickets.retain(|_, record| record.expires_at_unix > now);
+        SseTicketStoreStats {
+            active_ticket_count: tickets.len(),
+        }
     }
 }
 

@@ -92,28 +92,28 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
     expect(request).toHaveBeenLastCalledWith('/task-runner/available-plugins');
   });
 
-  it('registers a newly created local project before it is selected', async () => {
+  it('creates a cloud-managed project for the selected local workspace', async () => {
     vi.stubGlobal('window', {
       chatosLocalRuntime: { apiRequest: vi.fn() },
     });
-    const createProject = vi.fn().mockResolvedValue({
+    const request = vi.fn().mockResolvedValue({
       id: 'local-project-1',
       name: 'Local project',
       root_path: 'local://connector/device/workspace/app',
     });
-    const registerLocalProjectExecution = vi.fn();
-    const context = {
-      getLocalRuntimeClient: () => ({ createProject }),
-      registerLocalProjectExecution,
-    };
+    const context = { getRequestFn: () => request };
 
-    await workspaceLocalConnectorFacade.createLocalConnectorProject.call(context as never, {
+    const data = {
       name: 'Local project',
       device_id: 'device',
       workspace_id: 'workspace',
       relative_path: 'app',
-    });
+    };
+    await workspaceLocalConnectorFacade.createLocalConnectorProject.call(context as never, data);
 
-    expect(registerLocalProjectExecution).toHaveBeenCalledWith('local-project-1');
+    expect(request).toHaveBeenCalledWith('/local-connectors/projects', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   });
 });

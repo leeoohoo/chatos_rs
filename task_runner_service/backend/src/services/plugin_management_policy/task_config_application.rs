@@ -21,53 +21,31 @@ impl TaskRunnerCapabilityPolicy {
             .map_err(|err| err.to_string())?;
         task.mcp_config.enabled = true;
 
-        let allowed_optional_builtin = self
-            .selectable_builtin_kinds()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let mut effective_builtin = task
-            .mcp_config
-            .enabled_builtin_kinds
+        let mut effective_builtin = self
+            .capabilities
+            .mcps
             .iter()
-            .filter_map(|value| builtin_kind_by_any(value))
-            .filter(|kind| allowed_optional_builtin.contains(kind))
+            .filter(|item| item.binding.enabled && item.resource.enabled)
+            .filter_map(plugin_builtin_kind)
             .collect::<Vec<_>>();
-        effective_builtin.extend(
-            self.capabilities
-                .required_mcps()
-                .filter(|item| item.available)
-                .filter_map(plugin_builtin_kind),
-        );
-        if self.is_planning_agent() {
-            effective_builtin.extend(self.selectable_builtin_kinds());
-        }
         dedupe_builtin_kinds(&mut effective_builtin);
         task.mcp_config.enabled_builtin_kinds = effective_builtin
             .into_iter()
             .map(|kind| kind.kind_name().to_string())
             .collect();
 
-        let allowed_optional_external = self
-            .selectable_external_mcp_ids()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let mut effective_external = task
-            .mcp_config
-            .external_mcp_config_ids
+        let mut effective_external = self
+            .capabilities
+            .mcps
             .iter()
-            .filter(|resource_id| allowed_optional_external.contains(resource_id.as_str()))
-            .cloned()
+            .filter(|item| {
+                item.binding.enabled
+                    && item.resource.enabled
+                    && plugin_builtin_kind(item).is_none()
+                    && !plugin_task_process_log_mcp(item)
+            })
+            .map(|item| item.resource.id.clone())
             .collect::<Vec<_>>();
-        effective_external.extend(
-            self.capabilities
-                .required_mcps()
-                .filter(|item| {
-                    item.available
-                        && plugin_builtin_kind(item).is_none()
-                        && !plugin_task_process_log_mcp(item)
-                })
-                .map(|item| item.resource.id.clone()),
-        );
         effective_external.sort();
         effective_external.dedup();
         task.mcp_config.external_mcp_config_ids = effective_external;
@@ -83,6 +61,8 @@ impl TaskRunnerCapabilityPolicy {
         effective_skills.dedup();
         task.mcp_config.selected_skill_ids = effective_skills;
         task.mcp_config.skill_policy_revision = Some(self.policy_revision().to_string());
+        task.mcp_config.sandbox_manager_base_url = None;
+        task.mcp_config.ephemeral_http_servers.clear();
         self.apply_plugins_to_task(task)?;
         Ok(())
     }
@@ -185,11 +165,11 @@ impl TaskRunnerCapabilityPolicy {
             }
         }
         for dependency in dependencies {
-            let available = self
-                .capabilities
-                .mcps
-                .iter()
-                .any(|item| item.available && plugin_builtin_kind(item) == Some(dependency));
+            let available = self.capabilities.mcps.iter().any(|item| {
+                item.binding.enabled
+                    && item.resource.enabled
+                    && plugin_builtin_kind(item) == Some(dependency)
+            });
             if !available {
                 return Err(format!(
                     "Plugin builtin dependency is unavailable for {}: {}",

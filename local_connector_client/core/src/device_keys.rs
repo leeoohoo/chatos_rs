@@ -85,7 +85,7 @@ pub(crate) fn verify_device_message_signature(
         .map_err(|_| anyhow!("local connector device signature verification failed"))
 }
 
-fn ensure_supported_public_key(value: &str) -> Result<()> {
+pub(crate) fn ensure_supported_public_key(value: &str) -> Result<()> {
     public_key_bytes(value)
         .map(|_| ())
         .ok_or_else(|| anyhow!("local connector device public key must be an ed25519 key"))

@@ -23,6 +23,7 @@ pub fn issue_internal_service_token(
     scope: &str,
     ttl_seconds: u64,
 ) -> Result<String, String> {
+    ensure_crypto_provider();
     let now = unix_timestamp()?;
     let ttl_seconds = ttl_seconds.clamp(5, 300) as usize;
     let claims = InternalServiceTokenClaims {
@@ -48,6 +49,7 @@ pub fn verify_internal_service_token(
     expected_audience: &str,
     expected_scope: &str,
 ) -> Result<InternalServiceTokenClaims, String> {
+    ensure_crypto_provider();
     let mut validation = Validation::new(Algorithm::HS256);
     validation.set_issuer(&[expected_issuer]);
     validation.set_audience(&[expected_audience]);
@@ -73,6 +75,10 @@ pub fn verify_internal_service_token(
         return Err("internal service token lifetime is invalid".to_string());
     }
     Ok(claims)
+}
+
+fn ensure_crypto_provider() {
+    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
 }
 
 fn unix_timestamp() -> Result<usize, String> {

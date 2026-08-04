@@ -166,7 +166,7 @@ pub(crate) mod test_support {
     use serde_json::json;
 
     use super::SharedMcpToolExecute;
-    use crate::services::builtin_mcp::BuiltinMcpKind;
+    use crate::services::mcp_loader::BuiltinMcpKind;
     use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
     pub(crate) async fn build_skill_reader_executor(builtin_only: bool) -> SharedMcpToolExecute {

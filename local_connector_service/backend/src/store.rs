@@ -3,8 +3,8 @@
 
 use crate::models::{
     ApplicableManagedRequirementsLayer, LocalConnectorDevice, LocalConnectorProjectBinding,
-    LocalConnectorSandboxPairing, LocalConnectorSession, LocalConnectorWorkspace,
-    ManagedRequirementsAssignment, ManagedRequirementsPolicy,
+    LocalConnectorSandboxPairing, LocalConnectorSession, LocalConnectorStoreStats,
+    LocalConnectorWorkspace, ManagedRequirementsAssignment, ManagedRequirementsPolicy,
 };
 
 mod mongo;
@@ -291,6 +291,12 @@ impl ConnectorStore {
     ) -> Result<Option<LocalConnectorSession>, String> {
         match self {
             Self::Mongo(store) => store.active_session(owner_user_id).await,
+        }
+    }
+
+    pub async fn system_stats(&self) -> Result<LocalConnectorStoreStats, String> {
+        match self {
+            Self::Mongo(store) => store.system_stats().await,
         }
     }
 

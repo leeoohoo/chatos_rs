@@ -7,7 +7,11 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 
 use chatos_plugin_management_sdk::{
-    normalize_plugin_relative_path, parse_plugin_manifest, PluginManifest, PluginManifestSource,
+    build_plugin_mcp_cloud_runtime_bundle,
+    build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime, normalize_plugin_relative_path,
+    normalized_plugin_manifest_sha256, parse_plugin_manifest, parse_plugin_mcp_config_servers,
+    plugin_mcp_cloud_runtime_bundle_sha256, PluginComponentKind, PluginExecutionHost,
+    PluginManifest, PluginManifestSource, PluginMcpCloudRuntimeBundle, PluginMcpServer,
     PluginReleaseRecord,
 };
 use serde::Deserialize;
@@ -77,11 +81,156 @@ pub fn verify_plugin_archive_bytes(
     release: &PluginReleaseRecord,
     limits: PluginPackageLimits,
 ) -> Result<VerifiedPluginPackage, PluginPackageError> {
+    let package =
+        read_verified_plugin_archive_bytes(bytes, release.artifact_sha256.as_str(), limits)?;
+    if package.manifest != release.normalized_manifest
+        || release.manifest_schema_version != package.manifest.schema_version
+        || release.version != package.manifest.version
+    {
+        return invalid("Plugin package Manifest does not match the signed Release");
+    }
+    verify_sbom(&package.files, release)?;
+    Ok(package)
+}
+
+pub fn verify_plugin_mcp_cloud_artifact_bytes(
+    bytes: &[u8],
+    bundle: &PluginMcpCloudRuntimeBundle,
+    limits: PluginPackageLimits,
+) -> Result<VerifiedPluginPackage, PluginPackageError> {
+    let package =
+        read_verified_plugin_archive_bytes(bytes, bundle.artifact_sha256.as_str(), limits)?;
+    verify_plugin_mcp_cloud_package(&package, bundle)?;
+    Ok(package)
+}
+
+pub fn verify_plugin_mcp_cloud_package(
+    package: &VerifiedPluginPackage,
+    bundle: &PluginMcpCloudRuntimeBundle,
+) -> Result<(), PluginPackageError> {
+    if package.artifact_sha256 != bundle.artifact_sha256
+        || bundle.component.kind != PluginComponentKind::McpServer
+        || bundle.component.execution_host == PluginExecutionHost::Local
+        || bundle.component.component_key != bundle.runtime.component_key()
+        || bundle.server_key.trim().is_empty()
+        || bundle.resolved_runtime.component_key() != bundle.server_key
+        || matches!(bundle.resolved_runtime, PluginMcpServer::ConfigFile { .. })
+        || plugin_mcp_cloud_runtime_bundle_sha256(bundle).map_err(PluginPackageError::Invalid)?
+            != bundle.bundle_sha256
+    {
+        return invalid("Plugin MCP cloud runtime Bundle identity is invalid");
+    }
+    let manifest_sha256 = normalized_plugin_manifest_sha256(&package.manifest)
+        .map_err(|error| PluginPackageError::Invalid(error.to_string()))?;
+    let runtime = package
+        .manifest
+        .mcp_servers
+        .iter()
+        .find(|runtime| runtime.component_key() == bundle.component.component_key)
+        .ok_or_else(|| {
+            PluginPackageError::Invalid(
+                "Plugin artifact is missing the immutable MCP runtime".to_string(),
+            )
+        })?;
+    if package.manifest.version != bundle.version
+        || manifest_sha256 != bundle.normalized_manifest_sha256
+        || runtime != &bundle.runtime
+    {
+        return invalid("Plugin artifact does not match the immutable MCP runtime Bundle");
+    }
+    let resolved_runtime = match runtime {
+        PluginMcpServer::ConfigFile { path, .. } => {
+            let path = normalize_plugin_relative_path(path.path.as_str())
+                .map_err(PluginPackageError::Invalid)?
+                .trim_start_matches("./")
+                .to_string();
+            let bytes = package.files.get(path.as_str()).ok_or_else(|| {
+                PluginPackageError::Invalid(
+                    "Plugin artifact is missing the MCP config file".to_string(),
+                )
+            })?;
+            parse_plugin_mcp_config_servers(bytes.as_slice())
+                .map_err(|error| PluginPackageError::Invalid(error.to_string()))?
+                .into_iter()
+                .find(|server| server.component_key() == bundle.server_key)
+                .ok_or_else(|| {
+                    PluginPackageError::Invalid(
+                        "Plugin MCP config does not contain the frozen server key".to_string(),
+                    )
+                })?
+        }
+        runtime => runtime.clone(),
+    };
+    if resolved_runtime != bundle.resolved_runtime {
+        return invalid("Plugin artifact does not match the resolved MCP runtime Bundle");
+    }
+    Ok(())
+}
+
+pub fn build_plugin_mcp_cloud_runtime_bundles_from_package(
+    release: &PluginReleaseRecord,
+    component_key: &str,
+    package: &VerifiedPluginPackage,
+) -> Result<Vec<PluginMcpCloudRuntimeBundle>, PluginPackageError> {
+    if package.artifact_sha256 != release.artifact_sha256
+        || package.manifest != release.normalized_manifest
+    {
+        return invalid("Plugin package does not match the immutable Release");
+    }
+    let runtime = release
+        .normalized_manifest
+        .mcp_servers
+        .iter()
+        .find(|runtime| runtime.component_key() == component_key)
+        .ok_or_else(|| {
+            PluginPackageError::Invalid(format!("Plugin MCP runtime is missing: {component_key}"))
+        })?;
+    let mut bundles = match runtime {
+        PluginMcpServer::ConfigFile { path, .. } => {
+            let path = normalize_plugin_relative_path(path.path.as_str())
+                .map_err(PluginPackageError::Invalid)?
+                .trim_start_matches("./")
+                .to_string();
+            let bytes = package.files.get(path.as_str()).ok_or_else(|| {
+                PluginPackageError::Invalid(format!("Plugin MCP config file is missing: {path}"))
+            })?;
+            parse_plugin_mcp_config_servers(bytes.as_slice())
+                .map_err(|error| PluginPackageError::Invalid(error.to_string()))?
+                .into_iter()
+                .map(|resolved_runtime| {
+                    let server_key = resolved_runtime.component_key().to_string();
+                    build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
+                        release,
+                        component_key,
+                        resolved_runtime,
+                        server_key.as_str(),
+                    )
+                    .map_err(PluginPackageError::Invalid)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        _ => vec![
+            build_plugin_mcp_cloud_runtime_bundle(release, component_key)
+                .map_err(PluginPackageError::Invalid)?,
+        ],
+    };
+    bundles.sort_by(|left, right| left.server_key.cmp(&right.server_key));
+    for bundle in &bundles {
+        verify_plugin_mcp_cloud_package(package, bundle)?;
+    }
+    Ok(bundles)
+}
+
+fn read_verified_plugin_archive_bytes(
+    bytes: &[u8],
+    expected_artifact_sha256: &str,
+    limits: PluginPackageLimits,
+) -> Result<VerifiedPluginPackage, PluginPackageError> {
     if bytes.len() > limits.max_archive_bytes {
         return invalid("Plugin artifact exceeds the archive size limit");
     }
     let artifact_sha256 = sha256(bytes);
-    if artifact_sha256 != release.artifact_sha256 {
+    if artifact_sha256 != expected_artifact_sha256 {
         return invalid("Plugin artifact SHA-256 does not match the signed Release");
     }
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
@@ -125,7 +274,7 @@ pub fn verify_plugin_archive_bytes(
         files.insert(path, body);
     }
 
-    verified_release_package(files, file_sha256, unpacked_bytes, artifact_sha256, release)
+    verified_package(files, file_sha256, unpacked_bytes, artifact_sha256)
 }
 
 /// Verifies a compile-time embedded Plugin package file set against an immutable Release.
@@ -188,18 +337,28 @@ fn verified_release_package(
     artifact_sha256: String,
     release: &PluginReleaseRecord,
 ) -> Result<VerifiedPluginPackage, PluginPackageError> {
+    let package = verified_package(files, file_sha256, unpacked_bytes, artifact_sha256)?;
+    if package.manifest != release.normalized_manifest
+        || release.manifest_schema_version != package.manifest.schema_version
+        || release.version != package.manifest.version
+    {
+        return invalid("Plugin package Manifest does not match the signed Release");
+    }
+    verify_sbom(&package.files, release)?;
+    Ok(package)
+}
+
+fn verified_package(
+    files: BTreeMap<String, Vec<u8>>,
+    file_sha256: BTreeMap<String, String>,
+    unpacked_bytes: usize,
+    artifact_sha256: String,
+) -> Result<VerifiedPluginPackage, PluginPackageError> {
     let (manifest_path, manifest_source, checksum_path) = metadata_paths(&files)?;
     let manifest_raw = utf8_file(&files, manifest_path, 1024 * 1024, "Plugin Manifest")?;
     let manifest = parse_plugin_manifest(manifest_raw, manifest_source)
         .map_err(|error| PluginPackageError::Invalid(error.to_string()))?;
-    if manifest != release.normalized_manifest
-        || release.manifest_schema_version != manifest.schema_version
-        || release.version != manifest.version
-    {
-        return invalid("Plugin package Manifest does not match the signed Release");
-    }
     verify_checksums(&files, &file_sha256, checksum_path)?;
-    verify_sbom(&files, release)?;
     Ok(VerifiedPluginPackage {
         manifest,
         manifest_source,

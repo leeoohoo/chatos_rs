@@ -4,17 +4,52 @@
 use super::*;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use reqwest::StatusCode;
+use std::fmt;
 use std::sync::OnceLock;
 
 static CHATOS_CALLBACK_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 const CHATOS_CALLBACK_RETRY_DELAYS_MS: [u64; 3] = [0, 250, 750];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ChatosCallbackDeliveryError {
+    message: String,
+    retryable: bool,
+}
+
+impl ChatosCallbackDeliveryError {
+    pub(super) fn retryable(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: true,
+        }
+    }
+
+    pub(super) fn permanent(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+
+    pub(super) fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+}
+
+impl fmt::Display for ChatosCallbackDeliveryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.message.as_str())
+    }
+}
+
 pub(super) async fn send_chatos_task_callback(
     config: AppConfig,
     payload: ChatosTaskCallbackPayload,
-) -> Result<(), String> {
+) -> Result<(), ChatosCallbackDeliveryError> {
     let Some(url) = config.chatos_callback_url.clone() else {
-        return Err("TASK_RUNNER_CHATOS_CALLBACK_URL not configured".to_string());
+        return Err(ChatosCallbackDeliveryError::permanent(
+            "TASK_RUNNER_CHATOS_CALLBACK_URL not configured",
+        ));
     };
     let mut last_error = None;
     for (attempt_index, delay_ms) in CHATOS_CALLBACK_RETRY_DELAYS_MS.into_iter().enumerate() {
@@ -37,7 +72,7 @@ pub(super) async fn send_chatos_task_callback(
                         .await;
                 let error = format!("callback request failed: {status} {body}");
                 if !callback_status_is_retryable(status) {
-                    return Err(error);
+                    return Err(ChatosCallbackDeliveryError::permanent(error));
                 }
                 last_error = Some(error);
             }
@@ -53,7 +88,9 @@ pub(super) async fn send_chatos_task_callback(
             );
         }
     }
-    Err(last_error.unwrap_or_else(|| "callback request failed".to_string()))
+    Err(ChatosCallbackDeliveryError::retryable(
+        last_error.unwrap_or_else(|| "callback request failed".to_string()),
+    ))
 }
 
 fn chatos_callback_client() -> &'static reqwest::Client {
