@@ -35,6 +35,9 @@ pub use run_post_process_queue::{
     spawn_run_post_process_consumer, spawn_run_post_process_outbox_reconciler,
 };
 pub use state::AppState;
+pub use terminal_store::{
+    configure_task_terminal_runtime, spawn_task_terminal_retention, TaskTerminalRetentionPolicy,
+};
 pub use worker_control_queue::{
     spawn_ask_user_resolution_outbox_reconciler, spawn_run_cancel_outbox_reconciler,
     spawn_run_terminal_outbox_reconciler, spawn_worker_control_consumer,

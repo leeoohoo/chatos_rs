@@ -1114,6 +1114,43 @@ fn catalog_exposes_task_runner_run_event_retention_controls() {
 }
 
 #[test]
+fn catalog_exposes_task_runner_terminal_retention_controls() {
+    let definitions = builtin_definitions();
+    for (key, env_alias, expected_default) in [
+        (
+            TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES",
+            json!(4_000),
+        ),
+        (
+            TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_MAX_SESSIONS",
+            json!(512),
+        ),
+        (
+            TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS",
+            json!(86_400),
+        ),
+        (
+            TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS",
+            json!(60_000),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Task Runner terminal definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
+    }
+}
+
+#[test]
 fn catalog_exposes_shared_memory_policies_for_server_and_client() {
     let definitions = builtin_definitions();
     let memory_definitions = definitions

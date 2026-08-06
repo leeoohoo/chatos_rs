@@ -11,12 +11,33 @@ use tokio::process::Child;
 use uuid::Uuid;
 
 use super::pathing::{canonicalize_existing, now_rfc3339};
+use super::retention::prune_expired_terminal_sessions;
 use super::{TerminalRuntimeState, TerminalSession, TerminalSessionMeta};
 
 static TERMINAL_STATE: OnceLock<Arc<TerminalRuntimeState>> = OnceLock::new();
 
+pub fn configure_task_terminal_runtime(
+    policy: super::TaskTerminalRetentionPolicy,
+) -> Result<(), String> {
+    TERMINAL_STATE
+        .set(Arc::new(TerminalRuntimeState::new(policy)))
+        .map_err(|_| "task terminal runtime is already configured".to_string())
+}
+
 pub(super) fn terminal_state() -> &'static Arc<TerminalRuntimeState> {
-    TERMINAL_STATE.get_or_init(|| Arc::new(TerminalRuntimeState::default()))
+    if let Some(state) = TERMINAL_STATE.get() {
+        return state;
+    }
+    #[cfg(test)]
+    {
+        return TERMINAL_STATE.get_or_init(|| {
+            Arc::new(TerminalRuntimeState::new(
+                super::TaskTerminalRetentionPolicy::test_default(),
+            ))
+        });
+    }
+    #[cfg(not(test))]
+    panic!("task terminal runtime must be configured before use");
 }
 
 pub(super) async fn register_session(
@@ -25,6 +46,22 @@ pub(super) async fn register_session(
     command: String,
     mut child: Child,
 ) -> Result<Arc<TerminalSession>, String> {
+    let state = terminal_state();
+    let mut sessions = state.sessions.write().await;
+    if sessions.len() >= state.policy.max_sessions() {
+        drop(sessions);
+        prune_expired_terminal_sessions(state, chrono::Utc::now()).await?;
+        sessions = state.sessions.write().await;
+        if sessions.len() >= state.policy.max_sessions() {
+            drop(sessions);
+            let _ = child.kill().await;
+            return Err(format!(
+                "task terminal session capacity reached: {}",
+                state.policy.max_sessions()
+            ));
+        }
+    }
+
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let session_id = Uuid::new_v4().to_string();
@@ -39,20 +76,19 @@ pub(super) async fn register_session(
             now,
         )),
         child: tokio::sync::Mutex::new(child),
-        logs: tokio::sync::Mutex::new(chatos_terminal_runtime::TerminalLogBuffer::default()),
+        logs: tokio::sync::Mutex::new(chatos_terminal_runtime::TerminalLogBuffer::new(
+            state.policy.log_max_entries(),
+        )),
     });
 
+    sessions.insert(session_id, session.clone());
+    drop(sessions);
     if let Some(stdout) = stdout {
         spawn_stream_reader(session.clone(), stdout, "stdout");
     }
     if let Some(stderr) = stderr {
         spawn_stream_reader(session.clone(), stderr, "stderr");
     }
-    terminal_state()
-        .sessions
-        .write()
-        .await
-        .insert(session_id, session.clone());
     Ok(session)
 }
 

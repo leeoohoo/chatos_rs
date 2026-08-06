@@ -109,6 +109,13 @@ pub const TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY: &str =
     "task_runner.retention.run_event_cleanup_interval_ms";
 pub const TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY: &str =
     "task_runner.retention.run_event_cleanup_batch_size";
+pub const TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY: &str =
+    "task_runner.terminal.log_max_entries";
+pub const TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY: &str = "task_runner.terminal.max_sessions";
+pub const TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY: &str =
+    "task_runner.terminal.exited_session_retention_seconds";
+pub const TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY: &str =
+    "task_runner.terminal.cleanup_interval_ms";
 pub const TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY: &str =
     "task_runner.memory.auto_summary_enabled";
 pub const TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
@@ -2817,6 +2824,74 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE"],
             2463,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY,
+            "终端日志条目上限",
+            "单个 Task Runner 终端会话在内存中保留的最大日志条目数",
+            "Task Runner / Terminal",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(4_000),
+            Some(100),
+            Some(100_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES"],
+            2464,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
+            "终端会话实例上限",
+            "单个 Task Runner 实例允许保留的运行中和未过期终端会话总数",
+            "Task Runner / Terminal",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(512),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_TERMINAL_MAX_SESSIONS"],
+            2465,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
+            "已退出终端保留时间",
+            "终端进程退出后继续保留会话元数据和日志的秒数，过期后自动清理",
+            "Task Runner / Terminal",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(86_400),
+            Some(60),
+            Some(2_592_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS"],
+            2466,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "终端会话清理间隔",
+            "Task Runner 扫描并移除过期已退出终端会话的间隔毫秒数",
+            "Task Runner / Terminal",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(60_000),
+            Some(1_000),
+            Some(3_600_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS"],
+            2467,
             &now,
         ),
         definition(
