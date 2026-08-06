@@ -168,6 +168,7 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTasksArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) client_ref: String,
     pub(in crate::mcp_server) project_task_id: String,
@@ -183,10 +184,7 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) tags: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) default_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(in crate::mcp_server) requires_execution: Option<bool>,
-    #[serde(default)]
-    pub(in crate::mcp_server) is_planning_task: Option<bool>,
+    pub(in crate::mcp_server) is_planning_task: bool,
     #[serde(default)]
     // Rejected if present; retained for explicit fail-closed compatibility.
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,

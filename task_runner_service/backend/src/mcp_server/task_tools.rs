@@ -73,8 +73,8 @@ impl TaskRunnerMcpService {
             }
             "create_task" => {
                 let decoded = decode_args::<CreateTaskArgs>(args)?;
-                let child_task_profile = request_context
-                    .child_task_profile(decoded.is_planning_task, decoded.requires_execution);
+                let child_task_profile =
+                    request_context.child_task_profile(decoded.is_planning_task);
                 let mut input: CreateTaskRequest = decoded.into_request()?;
                 request_context.enforce_plugin_config(&mut input);
                 let source_context = request_context.task_source_context()?;

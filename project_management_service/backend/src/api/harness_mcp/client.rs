@@ -242,15 +242,28 @@ pub(super) async fn list_harness_paths(
         ctx.access.base_url.trim().trim_end_matches('/'),
         encode_path_segments(ctx.repo_path.as_str())
     );
-    harness_request_json::<HarnessListPathsResponse, ()>(
-        &ctx.client,
-        Method::GET,
-        endpoint.as_str(),
-        ctx.access.access_token.as_str(),
-        None,
+    normalize_harness_paths_result(
+        harness_request_json::<HarnessListPathsResponse, ()>(
+            &ctx.client,
+            Method::GET,
+            endpoint.as_str(),
+            ctx.access.access_token.as_str(),
+            None,
+        )
+        .await,
     )
-    .await
-    .map_err(|err| err.to_string())
+}
+
+fn normalize_harness_paths_result(
+    result: Result<HarnessListPathsResponse, HarnessRequestError>,
+) -> Result<HarnessListPathsResponse, String> {
+    match result {
+        Ok(paths) => Ok(paths),
+        Err(err) if err.is_empty_repository_root_listing("") => {
+            Ok(HarnessListPathsResponse { files: Vec::new() })
+        }
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 pub(super) async fn commit_single_file_action(
@@ -429,6 +442,17 @@ mod tests {
         };
 
         assert!(error.is_empty_repository_root_listing(""));
+    }
+
+    #[test]
+    fn empty_repository_paths_are_returned_as_an_empty_listing() {
+        let paths = normalize_harness_paths_result(Err(HarnessRequestError {
+            status: Some(StatusCode::NOT_FOUND),
+            message: r#"{"message":"revision \"main\" not found"}"#.to_string(),
+        }))
+        .expect("empty repository should be readable as an empty workspace");
+
+        assert!(paths.files.is_empty());
     }
 
     #[test]
