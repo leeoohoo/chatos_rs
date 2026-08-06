@@ -226,7 +226,7 @@ impl SandboxRuntimeContext {
 }
 
 pub(super) fn task_requires_sandbox(task: &TaskRecord, authoritative_policy: bool) -> bool {
-    if !task.mcp_config.enabled {
+    if !task.mcp_config.enabled || !task.mcp_config.requires_execution {
         return false;
     }
     let selected_builtin_kinds = if authoritative_policy {
@@ -238,7 +238,7 @@ pub(super) fn task_requires_sandbox(task: &TaskRecord, authoritative_policy: boo
         matches!(
             kind,
             BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
-        ) || (!task.mcp_config.requires_execution && kind == BuiltinMcpKind::CodeMaintainerRead)
+        )
     })
 }
 
