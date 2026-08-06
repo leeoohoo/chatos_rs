@@ -83,6 +83,8 @@ pub struct AppConfig {
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
     pub agent_token_secret: String,
+    pub frontend_proxy_client_id: String,
+    pub frontend_proxy_client_key: String,
 }
 
 impl AppConfig {
@@ -192,6 +194,8 @@ impl AppConfig {
                 "SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS",
             )?,
             agent_token_secret: required_text("SANDBOX_MANAGER_AGENT_TOKEN_SECRET")?,
+            frontend_proxy_client_id: required_text("SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID")?,
+            frontend_proxy_client_key: required_text("SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY")?,
         };
 
         if !config.require_auth {
@@ -224,6 +228,11 @@ impl AppConfig {
             "SANDBOX_MANAGER_AGENT_TOKEN_SECRET",
             Some(config.agent_token_secret.as_str()),
             &[DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET],
+        )?;
+        validate_production_secret(
+            "SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY",
+            Some(config.frontend_proxy_client_key.as_str()),
+            &["change_me_sandbox_manager_frontend_proxy_client_key"],
         )?;
 
         Ok(config)
@@ -292,6 +301,8 @@ impl AppConfig {
             ]),
             require_signed_internal_requests: true,
             agent_token_secret: "test-sandbox-agent-token-secret".to_string(),
+            frontend_proxy_client_id: "sandbox-manager-frontend-test".to_string(),
+            frontend_proxy_client_key: "test-sandbox-manager-frontend-key".to_string(),
         }
     }
 }

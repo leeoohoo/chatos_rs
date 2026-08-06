@@ -55,6 +55,8 @@ server {
   location /api/ {
     proxy_pass $api_proxy_pass;
     proxy_http_version 1.1;
+    proxy_set_header X-Sandbox-Client-Id "${SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID}";
+    proxy_set_header X-Sandbox-Client-Key "${SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY}";
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

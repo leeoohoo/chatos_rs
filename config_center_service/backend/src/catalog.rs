@@ -526,6 +526,10 @@ pub const SANDBOX_MANAGER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "sandbox_manager.security.mcp_management_internal_api_secret";
 pub const SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY: &str =
     "sandbox_manager.security.agent_token_secret";
+pub const SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID_CONFIG_KEY: &str =
+    "sandbox_manager.frontend.proxy_client_id";
+pub const SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY_CONFIG_KEY: &str =
+    "sandbox_manager.frontend.proxy_client_key";
 pub const SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY: &str = "sandbox_manager.security.require_auth";
 pub const SANDBOX_MANAGER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "sandbox_manager.downstream.user_service_base_url";
@@ -7854,6 +7858,36 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SANDBOX_MANAGER_AGENT_TOKEN_SECRET"],
             371,
+            &now,
+        ),
+        definition(
+            SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID_CONFIG_KEY,
+            "Sandbox Console Proxy Client ID",
+            "Sandbox Manager 控制台反向代理使用的受管访问客户端标识",
+            "Sandbox Manager / Frontend",
+            "service",
+            Some("sandbox-manager"),
+            "string",
+            json!("sandbox-manager-frontend"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID"],
+            37101,
+            &now,
+        ),
+        secret_definition(
+            SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY_CONFIG_KEY,
+            "Sandbox Console Proxy Client Key",
+            "Sandbox Manager 控制台反向代理使用的受管访问客户端密钥",
+            "Sandbox Manager / Frontend",
+            "service",
+            Some("sandbox-manager"),
+            json!("change_me_sandbox_manager_frontend_proxy_client_key"),
+            "restart_required",
+            &["SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY"],
+            37102,
             &now,
         ),
         definition(

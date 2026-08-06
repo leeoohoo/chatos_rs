@@ -50,13 +50,15 @@ impl SandboxManager {
     ) -> Result<Self, String> {
         std::fs::create_dir_all(&config.work_root)
             .map_err(|err| format!("create sandbox work root failed: {err}"))?;
-        Ok(Self {
+        let manager = Self {
             config,
             store,
             backend,
             pool,
             image_jobs: images::ImageJobStore::default(),
-        })
+        };
+        manager.ensure_frontend_proxy_access_client().await?;
+        Ok(manager)
     }
 
     pub fn config(&self) -> &AppConfig {
