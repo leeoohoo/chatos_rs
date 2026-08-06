@@ -120,7 +120,6 @@ service_bins = {
     "sandbox_manager_service_backend",
     "task_runner_service_backend",
     "chat_app_server_rs",
-    "official_website_service_backend",
 }
 
 current = os.getpid()

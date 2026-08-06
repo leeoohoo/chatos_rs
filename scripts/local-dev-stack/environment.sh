@@ -186,9 +186,6 @@ export_local_env() {
   export HOST="${HOST:-0.0.0.0}"
   export BACKEND_PORT="${BACKEND_PORT:-3997}"
   export CHATOS_INTERNAL_MTLS_PORT="${CHATOS_INTERNAL_MTLS_PORT:-3999}"
-  export OFFICIAL_WEBSITE_HOST="${OFFICIAL_WEBSITE_HOST:-0.0.0.0}"
-  export OFFICIAL_WEBSITE_PORT="${OFFICIAL_WEBSITE_PORT:-39250}"
-
   export USER_SERVICE_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/user_service?authSource=admin"
   export MEMORY_ENGINE_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin"
   export PROJECT_SERVICE_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/project_management_service?authSource=admin"
@@ -274,7 +271,6 @@ export_local_env() {
   export CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
   export USER_SERVICE_HARNESS_PROVISIONING_ENABLED="${CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED:-true}"
   export USER_SERVICE_HARNESS_BASE_URL="${CHATOS_LOCAL_DEV_HARNESS_BASE_URL:-http://127.0.0.1:3000}"
-  export OFFICIAL_WEBSITE_STATUS_HOST="${OFFICIAL_WEBSITE_STATUS_HOST:-127.0.0.1}"
 }
 
 config_center_caller_signing_secret() {
@@ -422,7 +418,7 @@ prepare_local_dev_apisix_config() {
     -e 's/"task-runner-backend:39090"/"host.docker.internal:39090"/g' \
     -e 's/"memory-engine-backend:7081"/"host.docker.internal:7081"/g' \
     -e 's/"chatos-frontend:80"/"host.docker.internal:8088"/g' \
-    -e 's/"official-website-frontend:80"/"host.docker.internal:39251"/g' \
+    -e 's/"official-website-frontend:80"/"host.docker.internal:8088"/g' \
     "$source_config" >"$target_config"
 }
 
@@ -510,7 +506,6 @@ managed = {
     "sandbox-manager",
     "task-runner",
     "chatos-backend",
-    "official-website",
     "harness",
 }
 

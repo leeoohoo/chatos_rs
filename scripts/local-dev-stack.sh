@@ -44,7 +44,6 @@ DOCKER_APP_SERVICES=(
   task-runner-worker
   task-runner-scheduler
   chatos-backend
-  official-website-backend
   configuration-center-frontend
   chatos-frontend
   user-service-frontend
@@ -53,7 +52,6 @@ DOCKER_APP_SERVICES=(
   plugin-management-frontend
   task-runner-frontend
   sandbox-manager-frontend
-  official-website-frontend
 )
 
 BACKEND_SERVICES=(
@@ -70,7 +68,6 @@ BACKEND_SERVICES=(
   "task-runner-worker|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=worker TASK_RUNNER_WORKER_ID=task-runner-worker-local"
   "task-runner-scheduler|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=scheduler TASK_RUNNER_WORKER_ID=task-runner-scheduler-local"
   "chatos-backend|chatos-backend|chatos/backend/Cargo.toml|/health|3997|chat_app_server_rs|-"
-  "official-website-backend|official-website|official_website_service/backend/Cargo.toml|/health|39250|official_website_service_backend|-"
 )
 
 FRONTEND_SERVICES=(
@@ -82,7 +79,6 @@ FRONTEND_SERVICES=(
   "plugin-management-frontend|plugin_management_service/frontend|39261"
   "task-runner-frontend|task_runner_service/frontend|39091"
   "sandbox-manager-frontend|sandbox_manager_service/frontend|8096"
-  "official-website-frontend|official_website_service/frontend|39251"
 )
 
 # shellcheck source=local-dev-stack/support.sh
