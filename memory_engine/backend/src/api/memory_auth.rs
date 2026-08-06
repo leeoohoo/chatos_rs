@@ -26,6 +26,7 @@ use super::internal_auth::{
     require_internal_request, scope_for_memory_path, ADMIN_SCOPE, DATA_SCOPE,
     MODEL_PROFILE_SYNC_SCOPE, SOURCE_SCOPE,
 };
+use super::internal_audit::MemoryInternalRequestAudit;
 
 const PRINCIPAL_TYPE_AGENT_ACCOUNT: &str = "agent_account";
 const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";
@@ -247,14 +248,18 @@ pub async fn require_memory_auth(
         DATA_SCOPE => &["chatos-backend", "task-runner", "project-service"],
         _ => &[],
     };
-    if let Some(_) = require_internal_request(
+    if let Some(claims) = require_internal_request(
         &state.config,
         request.headers(),
         required_scope,
         allowed_callers,
     )? {
+        let audit = MemoryInternalRequestAudit::from_request(&request, &claims);
+        request.extensions_mut().insert(claims);
         request.extensions_mut().insert(MemoryAuthContext::Operator);
-        return Ok(next.run(request).await);
+        let response = next.run(request).await;
+        audit.record(response.status());
+        return Ok(response);
     }
     if let Some(token) = bearer_token_from_request(&request)? {
         match verify_user_service_principal(token.as_str(), &state.config, &state.user_service_http)
@@ -312,9 +317,12 @@ pub async fn require_model_profile_internal_auth(
             "signed Memory Engine model profile token is required".to_string(),
         )
     })?;
+    let audit = MemoryInternalRequestAudit::from_request(&request, &claims);
     request.extensions_mut().insert(claims);
     request.extensions_mut().insert(MemoryAuthContext::Operator);
-    Ok(next.run(request).await)
+    let response = next.run(request).await;
+    audit.record(response.status());
+    Ok(response)
 }
 
 fn bearer_token_from_request(

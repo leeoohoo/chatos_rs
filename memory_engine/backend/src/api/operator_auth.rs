@@ -13,6 +13,7 @@ use axum::{
 
 use crate::state::AppState;
 
+use super::internal_audit::MemoryInternalRequestAudit;
 use super::internal_auth::{require_internal_request, OPERATOR_SCOPE};
 
 pub async fn require_operator_auth(
@@ -37,6 +38,9 @@ pub async fn require_operator_auth(
             "signed Memory Engine internal API token is required".to_string(),
         )
     })?;
+    let audit = MemoryInternalRequestAudit::from_request(&request, &claims);
     request.extensions_mut().insert(claims);
-    Ok(next.run(request).await)
+    let response = next.run(request).await;
+    audit.record(response.status());
+    Ok(response)
 }

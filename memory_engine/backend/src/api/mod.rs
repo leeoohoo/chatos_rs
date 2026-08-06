@@ -10,6 +10,7 @@ use crate::state::AppState;
 mod admin_api;
 mod context_api;
 mod health_api;
+mod internal_audit;
 mod internal_auth;
 mod jobs_api;
 mod memory_auth;
