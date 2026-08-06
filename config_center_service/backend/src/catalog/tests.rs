@@ -636,6 +636,21 @@ fn catalog_exposes_project_service_runtime_routes_via_env_projection() {
             "string",
         ),
         (
+            PROJECT_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
+            "PROJECT_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT",
+            "string",
+        ),
+        (
+            PROJECT_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "PROJECT_SERVICE_OTEL_TRACE_SAMPLE_RATIO",
+            "number",
+        ),
+        (
+            PROJECT_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "PROJECT_SERVICE_OTEL_EXPORT_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
             PROJECT_SERVICE_PORT_CONFIG_KEY,
             "PROJECT_SERVICE_PORT",
             "integer",

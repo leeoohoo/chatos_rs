@@ -13,6 +13,7 @@ pub mod models;
 pub mod services;
 pub mod state;
 pub mod store;
+mod trace_context;
 pub mod user_model_runtime_client;
 
 pub use api::{build_internal_router, build_public_router};

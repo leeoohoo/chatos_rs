@@ -26,6 +26,9 @@ futures-util = "0.3"
 hex = "0.4"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["rt-tokio", "trace"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
@@ -35,6 +38,7 @@ sha2 = "0.11"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.7", features = ["cors", "trace"] }
 tracing = "0.1"
+tracing-opentelemetry = { version = "0.33", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }

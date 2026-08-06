@@ -13,6 +13,9 @@ use chatos_service_runtime::{parse_bool_text, validate_production_secret};
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
+    pub otlp_endpoint: String,
+    pub otlp_trace_sample_ratio: f64,
+    pub otlp_export_timeout: Duration,
     pub database_url: String,
     pub mcp_result_rabbitmq_url: String,
     pub mcp_result_queue_prefix: String,
@@ -53,6 +56,23 @@ impl AppConfig {
             .parse::<IpAddr>()
             .map_err(|err| format!("PROJECT_SERVICE_HOST must be a valid ip address: {err}"))?;
         let port = required_u16("PROJECT_SERVICE_PORT")?;
+        let otlp_endpoint = required_text("PROJECT_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT")?;
+        require_http_endpoint(
+            "PROJECT_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT",
+            otlp_endpoint.as_str(),
+        )?;
+        let otlp_trace_sample_ratio = required_f64("PROJECT_SERVICE_OTEL_TRACE_SAMPLE_RATIO")?;
+        if !(0.0..=1.0).contains(&otlp_trace_sample_ratio) {
+            return Err(
+                "PROJECT_SERVICE_OTEL_TRACE_SAMPLE_RATIO must be between 0 and 1".to_string(),
+            );
+        }
+        let otlp_export_timeout_ms = required_u64("PROJECT_SERVICE_OTEL_EXPORT_TIMEOUT_MS")?;
+        if otlp_export_timeout_ms == 0 {
+            return Err(
+                "PROJECT_SERVICE_OTEL_EXPORT_TIMEOUT_MS must be greater than zero".to_string(),
+            );
+        }
         let user_service_request_timeout_ms =
             required_u64("PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let task_runner_request_timeout_ms =
@@ -119,6 +139,9 @@ impl AppConfig {
         let config = Self {
             host,
             port,
+            otlp_endpoint,
+            otlp_trace_sample_ratio,
+            otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             database_url: required_text("PROJECT_SERVICE_DATABASE_URL")?,
             mcp_result_rabbitmq_url: required_text("PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL")?,
             mcp_result_queue_prefix: required_text("PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX")?,
@@ -270,6 +293,14 @@ fn require_https_base_url(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn require_http_endpoint(key: &str, value: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("{key} must use http or https"));
+    }
+    Ok(())
+}
+
 fn caller_internal_api_secrets() -> HashMap<String, String> {
     [
         (
@@ -315,6 +346,13 @@ fn required_u64(key: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
         .map_err(|err| format!("{key} must be a valid integer: {err}"))
+}
+
+fn required_f64(key: &str) -> Result<f64, String> {
+    let value = required_text(key)?;
+    value
+        .parse::<f64>()
+        .map_err(|err| format!("{key} must be a valid number: {err}"))
 }
 
 fn required_u16(key: &str) -> Result<u16, String> {

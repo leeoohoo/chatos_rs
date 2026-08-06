@@ -347,6 +347,12 @@ pub const PROJECT_SERVICE_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "project_service.security.mcp_management_internal_api_secret";
 pub const PROJECT_SERVICE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "project_service.downstream.plugin_management_internal_api_secret";
+pub const PROJECT_SERVICE_OTLP_ENDPOINT_CONFIG_KEY: &str =
+    "project_service.observability.otlp_endpoint";
+pub const PROJECT_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "project_service.observability.trace_sample_ratio";
+pub const PROJECT_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str =
+    "project_service.observability.export_timeout_ms";
 pub const PROJECT_SERVICE_HOST_CONFIG_KEY: &str = "project_service.runtime.host";
 pub const PROJECT_SERVICE_PORT_CONFIG_KEY: &str = "project_service.runtime.port";
 pub const PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
@@ -6226,6 +6232,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET"],
             357,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "Project Service OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "Project Service / Observability",
+            "service",
+            Some("project-service"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            358,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "Project Service 根链路按 Trace ID 采样的比例",
+            "Project Service / Observability",
+            "service",
+            Some("project-service"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_OTEL_TRACE_SAMPLE_RATIO"],
+            359,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "Project Service 导出一批 trace 的超时毫秒数",
+            "Project Service / Observability",
+            "service",
+            Some("project-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_OTEL_EXPORT_TIMEOUT_MS"],
+            360,
             &now,
         ),
         definition(
