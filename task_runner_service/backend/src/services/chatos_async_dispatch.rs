@@ -274,6 +274,9 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+            otlp_trace_sample_ratio: 0.0,
+            otlp_export_timeout: Duration::from_secs(1),
             role: TaskRunnerRole::All,
             store_mode: StoreMode::Memory,
             database_url: "memory://chatos-parallel-dispatch-test".to_string(),

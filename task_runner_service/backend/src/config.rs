@@ -224,6 +224,9 @@ mod tests {
         let mut config = super::AppConfig {
             host: "127.0.0.1".parse().unwrap(),
             port: 39090,
+            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+            otlp_trace_sample_ratio: 0.0,
+            otlp_export_timeout: std::time::Duration::from_secs(1),
             role: super::TaskRunnerRole::Api,
             store_mode: super::StoreMode::Mongo,
             database_url: "mongodb://example/task_runner_service".to_string(),
