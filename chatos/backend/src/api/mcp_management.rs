@@ -22,6 +22,10 @@ use chatos_mcp_service::{
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
+use crate::api::internal_audit::{
+    jsonrpc_outcome, record_chatos_internal_resource_access, ChatosInternalRequestIdentity,
+    ChatosInternalResourceAudit,
+};
 use crate::config::Config;
 use crate::models::message::Message;
 use crate::models::session::Session;
@@ -76,28 +80,55 @@ async fn mcp_management_entrypoint(
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = request.id.clone().unwrap_or(Value::Null);
-    if let Err(message) = require_mcp_management_request(&headers) {
-        return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
-    }
+    let identity = match require_mcp_management_request(&headers) {
+        Ok(identity) => identity,
+        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message)),
+    };
+    let (action, target_name) = mcp_management_audit_action(&request);
+    let runtime_session_id = header_text(&headers, "x-mcp-management-session-id")
+        .unwrap_or_else(|| identity.trace_id.clone());
+    let resource_id = format!("{runtime_session_id}/{system_key}/{target_name}");
+    let response = dispatch_mcp_management_request(system_key.as_str(), &headers, request).await;
+    record_chatos_internal_resource_access(
+        &identity,
+        ChatosInternalResourceAudit {
+            represented_user_id: header_text(&headers, "x-mcp-management-owner-user-id").as_deref(),
+            project_id: header_text(&headers, "x-mcp-management-project-id").as_deref(),
+            resource_type: "system_mcp_tool",
+            resource_id: resource_id.as_str(),
+            resource_name: Some(target_name.as_str()),
+            action: action.as_str(),
+            outcome: jsonrpc_outcome(&response),
+        },
+    );
+    Json(response)
+}
+
+async fn dispatch_mcp_management_request(
+    system_key: &str,
+    headers: &HeaderMap,
+    request: JsonRpcRequest,
+) -> JsonRpcResponse {
+    let id = request.id.clone().unwrap_or(Value::Null);
     let binding = match mcp_management_binding_from_headers(&headers) {
         Ok(binding) => binding,
-        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
+        Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
     };
     let system_key = match system_key.parse::<SystemMcpKey>() {
         Ok(system_key) => system_key,
-        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
+        Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
     };
     if system_key == SystemMcpKey::BrowserTools && request.method == METHOD_TOOLS_LIST {
-        return Json(dispatch_bound_browser_tools_list(request, &binding).await);
+        return dispatch_bound_browser_tools_list(request, &binding).await;
     }
     if request.method != METHOD_TOOLS_CALL {
-        return Json(jsonrpc_error(
+        return jsonrpc_error(
             id,
             MCP_ERROR_METHOD_NOT_FOUND,
             "ChatOS internal MCP Provider only accepts tools/call, plus tools/list for Browser Tools",
-        ));
+        );
     }
-    let response = match system_key {
+    match system_key {
         SystemMcpKey::AgentBuilder => dispatch_bound_agent_builder(request, &binding).await,
         SystemMcpKey::AskUser => dispatch_bound_ask_user(request, &binding).await,
         SystemMcpKey::BrowserTools => dispatch_bound_browser_tools(request, &binding).await,
@@ -112,8 +143,7 @@ async fn mcp_management_entrypoint(
             MCP_ERROR_INVALID_PARAMS,
             "ChatOS internal MCP Provider does not own this System MCP",
         ),
-    };
-    Json(response)
+    }
 }
 
 async fn close_bound_cloud_browser_session(
@@ -121,42 +151,66 @@ async fn close_bound_cloud_browser_session(
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    let identity = match require_mcp_management_request(&headers) {
+        Ok(identity) => identity,
+        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message)),
+    };
+    let response =
+        dispatch_close_bound_cloud_browser_session(session_id.as_str(), &headers, request).await;
+    record_chatos_internal_resource_access(
+        &identity,
+        ChatosInternalResourceAudit {
+            represented_user_id: header_text(&headers, "x-mcp-management-owner-user-id").as_deref(),
+            project_id: header_text(&headers, "x-mcp-management-project-id").as_deref(),
+            resource_type: "browser_runtime_session",
+            resource_id: session_id.as_str(),
+            resource_name: Some("browser_tools"),
+            action: "close",
+            outcome: jsonrpc_outcome(&response),
+        },
+    );
+    Json(response)
+}
+
+async fn dispatch_close_bound_cloud_browser_session(
+    session_id: &str,
+    headers: &HeaderMap,
+    request: JsonRpcRequest,
+) -> JsonRpcResponse {
     let id = request.id.unwrap_or(Value::Null);
-    if let Err(message) = require_mcp_management_request(&headers) {
-        return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
-    }
     let binding = match mcp_management_binding_from_headers(&headers) {
         Ok(binding) => binding,
-        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
+        Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
     };
     if request.method != CLOUD_BROWSER_SESSION_CLOSE_METHOD {
-        return Json(jsonrpc_error(
+        return jsonrpc_error(
             id,
             MCP_ERROR_METHOD_NOT_FOUND,
             "cloud Browser Runtime close endpoint only accepts browser/session/close",
-        ));
+        );
     }
     if session_id.trim() != binding.session_id {
-        return Json(jsonrpc_error(
+        return jsonrpc_error(
             id,
             MCP_ERROR_AUTH_REQUIRED,
             "cloud Browser Runtime close path does not match the bound Runtime Session",
-        ));
+        );
     }
     if !is_browser_agent(binding.agent_key) {
-        return Json(jsonrpc_error(
+        return jsonrpc_error(
             id,
             MCP_ERROR_AUTH_REQUIRED,
             "configured Agent is not allowed to close ChatOS Browser Tools MCP",
-        ));
+        );
     }
     let browser_binding = match cloud_browser_binding(&binding) {
         Ok(binding) => binding,
-        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
+        Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
     };
     match close_cloud_browser_runtime(&browser_binding).await {
-        Ok(closed) => Json(jsonrpc_ok(id, serde_json::json!({"closed": closed}))),
-        Err(error) => Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, error)),
+        Ok(closed) => jsonrpc_ok(id, serde_json::json!({"closed": closed})),
+        Err(error) => jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, error),
     }
 }
 
@@ -643,7 +697,26 @@ async fn dispatch_bound_ask_user(
     }
 }
 
-fn require_mcp_management_request(headers: &HeaderMap) -> Result<(), String> {
+fn mcp_management_audit_action(request: &JsonRpcRequest) -> (String, String) {
+    if request.method == METHOD_TOOLS_CALL {
+        let target = request
+            .params
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown_tool");
+        return ("call".to_string(), target.to_string());
+    }
+    if request.method == METHOD_TOOLS_LIST {
+        return ("list".to_string(), "tools".to_string());
+    }
+    (request.method.clone(), "unsupported_method".to_string())
+}
+
+fn require_mcp_management_request(
+    headers: &HeaderMap,
+) -> Result<ChatosInternalRequestIdentity, String> {
     let config = Config::try_get()?;
     let secret = config
         .mcp_management_internal_api_secret
@@ -656,14 +729,19 @@ fn require_mcp_management_request(headers: &HeaderMap) -> Result<(), String> {
     }
     let token = header_text(headers, "x-chatos-internal-token")
         .ok_or_else(|| "x-chatos-internal-token is required".to_string())?;
-    chatos_service_runtime::verify_internal_service_token(
+    let claims = chatos_service_runtime::verify_internal_service_token(
         token.as_str(),
         secret,
         MCP_MANAGEMENT_CALLER,
         CHATOS_TOKEN_AUDIENCE,
         MCP_TOOLS_CALL_SCOPE,
     )?;
-    Ok(())
+    Ok(ChatosInternalRequestIdentity {
+        caller_service: MCP_MANAGEMENT_CALLER.to_string(),
+        audience_service: CHATOS_TOKEN_AUDIENCE.to_string(),
+        scope: MCP_TOOLS_CALL_SCOPE.to_string(),
+        trace_id: claims.trace_id,
+    })
 }
 
 fn mcp_management_binding_from_headers(

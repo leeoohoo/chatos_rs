@@ -43,6 +43,7 @@ mod conversation_semantics;
 mod cors;
 pub mod fs;
 pub mod git;
+mod internal_audit;
 pub mod local_connectors;
 pub mod mcp_management;
 pub mod memory_compat;

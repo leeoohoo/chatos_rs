@@ -19,6 +19,7 @@ const ASK_USER_CALLBACK_RETRY_DELAYS_MS: [u64; 3] = [0, 250, 750];
 struct ChatosAskUserPromptCallbackPayload {
     event: String,
     task_id: String,
+    owner_user_id: Option<String>,
     run_id: Option<String>,
     status: String,
     task_title: String,
@@ -148,6 +149,7 @@ fn build_chatos_ask_user_prompt_callback_payload(
     ChatosAskUserPromptCallbackPayload {
         event: event.to_string(),
         task_id: task.id.clone(),
+        owner_user_id: task.owner_user_id.clone(),
         run_id: prompt
             .run_id
             .clone()
