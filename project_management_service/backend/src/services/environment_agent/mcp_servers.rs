@@ -45,26 +45,17 @@ pub(super) async fn create_sandbox_image_from_plan(
         RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
     }
     .ok_or_else(|| "当前项目没有可用的沙箱镜像 Provider".to_string())?;
-    let result = chatos_mcp_runtime::jsonrpc_http_call(
-        server.url.as_str(),
-        server.headers.as_ref(),
-        "tools/call",
+    call_sandbox_image_tool(
+        &server,
+        "create_image",
         json!({
-            "name": "create_image",
-            "arguments": {
-                "features": features,
-                "custom_build_script": custom_build_script,
-                "timeout_ms": 7_200_000u64
-            }
+            "features": features,
+            "custom_build_script": custom_build_script,
+            "timeout_ms": 7_200_000u64
         }),
-        Some(Duration::from_secs(2 * 60 * 60)),
+        Duration::from_secs(2 * 60 * 60),
     )
-    .await?;
-    Ok(result
-        .get("structured_content")
-        .cloned()
-        .or_else(|| result.get("_structured_result").cloned())
-        .unwrap_or(result))
+    .await
 }
 
 pub(super) async fn get_sandbox_image_catalog(
@@ -85,15 +76,31 @@ pub(super) async fn get_sandbox_image_catalog(
         RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
     }
     .ok_or_else(|| "当前项目没有可用的沙箱镜像 Provider".to_string())?;
-    let result = chatos_mcp_runtime::jsonrpc_http_call(
+    call_sandbox_image_tool(
+        &server,
+        "get_image_catalog",
+        json!({}),
+        Duration::from_secs(90),
+    )
+    .await
+}
+
+async fn call_sandbox_image_tool(
+    server: &McpHttpServer,
+    tool_name: &str,
+    arguments: Value,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let result = chatos_mcp_runtime::jsonrpc_http_call_with_client(
         server.url.as_str(),
         server.headers.as_ref(),
         "tools/call",
         json!({
-            "name": "get_image_catalog",
-            "arguments": {}
+            "name": tool_name,
+            "arguments": arguments
         }),
-        Some(Duration::from_secs(90)),
+        Some(timeout),
+        server.http_client.as_ref(),
     )
     .await?;
     Ok(result
@@ -510,4 +517,75 @@ fn required_user_access_token<'a>(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{label} 需要用户访问令牌"))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::routing::post;
+    use axum::{Json, Router};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn sandbox_image_tool_uses_server_http_client() {
+        async fn mcp(headers: HeaderMap, Json(request): Json<Value>) -> (StatusCode, Json<Value>) {
+            if headers
+                .get("x-sandbox-mtls-client")
+                .and_then(|value| value.to_str().ok())
+                != Some("configured")
+            {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": "custom client was not used"})),
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id").cloned().unwrap_or(Value::Null),
+                    "result": {
+                        "structured_content": {"status": "ready"}
+                    }
+                })),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test MCP server");
+        let address = listener.local_addr().expect("test MCP address");
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/mcp", post(mcp)))
+                .await
+                .expect("serve test MCP");
+        });
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        default_headers.insert(
+            "x-sandbox-mtls-client",
+            reqwest::header::HeaderValue::from_static("configured"),
+        );
+        let client = reqwest::Client::builder()
+            .default_headers(default_headers)
+            .build()
+            .expect("build custom client");
+        let server = McpHttpServer::new("sandbox-images", format!("http://{address}/mcp"))
+            .with_http_client(client);
+
+        let result = call_sandbox_image_tool(
+            &server,
+            "get_image_catalog",
+            json!({}),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("custom HTTP client should reach MCP server");
+
+        assert_eq!(
+            result.pointer("/status").and_then(Value::as_str),
+            Some("ready")
+        );
+        server_task.abort();
+    }
 }
