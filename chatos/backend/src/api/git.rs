@@ -505,7 +505,6 @@ async fn load_harness_git_snapshot(
     let sync_secret = cfg
         .project_service_sync_secret
         .as_deref()
-        .or(cfg.task_runner_callback_secret.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
@@ -514,44 +513,31 @@ async fn load_harness_git_snapshot(
                 Json(json!({ "error": "project service sync secret is not configured" })),
             )
         })?;
-    let value = project_management_api_client::call_project_harness_tool(
+    let response = project_management_api_client::get_project_harness_git_branches(
         sync_secret,
         project_id,
-        "list_branches",
-        json!({}),
+        auth.user_id.as_str(),
     )
     .await
     .map_err(|err| (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))))?;
-    let branches = value
-        .get("branches")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let name = item.get("name").and_then(Value::as_str)?.trim();
-                    if name.is_empty() {
-                        return None;
-                    }
-                    Some(HarnessBranchSnapshot {
-                        name: name.to_string(),
-                        sha: item
-                            .get("sha")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        is_default: item
-                            .get("is_default")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                    })
-                })
-                .collect::<Vec<_>>()
+    let branches = response
+        .branches
+        .into_iter()
+        .filter_map(|branch| {
+            let name = branch.name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some(HarnessBranchSnapshot {
+                name: name.to_string(),
+                sha: branch.sha,
+                is_default: branch.is_default,
+            })
         })
-        .unwrap_or_default();
-    let current = value
-        .get("current")
-        .and_then(Value::as_str)
+        .collect::<Vec<_>>();
+    let current = response
+        .current
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)

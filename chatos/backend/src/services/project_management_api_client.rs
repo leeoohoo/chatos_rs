@@ -43,6 +43,19 @@ pub struct ProjectServiceProjectRecord {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectHarnessGitBranch {
+    pub name: String,
+    pub sha: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectHarnessGitBranchesResponse {
+    pub current: Option<String>,
+    pub branches: Vec<ProjectHarnessGitBranch>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CreateProjectServiceProjectRequest {
     pub name: String,
@@ -351,6 +364,31 @@ pub async fn call_project_harness_tool(
     )
     .await?;
     parse_harness_tool_response(response)
+}
+
+pub async fn get_project_harness_git_branches(
+    sync_secret: &str,
+    project_id: &str,
+    owner_user_id: &str,
+) -> Result<ProjectHarnessGitBranchesResponse, String> {
+    let config = crate::config::Config::try_get()?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/harness/git-branches",
+        config
+            .project_service_internal_base_url
+            .trim()
+            .trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.get(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .header("X-ChatOS-Owner-User-Id", owner_user_id.trim()),
+    )
+    .await
 }
 
 fn parse_harness_tool_response(response: Value) -> Result<Value, String> {

@@ -9,7 +9,7 @@ use tokio::time::timeout;
 
 use crate::config::AppConfig;
 
-pub(super) fn authenticated_git_url(
+pub(crate) fn authenticated_git_url(
     raw_url: &str,
     username: &str,
     token: &str,
@@ -40,7 +40,7 @@ pub(super) async fn run_git(
     ))
 }
 
-pub(super) async fn run_git_output(
+pub(crate) async fn run_git_output(
     args: Vec<String>,
     cwd: Option<&Path>,
     config: &AppConfig,

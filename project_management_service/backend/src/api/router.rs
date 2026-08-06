@@ -20,7 +20,9 @@ use super::dependency_graph::{
     get_project_dependency_graph, get_requirement_dependency_graph, get_work_item_dependency_graph,
 };
 use super::execution_context::resolve_project_execution_context;
-use super::harness_git_access::sync_get_project_harness_git_access;
+use super::harness_git_access::{
+    sync_get_project_harness_git_access, sync_get_project_harness_git_branches,
+};
 use super::harness_mcp::harness_project_mcp_entrypoint;
 use super::plan::get_project_plan;
 use super::project_environment_agent_mcp::project_environment_agent_mcp_entrypoint;
@@ -244,6 +246,10 @@ pub fn build_internal_router(state: AppState) -> Router {
             .route(
                 "/api/chatos-sync/projects/{project_id}/harness/git-access",
                 get(sync_get_project_harness_git_access),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/harness/git-branches",
+                get(sync_get_project_harness_git_branches),
             )
             .route(
                 "/api/chatos-sync/projects/{project_id}/harness/mcp",
@@ -482,6 +488,7 @@ mod tests {
         for path in [
             "/api/chatos-sync/projects",
             "/api/internal/projects/project-1/execution-context",
+            "/api/chatos-sync/projects/project-1/harness/git-branches",
         ] {
             let status = client
                 .get(format!("{base_url}{path}"))
@@ -523,6 +530,10 @@ mod tests {
 
         for (path, expected_status) in [
             ("/api/chatos-sync/projects", StatusCode::UNAUTHORIZED),
+            (
+                "/api/chatos-sync/projects/project-1/harness/git-branches",
+                StatusCode::UNAUTHORIZED,
+            ),
             (
                 "/api/internal/projects/project-1/execution-context",
                 StatusCode::BAD_REQUEST,

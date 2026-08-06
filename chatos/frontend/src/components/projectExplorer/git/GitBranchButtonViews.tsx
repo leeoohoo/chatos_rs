@@ -16,6 +16,16 @@ import {
 } from './GitBranchPanels';
 import type { GitBranchButtonModel } from './useGitBranchButtonModel';
 
+export type GitSummaryViewState = 'loading' | 'error' | 'not-repo' | 'repo';
+
+export const resolveGitSummaryViewState = (
+  summary: { isRepo: boolean } | null | undefined,
+  error: string | null | undefined,
+): GitSummaryViewState => {
+  if (summary) return summary.isRepo ? 'repo' : 'not-repo';
+  return error ? 'error' : 'loading';
+};
+
 export const GitBranchTrigger: React.FC<{
   model: GitBranchButtonModel;
 }> = ({ model }) => {
@@ -73,6 +83,7 @@ export const GitBranchDropdown: React.FC<{
     setQuery,
     selectRepository,
   } = model;
+  const summaryViewState = resolveGitSummaryViewState(git.summary, git.error);
 
   return (
     <div className="absolute right-0 top-10 z-50 flex max-h-[78vh] w-[min(720px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl">
@@ -139,7 +150,21 @@ export const GitBranchDropdown: React.FC<{
           </div>
         )}
 
-        {!git.summary?.isRepo ? (
+        {summaryViewState === 'loading' ? (
+          <div className="p-3 text-sm text-muted-foreground">
+            {t('git.checking')}
+          </div>
+        ) : summaryViewState === 'error' ? (
+          <div className="p-3">
+            <button
+              type="button"
+              onClick={() => { void git.refreshSummary({ force: true }); }}
+              className="h-8 rounded border border-border px-3 text-xs hover:bg-accent"
+            >
+              {t('git.refresh')}
+            </button>
+          </div>
+        ) : summaryViewState === 'not-repo' ? (
           <div className="space-y-3 p-3 text-sm text-muted-foreground">
             <div>
               {gitAvailableRepositories.length > 0
@@ -154,7 +179,7 @@ export const GitBranchDropdown: React.FC<{
               {t('git.refresh')}
             </button>
           </div>
-        ) : (
+        ) : git.summary ? (
           <>
             <GitSummaryBlock
               branchLabel={branchLabel}
@@ -221,7 +246,7 @@ export const GitBranchDropdown: React.FC<{
               />
             )}
           </>
-        )}
+        ) : null}
       </div>
 
       <div className="flex items-center justify-between border-t border-border px-3 py-2">

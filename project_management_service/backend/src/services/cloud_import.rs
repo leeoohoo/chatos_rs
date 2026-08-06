@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 mod archive;
 mod archive_policy;
-mod git;
+pub(crate) mod git;
 
 use archive::{flatten_single_project_directory, has_importable_files, unpack_zip_safely};
 use git::{authenticated_git_url, run_git, run_git_output};
