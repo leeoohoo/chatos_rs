@@ -22,6 +22,7 @@ use crate::runtime::{
     PluginCloudToolComponentBinding, PluginLocalToolComponentBinding,
     PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
 };
+use crate::trace_context::InternalTraceContextExt;
 
 use super::{ProviderCallError, ProviderCallOutcome};
 
@@ -663,6 +664,7 @@ impl PluginComponentProvider {
             .header("x-local-connector-caller", CALLER_SERVICE)
             .header("x-local-connector-internal-token", token)
             .header("x-local-connector-owner-user-id", owner_user_id)
+            .with_internal_trace_context()
             .json(&body)
             .timeout(self.request_timeout)
             .send()

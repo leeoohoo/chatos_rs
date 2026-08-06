@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::{PluginLocalProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
+use crate::trace_context::InternalTraceContextExt;
 
 use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
@@ -487,6 +488,7 @@ impl PluginLocalProvider {
             .header("x-local-connector-caller", CALLER_SERVICE)
             .header("x-local-connector-internal-token", token)
             .header("x-local-connector-owner-user-id", owner_user_id)
+            .with_internal_trace_context()
             .json(&body)
             .timeout(self.request_timeout)
             .send()

@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{
@@ -330,7 +331,8 @@ impl CloudSandboxProvider {
         .map_err(ProviderCallError::provider_unavailable)?;
         Ok(request
             .header("x-sandbox-caller", CALLER_SERVICE)
-            .header("x-sandbox-internal-token", token))
+            .header("x-sandbox-internal-token", token)
+            .with_internal_trace_context())
     }
 }
 

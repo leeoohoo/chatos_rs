@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{
@@ -453,7 +454,8 @@ impl LocalSandboxProvider {
         Ok(request
             .header("x-local-connector-caller", CALLER_SERVICE)
             .header("x-local-connector-internal-token", token)
-            .header("x-local-connector-owner-user-id", owner_user_id))
+            .header("x-local-connector-owner-user-id", owner_user_id)
+            .with_internal_trace_context())
     }
 
     fn sandbox_url(&self, pairing_id: &str, sandbox_id: &str, suffix: Option<&str>) -> String {

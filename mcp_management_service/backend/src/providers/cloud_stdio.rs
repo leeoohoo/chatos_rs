@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::runtime::{CloudStdioProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
+use crate::trace_context::InternalTraceContextExt;
 
 use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
@@ -661,7 +662,8 @@ impl CloudStdioProvider {
         .map_err(ProviderCallError::provider_unavailable)?;
         Ok(request
             .header("x-sandbox-caller", CALLER_SERVICE)
-            .header("x-sandbox-internal-token", token))
+            .header("x-sandbox-internal-token", token)
+            .with_internal_trace_context())
     }
 }
 

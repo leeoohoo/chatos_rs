@@ -12,6 +12,7 @@ use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::{decode_cancel_notification_response, ProviderCancelOutcome};
 
@@ -167,6 +168,7 @@ impl ProjectServiceProvider {
             }
         }
         let response = request
+            .with_internal_trace_context()
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": invocation_id,
@@ -249,6 +251,7 @@ impl ProjectServiceProvider {
             }
         }
         let response = request
+            .with_internal_trace_context()
             .json(&json!({
                 "jsonrpc": "2.0",
                 "method": METHOD_NOTIFICATIONS_CANCELLED,

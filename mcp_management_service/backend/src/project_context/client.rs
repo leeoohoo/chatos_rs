@@ -5,6 +5,8 @@ use chatos_mcp_management_sdk::ProjectExecutionContext;
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 
+use crate::trace_context::InternalTraceContextExt;
+
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "project-service";
 const EXECUTION_CONTEXT_SCOPE: &str = "project.execution_context.read";
@@ -59,6 +61,7 @@ impl ProjectContextClient {
             .query(&[("owner_user_id", owner_user_id.trim())])
             .header("x-project-service-caller", CALLER_SERVICE)
             .header("x-project-service-internal-token", token)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("project context request failed: {err}"))?;

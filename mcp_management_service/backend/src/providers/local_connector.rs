@@ -13,6 +13,7 @@ use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{
@@ -195,6 +196,7 @@ impl LocalConnectorProvider {
                 LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
                 enabled_builtin_kinds,
             )
+            .with_internal_trace_context()
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": invocation_id,
@@ -373,7 +375,8 @@ impl LocalConnectorProvider {
             .header(
                 LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
                 enabled_builtin_kinds,
-            ))
+            )
+            .with_internal_trace_context())
     }
 }
 

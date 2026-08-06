@@ -11,6 +11,7 @@ use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{ProviderCallError, ProviderCallOutcome};
@@ -285,7 +286,7 @@ fn with_runtime_headers(
     {
         request = request.header(SANDBOX_IMAGE_RUN_ID_HEADER, run_id);
     }
-    request
+    request.with_internal_trace_context()
 }
 
 fn call_timeout(

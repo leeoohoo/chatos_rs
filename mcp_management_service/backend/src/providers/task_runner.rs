@@ -12,6 +12,7 @@ use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{
@@ -321,6 +322,7 @@ impl TaskRunnerProvider {
             );
         }
         let response = request
+            .with_internal_trace_context()
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": invocation_id,
@@ -418,7 +420,7 @@ impl TaskRunnerProvider {
                 binding.expected_project_task_ids.join(","),
             );
         }
-        Ok(request)
+        Ok(request.with_internal_trace_context())
     }
 
     pub(super) async fn cancel_invocation(
@@ -495,6 +497,7 @@ impl TaskRunnerProvider {
             }
         }
         let response = request
+            .with_internal_trace_context()
             .json(&json!({
                 "jsonrpc": "2.0",
                 "method": METHOD_NOTIFICATIONS_CANCELLED,
