@@ -81,6 +81,7 @@ impl AppState {
                 ask_user_request_timeout: config.task_runner_ask_user_request_timeout,
             },
             ChatosProviderConfig {
+                http: config.chatos_http_client.clone(),
                 base_url: config.chatos_service_base_url.clone(),
                 internal_secret: config.chatos_internal_api_secret.clone(),
                 request_timeout: config.downstream_request_timeout,

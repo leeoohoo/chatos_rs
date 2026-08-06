@@ -431,6 +431,7 @@ impl AppState {
                 ));
             }
         }
+        validate_chatos_mtls_invariants(values, &mut errors);
         let public_port = values
             .get(MCP_MANAGEMENT_PORT_CONFIG_KEY)
             .and_then(Value::as_i64);
@@ -514,6 +515,38 @@ impl AppState {
             );
         }
         Ok(errors)
+    }
+}
+
+pub(super) fn validate_chatos_mtls_invariants(
+    values: &BTreeMap<String, Value>,
+    errors: &mut Vec<String>,
+) {
+    for key in [
+        TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
+        MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY,
+    ] {
+        let is_https = values
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.trim().starts_with("https://"));
+        if !is_https {
+            errors.push(format!(
+                "{key} must use https:// because ChatOS internal APIs require mTLS"
+            ));
+        }
+    }
+
+    let public_port = values
+        .get(CHATOS_BACKEND_PORT_CONFIG_KEY)
+        .and_then(Value::as_i64);
+    let internal_mtls_port = values
+        .get(CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY)
+        .and_then(Value::as_i64);
+    if public_port.is_some() && public_port == internal_mtls_port {
+        errors.push(
+            "chatos.runtime.internal_mtls_port must differ from chatos.runtime.port".to_string(),
+        );
     }
 }
 

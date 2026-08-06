@@ -206,6 +206,12 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "integer",
         ),
         (
+            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_INTERNAL_MTLS_PORT",
+            "integer",
+        ),
+        (
             TASK_RUNNER_HOST_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_HOST",

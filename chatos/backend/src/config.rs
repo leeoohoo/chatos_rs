@@ -13,6 +13,7 @@ pub struct Config {
     pub openai_api_key: String,
     pub openai_base_url: String,
     pub port: u16,
+    pub internal_mtls_port: u16,
     pub node_env: String,
     pub host: String,
     pub log_level: String,
@@ -95,6 +96,10 @@ impl Config {
         let openai_base_url = require_config_center_value("OPENAI_BASE_URL")?;
 
         let port = require_config_center_u16("BACKEND_PORT")?;
+        let internal_mtls_port = require_config_center_u16("CHATOS_INTERNAL_MTLS_PORT")?;
+        if internal_mtls_port == port {
+            return Err("CHATOS_INTERNAL_MTLS_PORT must differ from BACKEND_PORT".to_string());
+        }
         let host = require_config_center_value("HOST")?;
 
         let log_level = require_config_center_value("LOG_LEVEL")?;
@@ -270,6 +275,7 @@ impl Config {
             openai_api_key,
             openai_base_url,
             port,
+            internal_mtls_port,
             node_env,
             host,
             log_level,

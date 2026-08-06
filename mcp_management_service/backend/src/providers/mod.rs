@@ -58,6 +58,7 @@ pub struct TaskRunnerProviderConfig {
 }
 
 pub struct ChatosProviderConfig {
+    pub http: reqwest::Client,
     pub base_url: String,
     pub internal_secret: Option<String>,
     pub request_timeout: Duration,
@@ -171,6 +172,7 @@ impl ProviderDispatcher {
                 runtime.response_limit_bytes,
             )?,
             chatos: ChatosProvider::new(
+                chatos.http,
                 chatos.base_url,
                 chatos.request_timeout,
                 chatos.ask_user_request_timeout,

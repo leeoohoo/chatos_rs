@@ -318,6 +318,7 @@ pub struct AppConfig {
     pub task_runner_request_timeout: Duration,
     pub task_runner_ask_user_request_timeout: Duration,
     pub chatos_service_base_url: String,
+    pub chatos_http_client: reqwest::Client,
     pub chatos_internal_api_secret: Option<String>,
     pub chatos_ask_user_request_timeout: Duration,
     pub chatos_browser_request_timeout: Duration,
@@ -511,6 +512,15 @@ impl AppConfig {
             required_u64("MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS")?
                 .clamp(30_000, 10 * 60 * 1_000),
         );
+        let chatos_service_base_url = require_https_base_url(
+            "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL",
+            normalize_base_url(required_text("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL")?),
+        )?;
+        let chatos_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(chatos_ask_user_request_timeout),
+            required_path("CHATOS_MTLS_CA_CERT_PATH")?.as_path(),
+            required_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let provider_response_limit_bytes =
             required_usize("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")?
                 .clamp(64 * 1024, 16 * 1024 * 1024);
@@ -565,9 +575,8 @@ impl AppConfig {
             task_runner_internal_api_secret,
             task_runner_request_timeout,
             task_runner_ask_user_request_timeout,
-            chatos_service_base_url: normalize_base_url(required_text(
-                "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL",
-            )?),
+            chatos_service_base_url,
+            chatos_http_client,
             chatos_internal_api_secret,
             chatos_ask_user_request_timeout,
             chatos_browser_request_timeout,
@@ -598,14 +607,6 @@ impl AppConfig {
 
     pub fn internal_mtls_bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.internal_mtls_port)
-    }
-
-    pub async fn resolve_service_urls(&mut self) {
-        self.chatos_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "chatos-backend",
-            self.chatos_service_base_url.as_str(),
-        )
-        .await;
     }
 
     #[cfg(test)]
@@ -654,6 +655,7 @@ impl AppConfig {
             task_runner_request_timeout: Duration::from_secs(180),
             task_runner_ask_user_request_timeout: Duration::from_secs(86_700),
             chatos_service_base_url: "http://127.0.0.1:3997".to_string(),
+            chatos_http_client: reqwest::Client::new(),
             chatos_internal_api_secret: Some("a-long-chatos-secret".to_string()),
             chatos_ask_user_request_timeout: Duration::from_secs(86_700),
             chatos_browser_request_timeout: Duration::from_secs(120),

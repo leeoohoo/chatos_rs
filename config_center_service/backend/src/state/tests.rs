@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::releases::{overlay_pressure_state, validate_sandbox_manager_mtls_invariants};
+use super::releases::{
+    overlay_pressure_state, validate_chatos_mtls_invariants,
+    validate_sandbox_manager_mtls_invariants,
+};
 use super::support::*;
 
 use super::*;
@@ -678,6 +681,49 @@ fn sandbox_manager_mtls_publish_validation_rejects_http_and_port_collisions() {
     );
     errors.clear();
     validate_sandbox_manager_mtls_invariants(&values, &mut errors);
+    assert!(errors.is_empty());
+}
+
+#[test]
+fn chatos_mtls_publish_validation_rejects_http_and_port_collisions() {
+    let mut values = BTreeMap::from([
+        (
+            TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
+            json!("http://chatos-backend:3997/api/agent/chat/task-runner/callback"),
+        ),
+        (
+            MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://chatos-backend:3999"),
+        ),
+        (CHATOS_BACKEND_PORT_CONFIG_KEY.to_string(), json!(3997)),
+        (
+            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+            json!(3997),
+        ),
+    ]);
+    let mut errors = Vec::new();
+
+    validate_chatos_mtls_invariants(&values, &mut errors);
+
+    assert_eq!(errors.len(), 2);
+    assert!(errors.iter().any(|error| {
+        error.contains(TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY)
+            && error.contains("must use https://")
+    }));
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("internal_mtls_port must differ")));
+
+    values.insert(
+        TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
+        json!("https://chatos-backend:3999/api/agent/chat/task-runner/callback"),
+    );
+    values.insert(
+        CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+        json!(3999),
+    );
+    errors.clear();
+    validate_chatos_mtls_invariants(&values, &mut errors);
     assert!(errors.is_empty());
 }
 

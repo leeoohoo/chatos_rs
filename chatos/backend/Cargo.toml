@@ -9,6 +9,7 @@ default-run = "chat_app_server_rs"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "macros", "multipart", "ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -75,3 +76,6 @@ chatos_project_execution = { path = "../../crates/chatos_project_execution" }
 [features]
 pdf = []
 test-support = []
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

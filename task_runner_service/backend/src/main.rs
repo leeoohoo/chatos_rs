@@ -177,7 +177,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    if config.callback_delivery_enabled() && config.chatos_callback_url.is_some() {
+    if config.callback_delivery_enabled() {
         background_handles.push(spawn_chatos_callback_reconciler(
             app_state.run_service.clone(),
         ));
@@ -269,16 +269,6 @@ async fn resolve_downstream_services(config: &mut AppConfig) {
         config.project_service_base_url = Some(
             chatos_service_runtime::resolve_service_base_url("project-service", base_url.as_str())
                 .await,
-        );
-    }
-    if let Some(callback_url) = config.chatos_callback_url.clone() {
-        config.chatos_callback_url = Some(
-            chatos_service_runtime::resolve_service_url(
-                "chatos-backend",
-                callback_url.as_str(),
-                "/api/agent/chat/task-runner/callback",
-            )
-            .await,
         );
     }
 }

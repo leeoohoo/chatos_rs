@@ -6,14 +6,12 @@ use serde_json::Value;
 use std::time::Duration;
 use tracing::{info, warn};
 
-use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
-use crate::models::{now_rfc3339, AskUserPromptRecord, TaskRecord, TaskRunRecord, TaskStatus};
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
-
 use super::support::{
     redacted_prompt_payload, redacted_prompt_response, secret_field_keys, status_label,
 };
 use super::*;
+use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
+use crate::models::{now_rfc3339, AskUserPromptRecord, TaskRecord, TaskRunRecord, TaskStatus};
 
 const ASK_USER_CALLBACK_RETRY_DELAYS_MS: [u64; 3] = [0, 250, 750];
 
@@ -72,9 +70,6 @@ impl AskUserPromptService {
         let Some(config) = self.config.clone() else {
             return;
         };
-        if config.chatos_callback_url.is_none() {
-            return;
-        }
         let Some((task, run)) = self.load_prompt_task_snapshot(prompt).await else {
             return;
         };
@@ -184,15 +179,12 @@ async fn send_chatos_ask_user_prompt_callback(
     config: AppConfig,
     payload: ChatosAskUserPromptCallbackPayload,
 ) -> Result<(), String> {
-    let Some(url) = config.chatos_callback_url.clone() else {
-        return Err("TASK_RUNNER_CHATOS_CALLBACK_URL not configured".to_string());
-    };
+    let url = config.chatos_callback_url.clone();
     let secret = config
         .chatos_internal_api_secret
         .as_deref()
         .ok_or_else(|| "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET not configured".to_string())?;
-    let client = build_http_client(HttpClientTimeouts::new(config.callback_timeout))
-        .map_err(|err| err.to_string())?;
+    let client = config.chatos_callback_http_client.clone();
     let mut last_error: Option<String> = None;
     for (attempt_index, delay_ms) in ASK_USER_CALLBACK_RETRY_DELAYS_MS.into_iter().enumerate() {
         if delay_ms > 0 {

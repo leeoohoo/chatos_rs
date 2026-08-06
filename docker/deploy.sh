@@ -558,6 +558,60 @@ ensure_project_service_mtls_material() {
   done
 }
 
+ensure_chatos_mtls_material() {
+  need_cmd openssl
+  local configured_dir resolved_dir
+  local required_file failures=0
+  configured_dir="$(env_value CHATOS_MTLS_DIR ./secrets/chatos-mtls)"
+  if [[ "$configured_dir" = /* ]]; then
+    resolved_dir="$configured_dir"
+  else
+    resolved_dir="$SCRIPT_DIR/$configured_dir"
+  fi
+
+  for required_file in \
+    ca.crt server.crt server.key \
+    task-runner.identity.pem \
+    mcp-management-service.identity.pem
+  do
+    if [[ ! -s "$resolved_dir/$required_file" ]]; then
+      failures=1
+      break
+    fi
+  done
+
+  if (( failures > 0 )) && ! is_production_environment; then
+    "$ROOT_DIR/scripts/generate-chatos-mtls.sh" "$resolved_dir"
+    failures=0
+  fi
+  if (( failures > 0 )); then
+    echo "[ERROR] ChatOS mTLS material is incomplete: $resolved_dir" >&2
+    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
+    return 1
+  fi
+  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
+    "$resolved_dir/server.crt" >/dev/null; then
+    echo "[ERROR] ChatOS server certificate is not trusted by the configured CA" >&2
+    return 1
+  fi
+  if ! openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1; then
+    echo "[ERROR] ChatOS server key is unreadable" >&2
+    return 1
+  fi
+  for required_file in task-runner.identity.pem mcp-management-service.identity.pem
+  do
+    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
+      "$resolved_dir/$required_file" >/dev/null; then
+      echo "[ERROR] ChatOS client certificate is invalid: $required_file" >&2
+      return 1
+    fi
+    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
+      echo "[ERROR] ChatOS client identity has no readable private key: $required_file" >&2
+      return 1
+    fi
+  done
+}
+
 ensure_local_connector_mtls_material() {
   need_cmd openssl
   local configured_dir resolved_dir
@@ -1065,6 +1119,7 @@ case "$ACTION" in
     ensure_mcp_management_mtls_material
     ensure_task_runner_mtls_material
     ensure_project_service_mtls_material
+    ensure_chatos_mtls_material
     ensure_local_connector_mtls_material
     ensure_user_service_mtls_material
     ensure_plugin_management_mtls_material

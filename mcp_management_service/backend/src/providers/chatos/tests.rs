@@ -47,6 +47,7 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
         axum::serve(listener, app).await.expect("serve mock ChatOS");
     });
     let provider = ChatosProvider::new(
+        reqwest::Client::new(),
         format!("http://{address}"),
         Duration::from_secs(5),
         Duration::from_secs(60),
@@ -256,6 +257,7 @@ async fn prepare_routes_materializes_the_live_chatos_browser_catalog() {
             .expect("serve mock ChatOS tools/list endpoint");
     });
     let provider = ChatosProvider::new(
+        reqwest::Client::new(),
         format!("http://{address}"),
         Duration::from_secs(5),
         Duration::from_secs(60),
@@ -304,6 +306,7 @@ async fn prepare_routes_materializes_the_live_chatos_browser_catalog() {
 #[tokio::test]
 async fn prepare_routes_marks_cloud_browser_unavailable_without_source_session() {
     let provider = ChatosProvider::new(
+        reqwest::Client::new(),
         "http://127.0.0.1:3997",
         Duration::from_secs(5),
         Duration::from_secs(60),
@@ -366,6 +369,7 @@ async fn close_session_releases_the_bound_chatos_browser_runtime() {
             .expect("serve mock ChatOS close endpoint");
     });
     let provider = ChatosProvider::new(
+        reqwest::Client::new(),
         format!("http://{address}"),
         Duration::from_secs(5),
         Duration::from_secs(60),
@@ -403,6 +407,7 @@ async fn close_session_releases_the_bound_chatos_browser_runtime() {
 #[test]
 fn provider_only_supports_chatos_owned_routes() {
     let provider = ChatosProvider::new(
+        reqwest::Client::new(),
         "http://127.0.0.1:3997",
         Duration::from_secs(5),
         Duration::from_secs(60),

@@ -60,7 +60,7 @@ pub mod task_runner_plugins;
 pub mod terminals;
 pub mod user_settings;
 
-pub fn router() -> Result<Router, String> {
+pub fn public_router() -> Result<Router, String> {
     let cfg = Config::try_get()?;
     let request_body_limit = default_request_body_limit_bytes();
 
@@ -123,6 +123,20 @@ pub fn router() -> Result<Router, String> {
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
         )))
+}
+
+pub fn internal_router() -> Router {
+    Router::new()
+        .merge(modules::app_api::internal_routes())
+        .fallback(fallback_404)
+        .layer(DefaultBodyLimit::max(default_request_body_limit_bytes()))
+        .layer(middleware::from_fn(log_server_error_requests))
+        .layer(TraceLayer::new_for_http())
+        .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
+        .layer(SetRequestIdLayer::new(
+            REQUEST_ID_HEADER.clone(),
+            MakeRequestUuid,
+        ))
 }
 
 async fn log_server_error_requests(request: Request<Body>, next: middleware::Next) -> Response {

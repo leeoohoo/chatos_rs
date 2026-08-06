@@ -192,7 +192,6 @@ pub(super) async fn get_system_stats(
             rabbitmq_queues,
             worker_consumers_expected: state.config.worker_enabled(),
             callback_consumer_expected: state.config.callback_delivery_enabled()
-                && state.config.chatos_callback_url.is_some()
                 && state.task_queue_topology.callback_delivery_mode
                     == crate::platform_queue::TaskQueueMode::RabbitMq,
             run_dispatch_queue: state.task_queue_topology.run_dispatch_queue.clone(),
@@ -750,7 +749,8 @@ mod tests {
             sandbox_manager_client_id: None,
             sandbox_manager_client_key: None,
             default_sandbox_lease_ttl_seconds: 7_200,
-            chatos_callback_url: None,
+            chatos_callback_url: String::new(),
+            chatos_callback_http_client: reqwest::Client::new(),
             internal_api_secret: Some("internal-secret".to_string()),
             chatos_internal_api_secret: Some("chatos-internal-secret".to_string()),
             mcp_management_internal_api_secret: Some("internal-secret".to_string()),

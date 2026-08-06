@@ -57,7 +57,7 @@ pub fn router() -> Router {
         )
 }
 
-pub fn public_router() -> Router {
+pub fn internal_router() -> Router {
     Router::new().route(
         "/api/agent/chat/task-runner/callback",
         post(task_runner_callback),

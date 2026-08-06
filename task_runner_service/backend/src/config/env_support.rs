@@ -69,6 +69,18 @@ impl AppConfig {
             require_config_center_u64("TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS")?.max(60);
         let callback_timeout_ms =
             require_config_center_u64("TASK_RUNNER_CALLBACK_TIMEOUT_MS")?.max(1_000);
+        let chatos_callback_url = require_config_center_secret("TASK_RUNNER_CHATOS_CALLBACK_URL")?;
+        require_https_base_url(
+            "TASK_RUNNER_CHATOS_CALLBACK_URL",
+            chatos_callback_url.as_str(),
+        )?;
+        let chatos_callback_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                callback_timeout_ms,
+            )),
+            required_bootstrap_path("CHATOS_MTLS_CA_CERT_PATH")?.as_path(),
+            required_bootstrap_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let local_connector_service_base_url = Some(require_config_center_secret(
             "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
         )?);
@@ -183,7 +195,8 @@ impl AppConfig {
             sandbox_manager_client_id: Some(sandbox_manager_client_id),
             sandbox_manager_client_key: Some(sandbox_manager_client_key),
             default_sandbox_lease_ttl_seconds,
-            chatos_callback_url: optional_config_center_text("TASK_RUNNER_CHATOS_CALLBACK_URL"),
+            chatos_callback_url,
+            chatos_callback_http_client,
             internal_api_secret,
             chatos_internal_api_secret,
             mcp_management_internal_api_secret,
@@ -288,12 +301,6 @@ fn require_https_base_url(key: &str, value: &str) -> Result<(), String> {
 
 fn require_config_center_text(key: &str) -> Result<String, String> {
     normalized_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
-}
-
-fn optional_config_center_text(key: &str) -> Option<String> {
-    normalized_env(key)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn require_config_center_u64(key: &str) -> Result<u64, String> {

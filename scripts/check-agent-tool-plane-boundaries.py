@@ -341,6 +341,67 @@ for env_key in [
             f"docker/compose.yml: {env_key} is not pinned to the Local Connector mTLS listener"
         )
 
+require(
+    "chatos/backend/src/lib.rs",
+    "api::public_router()",
+    "a dedicated public ChatOS router",
+)
+require(
+    "chatos/backend/src/lib.rs",
+    "api::internal_router()",
+    "a dedicated internal ChatOS router",
+)
+require(
+    "chatos/backend/src/lib.rs",
+    "axum_server::bind_rustls",
+    "mandatory TLS on the ChatOS internal listener",
+)
+require(
+    "task_runner_service/backend/src/config/env_support.rs",
+    'require_https_base_url(\n            "TASK_RUNNER_CHATOS_CALLBACK_URL"',
+    "strict HTTPS ChatOS callback validation",
+)
+require(
+    "task_runner_service/backend/src/config/env_support.rs",
+    'required_bootstrap_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")',
+    "a certificate-bound Task Runner ChatOS client",
+)
+require(
+    "mcp_management_service/backend/src/config.rs",
+    'require_https_base_url(\n            "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL"',
+    "strict HTTPS ChatOS provider validation",
+)
+require(
+    "mcp_management_service/backend/src/config.rs",
+    'required_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")',
+    "a certificate-bound MCP Management ChatOS client",
+)
+forbid(
+    "task_runner_service/backend/src/main.rs",
+    ['resolve_service_url(\n                "chatos-backend"'],
+    "ChatOS internal mTLS callback routing must not be replaced by public service discovery",
+)
+forbid(
+    "mcp_management_service/backend/src/config.rs",
+    ['resolve_service_base_url(\n            "chatos-backend"'],
+    "ChatOS internal mTLS provider routing must not be replaced by public service discovery",
+)
+for env_key, expected in [
+    (
+        "TASK_RUNNER_CHATOS_CALLBACK_URL",
+        "https://chatos-backend:3999/api/agent/chat/task-runner/callback",
+    ),
+    ("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL", "https://chatos-backend:3999"),
+]:
+    if f"{env_key}: http://" in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} must never route an internal caller over plain HTTP"
+        )
+    if f"{env_key}: {expected}" not in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} is not pinned to the ChatOS mTLS listener"
+        )
+
 if ERRORS:
     print("Agent Tool Plane architecture boundary violations:")
     for error in ERRORS:

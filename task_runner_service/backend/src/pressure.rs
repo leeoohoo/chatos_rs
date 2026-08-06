@@ -168,7 +168,6 @@ async fn inspect_main_queues(state: &AppState) -> RabbitMqQueueRuntimeStats {
         RabbitMqQueueSpec::new("run_post_process", topology.run_post_process_queue.as_str()),
     ];
     if state.config.callback_delivery_enabled()
-        && state.config.chatos_callback_url.is_some()
         && topology.callback_delivery_mode == TaskQueueMode::RabbitMq
     {
         specs.push(RabbitMqQueueSpec::new(

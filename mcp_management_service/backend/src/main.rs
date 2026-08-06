@@ -31,8 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mcp_management_service_backend::pressure::McpManagementPressurePolicy::from_snapshot(
             &pressure_snapshot,
         )?;
-    let mut config = AppConfig::from_env()?;
-    config.resolve_service_urls().await;
+    let config = AppConfig::from_env()?;
     let bind_addr = config.bind_addr();
     let internal_mtls_bind_addr = config.internal_mtls_bind_addr();
     let internal_mtls_config = load_internal_mtls_config(&config)?;

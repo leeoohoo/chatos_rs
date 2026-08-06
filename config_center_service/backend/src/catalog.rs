@@ -168,6 +168,7 @@ pub const DEFAULT_LOCAL_RABBITMQ_URL: &str =
 pub const CHATOS_NODE_ENV_CONFIG_KEY: &str = "chatos.runtime.node_env";
 pub const CHATOS_HOST_CONFIG_KEY: &str = "chatos.runtime.host";
 pub const CHATOS_BACKEND_PORT_CONFIG_KEY: &str = "chatos.runtime.port";
+pub const CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY: &str = "chatos.runtime.internal_mtls_port";
 pub const CHATOS_DATABASE_URL_CONFIG_KEY: &str = "chatos.runtime.database_url";
 pub const CHATOS_MONGODB_DATABASE_CONFIG_KEY: &str = "chatos.runtime.mongodb_database";
 pub const CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY: &str =
@@ -1208,6 +1209,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["BACKEND_PORT"],
+            160,
+            &now,
+        ),
+        definition(
+            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Chatos Backend 内部服务接口的强制 mTLS 监听端口",
+            "Chat OS / Runtime",
+            "service",
+            Some("chatos-backend"),
+            "integer",
+            json!(3999),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["CHATOS_INTERNAL_MTLS_PORT"],
             160,
             &now,
         ),
@@ -3086,7 +3104,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             292,
             &now,
         ),
-        nullable_definition(
+        definition(
             TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
             "Chatos Callback URL",
             "Task Runner 回调 Chatos Backend 任务状态时使用的地址",
@@ -3094,7 +3112,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "string",
-            Value::Null,
+            json!("https://127.0.0.1:3999/api/agent/chat/task-runner/callback"),
             None,
             None,
             &[],
@@ -5177,7 +5195,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:3997"),
+            json!("https://127.0.0.1:3999"),
             None,
             None,
             &[],

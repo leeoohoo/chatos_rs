@@ -11,6 +11,7 @@ mod builtin;
 mod config;
 mod core;
 mod db;
+mod internal_tls;
 mod logger;
 mod models;
 mod modules;
@@ -29,6 +30,7 @@ pub use api::message_task_runner::{
 };
 
 use crate::services::terminal_manager::get_terminal_manager;
+use internal_tls::{load_internal_mtls_config, ChatosInternalTlsConfig};
 
 pub async fn run_server_from_env() -> Result<(), String> {
     dotenvy::dotenv().ok();
@@ -66,23 +68,37 @@ pub async fn run_server_from_env() -> Result<(), String> {
         chatos_service_runtime::register_current_service("chatos-backend", cfg.port, "/health")
             .await;
 
-    let app = api::router().map_err(|err| format!("Failed to build API router: {err}"))?;
+    let public_app =
+        api::public_router().map_err(|err| format!("Failed to build public API router: {err}"))?;
+    let internal_app = api::internal_router();
 
     let host = cfg
         .host
         .parse::<IpAddr>()
         .map_err(|err| format!("Invalid HOST value '{}': {}", cfg.host, err))?;
     let addr = SocketAddr::new(host, cfg.port);
+    let internal_tls = ChatosInternalTlsConfig::from_config(host, cfg)?;
+    let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     info!("Server running on http://{}", addr);
+    info!(
+        "ChatOS internal API listening with mandatory mTLS on https://{}",
+        internal_tls.bind_addr
+    );
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|err| format!("Failed to bind: {err}"))?;
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|err| format!("Server error: {err}"))
+    tokio::select! {
+        result = axum::serve(listener, public_app).with_graceful_shutdown(shutdown_signal()) => {
+            result.map_err(|err| format!("Public server error: {err}"))?;
+        }
+        result = axum_server::bind_rustls(internal_tls.bind_addr, internal_mtls_config)
+            .serve(internal_app.into_make_service()) => {
+            result.map_err(|err| format!("Internal mTLS server error: {err}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn mcp_result_queue_instance_component(host: &str, port: u16) -> String {
