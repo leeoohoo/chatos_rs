@@ -44,12 +44,12 @@ pub(super) fn apply_text_edit(
             }
         }
         if let Some(before) = before_context {
-            if !content[..start].ends_with(before) {
+            if !matches_before_context(&content[..start], before) {
                 continue;
             }
         }
         if let Some(after) = after_context {
-            if !content[end..].starts_with(after) {
+            if !matches_after_context(&content[end..], after) {
                 continue;
             }
         }
@@ -120,8 +120,9 @@ fn already_applied_edit(
             let end = start + new_text.len();
             if start_line.is_some_and(|min| byte_line_number(content, start) < min)
                 || end_line.is_some_and(|max| byte_line_number(content, end) > max)
-                || before_context.is_some_and(|before| !content[..start].ends_with(before))
-                || after_context.is_some_and(|after| !content[end..].starts_with(after))
+                || before_context
+                    .is_some_and(|before| !matches_before_context(&content[..start], before))
+                || after_context.is_some_and(|after| !matches_after_context(&content[end..], after))
             {
                 return None;
             }
@@ -145,6 +146,34 @@ fn already_applied_edit(
         }),
         changed: false,
     })
+}
+
+fn matches_before_context(prefix: &str, context: &str) -> bool {
+    if prefix.ends_with(context) {
+        return true;
+    }
+    if context.ends_with(['\n', '\r']) {
+        return false;
+    }
+
+    prefix
+        .strip_suffix("\r\n")
+        .or_else(|| prefix.strip_suffix('\n'))
+        .is_some_and(|value| value.ends_with(context))
+}
+
+fn matches_after_context(suffix: &str, context: &str) -> bool {
+    if suffix.starts_with(context) {
+        return true;
+    }
+    if context.starts_with(['\n', '\r']) {
+        return false;
+    }
+
+    suffix
+        .strip_prefix("\r\n")
+        .or_else(|| suffix.strip_prefix('\n'))
+        .is_some_and(|value| value.starts_with(context))
 }
 
 fn byte_line_number(content: &str, byte_idx: usize) -> usize {
@@ -186,5 +215,29 @@ mod tests {
 
         assert!(!result.changed);
         assert_eq!(result.info["already_applied"], json!(true));
+    }
+
+    #[test]
+    fn edit_accepts_surrounding_context_lines_without_boundary_newlines() {
+        let args = json!({
+            "old_text": "old line one\nold line two",
+            "new_text": "new line one\nnew line two",
+            "start_line": 2,
+            "end_line": 3,
+            "before_context": "before",
+            "after_context": "after",
+            "expected_matches": 1
+        });
+
+        let result = apply_text_edit(
+            "before\nold line one\nold line two\nafter\n",
+            &args,
+            "old line one\nold line two",
+            "new line one\nnew line two",
+        )
+        .expect("edit with line-oriented context");
+
+        assert!(result.changed);
+        assert_eq!(result.info["replacements"], json!(1));
     }
 }

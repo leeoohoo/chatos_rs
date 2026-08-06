@@ -92,7 +92,7 @@ fn write_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "edit_file",
-            "description": "Safely edit a file in the current project workspace by replacing old_text with new_text. Use before_context / after_context or start_line/end_line when old_text appears multiple times.",
+            "description": "Safely edit a file in the current project workspace by replacing old_text with new_text. Use before_context / after_context or start_line/end_line when old_text appears multiple times. Context may be supplied as adjacent whole lines without manually adding the boundary newline.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

@@ -195,16 +195,44 @@ fn match_context(
     after_context: Option<&str>,
 ) -> bool {
     if let Some(before) = before_context {
-        if !original[..item.start].ends_with(before) {
+        if !matches_before_context(&original[..item.start], before) {
             return false;
         }
     }
     if let Some(after) = after_context {
-        if !original[item.end..].starts_with(after) {
+        if !matches_after_context(&original[item.end..], after) {
             return false;
         }
     }
     true
+}
+
+fn matches_before_context(prefix: &str, context: &str) -> bool {
+    if prefix.ends_with(context) {
+        return true;
+    }
+    if context.ends_with(['\n', '\r']) {
+        return false;
+    }
+
+    prefix
+        .strip_suffix("\r\n")
+        .or_else(|| prefix.strip_suffix('\n'))
+        .is_some_and(|value| value.ends_with(context))
+}
+
+fn matches_after_context(suffix: &str, context: &str) -> bool {
+    if suffix.starts_with(context) {
+        return true;
+    }
+    if context.starts_with(['\n', '\r']) {
+        return false;
+    }
+
+    suffix
+        .strip_prefix("\r\n")
+        .or_else(|| suffix.strip_prefix('\n'))
+        .is_some_and(|value| value.starts_with(context))
 }
 
 fn compute_line_starts(text: &str) -> Vec<usize> {
@@ -305,6 +333,30 @@ mod tests {
         assert_eq!(out.info.start_line, 4);
         assert!(out.changed);
         assert!(!out.info.already_applied);
+    }
+
+    #[test]
+    fn edit_accepts_surrounding_context_lines_without_boundary_newlines() {
+        let source = "before\nold line one\nold line two\nafter\n";
+        let out = apply_edit_text(
+            source,
+            EditRequest {
+                old_text: "old line one\nold line two",
+                new_text: "new line one\nnew line two",
+                start_line: Some(2),
+                end_line: Some(3),
+                before_context: Some("before"),
+                after_context: Some("after"),
+                expected_matches: Some(1),
+            },
+        )
+        .expect("edit with line-oriented context");
+
+        assert_eq!(
+            source.replace("old line one\nold line two", "new line one\nnew line two"),
+            out.content
+        );
+        assert_eq!(out.info.candidate_matches, 1);
     }
 
     #[test]

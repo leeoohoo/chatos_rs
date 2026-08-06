@@ -155,7 +155,7 @@ fn register_edit_file_tool(
     service.register_tool(
         "edit_file",
         &format!(
-            "Safely edit a file in the current project workspace by replacing old_text with new_text.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line.\n{workspace_note}"
+            "Safely edit a file in the current project workspace by replacing old_text with new_text.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line. Context may be supplied as adjacent whole lines without manually adding the boundary newline.\n{workspace_note}"
         ),
         json!({
             "type": "object",
@@ -223,7 +223,7 @@ fn register_edit_file_tool(
                                 "read_file_raw",
                                 "read_file_range"
                             ],
-                            "guidance": "File content likely changed. Re-read latest file content, then retry edit with tighter before_context/after_context or line range."
+                            "guidance": "The requested text or context does not match the latest file. Re-read the relevant range, then retry with current old_text and tighter context or line bounds."
                         }
                     });
                     serde_json::to_string(&hint).unwrap_or(err)
