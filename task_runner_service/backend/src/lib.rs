@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod api;
+mod ask_user_prompt_retention;
 pub mod ask_user_prompt_service;
 pub mod auth;
 pub mod config;
@@ -27,6 +28,9 @@ pub mod worker;
 mod worker_control_queue;
 
 pub use api::{build_internal_router, build_public_router};
+pub use ask_user_prompt_retention::{
+    spawn_ask_user_prompt_retention, AskUserPromptRetentionPolicy,
+};
 pub use config::{load_task_runner_dotenv, AppConfig, TaskRunnerRole};
 pub use run_dispatch_queue::spawn_run_dispatch_outbox_reconciler;
 pub use run_event_queue::spawn_run_event_consumer;

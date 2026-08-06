@@ -116,6 +116,12 @@ pub const TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY: &str
     "task_runner.terminal.exited_session_retention_seconds";
 pub const TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY: &str =
     "task_runner.terminal.cleanup_interval_ms";
+pub const TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY: &str =
+    "task_runner.retention.ask_user_prompt_days";
+pub const TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY: &str =
+    "task_runner.retention.ask_user_prompt_cleanup_interval_ms";
+pub const TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY: &str =
+    "task_runner.retention.ask_user_prompt_cleanup_batch_size";
 pub const TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY: &str =
     "task_runner.memory.auto_summary_enabled";
 pub const TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
@@ -2892,6 +2898,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS"],
             2467,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY,
+            "审批记录保留天数",
+            "只清理已完成回执投递且关联 Run 已终态的过期 Ask User 审批记录",
+            "Task Runner / Retention",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(90),
+            Some(1),
+            Some(3650),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS"],
+            2468,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "审批记录清理间隔",
+            "Task Runner Scheduler 清理过期审批记录的间隔毫秒数",
+            "Task Runner / Retention",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(3_600_000),
+            Some(60_000),
+            Some(86_400_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS"],
+            2469,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
+            "审批记录清理批次",
+            "单轮最多删除的过期审批记录数量，用于限制 MongoDB 清理压力",
+            "Task Runner / Retention",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(200),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE"],
+            2470,
             &now,
         ),
         definition(

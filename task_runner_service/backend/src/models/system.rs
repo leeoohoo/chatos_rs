@@ -40,6 +40,11 @@ pub struct TaskRunnerRuntimeStatsSnapshot {
     pub run_event_retention_failures_total: u64,
     pub run_event_retention_last_deleted: u64,
     pub run_event_retention_last_completed_at_unix: u64,
+    pub ask_user_prompt_retention_runs_total: u64,
+    pub ask_user_prompt_retention_deleted_total: u64,
+    pub ask_user_prompt_retention_failures_total: u64,
+    pub ask_user_prompt_retention_last_deleted: u64,
+    pub ask_user_prompt_retention_last_completed_at_unix: u64,
     pub scheduler_pressure_paused: bool,
 }
 
@@ -113,6 +118,12 @@ pub struct RunExecutionStats {
 pub struct RunEventPruneResult {
     pub eligible_runs: usize,
     pub deleted_events: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AskUserPromptPruneResult {
+    pub eligible_prompts: usize,
+    pub deleted_prompts: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

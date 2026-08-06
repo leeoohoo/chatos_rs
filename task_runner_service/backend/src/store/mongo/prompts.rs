@@ -72,6 +72,78 @@ impl MongoStore {
         Ok(prompt)
     }
 
+    pub(in crate::store) async fn prune_terminal_ask_user_prompts_before(
+        &self,
+        cutoff: &str,
+        candidate_limit: usize,
+    ) -> Result<AskUserPromptPruneResult, String> {
+        let candidate_limit = i64::try_from(candidate_limit)
+            .map_err(|_| "Ask User cleanup batch size is too large".to_string())?;
+        let eligible_documents = self
+            .aggregate_documents(
+                &self.ask_user_prompts,
+                vec![
+                    doc! {
+                        "$match": {
+                            "status": {
+                                "$in": ["submitted", "cancelled", "timed_out", "failed"]
+                            },
+                            "resolution_event_pending": { "$ne": true },
+                            "updated_at": { "$lt": cutoff },
+                            "run_id": { "$exists": true, "$ne": Bson::Null },
+                        }
+                    },
+                    doc! { "$project": { "id": 1, "run_id": 1, "updated_at": 1 } },
+                    doc! {
+                        "$lookup": {
+                            "from": "task_runs",
+                            "localField": "run_id",
+                            "foreignField": "id",
+                            "as": "run",
+                        }
+                    },
+                    doc! { "$unwind": "$run" },
+                    doc! {
+                        "$match": {
+                            "run.status": {
+                                "$in": ["succeeded", "failed", "cancelled", "blocked"]
+                            }
+                        }
+                    },
+                    doc! { "$sort": { "updated_at": 1, "id": 1 } },
+                    doc! { "$limit": candidate_limit },
+                ],
+            )
+            .await?;
+        let eligible_prompt_ids = eligible_documents
+            .into_iter()
+            .filter_map(|document| document.get_str("id").ok().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+        if eligible_prompt_ids.is_empty() {
+            return Ok(AskUserPromptPruneResult::default());
+        }
+
+        let result = self
+            .ask_user_prompts
+            .delete_many(
+                doc! {
+                    "id": { "$in": &eligible_prompt_ids },
+                    "status": {
+                        "$in": ["submitted", "cancelled", "timed_out", "failed"]
+                    },
+                    "resolution_event_pending": { "$ne": true },
+                    "updated_at": { "$lt": cutoff },
+                },
+                None,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(AskUserPromptPruneResult {
+            eligible_prompts: eligible_prompt_ids.len(),
+            deleted_prompts: result.deleted_count,
+        })
+    }
+
     pub(in crate::store) async fn list_pending_ask_user_resolution_events(
         &self,
         limit: usize,

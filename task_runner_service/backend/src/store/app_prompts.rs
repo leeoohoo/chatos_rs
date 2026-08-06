@@ -46,6 +46,23 @@ impl AppStore {
         }
     }
 
+    pub async fn prune_terminal_ask_user_prompts_before(
+        &self,
+        cutoff: &str,
+        candidate_limit: usize,
+    ) -> Result<AskUserPromptPruneResult, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.prune_terminal_ask_user_prompts_before(cutoff, candidate_limit))
+            }
+            Self::Mongo(store) => {
+                store
+                    .prune_terminal_ask_user_prompts_before(cutoff, candidate_limit)
+                    .await
+            }
+        }
+    }
+
     pub(crate) async fn list_pending_ask_user_resolution_events(
         &self,
         limit: usize,

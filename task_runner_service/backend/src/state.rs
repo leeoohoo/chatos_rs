@@ -37,12 +37,21 @@ pub struct TaskRunnerRuntimeStats {
     run_event_retention_failures_total: Arc<AtomicU64>,
     run_event_retention_last_deleted: Arc<AtomicU64>,
     run_event_retention_last_completed_at_unix: Arc<AtomicU64>,
+    ask_user_prompt_retention_runs_total: Arc<AtomicU64>,
+    ask_user_prompt_retention_deleted_total: Arc<AtomicU64>,
+    ask_user_prompt_retention_failures_total: Arc<AtomicU64>,
+    ask_user_prompt_retention_last_deleted: Arc<AtomicU64>,
+    ask_user_prompt_retention_last_completed_at_unix: Arc<AtomicU64>,
     scheduler_pressure_paused: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ActiveRunEventStreamLease {
     active_run_event_streams: Arc<AtomicUsize>,
+}
+
+fn current_unix_timestamp() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp()).unwrap_or_default()
 }
 
 impl TaskRunnerRuntimeStats {
@@ -152,10 +161,8 @@ impl TaskRunnerRuntimeStats {
             .fetch_add(deleted_events, Ordering::Relaxed);
         self.run_event_retention_last_deleted
             .store(deleted_events, Ordering::Relaxed);
-        self.run_event_retention_last_completed_at_unix.store(
-            u64::try_from(chrono::Utc::now().timestamp()).unwrap_or_default(),
-            Ordering::Relaxed,
-        );
+        self.run_event_retention_last_completed_at_unix
+            .store(current_unix_timestamp(), Ordering::Relaxed);
     }
 
     pub fn record_run_event_retention_failure(&self) {
@@ -165,10 +172,8 @@ impl TaskRunnerRuntimeStats {
             .fetch_add(1, Ordering::Relaxed);
         self.run_event_retention_last_deleted
             .store(0, Ordering::Relaxed);
-        self.run_event_retention_last_completed_at_unix.store(
-            u64::try_from(chrono::Utc::now().timestamp()).unwrap_or_default(),
-            Ordering::Relaxed,
-        );
+        self.run_event_retention_last_completed_at_unix
+            .store(current_unix_timestamp(), Ordering::Relaxed);
     }
 
     pub fn run_event_retention_runs_total(&self) -> u64 {
@@ -192,6 +197,53 @@ impl TaskRunnerRuntimeStats {
 
     pub fn run_event_retention_last_completed_at_unix(&self) -> u64 {
         self.run_event_retention_last_completed_at_unix
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn record_ask_user_prompt_retention_success(&self, deleted_prompts: u64) {
+        self.ask_user_prompt_retention_runs_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.ask_user_prompt_retention_deleted_total
+            .fetch_add(deleted_prompts, Ordering::Relaxed);
+        self.ask_user_prompt_retention_last_deleted
+            .store(deleted_prompts, Ordering::Relaxed);
+        self.ask_user_prompt_retention_last_completed_at_unix
+            .store(current_unix_timestamp(), Ordering::Relaxed);
+    }
+
+    pub fn record_ask_user_prompt_retention_failure(&self) {
+        self.ask_user_prompt_retention_runs_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.ask_user_prompt_retention_failures_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.ask_user_prompt_retention_last_deleted
+            .store(0, Ordering::Relaxed);
+        self.ask_user_prompt_retention_last_completed_at_unix
+            .store(current_unix_timestamp(), Ordering::Relaxed);
+    }
+
+    pub fn ask_user_prompt_retention_runs_total(&self) -> u64 {
+        self.ask_user_prompt_retention_runs_total
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn ask_user_prompt_retention_deleted_total(&self) -> u64 {
+        self.ask_user_prompt_retention_deleted_total
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn ask_user_prompt_retention_failures_total(&self) -> u64 {
+        self.ask_user_prompt_retention_failures_total
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn ask_user_prompt_retention_last_deleted(&self) -> u64 {
+        self.ask_user_prompt_retention_last_deleted
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn ask_user_prompt_retention_last_completed_at_unix(&self) -> u64 {
+        self.ask_user_prompt_retention_last_completed_at_unix
             .load(Ordering::Relaxed)
     }
 
@@ -232,6 +284,8 @@ mod tests {
         stats.record_run_event_consumed();
         stats.record_run_event_retention_success(12);
         stats.record_run_event_retention_failure();
+        stats.record_ask_user_prompt_retention_success(9);
+        stats.record_ask_user_prompt_retention_failure();
         stats.set_scheduler_pressure_paused(true);
 
         assert!(stats.run_dispatch_consumer_connected());
@@ -248,6 +302,11 @@ mod tests {
         assert_eq!(stats.run_event_retention_failures_total(), 1);
         assert_eq!(stats.run_event_retention_last_deleted(), 0);
         assert!(stats.run_event_retention_last_completed_at_unix() > 0);
+        assert_eq!(stats.ask_user_prompt_retention_runs_total(), 2);
+        assert_eq!(stats.ask_user_prompt_retention_deleted_total(), 9);
+        assert_eq!(stats.ask_user_prompt_retention_failures_total(), 1);
+        assert_eq!(stats.ask_user_prompt_retention_last_deleted(), 0);
+        assert!(stats.ask_user_prompt_retention_last_completed_at_unix() > 0);
         assert!(stats.scheduler_pressure_paused());
     }
 }
