@@ -12,6 +12,7 @@ use super::support::{
 use super::*;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::{now_rfc3339, AskUserPromptRecord, TaskRecord, TaskRunRecord, TaskStatus};
+use crate::trace_context::InternalTraceContextExt;
 
 const ASK_USER_CALLBACK_RETRY_DELAYS_MS: [u64; 3] = [0, 250, 750];
 
@@ -203,7 +204,7 @@ async fn send_chatos_ask_user_prompt_callback(
         request = request
             .header("X-Chatos-Internal-Caller", "task-runner")
             .header("X-Chatos-Internal-Token", token);
-        let response = match request.send().await {
+        let response = match request.with_internal_trace_context().send().await {
             Ok(response) => response,
             Err(err) => {
                 last_error = Some(err.to_string());

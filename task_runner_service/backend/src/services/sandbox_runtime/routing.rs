@@ -9,6 +9,7 @@ use crate::models::{TaskProjectRecord, PUBLIC_PROJECT_ID};
 use crate::services::project_management_api_client::{
     self, ProjectRuntimeEnvironmentImage, ProjectSandboxRuntimeSettings,
 };
+use crate::trace_context::InternalTraceContextExt;
 use chatos_project_execution::{parse_local_connector_workspace_root, LocalConnectorWorkspaceRef};
 use chatos_sandbox_contract::{
     ApprovalPolicy, ApprovalReviewer, EffectiveSandboxPolicy, PermissionProfileId,
@@ -713,6 +714,7 @@ async fn resolve_local_connector_sandbox_route(
         .header("x-local-connector-caller", "task-runner")
         .header("x-local-connector-internal-token", token)
         .header("x-local-connector-owner-user-id", owner_user_id)
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("query Local Connector sandbox pairing failed: {err}"))?;

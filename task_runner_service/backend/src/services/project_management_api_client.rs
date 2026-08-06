@@ -15,6 +15,7 @@ use crate::models::{
     ChatosProjectImportRequest, CreateTaskProjectRequest, TaskProjectRecord, TaskProjectStatus,
     UpdateTaskProjectRequest,
 };
+use crate::trace_context::InternalTraceContextExt;
 
 const PROJECT_SERVICE_CALLER: &str = "task-runner";
 const PROJECT_SERVICE_TOKEN_AUDIENCE: &str = "project-service";
@@ -589,7 +590,11 @@ pub(in crate::services) fn insert_project_service_mcp_signing_headers(
 async fn send_json<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, String> {
-    let response = request.send().await.map_err(|err| err.to_string())?;
+    let response = request
+        .with_internal_trace_context()
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
         let body =
@@ -602,7 +607,11 @@ async fn send_json<T: for<'de> Deserialize<'de>>(
 async fn send_optional_json<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
 ) -> Result<Option<T>, String> {
-    let response = request.send().await.map_err(|err| err.to_string())?;
+    let response = request
+        .with_internal_trace_context()
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);

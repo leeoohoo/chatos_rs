@@ -13,6 +13,8 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::trace_context::InternalTraceContextExt;
+
 use super::internal_auth::{
     require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
     MCP_TOOLS_LIST_SCOPE,
@@ -130,6 +132,7 @@ where
     let response = client
         .get(url)
         .bearer_auth(access_token)
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|error| ApiError {

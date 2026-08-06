@@ -21,6 +21,7 @@ pub mod services;
 pub mod state;
 pub mod store;
 pub mod terminal_store;
+mod trace_context;
 pub mod worker;
 mod worker_control_queue;
 

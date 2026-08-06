@@ -236,7 +236,7 @@ pub fn build_public_router(state: AppState) -> Router {
                 .allow_headers(Any),
         )
         .layer(middleware::from_fn(
-            super::trace_context::accept_remote_parent,
+            crate::trace_context::accept_remote_parent,
         ))
         .layer(
             TraceLayer::new_for_http()
@@ -278,7 +278,7 @@ pub fn build_internal_router(state: AppState) -> Router {
         .merge(chatos_internal::router())
         .with_state(state)
         .layer(middleware::from_fn(
-            super::trace_context::accept_remote_parent,
+            crate::trace_context::accept_remote_parent,
         ))
         .layer(
             TraceLayer::new_for_http()

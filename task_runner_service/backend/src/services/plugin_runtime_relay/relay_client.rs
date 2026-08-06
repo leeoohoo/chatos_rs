@@ -10,6 +10,7 @@ use serde_json::{json, Map, Value};
 use crate::models::{TaskRecord, TaskRunEventRecord, TaskRunRecord};
 use crate::services::RunService;
 use crate::store::AppStore;
+use crate::trace_context::InternalTraceContextExt;
 
 const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 const LOCAL_CONNECTOR_TOKEN_AUDIENCE: &str = "local-connector-service";
@@ -152,6 +153,7 @@ impl PluginRelayClient {
             request = request.timeout(self.hook_dispatch_timeout);
         }
         let response = request
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|error| format!("Plugin {action} relay request failed: {error}"))?;

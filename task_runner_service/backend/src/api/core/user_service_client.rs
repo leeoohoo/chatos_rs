@@ -6,6 +6,7 @@ use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
+use crate::trace_context::InternalTraceContextExt;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::Serialize;
 
@@ -64,10 +65,14 @@ where
     if let Some(body) = body {
         request = request.json(body);
     }
-    let response = request.send().await.map_err(|err| ApiError {
-        status: upstream_gateway_status(&err),
-        message: format!("user_service request failed: {err}"),
-    })?;
+    let response = request
+        .with_internal_trace_context()
+        .send()
+        .await
+        .map_err(|err| ApiError {
+            status: upstream_gateway_status(&err),
+            message: format!("user_service request failed: {err}"),
+        })?;
     if response.status().is_success() {
         return Ok(response);
     }

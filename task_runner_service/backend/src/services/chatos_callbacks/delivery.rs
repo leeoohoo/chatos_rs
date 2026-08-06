@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
+use crate::trace_context::InternalTraceContextExt;
 use reqwest::StatusCode;
 use std::fmt;
 
@@ -74,7 +75,7 @@ pub(super) async fn send_chatos_task_callback(
         request = request
             .header("X-Chatos-Internal-Caller", "task-runner")
             .header("X-Chatos-Internal-Token", token);
-        match request.send().await {
+        match request.with_internal_trace_context().send().await {
             Ok(response) if response.status().is_success() => return Ok(()),
             Ok(response) => {
                 let status = response.status();

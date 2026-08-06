@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::models::{RunOutputChangeManifest, TaskRecord, TaskRunRecord};
+use crate::trace_context::InternalTraceContextExt;
 
 use super::workspace::{
     copy_workspace_to_sandbox, sandbox_baseline_workspace, write_generated_config_files,
@@ -376,6 +377,7 @@ impl SandboxManagerClient {
                 task.project_id.as_str(),
             )
             .json(&payload)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox lease failed: {err}"))?;
@@ -438,6 +440,7 @@ impl SandboxManagerClient {
             task.project_id.as_str(),
         )
         .json(&payload)
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("request sandbox environment lease failed: {err}"))?;
@@ -520,6 +523,7 @@ impl SandboxManagerClient {
                 )
             )))?
             .json(&start_payload)
+            .with_internal_trace_context()
             .send()
             .await
         {
@@ -595,6 +599,7 @@ impl SandboxManagerClient {
                 self.base_url,
                 self.api_path(format!("/sandboxes/{sandbox_id}").as_str())
             )))?
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox detail failed: {err}"))?;
@@ -611,6 +616,7 @@ impl SandboxManagerClient {
                 self.base_url,
                 self.api_path(format!("/sandbox-environments/{environment_id}").as_str())
             )))?
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox environment detail failed: {err}"))?;
@@ -628,6 +634,7 @@ impl SandboxManagerClient {
                 self.api_path("/sandboxes")
             )))?
             .query(&[("run_id", run_id), ("limit", "100")])
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox leases for run failed: {err}"))?;
@@ -652,6 +659,7 @@ impl SandboxManagerClient {
                 self.api_path(format!("/sandboxes/{}/release", record.sandbox_id).as_str())
             )))?
             .json(&payload)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox release for terminal run failed: {err}"))?;
@@ -668,6 +676,7 @@ impl SandboxManagerClient {
                 self.base_url,
                 self.api_path(format!("/sandboxes/{}/health", context.sandbox_id).as_str())
             )))?
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox health failed: {err}"))?;
@@ -702,6 +711,7 @@ impl SandboxManagerClient {
                 )
             )))?
             .json(&payload)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox environment renewal failed: {err}"))?;
@@ -728,6 +738,7 @@ impl SandboxManagerClient {
                 self.api_path(format!("/sandboxes/{}/release", context.sandbox_id).as_str())
             )))?
             .json(&payload)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox release failed: {err}"))?;
@@ -752,6 +763,7 @@ impl SandboxManagerClient {
                 self.api_path(format!("/sandboxes/{}/release", response.sandbox_id).as_str())
             )))?
             .json(&payload)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox release failed: {err}"))?;
@@ -776,6 +788,7 @@ impl SandboxManagerClient {
                 self.api_path(format!("/sandboxes/{}/release", response.environment_id).as_str())
             )))?
             .json(&payload)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("request sandbox environment release failed: {err}"))?;
