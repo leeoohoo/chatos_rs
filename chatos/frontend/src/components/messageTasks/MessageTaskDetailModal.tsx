@@ -12,6 +12,7 @@ import type {
 } from '../../lib/api/client/types';
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, ModalShell, StatusBadge, valueOrDash } from './parts';
+import { buildTaskProcessTimelineItems, TaskProcessTimeline } from './TaskProcessTimeline';
 import { formatDateTime, isRecord, readString, readStringArray } from './utils';
 
 interface MessageTaskDetailModalProps {
@@ -351,55 +352,20 @@ export const MessageTaskProcessLogModal: FC<MessageTaskProcessLogModalProps> = (
     ? runDetail.process_tasks
     : [];
   const processLog = readString(effectiveTask?.process_log) || readString(task?.process_log);
-  const hasProcessContent = Boolean(processLog) || processTasks.length > 0;
+  const timelineItems = buildTaskProcessTimelineItems(
+    processLog,
+    processTasks,
+    readString(effectiveTask?.status) || readString(task?.status),
+  );
 
   return (
     <ModalShell
       title="执行过程"
       subtitle={effectiveTask?.title || effectiveTask?.id || runDetail?.run?.id}
       onClose={onClose}
-      widthClassName="max-w-4xl"
+      widthClassName="max-w-5xl"
     >
-      {hasProcessContent ? (
-        <div className="space-y-3">
-          {processLog ? (
-            <CollapsibleText
-              value={processLog}
-              maxHeightClassName="max-h-[68vh]"
-            />
-          ) : null}
-          {processTasks.length > 0 ? (
-            <div className="space-y-2">
-              {processTasks.map((item) => {
-                const itemProcess = readString(item.process_log)
-                  || readString(item.task_tool_state?.resume_hint)
-                  || readString(item.result_summary);
-                return (
-                  <div
-                    key={item.id}
-                    className="rounded-md border border-border bg-muted/30 px-3 py-2"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium text-foreground">
-                        {item.title || item.id}
-                      </span>
-                      {item.status ? <StatusBadge status={item.status} /> : null}
-                    </div>
-                    <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
-                      {itemProcess || '暂无过程说明'}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <CollapsibleText
-          value="暂无执行过程"
-          maxHeightClassName="max-h-[68vh]"
-        />
-      )}
+      <TaskProcessTimeline items={timelineItems} />
     </ModalShell>
   );
 };
