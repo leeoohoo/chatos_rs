@@ -78,6 +78,65 @@ impl MongoStore {
         Ok(events.pop().map(|event| (event.created_at, event.id)))
     }
 
+    pub(in crate::store) async fn prune_terminal_run_events_before(
+        &self,
+        cutoff: &str,
+        candidate_limit: usize,
+    ) -> Result<RunEventPruneResult, String> {
+        let candidate_limit = i64::try_from(candidate_limit)
+            .map_err(|_| "run event cleanup batch size is too large".to_string())?;
+        let eligible_documents = self
+            .aggregate_documents(
+                &self.run_events,
+                vec![
+                    doc! { "$match": { "created_at": { "$lt": cutoff } } },
+                    doc! { "$group": { "_id": "$run_id" } },
+                    doc! {
+                        "$lookup": {
+                            "from": "task_runs",
+                            "localField": "_id",
+                            "foreignField": "id",
+                            "as": "run",
+                        }
+                    },
+                    doc! { "$unwind": "$run" },
+                    doc! {
+                        "$match": {
+                            "run.status": {
+                                "$in": ["succeeded", "failed", "cancelled", "blocked"]
+                            }
+                        }
+                    },
+                    doc! { "$sort": { "_id": 1 } },
+                    doc! { "$limit": candidate_limit },
+                ],
+            )
+            .await?;
+        let eligible_run_ids = eligible_documents
+            .into_iter()
+            .filter_map(|document| document.get_str("_id").ok().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+        if eligible_run_ids.is_empty() {
+            return Ok(RunEventPruneResult::default());
+        }
+
+        let result = self
+            .run_events
+            .delete_many(
+                doc! {
+                    "run_id": { "$in": &eligible_run_ids },
+                    "created_at": { "$lt": cutoff },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(RunEventPruneResult {
+            eligible_runs: eligible_run_ids.len(),
+            deleted_events: result.deleted_count,
+        })
+    }
+
     pub(in crate::store) async fn append_run_event(
         &self,
         event: TaskRunEventRecord,

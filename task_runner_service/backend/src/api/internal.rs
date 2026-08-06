@@ -165,6 +165,19 @@ pub(super) async fn get_system_stats(
                 .runtime_stats
                 .run_event_consumer_reconnects_total(),
             run_event_consumer_events_total: state.runtime_stats.run_event_consumer_events_total(),
+            run_event_retention_runs_total: state.runtime_stats.run_event_retention_runs_total(),
+            run_event_retention_deleted_total: state
+                .runtime_stats
+                .run_event_retention_deleted_total(),
+            run_event_retention_failures_total: state
+                .runtime_stats
+                .run_event_retention_failures_total(),
+            run_event_retention_last_deleted: state
+                .runtime_stats
+                .run_event_retention_last_deleted(),
+            run_event_retention_last_completed_at_unix: state
+                .runtime_stats
+                .run_event_retention_last_completed_at_unix(),
             scheduler_pressure_paused: state.runtime_stats.scheduler_pressure_paused(),
         },
         queue: TaskRunnerQueueStatsSnapshot {
@@ -301,6 +314,63 @@ pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl In
         format!(
             "chatos_task_runner_run_event_consumer_events_total {}\n",
             state.runtime_stats.run_event_consumer_events_total()
+        )
+        .as_str(),
+    );
+    body.push_str(
+        "# HELP chatos_task_runner_run_event_retention_runs_total Run event retention cleanup attempts.\n\
+# TYPE chatos_task_runner_run_event_retention_runs_total counter\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_task_runner_run_event_retention_runs_total {}\n",
+            state.runtime_stats.run_event_retention_runs_total()
+        )
+        .as_str(),
+    );
+    body.push_str(
+        "# HELP chatos_task_runner_run_event_retention_deleted_total Expired terminal Run events deleted by retention cleanup.\n\
+# TYPE chatos_task_runner_run_event_retention_deleted_total counter\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_task_runner_run_event_retention_deleted_total {}\n",
+            state.runtime_stats.run_event_retention_deleted_total()
+        )
+        .as_str(),
+    );
+    body.push_str(
+        "# HELP chatos_task_runner_run_event_retention_failures_total Run event retention cleanup failures.\n\
+# TYPE chatos_task_runner_run_event_retention_failures_total counter\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_task_runner_run_event_retention_failures_total {}\n",
+            state.runtime_stats.run_event_retention_failures_total()
+        )
+        .as_str(),
+    );
+    body.push_str(
+        "# HELP chatos_task_runner_run_event_retention_last_deleted Events deleted by the most recent retention cleanup.\n\
+# TYPE chatos_task_runner_run_event_retention_last_deleted gauge\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_task_runner_run_event_retention_last_deleted {}\n",
+            state.runtime_stats.run_event_retention_last_deleted()
+        )
+        .as_str(),
+    );
+    body.push_str(
+        "# HELP chatos_task_runner_run_event_retention_last_completed_at_unix Unix timestamp of the most recent retention cleanup completion.\n\
+# TYPE chatos_task_runner_run_event_retention_last_completed_at_unix gauge\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_task_runner_run_event_retention_last_completed_at_unix {}\n",
+            state
+                .runtime_stats
+                .run_event_retention_last_completed_at_unix()
         )
         .as_str(),
     );
@@ -501,6 +571,7 @@ mod tests {
         state.sse_tickets.issue("test-access-token");
         state.runtime_stats.record_worker_claim_failure();
         state.runtime_stats.record_run_dispatch_fairness_deferral();
+        state.runtime_stats.record_run_event_retention_success(7);
         let token = chatos_service_runtime::issue_internal_service_token(
             "internal-secret",
             MCP_MANAGEMENT_CALLER,
@@ -526,6 +597,11 @@ mod tests {
         assert!(response.ok);
         assert_eq!(response.runtime.worker_claim_failures_total, 1);
         assert_eq!(response.runtime.run_dispatch_fairness_deferrals_total, 1);
+        assert_eq!(response.runtime.run_event_retention_runs_total, 1);
+        assert_eq!(response.runtime.run_event_retention_deleted_total, 7);
+        assert_eq!(response.runtime.run_event_retention_failures_total, 0);
+        assert_eq!(response.runtime.run_event_retention_last_deleted, 7);
+        assert!(response.runtime.run_event_retention_last_completed_at_unix > 0);
         assert_eq!(response.runtime.pending_sse_tickets, 1);
         assert_eq!(response.runtime.rabbitmq_consumer_reconnects_total, 0);
         assert!(!response.runtime.run_dispatch_consumer_connected);

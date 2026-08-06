@@ -35,6 +35,11 @@ pub struct TaskRunnerRuntimeStatsSnapshot {
     pub run_event_consumer_connected: bool,
     pub run_event_consumer_reconnects_total: u64,
     pub run_event_consumer_events_total: u64,
+    pub run_event_retention_runs_total: u64,
+    pub run_event_retention_deleted_total: u64,
+    pub run_event_retention_failures_total: u64,
+    pub run_event_retention_last_deleted: u64,
+    pub run_event_retention_last_completed_at_unix: u64,
     pub scheduler_pressure_paused: bool,
 }
 
@@ -102,6 +107,12 @@ pub struct RunExecutionStats {
     pub cancellation_outbox_pending: usize,
     pub post_process_outbox_pending: usize,
     pub terminal_cleanup_outbox_pending: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunEventPruneResult {
+    pub eligible_runs: usize,
+    pub deleted_events: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

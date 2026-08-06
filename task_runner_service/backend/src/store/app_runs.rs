@@ -396,6 +396,23 @@ impl AppStore {
         }
     }
 
+    pub async fn prune_terminal_run_events_before(
+        &self,
+        cutoff: &str,
+        candidate_limit: usize,
+    ) -> Result<RunEventPruneResult, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.prune_terminal_run_events_before(cutoff, candidate_limit))
+            }
+            Self::Mongo(store) => {
+                store
+                    .prune_terminal_run_events_before(cutoff, candidate_limit)
+                    .await
+            }
+        }
+    }
+
     pub async fn append_run_event(&self, event: TaskRunEventRecord) -> Result<(), String> {
         let publish_event = event.clone();
         match self {

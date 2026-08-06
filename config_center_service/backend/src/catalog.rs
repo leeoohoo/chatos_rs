@@ -103,6 +103,12 @@ pub const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY: &str =
 pub const TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.memory_engine_request_timeout_ms";
 pub const TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY: &str = "task_runner.scheduler.poll_interval_ms";
+pub const TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY: &str =
+    "task_runner.retention.run_event_days";
+pub const TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY: &str =
+    "task_runner.retention.run_event_cleanup_interval_ms";
+pub const TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY: &str =
+    "task_runner.retention.run_event_cleanup_batch_size";
 pub const TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY: &str =
     "task_runner.memory.auto_summary_enabled";
 pub const TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
@@ -2760,6 +2766,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_SCHEDULER_POLL_MS"],
             246,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY,
+            "Run 事件保留天数",
+            "Task Runner 只保留终态 Run 在该天数内的事件；运行中 Run 不会被清理",
+            "Task Runner / Retention",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(30),
+            Some(1),
+            Some(3650),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_EVENT_RETENTION_DAYS"],
+            2461,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "Run 事件清理间隔",
+            "Task Runner Scheduler 执行终态 Run 过期事件清理的间隔毫秒数",
+            "Task Runner / Retention",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(3_600_000),
+            Some(60_000),
+            Some(86_400_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS"],
+            2462,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
+            "Run 事件清理批次",
+            "单轮最多检查包含过期事件的 Run 数量，限制清理操作对 MongoDB 的压力",
+            "Task Runner / Retention",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(200),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE"],
+            2463,
             &now,
         ),
         definition(

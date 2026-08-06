@@ -603,6 +603,16 @@ impl RunService {
         self.store.latest_run_event_cursor(run_id).await
     }
 
+    pub async fn prune_terminal_run_events_before(
+        &self,
+        cutoff: &str,
+        candidate_limit: usize,
+    ) -> Result<RunEventPruneResult, String> {
+        self.store
+            .prune_terminal_run_events_before(cutoff, candidate_limit)
+            .await
+    }
+
     pub(crate) fn task_queue_topology(&self) -> &TaskQueueTopology {
         &self.task_queue_topology
     }

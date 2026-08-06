@@ -32,6 +32,11 @@ pub struct TaskRunnerRuntimeStats {
     run_event_consumer_connected: Arc<AtomicBool>,
     run_event_consumer_reconnects_total: Arc<AtomicU64>,
     run_event_consumer_events_total: Arc<AtomicU64>,
+    run_event_retention_runs_total: Arc<AtomicU64>,
+    run_event_retention_deleted_total: Arc<AtomicU64>,
+    run_event_retention_failures_total: Arc<AtomicU64>,
+    run_event_retention_last_deleted: Arc<AtomicU64>,
+    run_event_retention_last_completed_at_unix: Arc<AtomicU64>,
     scheduler_pressure_paused: Arc<AtomicBool>,
 }
 
@@ -140,6 +145,56 @@ impl TaskRunnerRuntimeStats {
         self.run_event_consumer_events_total.load(Ordering::Relaxed)
     }
 
+    pub fn record_run_event_retention_success(&self, deleted_events: u64) {
+        self.run_event_retention_runs_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.run_event_retention_deleted_total
+            .fetch_add(deleted_events, Ordering::Relaxed);
+        self.run_event_retention_last_deleted
+            .store(deleted_events, Ordering::Relaxed);
+        self.run_event_retention_last_completed_at_unix.store(
+            u64::try_from(chrono::Utc::now().timestamp()).unwrap_or_default(),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn record_run_event_retention_failure(&self) {
+        self.run_event_retention_runs_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.run_event_retention_failures_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.run_event_retention_last_deleted
+            .store(0, Ordering::Relaxed);
+        self.run_event_retention_last_completed_at_unix.store(
+            u64::try_from(chrono::Utc::now().timestamp()).unwrap_or_default(),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn run_event_retention_runs_total(&self) -> u64 {
+        self.run_event_retention_runs_total.load(Ordering::Relaxed)
+    }
+
+    pub fn run_event_retention_deleted_total(&self) -> u64 {
+        self.run_event_retention_deleted_total
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn run_event_retention_failures_total(&self) -> u64 {
+        self.run_event_retention_failures_total
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn run_event_retention_last_deleted(&self) -> u64 {
+        self.run_event_retention_last_deleted
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn run_event_retention_last_completed_at_unix(&self) -> u64 {
+        self.run_event_retention_last_completed_at_unix
+            .load(Ordering::Relaxed)
+    }
+
     pub fn set_scheduler_pressure_paused(&self, paused: bool) {
         self.scheduler_pressure_paused
             .store(paused, Ordering::Relaxed);
@@ -175,6 +230,8 @@ mod tests {
         stats.record_rabbitmq_consumer_reconnect();
         stats.record_run_event_consumer_reconnect();
         stats.record_run_event_consumed();
+        stats.record_run_event_retention_success(12);
+        stats.record_run_event_retention_failure();
         stats.set_scheduler_pressure_paused(true);
 
         assert!(stats.run_dispatch_consumer_connected());
@@ -186,6 +243,11 @@ mod tests {
         assert_eq!(stats.rabbitmq_consumer_reconnects_total(), 1);
         assert_eq!(stats.run_event_consumer_reconnects_total(), 1);
         assert_eq!(stats.run_event_consumer_events_total(), 1);
+        assert_eq!(stats.run_event_retention_runs_total(), 2);
+        assert_eq!(stats.run_event_retention_deleted_total(), 12);
+        assert_eq!(stats.run_event_retention_failures_total(), 1);
+        assert_eq!(stats.run_event_retention_last_deleted(), 0);
+        assert!(stats.run_event_retention_last_completed_at_unix() > 0);
         assert!(stats.scheduler_pressure_paused());
     }
 }

@@ -16,11 +16,11 @@ use task_runner_service_backend::{
     scheduler::spawn_task_scheduler,
     services::{spawn_chatos_callback_queue_consumer, spawn_chatos_callback_reconciler},
     spawn_ask_user_resolution_outbox_reconciler, spawn_run_cancel_outbox_reconciler,
-    spawn_run_dispatch_outbox_reconciler, spawn_run_event_consumer,
+    spawn_run_dispatch_outbox_reconciler, spawn_run_event_consumer, spawn_run_event_retention,
     spawn_run_post_process_consumer, spawn_run_post_process_outbox_reconciler,
     spawn_run_terminal_outbox_reconciler, spawn_worker_control_consumer,
     worker::spawn_task_worker,
-    AppConfig, AppState,
+    AppConfig, AppState, RunEventRetentionPolicy,
 };
 
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -51,6 +51,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     let pressure_state =
         task_runner_service_backend::pressure::TaskRunnerPressureState::new(pressure_policy);
+    let run_event_retention_policy = RunEventRetentionPolicy::from_managed_env()?;
     let mut config = AppConfig::from_env()?;
     let _telemetry = init_tracing(&config)?;
     resolve_downstream_services(&mut config).await;
@@ -163,6 +164,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             app_state.task_service.clone(),
             app_state.run_service.clone(),
             pressure_state.clone(),
+            app_state.runtime_stats.clone(),
+        ));
+        background_handles.push(spawn_run_event_retention(
+            run_event_retention_policy,
+            app_state.run_service.clone(),
             app_state.runtime_stats.clone(),
         ));
     }

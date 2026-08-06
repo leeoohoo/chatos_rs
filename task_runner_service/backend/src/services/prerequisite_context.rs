@@ -548,9 +548,7 @@ mod tests {
                 run_result_summary: Some("新增 src/domain.test.ts".to_string()),
                 process_log: None,
                 report_content: None,
-                authoritative_file_changes: vec![
-                    "added: src/domain/domain.test.ts".to_string(),
-                ],
+                authoritative_file_changes: vec!["added: src/domain/domain.test.ts".to_string()],
             }],
             BuiltinMcpPromptLocale::ZhCn,
         );

@@ -1082,6 +1082,38 @@ fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
 }
 
 #[test]
+fn catalog_exposes_task_runner_run_event_retention_controls() {
+    let definitions = builtin_definitions();
+    for (key, env_alias, expected_default) in [
+        (
+            TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY,
+            "TASK_RUNNER_RUN_EVENT_RETENTION_DAYS",
+            json!(30),
+        ),
+        (
+            TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS",
+            json!(3_600_000),
+        ),
+        (
+            TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
+            "TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE",
+            json!(200),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Task Runner retention definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
+    }
+}
+
+#[test]
 fn catalog_exposes_shared_memory_policies_for_server_and_client() {
     let definitions = builtin_definitions();
     let memory_definitions = definitions

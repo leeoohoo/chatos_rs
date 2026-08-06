@@ -717,6 +717,51 @@ impl InMemoryStore {
         })
     }
 
+    pub(in crate::store) fn prune_terminal_run_events_before(
+        &self,
+        cutoff: &str,
+        candidate_limit: usize,
+    ) -> RunEventPruneResult {
+        let mut data = self.inner.write();
+        let mut eligible_run_ids = data
+            .run_events
+            .iter()
+            .filter(|(run_id, events)| {
+                events
+                    .iter()
+                    .any(|event| event.created_at.as_str() < cutoff)
+                    && data
+                        .runs
+                        .get(run_id.as_str())
+                        .is_some_and(|run| task_run_status_is_terminal(run.status))
+            })
+            .map(|(run_id, _)| run_id.clone())
+            .collect::<Vec<_>>();
+        eligible_run_ids.sort();
+        eligible_run_ids.truncate(candidate_limit);
+
+        let mut deleted_events = 0_u64;
+        for run_id in &eligible_run_ids {
+            let remove_entry = if let Some(events) = data.run_events.get_mut(run_id) {
+                let previous_len = events.len();
+                events.retain(|event| event.created_at.as_str() >= cutoff);
+                deleted_events =
+                    deleted_events.saturating_add(previous_len.saturating_sub(events.len()) as u64);
+                events.is_empty()
+            } else {
+                false
+            };
+            if remove_entry {
+                data.run_events.remove(run_id);
+            }
+        }
+
+        RunEventPruneResult {
+            eligible_runs: eligible_run_ids.len(),
+            deleted_events,
+        }
+    }
+
     pub(in crate::store) fn append_run_event(&self, event: TaskRunEventRecord) {
         let mut data = self.inner.write();
         data.run_events
@@ -1371,6 +1416,40 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id, "evt-1");
+    }
+
+    #[test]
+    fn run_event_retention_only_prunes_expired_events_for_terminal_runs() {
+        let store = test_store();
+        let mut terminal = queued_run();
+        terminal.status = TaskRunStatus::Succeeded;
+        terminal.finished_at = Some("2026-07-01T00:00:00Z".to_string());
+        store.save_run(terminal).expect("save terminal run");
+        store.append_run_event(run_event("old-terminal", "2026-07-01T00:00:00Z"));
+        store.append_run_event(run_event("new-terminal", "2026-08-02T00:00:00Z"));
+
+        let mut active = queued_run();
+        active.id = "run-2".to_string();
+        active.task_id = "task-2".to_string();
+        active.status = TaskRunStatus::Running;
+        store.save_run(active).expect("save active run");
+        let mut active_event = run_event("old-active", "2026-07-01T00:00:00Z");
+        active_event.run_id = "run-2".to_string();
+        store.append_run_event(active_event);
+
+        let result = store.prune_terminal_run_events_before("2026-08-01T00:00:00Z", 100);
+
+        assert_eq!(result.eligible_runs, 1);
+        assert_eq!(result.deleted_events, 1);
+        assert_eq!(
+            store
+                .list_run_events("run-1")
+                .into_iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>(),
+            vec!["new-terminal".to_string()]
+        );
+        assert_eq!(store.list_run_events("run-2").len(), 1);
     }
 
     #[test]
