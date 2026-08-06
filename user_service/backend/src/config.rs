@@ -3,6 +3,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use chatos_service_runtime::{
     env_text as read_env, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
@@ -12,6 +13,9 @@ use chatos_service_runtime::{
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
+    pub otlp_endpoint: String,
+    pub otlp_trace_sample_ratio: f64,
+    pub otlp_export_timeout: Duration,
     pub database_url: String,
     pub mongodb_database: String,
     pub jwt_secret: String,
@@ -68,6 +72,23 @@ impl AppConfig {
         let mongodb_database = explicit_mongodb_database
             .or_else(|| mongodb_database_from_url(database_url.as_str()))
             .unwrap_or(default_mongodb_database);
+        let otlp_endpoint = require_config_center_text("USER_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT")?;
+        require_http_endpoint(
+            "USER_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT",
+            otlp_endpoint.as_str(),
+        )?;
+        let otlp_trace_sample_ratio =
+            require_config_center_f64("USER_SERVICE_OTEL_TRACE_SAMPLE_RATIO")?;
+        if !(0.0..=1.0).contains(&otlp_trace_sample_ratio) {
+            return Err("USER_SERVICE_OTEL_TRACE_SAMPLE_RATIO must be between 0 and 1".to_string());
+        }
+        let otlp_export_timeout_ms =
+            require_config_center_u64("USER_SERVICE_OTEL_EXPORT_TIMEOUT_MS")?;
+        if otlp_export_timeout_ms == 0 {
+            return Err(
+                "USER_SERVICE_OTEL_EXPORT_TIMEOUT_MS must be greater than zero".to_string(),
+            );
+        }
 
         let config = Self {
             host: read_env("USER_SERVICE_HOST")
@@ -75,6 +96,9 @@ impl AppConfig {
                 .parse()
                 .map_err(|err| format!("invalid USER_SERVICE_HOST: {err}"))?,
             port: require_config_center_u16("USER_SERVICE_PORT")?,
+            otlp_endpoint,
+            otlp_trace_sample_ratio,
+            otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             database_url,
             mongodb_database,
             jwt_secret: require_config_center_secret("USER_SERVICE_JWT_SECRET")?,
@@ -309,6 +333,26 @@ fn require_config_center_u16(key: &str) -> Result<u16, String> {
     require_config_center_text(key)?
         .parse()
         .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn require_config_center_u64(key: &str) -> Result<u64, String> {
+    require_config_center_text(key)?
+        .parse()
+        .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn require_config_center_f64(key: &str) -> Result<f64, String> {
+    require_config_center_text(key)?
+        .parse()
+        .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn require_http_endpoint(key: &str, value: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("{key} must use http or https"));
+    }
+    Ok(())
 }
 
 fn require_config_center_bool(key: &str) -> Result<bool, String> {

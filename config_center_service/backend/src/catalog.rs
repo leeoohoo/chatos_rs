@@ -771,6 +771,11 @@ pub const PLUGIN_MANAGEMENT_SEED_SYSTEM_RESOURCES_CONFIG_KEY: &str =
 pub const USER_SERVICE_PORT_CONFIG_KEY: &str = "user_service.runtime.port";
 pub const USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
     "user_service.runtime.internal_mtls_port";
+pub const USER_SERVICE_OTLP_ENDPOINT_CONFIG_KEY: &str = "user_service.observability.otlp_endpoint";
+pub const USER_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "user_service.observability.trace_sample_ratio";
+pub const USER_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str =
+    "user_service.observability.export_timeout_ms";
 pub const USER_SERVICE_JWT_SECRET_CONFIG_KEY: &str = "user_service.security.jwt_secret";
 pub const USER_SERVICE_SECRET_KEY_CONFIG_KEY: &str = "user_service.security.secret_key";
 pub const USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY: &str =
@@ -7894,6 +7899,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_INTERNAL_MTLS_PORT"],
             371,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "User Service OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "User Service / Observability",
+            "service",
+            Some("user-service"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["USER_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            372,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "User Service 根链路按 Trace ID 采样的比例",
+            "User Service / Observability",
+            "service",
+            Some("user-service"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["USER_SERVICE_OTEL_TRACE_SAMPLE_RATIO"],
+            373,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "User Service 导出一批 trace 的超时毫秒数",
+            "User Service / Observability",
+            "service",
+            Some("user-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["USER_SERVICE_OTEL_EXPORT_TIMEOUT_MS"],
+            374,
             &now,
         ),
         secret_definition(

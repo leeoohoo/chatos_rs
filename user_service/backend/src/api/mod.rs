@@ -9,7 +9,7 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use crate::auth::{
@@ -131,6 +131,7 @@ pub fn build_public_router(state: AppState) -> Router {
             )
             .merge(protected_api(state.clone()))
             .with_state(state),
+        "public",
     )
 }
 
@@ -157,22 +158,40 @@ pub fn build_internal_router(state: AppState) -> Router {
             )
             .merge(protected_internal)
             .with_state(state),
+        "internal",
     )
 }
 
-fn apply_common_layers(router: Router) -> Router {
+fn apply_common_layers(router: Router, surface: &'static str) -> Router {
     router
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
-                .on_request(DefaultOnRequest::new().level(Level::DEBUG))
-                .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
-        )
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
+        )
+        .layer(middleware::from_fn(
+            crate::trace_context::accept_remote_parent,
+        ))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(move |request: &axum::http::Request<axum::body::Body>| {
+                    let route = request
+                        .extensions()
+                        .get::<axum::extract::MatchedPath>()
+                        .map(axum::extract::MatchedPath::as_str)
+                        .unwrap_or("/unmatched");
+                    tracing::info_span!(
+                        "http.request",
+                        otel.kind = "server",
+                        otel.name = %format!("{} {route}", request.method()),
+                        http.request.method = %request.method(),
+                        http.route = route,
+                        surface
+                    )
+                })
+                .on_request(DefaultOnRequest::new().level(Level::DEBUG))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
