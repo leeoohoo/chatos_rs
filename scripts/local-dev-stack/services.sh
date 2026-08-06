@@ -835,6 +835,9 @@ start_all() {
 }
 
 stop_all() {
+  load_env_file "$ENV_FILE"
+  load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
+  export_local_env
   ensure_dirs
   cleanup_legacy_local_connector_client_state
   deregister_local_dev_services
