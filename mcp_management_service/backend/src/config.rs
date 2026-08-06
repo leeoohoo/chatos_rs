@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,6 +14,12 @@ use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secr
 const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
 const DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET: &str =
     "change_me_mcp_management_runtime_session_encryption_secret";
+const REQUIRED_INTERNAL_CALLERS: [&str; 4] = [
+    "chatos",
+    "task-runner",
+    "project-service",
+    "configuration-center",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsyncToolDispatchMode {
@@ -24,10 +30,9 @@ pub enum AsyncToolDispatchMode {
 impl AsyncToolDispatchMode {
     fn parse(value: &str) -> Result<Self, String> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "local" | "local_queue" | "in_memory" => Ok(Self::LocalQueue),
             "rabbitmq" | "rabbit_mq" | "amqp" => Ok(Self::RabbitMq),
             other => Err(format!(
-                "MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE is invalid: {other}"
+                "MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE must be rabbitmq, got: {other}"
             )),
         }
     }
@@ -45,9 +50,19 @@ pub struct AsyncToolDispatchTopology {
     pub mode: AsyncToolDispatchMode,
     pub worker_concurrency: usize,
     pub local_queue_buffer: usize,
+    pub queue_max_length: u32,
+    pub queue_max_bytes: u64,
+    pub rabbitmq_reconnect_delay: Duration,
+    pub max_delivery_attempts: u32,
+    pub retry_delay: Duration,
+    pub result_outbox_reconcile_interval: Duration,
+    pub result_outbox_batch_size: i64,
     pub rabbitmq_url: Option<String>,
     pub rabbitmq_exchange: Option<String>,
+    pub cancellation_exchange: Option<String>,
     pub queue_name: Option<String>,
+    pub retry_queue_name: Option<String>,
+    pub dead_letter_queue_name: Option<String>,
 }
 
 impl AsyncToolDispatchTopology {
@@ -71,6 +86,21 @@ impl AsyncToolDispatchTopology {
             }
             AsyncToolDispatchMode::RabbitMq => 0,
         };
+        let max_delivery_attempts =
+            required_u32("MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS")?;
+        let queue_max_length = required_u32("MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH")?;
+        let queue_max_bytes = required_u64("MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES")?;
+        let rabbitmq_reconnect_delay = Duration::from_millis(required_u64(
+            "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS",
+        )?);
+        let retry_delay =
+            Duration::from_millis(required_u64("MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS")?);
+        let result_outbox_reconcile_interval = Duration::from_millis(required_u64(
+            "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS",
+        )?);
+        let result_outbox_batch_size = i64::from(required_u32(
+            "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE",
+        )?);
         let rabbitmq_url = match mode {
             AsyncToolDispatchMode::RabbitMq => {
                 Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL")?)
@@ -83,28 +113,103 @@ impl AsyncToolDispatchTopology {
             )?),
             AsyncToolDispatchMode::LocalQueue => None,
         };
+        let cancellation_exchange = match mode {
+            AsyncToolDispatchMode::RabbitMq => Some(required_text(
+                "MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE",
+            )?),
+            AsyncToolDispatchMode::LocalQueue => None,
+        };
         let queue_name = match mode {
             AsyncToolDispatchMode::RabbitMq => {
                 Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE")?)
             }
             AsyncToolDispatchMode::LocalQueue => None,
         };
+        let retry_queue_name = match mode {
+            AsyncToolDispatchMode::RabbitMq => {
+                Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE")?)
+            }
+            AsyncToolDispatchMode::LocalQueue => None,
+        };
+        let dead_letter_queue_name = match mode {
+            AsyncToolDispatchMode::RabbitMq => Some(required_text(
+                "MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE",
+            )?),
+            AsyncToolDispatchMode::LocalQueue => None,
+        };
         let topology = Self {
             mode,
             worker_concurrency,
             local_queue_buffer,
+            queue_max_length,
+            queue_max_bytes,
+            rabbitmq_reconnect_delay,
+            max_delivery_attempts,
+            retry_delay,
+            result_outbox_reconcile_interval,
+            result_outbox_batch_size,
             rabbitmq_url,
             rabbitmq_exchange,
+            cancellation_exchange,
             queue_name,
+            retry_queue_name,
+            dead_letter_queue_name,
         };
         topology.validate()?;
         Ok(topology)
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.worker_concurrency == 0 {
+        if !(1..=512).contains(&self.worker_concurrency) {
             return Err(
-                "MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY must be at least 1".to_string(),
+                "MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY must be between 1 and 512"
+                    .to_string(),
+            );
+        }
+        if !(1..=100).contains(&self.max_delivery_attempts) {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS must be between 1 and 100"
+                    .to_string(),
+            );
+        }
+        if self.queue_max_length == 0 {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH must be at least 1".to_string(),
+            );
+        }
+        if !(1_024..=i64::MAX as u64).contains(&self.queue_max_bytes) {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES must be between 1024 and i64::MAX"
+                    .to_string(),
+            );
+        }
+        if !(Duration::from_millis(100)..=Duration::from_secs(60))
+            .contains(&self.rabbitmq_reconnect_delay)
+        {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS must be between 100 and 60000"
+                    .to_string(),
+            );
+        }
+        if !(Duration::from_millis(100)..=Duration::from_secs(60 * 60)).contains(&self.retry_delay)
+        {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS must be between 100 and 3600000"
+                    .to_string(),
+            );
+        }
+        if !(Duration::from_millis(100)..=Duration::from_secs(5 * 60))
+            .contains(&self.result_outbox_reconcile_interval)
+        {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS must be between 100 and 300000"
+                    .to_string(),
+            );
+        }
+        if !(1..=10_000).contains(&self.result_outbox_batch_size) {
+            return Err(
+                "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE must be between 1 and 10000"
+                    .to_string(),
             );
         }
         match self.mode {
@@ -140,6 +245,17 @@ impl AsyncToolDispatchTopology {
                     );
                 }
                 if self
+                    .cancellation_exchange
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(
+                        "MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE is required for RabbitMQ dispatch"
+                            .to_string(),
+                    );
+                }
+                if self
                     .queue_name
                     .as_deref()
                     .map(str::trim)
@@ -147,6 +263,28 @@ impl AsyncToolDispatchTopology {
                 {
                     return Err(
                         "MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE is required for RabbitMQ dispatch"
+                            .to_string(),
+                    );
+                }
+                if self
+                    .retry_queue_name
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(
+                        "MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE is required for RabbitMQ dispatch"
+                            .to_string(),
+                    );
+                }
+                if self
+                    .dead_letter_queue_name
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(
+                        "MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE is required for RabbitMQ dispatch"
                             .to_string(),
                     );
                 }
@@ -160,24 +298,38 @@ impl AsyncToolDispatchTopology {
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
-    pub internal_api_secret: String,
+    pub internal_mtls_port: u16,
+    pub otlp_endpoint: String,
+    pub otlp_trace_sample_ratio: f64,
+    pub otlp_export_timeout: Duration,
+    pub mtls_server_cert_path: PathBuf,
+    pub mtls_server_key_path: PathBuf,
+    pub mtls_client_ca_cert_path: PathBuf,
+    pub internal_api_secrets: BTreeMap<String, String>,
     pub require_signed_internal_requests: bool,
     pub allowed_internal_callers: BTreeSet<String>,
     pub plugin_management_service_base_url: String,
+    pub plugin_management_http_client: reqwest::Client,
     pub plugin_management_internal_api_secret: Option<String>,
     pub project_service_base_url: String,
+    pub project_service_http_client: reqwest::Client,
     pub project_service_internal_api_secret: Option<String>,
     pub task_runner_service_base_url: String,
+    pub task_runner_mtls_ca_cert_path: PathBuf,
+    pub task_runner_mtls_client_identity_path: PathBuf,
     pub task_runner_internal_api_secret: Option<String>,
     pub task_runner_request_timeout: Duration,
     pub task_runner_ask_user_request_timeout: Duration,
     pub chatos_service_base_url: String,
+    pub chatos_http_client: reqwest::Client,
     pub chatos_internal_api_secret: Option<String>,
     pub chatos_ask_user_request_timeout: Duration,
     pub chatos_browser_request_timeout: Duration,
     pub local_connector_service_base_url: String,
+    pub local_connector_http_client: reqwest::Client,
     pub local_connector_internal_api_secret: Option<String>,
     pub sandbox_manager_service_base_url: String,
+    pub sandbox_manager_http_client: reqwest::Client,
     pub sandbox_manager_internal_api_secret: Option<String>,
     pub sandbox_manager_request_timeout: Duration,
     pub sandbox_image_request_timeout: Duration,
@@ -199,18 +351,49 @@ impl AppConfig {
             .parse::<IpAddr>()
             .map_err(|err| format!("MCP_MANAGEMENT_HOST must be a valid IP address: {err}"))?;
         let port = required_u16("MCP_MANAGEMENT_PORT")?;
-        let internal_api_secret = required_text("MCP_MANAGEMENT_INTERNAL_API_SECRET")?;
-        validate_production_secret(
-            "MCP_MANAGEMENT_INTERNAL_API_SECRET",
-            Some(internal_api_secret.as_str()),
-            &["change_me_mcp_management_internal_secret"],
+        let internal_mtls_port = required_u16("MCP_MANAGEMENT_INTERNAL_MTLS_PORT")?;
+        if internal_mtls_port == port {
+            return Err(
+                "MCP_MANAGEMENT_INTERNAL_MTLS_PORT must differ from MCP_MANAGEMENT_PORT"
+                    .to_string(),
+            );
+        }
+        let otlp_endpoint = required_text("MCP_MANAGEMENT_OTEL_EXPORTER_OTLP_ENDPOINT")?;
+        require_http_endpoint(
+            "MCP_MANAGEMENT_OTEL_EXPORTER_OTLP_ENDPOINT",
+            otlp_endpoint.as_str(),
         )?;
+        let otlp_trace_sample_ratio = required_f64("MCP_MANAGEMENT_OTEL_TRACE_SAMPLE_RATIO")?;
+        if !(0.0..=1.0).contains(&otlp_trace_sample_ratio) {
+            return Err(
+                "MCP_MANAGEMENT_OTEL_TRACE_SAMPLE_RATIO must be between 0 and 1".to_string(),
+            );
+        }
+        let otlp_export_timeout_ms = required_u64("MCP_MANAGEMENT_OTEL_EXPORT_TIMEOUT_MS")?;
+        if otlp_export_timeout_ms == 0 {
+            return Err(
+                "MCP_MANAGEMENT_OTEL_EXPORT_TIMEOUT_MS must be greater than zero".to_string(),
+            );
+        }
         let require_signed_internal_requests =
             required_bool("MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS")?;
+        if !require_signed_internal_requests {
+            return Err("MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string());
+        }
         let allowed_internal_callers =
             parse_callers(required_text("MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS")?.as_str());
         if allowed_internal_callers.is_empty() {
             return Err("MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS cannot be empty".to_string());
+        }
+        let required_internal_callers = REQUIRED_INTERNAL_CALLERS
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect::<BTreeSet<_>>();
+        if allowed_internal_callers != required_internal_callers {
+            return Err(format!(
+                "MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS must contain exactly: {}",
+                REQUIRED_INTERNAL_CALLERS.join(",")
+            ));
         }
         let runtime_grant_secret = required_text("MCP_MANAGEMENT_RUNTIME_GRANT_SECRET")?;
         validate_production_secret(
@@ -229,14 +412,16 @@ impl AppConfig {
         let plugin_management_internal_api_secret = Some(required_text(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
         )?);
-        let project_service_internal_api_secret = Some(required_text(
-            "MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
-        )?);
-        let task_runner_internal_api_secret = Some(required_text(
-            "MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
-        )?);
-        let chatos_internal_api_secret =
-            Some(required_text("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")?);
+        let project_service_caller_secret =
+            required_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET")?;
+        let project_service_internal_api_secret = Some(project_service_caller_secret.clone());
+        let task_runner_caller_secret =
+            required_text("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")?;
+        let task_runner_internal_api_secret = Some(task_runner_caller_secret.clone());
+        let chatos_caller_secret = required_text("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")?;
+        let chatos_internal_api_secret = Some(chatos_caller_secret.clone());
+        let configuration_center_caller_secret =
+            required_text("MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET")?;
         let local_connector_internal_api_secret = Some(required_text(
             "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         )?);
@@ -273,9 +458,34 @@ impl AppConfig {
             sandbox_manager_internal_api_secret.as_deref(),
             &["change_me_mcp_management_sandbox_manager_secret"],
         )?;
+        validate_production_secret(
+            "MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET",
+            Some(configuration_center_caller_secret.as_str()),
+            &["change_me_configuration_center_mcp_management_secret"],
+        )?;
+        let internal_api_secrets = BTreeMap::from([
+            ("chatos".to_string(), chatos_caller_secret),
+            ("task-runner".to_string(), task_runner_caller_secret),
+            ("project-service".to_string(), project_service_caller_secret),
+            (
+                "configuration-center".to_string(),
+                configuration_center_caller_secret,
+            ),
+        ]);
         let downstream_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")?.clamp(300, 60_000),
         );
+        let plugin_management_service_base_url = require_https_base_url(
+            "MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL",
+            normalize_base_url(required_text(
+                "MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL",
+            )?),
+        )?;
+        let plugin_management_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(downstream_request_timeout),
+            required_path("PLUGIN_MANAGEMENT_MTLS_CA_CERT_PATH")?.as_path(),
+            required_path("PLUGIN_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let external_http_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 10 * 60 * 1_000),
@@ -291,6 +501,17 @@ impl AppConfig {
             required_u64("MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS")?
                 .clamp(30_000, 3 * 60 * 60 * 1_000),
         );
+        let sandbox_manager_service_base_url = require_https_base_url(
+            "MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL",
+            normalize_base_url(required_text(
+                "MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL",
+            )?),
+        )?;
+        let sandbox_manager_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(sandbox_image_request_timeout),
+            required_path("SANDBOX_MANAGER_MTLS_CA_CERT_PATH")?.as_path(),
+            required_path("SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let task_runner_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
@@ -311,44 +532,82 @@ impl AppConfig {
             required_u64("MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS")?
                 .clamp(30_000, 10 * 60 * 1_000),
         );
+        let chatos_service_base_url = require_https_base_url(
+            "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL",
+            normalize_base_url(required_text("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL")?),
+        )?;
+        let chatos_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(chatos_ask_user_request_timeout),
+            required_path("CHATOS_MTLS_CA_CERT_PATH")?.as_path(),
+            required_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let provider_response_limit_bytes =
             required_usize("MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES")?
                 .clamp(64 * 1024, 16 * 1024 * 1024);
         let async_tool_dispatch_topology = AsyncToolDispatchTopology::from_env()?;
         let public_base_url = normalize_base_url(required_text("MCP_MANAGEMENT_PUBLIC_BASE_URL")?);
+        let project_service_base_url = require_https_base_url(
+            "MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL",
+            normalize_base_url(required_text("MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL")?),
+        )?;
+        let project_service_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(downstream_request_timeout),
+            required_path("PROJECT_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
+            required_path("PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
+        let local_connector_service_base_url = require_https_base_url(
+            "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            normalize_base_url(required_text(
+                "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            )?),
+        )?;
+        let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(sandbox_image_request_timeout),
+            required_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
+            required_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         Ok(Self {
             host,
             port,
-            internal_api_secret,
+            internal_mtls_port,
+            otlp_endpoint,
+            otlp_trace_sample_ratio,
+            otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
+            mtls_server_cert_path: required_path("MCP_MANAGEMENT_MTLS_SERVER_CERT_PATH")?,
+            mtls_server_key_path: required_path("MCP_MANAGEMENT_MTLS_SERVER_KEY_PATH")?,
+            mtls_client_ca_cert_path: required_path("MCP_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH")?,
+            internal_api_secrets,
             require_signed_internal_requests,
             allowed_internal_callers,
-            plugin_management_service_base_url: normalize_base_url(required_text(
-                "MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL",
-            )?),
+            plugin_management_service_base_url,
+            plugin_management_http_client,
             plugin_management_internal_api_secret,
-            project_service_base_url: normalize_base_url(required_text(
-                "MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL",
-            )?),
+            project_service_base_url,
+            project_service_http_client,
             project_service_internal_api_secret,
-            task_runner_service_base_url: normalize_base_url(required_text(
+            task_runner_service_base_url: require_https_base_url(
                 "MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL",
-            )?),
+                normalize_base_url(required_text(
+                    "MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL",
+                )?),
+            )?,
+            task_runner_mtls_ca_cert_path: required_path("TASK_RUNNER_MTLS_CA_CERT_PATH")?,
+            task_runner_mtls_client_identity_path: required_path(
+                "TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH",
+            )?,
             task_runner_internal_api_secret,
             task_runner_request_timeout,
             task_runner_ask_user_request_timeout,
-            chatos_service_base_url: normalize_base_url(required_text(
-                "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL",
-            )?),
+            chatos_service_base_url,
+            chatos_http_client,
             chatos_internal_api_secret,
             chatos_ask_user_request_timeout,
             chatos_browser_request_timeout,
-            local_connector_service_base_url: normalize_base_url(required_text(
-                "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-            )?),
+            local_connector_service_base_url,
+            local_connector_http_client,
             local_connector_internal_api_secret,
-            sandbox_manager_service_base_url: normalize_base_url(required_text(
-                "MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL",
-            )?),
+            sandbox_manager_service_base_url,
+            sandbox_manager_http_client,
             sandbox_manager_internal_api_secret,
             sandbox_manager_request_timeout,
             sandbox_image_request_timeout,
@@ -369,37 +628,8 @@ impl AppConfig {
         SocketAddr::new(self.host, self.port)
     }
 
-    pub async fn resolve_service_urls(&mut self) {
-        self.plugin_management_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "plugin-management-service",
-            self.plugin_management_service_base_url.as_str(),
-        )
-        .await;
-        self.project_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "project-service",
-            self.project_service_base_url.as_str(),
-        )
-        .await;
-        self.task_runner_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "task-runner",
-            self.task_runner_service_base_url.as_str(),
-        )
-        .await;
-        self.chatos_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "chatos-backend",
-            self.chatos_service_base_url.as_str(),
-        )
-        .await;
-        self.local_connector_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "local-connector-service",
-            self.local_connector_service_base_url.as_str(),
-        )
-        .await;
-        self.sandbox_manager_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "sandbox-manager",
-            self.sandbox_manager_service_base_url.as_str(),
-        )
-        .await;
+    pub fn internal_mtls_bind_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.host, self.internal_mtls_port)
     }
 
     #[cfg(test)]
@@ -407,29 +637,56 @@ impl AppConfig {
         Self {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 39280,
-            internal_api_secret: "a-long-test-secret".to_string(),
+            internal_mtls_port: 39282,
+            mtls_server_cert_path: PathBuf::from("/tmp/mcp-management-server.crt"),
+            mtls_server_key_path: PathBuf::from("/tmp/mcp-management-server.key"),
+            mtls_client_ca_cert_path: PathBuf::from("/tmp/mcp-management-ca.crt"),
+            internal_api_secrets: BTreeMap::from([
+                ("chatos".to_string(), "a-long-chatos-secret".to_string()),
+                (
+                    "task-runner".to_string(),
+                    "a-long-task-runner-secret".to_string(),
+                ),
+                (
+                    "project-service".to_string(),
+                    "a-long-project-service-secret".to_string(),
+                ),
+                (
+                    "configuration-center".to_string(),
+                    "a-long-configuration-center-secret".to_string(),
+                ),
+            ]),
             require_signed_internal_requests: true,
             allowed_internal_callers: BTreeSet::from([
                 "chatos".to_string(),
                 "task-runner".to_string(),
+                "project-service".to_string(),
+                "configuration-center".to_string(),
             ]),
-            plugin_management_service_base_url: "http://127.0.0.1:39260".to_string(),
+            plugin_management_service_base_url: "https://127.0.0.1:39262".to_string(),
+            plugin_management_http_client: reqwest::Client::new(),
             plugin_management_internal_api_secret: Some(
                 "a-long-plugin-management-secret".to_string(),
             ),
             project_service_base_url: "http://127.0.0.1:39210".to_string(),
+            project_service_http_client: reqwest::Client::new(),
             project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
             task_runner_service_base_url: "http://127.0.0.1:39090".to_string(),
+            task_runner_mtls_ca_cert_path: PathBuf::new(),
+            task_runner_mtls_client_identity_path: PathBuf::new(),
             task_runner_internal_api_secret: Some("a-long-task-runner-secret".to_string()),
             task_runner_request_timeout: Duration::from_secs(180),
             task_runner_ask_user_request_timeout: Duration::from_secs(86_700),
             chatos_service_base_url: "http://127.0.0.1:3997".to_string(),
+            chatos_http_client: reqwest::Client::new(),
             chatos_internal_api_secret: Some("a-long-chatos-secret".to_string()),
             chatos_ask_user_request_timeout: Duration::from_secs(86_700),
             chatos_browser_request_timeout: Duration::from_secs(120),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
+            local_connector_http_client: reqwest::Client::new(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),
+            sandbox_manager_http_client: reqwest::Client::new(),
             sandbox_manager_internal_api_secret: Some("a-long-sandbox-manager-secret".to_string()),
             sandbox_manager_request_timeout: Duration::from_secs(180),
             sandbox_image_request_timeout: Duration::from_secs(2 * 60 * 60 + 30),
@@ -447,9 +704,19 @@ impl AppConfig {
                 mode: AsyncToolDispatchMode::LocalQueue,
                 worker_concurrency: 4,
                 local_queue_buffer: 64,
+                queue_max_length: 10_000,
+                queue_max_bytes: 256 * 1024 * 1024,
+                rabbitmq_reconnect_delay: Duration::from_secs(3),
+                max_delivery_attempts: 5,
+                retry_delay: Duration::from_secs(5),
+                result_outbox_reconcile_interval: Duration::from_secs(5),
+                result_outbox_batch_size: 128,
                 rabbitmq_url: None,
                 rabbitmq_exchange: None,
+                cancellation_exchange: None,
                 queue_name: None,
+                retry_queue_name: None,
+                dead_letter_queue_name: None,
             },
         }
     }
@@ -457,6 +724,23 @@ impl AppConfig {
 
 fn normalize_base_url(value: String) -> String {
     value.trim().trim_end_matches('/').to_string()
+}
+
+fn require_https_base_url(key: &str, value: String) -> Result<String, String> {
+    let parsed =
+        reqwest::Url::parse(value.as_str()).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if parsed.scheme() != "https" {
+        return Err(format!("{key} must use https"));
+    }
+    Ok(value)
+}
+
+fn require_http_endpoint(key: &str, value: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("{key} must use http or https"));
+    }
+    Ok(())
 }
 
 fn parse_callers(value: &str) -> BTreeSet<String> {
@@ -472,6 +756,10 @@ fn required_text(key: &str) -> Result<String, String> {
     env_text(key).ok_or_else(|| format!("{key} is required from config center"))
 }
 
+fn required_path(key: &str) -> Result<PathBuf, String> {
+    required_text(key).map(PathBuf::from)
+}
+
 fn required_u64(key: &str) -> Result<u64, String> {
     let value = required_text(key)?;
     value
@@ -479,11 +767,24 @@ fn required_u64(key: &str) -> Result<u64, String> {
         .map_err(|_| format!("{key} must be an unsigned integer"))
 }
 
+fn required_f64(key: &str) -> Result<f64, String> {
+    required_text(key)?
+        .parse::<f64>()
+        .map_err(|err| format!("{key} must be a valid number: {err}"))
+}
+
 fn required_u16(key: &str) -> Result<u16, String> {
     let value = required_text(key)?;
     value
         .parse::<u16>()
         .map_err(|err| format!("{key} must be a valid port: {err}"))
+}
+
+fn required_u32(key: &str) -> Result<u32, String> {
+    let value = required_text(key)?;
+    value
+        .parse::<u32>()
+        .map_err(|err| format!("{key} must be a valid unsigned integer: {err}"))
 }
 
 fn required_usize(key: &str) -> Result<usize, String> {
@@ -517,7 +818,7 @@ mod tests {
     #[test]
     fn async_tool_dispatch_mode_parser_rejects_unknown_values() {
         assert!(AsyncToolDispatchMode::parse("rabbitmq").is_ok());
-        assert!(AsyncToolDispatchMode::parse("local").is_ok());
+        assert!(AsyncToolDispatchMode::parse("local").is_err());
         assert!(AsyncToolDispatchMode::parse("mystery").is_err());
     }
 
@@ -527,10 +828,28 @@ mod tests {
             mode: AsyncToolDispatchMode::RabbitMq,
             worker_concurrency: 2,
             local_queue_buffer: 0,
+            queue_max_length: 10_000,
+            queue_max_bytes: 256 * 1024 * 1024,
+            rabbitmq_reconnect_delay: Duration::from_secs(3),
+            max_delivery_attempts: 5,
+            retry_delay: Duration::from_secs(5),
+            result_outbox_reconcile_interval: Duration::from_secs(5),
+            result_outbox_batch_size: 128,
             rabbitmq_url: None,
             rabbitmq_exchange: Some("mcp_management".to_string()),
+            cancellation_exchange: Some("mcp_management.cancellations".to_string()),
             queue_name: Some("mcp_management.async.dispatch".to_string()),
+            retry_queue_name: Some("mcp_management.async.retry".to_string()),
+            dead_letter_queue_name: Some("mcp_management.async.dlq".to_string()),
         };
+        assert!(topology.validate().is_err());
+    }
+
+    #[test]
+    fn async_tool_worker_concurrency_is_bounded_for_rabbitmq_prefetch() {
+        let mut topology = AppConfig::test().async_tool_dispatch_topology;
+        topology.worker_concurrency = 513;
+
         assert!(topology.validate().is_err());
     }
 }

@@ -13,6 +13,7 @@ pub struct McpHttpServer {
     pub allowed_tool_names: Option<Vec<String>>,
     pub preserve_tool_names: bool,
     pub fail_on_unavailable: bool,
+    pub async_result_transport: chatos_mcp_runtime::McpAsyncResultTransport,
     pub header_provider: Option<std::sync::Arc<dyn chatos_mcp_runtime::McpHttpHeaderProvider>>,
 }
 

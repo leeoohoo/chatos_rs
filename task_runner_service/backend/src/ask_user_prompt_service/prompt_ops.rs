@@ -25,6 +25,7 @@ impl AskUserPromptService {
                 selection: None,
                 reason: Some(reason.clone()),
             });
+            prompt.resolution_event_pending = prompt.run_id.is_some();
             prompt.updated_at = now_rfc3339();
             let saved = self.store.save_ask_user_prompt(prompt).await?;
             self.append_prompt_event(
@@ -36,6 +37,13 @@ impl AskUserPromptService {
             .await;
             self.try_send_chatos_ask_user_prompt_resolved(&saved).await;
             self.waiters.wake(saved.id.as_str());
+            if let Err(err) = self.publish_resolution_event_if_needed(&saved).await {
+                tracing::warn!(
+                    prompt_id = saved.id.as_str(),
+                    error = err.as_str(),
+                    "failed to publish ask_user cancellation event"
+                );
+            }
             cancelled += 1;
         }
         Ok(cancelled)
@@ -94,6 +102,7 @@ impl AskUserPromptService {
         };
         prompt.status = AskUserPromptStatus::Submitted;
         prompt.response = Some(response);
+        prompt.resolution_event_pending = prompt.run_id.is_some();
         prompt.updated_at = now_rfc3339();
         let saved = self.store.save_ask_user_prompt(prompt).await?;
         self.append_prompt_event(
@@ -105,6 +114,13 @@ impl AskUserPromptService {
         .await;
         self.try_send_chatos_ask_user_prompt_resolved(&saved).await;
         self.waiters.wake(id);
+        if let Err(err) = self.publish_resolution_event_if_needed(&saved).await {
+            tracing::warn!(
+                prompt_id = saved.id.as_str(),
+                error = err.as_str(),
+                "failed to publish ask_user submitted event"
+            );
+        }
         Ok(Some(saved))
     }
 
@@ -134,6 +150,7 @@ impl AskUserPromptService {
             selection: None,
             reason: reason.clone(),
         });
+        prompt.resolution_event_pending = prompt.run_id.is_some();
         prompt.updated_at = now_rfc3339();
         let saved = self.store.save_ask_user_prompt(prompt).await?;
         self.append_prompt_event(
@@ -145,6 +162,13 @@ impl AskUserPromptService {
         .await;
         self.try_send_chatos_ask_user_prompt_resolved(&saved).await;
         self.waiters.wake(id);
+        if let Err(err) = self.publish_resolution_event_if_needed(&saved).await {
+            tracing::warn!(
+                prompt_id = saved.id.as_str(),
+                error = err.as_str(),
+                "failed to publish ask_user cancelled event"
+            );
+        }
         Ok(Some(saved))
     }
 
@@ -194,6 +218,7 @@ impl AskUserPromptService {
             selection: None,
             reason: Some("prompt timed out".to_string()),
         });
+        prompt.resolution_event_pending = prompt.run_id.is_some();
         prompt.updated_at = now_rfc3339();
         let saved = self.store.save_ask_user_prompt(prompt).await?;
         self.append_prompt_event(
@@ -204,6 +229,14 @@ impl AskUserPromptService {
         )
         .await;
         self.try_send_chatos_ask_user_prompt_resolved(&saved).await;
+        self.waiters.wake(id);
+        if let Err(err) = self.publish_resolution_event_if_needed(&saved).await {
+            tracing::warn!(
+                prompt_id = saved.id.as_str(),
+                error = err.as_str(),
+                "failed to publish ask_user timeout event"
+            );
+        }
         Ok(saved)
     }
 

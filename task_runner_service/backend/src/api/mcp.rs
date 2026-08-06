@@ -13,6 +13,8 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::trace_context::InternalTraceContextExt;
+
 use super::internal_auth::{
     require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
     MCP_TOOLS_LIST_SCOPE,
@@ -98,13 +100,7 @@ pub(super) async fn list_plugin_connectors(
         .ok_or_else(|| ApiError::unauthorized("current user access token is unavailable"))?;
     let base_url =
         crate::services::plugin_relay_base_url(&state.config).map_err(ApiError::bad_gateway)?;
-    let client = reqwest::Client::builder()
-        .timeout(state.config.plugin_connector_discovery_timeout)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| {
-            ApiError::internal(format!("build Local Connector client failed: {error}"))
-        })?;
+    let client = &state.config.local_connector_http_client;
     let devices_url = format!("{base_url}/api/local-connectors/devices");
     let workspaces_url = format!("{base_url}/api/local-connectors/workspaces");
     let (devices, workspaces) = tokio::try_join!(
@@ -136,6 +132,7 @@ where
     let response = client
         .get(url)
         .bearer_auth(access_token)
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|error| ApiError {

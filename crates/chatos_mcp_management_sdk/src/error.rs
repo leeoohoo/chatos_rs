@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum McpManagementClientError {
     #[error("MCP management base URL is invalid: {0}")]
     InvalidBaseUrl(String),
+    #[error("MCP management mTLS configuration is invalid: {0}")]
+    InvalidMtlsConfiguration(String),
     #[error("MCP management internal API secret is not configured")]
     MissingInternalSecret,
     #[error("MCP management internal token failed: {0}")]

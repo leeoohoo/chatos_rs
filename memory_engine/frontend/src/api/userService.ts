@@ -106,10 +106,6 @@ export function clearAuthToken(): void {
   window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
 }
 
-export function hasOperatorConsoleAccess(): boolean {
-  return Boolean((import.meta.env.VITE_MEMORY_ENGINE_OPERATOR_TOKEN || '').trim());
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has('Content-Type')) {

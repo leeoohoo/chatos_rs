@@ -2,66 +2,43 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::StreamExt;
 use lapin::{
-    options::{BasicAckOptions, BasicConsumeOptions},
+    options::{BasicAckOptions, BasicConsumeOptions, BasicQosOptions, ConfirmSelectOptions},
     types::FieldTable,
-    Connection, ConnectionProperties,
+    Channel, Connection, ConnectionProperties,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
-use crate::platform_queue::TaskQueueMode;
-use crate::run_dispatch_queue::{ensure_run_dispatch_topology, QueuedRunDispatchEnvelope};
+use crate::run_dispatch_queue::{
+    defer_run_dispatch, ensure_run_dispatch_topology, QueuedRunDispatchEnvelope,
+};
 use crate::services::{RejectedRunClaimHeartbeatAction, RunService};
 
-const RUN_DISPATCH_QUEUE_CONSUMER_RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const RUN_DISPATCH_QUEUE_CONSUMER_TAG: &str = "task-runner-run-dispatch";
 
 pub fn spawn_task_worker(config: AppConfig, run_service: RunService) -> JoinHandle<()> {
     tokio::spawn(async move {
         let semaphore = Arc::new(Semaphore::new(config.worker_concurrency));
-        let mut last_stale_recovery = Instant::now();
         let stale_recovery_interval = heartbeat_interval(config.worker_claim_ttl);
 
         info!(
             worker_id = config.worker_id.as_str(),
             concurrency = config.worker_concurrency,
-            poll_ms = config.worker_poll_interval.as_millis(),
             claim_ttl_ms = config.worker_claim_ttl.as_millis(),
             claim_expiry_grace_ms =
                 crate::services::worker_claim_expiry_grace(config.worker_claim_ttl).as_millis(),
-            stale_recovery_poll_ms = stale_recovery_interval.as_millis(),
-            "task runner worker started"
+            stale_recovery_interval_ms = stale_recovery_interval.as_millis(),
+            "task runner rabbitmq worker started"
         );
 
-        match run_service.run_dispatch_mode() {
-            TaskQueueMode::Inline => loop {
-                reconcile_stale_claims_if_due(
-                    &config,
-                    &run_service,
-                    stale_recovery_interval,
-                    &mut last_stale_recovery,
-                )
-                .await;
-                poll_claimed_runs_once(&config, &run_service, &semaphore).await;
-                tokio::time::sleep(config.worker_poll_interval).await;
-            },
-            TaskQueueMode::RabbitMq => {
-                run_rabbitmq_dispatch_worker_loop(
-                    config,
-                    run_service,
-                    semaphore,
-                    stale_recovery_interval,
-                    last_stale_recovery,
-                )
-                .await;
-            }
-        }
+        run_rabbitmq_dispatch_worker_loop(config, run_service, semaphore, stale_recovery_interval)
+            .await;
     })
 }
 
@@ -70,19 +47,23 @@ async fn run_rabbitmq_dispatch_worker_loop(
     run_service: RunService,
     semaphore: Arc<Semaphore>,
     stale_recovery_interval: Duration,
-    mut last_stale_recovery: Instant,
 ) {
     loop {
-        reconcile_stale_claims_if_due(
-            &config,
-            &run_service,
-            stale_recovery_interval,
-            &mut last_stale_recovery,
+        reconcile_stale_claims(&config, &run_service).await;
+        match open_run_dispatch_consumer(
+            run_service.task_queue_topology(),
+            config.worker_concurrency,
         )
-        .await;
-        match open_run_dispatch_consumer(run_service.task_queue_topology()).await {
-            Ok((connection, mut consumer)) => {
+        .await
+        {
+            Ok((connection, channel, mut consumer)) => {
                 let _connection = connection;
+                run_service
+                    .runtime_stats()
+                    .set_run_dispatch_consumer_connected(true);
+                let mut stale_recovery = tokio::time::interval(stale_recovery_interval);
+                stale_recovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                stale_recovery.tick().await;
                 info!(
                     worker_id = config.worker_id.as_str(),
                     queue = run_service
@@ -103,6 +84,7 @@ async fn run_rabbitmq_dispatch_worker_loop(
                                     if let Err(err) = handle_run_dispatch_delivery(
                                         &config,
                                         &run_service,
+                                        &channel,
                                         delivery,
                                         permit,
                                     )
@@ -133,15 +115,8 @@ async fn run_rabbitmq_dispatch_worker_loop(
                                 }
                             }
                         }
-                        _ = tokio::time::sleep(config.worker_poll_interval) => {
-                            reconcile_stale_claims_if_due(
-                                &config,
-                                &run_service,
-                                stale_recovery_interval,
-                                &mut last_stale_recovery,
-                            )
-                            .await;
-                            poll_claimed_runs_once(&config, &run_service, &semaphore).await;
+                        _ = stale_recovery.tick() => {
+                            reconcile_stale_claims(&config, &run_service).await;
                         }
                     }
                 }
@@ -154,13 +129,20 @@ async fn run_rabbitmq_dispatch_worker_loop(
                 );
             }
         }
-        tokio::time::sleep(RUN_DISPATCH_QUEUE_CONSUMER_RECONNECT_DELAY).await;
+        run_service
+            .runtime_stats()
+            .set_run_dispatch_consumer_connected(false);
+        run_service
+            .runtime_stats()
+            .record_rabbitmq_consumer_reconnect();
+        tokio::time::sleep(run_service.task_queue_topology().rabbitmq_reconnect_delay).await;
     }
 }
 
 async fn open_run_dispatch_consumer(
     task_queue_topology: &crate::platform_queue::TaskQueueTopology,
-) -> Result<(Connection, lapin::Consumer), String> {
+    worker_concurrency: usize,
+) -> Result<(Connection, Channel, lapin::Consumer), String> {
     let rabbitmq_url = task_queue_topology.rabbitmq_url.as_deref().ok_or_else(|| {
         "TASK_RUNNER_RABBITMQ_URL is required when run dispatch uses RabbitMQ".to_string()
     })?;
@@ -172,6 +154,18 @@ async fn open_run_dispatch_consumer(
         .await
         .map_err(|err| err.to_string())?;
     ensure_run_dispatch_topology(&channel, task_queue_topology).await?;
+    channel
+        .confirm_select(ConfirmSelectOptions::default())
+        .await
+        .map_err(|err| err.to_string())?;
+    channel
+        .basic_qos(
+            u16::try_from(worker_concurrency)
+                .map_err(|_| "Task Runner worker concurrency exceeds RabbitMQ prefetch limit")?,
+            BasicQosOptions::default(),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
     let consumer = channel
         .basic_consume(
             task_queue_topology.run_dispatch_queue.as_str(),
@@ -181,29 +175,42 @@ async fn open_run_dispatch_consumer(
         )
         .await
         .map_err(|err| err.to_string())?;
-    Ok((connection, consumer))
+    Ok((connection, channel, consumer))
 }
 
 async fn handle_run_dispatch_delivery(
     config: &AppConfig,
     run_service: &RunService,
+    channel: &Channel,
     delivery: lapin::message::Delivery,
     permit: OwnedSemaphorePermit,
 ) -> Result<(), String> {
-    let envelope = serde_json::from_slice::<QueuedRunDispatchEnvelope>(&delivery.data)
-        .map_err(|err| err.to_string())?;
-    let run = run_service
-        .claim_queued_run_by_id(
-            envelope.run_id.as_str(),
-            config.worker_id.as_str(),
-            config.worker_claim_ttl,
-        )
-        .await?;
-    delivery
-        .ack(BasicAckOptions::default())
+    let envelope = match serde_json::from_slice::<QueuedRunDispatchEnvelope>(&delivery.data) {
+        Ok(envelope) => envelope,
+        Err(err) => {
+            delivery
+                .ack(BasicAckOptions::default())
+                .await
+                .map_err(|ack_err| ack_err.to_string())?;
+            drop(permit);
+            return Err(format!("invalid run dispatch envelope: {err}"));
+        }
+    };
+    let run = match run_service
+        .claim_next_queued_run(config.worker_id.as_str(), config.worker_claim_ttl)
         .await
-        .map_err(|err| err.to_string())?;
+    {
+        Ok(run) => run,
+        Err(err) => {
+            run_service.runtime_stats().record_worker_claim_failure();
+            return Err(err);
+        }
+    };
     if let Some(run) = run {
+        delivery
+            .ack(BasicAckOptions::default())
+            .await
+            .map_err(|err| err.to_string())?;
         spawn_claimed_run(
             run_service.clone(),
             config.worker_id.clone(),
@@ -212,20 +219,37 @@ async fn handle_run_dispatch_delivery(
             permit,
         );
     } else {
+        let should_defer = run_service.has_queued_run_waiting_for_execution().await?;
+        if should_defer {
+            run_service
+                .runtime_stats()
+                .record_run_dispatch_fairness_deferral();
+            defer_run_dispatch(
+                channel,
+                run_service.task_queue_topology(),
+                delivery.data.as_slice(),
+            )
+            .await?;
+            info!(
+                worker_id = config.worker_id.as_str(),
+                trigger_run_id = envelope.run_id.as_str(),
+                retry_delay_ms = run_service
+                    .task_queue_topology()
+                    .run_dispatch_retry_delay
+                    .as_millis(),
+                "task runner deferred fair scheduling trigger until an execution lane is available"
+            );
+        }
+        delivery
+            .ack(BasicAckOptions::default())
+            .await
+            .map_err(|err| err.to_string())?;
         drop(permit);
     }
     Ok(())
 }
 
-async fn reconcile_stale_claims_if_due(
-    config: &AppConfig,
-    run_service: &RunService,
-    stale_recovery_interval: Duration,
-    last_stale_recovery: &mut Instant,
-) {
-    if last_stale_recovery.elapsed() < stale_recovery_interval {
-        return;
-    }
+async fn reconcile_stale_claims(config: &AppConfig, run_service: &RunService) {
     match run_service
         .reconcile_expired_run_claims(config.worker_claim_ttl)
         .await
@@ -244,44 +268,6 @@ async fn reconcile_stale_claims_if_due(
                 error = err.as_str(),
                 "task runner worker failed to recover expired run claims"
             );
-        }
-    }
-    *last_stale_recovery = Instant::now();
-}
-
-async fn poll_claimed_runs_once(
-    config: &AppConfig,
-    run_service: &RunService,
-    semaphore: &Arc<Semaphore>,
-) {
-    while let Ok(permit) = semaphore.clone().try_acquire_owned() {
-        match run_service
-            .claim_next_queued_run(config.worker_id.as_str(), config.worker_claim_ttl)
-            .await
-        {
-            Ok(Some(run)) => {
-                spawn_claimed_run(
-                    run_service.clone(),
-                    config.worker_id.clone(),
-                    config.worker_claim_ttl,
-                    run,
-                    permit,
-                );
-            }
-            Ok(None) => {
-                drop(permit);
-                break;
-            }
-            Err(err) => {
-                drop(permit);
-                run_service.runtime_stats().record_worker_claim_failure();
-                warn!(
-                    worker_id = config.worker_id.as_str(),
-                    error = err.as_str(),
-                    "task runner worker failed to claim queued run"
-                );
-                break;
-            }
         }
     }
 }

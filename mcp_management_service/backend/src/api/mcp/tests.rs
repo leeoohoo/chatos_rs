@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::*;
 use axum::routing::post;
@@ -10,16 +11,19 @@ use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
     RuntimeToolDescriptor, SandboxProviderKind, WorkspaceProviderKind,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 fn snapshot() -> RuntimeSessionSnapshot {
     RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
         caller_service: "task-runner".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
+        device_id: Some("device-1".to_string()),
         run_id: Some("run-1".to_string()),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
@@ -71,16 +75,45 @@ fn snapshot() -> RuntimeSessionSnapshot {
     }
 }
 
+fn ask_user_snapshot() -> RuntimeSessionSnapshot {
+    let mut snapshot = snapshot();
+    let descriptor = system_mcp_descriptor(SystemMcpKey::AskUser);
+    snapshot.routes = vec![ResolvedMcpRoute {
+        resource_id: descriptor.resource_id.to_string(),
+        server_name: descriptor.server_name.to_string(),
+        provider_kind: McpProviderKind::InternalService,
+        provider_ref: Some("task-runner".to_string()),
+        tool_namespace: descriptor.server_name.to_string(),
+        allow_writes: true,
+        retry_class: McpRetryClass::NoRetry,
+        cancel_supported: true,
+        reason: "test".to_string(),
+    }];
+    snapshot.tools = vec![RuntimeToolDescriptor {
+        exposed_name: "ask_user_prompt_choices".to_string(),
+        original_name: "prompt_choices".to_string(),
+        resource_id: descriptor.resource_id.to_string(),
+        definition: json!({
+            "name": "ask_user_prompt_choices",
+            "inputSchema": {"type": "object"}
+        }),
+    }];
+    snapshot
+}
+
 fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGrantClaims {
     crate::runtime::RuntimeGrantClaims {
         iss: "mcp-management-service".to_string(),
         sub: snapshot.caller_service.clone(),
         aud: "mcp-management-runtime".to_string(),
         session_id: snapshot.session_id.clone(),
+        trace_id: snapshot.trace_id.clone(),
+        tenant_id: snapshot.tenant_id.clone(),
         owner_user_id: snapshot.owner_user_id.clone(),
         agent_key: snapshot.agent_key.clone(),
         task_profile: snapshot.task_profile.clone(),
         project_id: snapshot.project_id.clone(),
+        device_id: snapshot.device_id.clone(),
         run_id: snapshot.run_id.clone(),
         turn_id: snapshot.turn_id.clone(),
         task_id: snapshot.task_id.clone(),
@@ -115,6 +148,7 @@ async fn tools_list_returns_only_session_namespaced_tools() {
         },
         &snapshot(),
         &state,
+        Ok(None),
     )
     .await;
     assert_eq!(
@@ -183,6 +217,7 @@ async fn tools_call_dispatches_the_original_name_to_project_service() {
         },
         &snapshot,
         &state,
+        Ok(None),
     )
     .await;
     assert_eq!(
@@ -242,6 +277,11 @@ async fn long_running_tool_returns_accepted_and_persists_async_result() {
             "annotations": {"x-chatos-preferAsync": true}
         }),
     }];
+    state
+        .runtime_sessions
+        .insert(snapshot.clone())
+        .await
+        .expect("persist async runtime session");
     let response = handle_session_request(
         JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
@@ -254,6 +294,7 @@ async fn long_running_tool_returns_accepted_and_persists_async_result() {
         },
         &snapshot,
         &state,
+        Ok(Some("test.mcp.results".to_string())),
     )
     .await;
     let invocation_id = response
@@ -296,6 +337,115 @@ async fn long_running_tool_returns_accepted_and_persists_async_result() {
             "async": true,
         }))
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn ask_user_invocation_waits_for_user_and_completes_with_the_answer() {
+    #[derive(Clone)]
+    struct AskUserState {
+        started: mpsc::UnboundedSender<String>,
+        answer_ready: Arc<Notify>,
+    }
+
+    async fn provider(
+        State(state): State<AskUserState>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        let invocation_id = request
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        state.started.send(invocation_id.clone()).unwrap();
+        state.answer_ready.notified().await;
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": invocation_id,
+            "result": {"answer": "yes"}
+        }))
+    }
+
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let answer_ready = Arc::new(Notify::new());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_answer_ready = Arc::clone(&answer_ready);
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/internal/mcp-management/mcp/ask_user", post(provider))
+                .with_state(AskUserState {
+                    started: started_tx,
+                    answer_ready: server_answer_ready,
+                }),
+        )
+        .await
+        .unwrap();
+    });
+    let mut config = crate::config::AppConfig::test();
+    config.task_runner_service_base_url = format!("http://{address}");
+    let state = AppState::new(config).await.unwrap();
+    let snapshot = Arc::new(ask_user_snapshot());
+    let call_state = state.clone();
+    let call_snapshot = Arc::clone(&snapshot);
+    let call = tokio::spawn(async move {
+        handle_session_request(
+            JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("ask-user-call-1")),
+                method: METHOD_TOOLS_CALL.to_string(),
+                params: json!({
+                    "name": "ask_user_prompt_choices",
+                    "arguments": {
+                        "title": "Continue?",
+                        "options": [{"label": "Yes", "value": "yes"}]
+                    }
+                }),
+            },
+            &call_snapshot,
+            &call_state,
+            Ok(None),
+        )
+        .await
+    });
+
+    let invocation_id = tokio::time::timeout(Duration::from_secs(2), started_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let waiting = state
+        .runtime_invocations
+        .get_for_caller(invocation_id.as_str(), snapshot.caller_service.as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(waiting.status, RuntimeInvocationStatus::WaitingForUser);
+    assert_eq!(
+        state
+            .runtime_invocations
+            .stats()
+            .await
+            .unwrap()
+            .waiting_for_user,
+        1
+    );
+
+    answer_ready.notify_one();
+    let response = tokio::time::timeout(Duration::from_secs(2), call)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.result, Some(json!({"answer": "yes"})));
+    let completed = state
+        .runtime_invocations
+        .get_for_caller(invocation_id.as_str(), snapshot.caller_service.as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(completed.status, RuntimeInvocationStatus::Completed);
+    assert_eq!(completed.terminal_result, Some(json!({"answer": "yes"})));
     server.abort();
 }
 
@@ -402,6 +552,7 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
             },
             &call_snapshot,
             &call_state,
+            Ok(Some("test.mcp.results".to_string())),
         )
         .await
     });
@@ -409,6 +560,19 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(
+        state
+            .runtime_invocations
+            .get_for_caller(
+                internal_invocation_id.as_str(),
+                snapshot.caller_service.as_str(),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        RuntimeInvocationStatus::Running
+    );
     let cancel_response = handle_session_request(
         JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
@@ -418,6 +582,7 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
         },
         &snapshot,
         &state,
+        Ok(None),
     )
     .await;
     assert_eq!(
@@ -470,8 +635,13 @@ async fn unconfirmed_mutation_cancellation_returns_unknown_execution_state() {
             session_id: snapshot.session_id.clone(),
             request_id_key: "\"mutation-request\"".to_string(),
             caller_service: snapshot.caller_service.clone(),
+            tenant_id: snapshot.tenant_id.clone(),
+            owner_user_id: snapshot.owner_user_id.clone(),
+            project_id: snapshot.project_id.clone(),
+            device_id: snapshot.device_id.clone(),
             resource_id: route.resource_id.clone(),
             exposed_tool_name: "demo_mutate".to_string(),
+            original_tool_name: "demo_mutate".to_string(),
             mutation_may_have_started: true,
             cancel_supported: false,
             status: RuntimeInvocationStatus::Running,
@@ -482,6 +652,10 @@ async fn unconfirmed_mutation_cancellation_returns_unknown_execution_state() {
             terminal_result: None,
             terminal_error_code: None,
             terminal_error_message: None,
+            file_modification_outcome: None,
+            result_reply_to: None,
+            result_event_id: None,
+            result_event_pending: false,
             expires_at: DateTime::from_millis(
                 (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
             ),
@@ -535,6 +709,10 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     wrong_caller.sub = "another-service".to_string();
     assert!(!grant_matches_snapshot(&wrong_caller, &snapshot));
 
+    let mut wrong_tenant = claims.clone();
+    wrong_tenant.tenant_id = "another-tenant".to_string();
+    assert!(!grant_matches_snapshot(&wrong_tenant, &snapshot));
+
     let mut wrong_owner = claims.clone();
     wrong_owner.owner_user_id = "another-owner".to_string();
     assert!(!grant_matches_snapshot(&wrong_owner, &snapshot));
@@ -550,6 +728,10 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     let mut wrong_project = claims.clone();
     wrong_project.project_id = "another-project".to_string();
     assert!(!grant_matches_snapshot(&wrong_project, &snapshot));
+
+    let mut wrong_device = claims.clone();
+    wrong_device.device_id = Some("another-device".to_string());
+    assert!(!grant_matches_snapshot(&wrong_device, &snapshot));
 
     let mut wrong_run = claims.clone();
     wrong_run.run_id = Some("another-run".to_string());
@@ -604,4 +786,25 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
         .allowed_resource_ids
         .push("unconfigured-mcp".to_string());
     assert!(!grant_matches_snapshot(&extra_resource, &snapshot));
+}
+
+#[test]
+fn async_enqueue_errors_expose_stable_business_semantics() {
+    assert_eq!(
+        public_async_enqueue_error(&AsyncToolEnqueueError::CapacityExhausted),
+        (
+            MCP_ERROR_CAPACITY_EXHAUSTED,
+            "MCP async execution capacity is currently full",
+        )
+    );
+    let unavailable = AsyncToolEnqueueError::Unavailable(
+        "amqp://secret@example.internal connection failed".to_string(),
+    );
+    assert_eq!(
+        public_async_enqueue_error(&unavailable),
+        (
+            MCP_ERROR_INTERNAL,
+            "async tool dispatch queue is unavailable",
+        )
+    );
 }

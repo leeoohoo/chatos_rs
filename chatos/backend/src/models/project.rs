@@ -143,7 +143,6 @@ impl ProjectService {
                 return Err("project service sync secret is not configured".to_string());
             };
             project_management_api_client::sync_get_project_service_project(
-                cfg.project_service_base_url.as_str(),
                 secret.as_str(),
                 id.as_str(),
             )
@@ -166,7 +165,6 @@ impl ProjectService {
                 return Err("project service sync secret is not configured".to_string());
             };
             project_management_api_client::sync_list_project_service_projects(
-                cfg.project_service_base_url.as_str(),
                 secret.as_str(),
                 Some("active"),
             )

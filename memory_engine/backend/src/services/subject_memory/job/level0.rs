@@ -52,7 +52,8 @@ pub(crate) async fn process_level0_selection(
     .await?
     {
         progress.marked_source_summaries +=
-            mark_summary_sources_subject_memory_summarized(db, selected).await?;
+            mark_summary_sources_subject_memory_summarized(db, selected, req.scope_key.as_deref())
+                .await?;
         tracing::info!(
             "[MEMORY-ENGINE-SUBJECT] reused level0 subject_id={} memory_type={} digest={} memory_key={}",
             req.subject_id, req.memory_type, source_digest, existing.memory_key
@@ -133,57 +134,62 @@ pub(crate) async fn process_level0_selection(
     )
     .await?;
     progress.generated_level0 += 1;
-    progress.marked_source_summaries +=
-        match mark_summary_sources_subject_memory_summarized(db, selected).await {
-            Ok(marked) => marked,
-            Err(err) => {
-                let delete_req = UpsertSubjectMemoryRequest {
-                    id: None,
-                    tenant_id: req.tenant_id.clone(),
-                    source_id: req.source_id.clone(),
-                    memory_type: req.memory_type.clone(),
-                    text: String::new(),
-                    level: Some(0),
-                    source_digest: Some(source_digest.clone()),
-                    confidence: None,
-                    last_seen_at: None,
-                    metadata: None,
-                    rollup_status: Some("pending".to_string()),
-                    rollup_memory_key: None,
-                    rolled_up_at: None,
-                    status: Some("deleted".to_string()),
-                    created_at: None,
-                    updated_at: None,
-                };
-                let _ = subject_memories::upsert_generated_subject_memory(
-                    db,
-                    req.subject_id.as_str(),
-                    memory_key.as_str(),
-                    delete_req,
-                    Some(source_digest.clone()),
-                    "pending",
-                )
-                .await;
-                finish_subject_memory_job_run(
-                    db,
-                    job_run_id,
-                    build_failed_job_run(
-                        req,
-                        settings.relation_subject_id.as_str(),
-                        from_scope_runner,
-                        input_count,
-                        progress,
-                        selected.len(),
-                        format!(
-                            "mark source summaries subject-memory summarized failed: {}",
-                            err
-                        ),
+    progress.marked_source_summaries += match mark_summary_sources_subject_memory_summarized(
+        db,
+        selected,
+        req.scope_key.as_deref(),
+    )
+    .await
+    {
+        Ok(marked) => marked,
+        Err(err) => {
+            let delete_req = UpsertSubjectMemoryRequest {
+                id: None,
+                tenant_id: req.tenant_id.clone(),
+                source_id: req.source_id.clone(),
+                memory_type: req.memory_type.clone(),
+                text: String::new(),
+                level: Some(0),
+                source_digest: Some(source_digest.clone()),
+                confidence: None,
+                last_seen_at: None,
+                metadata: None,
+                rollup_status: Some("pending".to_string()),
+                rollup_memory_key: None,
+                rolled_up_at: None,
+                status: Some("deleted".to_string()),
+                created_at: None,
+                updated_at: None,
+            };
+            let _ = subject_memories::upsert_generated_subject_memory(
+                db,
+                req.subject_id.as_str(),
+                memory_key.as_str(),
+                delete_req,
+                Some(source_digest.clone()),
+                "pending",
+            )
+            .await;
+            finish_subject_memory_job_run(
+                db,
+                job_run_id,
+                build_failed_job_run(
+                    req,
+                    settings.relation_subject_id.as_str(),
+                    from_scope_runner,
+                    input_count,
+                    progress,
+                    selected.len(),
+                    format!(
+                        "mark source summaries subject-memory summarized failed: {}",
+                        err
                     ),
-                )
-                .await;
-                return Err(err);
-            }
-        };
+                ),
+            )
+            .await;
+            return Err(err);
+        }
+    };
 
     Ok(())
 }

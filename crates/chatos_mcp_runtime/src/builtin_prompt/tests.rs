@@ -12,7 +12,8 @@ use super::{
     BuiltinMcpPromptLocale,
 };
 use crate::{
-    BuiltinMcpKind, McpBuiltinServer, ToolInfo, BROWSER_TOOLS_SERVER_NAME, WEB_TOOLS_SERVER_NAME,
+    BuiltinMcpKind, McpAsyncResultTransport, McpBuiltinServer, ToolInfo, BROWSER_TOOLS_SERVER_NAME,
+    WEB_TOOLS_SERVER_NAME,
 };
 
 fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
@@ -140,6 +141,8 @@ fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
             server_url: None,
             server_headers: None,
             server_header_provider: None,
+            server_http_client: None,
+            server_async_result_transport: McpAsyncResultTransport::Disabled,
             server_timeout: None,
             server_config: None,
             tool_info: json!({}),

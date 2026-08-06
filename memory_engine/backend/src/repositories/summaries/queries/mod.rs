@@ -5,7 +5,9 @@ mod labels;
 mod rollups;
 mod thread;
 
-pub use labels::list_summaries_by_thread_label;
+pub use labels::{
+    list_summaries_by_thread_label, list_summaries_by_thread_label_for_subject_memory_scope,
+};
 pub use rollups::{
     find_summary_by_source_digest, list_pending_summaries_by_level,
     list_threads_with_pending_rollups,

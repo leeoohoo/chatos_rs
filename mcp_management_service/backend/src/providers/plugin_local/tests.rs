@@ -222,6 +222,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
     const SECRET: &str = "a-long-plugin-local-test-secret";
     let (base_url, actions, server) = start_local_connector(SECRET).await;
     let provider = PluginLocalProvider::new(
+        reqwest::Client::new(),
         base_url,
         Duration::from_secs(5),
         Some(SECRET.to_string()),
@@ -250,10 +251,13 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
     let snapshot = RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
         caller_service: "task-runner".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
+        device_id: None,
         run_id: Some("run-1".to_string()),
         turn_id: None,
         task_id: None,

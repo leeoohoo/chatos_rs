@@ -121,11 +121,10 @@ impl McpRequestContext {
         }
     }
 
-    pub(super) fn child_task_profile(
-        &self,
-        is_planning_task: Option<bool>,
-        _requires_execution: Option<bool>,
-    ) -> Option<String> {
+    pub(super) fn child_task_profile(&self, is_planning_task: Option<bool>) -> Option<String> {
+        if self.tool_profile() == McpToolProfile::ProjectRequirementExecutionPlanner {
+            return Some(TASK_PROFILE_DEFAULT.to_string());
+        }
         if !self.is_chatos_plan_task_profile() {
             return None;
         }

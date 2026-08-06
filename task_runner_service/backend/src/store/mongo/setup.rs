@@ -22,6 +22,8 @@ impl MongoStore {
             remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
+            run_terminal_subscriptions: database
+                .collection::<RunTerminalSubscriptionRecord>("task_run_terminal_subscriptions"),
             ask_user_prompts: database.collection::<AskUserPromptRecord>("ask_user_prompts"),
             users: database.collection::<UserRecord>("users"),
             task_prerequisites: database.collection::<TaskPrerequisiteRecord>("task_prerequisites"),
@@ -160,6 +162,18 @@ impl MongoStore {
             false,
         )
         .await?;
+        self.ensure_index(
+            &self.runs,
+            doc! { "post_process_event_pending": 1, "updated_at": 1 },
+            false,
+        )
+        .await?;
+        self.ensure_index(
+            &self.runs,
+            doc! { "terminal_cleanup_event_pending": 1, "updated_at": 1 },
+            false,
+        )
+        .await?;
         self.ensure_task_run_indexes().await?;
 
         self.ensure_index(&self.run_events, doc! { "id": 1 }, true)
@@ -171,6 +185,15 @@ impl MongoStore {
         self.ensure_index(
             &self.run_events,
             doc! { "run_id": 1, "created_at": 1, "id": 1 },
+            false,
+        )
+        .await?;
+
+        self.ensure_index(&self.run_terminal_subscriptions, doc! { "id": 1 }, true)
+            .await?;
+        self.ensure_index(
+            &self.run_terminal_subscriptions,
+            doc! { "run_id": 1, "created_at": 1 },
             false,
         )
         .await?;
@@ -203,6 +226,12 @@ impl MongoStore {
         .await?;
         self.ensure_index(&self.ask_user_prompts, doc! { "updated_at": -1 }, false)
             .await?;
+        self.ensure_index(
+            &self.ask_user_prompts,
+            doc! { "resolution_event_pending": 1, "updated_at": 1 },
+            false,
+        )
+        .await?;
 
         self.ensure_index(&self.users, doc! { "id": 1 }, true)
             .await?;
@@ -297,16 +326,11 @@ impl MongoStore {
             )
             .await;
 
-        if let Err(err) = create_execution_lane_index {
-            if is_mongo_active_run_index_conflict(&err.to_string()) {
-                warn!(
-                    "skipping active execution lane unique index creation due to existing duplicate running lanes: {}",
-                    err
-                );
-            } else {
-                return Err(err.to_string());
-            }
-        }
+        create_execution_lane_index.map_err(|err| {
+            format!(
+                "cannot enforce project execution fairness because the active execution lane unique index could not be created: {err}"
+            )
+        })?;
 
         Ok(())
     }

@@ -48,10 +48,13 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
     RuntimeSessionSnapshot {
         session_id: session_id.to_string(),
         caller_service: "task-runner".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "owner-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
+        device_id: None,
         run_id: Some("run-1".to_string()),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
@@ -150,15 +153,11 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
 async fn memory_store_preserves_insert_get_and_atomic_remove_semantics() {
     let store = RuntimeSessionStore::memory();
     store.insert(snapshot("memory-session")).await.unwrap();
-    assert_eq!(
-        store
-            .get("memory-session")
-            .await
-            .unwrap()
-            .unwrap()
-            .owner_user_id,
-        "owner-1"
-    );
+    let first = store.get("memory-session").await.unwrap().unwrap();
+    let second = store.get("memory-session").await.unwrap().unwrap();
+    assert_eq!(first.tenant_id, "tenant-1");
+    assert_eq!(first.owner_user_id, "owner-1");
+    assert!(Arc::ptr_eq(&first, &second));
     assert!(store.remove("memory-session").await.unwrap().is_some());
     assert!(store.get("memory-session").await.unwrap().is_none());
 }
@@ -180,6 +179,7 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
     }
 
     let restored = cipher.decrypt(document, Duration::from_secs(60)).unwrap();
+    assert_eq!(restored.trace_id, "00000000-0000-4000-8000-000000000001");
     let external = restored.external_http_bindings.get("external-1").unwrap();
     assert_eq!(
         external
@@ -220,6 +220,13 @@ fn encrypted_snapshot_rejects_envelope_identity_tampering_and_wrong_keys() {
     assert!(wrong_cipher
         .decrypt(document, Duration::from_secs(60))
         .is_err());
+
+    let mut old_schema = cipher.encrypt(&snapshot("old-schema-session")).unwrap();
+    old_schema.schema_version = 4;
+    assert!(cipher
+        .decrypt(old_schema, Duration::from_secs(60))
+        .unwrap_err()
+        .contains("unsupported Runtime Session Snapshot schema version"));
 }
 
 #[test]
@@ -243,14 +250,15 @@ fn cache_snapshot_evicts_oldest_entries_instead_of_clearing_everything() {
     let second = snapshot("cache-second");
     let third = snapshot("cache-third");
 
-    cache_snapshot_with_limits(&mut cache, [1; 32], first, 2, usize::MAX);
-    cache_snapshot_with_limits(&mut cache, [2; 32], second, 2, usize::MAX);
-    cache_snapshot_with_limits(&mut cache, [3; 32], third, 2, usize::MAX);
+    cache_snapshot_with_limits(&mut cache, [1; 32], Arc::new(first), 2, usize::MAX);
+    cache_snapshot_with_limits(&mut cache, [2; 32], Arc::new(second), 2, usize::MAX);
+    cache_snapshot_with_limits(&mut cache, [3; 32], Arc::new(third), 2, usize::MAX);
 
     assert_eq!(cache.entries.len(), 2);
     assert!(!cache.entries.contains_key("cache-first"));
     assert!(cache.entries.contains_key("cache-second"));
     assert!(cache.entries.contains_key("cache-third"));
+    assert_eq!(cache.capacity_evictions_total, 1);
 }
 
 #[test]
@@ -262,13 +270,59 @@ fn cache_snapshot_skips_entries_that_exceed_byte_budget() {
     cache_snapshot_with_limits(
         &mut cache,
         [9; 32],
-        oversized,
+        Arc::new(oversized),
         16,
         approx_size.saturating_sub(1),
     );
 
     assert!(cache.entries.is_empty());
     assert_eq!(cache.total_bytes, 0);
+    assert_eq!(cache.oversized_rejections_total, 1);
+}
+
+#[test]
+fn cache_hits_share_the_same_snapshot_allocation() {
+    let mut cache = RuntimeSessionCache::default();
+    let snapshot = Arc::new(snapshot("cache-shared-arc"));
+    let expires_at_unix = snapshot.expires_at_unix;
+
+    cache_snapshot_with_limits(&mut cache, [7; 32], Arc::clone(&snapshot), 16, usize::MAX);
+    let first = cache
+        .get_if_fresh("cache-shared-arc", [7; 32], expires_at_unix - 1)
+        .expect("first cache hit");
+    let second = cache
+        .get_if_fresh("cache-shared-arc", [7; 32], expires_at_unix - 1)
+        .expect("second cache hit");
+
+    assert!(Arc::ptr_eq(&snapshot, &first));
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(cache.hits_total, 2);
+    assert_eq!(cache.misses_total, 0);
+}
+
+#[test]
+fn cache_counts_misses_digest_invalidations_and_expired_evictions() {
+    let mut cache = RuntimeSessionCache::default();
+    let mut expired = snapshot("cache-expired");
+    expired.expires_at_unix = 10;
+    cache_snapshot_with_limits(&mut cache, [1; 32], Arc::new(expired), 16, usize::MAX);
+
+    assert!(cache.get_if_fresh("cache-missing", [1; 32], 9).is_none());
+    assert!(cache.get_if_fresh("cache-expired", [1; 32], 10).is_none());
+
+    let fresh = Arc::new(snapshot("cache-digest-mismatch"));
+    cache_snapshot_with_limits(&mut cache, [2; 32], fresh, 16, usize::MAX);
+    assert!(cache
+        .get_if_fresh(
+            "cache-digest-mismatch",
+            [3; 32],
+            chrono::Utc::now().timestamp(),
+        )
+        .is_none());
+
+    assert_eq!(cache.hits_total, 0);
+    assert_eq!(cache.misses_total, 3);
+    assert_eq!(cache.expired_evictions_total, 1);
 }
 
 #[tokio::test]
@@ -287,6 +341,11 @@ async fn memory_store_stats_report_active_sessions_and_snapshot_sizes() {
     assert!(stats.cached_p95_snapshot_bytes >= stats.cached_avg_snapshot_bytes);
     assert_eq!(stats.cache_entry_limit, None);
     assert_eq!(stats.cache_byte_limit, None);
+    assert_eq!(stats.cache_hits_total, 0);
+    assert_eq!(stats.cache_misses_total, 0);
+    assert_eq!(stats.cache_capacity_evictions_total, 0);
+    assert_eq!(stats.cache_expired_evictions_total, 0);
+    assert_eq!(stats.cache_oversized_rejections_total, 0);
 }
 
 #[tokio::test]
@@ -299,6 +358,7 @@ async fn mongodb_store_is_shared_across_service_instances() {
         database_url.as_str(),
         "shared-session-encryption-secret",
         Duration::from_secs(60),
+        RuntimeSessionCacheLimits::new(2_048, 32 * 1024 * 1024).unwrap(),
     )
     .await
     .unwrap();
@@ -306,6 +366,7 @@ async fn mongodb_store_is_shared_across_service_instances() {
         database_url.as_str(),
         "shared-session-encryption-secret",
         Duration::from_secs(60),
+        RuntimeSessionCacheLimits::new(2_048, 32 * 1024 * 1024).unwrap(),
     )
     .await
     .unwrap();

@@ -27,10 +27,19 @@ pub(super) async fn sync_local_connector_mcp_internal(
     headers: HeaderMap,
     Json(payload): Json<LocalConnectorMcpSyncPayload>,
 ) -> Result<Json<McpRecord>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
     let owner_user_id = required_text(Some(payload.owner_user_id.as_str()), "owner_user_id")?;
     let device_id = required_text(Some(payload.device_id.as_str()), "device_id")?;
     let manifest_id = required_text(Some(payload.manifest_id.as_str()), "manifest_id")?;
+    let mut audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "local_connector_mcp_manifest",
+        manifest_id.as_str(),
+        "sync",
+    );
+    audit.resource_name(Some(payload.display_name.as_str()));
     let existing = state
         .store
         .find_local_connector_mcp(
@@ -40,9 +49,11 @@ pub(super) async fn sync_local_connector_mcp_internal(
         )
         .await
         .map_err(ApiError::internal)?;
-    sync_local_connector_mcp_record(&state, existing, payload)
-        .await
-        .map(Json)
+    let result = sync_local_connector_mcp_record(&state, existing, payload).await;
+    if result.is_ok() {
+        audit.succeeded();
+    }
+    result.map(Json)
 }
 
 pub(super) async fn update_local_connector_mcp_internal(
@@ -51,11 +62,23 @@ pub(super) async fn update_local_connector_mcp_internal(
     Path(mcp_id): Path<String>,
     Json(payload): Json<LocalConnectorMcpSyncPayload>,
 ) -> Result<Json<McpRecord>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let owner_user_id = required_text(Some(payload.owner_user_id.as_str()), "owner_user_id")?;
+    let mut audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "local_connector_mcp",
+        mcp_id.as_str(),
+        "update",
+    );
+    audit.resource_name(Some(payload.display_name.as_str()));
     let record = load_local_connector_mcp_for_sync(&state, mcp_id.as_str(), &payload).await?;
-    sync_local_connector_mcp_record(&state, Some(record), payload)
-        .await
-        .map(Json)
+    let result = sync_local_connector_mcp_record(&state, Some(record), payload).await;
+    if result.is_ok() {
+        audit.succeeded();
+    }
+    result.map(Json)
 }
 
 pub(super) async fn delete_local_connector_mcp_internal(
@@ -64,10 +87,18 @@ pub(super) async fn delete_local_connector_mcp_internal(
     Path(mcp_id): Path<String>,
     Query(query): Query<LocalConnectorMcpInternalQuery>,
 ) -> Result<StatusCode, ApiError> {
-    require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
     let owner_user_id = required_text(query.owner_user_id.as_deref(), "owner_user_id")?;
     let device_id = required_text(query.device_id.as_deref(), "device_id")?;
     let manifest_id = required_text(query.manifest_id.as_deref(), "manifest_id")?;
+    let audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "local_connector_mcp",
+        mcp_id.as_str(),
+        "delete",
+    );
     let record = state
         .store
         .get_mcp(mcp_id.as_str())
@@ -85,6 +116,7 @@ pub(super) async fn delete_local_connector_mcp_internal(
         .delete_mcp(mcp_id.as_str())
         .await
         .map_err(ApiError::internal)?;
+    audit.succeeded();
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -94,10 +126,21 @@ pub(super) async fn update_local_connector_mcp_status_internal(
     Path(mcp_id): Path<String>,
     Json(payload): Json<LocalConnectorMcpStatusPayload>,
 ) -> Result<Json<ResourceCheckRecord>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
-    update_local_connector_mcp_status_record(&state, mcp_id.as_str(), payload)
-        .await
-        .map(Json)
+    let identity =
+        require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let owner_user_id = required_text(Some(payload.owner_user_id.as_str()), "owner_user_id")?;
+    let audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "local_connector_mcp",
+        mcp_id.as_str(),
+        "update_status",
+    );
+    let result = update_local_connector_mcp_status_record(&state, mcp_id.as_str(), payload).await;
+    if result.is_ok() {
+        audit.succeeded();
+    }
+    result.map(Json)
 }
 
 pub(super) async fn update_local_connector_mcp_status_batch_internal(
@@ -105,7 +148,8 @@ pub(super) async fn update_local_connector_mcp_status_batch_internal(
     headers: HeaderMap,
     Json(payload): Json<LocalConnectorMcpStatusBatchPayload>,
 ) -> Result<Json<Vec<ResourceCheckRecord>>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
     if payload.items.len() > 200 {
         return Err(ApiError::bad_request(
             "local connector MCP status batch exceeds 200 items",
@@ -114,8 +158,18 @@ pub(super) async fn update_local_connector_mcp_status_batch_internal(
     let mut checks = Vec::with_capacity(payload.items.len());
     for item in payload.items {
         let LocalConnectorMcpStatusItem { mcp_id, status } = item;
-        checks
-            .push(update_local_connector_mcp_status_record(&state, mcp_id.as_str(), status).await?);
+        let owner_user_id = required_text(Some(status.owner_user_id.as_str()), "owner_user_id")?;
+        let audit = PluginManagementInternalAuditGuard::new(
+            &identity,
+            Some(owner_user_id.as_str()),
+            "local_connector_mcp",
+            mcp_id.as_str(),
+            "update_status",
+        );
+        let check =
+            update_local_connector_mcp_status_record(&state, mcp_id.as_str(), status).await?;
+        audit.succeeded();
+        checks.push(check);
     }
     Ok(Json(checks))
 }

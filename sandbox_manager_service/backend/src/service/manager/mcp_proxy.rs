@@ -577,6 +577,7 @@ mod tests {
             allowed_project_ids: vec!["project-1".to_string()],
             allowed_tools: tools.iter().map(|value| value.to_string()).collect(),
             max_lease_ttl_seconds: 3_600,
+            internal_identity: None,
         })
     }
 
@@ -602,6 +603,7 @@ mod tests {
             allowed_project_ids: vec!["*".to_string()],
             allowed_tools: vec!["*".to_string()],
             max_lease_ttl_seconds: 3_600,
+            internal_identity: None,
         });
         let binding = SandboxMcpRuntimeBinding {
             lease_id: "lease-1".to_string(),
@@ -639,6 +641,7 @@ mod tests {
             allowed_project_ids: vec!["*".to_string()],
             allowed_tools: vec!["*".to_string()],
             max_lease_ttl_seconds: 3_600,
+            internal_identity: None,
         });
         validate_cloud_stdio_runtime_binding(&mcp_management, &lease_record(), Some(&binding))
             .unwrap();

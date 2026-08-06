@@ -157,7 +157,7 @@ pub(super) async fn import_chatos_project(
     headers: HeaderMap,
     Json(input): Json<ChatosProjectImportRequest>,
 ) -> Result<Json<TaskProjectRecord>, ApiError> {
-    super::router::require_chatos_sync_secret(&state, &headers)?;
+    super::router::require_chatos_project_sync(&state, &headers)?;
     let project = state
         .task_project_service
         .import_chatos_project(input)
@@ -171,7 +171,7 @@ pub(super) async fn sync_list_projects(
     headers: HeaderMap,
     Query(query): Query<ProjectListQuery>,
 ) -> Result<Json<Vec<TaskProjectRecord>>, ApiError> {
-    super::router::require_chatos_sync_secret(&state, &headers)?;
+    super::router::require_chatos_project_sync(&state, &headers)?;
     let projects = state
         .task_project_service
         .list_projects()
@@ -188,7 +188,7 @@ pub(super) async fn sync_get_project(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<TaskProjectRecord>, ApiError> {
-    super::router::require_chatos_sync_secret(&state, &headers)?;
+    super::router::require_chatos_project_sync(&state, &headers)?;
     let project = state
         .task_project_service
         .get_project(&id)

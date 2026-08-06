@@ -315,16 +315,15 @@ pub(in crate::services) async fn create_cloud_run_branch(
     secrets: &[&str],
 ) -> Result<String, String> {
     let remote_ref = format!("refs/remotes/origin/{base_branch}");
-    let base_commit = match run_git_output(
+    let base_commit = run_git_output(
         vec!["rev-parse".to_string(), "--verify".to_string(), remote_ref],
         Some(worktree),
         secrets,
     )
     .await
-    {
-        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
-        _ => initialize_empty_cloud_base_branch(worktree, base_branch, secrets).await?,
-    };
+    .map_err(|error| format!("Harness base branch is unavailable: {base_branch}: {error}"))?
+    .trim()
+    .to_string();
     if base_commit.is_empty() {
         return Err(format!("Harness base branch is empty: {base_branch}"));
     }
@@ -340,58 +339,6 @@ pub(in crate::services) async fn create_cloud_run_branch(
     )
     .await?;
     Ok(base_commit)
-}
-
-async fn initialize_empty_cloud_base_branch(
-    worktree: &Path,
-    base_branch: &str,
-    secrets: &[&str],
-) -> Result<String, String> {
-    let bootstrap_branch = format!("chatos-bootstrap-{}", Uuid::new_v4().simple());
-    let bootstrap_commit = create_orphan_commit(
-        worktree,
-        bootstrap_branch.as_str(),
-        "Initialize cloud project repository",
-        secrets,
-    )
-    .await?;
-    let push_result = run_git(
-        vec![
-            "push".to_string(),
-            "origin".to_string(),
-            format!("--force-with-lease=refs/heads/{base_branch}:"),
-            format!("{bootstrap_commit}:refs/heads/{base_branch}"),
-        ],
-        Some(worktree),
-        secrets,
-    )
-    .await;
-    let push_error = match push_result {
-        Ok(()) => return Ok(bootstrap_commit),
-        Err(error) => error,
-    };
-    let remote_ref = format!("refs/remotes/origin/{base_branch}");
-    if run_git(
-        vec![
-            "fetch".to_string(),
-            "origin".to_string(),
-            format!("refs/heads/{base_branch}:{remote_ref}"),
-        ],
-        Some(worktree),
-        secrets,
-    )
-    .await
-    .is_err()
-    {
-        return Err(push_error);
-    }
-    run_git_output(
-        vec!["rev-parse".to_string(), "--verify".to_string(), remote_ref],
-        Some(worktree),
-        secrets,
-    )
-    .await
-    .map(|value| value.trim().to_string())
 }
 
 pub(in crate::services) async fn create_snapshot_commit_and_push(

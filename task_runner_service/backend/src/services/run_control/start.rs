@@ -79,12 +79,8 @@ impl RunService {
         .await
     }
 
-    pub(crate) fn start_lock_for_task(&self, task_id: &str) -> Arc<AsyncMutex<()>> {
-        let mut locks = self.start_locks.lock();
-        locks
-            .entry(task_id.to_string())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-            .clone()
+    pub(crate) fn start_lock_for_task(&self, task_id: &str) -> KeyedAsyncLockHandle {
+        self.start_locks.handle(task_id)
     }
 
     async fn start_run_with_trigger(
@@ -95,8 +91,7 @@ impl RunService {
         retry_of_run_id: Option<&str>,
         current_user: Option<&CurrentUser>,
     ) -> Result<TaskRunRecord, String> {
-        let start_lock = self.start_lock_for_task(task_id);
-        let _guard = start_lock.lock().await;
+        let _guard = self.start_lock_for_task(task_id).lock_owned().await;
         let task = self
             .store
             .get_task(task_id)
@@ -171,10 +166,8 @@ impl RunService {
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
-        let configured_execution_environment_mode = self
-            .effective_execution_environment_mode()
-            .await
-            .unwrap_or_else(|_| self.config.default_execution_environment_mode.clone());
+        let configured_execution_environment_mode =
+            self.effective_execution_environment_mode().await?;
         let execution_environment_mode = self
             .execution_environment_mode_for_task(
                 &runtime_task,
@@ -183,8 +176,7 @@ impl RunService {
             .await;
         let sandbox_enabled = self
             .should_route_task_to_sandbox(&runtime_task, capability_policy.is_some())
-            .await
-            .unwrap_or(false);
+            .await?;
         if sandbox_enabled {
             self.validate_sandbox_route_for_task(&runtime_task).await?;
         }

@@ -129,7 +129,6 @@ pub(super) async fn execute_requirement_inner(
                     contact_runtime.task_runner_base_url.as_str(),
                     contact_runtime.task_runner_agent_token.as_str(),
                     access_token.as_str(),
-                    cfg.project_service_base_url.as_str(),
                     project_sync_secret.as_str(),
                     identity.conversation_id.as_str(),
                     identity.execution_group_id.as_str(),
@@ -274,7 +273,6 @@ pub(super) async fn execute_requirement_inner(
         executing_requirement_ids(root_requirement.id.as_str(), selected_work_items.as_slice());
     for executing_requirement_id in &executing_requirement_ids {
         sync_requirement_execution_state(
-            cfg.project_service_base_url.as_str(),
             project_sync_secret.as_str(),
             executing_requirement_id.as_str(),
             Some("reviewing"),

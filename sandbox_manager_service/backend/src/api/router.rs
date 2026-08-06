@@ -12,132 +12,129 @@ use crate::state::AppState;
 
 use super::handlers;
 
-pub fn build_router(state: AppState) -> Router {
-    let protected_api = Router::new()
-        .route("/api/system/config", get(handlers::system_config))
-        .route("/api/sandbox-pool/status", get(handlers::pool_status))
+fn protected_routes() -> Router<AppState> {
+    Router::new()
+        .route("/system/config", get(handlers::system_config))
+        .route("/sandbox-pool/status", get(handlers::pool_status))
+        .route("/sandbox-pool/config", put(handlers::update_pool_config))
+        .route("/sandbox-images", get(handlers::list_sandbox_images))
         .route(
-            "/api/sandbox-pool/config",
-            put(handlers::update_pool_config),
-        )
-        .route("/api/sandbox-images", get(handlers::list_sandbox_images))
-        .route(
-            "/api/sandbox-images/jobs",
+            "/sandbox-images/jobs",
             get(handlers::list_sandbox_image_jobs),
         )
         .route(
-            "/api/sandbox-images/initialize",
+            "/sandbox-images/initialize",
             post(handlers::initialize_sandbox_image),
         )
         .route(
-            "/api/sandbox-images/prepare-dependencies",
+            "/sandbox-images/prepare-dependencies",
             post(handlers::prepare_sandbox_dependency_images),
         )
         .route(
-            "/api/sandbox-images/mcp",
+            "/sandbox-images/mcp",
             post(handlers::sandbox_image_mcp_entrypoint),
         )
         .route(
-            "/api/access-clients",
+            "/access-clients",
             get(handlers::list_access_clients).post(handlers::create_access_client),
         )
         .route(
-            "/api/access-clients/{id}",
+            "/access-clients/{id}",
             put(handlers::update_access_client).delete(handlers::delete_access_client),
         )
         .route(
-            "/api/access-clients/{id}/rotate-key",
+            "/access-clients/{id}/rotate-key",
             post(handlers::rotate_access_client_key),
         )
+        .route("/sandboxes/leases", post(handlers::create_sandbox_lease))
         .route(
-            "/api/sandboxes/leases",
-            post(handlers::create_sandbox_lease),
-        )
-        .route(
-            "/api/sandbox-environments/leases",
+            "/sandbox-environments/leases",
             post(handlers::create_sandbox_environment_lease),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}",
+            "/sandbox-environments/{environment_id}",
             get(handlers::get_sandbox_environment),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/start",
+            "/sandbox-environments/{environment_id}/start",
             post(handlers::start_sandbox_environment),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/renew",
+            "/sandbox-environments/{environment_id}/renew",
             post(handlers::renew_sandbox_environment_lease),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/stop",
+            "/sandbox-environments/{environment_id}/stop",
             post(handlers::stop_sandbox_environment),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/services/{service_id}/exec",
+            "/sandbox-environments/{environment_id}/services/{service_id}/exec",
             post(handlers::exec_sandbox_environment_service),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/mcp",
+            "/sandbox-environments/{environment_id}/mcp",
             post(handlers::sandbox_environment_mcp_proxy),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/cloud-stdio-mcp/call",
+            "/sandbox-environments/{environment_id}/cloud-stdio-mcp/call",
             post(handlers::sandbox_environment_cloud_stdio_mcp_call),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/cloud-stdio-mcp/cancel",
+            "/sandbox-environments/{environment_id}/cloud-stdio-mcp/cancel",
             post(handlers::sandbox_environment_cloud_stdio_mcp_cancel),
         )
         .route(
-            "/api/sandbox-environments/{environment_id}/cloud-stdio-mcp/close",
+            "/sandbox-environments/{environment_id}/cloud-stdio-mcp/close",
             post(handlers::sandbox_environment_cloud_stdio_mcp_close),
         )
-        .route("/api/sandboxes", get(handlers::list_sandboxes))
+        .route("/sandboxes", get(handlers::list_sandboxes))
         .route(
-            "/api/sandboxes/{sandbox_id}",
+            "/sandboxes/{sandbox_id}",
             get(handlers::get_sandbox).delete(handlers::destroy_sandbox),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/heartbeat",
+            "/sandboxes/{sandbox_id}/heartbeat",
             post(handlers::heartbeat_sandbox),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/health",
+            "/sandboxes/{sandbox_id}/health",
             get(handlers::health_sandbox),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/mcp",
+            "/sandboxes/{sandbox_id}/mcp",
             post(handlers::sandbox_mcp_proxy),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/call",
+            "/sandboxes/{sandbox_id}/cloud-stdio-mcp/call",
             post(handlers::sandbox_cloud_stdio_mcp_call),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/cancel",
+            "/sandboxes/{sandbox_id}/cloud-stdio-mcp/cancel",
             post(handlers::sandbox_cloud_stdio_mcp_cancel),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/cloud-stdio-mcp/close",
+            "/sandboxes/{sandbox_id}/cloud-stdio-mcp/close",
             post(handlers::sandbox_cloud_stdio_mcp_close),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/release",
+            "/sandboxes/{sandbox_id}/release",
             post(handlers::release_sandbox),
         )
         .route(
-            "/api/sandboxes/{sandbox_id}/events",
+            "/sandboxes/{sandbox_id}/events",
             get(handlers::list_sandbox_events),
         )
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_sandbox_auth,
-        ));
+}
+
+pub fn build_public_router(state: AppState) -> Router {
+    let protected_api = protected_routes().layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::require_public_sandbox_auth,
+    ));
 
     Router::new()
         .route("/health", get(handlers::health))
-        .merge(protected_api)
+        .nest("/api", protected_api)
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(
@@ -146,6 +143,21 @@ pub fn build_router(state: AppState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+        .layer(middleware::from_fn(
+            chatos_service_runtime::request_id_middleware,
+        ))
+}
+
+pub fn build_internal_router(state: AppState) -> Router {
+    let protected_api = protected_routes().layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::require_internal_sandbox_auth,
+    ));
+
+    Router::new()
+        .nest("/api/internal", protected_api)
+        .with_state(state)
+        .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
         ))

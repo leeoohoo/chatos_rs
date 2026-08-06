@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=207
-total_route_count=207
+main_backend_route_count=211
+total_route_count=211
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -128,8 +128,12 @@ chatos/backend/src/api/message_task_runner/plugin_ui.rs: .route(
 chatos/backend/src/api/message_task_runner/plugin_ui.rs: Router::new().route(
 chatos/backend/src/api/messages.rs: .route(
 chatos/backend/src/api/messages.rs: .route("/api/messages", get(list_messages).post(create_message))
+chatos/backend/src/api/metrics.rs: .route(
+chatos/backend/src/api/metrics.rs: .route("/internal/callback", get(|| async { StatusCode::ACCEPTED }))
+chatos/backend/src/api/metrics.rs: .route("/metrics", get(prometheus_metrics))
 chatos/backend/src/api/mod.rs: .route("/", axum::routing::get(root))
 chatos/backend/src/api/mod.rs: .route("/health", axum::routing::get(health))
+chatos/backend/src/api/mod.rs: .route("/metrics", axum::routing::get(metrics::prometheus_metrics))
 chatos/backend/src/api/mod.rs: .route("/ready", axum::routing::get(ready))
 chatos/backend/src/api/notepad.rs: .route(
 chatos/backend/src/api/notepad.rs: .route(

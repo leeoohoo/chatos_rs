@@ -10,6 +10,7 @@ use serde_json::{json, Map, Value};
 use crate::models::{TaskRecord, TaskRunEventRecord, TaskRunRecord};
 use crate::services::RunService;
 use crate::store::AppStore;
+use crate::trace_context::InternalTraceContextExt;
 
 const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 const LOCAL_CONNECTOR_TOKEN_AUDIENCE: &str = "local-connector-service";
@@ -70,11 +71,7 @@ impl PluginRelayClient {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        let http = reqwest::Client::builder()
-            .timeout(service.config.plugin_relay_request_timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| format!("build Plugin relay HTTP client failed: {error}"))?;
+        let http = service.config.local_connector_http_client.clone();
         Ok(Self {
             http,
             base_url,
@@ -156,6 +153,7 @@ impl PluginRelayClient {
             request = request.timeout(self.hook_dispatch_timeout);
         }
         let response = request
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|error| format!("Plugin {action} relay request failed: {error}"))?;

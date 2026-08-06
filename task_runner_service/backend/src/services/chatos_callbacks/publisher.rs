@@ -8,15 +8,13 @@ use futures_util::StreamExt;
 use lapin::{
     message::Delivery,
     options::{
-        BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, ExchangeDeclareOptions,
-        QueueBindOptions, QueueDeclareOptions,
+        BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, BasicQosOptions,
+        ConfirmSelectOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions,
     },
+    publisher_confirm::Confirmation,
     types::FieldTable,
     BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind,
 };
-use std::time::Duration;
-
-const CALLBACK_QUEUE_CONSUMER_RETRY_DELAY: Duration = Duration::from_secs(3);
 const CALLBACK_QUEUE_CONSUMER_TAG: &str = "task-runner-chatos-callbacks";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,19 +65,25 @@ pub(super) fn spawn_chatos_callback_queue_consumer(
             "task callback queue consumer started"
         );
         loop {
-            if let Err(err) = consume_callback_queue_once(
+            let consume_result = consume_callback_queue_once(
                 config.clone(),
                 task_queue_topology.clone(),
                 run_service.clone(),
             )
-            .await
-            {
+            .await;
+            run_service
+                .runtime_stats()
+                .set_callback_consumer_connected(false);
+            if let Err(err) = consume_result {
                 warn!(
                     error = err.as_str(),
                     queue = task_queue_topology.callback_delivery_queue.as_str(),
                     "task callback queue consumer failed; reconnecting"
                 );
-                tokio::time::sleep(CALLBACK_QUEUE_CONSUMER_RETRY_DELAY).await;
+                run_service
+                    .runtime_stats()
+                    .record_rabbitmq_consumer_reconnect();
+                tokio::time::sleep(task_queue_topology.rabbitmq_reconnect_delay).await;
             }
         }
     })
@@ -95,11 +99,14 @@ async fn publish_callback_envelope(
             "serialize callback queue envelope failed: {err}"
         ))
     })?;
-    channel
+    let confirmation = channel
         .basic_publish(
             task_queue_topology.rabbitmq_exchange.as_str(),
             task_queue_topology.callback_delivery_queue.as_str(),
-            BasicPublishOptions::default(),
+            BasicPublishOptions {
+                mandatory: true,
+                ..BasicPublishOptions::default()
+            },
             payload.as_slice(),
             BasicProperties::default()
                 .with_content_type("application/json".into())
@@ -109,7 +116,11 @@ async fn publish_callback_envelope(
         .map_err(|err| ChatosCallbackDeliveryError::retryable(err.to_string()))?
         .await
         .map_err(|err| ChatosCallbackDeliveryError::retryable(err.to_string()))?;
-    Ok(())
+    ensure_callback_publish_confirmed(
+        task_queue_topology.callback_delivery_queue.as_str(),
+        confirmation,
+    )
+    .map_err(ChatosCallbackDeliveryError::retryable)
 }
 
 async fn consume_callback_queue_once(
@@ -118,6 +129,10 @@ async fn consume_callback_queue_once(
     run_service: RunService,
 ) -> Result<(), String> {
     let channel = open_callback_queue_channel(&task_queue_topology)
+        .await
+        .map_err(|err| err.to_string())?;
+    channel
+        .basic_qos(1, BasicQosOptions::default())
         .await
         .map_err(|err| err.to_string())?;
     let mut consumer = channel
@@ -129,6 +144,9 @@ async fn consume_callback_queue_once(
         )
         .await
         .map_err(|err| err.to_string())?;
+    run_service
+        .runtime_stats()
+        .set_callback_consumer_connected(true);
     while let Some(delivery) = consumer.next().await {
         match delivery {
             Ok(delivery) => {
@@ -232,13 +250,35 @@ async fn open_callback_queue_channel(
         .create_channel()
         .await
         .map_err(|err| ChatosCallbackDeliveryError::retryable(err.to_string()))?;
+    channel
+        .confirm_select(ConfirmSelectOptions::default())
+        .await
+        .map_err(|err| ChatosCallbackDeliveryError::retryable(err.to_string()))?;
     ensure_callback_queue_topology(&channel, task_queue_topology).await?;
     Ok(channel)
 }
 
+fn ensure_callback_publish_confirmed(
+    routing_key: &str,
+    confirmation: Confirmation,
+) -> Result<(), String> {
+    match confirmation {
+        Confirmation::Ack(None) => Ok(()),
+        Confirmation::Ack(Some(_)) => Err(format!(
+            "RabbitMQ returned unroutable Task Runner callback event for {routing_key}"
+        )),
+        Confirmation::Nack(_) => Err(format!(
+            "RabbitMQ rejected Task Runner callback event for {routing_key}"
+        )),
+        Confirmation::NotRequested => Err(
+            "RabbitMQ publisher confirm was not enabled for Task Runner callback event".to_string(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::callback_event_tracks_delivery_state;
+    use super::*;
 
     #[test]
     fn only_terminal_run_callbacks_track_delivery_state() {
@@ -251,6 +291,25 @@ mod tests {
             assert!(callback_event_tracks_delivery_state(event));
         }
         assert!(!callback_event_tracks_delivery_state("task.run.started"));
+    }
+
+    #[test]
+    fn callback_outbox_requires_confirmed_routing() {
+        assert!(ensure_callback_publish_confirmed(
+            "task_runner.callback.delivery",
+            Confirmation::Ack(None),
+        )
+        .is_ok());
+        assert!(ensure_callback_publish_confirmed(
+            "task_runner.callback.delivery",
+            Confirmation::Nack(None),
+        )
+        .is_err());
+        assert!(ensure_callback_publish_confirmed(
+            "task_runner.callback.delivery",
+            Confirmation::NotRequested,
+        )
+        .is_err());
     }
 }
 

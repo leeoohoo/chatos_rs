@@ -197,6 +197,7 @@ mod tests {
                 reason: None,
             }),
             status: AskUserPromptStatus::Submitted,
+            resolution_event_pending: false,
             created_at: "2026-07-01T00:00:00Z".to_string(),
             updated_at: "2026-07-01T00:00:00Z".to_string(),
             expires_at: None,

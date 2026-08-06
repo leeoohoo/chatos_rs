@@ -114,6 +114,18 @@ impl RemoteControlVerifier {
         if nonce.len() < 16 || nonce.len() > 128 {
             return Err("relay platform signature nonce is invalid".to_string());
         }
+
+        let signature = required_text(
+            request.platform_signature.as_deref(),
+            "relay platform_signature",
+        )?;
+        let payload = relay_request_signature_payload(request)?;
+        verify_device_message_signature(
+            public_key.as_str(),
+            payload.as_slice(),
+            signature.as_str(),
+        )
+        .map_err(|err| format!("relay platform signature verification failed: {err}"))?;
         if !self
             .consume_nonce(
                 key_id.as_str(),
@@ -125,14 +137,7 @@ impl RemoteControlVerifier {
         {
             return Err("relay platform signature nonce was already used".to_string());
         }
-
-        let signature = required_text(
-            request.platform_signature.as_deref(),
-            "relay platform_signature",
-        )?;
-        let payload = relay_request_signature_payload(request)?;
-        verify_device_message_signature(public_key.as_str(), payload.as_slice(), signature.as_str())
-            .map_err(|err| format!("relay platform signature verification failed: {err}"))
+        Ok(())
     }
 
     fn trusted_relay_public_keys<'a>(
@@ -239,12 +244,19 @@ mod tests {
     async fn rejects_tampered_request_body() {
         let (verifier, mut request, keypair) = verifier_and_request();
         sign_request(&mut request, &keypair);
+        let original_body = request.body.clone();
         request.body = serde_json::json!({"tool":"browser","args":{"a":1,"b":3}});
         let error = verifier
             .verify(&request)
             .await
             .expect_err("tampered request");
         assert!(error.contains("verification failed"));
+
+        request.body = original_body;
+        verifier
+            .verify(&request)
+            .await
+            .expect("invalid signature must not consume the nonce");
     }
 
     #[tokio::test]

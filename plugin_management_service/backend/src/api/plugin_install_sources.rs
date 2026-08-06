@@ -54,8 +54,16 @@ pub(super) async fn get_plugin_install_source_internal(
     Path((plugin_id, release_id)): Path<(String, String)>,
     Query(query): Query<PluginInstallSourceQuery>,
 ) -> Result<Json<PluginInstallSource>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
     let owner_user_id = required_text(Some(query.owner_user_id.as_str()), "owner_user_id")?;
+    let internal_audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "plugin_install_source",
+        plugin_id.as_str(),
+        "resolve",
+    );
     let plugin = state
         .store
         .get_plugin_catalog_entry(plugin_id.as_str())
@@ -87,7 +95,9 @@ pub(super) async fn get_plugin_install_source_internal(
             "persist Plugin install-source audit failed"
         );
     }
-    result.map(Json)
+    let response = result.map(Json)?;
+    internal_audit.succeeded();
+    Ok(response)
 }
 
 async fn load_install_source(

@@ -25,6 +25,16 @@ pub struct ApplyPatchResult {
     pub deleted: Vec<String>,
 }
 
+impl ApplyPatchResult {
+    pub fn changed(&self) -> bool {
+        self.changed_path_count() > 0
+    }
+
+    pub fn changed_path_count(&self) -> usize {
+        self.updated.len() + self.added.len() + self.deleted.len()
+    }
+}
+
 enum PatchOp {
     Update {
         path: String,
@@ -81,17 +91,25 @@ pub fn apply_patch_limited(
                 }
                 let content = lines.join("\n");
                 ensure_patch_target_within_limit(&target, content.len() as u64, max_target_bytes)?;
+                if target.exists()
+                    && read_patch_target_to_string(&target, max_target_bytes)? == content
+                {
+                    continue;
+                }
                 fs::write(&target, content).map_err(|err| err.to_string())?;
                 result.added.push(path);
             }
             PatchOp::Delete { path } => {
                 let target = ensure_path_inside_root(root, Path::new(&path))?;
+                let existed = target.exists();
                 if target.is_dir() {
                     fs::remove_dir_all(&target).map_err(|err| err.to_string())?;
                 } else if target.exists() {
                     fs::remove_file(&target).map_err(|err| err.to_string())?;
                 }
-                result.deleted.push(path);
+                if existed {
+                    result.deleted.push(path);
+                }
             }
             PatchOp::Replace {
                 path,
@@ -105,6 +123,9 @@ pub fn apply_patch_limited(
                 let original = read_patch_target_to_string(&target, max_target_bytes)?;
                 let output = replace_text_once(&original, &old_text, &new_text)?;
                 ensure_patch_target_within_limit(&target, output.len() as u64, max_target_bytes)?;
+                if output == original {
+                    continue;
+                }
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
@@ -126,6 +147,9 @@ pub fn apply_patch_limited(
                 let next_lines = apply_hunks(&orig_lines, &hunks)?;
                 let output = join_lines(&next_lines, &eol, ends_with_eol);
                 ensure_patch_target_within_limit(&target, output.len() as u64, max_target_bytes)?;
+                if output == original && move_to.is_none() {
+                    continue;
+                }
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }

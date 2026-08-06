@@ -24,7 +24,7 @@ pub(crate) async fn create_subject_memory_job_run(
         CreateEngineJobRunRequest {
             job_type: SUBJECT_MEMORY_JOB_TYPE.to_string(),
             trigger_type: if from_scope_runner {
-                "scheduler".to_string()
+                "queue".to_string()
             } else {
                 "subject_direct".to_string()
             },

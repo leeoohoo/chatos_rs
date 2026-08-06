@@ -95,17 +95,38 @@ cloud_agent_roots = [
 ]
 cloud_agent_files = rust_files(cloud_agent_roots)
 
-expected_runtime_session_resolvers = {
-    "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
-    "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
-    "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
-}
 require_exact_locations(
     "managed Runtime Session resolution",
+    rust_files(["crates/chatos_mcp_gateway/src"]),
+    ".resolve_runtime_session(",
+    {"crates/chatos_mcp_gateway/src/lib.rs"},
+)
+
+require_exact_locations(
+    "shared MCP Management Gateway construction",
+    cloud_agent_files,
+    "McpManagementGatewayBuilder::new(",
+    {
+        "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
+        "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
+        "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
+    },
+)
+require_exact_locations(
+    "cloud Agent direct Runtime Session resolution",
     cloud_agent_files,
     ".resolve_runtime_session(",
-    expected_runtime_session_resolvers,
+    set(),
 )
+for gateway_path in [
+    "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
+    "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
+]:
+    forbid(
+        gateway_path,
+        ["McpManagementClient::new", ".resolve_runtime_session(", "format!(\"Bearer"],
+        "cloud Agent must use the shared MCP Management Gateway builder",
+    )
 
 expected_executor_gateway_assembly = {
     "task_runner_service/backend/src/services/run_model_phase/setup/preparation.rs",
@@ -119,13 +140,10 @@ require_exact_locations(
 )
 
 chatos_runtime_files = rust_files(["chatos/backend/src/modules/conversation_runtime"])
-require_exact_locations(
-    "ChatOS runtime HTTP MCP construction",
-    chatos_runtime_files,
-    "McpHttpServer {",
-    {
-        "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs"
-    },
+forbid(
+    "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
+    ["McpHttpServer {", "McpManagementClient::new", ".resolve_runtime_session("],
+    "ChatOS must use the shared MCP Management Gateway builder",
 )
 forbid(
     "chatos/backend/src/modules/conversation_runtime/runtime_context.rs",
@@ -258,6 +276,130 @@ for identifier in retired_identifiers:
         ERRORS.append(
             f"retired Agent Tool Plane identifier {identifier!r} returned in: "
             + ", ".join(locations)
+        )
+
+require(
+    "local_connector_service/backend/src/main.rs",
+    "build_public_router",
+    "a dedicated public Local Connector router",
+)
+require(
+    "local_connector_service/backend/src/main.rs",
+    "build_internal_router",
+    "a dedicated internal Local Connector router",
+)
+require(
+    "local_connector_service/backend/src/main.rs",
+    "axum_server::bind_rustls",
+    "mandatory TLS on the Local Connector internal listener",
+)
+for config_path, env_key in [
+    ("chatos/backend/src/config.rs", "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
+    (
+        "task_runner_service/backend/src/config/env_support.rs",
+        "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    ),
+    (
+        "project_management_service/backend/src/config.rs",
+        "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    ),
+    (
+        "mcp_management_service/backend/src/config.rs",
+        "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    ),
+]:
+    require(config_path, f'require_https_base_url(\n            "{env_key}"', "strict HTTPS Local Connector validation")
+    require(
+        config_path,
+        'build_mtls_http_client(',
+        "a certificate-bound Local Connector HTTP client",
+    )
+
+forbid(
+    "mcp_management_service/backend/src/config.rs",
+    ['resolve_service_base_url(\n            "local-connector-service"'],
+    "Local Connector internal mTLS routing must not be replaced by public service discovery",
+)
+require(
+    "chatos/backend/src/api/terminals/ws_handlers.rs",
+    "connect_async_tls_with_config",
+    "mTLS for Local Connector terminal WebSocket forwarding",
+)
+compose = read("docker/compose.yml")
+for env_key in [
+    "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+]:
+    if f"{env_key}: http://" in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} must never route an internal caller over plain HTTP"
+        )
+    if f"{env_key}: https://local-connector-service-backend:39232" not in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} is not pinned to the Local Connector mTLS listener"
+        )
+
+require(
+    "chatos/backend/src/lib.rs",
+    "api::public_router()",
+    "a dedicated public ChatOS router",
+)
+require(
+    "chatos/backend/src/lib.rs",
+    "api::internal_router()",
+    "a dedicated internal ChatOS router",
+)
+require(
+    "chatos/backend/src/lib.rs",
+    "axum_server::bind_rustls",
+    "mandatory TLS on the ChatOS internal listener",
+)
+require(
+    "task_runner_service/backend/src/config/env_support.rs",
+    'require_https_base_url(\n            "TASK_RUNNER_CHATOS_CALLBACK_URL"',
+    "strict HTTPS ChatOS callback validation",
+)
+require(
+    "task_runner_service/backend/src/config/env_support.rs",
+    'required_bootstrap_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")',
+    "a certificate-bound Task Runner ChatOS client",
+)
+require(
+    "mcp_management_service/backend/src/config.rs",
+    'require_https_base_url(\n            "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL"',
+    "strict HTTPS ChatOS provider validation",
+)
+require(
+    "mcp_management_service/backend/src/config.rs",
+    'required_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")',
+    "a certificate-bound MCP Management ChatOS client",
+)
+forbid(
+    "task_runner_service/backend/src/main.rs",
+    ['resolve_service_url(\n                "chatos-backend"'],
+    "ChatOS internal mTLS callback routing must not be replaced by public service discovery",
+)
+forbid(
+    "mcp_management_service/backend/src/config.rs",
+    ['resolve_service_base_url(\n            "chatos-backend"'],
+    "ChatOS internal mTLS provider routing must not be replaced by public service discovery",
+)
+for env_key, expected in [
+    (
+        "TASK_RUNNER_CHATOS_CALLBACK_URL",
+        "https://chatos-backend:3999/api/agent/chat/task-runner/callback",
+    ),
+    ("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL", "https://chatos-backend:3999"),
+]:
+    if f"{env_key}: http://" in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} must never route an internal caller over plain HTTP"
+        )
+    if f"{env_key}: {expected}" not in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} is not pinned to the ChatOS mTLS listener"
         )
 
 if ERRORS:

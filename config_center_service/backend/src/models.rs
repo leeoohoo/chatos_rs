@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use chatos_config_sdk::{PlatformPressureLevel, ServicePressureSignal};
+
 pub const ROLE_SUPER_ADMIN: &str = "super_admin";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,7 +138,20 @@ pub struct ServiceInstanceRecord {
     #[serde(default)]
     pub emergency_override_keys: Vec<String>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub pressure: Option<ServicePressureSignal>,
     pub last_seen_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformPressureStateRecord {
+    pub id: String,
+    pub environment: String,
+    pub level: PlatformPressureLevel,
+    #[serde(default)]
+    pub contributors: Vec<String>,
+    pub reason: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +216,8 @@ pub struct InstanceHeartbeatRequest {
     #[serde(default)]
     pub emergency_override_keys: Vec<String>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub pressure: Option<ServicePressureSignal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,7 +9,7 @@ use crate::models::{now_rfc3339, TaskRecord, TaskRunRecord, TaskRunStatus};
 use crate::store::AppStore;
 
 use super::prerequisite_context::extract_report_content;
-use super::{RunService, TaskScheduleModeExt, TaskService, TaskStatusExt};
+use super::{KeyedAsyncLockHandle, RunService, TaskScheduleModeExt, TaskService, TaskStatusExt};
 
 mod delivery;
 mod dispatch;
@@ -23,6 +23,8 @@ pub use reconciliation::{spawn_chatos_callback_queue_consumer, spawn_chatos_call
 struct ChatosTaskCallbackPayload {
     event: String,
     task_id: String,
+    owner_user_id: Option<String>,
+    project_id: String,
     run_id: Option<String>,
     status: String,
     task_title: String,

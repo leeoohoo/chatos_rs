@@ -8,12 +8,15 @@ use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{self, doc, Bson, Document},
-    options::{FindOneAndUpdateOptions, FindOptions, IndexOptions, ReplaceOptions, ReturnDocument},
+    options::{
+        FindOneAndUpdateOptions, FindOneOptions, FindOptions, IndexOptions, ReplaceOptions,
+        ReturnDocument,
+    },
     Client, Collection, IndexModel,
 };
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::warn;
 
@@ -22,7 +25,7 @@ use crate::models::{
     now_rfc3339, AskUserPromptRecord, AskUserPromptStatus, AskUserPromptTaskCountRecord,
     ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus, ModelConfigRecord,
     ModelConfigUsageRecord, PaginatedResponse, PromptListFilters, RemoteServerRecord,
-    RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
+    RunExecutionStats, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
     TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord,
     TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus,
     TaskSummaryRecord, UserRecord,
@@ -66,12 +69,69 @@ fn task_run_status_is_terminal(status: TaskRunStatus) -> bool {
 }
 
 fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecord {
+    run.dispatch_event_pending = run.status == TaskRunStatus::Queued && !run.dispatch_paused;
+    if run.status != TaskRunStatus::Running || !run.cancel_requested || run.worker_id.is_none() {
+        run.cancel_event_pending = false;
+    }
     if task_run_status_is_terminal(run.status) {
         run.claim_token = None;
         run.claim_until = None;
         ensure_terminal_callback_pending(&mut run);
+        ensure_run_post_process_pending(&mut run);
     }
     run
+}
+
+fn ensure_run_post_process_pending(run: &mut TaskRunRecord) {
+    if run.status == TaskRunStatus::Succeeded
+        && !run.post_process_completed
+        && !run.post_process_dead_lettered
+        && !run.post_process_event_enqueued
+    {
+        run.post_process_event_pending = true;
+    }
+}
+
+fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
+    run.post_process_completed |= current.post_process_completed;
+    run.post_process_dead_lettered |= current.post_process_dead_lettered;
+    run.memory_summary_processed |= current.memory_summary_processed;
+    run.chatos_followup_processed |= current.chatos_followup_processed;
+    if run.summary_job_run_id.is_none() {
+        run.summary_job_run_id = current.summary_job_run_id.clone();
+    }
+    run.post_process_event_enqueued |= current.post_process_event_enqueued;
+    run.post_process_attempt_count = run
+        .post_process_attempt_count
+        .max(current.post_process_attempt_count);
+    if run.post_process_last_error.is_none() {
+        run.post_process_last_error = current.post_process_last_error.clone();
+    }
+    if run.post_process_completed || run.post_process_dead_lettered {
+        run.post_process_event_pending = false;
+        run.post_process_event_enqueued = false;
+    } else if run.post_process_event_enqueued {
+        run.post_process_event_pending = false;
+    } else {
+        run.post_process_event_pending |= current.post_process_event_pending;
+    }
+
+    run.terminal_cleanup_completed |= current.terminal_cleanup_completed;
+    run.terminal_cleanup_event_enqueued |= current.terminal_cleanup_event_enqueued;
+    run.terminal_cleanup_attempt_count = run
+        .terminal_cleanup_attempt_count
+        .max(current.terminal_cleanup_attempt_count);
+    if run.terminal_cleanup_last_error.is_none() {
+        run.terminal_cleanup_last_error = current.terminal_cleanup_last_error.clone();
+    }
+    if run.terminal_cleanup_completed {
+        run.terminal_cleanup_event_pending = false;
+        run.terminal_cleanup_event_enqueued = false;
+    } else if run.terminal_cleanup_event_enqueued {
+        run.terminal_cleanup_event_pending = false;
+    } else {
+        run.terminal_cleanup_event_pending |= current.terminal_cleanup_event_pending;
+    }
 }
 
 fn terminal_callback_event_for_status(status: TaskRunStatus) -> Option<&'static str> {
@@ -119,10 +179,32 @@ struct StoreData {
     remote_servers: BTreeMap<String, RemoteServerRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
+    run_terminal_subscriptions: BTreeMap<String, RunTerminalSubscriptionRecord>,
     ask_user_prompts: BTreeMap<String, AskUserPromptRecord>,
     users: BTreeMap<String, UserRecord>,
     task_prerequisites: BTreeMap<String, BTreeSet<String>>,
     cancel_requested_runs: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct RunTerminalSubscriptionRecord {
+    pub id: String,
+    pub run_id: String,
+    pub parent_run_id: String,
+    pub worker_id: String,
+    pub created_at: String,
+}
+
+impl RunTerminalSubscriptionRecord {
+    pub(crate) fn new(run_id: &str, parent_run_id: &str, worker_id: &str) -> Self {
+        Self {
+            id: format!("{run_id}:{parent_run_id}:{worker_id}"),
+            run_id: run_id.to_string(),
+            parent_run_id: parent_run_id.to_string(),
+            worker_id: worker_id.to_string(),
+            created_at: now_rfc3339(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -140,6 +222,7 @@ pub(crate) struct MongoStore {
     remote_servers: Collection<RemoteServerRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
+    run_terminal_subscriptions: Collection<RunTerminalSubscriptionRecord>,
     ask_user_prompts: Collection<AskUserPromptRecord>,
     users: Collection<UserRecord>,
     task_prerequisites: Collection<TaskPrerequisiteRecord>,

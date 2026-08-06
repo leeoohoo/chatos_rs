@@ -7,7 +7,8 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::internal_auth::{
-    require_project_internal_request, CHATOS_CALLER, PROJECT_READ_SCOPE, PROJECT_SYNC_SCOPE,
+    record_project_internal_resource_access, require_project_internal_request,
+    ProjectInternalResourceAudit, CHATOS_CALLER, PROJECT_READ_SCOPE, PROJECT_SYNC_SCOPE,
     TASK_RUNNER_CALLER,
 };
 use super::ApiError;
@@ -52,22 +53,41 @@ pub(in crate::api) async fn sync_import_project(
     headers: HeaderMap,
     Json(input): Json<ImportProjectRequest>,
 ) -> Result<Json<ProjectRecord>, ApiError> {
-    require_project_internal_request(
+    let identity = require_project_internal_request(
         &state.config,
         &headers,
         &[CHATOS_CALLER, TASK_RUNNER_CALLER],
         PROJECT_SYNC_SCOPE,
     )?;
+    let resource_id = input.id.clone();
+    let represented_user_id = input.owner_user_id.clone();
+    let resource_name = input.name.clone();
     let sandbox_enabled = input.sandbox_enabled;
-    let project = state
-        .store
-        .import_project(input)
-        .await
-        .map_err(ApiError::bad_request)?;
-    ensure_runtime_environment_for_project(&state.store, &project, sandbox_enabled)
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(project))
+    let result = async {
+        let project = state
+            .store
+            .import_project(input)
+            .await
+            .map_err(ApiError::bad_request)?;
+        ensure_runtime_environment_for_project(&state.store, &project, sandbox_enabled)
+            .await
+            .map_err(ApiError::bad_request)?;
+        Ok(project)
+    }
+    .await;
+    record_project_internal_resource_access(
+        &identity,
+        ProjectInternalResourceAudit {
+            represented_user_id: represented_user_id.as_deref(),
+            project_id: Some(resource_id.as_str()),
+            resource_type: "project",
+            resource_id: resource_id.as_str(),
+            resource_name: Some(resource_name.as_str()),
+            action: "import",
+            outcome: operation_outcome(&result),
+        },
+    );
+    result.map(Json)
 }
 
 pub(in crate::api) async fn sync_get_project(
@@ -143,16 +163,34 @@ pub(in crate::api) async fn sync_task_runner_work_item_status(
     headers: HeaderMap,
     Json(input): Json<SyncTaskRunnerWorkItemStatusRequest>,
 ) -> Result<Json<SyncTaskRunnerWorkItemStatusResponse>, ApiError> {
-    require_project_internal_request(
+    let identity = require_project_internal_request(
         &state.config,
         &headers,
         &[CHATOS_CALLER, TASK_RUNNER_CALLER],
         PROJECT_SYNC_SCOPE,
     )?;
-    execution_sync::sync_task_runner_work_item_status(&state.store, &work_item_id, input)
-        .await
-        .map(Json)
-        .map_err(sync_error_to_api_error)
+    let result =
+        execution_sync::sync_task_runner_work_item_status(&state.store, &work_item_id, input)
+            .await
+            .map_err(sync_error_to_api_error);
+    let work_item = result.as_ref().ok().map(|response| &response.work_item);
+    record_project_internal_resource_access(
+        &identity,
+        ProjectInternalResourceAudit {
+            represented_user_id: work_item.and_then(|item| {
+                item.owner_user_id
+                    .as_deref()
+                    .or(item.creator_user_id.as_deref())
+            }),
+            project_id: work_item.map(|item| item.project_id.as_str()),
+            resource_type: "project_work_item",
+            resource_id: work_item_id.as_str(),
+            resource_name: work_item.map(|item| item.title.as_str()),
+            action: "sync_task_runner_status",
+            outcome: operation_outcome(&result),
+        },
+    );
+    result.map(Json)
 }
 
 pub(in crate::api) async fn sync_task_runner_task_status(
@@ -161,16 +199,34 @@ pub(in crate::api) async fn sync_task_runner_task_status(
     headers: HeaderMap,
     Json(input): Json<SyncTaskRunnerWorkItemStatusRequest>,
 ) -> Result<Json<SyncTaskRunnerWorkItemStatusResponse>, ApiError> {
-    require_project_internal_request(
+    let identity = require_project_internal_request(
         &state.config,
         &headers,
         &[CHATOS_CALLER, TASK_RUNNER_CALLER],
         PROJECT_SYNC_SCOPE,
     )?;
-    execution_sync::sync_task_runner_task_status(&state.store, &task_runner_task_id, input)
-        .await
-        .map(Json)
-        .map_err(sync_error_to_api_error)
+    let result =
+        execution_sync::sync_task_runner_task_status(&state.store, &task_runner_task_id, input)
+            .await
+            .map_err(sync_error_to_api_error);
+    let work_item = result.as_ref().ok().map(|response| &response.work_item);
+    record_project_internal_resource_access(
+        &identity,
+        ProjectInternalResourceAudit {
+            represented_user_id: work_item.and_then(|item| {
+                item.owner_user_id
+                    .as_deref()
+                    .or(item.creator_user_id.as_deref())
+            }),
+            project_id: work_item.map(|item| item.project_id.as_str()),
+            resource_type: "task_runner_task",
+            resource_id: task_runner_task_id.as_str(),
+            resource_name: work_item.map(|item| item.title.as_str()),
+            action: "sync_project_status",
+            outcome: operation_outcome(&result),
+        },
+    );
+    result.map(Json)
 }
 
 pub(in crate::api) async fn sync_requirement_execution_state(
@@ -179,16 +235,42 @@ pub(in crate::api) async fn sync_requirement_execution_state(
     headers: HeaderMap,
     Json(input): Json<SyncRequirementExecutionStateRequest>,
 ) -> Result<Json<SyncRequirementExecutionStateResponse>, ApiError> {
-    require_project_internal_request(
+    let identity = require_project_internal_request(
         &state.config,
         &headers,
         &[CHATOS_CALLER, TASK_RUNNER_CALLER],
         PROJECT_SYNC_SCOPE,
     )?;
-    execution_sync::sync_requirement_execution_state(&state.store, &requirement_id, input)
-        .await
-        .map(Json)
-        .map_err(sync_error_to_api_error)
+    let result =
+        execution_sync::sync_requirement_execution_state(&state.store, &requirement_id, input)
+            .await
+            .map_err(sync_error_to_api_error);
+    let requirement = result.as_ref().ok().map(|response| &response.requirement);
+    record_project_internal_resource_access(
+        &identity,
+        ProjectInternalResourceAudit {
+            represented_user_id: requirement.and_then(|item| {
+                item.owner_user_id
+                    .as_deref()
+                    .or(item.creator_user_id.as_deref())
+            }),
+            project_id: requirement.map(|item| item.project_id.as_str()),
+            resource_type: "requirement",
+            resource_id: requirement_id.as_str(),
+            resource_name: requirement.map(|item| item.title.as_str()),
+            action: "sync_execution_state",
+            outcome: operation_outcome(&result),
+        },
+    );
+    result.map(Json)
+}
+
+fn operation_outcome<T>(result: &Result<T, ApiError>) -> &'static str {
+    if result.is_ok() {
+        "succeeded"
+    } else {
+        "failed"
+    }
 }
 
 fn sync_error_to_api_error(error: ExecutionSyncError) -> ApiError {

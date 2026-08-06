@@ -109,6 +109,7 @@ pub(crate) async fn select_rollup_batch(
 pub(crate) async fn mark_summary_sources_subject_memory_summarized(
     db: &Db,
     selected: &[PendingSourceSummary],
+    scope_key: Option<&str>,
 ) -> Result<usize, String> {
     if selected.is_empty() {
         return Ok(0);
@@ -128,14 +129,26 @@ pub(crate) async fn mark_summary_sources_subject_memory_summarized(
 
     let mut marked = 0usize;
     for ((tenant_id, source_id, thread_id), summary_ids) in grouped {
-        marked += summaries::mark_summaries_subject_memory_summarized(
-            db,
-            tenant_id.as_str(),
-            source_id.as_str(),
-            thread_id.as_str(),
-            summary_ids.as_slice(),
-        )
-        .await?;
+        marked += if let Some(scope_key) = scope_key {
+            summaries::mark_summaries_subject_memory_summarized_for_scope(
+                db,
+                tenant_id.as_str(),
+                source_id.as_str(),
+                thread_id.as_str(),
+                summary_ids.as_slice(),
+                scope_key,
+            )
+            .await?
+        } else {
+            summaries::mark_summaries_subject_memory_summarized(
+                db,
+                tenant_id.as_str(),
+                source_id.as_str(),
+                thread_id.as_str(),
+                summary_ids.as_slice(),
+            )
+            .await?
+        };
     }
 
     Ok(marked)

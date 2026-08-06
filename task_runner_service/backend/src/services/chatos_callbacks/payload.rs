@@ -35,6 +35,8 @@ pub(super) fn build_chatos_task_callback_payload(
     Some(ChatosTaskCallbackPayload {
         event: event.to_string(),
         task_id: task.id.clone(),
+        owner_user_id: task.owner_user_id.clone(),
+        project_id: task.project_id.clone(),
         run_id: run.map(|item| item.id.clone()),
         status: task.status.status_string().to_string(),
         task_title: task.title.clone(),

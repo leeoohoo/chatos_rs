@@ -4,4 +4,4 @@
 mod handlers;
 mod router;
 
-pub use router::build_router;
+pub use router::{build_internal_router, build_public_router};

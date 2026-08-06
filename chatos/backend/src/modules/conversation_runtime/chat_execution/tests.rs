@@ -158,6 +158,7 @@ fn per_request_mcp_auth_disables_codex_gateway_passthrough() {
         allowed_tool_names: None,
         preserve_tool_names: false,
         fail_on_unavailable: false,
+        async_result_transport: chatos_mcp_runtime::McpAsyncResultTransport::Disabled,
         header_provider: None,
     });
 
@@ -180,6 +181,7 @@ fn mcp_management_gateway_is_always_executed_by_chatos_runtime() {
         allowed_tool_names: None,
         preserve_tool_names: true,
         fail_on_unavailable: true,
+        async_result_transport: chatos_mcp_runtime::McpAsyncResultTransport::RabbitMq,
         header_provider: None,
     });
 

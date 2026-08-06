@@ -30,10 +30,28 @@ pub async fn upsert_subject_memory_scope(
 ) -> Result<Json<EngineSubjectMemoryScope>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    subject_memory_scopes::upsert_subject_memory_scope(&state.pool, scope_key.as_str(), req)
-        .await
-        .map(Json)
-        .map_err(internal_error)
+    let tenant_id = req.tenant_id.clone();
+    let source_id = req.source_id.clone();
+    let scope =
+        subject_memory_scopes::upsert_subject_memory_scope(&state.pool, scope_key.as_str(), req)
+            .await
+            .map_err(internal_error)?;
+    if let Err(err) = crate::subject_memory_queue::publish_pending_scope(
+        &state.config,
+        &state.pool,
+        tenant_id.as_str(),
+        source_id.as_str(),
+        scope_key.as_str(),
+    )
+    .await
+    {
+        tracing::warn!(
+            scope_key = scope_key.as_str(),
+            error = err.as_str(),
+            "Memory Engine left subject memory scope event in Outbox for recovery"
+        );
+    }
+    Ok(Json(scope))
 }
 
 pub async fn list_subject_memory_scopes(

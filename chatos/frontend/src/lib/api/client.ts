@@ -21,10 +21,10 @@ import { LocalRuntimeClient } from './localRuntime';
 import * as workspaceApi from './client/workspace';
 
 // Dev 环境默认直连后端，避免本地代理异常导致 /api 404。
-// 可通过 VITE_API_BASE_URL 显式覆盖（例如 https://your.domain/api）。
+// 可通过 VITE_API_BASE_URL 显式覆盖（例如 https://your.domain/api/chatos）。
 const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
 const API_BASE_URL =
-  ENV_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:3997/api' : '/api');
+  ENV_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:3997/api' : '/api/chatos');
 
 class ApiClient {
   private baseUrl: string;

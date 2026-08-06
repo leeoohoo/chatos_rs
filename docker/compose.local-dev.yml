@@ -2,6 +2,14 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 services:
+  prometheus:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./prometheus/prometheus.local-dev.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
   apisix-gateway:
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -9,7 +9,6 @@ use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
@@ -18,6 +17,7 @@ use crate::models::{
     ProjectImportStatus, ProjectRecord, ProjectRuntimeEnvironmentStatus, ProjectSourceType,
     RuntimeEnvironmentProvider,
 };
+use crate::trace_context::InternalTraceContextExt;
 
 #[derive(Debug)]
 pub(super) enum RuntimeEnvironmentDecision {
@@ -190,11 +190,8 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
     if base.is_empty() {
         return Ok(None);
     }
-    let client = build_http_client(HttpClientTimeouts::new(
-        config.local_connector_service_request_timeout,
-    ))
-    .map_err(|err| format!("build local connector client failed: {err}"))?;
-    let mut request = client
+    let mut request = config
+        .local_connector_http_client
         .get(format!("{base}/api/local-connectors/sandbox-pairings"))
         .bearer_auth(token)
         .query(&[("active_only", "true")]);
@@ -205,6 +202,7 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
         ]);
     }
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("query local connector sandbox pairings failed: {err}"))?;

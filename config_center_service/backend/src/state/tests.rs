@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::releases::{
+    overlay_pressure_state, validate_chatos_mtls_invariants,
+    validate_sandbox_manager_mtls_invariants,
+};
 use super::support::*;
 
 use super::*;
@@ -8,30 +12,79 @@ use crate::catalog::{
     CHATOS_BACKEND_PORT_CONFIG_KEY, CHATOS_CORS_ORIGINS_CONFIG_KEY, CHATOS_HOST_CONFIG_KEY,
     CHATOS_LOG_MAX_FILES_CONFIG_KEY, CHATOS_NODE_ENV_CONFIG_KEY, DEFAULT_LOCAL_RABBITMQ_URL,
     LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
-    LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY,
     LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
     LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
-    LOCAL_CONNECTOR_HOST_CONFIG_KEY,
+    LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY, LOCAL_CONNECTOR_HOST_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY,
     LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    LOCAL_CONNECTOR_PORT_CONFIG_KEY, LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
+    LOCAL_CONNECTOR_PORT_CONFIG_KEY, LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
+    LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY,
+    LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+    LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
+    LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY,
+    LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY,
     LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+    LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY,
+    LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY,
     LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY, MCP_MANAGEMENT_EMBEDDED_WORK_DIR_CONFIG_KEY,
-    MCP_MANAGEMENT_HOST_CONFIG_KEY, MCP_MANAGEMENT_PORT_CONFIG_KEY,
+    LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY, LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
+    LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY, MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY,
+    MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY, MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
+    MCP_MANAGEMENT_EMBEDDED_WORK_DIR_CONFIG_KEY, MCP_MANAGEMENT_HOST_CONFIG_KEY,
+    MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY,
+    MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY,
+    MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY,
+    MCP_MANAGEMENT_INVOCATION_QUOTA_KEY_PREFIX_CONFIG_KEY,
+    MCP_MANAGEMENT_INVOCATION_QUOTA_VALKEY_URL_CONFIG_KEY,
+    MCP_MANAGEMENT_INVOCATION_TENANT_ACTIVE_LIMIT_CONFIG_KEY,
+    MCP_MANAGEMENT_INVOCATION_USER_ACTIVE_LIMIT_CONFIG_KEY, MCP_MANAGEMENT_PORT_CONFIG_KEY,
+    MCP_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_PERCENT_CONFIG_KEY,
+    MCP_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_PERCENT_CONFIG_KEY,
+    MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
     MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+    MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY,
+    MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY,
     MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY, MEMORY_ENGINE_HOST_CONFIG_KEY,
     MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY, MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY,
     MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY, MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY,
     MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY, MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY,
-    MEMORY_ENGINE_PORT_CONFIG_KEY, MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+    MEMORY_ENGINE_PORT_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
+    MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
+    MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
+    MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY, MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY,
+    MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+    MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+    MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY, MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY, MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY,
@@ -40,13 +93,25 @@ use crate::catalog::{
     MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY, PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY, PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY,
@@ -54,6 +119,9 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY, PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -67,6 +135,8 @@ use crate::catalog::{
     PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY, PROJECT_SERVICE_HOST_CONFIG_KEY,
     PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
     PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+    PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
+    PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY,
     PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
     PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY, PROJECT_SERVICE_PORT_CONFIG_KEY,
     PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
@@ -92,19 +162,28 @@ use crate::catalog::{
     TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY, TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY,
+    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
+    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
     TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_PORT_CONFIG_KEY,
+    TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+    TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+    TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
     TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
     TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+    TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+    TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
     TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY, TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY, TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RUN_EVENTS_QUEUE_CONFIG_KEY, TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY, TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY,
+    TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY, TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY,
+    TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY,
     TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY,
     USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
     USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY, USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
@@ -124,7 +203,7 @@ use crate::catalog::{
     USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY, USER_SERVICE_SMTP_PORT_CONFIG_KEY,
     USER_SERVICE_SMTP_USERNAME_CONFIG_KEY, USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
     USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY, USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-    USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY,
+    USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
     USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY, USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
 };
 
@@ -286,6 +365,10 @@ fn task_runner_queue_mode_migration_replaces_legacy_inline_values() {
         values.get(TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY),
         Some(&json!("rabbitmq"))
     );
+    assert_eq!(
+        values.get(TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY),
+        Some(&json!("rabbitmq"))
+    );
 }
 
 #[test]
@@ -307,6 +390,341 @@ fn task_runner_queue_mode_draft_migration_only_changes_explicit_inline_values() 
         values.get(TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY),
         Some(&json!("rabbitmq"))
     );
+}
+
+#[test]
+fn platform_memory_engine_callers_replace_http_urls_with_mtls_defaults() {
+    let definitions = builtin_definitions();
+    let cases = [
+        (
+            TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            task_runner_service_default_values(&definitions),
+            ensure_task_runner_runtime_values
+                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
+        ),
+        (
+            PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            project_service_runtime_default_values(&definitions),
+            ensure_project_service_runtime_values,
+        ),
+        (
+            CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            chatos_service_default_values(&definitions),
+            ensure_chatos_runtime_values,
+        ),
+    ];
+
+    for (key, defaults, ensure_values) in cases {
+        let mut values = BTreeMap::from([(
+            key.to_string(),
+            json!("http://memory-engine-backend:7081/api/memory-engine/v1"),
+        )]);
+
+        let changed_keys = ensure_values(&mut values, &defaults);
+
+        assert!(changed_keys.contains(&key.to_string()));
+        assert_eq!(values.get(key), defaults.get(key));
+        assert!(values
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("https://")));
+    }
+}
+
+#[test]
+fn memory_engine_https_draft_migration_only_changes_explicit_http_values() {
+    let fallback = json!("https://memory-engine-backend:7083/api/memory-engine/v1");
+    let mut values = BTreeMap::new();
+
+    assert!(!migrate_https_url_draft(
+        &mut values,
+        CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+        &fallback,
+    ));
+    assert!(!values.contains_key(CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY));
+
+    values.insert(
+        CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
+        json!("http://memory-engine-backend:7081/api/memory-engine/v1"),
+    );
+    assert!(migrate_https_url_draft(
+        &mut values,
+        CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+        &fallback,
+    ));
+    assert_eq!(
+        values.get(CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY),
+        Some(&fallback)
+    );
+}
+
+#[test]
+fn project_service_internal_urls_are_forced_to_https_without_inserting_draft_keys() {
+    let definitions = builtin_definitions();
+    let cases = [
+        (
+            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            chatos_service_default_values(&definitions),
+            ensure_chatos_runtime_values
+                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
+        ),
+        (
+            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            task_runner_service_default_values(&definitions),
+            ensure_task_runner_runtime_values,
+        ),
+        (
+            MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
+            mcp_management_service_default_values(&definitions),
+            ensure_mcp_management_runtime_values,
+        ),
+    ];
+
+    for (key, defaults, ensure_values) in cases {
+        let mut values = BTreeMap::from([(
+            key.to_string(),
+            json!("http://project-management-backend:39210"),
+        )]);
+        let changed_keys = ensure_values(&mut values, &defaults);
+        assert!(changed_keys.contains(&key.to_string()));
+        assert_eq!(values.get(key), defaults.get(key));
+
+        let mut draft = BTreeMap::new();
+        let fallback = defaults.get(key).expect("Project Service HTTPS default");
+        assert!(!migrate_https_url_draft(&mut draft, key, fallback));
+        assert!(!draft.contains_key(key));
+    }
+}
+
+#[test]
+fn user_service_internal_url_is_forced_to_https_without_inserting_draft_keys() {
+    let definitions = builtin_definitions();
+    let defaults = project_service_runtime_default_values(&definitions);
+    let key = PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY;
+    let mut values =
+        BTreeMap::from([(key.to_string(), json!("http://user-service-backend:39190"))]);
+
+    let changed_keys = ensure_project_service_runtime_values(&mut values, &defaults);
+
+    assert!(changed_keys.contains(&key.to_string()));
+    assert_eq!(values.get(key), defaults.get(key));
+    let mut draft = BTreeMap::new();
+    let fallback = defaults.get(key).expect("User Service HTTPS default");
+    assert!(!migrate_https_url_draft(&mut draft, key, fallback));
+    assert!(!draft.contains_key(key));
+}
+
+#[test]
+fn local_connector_internal_urls_are_forced_to_mtls_defaults() {
+    let definitions = builtin_definitions();
+    let cases = [
+        (
+            CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            chatos_service_default_values(&definitions),
+            ensure_chatos_runtime_values
+                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
+        ),
+        (
+            TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            task_runner_service_default_values(&definitions),
+            ensure_task_runner_runtime_values,
+        ),
+        (
+            PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            project_service_runtime_default_values(&definitions),
+            ensure_project_service_runtime_values,
+        ),
+        (
+            MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            mcp_management_service_default_values(&definitions),
+            ensure_mcp_management_runtime_values,
+        ),
+    ];
+
+    for (key, defaults, ensure_values) in cases {
+        let mut values = BTreeMap::from([(
+            key.to_string(),
+            json!("http://local-connector-service-backend:39230"),
+        )]);
+        let changed_keys = ensure_values(&mut values, &defaults);
+        assert!(changed_keys.contains(&key.to_string()));
+        assert_eq!(values.get(key), defaults.get(key));
+        assert!(values
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "https://127.0.0.1:39232"));
+    }
+}
+
+#[test]
+fn plugin_management_internal_urls_are_forced_to_https_without_inserting_draft_keys() {
+    let definitions = builtin_definitions();
+    let cases = [
+        (
+            SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
+            plugin_management_service_runtime_default_values(&definitions),
+            ensure_plugin_management_runtime_values
+                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
+        ),
+        (
+            MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
+            mcp_management_service_default_values(&definitions),
+            ensure_mcp_management_runtime_values,
+        ),
+    ];
+
+    for (key, defaults, ensure_values) in cases {
+        let mut values = BTreeMap::from([(
+            key.to_string(),
+            json!("http://plugin-management-backend:39260"),
+        )]);
+        let changed_keys = ensure_values(&mut values, &defaults);
+        assert!(changed_keys.contains(&key.to_string()));
+        assert_eq!(values.get(key), defaults.get(key));
+
+        let mut draft = BTreeMap::new();
+        let fallback = defaults.get(key).expect("Plugin Management HTTPS default");
+        assert!(!migrate_https_url_draft(&mut draft, key, fallback));
+        assert!(!draft.contains_key(key));
+    }
+}
+
+#[test]
+fn sandbox_manager_internal_urls_are_forced_to_https_and_explicit_drafts_migrate() {
+    let definitions = builtin_definitions();
+    let cases = [
+        (
+            TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+            task_runner_service_default_values(&definitions),
+            ensure_task_runner_runtime_values
+                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
+        ),
+        (
+            PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+            project_service_runtime_default_values(&definitions),
+            ensure_project_service_runtime_values,
+        ),
+        (
+            MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
+            mcp_management_service_default_values(&definitions),
+            ensure_mcp_management_runtime_values,
+        ),
+    ];
+
+    for (key, defaults, ensure_values) in cases {
+        let mut values = BTreeMap::from([(
+            key.to_string(),
+            json!("http://sandbox-manager-backend:8095"),
+        )]);
+        let changed_keys = ensure_values(&mut values, &defaults);
+        let fallback = defaults.get(key).expect("Sandbox Manager HTTPS default");
+
+        assert!(changed_keys.contains(&key.to_string()));
+        assert_eq!(values.get(key), Some(fallback));
+        assert!(fallback
+            .as_str()
+            .is_some_and(|value| value.starts_with("https://")));
+
+        let mut draft = BTreeMap::new();
+        assert!(!migrate_https_url_draft(&mut draft, key, fallback));
+        assert!(!draft.contains_key(key));
+        draft.insert(
+            key.to_string(),
+            json!("http://sandbox-manager-backend:8095"),
+        );
+        assert!(migrate_https_url_draft(&mut draft, key, fallback));
+        assert_eq!(draft.get(key), Some(fallback));
+    }
+}
+
+#[test]
+fn sandbox_manager_mtls_publish_validation_rejects_http_and_port_collisions() {
+    let mut values = BTreeMap::from([
+        (
+            TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
+            json!("http://sandbox-manager-backend:8095"),
+        ),
+        (
+            PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://sandbox-manager-backend:8097"),
+        ),
+        (
+            MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://sandbox-manager-backend:8097"),
+        ),
+        (SANDBOX_MANAGER_PORT_CONFIG_KEY.to_string(), json!(8095)),
+        (
+            SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+            json!(8095),
+        ),
+    ]);
+    let mut errors = Vec::new();
+
+    validate_sandbox_manager_mtls_invariants(&values, &mut errors);
+
+    assert_eq!(errors.len(), 2);
+    assert!(errors.iter().any(|error| {
+        error.contains(TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY)
+            && error.contains("must use https://")
+    }));
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("internal_mtls_port must differ")));
+
+    values.insert(
+        TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
+        json!("https://sandbox-manager-backend:8097"),
+    );
+    values.insert(
+        SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+        json!(8097),
+    );
+    errors.clear();
+    validate_sandbox_manager_mtls_invariants(&values, &mut errors);
+    assert!(errors.is_empty());
+}
+
+#[test]
+fn chatos_mtls_publish_validation_rejects_http_and_port_collisions() {
+    let mut values = BTreeMap::from([
+        (
+            TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
+            json!("http://chatos-backend:3997/api/agent/chat/task-runner/callback"),
+        ),
+        (
+            MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://chatos-backend:3999"),
+        ),
+        (CHATOS_BACKEND_PORT_CONFIG_KEY.to_string(), json!(3997)),
+        (
+            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+            json!(3997),
+        ),
+    ]);
+    let mut errors = Vec::new();
+
+    validate_chatos_mtls_invariants(&values, &mut errors);
+
+    assert_eq!(errors.len(), 2);
+    assert!(errors.iter().any(|error| {
+        error.contains(TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY)
+            && error.contains("must use https://")
+    }));
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("internal_mtls_port must differ")));
+
+    values.insert(
+        TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
+        json!("https://chatos-backend:3999/api/agent/chat/task-runner/callback"),
+    );
+    values.insert(
+        CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+        json!(3999),
+    );
+    errors.clear();
+    validate_chatos_mtls_invariants(&values, &mut errors);
+    assert!(errors.is_empty());
 }
 
 #[test]
@@ -342,11 +760,34 @@ fn task_runner_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY.to_string())
+    );
+    assert!(
+        changed_keys.contains(&TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys.contains(&TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string())
+    );
+    assert_eq!(
+        values.get(TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        values.get(TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY),
+        Some(&json!(true))
+    );
     assert!(changed_keys.contains(&TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY.to_string()));
 }
@@ -365,7 +806,7 @@ fn task_runner_snapshot_exposes_queue_environment_aliases() {
         ),
         (
             TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY.to_string(),
-            json!("inline"),
+            json!("rabbitmq"),
         ),
         (
             TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY.to_string(),
@@ -376,6 +817,10 @@ fn task_runner_snapshot_exposes_queue_environment_aliases() {
             json!("task_runner"),
         ),
         (
+            TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string(),
+            json!(3_000),
+        ),
+        (
             TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY.to_string(),
             json!("task_runner.run.dispatch"),
         ),
@@ -384,8 +829,8 @@ fn task_runner_snapshot_exposes_queue_environment_aliases() {
             json!("task_runner.callback.delivery"),
         ),
         (
-            TASK_RUNNER_QUEUE_RUN_EVENTS_QUEUE_CONFIG_KEY.to_string(),
-            json!("task_runner.run.events"),
+            TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY.to_string(),
+            json!("task_runner.run.events.broadcast"),
         ),
     ]);
 
@@ -402,15 +847,19 @@ fn task_runner_snapshot_exposes_queue_environment_aliases() {
     );
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_RUN_EVENTS_PUBLISH_MODE"),
-        Some(&"inline".to_string())
+        Some(&"rabbitmq".to_string())
     );
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_RABBITMQ_URL"),
         Some(&DEFAULT_LOCAL_RABBITMQ_URL.to_string())
     );
     assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_EVENTS_QUEUE"),
-        Some(&"task_runner.run.events".to_string())
+        snapshot.env.get("TASK_RUNNER_RABBITMQ_RECONNECT_MS"),
+        Some(&"3000".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("TASK_RUNNER_RUN_EVENTS_ROUTING_KEY"),
+        Some(&"task_runner.run.events.broadcast".to_string())
     );
 }
 
@@ -466,6 +915,10 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         (
             TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
             json!("http://127.0.0.1:39210"),
+        ),
+        (
+            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://127.0.0.1:39212"),
         ),
         (
             TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -583,6 +1036,12 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         Some(&"6000".to_string())
     );
     assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL"),
+        Some(&"https://127.0.0.1:39212".to_string())
+    );
+    assert_eq!(
         snapshot.env.get("TASK_RUNNER_MEMORY_ENGINE_BASE_URL"),
         Some(&"http://127.0.0.1:7081/api/memory-engine/v1".to_string())
     );
@@ -632,9 +1091,68 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         snapshot.env.get("TASK_RUNNER_WORKER_CLAIM_TTL_MS"),
         Some(&"120000".to_string())
     );
+    assert_eq!(snapshot.env.get("TASK_RUNNER_WORKER_POLL_MS"), None);
     assert_eq!(
-        snapshot.env.get("TASK_RUNNER_WORKER_POLL_MS"),
+        snapshot.env.get("TASK_RUNNER_RUN_DISPATCH_RETRY_QUEUE"),
+        Some(&"task_runner.run.dispatch.retry".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("TASK_RUNNER_RUN_DISPATCH_RETRY_DELAY_MS"),
         Some(&"1000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_RUN_DISPATCH_OUTBOX_RECONCILE_MS"),
+        Some(&"5000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE"),
+        Some(&"100".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("TASK_RUNNER_WORKER_CONTROL_QUEUE_PREFIX"),
+        Some(&"task_runner.worker.control".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("TASK_RUNNER_RUN_POST_PROCESS_QUEUE"),
+        Some(&"task_runner.run.post_process".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("TASK_RUNNER_RUN_POST_PROCESS_RETRY_QUEUE"),
+        Some(&"task_runner.run.post_process.retry".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_RUN_POST_PROCESS_DEAD_LETTER_QUEUE"),
+        Some(&"task_runner.run.post_process.dead".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_RUN_POST_PROCESS_MAX_DELIVERY_ATTEMPTS"),
+        Some(&"8".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_RUN_POST_PROCESS_RETRY_DELAY_MS"),
+        Some(&"5000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_RECONCILE_MS"),
+        Some(&"5000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_BATCH_SIZE"),
+        Some(&"100".to_string())
     );
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_ADMIN_USERNAME"),
@@ -654,7 +1172,7 @@ fn mcp_management_async_dispatch_backfill_adds_all_service_defaults() {
 
     let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 37);
+    assert_eq!(defaults.len(), MCP_MANAGEMENT_RUNTIME_CONFIG_KEYS.len());
     for key in defaults.keys() {
         assert!(
             values.contains_key(key),
@@ -663,8 +1181,51 @@ fn mcp_management_async_dispatch_backfill_adds_all_service_defaults() {
     }
     assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY.to_string())
+    );
+    assert!(
+        changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_PERCENT_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_PERCENT_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY.to_string()));
+    for key in [
+        MCP_MANAGEMENT_INVOCATION_QUOTA_VALKEY_URL_CONFIG_KEY,
+        MCP_MANAGEMENT_INVOCATION_QUOTA_KEY_PREFIX_CONFIG_KEY,
+        MCP_MANAGEMENT_INVOCATION_TENANT_ACTIVE_LIMIT_CONFIG_KEY,
+        MCP_MANAGEMENT_INVOCATION_USER_ACTIVE_LIMIT_CONFIG_KEY,
+        MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY,
+        MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY,
+    ] {
+        assert!(changed_keys.contains(&key.to_string()));
+    }
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MCP_MANAGEMENT_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MCP_MANAGEMENT_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY.to_string()));
@@ -710,30 +1271,65 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
             json!("mcp_management"),
         ),
         (
+            MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY.to_string(),
+            json!("mcp_management.cancellations"),
+        ),
+        (
             MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY.to_string(),
             json!("mcp_management.async.dispatch"),
         ),
         (
-            MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_mcp_management_internal_secret"),
+            MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY.to_string(),
+            json!(10_000),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY.to_string(),
+            json!(256_i64 * 1024 * 1024),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string(),
+            json!(3_000),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
+            json!(5_000),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
+            json!(128),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
+            json!(5),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
+            json!(5_000),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY.to_string(),
+            json!("mcp_management.async.retry"),
+        ),
+        (
+            MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
+            json!("mcp_management.async.dlq"),
+        ),
+        (
+            "mcp_management.security.internal_api_secret".to_string(),
+            json!("retired-global-secret-must-not-be-projected"),
         ),
         (
             MCP_MANAGEMENT_HOST_CONFIG_KEY.to_string(),
             json!("127.0.0.1"),
         ),
-        (
-            MCP_MANAGEMENT_PORT_CONFIG_KEY.to_string(),
-            json!(39280),
-        ),
+        (MCP_MANAGEMENT_PORT_CONFIG_KEY.to_string(), json!(39280)),
         (
             MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY.to_string(),
             json!("mongodb://127.0.0.1:27017/mcp_management_service"),
         ),
         (
             MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY.to_string(),
-            json!(
-                "chatos,task-runner,project-service,memory-engine,local-connector-service,sandbox-manager,plugin-management-service"
-            ),
+            json!("chatos,task-runner,project-service,configuration-center"),
         ),
         (
             MCP_MANAGEMENT_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
@@ -750,6 +1346,10 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         (
             MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
             json!("change_me_mcp_management_chatos_secret"),
+        ),
+        (
+            MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
+            json!("change_me_configuration_center_mcp_management_secret"),
         ),
         (
             MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
@@ -782,6 +1382,14 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         (
             MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY.to_string(),
             json!(30 * 60),
+        ),
+        (
+            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY.to_string(),
+            json!(2_048),
+        ),
+        (
+            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY.to_string(),
+            json!(32 * 1024 * 1024),
         ),
         (
             MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -821,7 +1429,7 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         ),
         (
             MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39210"),
+            json!("https://127.0.0.1:39212"),
         ),
         (
             MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
@@ -853,12 +1461,69 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         Some(&DEFAULT_LOCAL_RABBITMQ_URL.to_string())
     );
     assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE"),
+        Some(&"mcp_management.cancellations".to_string())
+    );
+    assert_eq!(
         snapshot.env.get("MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE"),
         Some(&"mcp_management.async.dispatch".to_string())
     );
     assert_eq!(
-        snapshot.env.get("MCP_MANAGEMENT_INTERNAL_API_SECRET"),
-        Some(&"change_me_mcp_management_internal_secret".to_string())
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH"),
+        Some(&"10000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES"),
+        Some(&"268435456".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS"),
+        Some(&"3000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS"),
+        Some(&"5000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE"),
+        Some(&"128".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS"),
+        Some(&"5".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE"),
+        Some(&"mcp_management.async.retry".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE"),
+        Some(&"mcp_management.async.dlq".to_string())
+    );
+    assert!(!snapshot
+        .env
+        .contains_key("MCP_MANAGEMENT_INTERNAL_API_SECRET"));
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET"),
+        Some(&"change_me_configuration_center_mcp_management_secret".to_string())
     );
     assert_eq!(
         snapshot.env.get("MCP_MANAGEMENT_HOST"),
@@ -869,15 +1534,16 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         Some(&"39280".to_string())
     );
     assert_eq!(
+        snapshot.env.get("MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL"),
+        Some(&"https://127.0.0.1:39212".to_string())
+    );
+    assert_eq!(
         snapshot.env.get("MCP_MANAGEMENT_DATABASE_URL"),
         Some(&"mongodb://127.0.0.1:27017/mcp_management_service".to_string())
     );
     assert_eq!(
         snapshot.env.get("MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS"),
-        Some(
-            &"chatos,task-runner,project-service,memory-engine,local-connector-service,sandbox-manager,plugin-management-service"
-                .to_string()
-        )
+        Some(&"chatos,task-runner,project-service,configuration-center".to_string())
     );
     assert_eq!(
         snapshot
@@ -966,6 +1632,24 @@ fn mcp_management_runtime_backfill_normalizes_legacy_root_vhost_url() {
 }
 
 #[test]
+fn mcp_management_runtime_backfill_replaces_legacy_local_dispatch_mode() {
+    let definitions = builtin_definitions();
+    let defaults = mcp_management_service_default_values(&definitions);
+    let mut values = BTreeMap::from([(
+        MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY.to_string(),
+        json!("local_queue"),
+    )]);
+
+    let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
+
+    assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY),
+        Some(&json!("rabbitmq"))
+    );
+}
+
+#[test]
 fn local_connector_runtime_backfill_adds_all_service_defaults() {
     let definitions = builtin_definitions();
     let defaults = local_connector_service_runtime_default_values(&definitions);
@@ -988,14 +1672,20 @@ fn local_connector_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY.to_string()));
     assert!(changed_keys
-        .contains(&LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY.to_string()));
-    assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY.to_string())
+    );
     assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string()));
 }
@@ -1030,10 +1720,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             json!(true),
         ),
         (
-            LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY.to_string(),
-            json!(false),
-        ),
-        (
             LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(30_000),
         ),
@@ -1052,6 +1738,38 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
         (
             LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY.to_string(),
             json!(90),
+        ),
+        (
+            LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY.to_string(),
+            json!("redis://127.0.0.1:6379/0"),
+        ),
+        (
+            LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY.to_string(),
+            json!("chatos:local-connector"),
+        ),
+        (
+            LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY.to_string(),
+            json!(120),
+        ),
+        (
+            LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY.to_string(),
+            json!(2_000),
+        ),
+        (
+            LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY.to_string(),
+            json!(30),
+        ),
+        (
+            LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY.to_string(),
+            json!(3_000),
+        ),
+        (
+            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY.to_string(),
+            json!(60),
+        ),
+        (
+            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY.to_string(),
+            json!(20),
         ),
         (
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY.to_string(),
@@ -1104,12 +1822,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
         Some(&"true".to_string())
     );
     assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN"),
-        Some(&"false".to_string())
-    );
-    assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS"),
         Some(&"30000".to_string())
     );
@@ -1136,6 +1848,48 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             .env
             .get("LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS"),
         Some(&"90".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("LOCAL_CONNECTOR_VALKEY_URL"),
+        Some(&"redis://127.0.0.1:6379/0".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("LOCAL_CONNECTOR_VALKEY_KEY_PREFIX"),
+        Some(&"chatos:local-connector".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS"),
+        Some(&"120".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("LOCAL_CONNECTOR_VALKEY_RECONNECT_MS"),
+        Some(&"2000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS"),
+        Some(&"30".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS"),
+        Some(&"3000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS"),
+        Some(&"60".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS"),
+        Some(&"20".to_string())
     );
     assert_eq!(
         snapshot
@@ -1215,11 +1969,14 @@ fn sandbox_manager_snapshot_exposes_pool_environment_aliases() {
 fn sandbox_manager_runtime_backfill_adds_all_service_defaults() {
     let definitions = builtin_definitions();
     let defaults = sandbox_manager_runtime_default_values(&definitions);
-    let mut values = BTreeMap::new();
+    let mut values = BTreeMap::from([(
+        SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY.to_string(),
+        json!(false),
+    )]);
 
     let changed_keys = ensure_sandbox_manager_runtime_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 19);
+    assert_eq!(defaults.len(), 16);
     for key in defaults.keys() {
         assert!(
             values.contains_key(key),
@@ -1228,10 +1985,15 @@ fn sandbox_manager_runtime_backfill_adds_all_service_defaults() {
     }
     assert!(changed_keys.contains(&SANDBOX_MANAGER_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&SANDBOX_MANAGER_PORT_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&SANDBOX_MANAGER_DATABASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&SANDBOX_MANAGER_MONGODB_DATABASE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&SANDBOX_MANAGER_AGENT_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY),
+        Some(&json!(true))
+    );
     assert!(changed_keys.contains(&SANDBOX_MANAGER_LEASE_TTL_SECONDS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&SANDBOX_MANAGER_CLEANUP_INTERVAL_SECONDS_CONFIG_KEY.to_string()));
     assert!(
@@ -1244,7 +2006,6 @@ fn sandbox_manager_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys
         .contains(&SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&SANDBOX_MANAGER_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS_CONFIG_KEY.to_string()));
 }
@@ -1257,7 +2018,7 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
 
     let changed_keys = ensure_memory_engine_runtime_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 19);
+    assert_eq!(defaults.len(), MEMORY_ENGINE_RUNTIME_CONFIG_KEYS.len());
     assert_eq!(
         values.get(MEMORY_ENGINE_HOST_CONFIG_KEY),
         Some(&json!("0.0.0.0"))
@@ -1265,6 +2026,10 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
     assert_eq!(
         values.get(MEMORY_ENGINE_PORT_CONFIG_KEY),
         Some(&json!(7081))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY),
+        Some(&json!(7083))
     );
     assert_eq!(
         values.get(MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY),
@@ -1294,8 +2059,41 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
         values.get(MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY),
         Some(&json!(true))
     );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_WORKER_PRESSURE_SUMMARY_CONCURRENCY_CONFIG_KEY),
+        Some(&json!(1))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_WORKER_PRESSURE_REFRESH_INTERVAL_MS_CONFIG_KEY),
+        Some(&json!(5_000))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY),
+        Some(&json!(100))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY),
+        Some(&json!(1_000))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY),
+        Some(&json!(DEFAULT_LOCAL_RABBITMQ_URL))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY),
+        Some(&json!("memory_engine.summary.requested"))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY),
+        Some(&json!("memory_engine.rollup.requested"))
+    );
+    assert_eq!(
+        values.get(MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY),
+        Some(&json!("memory_engine.subject_memory.requested"))
+    );
     assert!(changed_keys.contains(&MEMORY_ENGINE_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_PORT_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
@@ -1308,11 +2106,71 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
 }
 
 #[test]
+fn platform_pressure_backfill_adds_the_shared_authoritative_state() {
+    let definitions = builtin_definitions();
+    let defaults = platform_pressure_default_values(&definitions);
+    let mut values = BTreeMap::new();
+
+    let changed_keys = ensure_platform_pressure_values(&mut values, &defaults);
+
+    assert_eq!(defaults.len(), PLATFORM_PRESSURE_CONFIG_KEYS.len());
+    assert_eq!(
+        values.get(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY),
+        Some(&json!("normal"))
+    );
+    assert_eq!(
+        values.get(PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert_eq!(changed_keys.len(), PLATFORM_PRESSURE_CONFIG_KEYS.len());
+    assert!(changed_keys.contains(&PLATFORM_PRESSURE_LEVEL_CONFIG_KEY.to_string()));
+
+    let snapshot = build_snapshot("local", "task-runner", 1, &definitions, &values)
+        .expect("shared pressure snapshot");
+    assert_eq!(
+        snapshot.values.get(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY),
+        Some(&json!("normal"))
+    );
+}
+
+#[test]
+fn runtime_pressure_state_overlays_snapshots_and_changes_their_etag() {
+    let definitions = builtin_definitions();
+    let values = platform_pressure_default_values(&definitions);
+    let mut snapshot =
+        build_snapshot("local", "memory-engine", 1, &definitions, &values).expect("base snapshot");
+    let original_etag = snapshot.etag();
+
+    overlay_pressure_state(
+        &mut snapshot,
+        &PlatformPressureStateRecord {
+            id: "local".to_string(),
+            environment: "local".to_string(),
+            level: PlatformPressureLevel::Critical,
+            contributors: vec!["memory-engine:one".to_string()],
+            reason: "test".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    )
+    .expect("pressure overlay");
+
+    assert_eq!(
+        snapshot.values.get(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY),
+        Some(&json!("critical"))
+    );
+    assert_ne!(snapshot.etag(), original_etag);
+}
+
+#[test]
 fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
     let definitions = builtin_definitions();
     let values = BTreeMap::from([
         (MEMORY_ENGINE_HOST_CONFIG_KEY.to_string(), json!("0.0.0.0")),
         (MEMORY_ENGINE_PORT_CONFIG_KEY.to_string(), json!(7081)),
+        (
+            MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+            json!(7083),
+        ),
         (
             MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY.to_string(),
             json!("mongodb://admin:admin@127.0.0.1:27018/admin"),
@@ -1377,6 +2235,114 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
             MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY_CONFIG_KEY.to_string(),
             json!(2),
         ),
+        (
+            MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY.to_string(),
+            json!(DEFAULT_LOCAL_RABBITMQ_URL),
+        ),
+        (
+            MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY.to_string(),
+            json!("memory_engine"),
+        ),
+        (
+            MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY.to_string(),
+            json!(3_000),
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.summary.requested"),
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.summary.requested.retry"),
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.summary.requested.dead"),
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
+            json!(8),
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
+            json!(5_000),
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
+            json!(5_000),
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
+            json!(100),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.rollup.requested"),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.rollup.requested.retry"),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.rollup.requested.dead"),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
+            json!(8),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
+            json!(5_000),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
+            json!(30_000),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
+            json!(100),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.subject_memory.requested"),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.subject_memory.requested.retry"),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
+            json!("memory_engine.subject_memory.requested.dead"),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
+            json!(8),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
+            json!(5_000),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
+            json!(30_000),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
+            json!(100),
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY.to_string(),
+            json!(300),
+        ),
+        (
+            MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY.to_string(),
+            json!(300),
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY.to_string(),
+            json!(300),
+        ),
     ]);
 
     let snapshot = build_snapshot("local", "memory-engine", 1, &definitions, &values)
@@ -1435,6 +2401,28 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
             .get("MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY"),
         Some(&"2".to_string())
     );
+    assert_eq!(
+        snapshot.env.get("MEMORY_ENGINE_RABBITMQ_URL"),
+        Some(&DEFAULT_LOCAL_RABBITMQ_URL.to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("MEMORY_ENGINE_SUMMARY_QUEUE"),
+        Some(&"memory_engine.summary.requested".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("MEMORY_ENGINE_ROLLUP_QUEUE"),
+        Some(&"memory_engine.rollup.requested".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE"),
+        Some(&"memory_engine.subject_memory.requested".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS"),
+        Some(&"300".to_string())
+    );
 }
 
 #[test]
@@ -1446,6 +2434,10 @@ fn sandbox_manager_snapshot_exposes_runtime_environment_aliases() {
             json!("127.0.0.1"),
         ),
         (SANDBOX_MANAGER_PORT_CONFIG_KEY.to_string(), json!(8095)),
+        (
+            SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+            json!(8097),
+        ),
         (
             SANDBOX_MANAGER_DATABASE_URL_CONFIG_KEY.to_string(),
             json!("mongodb://admin:admin@127.0.0.1:27018/sandbox_manager_service?authSource=admin"),
@@ -1495,24 +2487,6 @@ fn sandbox_manager_snapshot_exposes_runtime_environment_aliases() {
             json!(5_000),
         ),
         (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES_CONFIG_KEY.to_string(),
-            json!(
-                "sandbox.lease.create,sandbox.lease.read,sandbox.lease.release,sandbox.mcp.tools"
-            ),
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS_CONFIG_KEY.to_string(),
-            json!("*"),
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS_CONFIG_KEY.to_string(),
-            json!("*"),
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS_CONFIG_KEY.to_string(),
-            json!("*"),
-        ),
-        (
             SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS_CONFIG_KEY.to_string(),
             json!(7_200),
         ),
@@ -1528,6 +2502,10 @@ fn sandbox_manager_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("SANDBOX_MANAGER_PORT"),
         Some(&"8095".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("SANDBOX_MANAGER_INTERNAL_MTLS_PORT"),
+        Some(&"8097".to_string())
     );
     assert_eq!(
         snapshot.env.get("SANDBOX_MANAGER_DATABASE_URL"),
@@ -1590,13 +2568,9 @@ fn sandbox_manager_snapshot_exposes_runtime_environment_aliases() {
             .get("SANDBOX_MANAGER_USER_SERVICE_REQUEST_TIMEOUT_MS"),
         Some(&"5000".to_string())
     );
-    assert_eq!(
-        snapshot.env.get("SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES"),
-        Some(
-            &"sandbox.lease.create,sandbox.lease.read,sandbox.lease.release,sandbox.mcp.tools"
-                .to_string()
-        )
-    );
+    assert!(!snapshot
+        .env
+        .contains_key("SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES"));
     assert_eq!(
         snapshot
             .env
@@ -1622,8 +2596,13 @@ fn project_service_runtime_backfill_adds_all_service_defaults() {
     }
     assert!(changed_keys.contains(&PROJECT_SERVICE_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_PORT_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string()));
@@ -1650,14 +2629,30 @@ fn project_service_snapshot_exposes_runtime_environment_aliases() {
         ),
         (PROJECT_SERVICE_PORT_CONFIG_KEY.to_string(), json!(39210)),
         (
+            PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+            json!(39212),
+        ),
+        (
             PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY.to_string(),
             json!(
                 "mongodb://admin:admin@127.0.0.1:27018/project_management_service?authSource=admin"
             ),
         ),
         (
+            PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY.to_string(),
+            json!(DEFAULT_LOCAL_RABBITMQ_URL),
+        ),
+        (
+            PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY.to_string(),
+            json!("project_service.mcp.results"),
+        ),
+        (
             PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
             json!("http://127.0.0.1:39190"),
+        ),
+        (
+            PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://127.0.0.1:39192"),
         ),
         (
             PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -1729,6 +2724,10 @@ fn project_service_snapshot_exposes_runtime_environment_aliases() {
         Some(&"39210".to_string())
     );
     assert_eq!(
+        snapshot.env.get("PROJECT_SERVICE_INTERNAL_MTLS_PORT"),
+        Some(&"39212".to_string())
+    );
+    assert_eq!(
         snapshot.env.get("PROJECT_SERVICE_DATABASE_URL"),
         Some(
             &"mongodb://admin:admin@127.0.0.1:27018/project_management_service?authSource=admin"
@@ -1736,8 +2735,22 @@ fn project_service_snapshot_exposes_runtime_environment_aliases() {
         )
     );
     assert_eq!(
+        snapshot.env.get("PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL"),
+        Some(&DEFAULT_LOCAL_RABBITMQ_URL.to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX"),
+        Some(&"project_service.mcp.results".to_string())
+    );
+    assert_eq!(
         snapshot.env.get("PROJECT_SERVICE_USER_SERVICE_BASE_URL"),
         Some(&"http://127.0.0.1:39190".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL"),
+        Some(&"https://127.0.0.1:39192".to_string())
     );
     assert_eq!(
         snapshot
@@ -1810,7 +2823,6 @@ fn plugin_management_runtime_backfill_adds_all_service_defaults() {
             "missing Plugin Management config key {key}"
         );
     }
-    assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY.to_string()));
@@ -1823,6 +2835,16 @@ fn plugin_management_runtime_backfill_adds_all_service_defaults() {
     assert!(
         changed_keys.contains(&PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string())
     );
+    assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_SUPER_ADMIN_PASSWORD_CONFIG_KEY.to_string()));
 }
 
@@ -1839,16 +2861,19 @@ fn plugin_management_runtime_backfill_projects_shared_values_to_other_services()
             || definition.service_name.as_deref() == Some("project-service")
     });
 
-    assert_eq!(changed_keys.len(), 2);
+    assert_eq!(changed_keys.len(), 3);
     assert_eq!(
         env.get("PLUGIN_MANAGEMENT_SERVICE_URL"),
         Some(&"http://127.0.0.1:39260".to_string())
     );
     assert_eq!(
+        env.get("PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL"),
+        Some(&"https://plugin-management-backend:39262".to_string())
+    );
+    assert_eq!(
         env.get("PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS"),
         Some(&"5000".to_string())
     );
-    assert!(!values.contains_key(PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY));
     assert!(!env.contains_key("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"));
 }
 
@@ -1857,8 +2882,8 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
     let definitions = builtin_definitions();
     let values = BTreeMap::from([
         (
-            PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_plugin_management_internal_secret"),
+            "plugin_management.security.internal_api_secret".to_string(),
+            json!("retired-global-secret-must-not-be-projected"),
         ),
         (
             PLUGIN_MANAGEMENT_HOST_CONFIG_KEY.to_string(),
@@ -1936,6 +2961,58 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             json!(15 * 60),
         ),
         (
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY.to_string(),
+            json!("amqp://guest:guest@127.0.0.1:5672/%2f"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY.to_string(),
+            json!("chatos.command"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY.to_string(),
+            json!("plugin.catalog.sync"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY.to_string(),
+            json!("plugin.catalog.sync.retry"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY.to_string(),
+            json!("plugin.catalog.sync.schedule"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
+            json!("plugin.catalog.sync.dlq"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
+            json!(5),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
+            json!(30_000),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string(),
+            json!(2_000),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY.to_string(),
+            json!(2),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
+            json!(60_000),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
+            json!(100),
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY.to_string(),
+            json!(3_600),
+        ),
+        (
             PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(30_000),
         ),
@@ -1966,10 +3043,9 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
     )
     .expect("Plugin Management runtime snapshot");
 
-    assert_eq!(
-        snapshot.env.get("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"),
-        Some(&"change_me_plugin_management_internal_secret".to_string())
-    );
+    assert!(!snapshot
+        .env
+        .contains_key("PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"));
     assert_eq!(
         snapshot.env.get("PLUGIN_MANAGEMENT_SERVICE_HOST"),
         Some(&"127.0.0.1".to_string())
@@ -2018,6 +3094,20 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
         Some(&"30000".to_string())
     );
     assert_eq!(
+        snapshot.env.get("PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL"),
+        Some(&"amqp://guest:guest@127.0.0.1:5672/%2f".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("PLUGIN_MANAGEMENT_CATALOG_QUEUE"),
+        Some(&"plugin.catalog.sync".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS"),
+        Some(&"60000".to_string())
+    );
+    assert_eq!(
         snapshot.env.get("PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES"),
         Some(&(8 * 1024 * 1024).to_string())
     );
@@ -2043,7 +3133,7 @@ fn internal_request_security_backfill_adds_all_service_defaults() {
 
     let changed_keys = ensure_internal_request_security_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 60);
+    assert_eq!(defaults.len(), 65);
     for key in defaults.keys() {
         assert!(
             values.contains_key(key),
@@ -2065,13 +3155,26 @@ fn internal_request_security_backfill_adds_all_service_defaults() {
     assert!(
         changed_keys.contains(&PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET_CONFIG_KEY.to_string())
     );
-    assert!(
-        changed_keys.contains(&PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY.to_string())
-    );
-    assert!(changed_keys.contains(&MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&SANDBOX_MANAGER_OPERATOR_TOKEN_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys
+        .contains(&CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys
+        .contains(&CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&SANDBOX_MANAGER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
     assert!(changed_keys
@@ -2090,6 +3193,77 @@ fn internal_request_security_backfill_adds_all_service_defaults() {
         .contains(&PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
+}
+
+#[test]
+fn internal_request_security_migration_forces_strict_service_signed_requests() {
+    let definitions = builtin_definitions();
+    let defaults = internal_request_security_default_values(&definitions);
+    let mut values = BTreeMap::from([
+        (
+            LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
+            json!(false),
+        ),
+        (
+            PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
+            json!(false),
+        ),
+        (
+            PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
+            json!(false),
+        ),
+        (
+            MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
+            json!(false),
+        ),
+        (
+            MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
+            json!(false),
+        ),
+        (
+            SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
+            json!(false),
+        ),
+    ]);
+
+    let changed_keys = ensure_internal_request_security_values(&mut values, &defaults);
+
+    assert_eq!(
+        values.get(LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert!(changed_keys
+        .contains(&LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert!(changed_keys
+        .contains(&PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert!(changed_keys
+        .contains(&PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert!(changed_keys
+        .contains(&MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY),
+        Some(&json!(true))
+    );
     assert!(changed_keys
         .contains(&SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string()));
 }
@@ -2143,7 +3317,7 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
             json!("change_me_project_sync_secret"),
         ),
         (
-            PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY.to_string(),
+            PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
             json!("chatos-memory-engine-dev-operator-token"),
         ),
         (
@@ -2152,7 +3326,7 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
         ),
         (
             PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY_CONFIG_KEY.to_string(),
-            json!("chatos-task-runner-sandbox-dev-key"),
+            json!("change_me_project_service_sandbox_manager_secret"),
         ),
         (
             MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
@@ -2171,10 +3345,6 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
             json!("change_me_user_service_memory_engine_secret"),
         ),
         (
-            MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY.to_string(),
-            json!("chatos-memory-engine-dev-operator-token"),
-        ),
-        (
             SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
             json!("change_me_task_runner_sandbox_manager_secret"),
         ),
@@ -2185,18 +3355,6 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
         (
             SANDBOX_MANAGER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
             json!("change_me_mcp_management_sandbox_manager_secret"),
-        ),
-        (
-            SANDBOX_MANAGER_OPERATOR_TOKEN_CONFIG_KEY.to_string(),
-            json!("chatos-sandbox-manager-dev-operator-token"),
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ID_CONFIG_KEY.to_string(),
-            json!("task_runner"),
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_KEY_CONFIG_KEY.to_string(),
-            json!("chatos-task-runner-sandbox-dev-key"),
         ),
         (
             SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY.to_string(),
@@ -2236,7 +3394,7 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
         ),
         (
             TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("chatos-task-runner-sandbox-dev-key"),
+            json!("change_me_task_runner_sandbox_manager_secret"),
         ),
         (
             TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY.to_string(),
@@ -2365,14 +3523,14 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
     assert_eq!(
         project_snapshot
             .env
-            .get("PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN"),
+            .get("PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"),
         Some(&"chatos-memory-engine-dev-operator-token".to_string())
     );
     assert_eq!(
         project_snapshot
             .env
             .get("PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY"),
-        Some(&"chatos-task-runner-sandbox-dev-key".to_string())
+        Some(&"change_me_project_service_sandbox_manager_secret".to_string())
     );
 
     let memory_snapshot = build_snapshot("local", "memory-engine", 1, &definitions, &values)
@@ -2389,10 +3547,9 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
             .get("TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET"),
         Some(&"change_me_task_runner_memory_engine_secret".to_string())
     );
-    assert_eq!(
-        memory_snapshot.env.get("MEMORY_ENGINE_OPERATOR_TOKEN"),
-        Some(&"chatos-memory-engine-dev-operator-token".to_string())
-    );
+    assert!(!memory_snapshot
+        .env
+        .contains_key("MEMORY_ENGINE_OPERATOR_TOKEN"));
 
     let sandbox_snapshot = build_snapshot("local", "sandbox-manager", 1, &definitions, &values)
         .expect("Sandbox Manager snapshot");
@@ -2408,10 +3565,15 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
             .get("PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET"),
         Some(&"change_me_project_service_sandbox_manager_secret".to_string())
     );
-    assert_eq!(
-        sandbox_snapshot.env.get("SANDBOX_MANAGER_OPERATOR_TOKEN"),
-        Some(&"chatos-sandbox-manager-dev-operator-token".to_string())
-    );
+    assert!(!sandbox_snapshot
+        .env
+        .contains_key("SANDBOX_MANAGER_OPERATOR_TOKEN"));
+    assert!(!sandbox_snapshot
+        .env
+        .contains_key("SANDBOX_MANAGER_SYSTEM_CLIENT_ID"));
+    assert!(!sandbox_snapshot
+        .env
+        .contains_key("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"));
     assert_eq!(
         sandbox_snapshot
             .env
@@ -2437,7 +3599,7 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
         task_runner_snapshot
             .env
             .get("TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET"),
-        Some(&"chatos-task-runner-sandbox-dev-key".to_string())
+        Some(&"change_me_task_runner_sandbox_manager_secret".to_string())
     );
 
     let chatos_snapshot = build_snapshot("local", "chatos-backend", 1, &definitions, &values)
@@ -2549,7 +3711,7 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
 
     let changed_keys = ensure_user_service_runtime_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 25);
+    assert_eq!(defaults.len(), 27);
     for key in defaults.keys() {
         assert!(
             values.contains_key(key),
@@ -2557,16 +3719,26 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
         );
     }
     assert_eq!(
+        values.get(USER_SERVICE_PORT_CONFIG_KEY),
+        Some(&json!(39190))
+    );
+    assert_eq!(
+        values.get(USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY),
+        Some(&json!(39192))
+    );
+    assert_eq!(
         values.get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY),
-        Some(&Value::Null)
+        Some(&json!(
+            "https://memory-engine-backend:7083/api/memory-engine/v1"
+        ))
     );
     assert_eq!(
         values.get(USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY),
-        Some(&Value::Null)
+        Some(&json!("https://task-runner-backend:39092"))
     );
     assert_eq!(
-        values.get(USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY),
-        Some(&Value::Null)
+        values.get(USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY),
+        Some(&json!("change_me_user_service_task_runner_secret"))
     );
     assert_eq!(
         values.get(USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY),
@@ -2600,20 +3772,25 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
 }
 
 #[test]
-fn user_service_runtime_snapshot_projects_present_values_and_skips_null_aliases() {
+fn user_service_runtime_snapshot_projects_internal_memory_engine_url() {
     let definitions = builtin_definitions();
     let values = BTreeMap::from([
+        (USER_SERVICE_PORT_CONFIG_KEY.to_string(), json!(39190)),
+        (
+            USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
+            json!(39192),
+        ),
         (
             USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
-            Value::Null,
+            json!("https://memory-engine-backend:7083/api/memory-engine/v1"),
         ),
         (
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39090"),
+            json!("https://task-runner-backend:39092"),
         ),
         (
-            USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_chatos_task_runner_secret"),
+            USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
+            json!("change_me_user_service_task_runner_secret"),
         ),
         (
             USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -2708,16 +3885,27 @@ fn user_service_runtime_snapshot_projects_present_values_and_skips_null_aliases(
     let snapshot = build_snapshot("local", "user-service", 1, &definitions, &values)
         .expect("User Service runtime snapshot");
 
-    assert!(!snapshot
-        .env
-        .contains_key("USER_SERVICE_MEMORY_ENGINE_BASE_URL"));
     assert_eq!(
-        snapshot.env.get("USER_SERVICE_TASK_RUNNER_BASE_URL"),
-        Some(&"http://127.0.0.1:39090".to_string())
+        snapshot.env.get("USER_SERVICE_PORT"),
+        Some(&"39190".to_string())
     );
     assert_eq!(
-        snapshot.env.get("USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET"),
-        Some(&"change_me_chatos_task_runner_secret".to_string())
+        snapshot.env.get("USER_SERVICE_INTERNAL_MTLS_PORT"),
+        Some(&"39192".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("USER_SERVICE_MEMORY_ENGINE_BASE_URL"),
+        Some(&"https://memory-engine-backend:7083/api/memory-engine/v1".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("USER_SERVICE_TASK_RUNNER_BASE_URL"),
+        Some(&"https://task-runner-backend:39092".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"),
+        Some(&"change_me_user_service_task_runner_secret".to_string())
     );
     assert_eq!(
         snapshot
@@ -2899,6 +4087,7 @@ fn chatos_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&CHATOS_BACKEND_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string()));
@@ -2959,6 +4148,14 @@ fn chatos_snapshot_exposes_runtime_environment_aliases() {
         (
             CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
             json!("http://127.0.0.1:39210"),
+        ),
+        (
+            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://127.0.0.1:39212"),
+        ),
+        (
+            CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
+            json!(30_000),
         ),
         (
             CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string(),
@@ -3089,6 +4286,16 @@ fn chatos_snapshot_exposes_runtime_environment_aliases() {
     );
     assert_eq!(
         snapshot.env.get("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS"),
+        Some(&"30000".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL"),
+        Some(&"https://127.0.0.1:39212".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS"),
         Some(&"30000".to_string())
     );
     assert_eq!(

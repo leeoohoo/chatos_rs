@@ -10,6 +10,7 @@ use chatos_plugin_management_sdk::{
 };
 use serde_json::Value;
 
+use super::plugin_catalog_sync::is_syncable_network_marketplace;
 use super::*;
 
 pub(super) async fn list_admin_plugin_marketplaces(
@@ -87,7 +88,11 @@ pub(super) async fn update_admin_plugin_marketplace(
     };
     let replaced = state
         .store
-        .replace_plugin_marketplace_if_matches(&existing, &updated)
+        .replace_plugin_marketplace_if_matches_with_catalog_sync(
+            &existing,
+            &updated,
+            is_syncable_network_marketplace(&updated),
+        )
         .await
         .map_err(ApiError::internal)?;
     if !replaced {
@@ -118,6 +123,7 @@ pub(super) async fn update_admin_plugin_marketplace(
         .insert_plugin_audit(&audit)
         .await
         .map_err(ApiError::internal)?;
+    publish_catalog_sync_outbox(&state, updated.id.as_str()).await;
     Ok(Json(updated))
 }
 
@@ -208,7 +214,10 @@ pub(super) async fn create_plugin_marketplace(
     };
     state
         .store
-        .replace_plugin_marketplace(&record)
+        .replace_plugin_marketplace_with_catalog_sync(
+            &record,
+            is_syncable_network_marketplace(&record),
+        )
         .await
         .map_err(ApiError::internal)?;
     let audit = plugin_audit_record(
@@ -229,7 +238,20 @@ pub(super) async fn create_plugin_marketplace(
         .insert_plugin_audit(&audit)
         .await
         .map_err(ApiError::internal)?;
+    publish_catalog_sync_outbox(&state, record.id.as_str()).await;
     Ok(Json(record))
+}
+
+async fn publish_catalog_sync_outbox(state: &AppState, marketplace_id: &str) {
+    if let Err(error) =
+        crate::catalog_sync_queue::publish_pending_marketplace(state, marketplace_id).await
+    {
+        tracing::warn!(
+            marketplace_id,
+            error = error.as_str(),
+            "Plugin Management left Catalog sync event in Outbox"
+        );
+    }
 }
 
 fn validate_personal_marketplace_configuration(

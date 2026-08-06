@@ -102,11 +102,10 @@ fn sanitize_current_turn_tool_outputs(
         .unwrap_or_else(ToolResultModelBudget::from_env);
     let mut sanitized = Vec::with_capacity(tool_output_items.len());
 
-    // Preserve the newest evidence when the current turn exceeds the cumulative
-    // model-input budget. Earlier calls remain visible as compact advisories so
-    // the model knows they already ran instead of repeating them after a memory
-    // context refresh.
-    for item in tool_output_items.iter().rev() {
+    // Keep the already-sent history prefix stable across iterations. The output
+    // from the immediately preceding batch is merged afterwards as authoritative
+    // pending evidence, so it can remain complete without rewriting older items.
+    for item in tool_output_items {
         let mut item = item.clone();
         if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
             let call_id = item
@@ -123,7 +122,6 @@ fn sanitize_current_turn_tool_outputs(
         }
         sanitized.push(item);
     }
-    sanitized.reverse();
     sanitized
 }
 

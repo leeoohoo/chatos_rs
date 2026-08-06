@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
-use crate::rpc::{jsonrpc_http_tool_call_cancellable, jsonrpc_stdio_call};
+use crate::rpc::{jsonrpc_http_tool_call_cancellable_with_client, jsonrpc_stdio_call};
 use crate::text::{inject_agent_builder_args, to_text_and_structured_result_with_transient};
 use crate::types::{
     ToolCallContext, ToolCallError, ToolInfo, ToolLifecycleEvent, ToolLifecycleOutcome, ToolResult,
@@ -125,11 +125,13 @@ impl McpExecutor {
                 "http" => {
                     let url = info.server_url.clone().ok_or("missing server url")?;
                     let headers = http_tool_call_headers(info, &context).await?;
-                    let result = jsonrpc_http_tool_call_cancellable(
+                    let result = jsonrpc_http_tool_call_cancellable_with_client(
                         url.as_str(),
                         headers.as_ref(),
                         json!({"name": info.original_name, "arguments": args}),
                         info.server_timeout,
+                        info.server_async_result_transport,
+                        info.server_http_client.as_ref(),
                     )
                     .await
                     .map_err(classify_remote_tool_call_error)?;

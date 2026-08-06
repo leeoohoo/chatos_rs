@@ -52,9 +52,11 @@ Backward compatibility is still kept for the old contact-level Task Runner usern
 If you want model config changes in `user_service` to sync into the other services, configure these environment variables:
 
 - `MEMORY_ENGINE_BASE_URL=http://127.0.0.1:7081/api/memory-engine/v1`
-- `MEMORY_ENGINE_OPERATOR_TOKEN=...`
-- `TASK_RUNNER_BASE_URL=http://127.0.0.1:39090`
-- `TASK_RUNNER_CHATOS_CALLBACK_SECRET=...`
+- `USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET=...`
+- `USER_SERVICE_TASK_RUNNER_BASE_URL=https://127.0.0.1:39092`
+- `USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET=...`
+- `TASK_RUNNER_MTLS_CA_CERT_PATH=...`
+- `TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH=...`
 - `USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS=5000`
 
 ## Harness Provisioning
@@ -71,7 +73,7 @@ Important behavior:
 - `model` is optional on create. If omitted, `user_service` imports provider models from `/models`.
 - `model` is required on each concrete stored config and cannot be cleared on update.
 - Downstream sync problems are returned as `sync_warnings` on the save response.
-- Docker deployment defaults `MEMORY_ENGINE_OPERATOR_TOKEN` in `docker/.env.example` for local development.
+- Docker deployment projects `USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET` from Configuration Center for signed service calls.
 
 ## Docker Stack
 

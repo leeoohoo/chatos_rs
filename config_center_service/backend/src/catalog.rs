@@ -3,19 +3,18 @@
 
 use chatos_agent::{
     AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS,
+    DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED, DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED,
     DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
     DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS, DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
 };
 pub use chatos_agent::{
-    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+    TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
     TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
     TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };
-use chatos_service_runtime::{
-    DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN, DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET,
-    DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN, DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID,
-    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
-};
+use chatos_service_runtime::DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET;
 use chrono::Utc;
 use memory_engine_sdk::{
     memory_policy_config_key, memory_policy_env_key, ManagedMemoryPolicy, MemoryPolicyKind,
@@ -30,6 +29,17 @@ pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
     "chatos.ai.max_iterations",
     "task_runner.execution.max_iterations",
 ];
+pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";
+pub const PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY: &str =
+    "platform.pressure.controller.enabled";
+pub const PLATFORM_PRESSURE_CONTROLLER_INTERVAL_MS_CONFIG_KEY: &str =
+    "platform.pressure.controller.interval_ms";
+pub const PLATFORM_PRESSURE_SIGNAL_TTL_SECONDS_CONFIG_KEY: &str =
+    "platform.pressure.controller.signal_ttl_seconds";
+pub const PLATFORM_PRESSURE_ESCALATION_STABLE_SECONDS_CONFIG_KEY: &str =
+    "platform.pressure.controller.escalation_stable_seconds";
+pub const PLATFORM_PRESSURE_RECOVERY_STABLE_SECONDS_CONFIG_KEY: &str =
+    "platform.pressure.controller.recovery_stable_seconds";
 pub const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
 pub const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
     "task_runner.execution.environment_mode";
@@ -40,18 +50,56 @@ pub const TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY: &str =
 pub const TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY: &str = "task_runner.queue.rabbitmq_url";
 pub const TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
     "task_runner.queue.rabbitmq_exchange";
+pub const TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY: &str =
+    "task_runner.queue.rabbitmq_reconnect_ms";
 pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY: &str =
     "task_runner.queue.run_dispatch_queue";
+pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_QUEUE_CONFIG_KEY: &str =
+    "task_runner.queue.run_dispatch_retry_queue";
+pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_DELAY_MS_CONFIG_KEY: &str =
+    "task_runner.queue.run_dispatch_retry_delay_ms";
+pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "task_runner.queue.run_dispatch_outbox_reconcile_ms";
+pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "task_runner.queue.run_dispatch_outbox_batch_size";
+pub const TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_CONFIG_KEY: &str =
+    "task_runner.queue.worker_control_queue_prefix";
+pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_QUEUE_CONFIG_KEY: &str =
+    "task_runner.queue.run_post_process_queue";
+pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_RETRY_QUEUE_CONFIG_KEY: &str =
+    "task_runner.queue.run_post_process_retry_queue";
+pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
+    "task_runner.queue.run_post_process_dead_letter_queue";
+pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
+    "task_runner.queue.run_post_process_max_delivery_attempts";
+pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_RETRY_DELAY_MS_CONFIG_KEY: &str =
+    "task_runner.queue.run_post_process_retry_delay_ms";
+pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "task_runner.queue.run_post_process_outbox_reconcile_ms";
+pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "task_runner.queue.run_post_process_outbox_batch_size";
 pub const TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY: &str =
     "task_runner.queue.callback_delivery_queue";
 pub const TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY: &str =
     "task_runner.queue.run_events_publish_mode";
-pub const TASK_RUNNER_QUEUE_RUN_EVENTS_QUEUE_CONFIG_KEY: &str =
-    "task_runner.queue.run_events_queue";
+pub const TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY: &str =
+    "task_runner.queue.run_events_routing_key";
+pub const TASK_RUNNER_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY: &str =
+    "task_runner.mcp.result_queue_prefix";
+pub const TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY: &str =
+    "task_runner.pressure.queue_elevated_messages";
+pub const TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY: &str =
+    "task_runner.pressure.queue_critical_messages";
+pub const TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY: &str =
+    "task_runner.pressure.report_interval_ms";
 pub const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_result_max_chars";
 pub const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_results_total_max_chars";
+pub const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
+    "task_runner.cache.plugin_cloud_bundle_max_entries";
+pub const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY: &str =
+    "task_runner.cache.plugin_cloud_bundle_max_bytes";
 pub const TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.memory_engine_request_timeout_ms";
 pub const TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY: &str = "task_runner.scheduler.poll_interval_ms";
@@ -63,6 +111,8 @@ pub const TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.user_service_request_timeout_ms";
 pub const TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "task_runner.downstream.project_service_base_url";
+pub const TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
+    "task_runner.downstream.project_service_internal_base_url";
 pub const TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.project_service_request_timeout_ms";
 pub const TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
@@ -83,6 +133,8 @@ pub const TASK_RUNNER_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.security.chatos_internal_api_secret";
 pub const TASK_RUNNER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.security.mcp_management_internal_api_secret";
+pub const TASK_RUNNER_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
+    "task_runner.security.user_service_internal_api_secret";
 pub const TASK_RUNNER_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.downstream.plugin_management_internal_api_secret";
 pub const TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =
@@ -99,8 +151,15 @@ pub const TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY: &str =
     "task_runner.downstream.chatos_callback_url";
 pub const TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.callback_timeout_ms";
+pub const TASK_RUNNER_OTLP_ENDPOINT_CONFIG_KEY: &str = "task_runner.observability.otlp_endpoint";
+pub const TASK_RUNNER_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "task_runner.observability.trace_sample_ratio";
+pub const TASK_RUNNER_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str =
+    "task_runner.observability.export_timeout_ms";
 pub const TASK_RUNNER_HOST_CONFIG_KEY: &str = "task_runner.runtime.host";
 pub const TASK_RUNNER_PORT_CONFIG_KEY: &str = "task_runner.runtime.port";
+pub const TASK_RUNNER_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "task_runner.runtime.internal_mtls_port";
 pub const TASK_RUNNER_DATABASE_URL_CONFIG_KEY: &str = "task_runner.runtime.database_url";
 pub const TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY: &str = "task_runner.runtime.mongodb_database";
 pub const TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY: &str = "task_runner.runtime.workspace_dir";
@@ -114,6 +173,7 @@ pub const DEFAULT_LOCAL_RABBITMQ_URL: &str =
 pub const CHATOS_NODE_ENV_CONFIG_KEY: &str = "chatos.runtime.node_env";
 pub const CHATOS_HOST_CONFIG_KEY: &str = "chatos.runtime.host";
 pub const CHATOS_BACKEND_PORT_CONFIG_KEY: &str = "chatos.runtime.port";
+pub const CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY: &str = "chatos.runtime.internal_mtls_port";
 pub const CHATOS_DATABASE_URL_CONFIG_KEY: &str = "chatos.runtime.database_url";
 pub const CHATOS_MONGODB_DATABASE_CONFIG_KEY: &str = "chatos.runtime.mongodb_database";
 pub const CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY: &str =
@@ -127,9 +187,15 @@ pub const CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.downstream.user_service_request_timeout_ms";
 pub const CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "chatos.downstream.project_service_base_url";
+pub const CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
+    "chatos.downstream.project_service_internal_base_url";
+pub const CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
+    "chatos.downstream.project_service_request_timeout_ms";
 pub const CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.downstream.project_service_internal_api_secret";
 pub const CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str = "chatos.downstream.task_runner_base_url";
+pub const CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY: &str =
+    "chatos.downstream.task_runner_internal_base_url";
 pub const CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.downstream.task_runner_internal_api_secret";
 pub const CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
@@ -173,6 +239,12 @@ pub const CHATOS_AUTH_COMPAT_SECRET_CONFIG_KEY: &str = "chatos.auth.compat_secre
 pub const CHATOS_AUTH_ACCESS_TOKEN_TTL_SECONDS_CONFIG_KEY: &str =
     "chatos.auth.access_token_ttl_seconds";
 pub const CHATOS_LOG_MAX_FILES_CONFIG_KEY: &str = "chatos.logging.max_files";
+pub const CHATOS_OTLP_ENDPOINT_CONFIG_KEY: &str = "chatos.observability.otlp_endpoint";
+pub const CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "chatos.observability.trace_sample_ratio";
+pub const CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str = "chatos.observability.export_timeout_ms";
+pub const CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY: &str = "chatos.mcp.result_rabbitmq_url";
+pub const CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY: &str = "chatos.mcp.result_queue_prefix";
 pub const CHATOS_CORS_ORIGINS_CONFIG_KEY: &str = "chatos.http.cors_origins";
 pub const CHATOS_PLUGIN_UI_PARENT_ORIGIN_CONFIG_KEY: &str = "chatos.plugin_ui.parent_origin";
 pub const CHATOS_PLUGIN_UI_RESOURCE_ORIGIN_CONFIG_KEY: &str = "chatos.plugin_ui.resource_origin";
@@ -198,6 +270,8 @@ pub const SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS_CONFIG_KEY: &str =
     "sandbox_manager.docker.build_cache_timeout_secs";
 pub const SANDBOX_MANAGER_HOST_CONFIG_KEY: &str = "sandbox_manager.runtime.host";
 pub const SANDBOX_MANAGER_PORT_CONFIG_KEY: &str = "sandbox_manager.runtime.port";
+pub const SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "sandbox_manager.runtime.internal_mtls_port";
 pub const SANDBOX_MANAGER_DATABASE_URL_CONFIG_KEY: &str = "sandbox_manager.runtime.database_url";
 pub const SANDBOX_MANAGER_MONGODB_DATABASE_CONFIG_KEY: &str =
     "sandbox_manager.runtime.mongodb_database";
@@ -216,6 +290,8 @@ pub const LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str
     "local_connector.downstream.plugin_management_internal_api_secret";
 pub const LOCAL_CONNECTOR_HOST_CONFIG_KEY: &str = "local_connector.runtime.host";
 pub const LOCAL_CONNECTOR_PORT_CONFIG_KEY: &str = "local_connector.runtime.port";
+pub const LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "local_connector.runtime.internal_mtls_port";
 pub const LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY: &str = "local_connector.runtime.database_url";
 pub const LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "local_connector.downstream.user_service_base_url";
@@ -230,12 +306,25 @@ pub const LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &st
 pub const LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY: &str = "local_connector.public.base_url";
 pub const LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY: &str =
     "local_connector.device_connect.require_signature";
-pub const LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY: &str =
-    "local_connector.device_connect.allow_query_token";
 pub const LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY: &str =
     "local_connector.device_connect.signature_max_skew_seconds";
 pub const LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
     "local_connector.device_connect.active_session_lease_ttl_seconds";
+pub const LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY: &str = "local_connector.coordination.valkey_url";
+pub const LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY: &str =
+    "local_connector.coordination.key_prefix";
+pub const LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY: &str =
+    "local_connector.coordination.device_presence_ttl_seconds";
+pub const LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY: &str =
+    "local_connector.coordination.valkey_reconnect_ms";
+pub const LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY: &str =
+    "local_connector.coordination.relay_correlation_grace_seconds";
+pub const LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY: &str =
+    "local_connector.coordination.relay_delivery_ack_timeout_ms";
+pub const LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY: &str =
+    "local_connector.coordination.terminal_subscriber_ttl_seconds";
+pub const LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY: &str =
+    "local_connector.coordination.terminal_subscriber_refresh_seconds";
 pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY: &str =
     "local_connector.managed_requirements.bundle_ttl_seconds";
 pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY: &str =
@@ -258,13 +347,27 @@ pub const PROJECT_SERVICE_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "project_service.security.mcp_management_internal_api_secret";
 pub const PROJECT_SERVICE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "project_service.downstream.plugin_management_internal_api_secret";
+pub const PROJECT_SERVICE_OTLP_ENDPOINT_CONFIG_KEY: &str =
+    "project_service.observability.otlp_endpoint";
+pub const PROJECT_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "project_service.observability.trace_sample_ratio";
+pub const PROJECT_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str =
+    "project_service.observability.export_timeout_ms";
 pub const PROJECT_SERVICE_HOST_CONFIG_KEY: &str = "project_service.runtime.host";
 pub const PROJECT_SERVICE_PORT_CONFIG_KEY: &str = "project_service.runtime.port";
+pub const PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "project_service.runtime.internal_mtls_port";
 pub const PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY: &str = "project_service.runtime.database_url";
+pub const PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY: &str =
+    "project_service.mcp.result_rabbitmq_url";
+pub const PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY: &str =
+    "project_service.mcp.result_queue_prefix";
 pub const PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET_CONFIG_KEY: &str =
     "project_service.downstream.user_service_internal_secret";
 pub const PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "project_service.downstream.user_service_base_url";
+pub const PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
+    "project_service.downstream.user_service_internal_base_url";
 pub const PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "project_service.downstream.user_service_request_timeout_ms";
 pub const PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET_CONFIG_KEY: &str =
@@ -280,8 +383,8 @@ pub const PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY:
     "project_service.downstream.local_connector_service_request_timeout_ms";
 pub const PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
     "project_service.downstream.memory_engine_base_url";
-pub const PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY: &str =
-    "project_service.downstream.memory_engine_operator_token";
+pub const PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
+    "project_service.downstream.memory_engine_internal_api_secret";
 pub const PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "project_service.downstream.memory_engine_request_timeout_ms";
 pub const PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY: &str =
@@ -304,6 +407,14 @@ pub const PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS_CONFIG_KEY: &str =
     "project_service.cloud_import.git_timeout_ms";
 pub const MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "memory_engine.security.require_signed_internal_requests";
+pub const CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
+    "configuration_center.downstream.memory_engine_base_url";
+pub const CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY: &str =
+    "configuration_center.downstream.plugin_management_base_url";
+pub const CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY: &str =
+    "configuration_center.downstream.mcp_management_base_url";
+pub const CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
+    "configuration_center.downstream.mcp_management_internal_api_secret";
 pub const MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.chatos_internal_api_secret";
 pub const MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
@@ -312,11 +423,14 @@ pub const MEMORY_ENGINE_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.project_service_internal_api_secret";
 pub const MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.user_service_internal_api_secret";
+pub const MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
+    "memory_engine.security.configuration_center_internal_api_secret";
 pub const MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.downstream.plugin_management_internal_api_secret";
-pub const MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY: &str = "memory_engine.security.operator_token";
 pub const MEMORY_ENGINE_HOST_CONFIG_KEY: &str = "memory_engine.runtime.host";
 pub const MEMORY_ENGINE_PORT_CONFIG_KEY: &str = "memory_engine.runtime.port";
+pub const MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "memory_engine.runtime.internal_mtls_port";
 pub const MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY: &str = "memory_engine.runtime.mongodb_uri";
 pub const MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY: &str =
     "memory_engine.runtime.mongodb_database";
@@ -337,12 +451,71 @@ pub const MEMORY_ENGINE_WORKER_MAX_THREADS_PER_TICK_CONFIG_KEY: &str =
     "memory_engine.worker.max_threads_per_tick";
 pub const MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY: &str =
     "memory_engine.worker.summary_concurrency";
+pub const MEMORY_ENGINE_WORKER_PRESSURE_SUMMARY_CONCURRENCY_CONFIG_KEY: &str =
+    "memory_engine.worker.pressure_summary_concurrency";
+pub const MEMORY_ENGINE_WORKER_PRESSURE_REFRESH_INTERVAL_MS_CONFIG_KEY: &str =
+    "memory_engine.worker.pressure_refresh_interval_ms";
+pub const MEMORY_ENGINE_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY: &str =
+    "memory_engine.pressure.queue_elevated_messages";
+pub const MEMORY_ENGINE_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY: &str =
+    "memory_engine.pressure.queue_critical_messages";
 pub const MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY: &str =
     "memory_engine.worker.rollup_concurrency";
 pub const MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY: &str =
     "memory_engine.worker.subject_memory_concurrency";
 pub const MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY_CONFIG_KEY: &str =
     "memory_engine.worker.reconcile_concurrency";
+pub const MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY: &str = "memory_engine.queue.rabbitmq_url";
+pub const MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
+    "memory_engine.queue.rabbitmq_exchange";
+pub const MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.rabbitmq_reconnect_delay_ms";
+pub const MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY: &str = "memory_engine.queue.summary_queue";
+pub const MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY: &str =
+    "memory_engine.queue.summary_retry_queue";
+pub const MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
+    "memory_engine.queue.summary_dead_letter_queue";
+pub const MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
+    "memory_engine.queue.summary_max_delivery_attempts";
+pub const MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.summary_retry_delay_ms";
+pub const MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.summary_outbox_reconcile_ms";
+pub const MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "memory_engine.queue.summary_outbox_batch_size";
+pub const MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY: &str = "memory_engine.queue.rollup_queue";
+pub const MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY: &str =
+    "memory_engine.queue.rollup_retry_queue";
+pub const MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
+    "memory_engine.queue.rollup_dead_letter_queue";
+pub const MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
+    "memory_engine.queue.rollup_max_delivery_attempts";
+pub const MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.rollup_retry_delay_ms";
+pub const MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.rollup_outbox_reconcile_ms";
+pub const MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "memory_engine.queue.rollup_outbox_batch_size";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_queue";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_retry_queue";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_dead_letter_queue";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_max_delivery_attempts";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_retry_delay_ms";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_outbox_reconcile_ms";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_outbox_batch_size";
+pub const MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY: &str =
+    "memory_engine.queue.subject_memory_lock_timeout_secs";
+pub const MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY: &str =
+    "memory_engine.queue.record_sync_lease_timeout_secs";
+pub const MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY: &str =
+    "memory_engine.queue.rollup_lock_timeout_secs";
 pub const SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "sandbox_manager.security.require_signed_internal_requests";
 pub const SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
@@ -351,27 +524,17 @@ pub const SANDBOX_MANAGER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "sandbox_manager.security.project_service_internal_api_secret";
 pub const SANDBOX_MANAGER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "sandbox_manager.security.mcp_management_internal_api_secret";
-pub const SANDBOX_MANAGER_OPERATOR_TOKEN_CONFIG_KEY: &str =
-    "sandbox_manager.security.operator_token";
-pub const SANDBOX_MANAGER_SYSTEM_CLIENT_ID_CONFIG_KEY: &str =
-    "sandbox_manager.security.system_client_id";
-pub const SANDBOX_MANAGER_SYSTEM_CLIENT_KEY_CONFIG_KEY: &str =
-    "sandbox_manager.security.system_client_key";
 pub const SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY: &str =
     "sandbox_manager.security.agent_token_secret";
+pub const SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID_CONFIG_KEY: &str =
+    "sandbox_manager.frontend.proxy_client_id";
+pub const SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY_CONFIG_KEY: &str =
+    "sandbox_manager.frontend.proxy_client_key";
 pub const SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY: &str = "sandbox_manager.security.require_auth";
 pub const SANDBOX_MANAGER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "sandbox_manager.downstream.user_service_base_url";
 pub const SANDBOX_MANAGER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "sandbox_manager.downstream.user_service_request_timeout_ms";
-pub const SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES_CONFIG_KEY: &str =
-    "sandbox_manager.security.system_client_scopes";
-pub const SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS_CONFIG_KEY: &str =
-    "sandbox_manager.security.system_client_allowed_tenant_ids";
-pub const SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS_CONFIG_KEY: &str =
-    "sandbox_manager.security.system_client_allowed_project_ids";
-pub const SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS_CONFIG_KEY: &str =
-    "sandbox_manager.security.system_client_allowed_tools";
 pub const SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
     "sandbox_manager.security.system_client_max_lease_ttl_seconds";
 pub const LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY: &str =
@@ -390,6 +553,18 @@ pub const LOCAL_CONNECTOR_TERMINAL_MAX_EVENT_BYTES_CONFIG_KEY: &str =
     "local_connector.terminal.max_event_bytes";
 pub const LOCAL_CONNECTOR_TERMINAL_EVENT_CHANNEL_CAPACITY_CONFIG_KEY: &str =
     "local_connector.terminal.event_channel_capacity";
+pub const LOCAL_CONNECTOR_TERMINAL_MAX_ACTIVE_SESSIONS_CONFIG_KEY: &str =
+    "local_connector.terminal.max_active_sessions";
+pub const LOCAL_CONNECTOR_TERMINAL_NEW_SESSION_SOFT_LIMIT_CONFIG_KEY: &str =
+    "local_connector.terminal.new_session_soft_limit";
+pub const LOCAL_CONNECTOR_TERMINAL_MAX_SUBSCRIBERS_PER_SESSION_CONFIG_KEY: &str =
+    "local_connector.terminal.max_subscribers_per_session";
+pub const LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY: &str =
+    "local_connector.pressure.pending_relay_elevated_requests";
+pub const LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY: &str =
+    "local_connector.pressure.pending_relay_critical_requests";
+pub const LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY: &str =
+    "local_connector.pressure.report_interval_ms";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY: &str =
     "mcp_management.async_tool.dispatch_mode";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY_CONFIG_KEY: &str =
@@ -400,12 +575,38 @@ pub const MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY: &str =
     "mcp_management.async_tool.rabbitmq_url";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
     "mcp_management.async_tool.rabbitmq_exchange";
+pub const MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY: &str =
+    "mcp_management.invocation.cancellation_exchange";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY: &str =
     "mcp_management.async_tool.dispatch_queue";
-pub const MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "mcp_management.security.internal_api_secret";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY: &str =
+    "mcp_management.async_tool.queue_max_length";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY: &str =
+    "mcp_management.async_tool.queue_max_bytes";
+pub const MCP_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_PERCENT_CONFIG_KEY: &str =
+    "mcp_management.pressure.queue_elevated_percent";
+pub const MCP_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_PERCENT_CONFIG_KEY: &str =
+    "mcp_management.pressure.queue_critical_percent";
+pub const MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY: &str =
+    "mcp_management.pressure.report_interval_ms";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY: &str =
+    "mcp_management.async_tool.rabbitmq_reconnect_ms";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "mcp_management.async_tool.result_outbox_reconcile_ms";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "mcp_management.async_tool.result_outbox_batch_size";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
+    "mcp_management.async_tool.max_delivery_attempts";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY: &str =
+    "mcp_management.async_tool.retry_delay_ms";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY: &str =
+    "mcp_management.async_tool.retry_queue";
+pub const MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
+    "mcp_management.async_tool.dead_letter_queue";
 pub const MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY: &str =
     "mcp_management.security.allowed_internal_callers";
+pub const MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
+    "mcp_management.security.configuration_center_internal_api_secret";
 pub const MCP_MANAGEMENT_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "mcp_management.downstream.plugin_management_internal_api_secret";
 pub const MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
@@ -420,6 +621,14 @@ pub const MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "mcp_management.downstream.sandbox_manager_internal_api_secret";
 pub const MCP_MANAGEMENT_HOST_CONFIG_KEY: &str = "mcp_management.runtime.host";
 pub const MCP_MANAGEMENT_PORT_CONFIG_KEY: &str = "mcp_management.runtime.port";
+pub const MCP_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "mcp_management.runtime.internal_mtls_port";
+pub const MCP_MANAGEMENT_OTLP_ENDPOINT_CONFIG_KEY: &str =
+    "mcp_management.observability.otlp_endpoint";
+pub const MCP_MANAGEMENT_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "mcp_management.observability.trace_sample_ratio";
+pub const MCP_MANAGEMENT_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str =
+    "mcp_management.observability.export_timeout_ms";
 pub const MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY: &str = "mcp_management.runtime.database_url";
 pub const MCP_MANAGEMENT_RUNTIME_GRANT_SECRET_CONFIG_KEY: &str =
     "mcp_management.runtime.grant_secret";
@@ -433,6 +642,22 @@ pub const MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
     "mcp_management.runtime.external_http_tool_timeout_ms";
 pub const MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY: &str =
     "mcp_management.runtime.session_ttl_seconds";
+pub const MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
+    "mcp_management.runtime.session_cache_max_entries";
+pub const MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY: &str =
+    "mcp_management.runtime.session_cache_max_bytes";
+pub const MCP_MANAGEMENT_INVOCATION_QUOTA_VALKEY_URL_CONFIG_KEY: &str =
+    "mcp_management.invocation.quota_valkey_url";
+pub const MCP_MANAGEMENT_INVOCATION_QUOTA_KEY_PREFIX_CONFIG_KEY: &str =
+    "mcp_management.invocation.quota_key_prefix";
+pub const MCP_MANAGEMENT_INVOCATION_TENANT_ACTIVE_LIMIT_CONFIG_KEY: &str =
+    "mcp_management.invocation.tenant_active_limit";
+pub const MCP_MANAGEMENT_INVOCATION_USER_ACTIVE_LIMIT_CONFIG_KEY: &str =
+    "mcp_management.invocation.user_active_limit";
+pub const MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY: &str =
+    "mcp_management.invocation.project_active_limit";
+pub const MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY: &str =
+    "mcp_management.invocation.device_active_limit";
 pub const MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
     "mcp_management.runtime.sandbox_tool_timeout_ms";
 pub const MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
@@ -473,8 +698,6 @@ pub const PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.memory_engine_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.mcp_management_internal_api_secret";
-pub const PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "plugin_management.security.internal_api_secret";
 pub const PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET_CONFIG_KEY: &str =
     "plugin_management.security.cloud_credential_encryption_secret";
 pub const PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
@@ -487,6 +710,8 @@ pub const PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str =
     "plugin_management.downstream.task_runner_base_url";
 pub const PLUGIN_MANAGEMENT_HOST_CONFIG_KEY: &str = "plugin_management.runtime.host";
 pub const PLUGIN_MANAGEMENT_PORT_CONFIG_KEY: &str = "plugin_management.runtime.port";
+pub const PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "plugin_management.runtime.internal_mtls_port";
 pub const PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY: &str =
     "plugin_management.runtime.database_url";
 pub const PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY: &str =
@@ -512,6 +737,37 @@ pub const PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED_CONFIG_KEY: &str =
     "plugin_management.catalog.sync_enabled";
 pub const PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY: &str =
     "plugin_management.catalog.sync_interval_seconds";
+pub const PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY: &str =
+    "plugin_management.pressure.queue_elevated_messages";
+pub const PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY: &str =
+    "plugin_management.pressure.queue_critical_messages";
+pub const PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY: &str =
+    "plugin_management.pressure.report_interval_ms";
+pub const PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY: &str =
+    "plugin_management.catalog.rabbitmq_url";
+pub const PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
+    "plugin_management.catalog.rabbitmq_exchange";
+pub const PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY: &str = "plugin_management.catalog.queue";
+pub const PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY: &str =
+    "plugin_management.catalog.retry_queue";
+pub const PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY: &str =
+    "plugin_management.catalog.schedule_queue";
+pub const PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
+    "plugin_management.catalog.dead_letter_queue";
+pub const PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
+    "plugin_management.catalog.max_delivery_attempts";
+pub const PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY: &str =
+    "plugin_management.catalog.retry_delay_ms";
+pub const PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY: &str =
+    "plugin_management.catalog.rabbitmq_reconnect_ms";
+pub const PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY: &str =
+    "plugin_management.catalog.consumer_concurrency";
+pub const PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "plugin_management.catalog.outbox_reconcile_ms";
+pub const PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "plugin_management.catalog.outbox_batch_size";
+pub const PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY: &str =
+    "plugin_management.catalog.sync_lock_timeout_seconds";
 pub const PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "plugin_management.catalog.request_timeout_ms";
 pub const PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY: &str =
@@ -522,6 +778,14 @@ pub const PLUGIN_MANAGEMENT_SUPER_ADMIN_PASSWORD_CONFIG_KEY: &str =
     "plugin_management.bootstrap.super_admin_password";
 pub const PLUGIN_MANAGEMENT_SEED_SYSTEM_RESOURCES_CONFIG_KEY: &str =
     "plugin_management.bootstrap.seed_system_resources";
+pub const USER_SERVICE_PORT_CONFIG_KEY: &str = "user_service.runtime.port";
+pub const USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "user_service.runtime.internal_mtls_port";
+pub const USER_SERVICE_OTLP_ENDPOINT_CONFIG_KEY: &str = "user_service.observability.otlp_endpoint";
+pub const USER_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "user_service.observability.trace_sample_ratio";
+pub const USER_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str =
+    "user_service.observability.export_timeout_ms";
 pub const USER_SERVICE_JWT_SECRET_CONFIG_KEY: &str = "user_service.security.jwt_secret";
 pub const USER_SERVICE_SECRET_KEY_CONFIG_KEY: &str = "user_service.security.secret_key";
 pub const USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY: &str =
@@ -562,8 +826,8 @@ pub const USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
     "user_service.downstream.memory_engine_base_url";
 pub const USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str =
     "user_service.downstream.task_runner_base_url";
-pub const USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY: &str =
-    "user_service.downstream.task_runner_callback_secret";
+pub const USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
+    "user_service.downstream.task_runner_internal_api_secret";
 pub const USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "user_service.downstream.request_timeout_ms";
 pub const USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY: &str =
@@ -584,8 +848,14 @@ pub const USER_SERVICE_EMAIL_FROM_CONFIG_KEY: &str = "user_service.smtp.email_fr
 pub const USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY: &str = "user_service.smtp.email_from_name";
 pub const SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY: &str =
     "shared.downstream.plugin_management_service_url";
+pub const SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY: &str =
+    "shared.downstream.plugin_management_service_internal_url";
 pub const SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "shared.downstream.plugin_management_request_timeout_ms";
+pub const SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY: &str =
+    "shared.downstream.mcp_management_service_base_url";
+pub const SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
+    "shared.downstream.mcp_management_request_timeout_ms";
 
 pub fn default_task_runner_execution_environment_mode() -> &'static str {
     if cfg!(target_os = "linux") {
@@ -616,6 +886,108 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            PLATFORM_PRESSURE_LEVEL_CONFIG_KEY,
+            "平台压力等级",
+            "配置中心发布的权威平台压力状态；业务服务不得自行窥探其他服务队列推断全局压力",
+            "Platform / Pressure",
+            "shared",
+            None,
+            "enum",
+            json!("normal"),
+            None,
+            None,
+            &["normal", "elevated", "critical"],
+            "hot_reload",
+            &[],
+            40,
+            &now,
+        ),
+        definition(
+            PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY,
+            "启用自动压力控制器",
+            "由配置中心聚合服务压力信号并自动发布权威平台压力等级",
+            "Platform / Pressure",
+            "shared",
+            None,
+            "boolean",
+            json!(true),
+            None,
+            None,
+            &[],
+            "hot_reload",
+            &[],
+            41,
+            &now,
+        ),
+        definition(
+            PLATFORM_PRESSURE_CONTROLLER_INTERVAL_MS_CONFIG_KEY,
+            "压力控制器检查间隔",
+            "配置中心重新聚合服务压力信号的间隔",
+            "Platform / Pressure",
+            "shared",
+            None,
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(60_000),
+            &[],
+            "hot_reload",
+            &[],
+            42,
+            &now,
+        ),
+        definition(
+            PLATFORM_PRESSURE_SIGNAL_TTL_SECONDS_CONFIG_KEY,
+            "压力信号有效期",
+            "超过该时间未更新的服务压力信号不参与平台压力判定",
+            "Platform / Pressure",
+            "shared",
+            None,
+            "integer",
+            json!(30),
+            Some(5),
+            Some(600),
+            &[],
+            "hot_reload",
+            &[],
+            43,
+            &now,
+        ),
+        definition(
+            PLATFORM_PRESSURE_ESCALATION_STABLE_SECONDS_CONFIG_KEY,
+            "压力升级稳定窗口",
+            "候选压力等级持续达到该时间后才升级权威等级",
+            "Platform / Pressure",
+            "shared",
+            None,
+            "integer",
+            json!(5),
+            Some(0),
+            Some(300),
+            &[],
+            "hot_reload",
+            &[],
+            44,
+            &now,
+        ),
+        definition(
+            PLATFORM_PRESSURE_RECOVERY_STABLE_SECONDS_CONFIG_KEY,
+            "压力恢复稳定窗口",
+            "候选压力下降持续达到该时间后才降低权威等级，避免抖动",
+            "Platform / Pressure",
+            "shared",
+            None,
+            "integer",
+            json!(60),
+            Some(5),
+            Some(3_600),
+            &[],
+            "hot_reload",
+            &[],
+            45,
+            &now,
+        ),
+        definition(
             AGENT_MAX_ITERATIONS_CONFIG_KEY,
             "Agent 最大迭代次数",
             "所有系统 Agent 单次执行的模型工具循环迭代上限",
@@ -634,8 +1006,8 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         ),
         definition(
             SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
-            "Plugin Management Service URL",
-            "内部服务调用 Plugin Management 时使用的统一基础地址",
+            "Plugin Management Public Service URL",
+            "内部服务调用 Plugin Management 用户 Bearer API 时使用的公网监听地址",
             "Shared / Downstream",
             "shared",
             None,
@@ -647,6 +1019,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_URL"],
             101,
+            &now,
+        ),
+        definition(
+            SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
+            "Plugin Management Internal Service URL",
+            "内部服务调用 Plugin Management 控制面时使用的强制 mTLS 地址",
+            "Shared / Downstream",
+            "shared",
+            None,
+            "string",
+            json!("https://plugin-management-backend:39262"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL"],
+            1011,
             &now,
         ),
         definition(
@@ -664,6 +1053,40 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS"],
             102,
+            &now,
+        ),
+        definition(
+            SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
+            "MCP Management Internal Base URL",
+            "内部服务调用 MCP Management 控制面时使用的强制 mTLS 地址",
+            "Shared / Downstream",
+            "shared",
+            None,
+            "string",
+            json!("https://mcp-management-service-backend:39282"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_SERVICE_BASE_URL"],
+            103,
+            &now,
+        ),
+        definition(
+            SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "MCP Management Control Request Timeout",
+            "内部服务调用 MCP Management 控制面接口的请求超时毫秒数",
+            "Shared / Downstream",
+            "shared",
+            None,
+            "duration_ms",
+            json!(5_000),
+            Some(300),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_REQUEST_TIMEOUT_MS"],
+            104,
             &now,
         ),
         definition(
@@ -819,6 +1242,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             160,
             &now,
         ),
+        definition(
+            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Chatos Backend 内部服务接口的强制 mTLS 监听端口",
+            "Chat OS / Runtime",
+            "service",
+            Some("chatos-backend"),
+            "integer",
+            json!(3999),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["CHATOS_INTERNAL_MTLS_PORT"],
+            160,
+            &now,
+        ),
         secret_definition(
             CHATOS_DATABASE_URL_CONFIG_KEY,
             "Database URL",
@@ -930,6 +1370,40 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             163,
             &now,
         ),
+        definition(
+            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "Project Service Internal Base URL",
+            "Chatos Backend 调用 Project Service 内部接口时使用的强制 mTLS 地址",
+            "Chat OS / Downstream Security",
+            "service",
+            Some("chatos-backend"),
+            "string",
+            json!("https://project-management-backend:39212"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL"],
+            164,
+            &now,
+        ),
+        definition(
+            CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "Project Service Request Timeout",
+            "Chatos Backend 调用 Project Service 内部接口时使用的请求超时毫秒数",
+            "Chat OS / Downstream",
+            "service",
+            Some("chatos-backend"),
+            "duration_ms",
+            json!(30_000),
+            Some(300),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS"],
+            164,
+            &now,
+        ),
         secret_definition(
             CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
             "Project Service Internal Secret",
@@ -958,6 +1432,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_TASK_RUNNER_BASE_URL"],
             166,
+            &now,
+        ),
+        definition(
+            CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY,
+            "Task Runner Internal Base URL",
+            "Chatos Backend 调用 Task Runner 内部控制面时使用的强制 mTLS 地址",
+            "Chat OS / Downstream Security",
+            "service",
+            Some("chatos-backend"),
+            "string",
+            json!("https://task-runner-backend:39092"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["CHATOS_TASK_RUNNER_INTERNAL_BASE_URL"],
+            167,
             &now,
         ),
         secret_definition(
@@ -1024,7 +1515,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("chatos-backend"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],
@@ -1071,7 +1562,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("chatos-backend"),
             "string",
-            json!("http://127.0.0.1:7081/api/memory-engine/v1"),
+            json!("https://memory-engine-backend:7083/api/memory-engine/v1"),
             None,
             None,
             &[],
@@ -1083,11 +1574,11 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         secret_definition(
             CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "Memory Engine Internal Secret",
-            "Chatos Backend 调用 Memory Engine 内部接口时使用的 operator token",
+            "Chatos Backend 签发 Memory Engine 内部短期 token 时使用的调用方专属密钥",
             "Chat OS / Downstream Security",
             "service",
             Some("chatos-backend"),
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_chatos_memory_engine_secret"),
             "restart_required",
             &["CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             174,
@@ -1422,6 +1913,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            CHATOS_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "ChatOS OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "Chat OS / Observability",
+            "service",
+            Some("chatos-backend"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["CHATOS_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            194,
+            &now,
+        ),
+        definition(
+            CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "ChatOS 根链路按 Trace ID 采样的比例",
+            "Chat OS / Observability",
+            "service",
+            Some("chatos-backend"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["CHATOS_OTEL_TRACE_SAMPLE_RATIO"],
+            195,
+            &now,
+        ),
+        definition(
+            CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "ChatOS 导出一批 trace 的超时毫秒数",
+            "Chat OS / Observability",
+            "service",
+            Some("chatos-backend"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["CHATOS_OTEL_EXPORT_TIMEOUT_MS"],
+            196,
+            &now,
+        ),
+        definition(
             CHATOS_CORS_ORIGINS_CONFIG_KEY,
             "CORS Origins",
             "Chatos Backend 允许的跨域来源列表，使用逗号分隔，支持 *",
@@ -1436,6 +1978,40 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CORS_ORIGINS"],
             193,
+            &now,
+        ),
+        definition(
+            CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY,
+            "MCP 结果 RabbitMQ 地址",
+            "Chatos Backend 消费 MCP 异步调用结果事件使用的 AMQP 地址",
+            "Chat OS / MCP Queue",
+            "service",
+            Some("chatos-backend"),
+            "string",
+            json!(DEFAULT_LOCAL_RABBITMQ_URL),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["CHATOS_MCP_RESULT_RABBITMQ_URL"],
+            194,
+            &now,
+        ),
+        definition(
+            CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
+            "MCP 结果队列前缀",
+            "Chatos Backend 按实例创建共享 MCP 结果消费队列使用的名称前缀",
+            "Chat OS / MCP Queue",
+            "service",
+            Some("chatos-backend"),
+            "string",
+            json!("chatos.mcp.results"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["CHATOS_MCP_RESULT_QUEUE_PREFIX"],
+            196,
             &now,
         ),
         nullable_definition(
@@ -1528,8 +2104,8 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "任务执行最大迭代次数",
             "单次 Task Run 允许的模型与工具循环总次数；最后两轮会自动关闭工具并强制收尾",
             "Task Runner / Execution",
-            "service",
-            Some("task-runner"),
+            "shared",
+            None,
             "integer",
             json!(DEFAULT_AGENT_MAX_ITERATIONS),
             Some(2),
@@ -1545,8 +2121,8 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "复盘触发：只读迭代次数",
             "Task Run 连续多少轮没有真实工程改动时触发一次自动复盘；不会禁用工具",
             "Task Runner / Execution",
-            "service",
-            Some("task-runner"),
+            "shared",
+            None,
             "integer",
             json!(DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS),
             Some(1),
@@ -1562,8 +2138,8 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "复盘触发：缺失文件读取次数",
             "Task Run 连续读取不存在文件达到该次数时触发自动复盘；不会禁用读取工具",
             "Task Runner / Execution",
-            "service",
-            Some("task-runner"),
+            "shared",
+            None,
             "integer",
             json!(DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES),
             Some(1),
@@ -1579,8 +2155,8 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "复盘触发：重复间隔",
             "同一 Task Run 自动复盘之间至少间隔多少轮模型/工具循环",
             "Task Runner / Execution",
-            "service",
-            Some("task-runner"),
+            "shared",
+            None,
             "integer",
             json!(DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL),
             Some(1),
@@ -1628,7 +2204,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         definition(
             TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
             "Run 调度模式",
-            "控制 Task Run 创建后是由当前实例直接拉起，还是进入 RabbitMQ 分发队列",
+            "Task Run 创建后必须进入 RabbitMQ 分发队列，禁止回退到数据库轮询",
             "Task Runner / Queue",
             "service",
             Some("task-runner"),
@@ -1636,7 +2212,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             json!("rabbitmq"),
             None,
             None,
-            &["inline", "rabbitmq"],
+            &["rabbitmq"],
             "restart_required",
             &["TASK_RUNNER_RUN_DISPATCH_MODE"],
             216,
@@ -1694,6 +2270,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+            "RabbitMQ 重连等待时间",
+            "Task Runner 队列消费者连接中断后再次连接 RabbitMQ 的等待毫秒数",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(3_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RABBITMQ_RECONNECT_MS"],
+            219,
+            &now,
+        ),
+        definition(
             TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY,
             "Run 调度队列名",
             "Task Runner 分发 queued run 给 worker 的 RabbitMQ 队列名",
@@ -1708,6 +2301,210 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_DISPATCH_QUEUE"],
             220,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_QUEUE_CONFIG_KEY,
+            "Run 调度延迟重试队列名",
+            "执行通道暂不可用时暂存 Run 调度消息的 RabbitMQ 延迟队列名",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("task_runner.run.dispatch.retry"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_DISPATCH_RETRY_QUEUE"],
+            221,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_DELAY_MS_CONFIG_KEY,
+            "Run 调度延迟重试时间",
+            "执行通道暂不可用时由 RabbitMQ 延迟再次触发认领的等待毫秒数",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(1_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_DISPATCH_RETRY_DELAY_MS"],
+            222,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "Run 调度 Outbox 补偿间隔",
+            "扫描异常遗留待发布 Run 调度事件的低频补偿间隔毫秒数，不用于业务任务发现",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_DISPATCH_OUTBOX_RECONCILE_MS"],
+            223,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "Run 调度 Outbox 补偿批次",
+            "单轮最多补偿发布的待处理 Run 调度事件数量",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE"],
+            224,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_CONFIG_KEY,
+            "Worker 控制队列前缀",
+            "每个 Task Runner Worker 实例共享的定向控制事件队列名称前缀",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("task_runner.worker.control"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_WORKER_CONTROL_QUEUE_PREFIX"],
+            225,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_POST_PROCESS_QUEUE_CONFIG_KEY,
+            "Run 后处理队列名",
+            "成功 Run 的 Memory 总结和后续任务调度使用的共享 RabbitMQ 队列名",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("task_runner.run.post_process"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_POST_PROCESS_QUEUE"],
+            226,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_POST_PROCESS_RETRY_QUEUE_CONFIG_KEY,
+            "Run 后处理延迟重试队列名",
+            "Run 后处理失败后等待 RabbitMQ 重新投递的共享延迟队列名",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("task_runner.run.post_process.retry"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_POST_PROCESS_RETRY_QUEUE"],
+            227,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_POST_PROCESS_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "Run 后处理死信队列名",
+            "Run 后处理达到最大投递次数后保存毒消息的 RabbitMQ 队列名",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("task_runner.run.post_process.dead"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_POST_PROCESS_DEAD_LETTER_QUEUE"],
+            228,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_POST_PROCESS_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "Run 后处理最大投递次数",
+            "Run 后处理进入死信队列前允许的最大失败投递次数",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(8),
+            Some(1),
+            Some(100),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_POST_PROCESS_MAX_DELIVERY_ATTEMPTS"],
+            229,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_POST_PROCESS_RETRY_DELAY_MS_CONFIG_KEY,
+            "Run 后处理重试等待时间",
+            "Run 后处理失败后由 RabbitMQ 延迟再次触发的等待毫秒数",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_POST_PROCESS_RETRY_DELAY_MS"],
+            228,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_POST_PROCESS_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "Run 后处理 Outbox 补偿间隔",
+            "低频补偿发布异常遗留的 Run 后处理和定向终端清理事件，不用于业务任务发现",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_RECONCILE_MS"],
+            229,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_QUEUE_RUN_POST_PROCESS_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "Run 后处理 Outbox 补偿批次",
+            "单轮最多补偿发布的 Run 后处理和定向终端清理事件数量",
+            "Task Runner / Queue",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_BATCH_SIZE"],
+            230,
             &now,
         ),
         definition(
@@ -1730,35 +2527,103 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         definition(
             TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
             "Run 事件发布模式",
-            "控制持久化 Run 事件后是否额外发布到 RabbitMQ；仅在已有事件消费者时启用",
+            "持久化 Run 事件后必须通过 RabbitMQ 广播到各 API 实例",
             "Task Runner / Queue",
             "service",
             Some("task-runner"),
             "enum",
-            json!("inline"),
+            json!("rabbitmq"),
             None,
             None,
-            &["inline", "rabbitmq"],
+            &["rabbitmq"],
             "restart_required",
             &["TASK_RUNNER_RUN_EVENTS_PUBLISH_MODE"],
             222,
             &now,
         ),
         definition(
-            TASK_RUNNER_QUEUE_RUN_EVENTS_QUEUE_CONFIG_KEY,
-            "Run 事件队列名",
-            "Task Runner 对外发布 Run 事件时使用的 RabbitMQ 队列名",
+            TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY,
+            "Run 事件广播路由键",
+            "Task Runner 发布 Run 事件、API 实例绑定临时消费队列时使用的 RabbitMQ 路由键",
             "Task Runner / Queue",
             "service",
             Some("task-runner"),
             "string",
-            json!("task_runner.run.events"),
+            json!("task_runner.run.events.broadcast"),
             None,
             None,
             &[],
             "restart_required",
-            &["TASK_RUNNER_RUN_EVENTS_QUEUE"],
+            &["TASK_RUNNER_RUN_EVENTS_ROUTING_KEY"],
             223,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
+            "MCP 结果队列前缀",
+            "Task Runner 按实例创建共享 MCP 结果消费队列使用的名称前缀",
+            "Task Runner / MCP Queue",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("task_runner.mcp.results"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_MCP_RESULT_QUEUE_PREFIX"],
+            225,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+            "Task Runner 队列升压阈值",
+            "Task Runner 自有主队列 ready 消息总数达到该值时上报 elevated",
+            "Task Runner / Pressure",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            2251,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+            "Task Runner 队列临界阈值",
+            "Task Runner 自有主队列 ready 消息总数达到该值时上报 critical",
+            "Task Runner / Pressure",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(1_000),
+            Some(2),
+            Some(100_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            2252,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            "Task Runner 压力上报间隔",
+            "Task Runner 刷新压力策略并上报自身队列压力信号的间隔",
+            "Task Runner / Pressure",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "hot_reload",
+            &[],
+            2253,
             &now,
         ),
         definition(
@@ -1793,6 +2658,74 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             240,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
+            "Plugin Cloud Bundle 缓存条目上限",
+            "Task Runner Worker 单实例缓存不可变 Plugin Cloud Bundle 的最大条目数",
+            "Task Runner / Cache",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(256),
+            Some(1),
+            Some(100_000),
+            &[],
+            "hot_reload",
+            &[],
+            2401,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
+            "Plugin Cloud Bundle 缓存字节上限",
+            "Task Runner Worker 单实例缓存不可变 Plugin Cloud Bundle 正文的估算总字节预算",
+            "Task Runner / Cache",
+            "service",
+            Some("task-runner"),
+            "bytes",
+            json!(64 * 1024 * 1024),
+            Some(1024),
+            Some(4_i64 * 1024 * 1024 * 1024),
+            &[],
+            "hot_reload",
+            &[],
+            2402,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+            "Prompt 缓存",
+            "为 Task Runner 的同一 Run 设置稳定且隔离的模型 Prompt 缓存键",
+            "Task Runner / AI",
+            "shared",
+            None,
+            "boolean",
+            json!(DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED),
+            None,
+            None,
+            &[],
+            "next_run",
+            &[],
+            241,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+            "Prompt 缓存保留",
+            "启用 Responses API 的 24 小时 Prompt 缓存保留参数",
+            "Task Runner / AI",
+            "shared",
+            None,
+            "boolean",
+            json!(DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED),
+            None,
+            None,
+            &[],
+            "next_run",
+            &[],
+            242,
             &now,
         ),
         definition(
@@ -1837,7 +2770,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "boolean",
-            json!(false),
+            json!(true),
             None,
             None,
             &[],
@@ -1871,7 +2804,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "string",
-            json!("http://127.0.0.1:8095"),
+            json!("https://sandbox-manager-backend:8097"),
             None,
             None,
             &[],
@@ -1932,23 +2865,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
-            "task_runner.worker.poll_interval_ms",
-            "Worker 轮询间隔",
-            "Worker 查询待执行任务的间隔",
-            "Task Runner / Worker",
-            "service",
-            Some("task-runner"),
-            "duration_ms",
-            json!(1000),
-            Some(50),
-            Some(60000),
-            &[],
-            "restart_required",
-            &["TASK_RUNNER_WORKER_POLL_MS"],
-            280,
-            &now,
-        ),
-        definition(
             TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
             "Local Connector Service Base URL",
             "Task Runner 调用 Local Connector 服务时使用的基础地址",
@@ -1956,7 +2872,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],
@@ -2017,6 +2933,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "Project Service Internal Base URL",
+            "Task Runner 调用 Project Service 内部接口时使用的强制 mTLS 地址",
+            "Task Runner / Downstream Security",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("https://project-management-backend:39212"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL"],
+            281,
+            &now,
+        ),
+        definition(
             TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "Project Service Request Timeout",
             "Task Runner 调用 Project Service 时使用的请求超时毫秒数",
@@ -2041,7 +2974,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "string",
-            json!("http://127.0.0.1:7081/api/memory-engine/v1"),
+            json!("https://memory-engine-backend:7083/api/memory-engine/v1"),
             None,
             None,
             &[],
@@ -2058,7 +2991,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "string",
-            json!("http://127.0.0.1:8095"),
+            json!("https://sandbox-manager-backend:8097"),
             None,
             None,
             &[],
@@ -2096,11 +3029,11 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         secret_definition(
             TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "Memory Engine Internal Secret",
-            "Task Runner 调用 Memory Engine 内部接口时使用的 operator token",
+            "Task Runner 签发 Memory Engine 内部短期 token 时使用的调用方专属密钥",
             "Task Runner / Downstream Security",
             "service",
             Some("task-runner"),
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_task_runner_memory_engine_secret"),
             "restart_required",
             &["TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             283,
@@ -2126,7 +3059,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "Task Runner / Downstream Security",
             "service",
             Some("task-runner"),
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY),
+            json!("change_me_task_runner_sandbox_manager_secret"),
             "restart_required",
             &["TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET"],
             285,
@@ -2169,6 +3102,19 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"],
             288,
+            &now,
+        ),
+        secret_definition(
+            TASK_RUNNER_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+            "User Service Internal Secret",
+            "Task Runner 校验来自 User Service 的内部签名请求时使用的共享密钥",
+            "Task Runner / Security",
+            "service",
+            Some("task-runner"),
+            json!("change_me_user_service_task_runner_secret"),
+            "restart_required",
+            &["USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"],
+            289,
             &now,
         ),
         definition(
@@ -2239,7 +3185,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             292,
             &now,
         ),
-        nullable_definition(
+        definition(
             TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
             "Chatos Callback URL",
             "Task Runner 回调 Chatos Backend 任务状态时使用的地址",
@@ -2247,7 +3193,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "string",
-            Value::Null,
+            json!("https://127.0.0.1:3999/api/agent/chat/task-runner/callback"),
             None,
             None,
             &[],
@@ -2271,6 +3217,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_CALLBACK_TIMEOUT_MS"],
             294,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "Task Runner OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "Task Runner / Observability",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            295,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "Task Runner 根链路按 Trace ID 采样的比例",
+            "Task Runner / Observability",
+            "service",
+            Some("task-runner"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_OTEL_TRACE_SAMPLE_RATIO"],
+            296,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "Task Runner 导出一批 trace 的超时毫秒数",
+            "Task Runner / Observability",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_OTEL_EXPORT_TIMEOUT_MS"],
+            297,
             &now,
         ),
         definition(
@@ -2305,6 +3302,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_PORT"],
             294,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Task Runner 内部控制面强制 mTLS 监听端口",
+            "Task Runner / Runtime Security",
+            "service",
+            Some("task-runner"),
+            "integer",
+            json!(39092),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_INTERNAL_MTLS_PORT"],
+            295,
             &now,
         ),
         secret_definition(
@@ -2571,6 +3585,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             316,
             &now,
         ),
+        definition(
+            SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Sandbox Manager 内部控制面强制 mTLS 监听端口",
+            "Sandbox Manager / Runtime",
+            "service",
+            Some("sandbox-manager"),
+            "integer",
+            json!(8097),
+            Some(1),
+            Some(65_535),
+            &[],
+            "restart_required",
+            &["SANDBOX_MANAGER_INTERNAL_MTLS_PORT"],
+            3161,
+            &now,
+        ),
         secret_definition(
             SANDBOX_MANAGER_DATABASE_URL_CONFIG_KEY,
             "Database URL",
@@ -2626,7 +3657,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("local-connector-service"),
             "boolean",
-            json!(false),
+            json!(true),
             None,
             None,
             &[],
@@ -2731,6 +3762,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["LOCAL_CONNECTOR_SERVICE_PORT"],
+            319,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Local Connector Service 强制双向 TLS 的内部服务监听端口",
+            "Local Connector / Runtime",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(39232),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_INTERNAL_MTLS_PORT"],
             319,
             &now,
         ),
@@ -2952,23 +4000,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
-            LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY,
-            "允许设备接入 Query Token",
-            "Local Connector Service 是否允许设备接入时通过 query token 兼容旧链路",
-            "Local Connector / Device Connect",
-            "service",
-            Some("local-connector-service"),
-            "boolean",
-            json!(false),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN"],
-            327,
-            &now,
-        ),
-        definition(
             LOCAL_CONNECTOR_REMOTE_CONTROL_TRUSTED_RELAY_PUBLIC_KEYS_CONFIG_KEY,
             "远控签名信任公钥集合",
             "本地客户端信任的平台 relay 签名公钥集合，格式为 {\"<key-id>\": \"ed25519:<base64url-public-key>\"}",
@@ -3000,6 +4031,142 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS"],
             329,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY,
+            "Valkey URL",
+            "Local Connector Service 保存防重放 nonce 和设备实例路由状态的 Valkey 地址",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "string",
+            json!("redis://127.0.0.1:6379/0"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_VALKEY_URL"],
+            3291,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY,
+            "Valkey Key Prefix",
+            "Local Connector Service 共享协调键使用的命名空间前缀",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "string",
+            json!("chatos:local-connector"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_VALKEY_KEY_PREFIX"],
+            3292,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY,
+            "Device Presence TTL",
+            "Local Connector 设备到服务实例路由租约的 TTL（秒），必须不小于 Mongo active session 租约",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(120),
+            Some(30),
+            Some(600),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS"],
+            3293,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
+            "Valkey Reconnect Delay",
+            "Local Connector 实例控制订阅断线后的重连等待毫秒数",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "duration_ms",
+            json!(2_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_VALKEY_RECONNECT_MS"],
+            3294,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY,
+            "Relay Correlation Grace TTL",
+            "Local Connector relay 请求超时之外保留 correlation metadata 的额外秒数",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(30),
+            Some(5),
+            Some(600),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS"],
+            3295,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY,
+            "Relay Delivery Ack Timeout",
+            "跨实例 relay send 等待 owner 实例确认已写入本地 WebSocket outbound channel 的超时毫秒数",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "duration_ms",
+            json!(3_000),
+            Some(100),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS"],
+            3296,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY,
+            "Terminal Subscriber TTL",
+            "终端 WebSocket 订阅实例在 Valkey 中的路由租约 TTL（秒），只保存实例元数据，不保存终端正文",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(60),
+            Some(15),
+            Some(600),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS"],
+            3297,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY,
+            "Terminal Subscriber Refresh",
+            "终端 WebSocket 订阅实例刷新 Valkey 路由租约的周期（秒），必须小于订阅 TTL",
+            "Local Connector / Coordination",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(20),
+            Some(5),
+            Some(300),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS"],
+            3298,
             &now,
         ),
         definition(
@@ -3122,6 +4289,108 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            LOCAL_CONNECTOR_TERMINAL_MAX_ACTIVE_SESSIONS_CONFIG_KEY,
+            "Terminal 活动会话上限",
+            "单个 Local Connector Service 实例允许保留的活动 terminal session 最大数量",
+            "Local Connector / Terminal",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(10_000),
+            Some(1),
+            Some(1_000_000),
+            &[],
+            "next_request",
+            &[],
+            335,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_TERMINAL_NEW_SESSION_SOFT_LIMIT_CONFIG_KEY,
+            "Terminal 新会话软阈值",
+            "活动 terminal session 达到该阈值后暂停创建新 session；已有 session 和订阅继续工作，该值不得超过活动会话硬上限",
+            "Local Connector / Terminal",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(8_000),
+            Some(1),
+            Some(1_000_000),
+            &[],
+            "next_request",
+            &[],
+            3351,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_TERMINAL_MAX_SUBSCRIBERS_PER_SESSION_CONFIG_KEY,
+            "Terminal 单会话订阅上限",
+            "单个 Local Connector Service 实例允许同一 terminal session 保留的 WebSocket 订阅最大数量",
+            "Local Connector / Terminal",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(64),
+            Some(1),
+            Some(10_000),
+            &[],
+            "next_request",
+            &[],
+            336,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY,
+            "Relay 待处理升压阈值",
+            "单个 Local Connector Service 实例待处理 relay 请求达到该值时上报 elevated",
+            "Local Connector / Pressure",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(1_000),
+            Some(1),
+            Some(10_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            3361,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
+            "Relay 待处理临界阈值",
+            "单个 Local Connector Service 实例待处理 relay 请求达到该值时上报 critical",
+            "Local Connector / Pressure",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(5_000),
+            Some(2),
+            Some(100_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            3362,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            "Local Connector 压力上报间隔",
+            "Local Connector 刷新压力策略并上报自身运行压力信号的间隔",
+            "Local Connector / Pressure",
+            "service",
+            Some("local-connector-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "hot_reload",
+            &[],
+            3363,
+            &now,
+        ),
+        definition(
             MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             "内部请求必须签名",
             "MCP Management Service 是否必须校验来自内部服务的签名请求",
@@ -3129,7 +4398,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "boolean",
-            json!(false),
+            json!(true),
             None,
             None,
             &[],
@@ -3141,7 +4410,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
             "异步工具分发模式",
-            "MCP Management 对长耗时工具调用使用本地内存队列还是 RabbitMQ 持久化队列",
+            "MCP Management 对长耗时工具调用统一使用 RabbitMQ 持久化队列",
             "MCP Management / Async Tool Dispatch",
             "service",
             Some("mcp-management-service"),
@@ -3149,7 +4418,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             json!("rabbitmq"),
             None,
             None,
-            &["local_queue", "rabbitmq"],
+            &["rabbitmq"],
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE"],
             340,
@@ -3224,6 +4493,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY,
+            "Invocation 取消事件 Exchange",
+            "MCP Management 在服务实例之间广播调用取消事件使用的 RabbitMQ Fanout Exchange",
+            "MCP Management / Invocation Coordination",
+            "service",
+            Some("mcp-management-service"),
+            "string",
+            json!("mcp_management.cancellations"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE"],
+            349,
+            &now,
+        ),
+        definition(
             MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
             "RabbitMQ Dispatch Queue",
             "MCP Management 异步工具分发消费的队列名称",
@@ -3240,17 +4526,208 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             350,
             &now,
         ),
-        secret_definition(
-            MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "内部 API Secret",
-            "MCP Management 对外校验内部服务调用时使用的共享密钥",
-            "MCP Management / Security",
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY,
+            "RabbitMQ 队列最大消息数",
+            "MCP Management 异步工具主队列允许积压的最大消息数量，超限时拒绝发布",
+            "MCP Management / Async Tool Dispatch",
             "service",
             Some("mcp-management-service"),
-            json!("change_me_mcp_management_internal_secret"),
+            "integer",
+            json!(10_000),
+            Some(1),
+            Some(i32::MAX as i64),
+            &[],
             "restart_required",
-            &["MCP_MANAGEMENT_INTERNAL_API_SECRET"],
-            351,
+            &["MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH"],
+            3501,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY,
+            "RabbitMQ 队列最大字节数",
+            "MCP Management 异步工具主队列允许积压的最大消息字节数，超限时拒绝发布",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(256_i64 * 1024 * 1024),
+            Some(1_024),
+            Some(i64::MAX),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES"],
+            3502,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_PERCENT_CONFIG_KEY,
+            "MCP 队列升压百分比",
+            "MCP Management 自有异步工具主队列容量使用率达到该百分比时上报 elevated",
+            "MCP Management / Pressure",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(70),
+            Some(1),
+            Some(99),
+            &[],
+            "hot_reload",
+            &[],
+            35021,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_PERCENT_CONFIG_KEY,
+            "MCP 队列临界百分比",
+            "MCP Management 自有异步工具主队列容量使用率达到该百分比时上报 critical",
+            "MCP Management / Pressure",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(90),
+            Some(1),
+            Some(99),
+            &[],
+            "hot_reload",
+            &[],
+            35022,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            "MCP 压力上报间隔",
+            "MCP Management 刷新压力策略并上报自身队列压力信号的间隔",
+            "MCP Management / Pressure",
+            "service",
+            Some("mcp-management-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "hot_reload",
+            &[],
+            35023,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+            "RabbitMQ 重连间隔（毫秒）",
+            "MCP Management 异步工具消费者和结果发布器断线后的重连等待时间",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(3_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS"],
+            3503,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "结果 Outbox 补偿间隔（毫秒）",
+            "MCP Management 没有新终态通知时重新扫描待发布结果事件的间隔",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(5_000),
+            Some(100),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS"],
+            3504,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "结果 Outbox 发布批次",
+            "MCP Management 单轮最多加载并发布的异步工具终态结果事件数量",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(128),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE"],
+            3505,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "异步工具最大投递次数",
+            "MCP Management 异步工具调用在进入失败终态或死信队列前允许的总投递次数",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(5),
+            Some(1),
+            Some(100),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS"],
+            3506,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY,
+            "异步工具重试延迟（毫秒）",
+            "MCP Management 异步工具调用发生可重试基础设施错误后的延迟重投时间",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(5_000),
+            Some(100),
+            Some(3_600_000),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS"],
+            3507,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY,
+            "RabbitMQ Retry Queue",
+            "MCP Management 异步工具可重试消息的延迟队列名称",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "string",
+            json!("mcp_management.async.retry"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE"],
+            3508,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "RabbitMQ Dead Letter Queue",
+            "MCP Management 异步工具无效消息或重试耗尽消息的死信队列名称",
+            "MCP Management / Async Tool Dispatch",
+            "service",
+            Some("mcp-management-service"),
+            "string",
+            json!("mcp_management.async.dlq"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE"],
+            3509,
             &now,
         ),
         definition(
@@ -3261,15 +4738,26 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!(
-                "chatos,task-runner,project-service,memory-engine,local-connector-service,sandbox-manager,plugin-management-service"
-            ),
+            json!("chatos,task-runner,project-service,configuration-center"),
             None,
             None,
             &[],
             "restart_required",
             &["MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS"],
             352,
+            &now,
+        ),
+        secret_definition(
+            MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
+            "Configuration Center Internal Secret",
+            "MCP Management 校验来自 Configuration Center 的内部签名请求时使用的专用密钥",
+            "MCP Management / Security",
+            "service",
+            Some("mcp-management-service"),
+            json!("change_me_configuration_center_mcp_management_secret"),
+            "restart_required",
+            &["MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET"],
+            3521,
             &now,
         ),
         secret_definition(
@@ -3411,6 +4899,74 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            MCP_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "内部 mTLS 监听端口",
+            "MCP Management 内部控制面强制 mTLS 监听端口",
+            "MCP Management / Runtime Security",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(39282),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_INTERNAL_MTLS_PORT"],
+            3601,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "MCP Management OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "MCP Management / Observability",
+            "service",
+            Some("mcp-management-service"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            3602,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "MCP Management 根链路按 Trace ID 采样的比例",
+            "MCP Management / Observability",
+            "service",
+            Some("mcp-management-service"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_OTEL_TRACE_SAMPLE_RATIO"],
+            3603,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "MCP Management 导出一批 trace 的超时毫秒数",
+            "MCP Management / Observability",
+            "service",
+            Some("mcp-management-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_OTEL_EXPORT_TIMEOUT_MS"],
+            3604,
+            &now,
+        ),
+        definition(
             MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
             "Runtime Session Database URL",
             "MCP Management 存储 runtime session 时使用的数据库连接串",
@@ -3493,6 +5049,138 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS"],
             3603,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY,
+            "Runtime Session 缓存条目上限",
+            "MCP Management 单实例内存中保留的 Runtime Session 主快照数量上限",
+            "MCP Management / Runtime Cache",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(2_048),
+            Some(1),
+            Some(100_000),
+            &[],
+            "restart_required",
+            &[],
+            3603,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY,
+            "Runtime Session 缓存字节上限",
+            "MCP Management 单实例 Runtime Session 主快照缓存的估算总字节上限",
+            "MCP Management / Runtime Cache",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(32 * 1024 * 1024),
+            Some(1024 * 1024),
+            Some(2 * 1024 * 1024 * 1024),
+            &[],
+            "restart_required",
+            &[],
+            3603,
+            &now,
+        ),
+        secret_definition(
+            MCP_MANAGEMENT_INVOCATION_QUOTA_VALKEY_URL_CONFIG_KEY,
+            "Invocation 配额 Valkey URL",
+            "MCP Management 原子占用和释放 Runtime Invocation 四级配额使用的 Valkey 地址",
+            "MCP Management / Invocation Quota",
+            "service",
+            Some("mcp-management-service"),
+            json!("redis://:change_me_valkey_password@127.0.0.1:6379/0"),
+            "restart_required",
+            &[],
+            36031,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_INVOCATION_QUOTA_KEY_PREFIX_CONFIG_KEY,
+            "Invocation 配额键前缀",
+            "MCP Management Runtime Invocation 分布式配额键使用的命名空间前缀",
+            "MCP Management / Invocation Quota",
+            "service",
+            Some("mcp-management-service"),
+            "string",
+            json!("chatos:mcp-management:invocation-quota"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &[],
+            36032,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_INVOCATION_TENANT_ACTIVE_LIMIT_CONFIG_KEY,
+            "租户活跃 Invocation 上限",
+            "单个租户允许同时占用的 Runtime Invocation 数量上限",
+            "MCP Management / Invocation Quota",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(2_000),
+            Some(1),
+            Some(1_000_000),
+            &[],
+            "restart_required",
+            &[],
+            36033,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_INVOCATION_USER_ACTIVE_LIMIT_CONFIG_KEY,
+            "用户活跃 Invocation 上限",
+            "单个用户允许同时占用的 Runtime Invocation 数量上限",
+            "MCP Management / Invocation Quota",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(200),
+            Some(1),
+            Some(1_000_000),
+            &[],
+            "restart_required",
+            &[],
+            36034,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY,
+            "项目活跃 Invocation 上限",
+            "单个项目允许同时占用的 Runtime Invocation 数量上限",
+            "MCP Management / Invocation Quota",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(1_000_000),
+            &[],
+            "restart_required",
+            &[],
+            36035,
+            &now,
+        ),
+        definition(
+            MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY,
+            "设备活跃 Invocation 上限",
+            "单个本地设备允许同时占用的 Runtime Invocation 数量上限；无设备绑定的云端调用不占用设备维度",
+            "MCP Management / Invocation Quota",
+            "service",
+            Some("mcp-management-service"),
+            "integer",
+            json!(50),
+            Some(1),
+            Some(1_000_000),
+            &[],
+            "restart_required",
+            &[],
+            36036,
             &now,
         ),
         definition(
@@ -3633,13 +5321,13 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         ),
         definition(
             MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
-            "Plugin Management Base URL",
-            "MCP Management 调用 Plugin Management 时使用的基础地址",
+            "Plugin Management Internal Base URL",
+            "MCP Management 调用 Plugin Management 控制面时使用的强制 mTLS 地址",
             "MCP Management / Downstream",
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:39260"),
+            json!("https://plugin-management-backend:39262"),
             None,
             None,
             &[],
@@ -3656,7 +5344,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:39210"),
+            json!("https://project-management-backend:39212"),
             None,
             None,
             &[],
@@ -3673,7 +5361,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:39090"),
+            json!("https://task-runner-backend:39092"),
             None,
             None,
             &[],
@@ -3690,7 +5378,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:3997"),
+            json!("https://127.0.0.1:3999"),
             None,
             None,
             &[],
@@ -3707,7 +5395,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],
@@ -3724,7 +5412,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:8095"),
+            json!("https://sandbox-manager-backend:8097"),
             None,
             None,
             &[],
@@ -3824,19 +5512,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             366,
             &now,
         ),
-        secret_definition(
-            PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "Internal API Secret",
-            "Plugin Management 对外校验内部服务调用时使用的共享密钥",
-            "Plugin Management / Security",
-            "service",
-            Some("plugin-management-service"),
-            json!("change_me_plugin_management_internal_secret"),
-            "restart_required",
-            &["PLUGIN_MANAGEMENT_INTERNAL_API_SECRET"],
-            367,
-            &now,
-        ),
         definition(
             PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             "内部请求必须签名",
@@ -3845,7 +5520,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("plugin-management-service"),
             "boolean",
-            json!(false),
+            json!(true),
             None,
             None,
             &[],
@@ -3937,6 +5612,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_PORT"],
             371,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "内部 mTLS 监听端口",
+            "Plugin Management 内部控制面强制客户端证书的 HTTPS 监听端口",
+            "Plugin Management / Runtime",
+            "service",
+            Some("plugin-management-service"),
+            "integer",
+            json!(39262),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT"],
+            3711,
             &now,
         ),
         definition(
@@ -4195,6 +5887,278 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+            "Plugin 队列升压阈值",
+            "Plugin Management 自有 Catalog Sync 主队列 ready 消息达到该值时上报 elevated",
+            "Plugin Management / Pressure",
+            "service",
+            Some("plugin-management-service"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            3831,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+            "Plugin 队列临界阈值",
+            "Plugin Management 自有 Catalog Sync 主队列 ready 消息达到该值时上报 critical",
+            "Plugin Management / Pressure",
+            "service",
+            Some("plugin-management-service"),
+            "integer",
+            json!(1_000),
+            Some(2),
+            Some(100_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            3832,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            "Plugin 压力上报间隔",
+            "Plugin Management 刷新压力策略并上报自身队列压力信号的间隔",
+            "Plugin Management / Pressure",
+            "service",
+            Some("plugin-management-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "hot_reload",
+            &[],
+            3833,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
+            "Catalog RabbitMQ URL",
+            "Plugin Management Catalog Sync 事件队列使用的 AMQP 地址",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "string",
+            json!(DEFAULT_LOCAL_RABBITMQ_URL),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL"],
+            390,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY,
+            "Catalog RabbitMQ Exchange",
+            "Plugin Management Catalog Sync 使用的共享命令交换机",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "string",
+            json!("chatos.command"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE"],
+            391,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY,
+            "Catalog Sync Queue",
+            "Plugin Management Catalog Sync 共享主队列",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "string",
+            json!("plugin.catalog.sync"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_QUEUE"],
+            392,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
+            "Catalog Sync Retry Queue",
+            "Plugin Management Catalog Sync 失败事件使用的 TTL 延迟重试队列",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "string",
+            json!("plugin.catalog.sync.retry"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE"],
+            393,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY,
+            "Catalog Sync Schedule Queue",
+            "Plugin Management Catalog Sync 下一周期事件使用的 TTL 调度队列",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "string",
+            json!("plugin.catalog.sync.schedule"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE"],
+            394,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "Catalog Sync Dead Letter Queue",
+            "Plugin Management Catalog Sync 重试耗尽后的共享死信队列",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "string",
+            json!("plugin.catalog.sync.dlq"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE"],
+            395,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "Catalog Sync Max Delivery Attempts",
+            "Plugin Management Catalog Sync 单个事件进入 DLQ 前允许的最大投递次数",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "integer",
+            json!(5),
+            Some(1),
+            Some(100),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS"],
+            396,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY,
+            "Catalog Sync Retry Delay",
+            "Plugin Management Catalog Sync 失败事件再次投递前的延迟毫秒数",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "duration_ms",
+            json!(30_000),
+            Some(100),
+            Some(24 * 60 * 60 * 1_000),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS"],
+            397,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+            "Catalog RabbitMQ Reconnect Delay",
+            "Plugin Management Catalog Sync 消费者断线后重连的等待毫秒数",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "duration_ms",
+            json!(2_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS"],
+            398,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
+            "Catalog Sync Consumer Concurrency",
+            "Plugin Management 同时处理 Catalog Sync 事件的消费者数量",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "integer",
+            json!(2),
+            Some(1),
+            Some(64),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY"],
+            399,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "Catalog Sync Outbox Reconcile Interval",
+            "Plugin Management 补发异常遗留 Catalog Sync Outbox 的低频周期毫秒数",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "duration_ms",
+            json!(60_000),
+            Some(1_000),
+            Some(24 * 60 * 60 * 1_000),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS"],
+            400,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "Catalog Sync Outbox Batch Size",
+            "Plugin Management 每轮补偿最多处理的 Catalog Sync Outbox 数量",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE"],
+            401,
+            &now,
+        ),
+        definition(
+            PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY,
+            "Catalog Sync Lock Timeout",
+            "Plugin Management 单个 Marketplace Catalog Sync 分布式租约超时秒数",
+            "Plugin Management / Catalog Queue",
+            "service",
+            Some("plugin-management-service"),
+            "integer",
+            json!(60 * 60),
+            Some(30),
+            Some(60 * 60),
+            &[],
+            "restart_required",
+            &["PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS"],
+            402,
+            &now,
+        ),
+        definition(
             PLUGIN_MANAGEMENT_SUPER_ADMIN_USERNAME_CONFIG_KEY,
             "Super Admin Username",
             "Plugin Management 启动时自动确保存在的超级管理员用户名",
@@ -4249,7 +6213,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("project-service"),
             "boolean",
-            json!(false),
+            json!(true),
             None,
             None,
             &[],
@@ -4337,6 +6301,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            PROJECT_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "Project Service OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "Project Service / Observability",
+            "service",
+            Some("project-service"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            358,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "Project Service 根链路按 Trace ID 采样的比例",
+            "Project Service / Observability",
+            "service",
+            Some("project-service"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_OTEL_TRACE_SAMPLE_RATIO"],
+            359,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "Project Service 导出一批 trace 的超时毫秒数",
+            "Project Service / Observability",
+            "service",
+            Some("project-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_OTEL_EXPORT_TIMEOUT_MS"],
+            360,
+            &now,
+        ),
+        definition(
             PROJECT_SERVICE_HOST_CONFIG_KEY,
             "Host",
             "Project Service HTTP 服务监听地址",
@@ -4370,6 +6385,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             357,
             &now,
         ),
+        definition(
+            PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Project Service 内部接口强制 mTLS 监听端口",
+            "Project Service / Runtime Security",
+            "service",
+            Some("project-service"),
+            "integer",
+            json!(39212),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_INTERNAL_MTLS_PORT"],
+            358,
+            &now,
+        ),
         secret_definition(
             PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY,
             "Database URL",
@@ -4380,6 +6412,40 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             json!("mongodb://admin:admin@127.0.0.1:27018/project_management_service?authSource=admin"),
             "restart_required",
             &["PROJECT_SERVICE_DATABASE_URL"],
+            357,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY,
+            "MCP Result RabbitMQ URL",
+            "Project Service 消费 MCP 异步调用结果事件使用的 AMQP 地址",
+            "Project Service / MCP Queue",
+            "service",
+            Some("project-service"),
+            "string",
+            json!(DEFAULT_LOCAL_RABBITMQ_URL),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL"],
+            357,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
+            "MCP Result Queue Prefix",
+            "Project Service 按实例创建 MCP 异步结果消费队列使用的名称前缀",
+            "Project Service / MCP Queue",
+            "service",
+            Some("project-service"),
+            "string",
+            json!("project_service.mcp.results"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX"],
             357,
             &now,
         ),
@@ -4397,6 +6463,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["PROJECT_SERVICE_USER_SERVICE_BASE_URL"],
+            358,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "User Service Internal Base URL",
+            "Project Service 调用 User Service 内部接口时使用的强制 mTLS 地址",
+            "Project Service / Downstream Security",
+            "service",
+            Some("project-service"),
+            "string",
+            json!("https://user-service-backend:39192"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL"],
             358,
             &now,
         ),
@@ -4438,7 +6521,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("project-service"),
             "string",
-            json!("http://127.0.0.1:39090"),
+            json!("https://task-runner-backend:39092"),
             None,
             None,
             &[],
@@ -4485,7 +6568,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("project-service"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],
@@ -4519,7 +6602,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("project-service"),
             "string",
-            json!("http://127.0.0.1:7081/api/memory-engine/v1"),
+            json!("https://memory-engine-backend:7083/api/memory-engine/v1"),
             None,
             None,
             &[],
@@ -4529,15 +6612,15 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         secret_definition(
-            PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY,
-            "Memory Engine Operator Token",
-            "Project Service 以平台身份调用 Memory Engine 时使用的 operator token",
+            PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
+            "Memory Engine Internal Secret",
+            "Project Service 签发 Memory Engine 内部短期 token 时使用的调用方专属密钥",
             "Project Service / Downstream Security",
             "service",
             Some("project-service"),
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_project_service_memory_engine_secret"),
             "restart_required",
-            &["PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN"],
+            &["PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             367,
             &now,
         ),
@@ -4566,7 +6649,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("project-service"),
             "string",
-            json!("http://127.0.0.1:8095"),
+            json!("https://sandbox-manager-backend:8097"),
             None,
             None,
             &[],
@@ -4599,7 +6682,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "Project Service / Downstream Security",
             "service",
             Some("project-service"),
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY),
+            json!("change_me_project_service_sandbox_manager_secret"),
             "restart_required",
             &["PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY"],
             371,
@@ -4708,6 +6791,70 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            "Memory Engine Base URL",
+            "Configuration Center 执行队列运维操作时调用 Memory Engine 的内部地址",
+            "Configuration Center / Downstream",
+            "service",
+            Some("configuration-center"),
+            "string",
+            json!("https://memory-engine-backend:7083/api/memory-engine/v1"),
+            None,
+            None,
+            &[],
+            "immediate",
+            &["CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL"],
+            357,
+            &now,
+        ),
+        definition(
+            CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY,
+            "Plugin Management Base URL",
+            "Configuration Center 执行队列运维操作时调用 Plugin Management 的内部地址",
+            "Configuration Center / Downstream",
+            "service",
+            Some("configuration-center"),
+            "string",
+            json!("http://127.0.0.1:9080/api/plugin"),
+            None,
+            None,
+            &[],
+            "immediate",
+            &[],
+            358,
+            &now,
+        ),
+        definition(
+            CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
+            "MCP Management Base URL",
+            "Configuration Center 执行队列运维操作时调用 MCP Management 的内部地址",
+            "Configuration Center / Downstream",
+            "service",
+            Some("configuration-center"),
+            "string",
+            json!("https://mcp-management-service-backend:39282"),
+            None,
+            None,
+            &[],
+            "immediate",
+            &["CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL"],
+            359,
+            &now,
+        ),
+        secret_definition(
+            CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+            "MCP Management Internal Secret",
+            "Configuration Center 调用 MCP Management 队列运维接口时使用的专用签名密钥",
+            "Configuration Center / Downstream Security",
+            "service",
+            Some("configuration-center"),
+            json!("change_me_configuration_center_mcp_management_secret"),
+            "immediate",
+            &[],
+            3591,
+            &now,
+        ),
+        definition(
             MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             "内部请求必须签名",
             "Memory Engine 是否必须校验来自内部服务的签名请求",
@@ -4715,7 +6862,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("memory-engine"),
             "boolean",
-            json!(false),
+            json!(true),
             None,
             None,
             &[],
@@ -4777,15 +6924,15 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         secret_definition(
-            MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY,
-            "Memory Engine Operator Token",
-            "Memory Engine 平台内部管理接口使用的 operator token",
+            MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
+            "Configuration Center Internal Secret",
+            "Memory Engine 校验来自 Configuration Center 队列运维请求时使用的专用密钥",
             "Memory Engine / Security",
             "service",
             Some("memory-engine"),
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_configuration_center_memory_engine_secret"),
             "restart_required",
-            &["MEMORY_ENGINE_OPERATOR_TOKEN"],
+            &["CONFIGURATION_CENTER_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             363,
             &now,
         ),
@@ -4833,6 +6980,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["MEMORY_ENGINE_PORT"],
+            3630,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Memory Engine 内部控制面强制 mTLS 监听端口",
+            "Memory Engine / Runtime",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(7083),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_INTERNAL_MTLS_PORT"],
             3630,
             &now,
         ),
@@ -5000,8 +7164,8 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         ),
         definition(
             MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY,
-            "Worker 轮询间隔（秒）",
-            "Memory Engine worker 轮询任务队列的时间间隔",
+            "Worker 恢复检查间隔（秒）",
+            "Memory Engine worker 执行 rollup、subject memory 与低频异常恢复检查的间隔；摘要正常执行由 MQ 事件触发",
             "Memory Engine / Worker",
             "service",
             Some("memory-engine"),
@@ -5050,6 +7214,74 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            MEMORY_ENGINE_WORKER_PRESSURE_SUMMARY_CONCURRENCY_CONFIG_KEY,
+            "压力状态摘要并发数",
+            "平台压力为 elevated 或 critical 时 Memory Engine 保留的 summary 消费并发数",
+            "Memory Engine / Worker",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(1),
+            Some(1),
+            Some(1024),
+            &[],
+            "hot_reload",
+            &[],
+            3642,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_WORKER_PRESSURE_REFRESH_INTERVAL_MS_CONFIG_KEY,
+            "压力状态刷新间隔",
+            "Memory Engine 从配置中心严格刷新平台压力状态的间隔",
+            "Memory Engine / Worker",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "hot_reload",
+            &[],
+            3643,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+            "Memory 队列升压阈值",
+            "Memory Engine 自有主队列 ready 消息总数达到该值时上报 elevated",
+            "Memory Engine / Pressure",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            3644,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+            "Memory 队列临界阈值",
+            "Memory Engine 自有主队列 ready 消息总数达到该值时上报 critical",
+            "Memory Engine / Pressure",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(1_000),
+            Some(2),
+            Some(100_000_000),
+            &[],
+            "hot_reload",
+            &[],
+            3645,
+            &now,
+        ),
+        definition(
             MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY,
             "Rollup 并发数",
             "Memory Engine worker 处理 rollup 任务时的并发数",
@@ -5063,7 +7295,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY"],
-            3642,
+            3646,
             &now,
         ),
         definition(
@@ -5080,7 +7312,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY"],
-            3643,
+            3647,
             &now,
         ),
         definition(
@@ -5097,7 +7329,466 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY"],
-            3644,
+            3648,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
+            "RabbitMQ 连接地址",
+            "Memory Engine 摘要事件队列连接 RabbitMQ 使用的 AMQP 地址",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!(DEFAULT_LOCAL_RABBITMQ_URL),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_RABBITMQ_URL"],
+            3645,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
+            "RabbitMQ Exchange",
+            "Memory Engine 事件队列使用的共享 RabbitMQ Exchange",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_RABBITMQ_EXCHANGE"],
+            3646,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY,
+            "RabbitMQ 重连等待时间",
+            "Memory Engine 队列消费者连接中断后再次连接 RabbitMQ 的等待毫秒数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(3_000),
+            Some(100),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS"],
+            3647,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY,
+            "摘要任务队列名",
+            "记录写入达到摘要阈值后投递线程 ID 的共享 RabbitMQ 队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.summary.requested"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUMMARY_QUEUE"],
+            3647,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY,
+            "摘要延迟重试队列名",
+            "摘要执行失败后等待 RabbitMQ 再次触发的共享延迟队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.summary.requested.retry"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUMMARY_RETRY_QUEUE"],
+            3648,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "摘要死信队列名",
+            "摘要事件超过最大投递次数后保存毒消息的共享 RabbitMQ 队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.summary.requested.dead"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE"],
+            3649,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "摘要最大投递次数",
+            "摘要事件进入死信队列前允许的最大失败投递次数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(8),
+            Some(1),
+            Some(100),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS"],
+            3650,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY,
+            "摘要重试等待时间",
+            "摘要执行失败后由 RabbitMQ 延迟再次触发的等待毫秒数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS"],
+            3651,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "摘要 Outbox 补偿间隔",
+            "低频补偿发布异常遗留的摘要事件，不用于正常摘要任务发现",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(5_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS"],
+            3652,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "摘要 Outbox 补偿批次",
+            "单轮最多补偿发布的摘要事件数量",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE"],
+            3653,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
+            "记录同步租约超时",
+            "批量记录同步异常退出后，允许低频恢复流程接管计数修复的等待秒数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(300),
+            Some(30),
+            Some(86_400),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS"],
+            3654,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY,
+            "Rollup 抢占锁超时",
+            "同一线程 rollup Worker 异常退出后允许其它事件重新认领的等待秒数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(300),
+            Some(30),
+            Some(86_400),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS"],
+            3655,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY,
+            "Rollup 任务队列名",
+            "摘要完成后投递摘要 ID 的共享 RabbitMQ 队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.rollup.requested"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_QUEUE"],
+            3656,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
+            "Rollup 延迟重试队列名",
+            "Rollup 执行失败后等待 RabbitMQ 再次触发的共享延迟队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.rollup.requested.retry"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_RETRY_QUEUE"],
+            3657,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "Rollup 死信队列名",
+            "Rollup 事件超过最大投递次数后保存毒消息的共享 RabbitMQ 队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.rollup.requested.dead"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE"],
+            3658,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "Rollup 最大投递次数",
+            "Rollup 事件进入死信队列前允许的最大失败投递次数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(8),
+            Some(1),
+            Some(100),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS"],
+            3659,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY,
+            "Rollup 重试等待时间",
+            "Rollup 执行失败后由 RabbitMQ 延迟再次触发的等待毫秒数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS"],
+            3660,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "Rollup Outbox 补偿间隔",
+            "低频补偿发布异常遗留的 Rollup 事件，不用于正常任务发现",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(30_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS"],
+            3661,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "Rollup Outbox 补偿批次",
+            "单轮最多补偿发布的 Rollup 事件数量",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE"],
+            3662,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
+            "主体记忆任务队列名",
+            "摘要来源事件和主体记忆 scope 任务共用的 RabbitMQ 队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.subject_memory.requested"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE"],
+            3663,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
+            "主体记忆延迟重试队列名",
+            "主体记忆事件执行失败后等待 RabbitMQ 再次触发的共享延迟队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.subject_memory.requested.retry"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE"],
+            3664,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "主体记忆死信队列名",
+            "主体记忆事件超过最大投递次数后保存毒消息的共享 RabbitMQ 队列",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "string",
+            json!("memory_engine.subject_memory.requested.dead"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE"],
+            3665,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "主体记忆最大投递次数",
+            "主体记忆事件进入死信队列前允许的最大失败投递次数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(8),
+            Some(1),
+            Some(100),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS"],
+            3666,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY,
+            "主体记忆重试等待时间",
+            "主体记忆事件执行失败后由 RabbitMQ 延迟再次触发的等待毫秒数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS"],
+            3667,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "主体记忆 Outbox 补偿间隔",
+            "低频补偿异常遗留事件和跨文档扇出中断，不用于正常任务发现",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "duration_ms",
+            json!(30_000),
+            Some(1_000),
+            Some(300_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS"],
+            3668,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "主体记忆 Outbox 补偿批次",
+            "单轮最多补偿发布的主体记忆来源和 scope 事件数量",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(100),
+            Some(1),
+            Some(10_000),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE"],
+            3669,
+            &now,
+        ),
+        definition(
+            MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY,
+            "主体记忆 scope 抢占锁超时",
+            "同一主体记忆 scope Worker 异常退出后允许其它事件重新认领的等待秒数",
+            "Memory Engine / Queue",
+            "service",
+            Some("memory-engine"),
+            "integer",
+            json!(300),
+            Some(30),
+            Some(86_400),
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS"],
+            3670,
             &now,
         ),
         definition(
@@ -5108,7 +7799,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("sandbox-manager"),
             "boolean",
-            json!(false),
+            json!(true),
             None,
             None,
             &[],
@@ -5157,49 +7848,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         secret_definition(
-            SANDBOX_MANAGER_OPERATOR_TOKEN_CONFIG_KEY,
-            "Sandbox Manager Operator Token",
-            "Sandbox Manager 平台内部管理接口使用的 operator token",
-            "Sandbox Manager / Security",
-            "service",
-            Some("sandbox-manager"),
-            json!(DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN),
-            "restart_required",
-            &["SANDBOX_MANAGER_OPERATOR_TOKEN"],
-            368,
-            &now,
-        ),
-        definition(
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ID_CONFIG_KEY,
-            "Sandbox Manager System Client ID",
-            "Sandbox Manager 内置系统客户端的 client id",
-            "Sandbox Manager / Security",
-            "service",
-            Some("sandbox-manager"),
-            "string",
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["SANDBOX_MANAGER_SYSTEM_CLIENT_ID"],
-            369,
-            &now,
-        ),
-        secret_definition(
-            SANDBOX_MANAGER_SYSTEM_CLIENT_KEY_CONFIG_KEY,
-            "Sandbox Manager System Client Key",
-            "Sandbox Manager 内置系统客户端的 client key",
-            "Sandbox Manager / Security",
-            "service",
-            Some("sandbox-manager"),
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY),
-            "restart_required",
-            &["SANDBOX_MANAGER_SYSTEM_CLIENT_KEY"],
-            370,
-            &now,
-        ),
-        secret_definition(
             SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY,
             "Sandbox Manager Agent Token Secret",
             "Sandbox Agent 与 Sandbox Manager 之间签发与校验代理 token 使用的共享密钥",
@@ -5213,9 +7861,39 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
+            SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID_CONFIG_KEY,
+            "Sandbox Console Proxy Client ID",
+            "Sandbox Manager 控制台反向代理使用的受管访问客户端标识",
+            "Sandbox Manager / Frontend",
+            "service",
+            Some("sandbox-manager"),
+            "string",
+            json!("sandbox-manager-frontend"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID"],
+            37101,
+            &now,
+        ),
+        secret_definition(
+            SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY_CONFIG_KEY,
+            "Sandbox Console Proxy Client Key",
+            "Sandbox Manager 控制台反向代理使用的受管访问客户端密钥",
+            "Sandbox Manager / Frontend",
+            "service",
+            Some("sandbox-manager"),
+            json!("change_me_sandbox_manager_frontend_proxy_client_key"),
+            "restart_required",
+            &["SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY"],
+            37102,
+            &now,
+        ),
+        definition(
             SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY,
             "启用接口认证",
-            "Sandbox Manager 是否启用 operator token 与系统客户端认证校验",
+            "Sandbox Manager 是否启用真实用户、权限受限 access client 与内部服务签名认证",
             "Sandbox Manager / Runtime",
             "service",
             Some("sandbox-manager"),
@@ -5264,76 +7942,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &now,
         ),
         definition(
-            SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES_CONFIG_KEY,
-            "System Client Scopes",
-            "Sandbox Manager 内置系统客户端允许申请的 scopes，使用逗号分隔",
-            "Sandbox Manager / Security",
-            "service",
-            Some("sandbox-manager"),
-            "string",
-            json!(
-                "sandbox.lease.create,sandbox.lease.read,sandbox.lease.release,sandbox.mcp.tools,sandbox.mcp.call,sandbox.pool.read,sandbox.images.read"
-            ),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES"],
-            3714,
-            &now,
-        ),
-        definition(
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS_CONFIG_KEY,
-            "System Client Allowed Tenant IDs",
-            "Sandbox Manager 内置系统客户端允许访问的租户 ID 列表，使用逗号分隔",
-            "Sandbox Manager / Security",
-            "service",
-            Some("sandbox-manager"),
-            "string",
-            json!("*"),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS"],
-            3715,
-            &now,
-        ),
-        definition(
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS_CONFIG_KEY,
-            "System Client Allowed Project IDs",
-            "Sandbox Manager 内置系统客户端允许访问的项目 ID 列表，使用逗号分隔",
-            "Sandbox Manager / Security",
-            "service",
-            Some("sandbox-manager"),
-            "string",
-            json!("*"),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS"],
-            3716,
-            &now,
-        ),
-        definition(
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS_CONFIG_KEY,
-            "System Client Allowed Tools",
-            "Sandbox Manager 内置系统客户端允许调用的工具列表，使用逗号分隔",
-            "Sandbox Manager / Security",
-            "service",
-            Some("sandbox-manager"),
-            "string",
-            json!("*"),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS"],
-            3717,
-            &now,
-        ),
-        definition(
             SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS_CONFIG_KEY,
             "System Client 最大租约 TTL（秒）",
             "Sandbox Manager 内置系统客户端能够申请的最大租约时长",
@@ -5348,6 +7956,91 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS"],
             3718,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_PORT_CONFIG_KEY,
+            "Port",
+            "User Service HTTP 服务监听端口",
+            "User Service / Runtime",
+            "service",
+            Some("user-service"),
+            "integer",
+            json!(39190),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["USER_SERVICE_PORT"],
+            371,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "User Service 内部接口强制 mTLS 监听端口",
+            "User Service / Runtime Security",
+            "service",
+            Some("user-service"),
+            "integer",
+            json!(39192),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["USER_SERVICE_INTERNAL_MTLS_PORT"],
+            371,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "User Service OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "User Service / Observability",
+            "service",
+            Some("user-service"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["USER_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            372,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "User Service 根链路按 Trace ID 采样的比例",
+            "User Service / Observability",
+            "service",
+            Some("user-service"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["USER_SERVICE_OTEL_TRACE_SAMPLE_RATIO"],
+            373,
+            &now,
+        ),
+        definition(
+            USER_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "User Service 导出一批 trace 的超时毫秒数",
+            "User Service / Observability",
+            "service",
+            Some("user-service"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["USER_SERVICE_OTEL_EXPORT_TIMEOUT_MS"],
+            374,
             &now,
         ),
         secret_definition(
@@ -5405,11 +8098,11 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
         secret_definition(
             USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "Memory Engine Internal Secret",
-            "User Service 调用 Memory Engine 内部接口时使用的 operator token",
+            "User Service 签发 Memory Engine 内部短期 token 时使用的调用方专属密钥",
             "User Service / Downstream Security",
             "service",
             Some("user-service"),
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_user_service_memory_engine_secret"),
             "restart_required",
             &["USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             375,
@@ -5666,15 +8359,15 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             37515,
             &now,
         ),
-        nullable_definition(
+        definition(
             USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             "Memory Engine Base URL",
-            "User Service 同步用户模型配置到 Memory Engine 时使用的基础地址，留空表示关闭同步",
+            "User Service 同步用户模型配置到 Memory Engine 内部控制面时使用的强制 mTLS 地址",
             "User Service / Runtime",
             "service",
             Some("user-service"),
             "string",
-            Value::Null,
+            json!("https://memory-engine-backend:7083/api/memory-engine/v1"),
             None,
             None,
             &[],
@@ -5683,15 +8376,15 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             3751,
             &now,
         ),
-        nullable_definition(
+        definition(
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             "Task Runner Base URL",
-            "User Service 同步用户模型配置到 Task Runner 时使用的基础地址，留空表示关闭同步",
+            "User Service 同步用户模型配置到 Task Runner 内部控制面时使用的强制 mTLS 地址",
             "User Service / Runtime",
             "service",
             Some("user-service"),
             "string",
-            Value::Null,
+            json!("https://task-runner-backend:39092"),
             None,
             None,
             &[],
@@ -5700,16 +8393,16 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             3752,
             &now,
         ),
-        nullable_secret_definition(
-            USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY,
-            "Task Runner Callback Secret",
-            "User Service 调用 Task Runner chatos-sync 接口时附带的回调鉴权密钥，留空表示不发送",
-            "User Service / Runtime",
+        secret_definition(
+            USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+            "Task Runner Internal Secret",
+            "User Service 调用 Task Runner 模型配置同步接口时使用的短期签名根密钥",
+            "User Service / Downstream Security",
             "service",
             Some("user-service"),
-            Value::Null,
+            json!("change_me_user_service_task_runner_secret"),
             "restart_required",
-            &["USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET"],
+            &["USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"],
             3753,
             &now,
         ),

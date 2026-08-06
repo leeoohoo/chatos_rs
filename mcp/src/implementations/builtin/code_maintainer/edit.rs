@@ -21,12 +21,14 @@ pub struct EditMatchInfo {
     pub selected_match_ordinal: usize,
     pub start_line: usize,
     pub end_line: usize,
+    pub already_applied: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct EditOutput {
     pub content: String,
     pub info: EditMatchInfo,
+    pub changed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -67,7 +69,7 @@ pub fn apply_edit_text(original: &str, req: EditRequest<'_>) -> Result<EditOutpu
     }
 
     if all_matches.is_empty() {
-        return Err("old_text not found in file.".to_string());
+        return already_applied_output(original, req, &line_starts);
     }
 
     let candidates: Vec<MatchCandidate> = all_matches
@@ -116,7 +118,55 @@ pub fn apply_edit_text(original: &str, req: EditRequest<'_>) -> Result<EditOutpu
             selected_match_ordinal: selected.ordinal,
             start_line: selected.start_line,
             end_line: selected.end_line,
+            already_applied: false,
         },
+        changed: true,
+    })
+}
+
+fn already_applied_output(
+    original: &str,
+    req: EditRequest<'_>,
+    line_starts: &[usize],
+) -> Result<EditOutput, String> {
+    if req.new_text.is_empty() {
+        return Err("old_text not found in file.".to_string());
+    }
+    let mut matches = Vec::new();
+    let mut offset = 0usize;
+    while let Some(rel) = original[offset..].find(req.new_text) {
+        let start = offset + rel;
+        let end = start + req.new_text.len();
+        let candidate = MatchCandidate {
+            start,
+            end,
+            start_line: line_of_index(line_starts, start),
+            end_line: line_of_index(line_starts, end.saturating_sub(1)),
+            ordinal: matches.len() + 1,
+        };
+        if match_line_range(&candidate, req.start_line, req.end_line)
+            && match_context(original, &candidate, req.before_context, req.after_context)
+        {
+            matches.push(candidate);
+        }
+        offset = end;
+    }
+    let expected = req.expected_matches.unwrap_or(1);
+    if matches.len() != expected || matches.len() != 1 {
+        return Err("old_text not found in file.".to_string());
+    }
+    let selected = matches[0];
+    Ok(EditOutput {
+        content: original.to_string(),
+        info: EditMatchInfo {
+            total_matches: 0,
+            candidate_matches: 1,
+            selected_match_ordinal: selected.ordinal,
+            start_line: selected.start_line,
+            end_line: selected.end_line,
+            already_applied: true,
+        },
+        changed: false,
     })
 }
 
@@ -253,5 +303,29 @@ mod tests {
         .expect("edit by line range/context");
         assert_eq!(out.content, "alpha\nsame\nbeta\nnew\ngamma\n");
         assert_eq!(out.info.start_line, 4);
+        assert!(out.changed);
+        assert!(!out.info.already_applied);
+    }
+
+    #[test]
+    fn repeated_edit_is_reported_as_already_applied() {
+        let source = "alpha\nnew\nomega\n";
+        let out = apply_edit_text(
+            source,
+            EditRequest {
+                old_text: "old",
+                new_text: "new",
+                start_line: Some(2),
+                end_line: Some(2),
+                before_context: Some("alpha\n"),
+                after_context: Some("\nomega"),
+                expected_matches: Some(1),
+            },
+        )
+        .expect("idempotent edit");
+
+        assert_eq!(out.content, source);
+        assert!(!out.changed);
+        assert!(out.info.already_applied);
     }
 }

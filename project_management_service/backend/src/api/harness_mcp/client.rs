@@ -12,6 +12,7 @@ use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
+use crate::trace_context::InternalTraceContextExt;
 
 use super::HarnessMcpContext;
 
@@ -131,10 +132,6 @@ impl HarnessRequestError {
     pub(super) fn is_not_found(&self) -> bool {
         self.status == Some(StatusCode::NOT_FOUND)
             || self.message.to_ascii_lowercase().contains("not found")
-    }
-
-    pub(super) fn is_empty_repository_root_listing(&self, requested_path: &str) -> bool {
-        requested_path.is_empty() && self.is_not_found()
     }
 }
 
@@ -329,6 +326,7 @@ where
         request = request.json(body);
     }
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| HarnessRequestError::from_message(err.to_string()))?;
@@ -417,36 +415,5 @@ mod tests {
         let value = serde_json::to_value(body).expect("serialize body");
 
         assert!(value.get("branch").is_none());
-    }
-
-    #[test]
-    fn identifies_an_empty_repository_missing_its_initial_revision() {
-        let error = HarnessRequestError {
-            status: Some(StatusCode::NOT_FOUND),
-            message: r#"{"message":"revision \"main\" not found"}"#.to_string(),
-        };
-
-        assert!(error.is_empty_repository_root_listing(""));
-    }
-
-    #[test]
-    fn does_not_treat_an_ordinary_missing_path_as_an_empty_repository() {
-        let error = HarnessRequestError {
-            status: Some(StatusCode::NOT_FOUND),
-            message: r#"{"message":"path src/main.rs not found"}"#.to_string(),
-        };
-
-        assert!(!error.is_empty_repository_root_listing("src"));
-    }
-
-    #[test]
-    fn treats_a_missing_root_path_as_an_empty_repository_listing() {
-        let error = HarnessRequestError {
-            status: Some(StatusCode::NOT_FOUND),
-            message: r#"{"message":"path './' wasn't found in the repo"}"#.to_string(),
-        };
-
-        assert!(error.is_empty_repository_root_listing(""));
-        assert!(!error.is_empty_repository_root_listing("src"));
     }
 }

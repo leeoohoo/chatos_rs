@@ -22,7 +22,10 @@ pub(super) async fn send_json_with_limit<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
     response_limit_bytes: usize,
 ) -> Result<T, String> {
-    let response = request.send().await.map_err(|err| err.to_string())?;
+    let response = crate::core::trace_context::inject_current_trace_context(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
         let body = read_body_limited(response, ERROR_BODY_PREVIEW_BYTES)
@@ -38,7 +41,10 @@ pub(super) async fn send_json_with_limit<T: for<'de> Deserialize<'de>>(
 pub(super) async fn send_optional_json<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
 ) -> Result<Option<T>, String> {
-    let response = request.send().await.map_err(|err| err.to_string())?;
+    let response = crate::core::trace_context::inject_current_trace_context(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);

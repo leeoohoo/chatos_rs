@@ -23,7 +23,6 @@ export const enUSSettings: MessageDictionary = {
   'settings.defaultExecutionTimeout': 'Default execution timeout (seconds)',
   'settings.currentExecutionTimeout': 'Current execution timeout (seconds)',
   'settings.workerConcurrency': 'Worker concurrency',
-  'settings.workerPollInterval': 'Worker poll interval',
   'settings.workerClaimTtl': 'Worker claim TTL',
   'settings.defaultToolResultLimit': 'Default per-result tool limit',
   'settings.currentToolResultLimit': 'Current per-result tool limit',

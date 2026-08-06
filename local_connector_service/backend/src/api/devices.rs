@@ -121,6 +121,30 @@ pub(super) async fn heartbeat_device(
                 "Local Connector active session lease is missing or expired",
             ));
         }
+        let presence = state
+            .device_presence(device.id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+            .filter(|presence| {
+                presence.owner_user_id == user.effective_owner_user_id()
+                    && presence.session_id == session_id
+            })
+            .ok_or_else(|| {
+                ApiError::conflict(
+                    "connector_presence_lease_lost",
+                    "Local Connector device presence lease is missing or was replaced",
+                )
+            })?;
+        let refreshed = state
+            .refresh_device_presence(&presence)
+            .await
+            .map_err(ApiError::internal)?;
+        if !refreshed {
+            return Err(ApiError::conflict(
+                "connector_presence_lease_lost",
+                "Local Connector device presence lease is missing or was replaced",
+            ));
+        }
     } else {
         return Err(ApiError::bad_request(
             "session_id is required to renew the Local Connector active session lease",
@@ -308,6 +332,43 @@ async fn handle_connector_socket(
             outbound_tx.clone(),
         )
         .await;
+    let presence = match state
+        .register_device_presence(
+            session.owner_user_id.as_str(),
+            device_id.as_str(),
+            session.id.as_str(),
+        )
+        .await
+    {
+        Ok(presence) => presence,
+        Err(error) => {
+            let _ = sender
+                .send(Message::Text(
+                    json!({
+                        "type": "error",
+                        "code": "connector_presence_registration_failed",
+                        "message": error,
+                        "timestamp": crate::models::now_rfc3339(),
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            state
+                .relay
+                .unregister_session(device_id.as_str(), session.id.as_str())
+                .await;
+            let _ = state
+                .store
+                .close_session(
+                    session.owner_user_id.as_str(),
+                    session.id.as_str(),
+                    device_id.as_str(),
+                )
+                .await;
+            return;
+        }
+    };
 
     let send_task = tokio::spawn(async move {
         while let Some(text) = outbound_rx.recv().await {
@@ -355,6 +416,30 @@ async fn handle_connector_socket(
                         )
                         .await;
                         break;
+                    }
+                    match state.refresh_device_presence(&presence).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            let _ = send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "error",
+                                    "code": "connector_presence_lease_lost",
+                                    "message": "Local Connector device presence lease was replaced or expired",
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await;
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                device_id = device_id.as_str(),
+                                error = error.as_str(),
+                                "refresh Local Connector device presence failed"
+                            );
+                            break;
+                        }
                     }
                     if !send_outbound_json(
                         &outbound_tx,
@@ -516,6 +601,18 @@ async fn handle_connector_socket(
                 if !renewed {
                     break;
                 }
+                match state.refresh_device_presence(&presence).await {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => {
+                        tracing::warn!(
+                            device_id = device_id.as_str(),
+                            error = error.as_str(),
+                            "refresh Local Connector device presence after websocket ping failed"
+                        );
+                        break;
+                    }
+                }
                 let _ = send_outbound_json(
                     &outbound_tx,
                     json!({
@@ -544,6 +641,13 @@ async fn handle_connector_socket(
         .relay
         .unregister_session(device_id.as_str(), session.id.as_str())
         .await;
+    if let Err(error) = state.unregister_device_presence(&presence).await {
+        tracing::warn!(
+            device_id = device_id.as_str(),
+            error = error.as_str(),
+            "unregister Local Connector device presence failed"
+        );
+    }
     if let Err(err) =
         mark_device_mcps_offline(&state, session.owner_user_id.as_str(), device_id.as_str()).await
     {
@@ -593,6 +697,18 @@ async fn release_device_session(
             .relay
             .unregister_session(device_id, session.id.as_str())
             .await;
+        if let Some(presence) = state
+            .device_presence(device_id)
+            .await
+            .map_err(ApiError::internal)?
+        {
+            if presence.owner_user_id == owner_user_id && presence.session_id == session.id {
+                state
+                    .unregister_device_presence(&presence)
+                    .await
+                    .map_err(ApiError::internal)?;
+            }
+        }
     } else {
         state
             .store
@@ -673,14 +789,6 @@ async fn verify_device_connect_signature(
             "Local Connector device signature nonce is invalid",
         ));
     }
-    if !state
-        .consume_device_connect_nonce(device.id.as_str(), nonce.as_str(), now)
-        .await
-    {
-        return Err(ApiError::unauthorized(
-            "Local Connector device signature nonce was already used",
-        ));
-    }
     let signature = required_header(headers, "x-local-connector-device-signature")?;
     let signature = URL_SAFE_NO_PAD.decode(signature.as_bytes()).map_err(|_| {
         ApiError::unauthorized("Local Connector device signature encoding is invalid")
@@ -690,7 +798,17 @@ async fn verify_device_connect_signature(
         device_signature_payload(device.id.as_str(), timestamp, nonce.as_str(), path.as_str());
     UnparsedPublicKey::new(&ED25519, public_key.as_slice())
         .verify(payload.as_bytes(), signature.as_slice())
-        .map_err(|_| ApiError::unauthorized("Local Connector device signature is invalid"))
+        .map_err(|_| ApiError::unauthorized("Local Connector device signature is invalid"))?;
+    let nonce_consumed = state
+        .consume_device_connect_nonce(device.id.as_str(), nonce.as_str())
+        .await
+        .map_err(ApiError::internal)?;
+    if !nonce_consumed {
+        return Err(ApiError::unauthorized(
+            "Local Connector device signature nonce was already used",
+        ));
+    }
+    Ok(())
 }
 
 fn device_public_key_bytes(value: &str) -> Result<Vec<u8>, ApiError> {

@@ -26,7 +26,20 @@ pub(super) fn replace_text_once(
         }
         return Ok(original.replacen(&old_candidate, &new_candidate, 1));
     }
+    if replacement_is_already_applied(original, new_text) {
+        return Ok(original.to_string());
+    }
     Err("Replacement target not found in file.".to_string())
+}
+
+fn replacement_is_already_applied(original: &str, new_text: &str) -> bool {
+    if new_text.is_empty() {
+        return false;
+    }
+    let candidates = build_replace_candidates(new_text, new_text, original.contains("\r\n"));
+    candidates
+        .into_iter()
+        .any(|(candidate, _)| original.match_indices(candidate.as_str()).take(2).count() == 1)
 }
 
 fn build_replace_candidates(

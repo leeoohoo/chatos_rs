@@ -24,16 +24,34 @@ const TASK_RUNNER_CALLER: &str = "task-runner";
 const PROJECT_SERVICE_CALLER: &str = "project-service";
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct InternalServiceRequestIdentity {
+    pub caller_service: String,
+    pub scope: String,
+    pub trace_id: String,
+    pub owner_user_id: String,
+}
+
+#[cfg(test)]
 pub(super) fn internal_service_user_from_request(
     config: &AppConfig,
     headers: &HeaderMap,
     method: &Method,
     path: &str,
 ) -> Result<Option<CurrentUser>, ApiError> {
+    internal_service_auth_from_request(config, headers, method, path)
+        .map(|auth| auth.map(|(user, _identity)| user))
+}
+
+pub(super) fn internal_service_auth_from_request(
+    config: &AppConfig,
+    headers: &HeaderMap,
+    method: &Method,
+    path: &str,
+) -> Result<Option<(CurrentUser, InternalServiceRequestIdentity)>, ApiError> {
     let caller = header_text(headers, "x-local-connector-caller");
     let token = header_text(headers, "x-local-connector-internal-token");
-    let legacy_secret = header_text(headers, "x-local-connector-internal-secret");
-    if caller.is_none() && token.is_none() && legacy_secret.is_none() {
+    if caller.is_none() && token.is_none() {
         return Ok(None);
     }
 
@@ -70,37 +88,40 @@ pub(super) fn internal_service_user_from_request(
         .ok_or_else(|| {
             ApiError::unauthorized("Local Connector internal API is disabled for caller")
         })?;
-    if let Some(token) = token {
-        chatos_service_runtime::verify_internal_service_token(
-            token,
-            expected,
-            caller,
-            TOKEN_AUDIENCE,
-            access.scope,
-        )
-        .map_err(|_| ApiError::unauthorized("invalid Local Connector internal API token"))?;
-    } else {
-        if config.require_signed_internal_requests {
-            return Err(ApiError::unauthorized(
-                "signed Local Connector internal API token is required",
-            ));
-        }
-        require_legacy_secret(legacy_secret, expected)?;
-    }
+    let token = token.ok_or_else(|| {
+        ApiError::unauthorized("signed Local Connector internal API token is required")
+    })?;
+    let claims = chatos_service_runtime::verify_internal_service_token(
+        token,
+        expected,
+        caller,
+        TOKEN_AUDIENCE,
+        access.scope,
+    )
+    .map_err(|_| ApiError::unauthorized("invalid Local Connector internal API token"))?;
 
     let owner_user_id = header_text(headers, "x-local-connector-owner-user-id")
         .or_else(|| header_text(headers, "x-chatos-owner-user-id"))
         .ok_or_else(|| ApiError::unauthorized("Local Connector owner user id is required"))?
         .to_string();
     let service_name = caller.replace('-', "_");
-    Ok(Some(CurrentUser {
+    let user = CurrentUser {
         principal_type: "service".to_string(),
         user_id: format!("service:{caller}:{owner_user_id}"),
         username: Some(service_name.clone()),
         display_name: Some(service_name),
         role: "service".to_string(),
-        owner_user_id: Some(owner_user_id),
-    }))
+        owner_user_id: Some(owner_user_id.clone()),
+    };
+    Ok(Some((
+        user,
+        InternalServiceRequestIdentity {
+            caller_service: caller.to_string(),
+            scope: access.scope.to_string(),
+            trace_id: claims.trace_id,
+            owner_user_id,
+        },
+    )))
 }
 
 struct InternalAccess {
@@ -233,31 +254,12 @@ pub(super) fn require_mcp_management_service_caller(user: &CurrentUser) -> Resul
     ))
 }
 
-fn require_legacy_secret(provided: Option<&str>, expected: &str) -> Result<(), ApiError> {
-    let provided = provided
-        .ok_or_else(|| ApiError::unauthorized("missing Local Connector internal API secret"))?;
-    if !constant_time_eq(expected.as_bytes(), provided.as_bytes()) {
-        return Err(ApiError::unauthorized(
-            "invalid Local Connector internal API secret",
-        ));
-    }
-    Ok(())
-}
-
 fn header_text<'a>(headers: &'a HeaderMap, key: &'static str) -> Option<&'a str> {
     headers
         .get(key)
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn constant_time_eq(expected: &[u8], actual: &[u8]) -> bool {
-    let mut difference = expected.len() ^ actual.len();
-    for (left, right) in expected.iter().zip(actual.iter()) {
-        difference |= usize::from(left ^ right);
-    }
-    difference == 0
 }
 
 #[cfg(test)]
@@ -273,7 +275,6 @@ mod tests {
     #[test]
     fn signed_token_is_bound_to_caller_scope_and_path() {
         let mut config = test_config();
-        config.require_signed_internal_requests = true;
         config.internal_api_secrets.insert(
             TASK_RUNNER_CALLER.to_string(),
             "a-long-task-runner-local-connector-secret".to_string(),
@@ -296,6 +297,18 @@ mod tests {
         .expect("matching request")
         .expect("service user");
         assert_eq!(user.user_id, "service:task-runner:user-1");
+        let (_user, identity) = internal_service_auth_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .expect("matching signed request")
+        .expect("internal identity");
+        assert_eq!(identity.caller_service, TASK_RUNNER_CALLER);
+        assert_eq!(identity.scope, MCP_RELAY_SCOPE);
+        assert_eq!(identity.owner_user_id, "user-1");
+        uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("valid trace id");
 
         assert!(internal_service_user_from_request(
             &config,
@@ -304,6 +317,40 @@ mod tests {
             "/api/local-connectors/devices",
         )
         .is_err());
+    }
+
+    #[test]
+    fn legacy_internal_secret_is_rejected_without_a_signed_trace() {
+        let mut config = test_config();
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-local-connector-secret".to_string(),
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-local-connector-caller",
+            HeaderValue::from_static(TASK_RUNNER_CALLER),
+        );
+        headers.insert(
+            "x-local-connector-internal-secret",
+            HeaderValue::from_static("a-long-task-runner-local-connector-secret"),
+        );
+        headers.insert(
+            "x-local-connector-owner-user-id",
+            HeaderValue::from_static("user-1"),
+        );
+
+        let error = internal_service_auth_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .expect_err("legacy secret must not create an internal identity");
+        assert_eq!(
+            error.message(),
+            "signed Local Connector internal API token is required"
+        );
     }
 
     #[test]
@@ -334,7 +381,6 @@ mod tests {
     #[test]
     fn mcp_management_tokens_are_limited_to_mcp_plugin_and_sandbox_tool_relays() {
         let mut config = test_config();
-        config.require_signed_internal_requests = true;
         config.internal_api_secrets.insert(
             MCP_MANAGEMENT_CALLER.to_string(),
             "a-long-mcp-management-local-connector-secret".to_string(),
@@ -441,7 +487,6 @@ mod tests {
     #[test]
     fn task_runner_plugin_relay_token_is_scope_and_path_bound() {
         let mut config = test_config();
-        config.require_signed_internal_requests = true;
         config.internal_api_secrets.insert(
             TASK_RUNNER_CALLER.to_string(),
             "a-long-task-runner-local-connector-secret".to_string(),
@@ -476,7 +521,6 @@ mod tests {
     #[test]
     fn chatos_plugin_ui_read_token_is_scope_caller_and_path_bound() {
         let mut config = test_config();
-        config.require_signed_internal_requests = true;
         config.internal_api_secrets.insert(
             CHATOS_CALLER.to_string(),
             "a-long-chatos-local-connector-secret".to_string(),
@@ -606,7 +650,6 @@ mod tests {
     #[test]
     fn task_runner_can_read_sandbox_routing_and_use_facade_with_scoped_tokens() {
         let mut config = test_config();
-        config.require_signed_internal_requests = true;
         config.internal_api_secrets.insert(
             TASK_RUNNER_CALLER.to_string(),
             "a-long-task-runner-local-connector-secret".to_string(),
@@ -657,6 +700,7 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            internal_mtls_port: 1,
             database_url: "mongodb://127.0.0.1/test".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
@@ -665,11 +709,17 @@ mod tests {
             sandbox_image_relay_request_timeout: Duration::from_secs(1),
             public_base_url: None,
             internal_api_secrets: HashMap::new(),
-            require_signed_internal_requests: false,
             require_device_connect_signature: true,
-            allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),
             active_session_lease_ttl: Duration::from_secs(90),
+            valkey_url: "redis://127.0.0.1:6379/0".to_string(),
+            valkey_key_prefix: "chatos:local-connector:test".to_string(),
+            device_presence_ttl: Duration::from_secs(120),
+            valkey_reconnect_delay: Duration::from_secs(2),
+            relay_correlation_grace_ttl: Duration::from_secs(30),
+            relay_delivery_ack_timeout: Duration::from_secs(3),
+            terminal_subscriber_ttl: Duration::from_secs(60),
+            terminal_subscriber_refresh_interval: Duration::from_secs(20),
             managed_requirements_toml_path: None,
             managed_requirements_signing_key_path: None,
             managed_requirements_signing_key_id: None,

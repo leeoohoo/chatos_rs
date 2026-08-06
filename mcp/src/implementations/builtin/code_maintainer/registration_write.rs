@@ -12,6 +12,7 @@ use super::diff::{
 };
 use super::edit::{apply_edit_text, EditRequest};
 use super::fs_ops::FsOps;
+use super::outcome::{classify_file_modification_error, FileModificationOutcome};
 use super::patch::apply_patch_limited;
 use super::service::{CodeMaintainerHooksRef, CodeMaintainerService};
 use super::storage::ChangeLogStore;
@@ -172,6 +173,7 @@ fn register_edit_file_tool(
             "required": ["path", "old_text", "new_text"]
         }),
         Arc::new(move |args, ctx| {
+            let invocation = (|| {
             let path = args
                 .get("path")
                 .and_then(|value| value.as_str())
@@ -199,7 +201,7 @@ fn register_edit_file_tool(
                 .and_then(|value| value.as_u64())
                 .map(|value| value as usize);
 
-            let (_resolved_path, _size, _sha, content) = fs_ops.read_file_raw(path)?;
+            let (resolved_path, size, sha, content) = fs_ops.read_file_raw(path)?;
             let edit_result = apply_edit_text(
                 &content,
                 EditRequest {
@@ -230,6 +232,23 @@ fn register_edit_file_tool(
                 }
             })?;
 
+            if !edit_result.changed {
+                return Ok(text_result(json!({
+                    "outcome": FileModificationOutcome::AlreadyApplied,
+                    "changed": false,
+                    "changed_target_count": 0,
+                    "result": {
+                        "path": resolved_path,
+                        "bytes": size,
+                        "sha256": sha,
+                        "changed": false,
+                        "already_applied": true
+                    },
+                    "match": edit_result.info,
+                    "message": "The requested edit is already present. No file-system change was applied."
+                })));
+            }
+
             let updated_content = edit_result.content.clone();
             let write_result = fs_ops.write_file(path, &updated_content)?;
             let diff = build_diff(DiffInput::text(content), DiffInput::text(updated_content));
@@ -249,10 +268,16 @@ fn register_edit_file_tool(
                 )?;
             note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
             Ok(text_result(json!({
+                "outcome": FileModificationOutcome::Changed,
+                "changed": true,
+                "changed_target_count": 1,
                 "result": write_result,
                 "match": edit_result.info,
                 "change": record
             })))
+            })();
+            record_file_modification_outcome("edit_file", ctx, &invocation);
+            invocation
         }),
     );
 }
@@ -437,6 +462,7 @@ fn register_apply_patch_tool(
             "required": ["patch"]
         }),
         Arc::new(move |args, ctx| {
+            let invocation = (|| {
             let patch_text = args
                 .get("patch")
                 .and_then(|value| value.as_str())
@@ -555,7 +581,18 @@ fn register_apply_patch_tool(
                 }
             }
 
-            Ok(text_result(json!({ "result": result, "files": hashes })))
+            let changed = result.changed();
+            let changed_target_count = result.changed_path_count();
+            Ok(text_result(json!({
+                "outcome": FileModificationOutcome::from_changed(changed),
+                "changed": changed,
+                "changed_target_count": changed_target_count,
+                "result": result,
+                "files": hashes
+            })))
+            })();
+            record_file_modification_outcome("apply_patch", ctx, &invocation);
+            invocation
         }),
     );
 }
@@ -580,4 +617,45 @@ fn note_workspace_path_changed(hooks: Option<&CodeMaintainerHooksRef>, path: &st
     if let Some(hooks) = hooks {
         hooks.note_workspace_path_changed(path);
     }
+}
+
+fn record_file_modification_outcome(
+    tool: &str,
+    ctx: &super::service::ToolContext<'_>,
+    invocation: &Result<serde_json::Value, String>,
+) {
+    let (outcome, success, changed, changed_target_count) = match invocation {
+        Ok(value) => {
+            let payload = value.get("_structured_result").unwrap_or(value);
+            let changed = payload
+                .get("changed")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let outcome = payload
+                .get("outcome")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| FileModificationOutcome::from_changed(changed).as_str());
+            let changed_target_count = payload
+                .get("changed_target_count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(u64::from(changed));
+            (outcome, true, changed, changed_target_count)
+        }
+        Err(error) => {
+            let outcome = classify_file_modification_error(error);
+            (outcome.as_str(), outcome.is_success(), false, 0)
+        }
+    };
+    tracing::info!(
+        event = "file_modification_outcome",
+        source = "builtin_code_maintainer",
+        tool,
+        conversation_id = ctx.conversation_id,
+        run_id = ctx.run_id,
+        outcome,
+        success,
+        changed,
+        changed_target_count,
+        "file modification completed"
+    );
 }

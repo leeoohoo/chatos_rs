@@ -2,10 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -67,6 +63,7 @@ async fn dropping_http_tool_call_sends_cancel_with_the_same_request_id_and_heade
             Some(&headers),
             json!({"name": "demo", "arguments": {}}),
             Some(Duration::from_secs(30)),
+            McpAsyncResultTransport::Disabled,
         )
         .await
     });
@@ -96,154 +93,22 @@ async fn dropping_http_tool_call_sends_cancel_with_the_same_request_id_and_heade
 }
 
 #[tokio::test]
-async fn accepted_http_tool_call_is_polled_until_completed() {
-    #[derive(Clone)]
-    struct PollState {
-        poll_count: Arc<AtomicUsize>,
-        poll_token: Arc<std::sync::Mutex<Option<String>>>,
-        poll_caller: Arc<std::sync::Mutex<Option<String>>>,
-        saw_secret: Arc<std::sync::Mutex<bool>>,
-    }
+async fn internal_mcp_tool_call_requires_initialized_result_queue() {
+    let headers = HashMap::from([(
+        "authorization".to_string(),
+        "Bearer runtime-token".to_string(),
+    )]);
 
-    async fn mcp(axum::Json(request): axum::Json<Value>) -> axum::Json<Value> {
-        axum::Json(json!({
-            "jsonrpc": "2.0",
-            "id": request.get("id").cloned().unwrap_or(Value::Null),
-            "result": {
-                "status": "accepted",
-                "invocation_id": "invocation-1",
-                "queued": true
-            }
-        }))
-    }
-
-    async fn invocation_status(
-        axum::extract::State(state): axum::extract::State<PollState>,
-        headers: axum::http::HeaderMap,
-    ) -> axum::Json<Value> {
-        *state.poll_token.lock().unwrap() = headers
-            .get("x-mcp-management-internal-token")
-            .and_then(|value| value.to_str().ok())
-            .map(ToOwned::to_owned);
-        *state.poll_caller.lock().unwrap() = headers
-            .get("x-mcp-management-caller-service")
-            .and_then(|value| value.to_str().ok())
-            .map(ToOwned::to_owned);
-        *state.saw_secret.lock().unwrap() =
-            headers.contains_key("x-mcp-management-internal-secret");
-        let poll_index = state.poll_count.fetch_add(1, Ordering::SeqCst);
-        let body = if poll_index == 0 {
-            json!({
-                "invocation_id": "invocation-1",
-                "session_id": "session-1",
-                "caller_service": "task-runner",
-                "resource_id": "resource-1",
-                "exposed_tool_name": "demo_tool",
-                "status": "running",
-                "async_execution": true,
-                "created_at_unix_ms": 1,
-                "started_at_unix_ms": 2
-            })
-        } else {
-            json!({
-                "invocation_id": "invocation-1",
-                "session_id": "session-1",
-                "caller_service": "task-runner",
-                "resource_id": "resource-1",
-                "exposed_tool_name": "demo_tool",
-                "status": "completed",
-                "async_execution": true,
-                "created_at_unix_ms": 1,
-                "started_at_unix_ms": 2,
-                "completed_at_unix_ms": 3,
-                "terminal_result": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "done"
-                        }
-                    ]
-                }
-            })
-        };
-        axum::Json(body)
-    }
-
-    let state = PollState {
-        poll_count: Arc::new(AtomicUsize::new(0)),
-        poll_token: Arc::new(std::sync::Mutex::new(None)),
-        poll_caller: Arc::new(std::sync::Mutex::new(None)),
-        saw_secret: Arc::new(std::sync::Mutex::new(false)),
-    };
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server_state = state.clone();
-    let server = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            axum::Router::new()
-                .route("/mcp", axum::routing::post(mcp))
-                .route(
-                    "/api/internal/runtime/invocations/invocation-1",
-                    axum::routing::get(invocation_status),
-                )
-                .with_state(server_state),
-        )
-        .await
-        .unwrap();
-    });
-    let headers = HashMap::from([
-        (
-            "authorization".to_string(),
-            "Bearer runtime-token".to_string(),
-        ),
-        (
-            "x-mcp-management-internal-secret".to_string(),
-            "a-long-mcp-management-secret".to_string(),
-        ),
-        (
-            "x-mcp-management-caller-service".to_string(),
-            "task-runner".to_string(),
-        ),
-        (
-            "x-mcp-management-internal-scope".to_string(),
-            "runtime.invocations.read".to_string(),
-        ),
-    ]);
-
-    let result = jsonrpc_http_tool_call_cancellable(
-        format!("http://{address}/mcp").as_str(),
+    let error = jsonrpc_http_tool_call_cancellable(
+        "http://127.0.0.1:1/mcp",
         Some(&headers),
         json!({"name": "demo", "arguments": {}}),
-        Some(Duration::from_secs(5)),
+        Some(Duration::from_secs(1)),
+        McpAsyncResultTransport::RabbitMq,
     )
     .await
-    .expect("final tool result");
-
-    assert_eq!(
-        result,
-        json!({
-            "content": [
-                {
-                    "type": "text",
-                    "text": "done"
-                }
-            ]
-        })
-    );
-    assert_eq!(state.poll_count.load(Ordering::SeqCst), 2);
-    assert_eq!(
-        state.poll_caller.lock().unwrap().as_deref(),
-        Some("task-runner")
-    );
-    assert!(state
-        .poll_token
-        .lock()
-        .unwrap()
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty()));
-    assert!(!*state.saw_secret.lock().unwrap());
-    server.abort();
+    .expect_err("missing MQ result consumer must fail closed");
+    assert!(error.contains("result queue is not initialized"));
 }
 
 #[test]

@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::auth::{
-    SandboxAuthContext, SandboxSystemClient, SCOPE_IMAGES_READ, SCOPE_LEASE_CREATE,
+    SandboxAuthContext, SandboxSystemClient, SCOPE_ADMIN, SCOPE_IMAGES_READ, SCOPE_LEASE_CREATE,
     SCOPE_LEASE_READ, SCOPE_LEASE_RELEASE, SCOPE_MCP_CALL, SCOPE_MCP_TOOLS, SCOPE_POOL_READ,
 };
 use crate::error::ApiError;
@@ -19,6 +19,45 @@ use crate::models::{
 use super::{now_rfc3339, prefixed_id, SandboxManager};
 
 impl SandboxManager {
+    pub(super) async fn ensure_frontend_proxy_access_client(&self) -> Result<(), String> {
+        let client_id = self.config.frontend_proxy_client_id.trim();
+        let client_key = self.config.frontend_proxy_client_key.trim();
+        if client_id.is_empty() || client_key.is_empty() {
+            return Err("sandbox frontend proxy credentials must not be empty".to_string());
+        }
+
+        let now = now_rfc3339();
+        let existing = self.store.get_access_client_by_client_id(client_id).await?;
+        let existed = existing.is_some();
+        let record = SandboxAccessClientRecord {
+            id: existing
+                .as_ref()
+                .map(|record| record.id.clone())
+                .unwrap_or_else(|| prefixed_id("sandbox_access_client")),
+            name: "Sandbox Manager Console Proxy".to_string(),
+            client_id: client_id.to_string(),
+            key_hash: access_client_key_hash(client_key, self.config.agent_token_secret.as_str()),
+            enabled: true,
+            scopes: vec![SCOPE_ADMIN.to_string()],
+            allowed_tenant_ids: vec!["*".to_string()],
+            allowed_project_ids: vec!["*".to_string()],
+            allowed_tools: vec!["*".to_string()],
+            max_lease_ttl_seconds: self.config.system_client_max_lease_ttl_seconds,
+            created_at: existing
+                .as_ref()
+                .map(|record| record.created_at.clone())
+                .unwrap_or_else(|| now.clone()),
+            updated_at: now,
+            last_used_at: existing.and_then(|record| record.last_used_at),
+        };
+        if existed {
+            self.store.replace_access_client(&record).await?;
+        } else {
+            self.store.create_access_client(&record).await?;
+        }
+        Ok(())
+    }
+
     pub async fn authenticate_access_client(
         &self,
         client_id: &str,
@@ -52,6 +91,7 @@ impl SandboxManager {
             allowed_project_ids: record.allowed_project_ids,
             allowed_tools: record.allowed_tools,
             max_lease_ttl_seconds: record.max_lease_ttl_seconds,
+            internal_identity: None,
         }))
     }
 
@@ -225,7 +265,7 @@ fn generate_access_client_key() -> String {
     )
 }
 
-fn access_client_key_hash(value: &str, secret: &str) -> String {
+pub(super) fn access_client_key_hash(value: &str, secret: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(secret.as_bytes());
     hasher.update([0]);

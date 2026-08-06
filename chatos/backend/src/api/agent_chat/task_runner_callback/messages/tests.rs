@@ -15,6 +15,7 @@ fn sample_callback_payload() -> TaskRunnerCallbackRequest {
     TaskRunnerCallbackRequest {
         event: "task.completed".to_string(),
         task_id: "task-1".to_string(),
+        owner_user_id: Some("owner-1".to_string()),
         run_id: Some("run-1".to_string()),
         status: "succeeded".to_string(),
         task_title: "Demo task".to_string(),

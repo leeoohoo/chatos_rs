@@ -116,6 +116,11 @@ pub(super) async fn terminal_session_create_relay(
     let workspace_id = required_text(req.workspace_id, "workspace_id")?;
     let terminal_session_id = required_text(req.terminal_session_id, "terminal_session_id")?;
     validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+    if state.relay.new_terminal_sessions_paused().await {
+        return Err(ApiError::too_many_requests(
+            "Local Connector is temporarily pausing new terminal sessions",
+        ));
+    }
 
     let request = RelayRequest {
         message_type: "terminal_session_create_request".to_string(),
@@ -222,10 +227,23 @@ async fn handle_terminal_relay_socket(
     rows: u16,
     mut socket: WebSocket,
 ) {
-    let mut events = state
+    let subscription = match state
         .relay
         .subscribe_terminal_session(terminal_session_id.as_str())
-        .await;
+        .await
+    {
+        Ok(subscription) => subscription,
+        Err(error) => {
+            let _ = socket
+                .send(Message::Text(
+                    json!({"type": "error", "error": error}).to_string().into(),
+                ))
+                .await;
+            return;
+        }
+    };
+    let subscription_id = subscription.id;
+    let mut events = subscription.events;
     let create_request = RelayRequest {
         message_type: "terminal_session_create_request".to_string(),
         request_id: Uuid::new_v4().to_string(),
@@ -266,10 +284,12 @@ async fn handle_terminal_relay_socket(
                     .await
                     .is_err()
             {
-                state
-                    .relay
-                    .drop_terminal_session(terminal_session_id.as_str())
-                    .await;
+                drop_terminal_subscription(
+                    &state,
+                    terminal_session_id.as_str(),
+                    subscription_id.as_str(),
+                )
+                .await;
                 return;
             }
             let busy = response
@@ -286,10 +306,12 @@ async fn handle_terminal_relay_socket(
                 .await
                 .is_err()
             {
-                state
-                    .relay
-                    .drop_terminal_session(terminal_session_id.as_str())
-                    .await;
+                drop_terminal_subscription(
+                    &state,
+                    terminal_session_id.as_str(),
+                    subscription_id.as_str(),
+                )
+                .await;
                 return;
             }
         }
@@ -306,10 +328,12 @@ async fn handle_terminal_relay_socket(
                         .into(),
                 ))
                 .await;
-            state
-                .relay
-                .drop_terminal_session(terminal_session_id.as_str())
-                .await;
+            drop_terminal_subscription(
+                &state,
+                terminal_session_id.as_str(),
+                subscription_id.as_str(),
+            )
+            .await;
             return;
         }
         Err(err) => {
@@ -320,42 +344,81 @@ async fn handle_terminal_relay_socket(
                         .into(),
                 ))
                 .await;
-            state
-                .relay
-                .drop_terminal_session(terminal_session_id.as_str())
-                .await;
+            drop_terminal_subscription(
+                &state,
+                terminal_session_id.as_str(),
+                subscription_id.as_str(),
+            )
+            .await;
             return;
         }
     }
 
     let (mut sender, mut receiver) = socket.split();
-    let event_task = tokio::spawn(async move {
+    let relay = state.relay.clone();
+    let subscriber_terminal_session_id = terminal_session_id.clone();
+    let subscriber_id = subscription_id.clone();
+    let refresh_interval = state.config.terminal_subscriber_refresh_interval;
+    let mut event_task = tokio::spawn(async move {
+        let mut refresh = tokio::time::interval(refresh_interval);
+        refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            match events.recv().await {
-                Ok(event) => {
-                    let payload =
-                        terminal_event_to_ws_payload(event.message_type.as_str(), &event.body);
-                    let Some(payload) = payload else {
-                        continue;
-                    };
-                    if sender
-                        .send(Message::Text(payload.to_string().into()))
-                        .await
-                        .is_err()
-                    {
-                        break;
+            tokio::select! {
+                event = events.recv() => match event {
+                    Ok(event) => {
+                        let payload =
+                            terminal_event_to_ws_payload(event.message_type.as_str(), &event.body);
+                        let Some(payload) = payload else {
+                            continue;
+                        };
+                        if sender
+                            .send(Message::Text(payload.to_string().into()))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        if event.message_type == "terminal_exit" {
+                            break;
+                        }
                     }
-                    if event.message_type == "terminal_exit" {
-                        break;
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                },
+                _ = refresh.tick() => {
+                    match relay
+                        .refresh_terminal_subscription(
+                            subscriber_terminal_session_id.as_str(),
+                            subscriber_id.as_str(),
+                        )
+                        .await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => break,
+                        Err(error) => {
+                            let _ = sender
+                                .send(Message::Text(
+                                    json!({"type": "error", "error": error})
+                                        .to_string()
+                                        .into(),
+                                ))
+                                .await;
+                            break;
+                        }
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
 
-    while let Some(message) = receiver.next().await {
+    loop {
+        let message = tokio::select! {
+            _ = &mut event_task => break,
+            message = receiver.next() => message,
+        };
+        let Some(message) = message else {
+            break;
+        };
         match message {
             Ok(Message::Text(text)) => {
                 if !handle_terminal_ws_input(
@@ -404,11 +467,32 @@ async fn handle_terminal_relay_socket(
         json!({}),
     )
     .await;
-    state
-        .relay
-        .drop_terminal_session(terminal_session_id.as_str())
-        .await;
     event_task.abort();
+    drop_terminal_subscription(
+        &state,
+        terminal_session_id.as_str(),
+        subscription_id.as_str(),
+    )
+    .await;
+}
+
+async fn drop_terminal_subscription(
+    state: &AppState,
+    terminal_session_id: &str,
+    subscription_id: &str,
+) {
+    if let Err(error) = state
+        .relay
+        .drop_terminal_subscription(terminal_session_id, subscription_id)
+        .await
+    {
+        tracing::warn!(
+            terminal_session_id,
+            subscription_id,
+            error = error.as_str(),
+            "drop Local Connector terminal subscriber lease failed"
+        );
+    }
 }
 
 async fn handle_terminal_ws_input(

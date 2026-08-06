@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
@@ -21,7 +21,6 @@ pub struct AppConfig {
     pub user_service_request_timeout: Duration,
     pub task_runner_base_url: String,
     pub cors_origins: Vec<String>,
-    pub internal_api_secret: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
     pub cloud_credential_encryption_secret: String,
     pub oauth_public_base_url: String,
@@ -35,6 +34,19 @@ pub struct AppConfig {
     pub local_connector_max_tool_snapshot_bytes: usize,
     pub plugin_catalog_sync_enabled: bool,
     pub plugin_catalog_sync_interval: Duration,
+    pub plugin_catalog_rabbitmq_url: String,
+    pub plugin_catalog_rabbitmq_exchange: String,
+    pub plugin_catalog_queue: String,
+    pub plugin_catalog_retry_queue: String,
+    pub plugin_catalog_schedule_queue: String,
+    pub plugin_catalog_dead_letter_queue: String,
+    pub plugin_catalog_max_delivery_attempts: u32,
+    pub plugin_catalog_retry_delay: Duration,
+    pub plugin_catalog_rabbitmq_reconnect_delay: Duration,
+    pub plugin_catalog_consumer_concurrency: usize,
+    pub plugin_catalog_outbox_reconcile_interval: Duration,
+    pub plugin_catalog_outbox_batch_size: i64,
+    pub plugin_catalog_sync_lock_timeout: Duration,
     pub plugin_catalog_request_timeout: Duration,
     pub plugin_catalog_max_bytes: usize,
     pub super_admin_username: String,
@@ -54,9 +66,6 @@ impl AppConfig {
             require_config_center_text("PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE")?;
         let user_service_request_timeout_ms =
             required_u64("PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
-        let internal_api_secret = Some(require_config_center_secret(
-            "PLUGIN_MANAGEMENT_INTERNAL_API_SECRET",
-        )?);
         let cloud_credential_encryption_secret =
             require_config_center_secret("PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET")?;
         let cors_origins = require_csv("PLUGIN_MANAGEMENT_CORS_ORIGINS")?;
@@ -73,7 +82,6 @@ impl AppConfig {
                 "PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL",
             )?,
             cors_origins: cors_origins.clone(),
-            internal_api_secret,
             internal_api_secrets: caller_internal_api_secrets()?,
             cloud_credential_encryption_secret,
             oauth_public_base_url: require_config_center_secret(
@@ -108,6 +116,51 @@ impl AppConfig {
                 required_u64("PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS")?
                     .clamp(60, 24 * 60 * 60),
             ),
+            plugin_catalog_rabbitmq_url: require_config_center_secret(
+                "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL",
+            )?,
+            plugin_catalog_rabbitmq_exchange: require_config_center_text(
+                "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE",
+            )?,
+            plugin_catalog_queue: require_config_center_text("PLUGIN_MANAGEMENT_CATALOG_QUEUE")?,
+            plugin_catalog_retry_queue: require_config_center_text(
+                "PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE",
+            )?,
+            plugin_catalog_schedule_queue: require_config_center_text(
+                "PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE",
+            )?,
+            plugin_catalog_dead_letter_queue: require_config_center_text(
+                "PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE",
+            )?,
+            plugin_catalog_max_delivery_attempts: u32::try_from(
+                required_u64("PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS")?.clamp(1, 100),
+            )
+            .map_err(|_| {
+                "PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS is too large".to_string()
+            })?,
+            plugin_catalog_retry_delay: Duration::from_millis(
+                required_u64("PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS")?
+                    .clamp(100, 24 * 60 * 60 * 1_000),
+            ),
+            plugin_catalog_rabbitmq_reconnect_delay: Duration::from_millis(
+                required_u64("PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS")?.clamp(100, 60_000),
+            ),
+            plugin_catalog_consumer_concurrency: required_usize(
+                "PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY",
+            )?
+            .clamp(1, 64),
+            plugin_catalog_outbox_reconcile_interval: Duration::from_millis(
+                required_u64("PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS")?
+                    .clamp(1_000, 24 * 60 * 60 * 1_000),
+            ),
+            plugin_catalog_outbox_batch_size: i64::try_from(
+                required_u64("PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE")?.clamp(1, 10_000),
+            )
+            .map_err(|_| "PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE is too large".to_string())?,
+            plugin_catalog_sync_lock_timeout: Duration::from_secs(
+                required_u64("PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS")?
+                    .clamp(30, 60 * 60),
+            ),
             plugin_catalog_request_timeout: Duration::from_millis(
                 required_u64("PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS")?
                     .clamp(1_000, 5 * 60 * 1_000),
@@ -124,6 +177,32 @@ impl AppConfig {
                 "PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES",
             )?,
         };
+
+        let catalog_queues = [
+            config.plugin_catalog_queue.as_str(),
+            config.plugin_catalog_retry_queue.as_str(),
+            config.plugin_catalog_schedule_queue.as_str(),
+            config.plugin_catalog_dead_letter_queue.as_str(),
+        ];
+        if catalog_queues.iter().any(|queue| queue.trim().is_empty())
+            || catalog_queues.iter().copied().collect::<HashSet<_>>().len() != catalog_queues.len()
+        {
+            return Err(
+                "Plugin Catalog main, retry, schedule, and dead-letter queues must be non-empty and distinct"
+                    .to_string(),
+            );
+        }
+        if config.plugin_catalog_sync_lock_timeout <= config.plugin_catalog_request_timeout {
+            return Err(
+                "PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS must exceed PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS"
+                    .to_string(),
+                );
+        }
+        if !config.require_signed_internal_requests {
+            return Err(
+                "PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string(),
+            );
+        }
 
         validate_production_secret(
             "PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD",
@@ -149,13 +228,6 @@ impl AppConfig {
                 "PLUGIN_MANAGEMENT_FRONTEND_ORIGIN must contain only scheme, host, and port"
                     .to_string(),
             );
-        }
-        if config.internal_api_secret.is_some() {
-            validate_production_secret(
-                "PLUGIN_MANAGEMENT_INTERNAL_API_SECRET",
-                config.internal_api_secret.as_deref(),
-                &["change_me_plugin_management_internal_secret"],
-            )?;
         }
         validate_production_secret(
             "PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET",

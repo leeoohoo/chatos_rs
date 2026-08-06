@@ -10,11 +10,11 @@ use chatos_mcp_management_sdk::{
 };
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{
@@ -32,6 +32,7 @@ pub(super) struct LocalSandboxProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: Duration,
     response_limit_bytes: usize,
 }
 
@@ -57,6 +58,7 @@ struct LocalSandboxLeaseBinding {
 
 impl LocalSandboxProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: Duration,
         internal_secret: Option<String>,
@@ -68,17 +70,13 @@ impl LocalSandboxProvider {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("Local Sandbox Provider base URL must use http or https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|error| format!("build Local Sandbox Provider client failed: {error}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
+            request_timeout,
             response_limit_bytes,
         })
     }
@@ -154,6 +152,7 @@ impl LocalSandboxProvider {
                 SANDBOX_ROUTING_SCOPE,
                 context.owner_user_id.as_str(),
             )?
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -223,6 +222,7 @@ impl LocalSandboxProvider {
                 SANDBOX_SERVICE_SCOPE,
                 owner_user_id,
             )?
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -308,6 +308,7 @@ impl LocalSandboxProvider {
                     "arguments": arguments,
                 }
             }))
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -372,6 +373,7 @@ impl LocalSandboxProvider {
                     "reason": "MCP Management runtime cancelled the invocation"
                 }
             }))
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -452,7 +454,8 @@ impl LocalSandboxProvider {
         Ok(request
             .header("x-local-connector-caller", CALLER_SERVICE)
             .header("x-local-connector-internal-token", token)
-            .header("x-local-connector-owner-user-id", owner_user_id))
+            .header("x-local-connector-owner-user-id", owner_user_id)
+            .with_internal_trace_context())
     }
 
     fn sandbox_url(&self, pairing_id: &str, sandbox_id: &str, suffix: Option<&str>) -> String {
@@ -524,10 +527,13 @@ mod tests {
         RuntimeSessionSnapshot {
             session_id: "session-1".to_string(),
             caller_service: "task-runner".to_string(),
+            trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
             task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
+            device_id: None,
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
@@ -633,6 +639,7 @@ mod tests {
             .unwrap();
         });
         let provider = LocalSandboxProvider::new(
+            reqwest::Client::new(),
             format!("http://{address}"),
             Duration::from_secs(5),
             Some("a-long-local-connector-secret".to_string()),

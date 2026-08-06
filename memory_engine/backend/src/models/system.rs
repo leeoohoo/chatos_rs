@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_queue_observability::RabbitMqQueueRuntimeStats;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -54,6 +55,14 @@ pub struct MemoryEngineWorkerRuntimeStats {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct MemoryEnginePressureStats {
+    pub level: &'static str,
+    pub active_summary_concurrency: usize,
+    pub reconcile_paused: bool,
+    pub refresh_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct MemoryEngineSystemStatsResponse {
     pub ok: bool,
     pub service: &'static str,
@@ -61,6 +70,8 @@ pub struct MemoryEngineSystemStatsResponse {
     pub roles: MemoryEngineRoleStats,
     pub worker_config: MemoryEngineWorkerConfigStats,
     pub worker_runtime: MemoryEngineWorkerRuntimeStats,
+    pub pressure: MemoryEnginePressureStats,
+    pub rabbitmq_queues: RabbitMqQueueRuntimeStats,
     pub backlog: MemoryEngineBacklogStats,
     pub job_runs_last_24h: serde_json::Value,
 }

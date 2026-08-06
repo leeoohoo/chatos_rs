@@ -5,10 +5,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_CENTER_BASE_URL="${LOCAL_PROJECT_ENTRY_CONFIG_CENTER_BASE_URL:-http://127.0.0.1:${CONFIG_CENTER_PORT:-39270}}"
+CONFIG_CENTER_PUBLIC_BASE_URL="${LOCAL_PROJECT_ENTRY_CONFIG_CENTER_PUBLIC_BASE_URL:-http://127.0.0.1:${CONFIG_CENTER_PORT:-39270}}"
+CONFIG_CENTER_BASE_URL="${LOCAL_PROJECT_ENTRY_CONFIG_CENTER_BASE_URL:-https://127.0.0.1:${CONFIG_CENTER_INTERNAL_MTLS_PORT:-39272}}"
+CONFIG_CENTER_MTLS_DIR="${CONFIG_CENTER_MTLS_DIR:-$ROOT_DIR/.chatos-local-dev/config-center-mtls}"
+CONFIG_CENTER_MTLS_CA_CERT_PATH="${CONFIG_CENTER_MTLS_CA_CERT_PATH:-$CONFIG_CENTER_MTLS_DIR/ca.crt}"
+CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH="${CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH:-$CONFIG_CENTER_MTLS_DIR/chatos-backend.identity.pem}"
 CHATOS_BASE_URL="${LOCAL_PROJECT_ENTRY_CHATOS_BASE_URL:-http://127.0.0.1:${BACKEND_PORT:-3997}}"
 CONFIG_ENVIRONMENT="${LOCAL_PROJECT_ENTRY_CONFIG_ENVIRONMENT:-local}"
-CONFIG_CENTER_SECRET="${CONFIG_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_internal_secret}"
+CONFIG_CENTER_SECRET="${CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET:-change_me_config_center_chatos_backend_signing_secret}"
 JWT_SECRET="${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}"
 
 require_command() {
@@ -23,8 +27,8 @@ require_command curl
 require_command docker
 require_command node
 
-if ! curl -fsS --max-time 5 "${CONFIG_CENTER_BASE_URL%/}/health" >/dev/null; then
-  echo "[ERROR] Configuration Center is not healthy at $CONFIG_CENTER_BASE_URL" >&2
+if ! curl -fsS --max-time 5 "${CONFIG_CENTER_PUBLIC_BASE_URL%/}/health" >/dev/null; then
+  echo "[ERROR] Configuration Center is not healthy at $CONFIG_CENTER_PUBLIC_BASE_URL" >&2
   exit 1
 fi
 if ! curl -fsS --max-time 5 "${CHATOS_BASE_URL%/}/health" >/dev/null; then
@@ -62,6 +66,8 @@ if [[ -z "$user_json" || "$user_json" == "null" ]]; then
 fi
 
 export LOCAL_PROJECT_ENTRY_CONFIG_CENTER_BASE_URL="${CONFIG_CENTER_BASE_URL%/}"
+export LOCAL_PROJECT_ENTRY_CONFIG_CENTER_MTLS_CA_CERT_PATH="$CONFIG_CENTER_MTLS_CA_CERT_PATH"
+export LOCAL_PROJECT_ENTRY_CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH="$CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH"
 export LOCAL_PROJECT_ENTRY_CHATOS_BASE_URL="${CHATOS_BASE_URL%/}"
 export LOCAL_PROJECT_ENTRY_CONFIG_ENVIRONMENT="$CONFIG_ENVIRONMENT"
 export LOCAL_PROJECT_ENTRY_CONFIG_CENTER_SECRET="$CONFIG_CENTER_SECRET"
@@ -70,11 +76,14 @@ export LOCAL_PROJECT_ENTRY_USER_JSON="$user_json"
 
 node <<'NODE'
 const crypto = require('crypto');
+const {execFileSync} = require('child_process');
 
 const configCenterBaseUrl = process.env.LOCAL_PROJECT_ENTRY_CONFIG_CENTER_BASE_URL;
 const chatosBaseUrl = process.env.LOCAL_PROJECT_ENTRY_CHATOS_BASE_URL;
 const environment = process.env.LOCAL_PROJECT_ENTRY_CONFIG_ENVIRONMENT;
 const configCenterSecret = process.env.LOCAL_PROJECT_ENTRY_CONFIG_CENTER_SECRET;
+const configCenterCaCertPath = process.env.LOCAL_PROJECT_ENTRY_CONFIG_CENTER_MTLS_CA_CERT_PATH;
+const configCenterClientIdentityPath = process.env.LOCAL_PROJECT_ENTRY_CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH;
 const jwtSecret = process.env.LOCAL_PROJECT_ENTRY_JWT_SECRET;
 const user = JSON.parse(process.env.LOCAL_PROJECT_ENTRY_USER_JSON);
 const configKey = 'chatos.ui.local_project_creation_enabled';
@@ -118,6 +127,27 @@ function issueUserToken() {
   return `${header}.${payload}.${signature}`;
 }
 
+function issueConfigCenterToken() {
+  const now = Math.floor(Date.now() / 1000);
+  const caller = 'chatos-backend';
+  const header = encodedJson({alg: 'HS256', typ: 'JWT'});
+  const payload = encodedJson({
+    iss: caller,
+    sub: caller,
+    caller,
+    aud: 'configuration-center',
+    scope: 'config.snapshot.read',
+    trace_id: crypto.randomUUID(),
+    exp: now + 60,
+    iat: now,
+  });
+  const signature = crypto
+    .createHmac('sha256', configCenterSecret)
+    .update(`${header}.${payload}`)
+    .digest('base64url');
+  return `${header}.${payload}.${signature}`;
+}
+
 async function readJson(response, label) {
   const text = await response.text();
   if (!text) {
@@ -131,17 +161,19 @@ async function readJson(response, label) {
 }
 
 async function main() {
-  const snapshotResponse = await fetch(
-    `${configCenterBaseUrl}/internal/config/v1/snapshots/chatos-backend?environment=${encodeURIComponent(environment)}`,
-    {
-      headers: {
-        'x-config-center-service': 'chatos-backend',
-        'x-config-center-internal-secret': configCenterSecret,
-      },
-    },
+  const snapshotText = execFileSync(
+    'curl',
+    [
+      '-fsS',
+      '--cacert', configCenterCaCertPath,
+      '--cert', configCenterClientIdentityPath,
+      '-H', 'x-config-center-caller: chatos-backend',
+      '-H', `x-config-center-internal-token: ${issueConfigCenterToken()}`,
+      `${configCenterBaseUrl}/internal/config/v1/snapshots/chatos-backend?environment=${encodeURIComponent(environment)}`,
+    ],
+    {encoding: 'utf8'},
   );
-  const snapshot = await readJson(snapshotResponse, 'Configuration Center snapshot');
-  assert(snapshotResponse.ok, `Configuration Center snapshot failed: ${snapshotResponse.status}`);
+  const snapshot = JSON.parse(snapshotText);
   assert(
     Object.prototype.hasOwnProperty.call(snapshot.values || {}, configKey),
     `${configKey} is missing from the live chatos-backend snapshot`,

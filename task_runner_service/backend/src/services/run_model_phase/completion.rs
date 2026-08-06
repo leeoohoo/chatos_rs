@@ -60,6 +60,7 @@ impl RunService {
                 .or_else(|| Some("任务已完成。".to_string()));
             run.result_summary = result_summary.clone();
         }
+        self.request_task_terminal_cleanup(task, run);
         match self.store.save_run(run.clone()).await {
             Ok(saved) => {
                 *run = saved;
@@ -120,91 +121,8 @@ impl RunService {
         if !task_already_cancelled {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
         }
-        self.cleanup_task_terminals(task, run, effective_workspace_dir)
-            .await;
-        self.maybe_trigger_auto_memory_summary(task, run).await;
-        self.spawn_chatos_async_followup_dispatch(task, run);
+        self.enqueue_terminal_side_effects(run).await;
         self.store.clear_cancel_requested(&run.id);
-    }
-
-    fn spawn_chatos_async_followup_dispatch(&self, task: &TaskRecord, run: &TaskRunRecord) {
-        if run.status != TaskRunStatus::Succeeded {
-            return;
-        }
-        let service = self.clone();
-        let task = task.clone();
-        let run_id = run.id.clone();
-        crate::auth::spawn_with_current_access_token(async move {
-            service
-                .dispatch_chatos_async_followup_tasks(task, run_id)
-                .await;
-        });
-    }
-
-    async fn dispatch_chatos_async_followup_tasks(&self, task: TaskRecord, run_id: String) {
-        match self
-            .dispatch_ready_chatos_async_tasks_for_source_task(&task)
-            .await
-        {
-            Ok(runs) => {
-                if !runs.is_empty() {
-                    info!(
-                        task_id = task.id.as_str(),
-                        run_id = run_id.as_str(),
-                        dispatched_count = runs.len(),
-                        "task runner dispatched ready Chatos async follow-up tasks"
-                    );
-                }
-            }
-            Err(err) => {
-                warn!(
-                    task_id = task.id.as_str(),
-                    run_id = run_id.as_str(),
-                    error = err.as_str(),
-                    "task runner failed to dispatch Chatos async follow-up tasks"
-                );
-            }
-        }
-    }
-
-    async fn maybe_trigger_auto_memory_summary(&self, task: &TaskRecord, run: &mut TaskRunRecord) {
-        if matches!(run.status, TaskRunStatus::Succeeded)
-            && self.config.memory_engine_base_url.is_some()
-            && self.config.auto_memory_summary
-        {
-            if let Err(err) = self.trigger_memory_summary(task, run).await {
-                if let Err(event_err) = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "memory_summary_error",
-                        Some(format!("触发 Memory Engine 总结失败: {err}")),
-                        None,
-                    ))
-                    .await
-                {
-                    warn!(
-                        "failed to append memory summary error event for run {}: {}",
-                        run.id, event_err
-                    );
-                }
-                warn!(
-                    "failed to trigger memory summary for run {}: {}",
-                    run.id, err
-                );
-            }
-        } else if matches!(run.status, TaskRunStatus::Succeeded)
-            && self.config.memory_engine_base_url.is_some()
-            && !self.config.auto_memory_summary
-        {
-            info!(
-                run_id = run.id.as_str(),
-                task_id = task.id.as_str(),
-                task_title = task.title.as_str(),
-                memory_thread_id = run.memory_thread_id.as_str(),
-                "task runner skipped automatic memory summary because TASK_RUNNER_AUTO_MEMORY_SUMMARY is disabled"
-            );
-        }
     }
 }
 
@@ -381,12 +299,16 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+            otlp_trace_sample_ratio: 0.0,
+            otlp_export_timeout: Duration::from_secs(1),
             role: crate::config::TaskRunnerRole::All,
             store_mode: StoreMode::Memory,
             database_url: "memory://run-completion-test".to_string(),
             memory_engine_base_url: None,
             memory_engine_source_id: "task".to_string(),
             memory_engine_operator_token: None,
+            memory_engine_http_client: reqwest::Client::new(),
             default_tenant_id: "tenant".to_string(),
             default_subject_id: "subject".to_string(),
             default_workspace_dir: ".".to_string(),
@@ -394,7 +316,6 @@ mod tests {
             execution_timeout: Duration::from_millis(1000),
             scheduler_poll_interval: Duration::from_millis(1000),
             worker_id: "test-worker".to_string(),
-            worker_poll_interval: Duration::from_millis(1_000),
             worker_claim_ttl: Duration::from_millis(120_000),
             worker_concurrency: 4,
             auto_memory_summary: false,
@@ -403,16 +324,19 @@ mod tests {
             default_tool_results_model_total_max_chars: 2000,
             default_execution_environment_mode: "local".to_string(),
             default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
+            sandbox_manager_http_client: reqwest::Client::new(),
             sandbox_manager_client_id: None,
             sandbox_manager_client_key: None,
             default_sandbox_lease_ttl_seconds: 7_200,
-            chatos_callback_url: None,
-            chatos_callback_secret: None,
+            chatos_callback_url: String::new(),
+            chatos_callback_http_client: reqwest::Client::new(),
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
+            user_service_internal_api_secret: None,
             local_connector_internal_api_secret: None,
             local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_http_client: reqwest::Client::new(),
             local_connector_service_request_timeout: Duration::from_millis(5_000),
             plugin_relay_request_timeout: Duration::from_millis(60_000),
             plugin_hook_relay_timeout: Duration::from_millis(330_000),
@@ -424,6 +348,8 @@ mod tests {
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
             project_service_base_url: None,
+            project_service_internal_base_url: None,
+            project_service_internal_http_client: reqwest::Client::new(),
             project_service_sync_secret: None,
             project_service_request_timeout: Duration::from_millis(5000),
         }
@@ -435,6 +361,45 @@ mod tests {
         let task_service = TaskService::new(config.clone(), store.clone());
         let run_service = RunService::new(config, store.clone(), AskUserPromptService::new(store));
         (task_service, run_service)
+    }
+
+    #[tokio::test]
+    async fn runtime_cancel_signal_cancels_registered_token() {
+        let (_, run_service) = test_services().await;
+        let token = tokio_util::sync::CancellationToken::new();
+        run_service.register_runtime_abort_token("run-registered", token.clone());
+
+        run_service.signal_runtime_cancel("run-registered");
+
+        assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn runtime_abort_registration_observes_early_cancel_signal() {
+        let (_, run_service) = test_services().await;
+        run_service.signal_runtime_cancel("run-before-registration");
+        let token = tokio_util::sync::CancellationToken::new();
+
+        run_service.register_runtime_abort_token("run-before-registration", token.clone());
+
+        assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn dependency_terminal_signal_wakes_all_local_waiters_for_run() {
+        let (_, run_service) = test_services().await;
+        let first = tokio_util::sync::CancellationToken::new();
+        let second = tokio_util::sync::CancellationToken::new();
+        let unrelated = tokio_util::sync::CancellationToken::new();
+        run_service.register_run_terminal_waiter("dependency-run", "parent-1", first.clone());
+        run_service.register_run_terminal_waiter("dependency-run", "parent-2", second.clone());
+        run_service.register_run_terminal_waiter("other-run", "parent-3", unrelated.clone());
+
+        run_service.signal_run_terminal("dependency-run");
+
+        assert!(first.is_cancelled());
+        assert!(second.is_cancelled());
+        assert!(!unrelated.is_cancelled());
     }
 
     async fn create_task(service: &TaskService, title: &str, status: TaskStatus) -> TaskRecord {
@@ -484,7 +449,22 @@ mod tests {
             usage: None,
             report: None,
             cancel_requested: false,
+            cancel_event_pending: false,
             dispatch_paused: false,
+            dispatch_event_pending: false,
+            post_process_event_pending: false,
+            post_process_event_enqueued: false,
+            post_process_completed: false,
+            post_process_dead_lettered: false,
+            post_process_attempt_count: 0,
+            post_process_last_error: None,
+            memory_summary_processed: false,
+            chatos_followup_processed: false,
+            terminal_cleanup_event_pending: false,
+            terminal_cleanup_event_enqueued: false,
+            terminal_cleanup_completed: false,
+            terminal_cleanup_attempt_count: 0,
+            terminal_cleanup_last_error: None,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,

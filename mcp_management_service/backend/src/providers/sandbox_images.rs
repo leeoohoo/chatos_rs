@@ -8,10 +8,10 @@ use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxProviderKind};
 use chatos_mcp_service::METHOD_TOOLS_CALL;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{ProviderCallError, ProviderCallOutcome};
@@ -43,8 +43,10 @@ pub(super) struct SandboxImagesProvider {
 impl SandboxImagesProvider {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
+        cloud_http: reqwest::Client,
         cloud_base_url: impl Into<String>,
         cloud_internal_secret: Option<String>,
+        local_http: reqwest::Client,
         local_base_url: impl Into<String>,
         local_internal_secret: Option<String>,
         request_timeout: Duration,
@@ -54,10 +56,10 @@ impl SandboxImagesProvider {
         let cloud_base_url = normalized_base_url(cloud_base_url.into(), "Sandbox Manager")?;
         let local_base_url = normalized_base_url(local_base_url.into(), "Local Connector")?;
         Ok(Self {
-            cloud_http: build_client("Sandbox Manager image")?,
+            cloud_http,
             cloud_base_url,
             cloud_internal_secret: normalized_secret(cloud_internal_secret),
-            local_http: build_client("Local Connector image")?,
+            local_http,
             local_base_url,
             local_internal_secret: normalized_secret(local_internal_secret),
             request_timeout,
@@ -172,7 +174,10 @@ impl SandboxImagesProvider {
         .map_err(ProviderCallError::provider_unavailable)?;
         Ok(with_runtime_headers(
             self.cloud_http
-                .post(format!("{}/api/sandbox-images/mcp", self.cloud_base_url))
+                .post(format!(
+                    "{}/api/internal/sandbox-images/mcp",
+                    self.cloud_base_url
+                ))
                 .header("x-sandbox-caller", CALLER_SERVICE)
                 .header("x-sandbox-internal-token", token),
             snapshot,
@@ -265,14 +270,6 @@ fn normalized_secret(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn build_client(provider: &str) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .redirect(Policy::none())
-        .build()
-        .map_err(|error| format!("build {provider} Provider client failed: {error}"))
-}
-
 fn with_runtime_headers(
     mut request: reqwest::RequestBuilder,
     snapshot: &RuntimeSessionSnapshot,
@@ -289,7 +286,7 @@ fn with_runtime_headers(
     {
         request = request.header(SANDBOX_IMAGE_RUN_ID_HEADER, run_id);
     }
-    request
+    request.with_internal_trace_context()
 }
 
 fn call_timeout(
@@ -344,10 +341,13 @@ mod tests {
         RuntimeSessionSnapshot {
             session_id: "session-1".to_string(),
             caller_service: "task-runner".to_string(),
+            trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
             task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
+            device_id: None,
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
@@ -392,7 +392,7 @@ mod tests {
             Json(request): Json<Value>,
         ) -> Json<Value> {
             let (caller_header, token_header, secret, audience) = if path
-                == "cloud/api/sandbox-images/mcp"
+                == "cloud/api/internal/sandbox-images/mcp"
             {
                 (
                     "x-sandbox-caller",
@@ -471,8 +471,10 @@ mod tests {
 
     fn provider(base_url: &str) -> SandboxImagesProvider {
         SandboxImagesProvider::new(
+            reqwest::Client::new(),
             format!("{base_url}/cloud"),
             Some(CLOUD_SECRET.to_string()),
+            reqwest::Client::new(),
             format!("{base_url}/local"),
             Some(LOCAL_SECRET.to_string()),
             Duration::from_secs(5),

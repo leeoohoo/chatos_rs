@@ -17,6 +17,7 @@ pub const MCP_ERROR_INTERNAL: i32 = -32000;
 pub const MCP_ERROR_AUTH_REQUIRED: i32 = -32001;
 pub const MCP_ERROR_INVOCATION_CANCELLED: i32 = -32010;
 pub const MCP_ERROR_UNKNOWN_EXECUTION_STATE: i32 = -32011;
+pub const MCP_ERROR_CAPACITY_EXHAUSTED: i32 = -32012;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct CancelledNotificationParams {

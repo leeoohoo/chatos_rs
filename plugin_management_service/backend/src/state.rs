@@ -4,12 +4,14 @@
 use mongodb::Client;
 use tracing::warn;
 
+use chatos_queue_observability::RabbitMqQueueInspector;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::auth::login_via_user_service;
 use crate::cloud_secrets::CloudSecretCipher;
 use crate::config::AppConfig;
 use crate::models::LoginRequest;
+use crate::pressure::PluginManagementPressureState;
 use crate::seed::{ensure_agent_prompt_version_history, seed_system_resources};
 use crate::store::AppStore;
 
@@ -19,10 +21,15 @@ pub struct AppState {
     pub store: AppStore,
     pub(crate) cloud_secret_cipher: CloudSecretCipher,
     pub(crate) user_service_http: reqwest::Client,
+    pub(crate) rabbitmq_queue_inspector: RabbitMqQueueInspector,
+    pub(crate) pressure: PluginManagementPressureState,
 }
 
 impl AppState {
-    pub async fn new(config: AppConfig) -> Result<Self, String> {
+    pub async fn new(
+        config: AppConfig,
+        pressure: PluginManagementPressureState,
+    ) -> Result<Self, String> {
         let client = Client::with_uri_str(config.database_url.as_str())
             .await
             .map_err(|err| format!("connect MongoDB failed: {err}"))?;
@@ -34,6 +41,8 @@ impl AppState {
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
                 .map_err(|err| format!("build user_service client failed: {err}"))?;
+        let rabbitmq_queue_inspector =
+            RabbitMqQueueInspector::new(config.plugin_catalog_rabbitmq_url.clone())?;
         if config.seed_system_resources {
             let admin_user_id = resolve_seed_admin_user_id(&config, &user_service_http).await;
             seed_system_resources(&store, admin_user_id.as_str()).await?;
@@ -44,6 +53,8 @@ impl AppState {
             store,
             cloud_secret_cipher,
             user_service_http,
+            rabbitmq_queue_inspector,
+            pressure,
         })
     }
 

@@ -60,7 +60,6 @@ pub fn routes() -> Router {
 
 pub fn public_routes() -> Router {
     Router::new()
-        .merge(api::agent_chat::public_router())
         .merge(api::attachments::public_router())
         .merge(api::message_task_runner::plugin_ui_public_router())
 }

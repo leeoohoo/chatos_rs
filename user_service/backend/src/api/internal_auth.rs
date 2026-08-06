@@ -16,70 +16,110 @@ pub(super) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
 pub(super) const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
 pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct UserServiceInternalRequestIdentity {
+    pub caller_service: String,
+    pub scope: String,
+    pub trace_id: String,
+}
+
+pub(super) struct UserServiceInternalResourceAudit<'a> {
+    pub represented_user_id: Option<&'a str>,
+    pub project_id: Option<&'a str>,
+    pub resource_type: &'a str,
+    pub resource_id: &'a str,
+    pub resource_name: Option<&'a str>,
+    pub action: &'a str,
+    pub outcome: &'a str,
+}
+
 pub(super) fn require_project_service_internal_request(
     config: &AppConfig,
     headers: &HeaderMap,
     required_scope: &str,
-) -> Result<(), (StatusCode, Json<Value>)> {
+) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
     let expected = config
         .user_service_internal_api_secret
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| forbidden("project service user API secret is not configured"))?;
-    verify_project_service_internal_request(
-        headers,
-        expected,
-        required_scope,
-        chatos_service_runtime::is_production_environment(),
-    )
+    verify_project_service_internal_request(headers, expected, required_scope)
 }
 
 fn verify_project_service_internal_request(
     headers: &HeaderMap,
     expected: &str,
     required_scope: &str,
-    require_signed: bool,
-) -> Result<(), (StatusCode, Json<Value>)> {
-    let caller = header_text(headers, "x-user-service-caller");
+) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
     let token = header_text(headers, "x-user-service-internal-token");
-    if let Some(caller) = caller {
-        if caller != PROJECT_SERVICE_CALLER {
-            return Err(forbidden("user service internal caller is not allowed"));
+    let caller = match header_text(headers, "x-user-service-caller") {
+        Some(caller) => caller,
+        None if token.is_some() => {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "user service caller is required for signed internal requests",
+            ));
         }
-        if let Some(token) = token {
-            chatos_service_runtime::verify_internal_service_token(
-                token,
-                expected,
-                PROJECT_SERVICE_CALLER,
-                USER_SERVICE_TOKEN_AUDIENCE,
-                required_scope,
-            )
-            .map_err(|_| unauthorized("invalid user service internal API token"))?;
-            return Ok(());
-        }
-        if require_signed {
+        None => {
             return Err(unauthorized(
                 "signed user service internal API token is required",
             ));
         }
-    } else if token.is_some() {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "user service caller is required for signed internal requests",
-        ));
-    } else if require_signed {
-        return Err(unauthorized(
-            "signed user service internal API token is required",
-        ));
+    };
+    if caller != PROJECT_SERVICE_CALLER {
+        return Err(forbidden("user service internal caller is not allowed"));
     }
+    let token =
+        token.ok_or_else(|| unauthorized("signed user service internal API token is required"))?;
+    let claims = chatos_service_runtime::verify_internal_service_token(
+        token,
+        expected,
+        PROJECT_SERVICE_CALLER,
+        USER_SERVICE_TOKEN_AUDIENCE,
+        required_scope,
+    )
+    .map_err(|_| unauthorized("invalid user service internal API token"))?;
+    Ok(UserServiceInternalRequestIdentity {
+        caller_service: caller.to_string(),
+        scope: required_scope.to_string(),
+        trace_id: claims.trace_id,
+    })
+}
 
-    let provided = header_text(headers, "x-user-service-internal-secret")
-        .ok_or_else(|| unauthorized("missing user service internal secret"))?;
-    if !constant_time_eq(expected.as_bytes(), provided.as_bytes()) {
-        return Err(unauthorized("invalid user service internal secret"));
+pub(super) fn record_user_service_internal_resource_access(
+    identity: &UserServiceInternalRequestIdentity,
+    access: UserServiceInternalResourceAudit<'_>,
+) {
+    let event = chatos_service_runtime::InternalResourceAccessAudit {
+        caller_service: identity.caller_service.clone(),
+        audience_service: USER_SERVICE_TOKEN_AUDIENCE.to_string(),
+        scope: identity.scope.clone(),
+        trace_id: identity.trace_id.clone(),
+        represented_user_id: normalized_optional(access.represented_user_id),
+        tenant_id: None,
+        project_id: normalized_optional(access.project_id),
+        resource_type: access.resource_type.to_string(),
+        resource_id: access.resource_id.to_string(),
+        resource_name: normalized_optional(access.resource_name),
+        action: access.action.to_string(),
+        outcome: access.outcome.to_string(),
+    };
+    if let Err(error) = chatos_service_runtime::record_internal_resource_access(&event) {
+        tracing::error!(
+            target: "chatos_internal_audit",
+            trace_id = identity.trace_id.as_str(),
+            error = error.as_str(),
+            "user service internal resource audit validation failed"
+        );
     }
-    Ok(())
+}
+
+fn normalized_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn header_text<'a>(headers: &'a HeaderMap, key: &'static str) -> Option<&'a str> {
@@ -88,14 +128,6 @@ fn header_text<'a>(headers: &'a HeaderMap, key: &'static str) -> Option<&'a str>
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn constant_time_eq(expected: &[u8], actual: &[u8]) -> bool {
-    let mut difference = expected.len() ^ actual.len();
-    for (left, right) in expected.iter().zip(actual.iter()) {
-        difference |= usize::from(left ^ right);
-    }
-    difference == 0
 }
 
 fn unauthorized(message: impl Into<String>) -> (StatusCode, Json<Value>) {
@@ -128,25 +160,26 @@ mod tests {
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
 
-        verify_project_service_internal_request(
+        let identity = verify_project_service_internal_request(
             &headers,
             "a-long-project-user-service-secret",
             HARNESS_ACCESS_READ_SCOPE,
-            true,
         )
         .expect("matching signed request");
+        assert_eq!(identity.caller_service, PROJECT_SERVICE_CALLER);
+        assert_eq!(identity.scope, HARNESS_ACCESS_READ_SCOPE);
+        uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("signed trace id");
         let err = verify_project_service_internal_request(
             &headers,
             "a-long-project-user-service-secret",
             MODEL_SETTINGS_READ_SCOPE,
-            true,
         )
         .expect_err("scope mismatch must fail");
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
     }
 
     #[test]
-    fn production_style_auth_rejects_legacy_secret_only() {
+    fn legacy_secret_is_always_rejected() {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-user-service-internal-secret",
@@ -156,9 +189,32 @@ mod tests {
             &headers,
             "a-long-project-user-service-secret",
             HARNESS_ACCESS_READ_SCOPE,
-            true,
         )
-        .expect_err("legacy auth must fail");
+        .expect_err("legacy auth must fail in every environment");
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn caller_is_required_when_a_signed_token_is_present() {
+        let token = chatos_service_runtime::issue_internal_service_token(
+            "a-long-project-user-service-secret",
+            PROJECT_SERVICE_CALLER,
+            USER_SERVICE_TOKEN_AUDIENCE,
+            HARNESS_ACCESS_READ_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-user-service-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+        let err = verify_project_service_internal_request(
+            &headers,
+            "a-long-project-user-service-secret",
+            HARNESS_ACCESS_READ_SCOPE,
+        )
+        .expect_err("caller is part of the signed request identity");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
     }
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{doc, Bson, Document};
 
 use crate::db::Db;
 use crate::models::{now_rfc3339, EngineSummary, UpsertThreadSummaryRequest};
@@ -95,37 +95,69 @@ pub async fn upsert_thread_summary(
         "id": summary_id,
     };
 
+    let rollup_eligible = status == "done" && rollup_status == "pending";
+    let subject_memory_eligible =
+        status == "done" && req.subject_memory_summarized.unwrap_or(0).max(0) == 0;
+    let mut set_fields = doc! {
+        "tenant_id": &req.tenant_id,
+        "source_id": &req.source_id,
+        "thread_id": thread_id,
+        "subject_id": &req.subject_id,
+        "summary_type": &req.summary_type,
+        "level": req.level.unwrap_or(0).max(0),
+        "source_digest": mongodb::bson::to_bson(&req.source_digest).unwrap_or(Bson::Null),
+        "summary_text": &req.summary_text,
+        "source_record_start_id": mongodb::bson::to_bson(&req.source_record_start_id).unwrap_or(Bson::Null),
+        "source_record_end_id": mongodb::bson::to_bson(&req.source_record_end_id).unwrap_or(Bson::Null),
+        "source_record_count": req.source_record_count.unwrap_or(0).max(0),
+        "status": &status,
+        "rollup_status": &rollup_status,
+        "rollup_summary_id": mongodb::bson::to_bson(&req.rollup_summary_id).unwrap_or(Bson::Null),
+        "rolled_up_at": mongodb::bson::to_bson(&req.rolled_up_at).unwrap_or(Bson::Null),
+        "subject_memory_summarized": req.subject_memory_summarized.unwrap_or(0).max(0),
+        "subject_memory_summarized_at": mongodb::bson::to_bson(&req.subject_memory_summarized_at).unwrap_or(Bson::Null),
+        "metadata": mongodb::bson::to_bson(&req.metadata).unwrap_or(Bson::Null),
+        "updated_at": &updated_at,
+    };
+    if rollup_eligible {
+        set_fields.insert("rollup_dispatch_requested_at", now.clone());
+        set_fields.insert("rollup_dispatch_last_error", Bson::Null);
+        set_fields.insert("rollup_dispatch_pending", true);
+    } else {
+        set_fields.insert("rollup_dispatch_pending", false);
+    }
+    if subject_memory_eligible {
+        set_fields.insert("subject_memory_source_dispatch_requested_at", now.clone());
+        set_fields.insert("subject_memory_source_dispatch_last_error", Bson::Null);
+        set_fields.insert("subject_memory_source_dispatch_pending", true);
+    } else {
+        set_fields.insert("subject_memory_source_dispatch_pending", false);
+    }
+    let mut update = doc! {
+    "$set": set_fields,
+    "$setOnInsert": {
+        "id": summary_id,
+        "created_at": &created_at,
+        "rollup_dispatch_published_version": 0,
+                "rollup_dispatch_consumed_version": 0,
+                "subject_memory_source_dispatch_published_version": 0,
+                "subject_memory_source_dispatch_consumed_version": 0,
+            }
+        };
+    if rollup_eligible {
+        update.insert("$inc", doc! {"rollup_dispatch_version": 1});
+    }
+    if subject_memory_eligible {
+        update
+            .entry("$inc".to_string())
+            .or_insert_with(|| Bson::Document(Document::new()))
+            .as_document_mut()
+            .ok_or_else(|| "summary upsert $inc must be a document".to_string())?
+            .insert("subject_memory_source_dispatch_version", 1_i64);
+    }
+
     summary_collection(db)
-        .update_one(
-            filter.clone(),
-            doc! {
-                "$set": {
-                    "tenant_id": &req.tenant_id,
-                    "source_id": &req.source_id,
-                    "thread_id": thread_id,
-                    "subject_id": &req.subject_id,
-                    "summary_type": &req.summary_type,
-                    "level": req.level.unwrap_or(0).max(0),
-                    "source_digest": mongodb::bson::to_bson(&req.source_digest).unwrap_or(Bson::Null),
-                    "summary_text": &req.summary_text,
-                    "source_record_start_id": mongodb::bson::to_bson(&req.source_record_start_id).unwrap_or(Bson::Null),
-                    "source_record_end_id": mongodb::bson::to_bson(&req.source_record_end_id).unwrap_or(Bson::Null),
-                    "source_record_count": req.source_record_count.unwrap_or(0).max(0),
-                    "status": &status,
-                    "rollup_status": &rollup_status,
-                    "rollup_summary_id": mongodb::bson::to_bson(&req.rollup_summary_id).unwrap_or(Bson::Null),
-                    "rolled_up_at": mongodb::bson::to_bson(&req.rolled_up_at).unwrap_or(Bson::Null),
-                    "subject_memory_summarized": req.subject_memory_summarized.unwrap_or(0).max(0),
-                    "subject_memory_summarized_at": mongodb::bson::to_bson(&req.subject_memory_summarized_at).unwrap_or(Bson::Null),
-                    "metadata": mongodb::bson::to_bson(&req.metadata).unwrap_or(Bson::Null),
-                    "updated_at": &updated_at,
-                },
-                "$setOnInsert": {
-                    "id": summary_id,
-                    "created_at": &created_at,
-                }
-            },
-        )
+        .update_one(filter.clone(), update)
         .upsert(true)
         .await
         .map_err(|err| err.to_string())?;
@@ -166,10 +198,7 @@ pub async fn create_thread_summary_with_type(
         metadata,
     );
 
-    summary_collection(db)
-        .insert_one(summary.clone())
-        .await
-        .map_err(|err| err.to_string())?;
+    insert_summary_with_rollup_outbox(db, &summary).await?;
 
     Ok(summary)
 }
@@ -203,10 +232,58 @@ pub async fn create_rollup_summary(
         metadata,
     );
 
-    summary_collection(db)
-        .insert_one(summary.clone())
-        .await
-        .map_err(|err| err.to_string())?;
+    insert_summary_with_rollup_outbox(db, &summary).await?;
 
     Ok(summary)
+}
+
+async fn insert_summary_with_rollup_outbox(db: &Db, summary: &EngineSummary) -> Result<(), String> {
+    let mut document = mongodb::bson::to_document(summary).map_err(|err| err.to_string())?;
+    add_initial_summary_outboxes(&mut document, summary.created_at.as_str());
+    db.collection::<Document>("engine_summaries")
+        .insert_one(document)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn add_initial_summary_outboxes(document: &mut Document, requested_at: &str) {
+    document.insert("rollup_dispatch_version", 1_i64);
+    document.insert("rollup_dispatch_published_version", 0_i64);
+    document.insert("rollup_dispatch_consumed_version", 0_i64);
+    document.insert("rollup_dispatch_pending", true);
+    document.insert("rollup_dispatch_requested_at", requested_at);
+    document.insert("rollup_dispatch_last_error", Bson::Null);
+    document.insert("subject_memory_source_dispatch_version", 1_i64);
+    document.insert("subject_memory_source_dispatch_published_version", 0_i64);
+    document.insert("subject_memory_source_dispatch_consumed_version", 0_i64);
+    document.insert("subject_memory_source_dispatch_pending", true);
+    document.insert("subject_memory_source_dispatch_requested_at", requested_at);
+    document.insert("subject_memory_source_dispatch_last_error", Bson::Null);
+}
+
+#[cfg(test)]
+mod tests {
+    use mongodb::bson::doc;
+
+    use super::add_initial_summary_outboxes;
+
+    #[test]
+    fn initial_summary_outboxes_are_pending_and_unpublished() {
+        let mut document = doc! {};
+        add_initial_summary_outboxes(&mut document, "2026-08-05T00:00:00Z");
+
+        assert_eq!(document.get_i64("rollup_dispatch_version"), Ok(1));
+        assert_eq!(document.get_i64("rollup_dispatch_published_version"), Ok(0));
+        assert_eq!(document.get_i64("rollup_dispatch_consumed_version"), Ok(0));
+        assert_eq!(document.get_bool("rollup_dispatch_pending"), Ok(true));
+        assert_eq!(
+            document.get_i64("subject_memory_source_dispatch_version"),
+            Ok(1)
+        );
+        assert_eq!(
+            document.get_bool("subject_memory_source_dispatch_pending"),
+            Ok(true)
+        );
+    }
 }

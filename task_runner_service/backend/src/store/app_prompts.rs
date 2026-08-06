@@ -46,6 +46,26 @@ impl AppStore {
         }
     }
 
+    pub(crate) async fn list_pending_ask_user_resolution_events(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AskUserPromptRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_pending_ask_user_resolution_events(limit)),
+            Self::Mongo(store) => store.list_pending_ask_user_resolution_events(limit).await,
+        }
+    }
+
+    pub(crate) async fn acknowledge_ask_user_resolution_event(
+        &self,
+        prompt_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.acknowledge_ask_user_resolution_event(prompt_id)),
+            Self::Mongo(store) => store.acknowledge_ask_user_resolution_event(prompt_id).await,
+        }
+    }
+
     pub async fn list_ask_user_prompt_task_counts(
         &self,
         status: Option<AskUserPromptStatus>,

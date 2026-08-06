@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn create_rejects_an_uninitialized_default_image() {
-        let config = AppConfig::from_env().expect("sandbox config");
+        let config = AppConfig::for_tests();
         let record = default_image_record(&config, SandboxBackendKind::Docker);
         let error = ensure_image_ready_for_create(&record)
             .expect_err("missing default image must not be used for a lease");
@@ -615,7 +615,7 @@ mod tests {
 
     #[tokio::test]
     async fn mock_dependency_preparation_reuses_all_platform_images() {
-        let config = AppConfig::from_env().expect("sandbox config");
+        let config = AppConfig::for_tests();
         let jobs = ImageJobStore::default();
         let result = prepare_dependency_images(
             jobs.clone(),
@@ -651,7 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn mock_initialize_records_reused_request_without_starting_build() {
-        let config = AppConfig::from_env().expect("sandbox config");
+        let config = AppConfig::for_tests();
         let jobs = ImageJobStore::default();
 
         let first = start_initialize_job(
@@ -692,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_lists_platform_dependency_images_for_reuse_visibility() {
-        let config = AppConfig::from_env().expect("sandbox config");
+        let config = AppConfig::for_tests();
         let catalog = catalog(&config, SandboxBackendKind::Mock).await;
 
         let postgres = catalog
@@ -710,7 +710,7 @@ mod tests {
 
     #[tokio::test]
     async fn dependency_preparation_rejects_unmanaged_image_refs() {
-        let config = AppConfig::from_env().expect("sandbox config");
+        let config = AppConfig::for_tests();
         let error = prepare_dependency_images(
             ImageJobStore::default(),
             &config,

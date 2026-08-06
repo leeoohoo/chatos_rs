@@ -6,6 +6,21 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn audit_action_uses_the_actual_mcp_operation_and_tool_name() {
+    let request = JsonRpcRequest {
+        jsonrpc: Some("2.0".to_string()),
+        id: Some(json!("request-1")),
+        method: METHOD_TOOLS_CALL.to_string(),
+        params: json!({"name": "read_file", "arguments": {}}),
+    };
+
+    assert_eq!(
+        mcp_management_audit_action(&request),
+        ("call".to_string(), "read_file".to_string())
+    );
+}
+
+#[test]
 fn binding_parser_requires_registered_agent_and_immutable_identity() {
     let mut headers = HeaderMap::new();
     for (key, value) in [

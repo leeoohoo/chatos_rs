@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::models::ChatosCallbackDeliveryStatus;
 use crate::platform_queue::{TaskQueueMode, TaskQueueTopology};
 use tracing::warn;
 
@@ -13,26 +12,17 @@ const WORKER_CLAIM_EXPIRED_ERROR: &str = "worker claim expired";
 const CANCEL_REQUESTED_CLAIM_EXPIRED_REASON: &str =
     "run cancellation requested before worker claim expired";
 
-#[derive(Debug, Clone, Default)]
-pub struct RunExecutionStats {
-    pub total: usize,
-    pub active: usize,
-    pub queued: usize,
-    pub running: usize,
-    pub succeeded: usize,
-    pub failed: usize,
-    pub cancelled: usize,
-    pub blocked: usize,
-    pub dispatch_paused: usize,
-    pub callback_pending: usize,
-    pub callback_enqueued: usize,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RejectedRunClaimHeartbeatAction {
     Continue,
     Stop,
     Abort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TaskRunnerPromptCachePolicy {
+    pub(crate) enabled: bool,
+    pub(crate) retention_enabled: bool,
 }
 
 pub(crate) fn worker_claim_expiry_grace(claim_ttl: Duration) -> Duration {
@@ -55,8 +45,10 @@ impl RunService {
             plugin_management_client: None,
             ask_user_prompt_service,
             runtime_stats: crate::state::TaskRunnerRuntimeStats::default(),
-            start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            start_locks: Arc::new(KeyedAsyncLockRegistry::default()),
+            callback_delivery_locks: Arc::new(KeyedAsyncLockRegistry::default()),
+            runtime_abort_tokens: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            run_terminal_waiters: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
         }
     }
@@ -76,101 +68,87 @@ impl RunService {
             plugin_management_client: Some(plugin_management_client),
             ask_user_prompt_service,
             runtime_stats,
-            start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            callback_delivery_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            start_locks: Arc::new(KeyedAsyncLockRegistry::default()),
+            callback_delivery_locks: Arc::new(KeyedAsyncLockRegistry::default()),
+            runtime_abort_tokens: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            run_terminal_waiters: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
         }
     }
 
     pub(super) async fn effective_task_execution_max_iterations(&self) -> Result<usize, String> {
-        let snapshot = load_managed_config_snapshot().await;
-        Ok(snapshot
-            .as_ref()
-            .and_then(|snapshot| {
-                snapshot
-                    .usize(chatos_agent::TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
-                    .or_else(|| snapshot.usize(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY))
-            })
-            .unwrap_or(self.config.default_task_execution_max_iterations)
-            .max(2))
+        Ok(self
+            .effective_task_runner_runtime_settings()
+            .await?
+            .max_iterations)
     }
 
     pub(super) async fn effective_task_runner_runtime_settings(
         &self,
     ) -> Result<chatos_agent::TaskRunnerRuntimeSettings, String> {
-        let snapshot = load_managed_config_snapshot().await;
-        Ok(chatos_agent::resolve_task_runner_runtime_settings(
-            snapshot.as_ref(),
-            self.config.default_task_execution_max_iterations,
-        ))
+        let snapshot = load_managed_config_snapshot().await?;
+        chatos_agent::require_task_runner_runtime_settings(&snapshot)
+    }
+
+    pub(super) async fn effective_prompt_cache_policy(
+        &self,
+    ) -> Result<TaskRunnerPromptCachePolicy, String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        prompt_cache_policy_from_snapshot(&snapshot)
     }
 
     pub(super) async fn effective_execution_timeout(&self) -> Result<Duration, String> {
-        Ok(Duration::from_millis(
-            load_managed_config_snapshot()
-                .await
-                .and_then(|snapshot| snapshot.u64(TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY))
-                .unwrap_or(self.config.execution_timeout.as_millis() as u64)
-                .max(1),
-        ))
+        let snapshot = load_managed_config_snapshot().await?;
+        Ok(Duration::from_millis(require_managed_u64(
+            &snapshot,
+            TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
+            1,
+        )?))
     }
 
     pub(super) async fn effective_tool_result_model_budget_limits(
         &self,
     ) -> Result<ToolResultModelBudgetLimits, String> {
-        let snapshot = load_managed_config_snapshot().await;
-        Ok(ToolResultModelBudgetLimits::new(
-            snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.usize(TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY))
-                .unwrap_or(self.config.default_tool_result_model_max_chars),
-            snapshot
-                .as_ref()
-                .and_then(|snapshot| {
-                    snapshot.usize(TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY)
-                })
-                .unwrap_or(self.config.default_tool_results_model_total_max_chars),
-        ))
+        let snapshot = load_managed_config_snapshot().await?;
+        let per_result =
+            require_managed_usize(&snapshot, TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY, 1)?;
+        let total = require_managed_usize(
+            &snapshot,
+            TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
+            1,
+        )?;
+        if total < per_result {
+            return Err(format!(
+                "managed configuration key {} must be greater than or equal to {}",
+                TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
+                TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY
+            ));
+        }
+        Ok(ToolResultModelBudgetLimits::new(per_result, total))
     }
 
     pub(super) async fn effective_execution_environment_mode(&self) -> Result<String, String> {
-        let snapshot = load_managed_config_snapshot().await;
-        Ok(normalize_execution_environment_mode(
-            snapshot
-                .as_ref()
-                .and_then(|snapshot| {
-                    snapshot.string(TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY)
-                })
-                .as_deref()
-                .or(Some(
-                    self.config.default_execution_environment_mode.as_str(),
-                )),
-        ))
+        let snapshot = load_managed_config_snapshot().await?;
+        require_managed_execution_environment_mode(&snapshot)
     }
 
     pub(super) async fn effective_sandbox_enabled(&self) -> Result<bool, String> {
-        Ok(load_managed_config_snapshot()
-            .await
-            .and_then(|snapshot| snapshot.bool("task_runner.sandbox.enabled"))
-            .unwrap_or(false))
+        let snapshot = load_managed_config_snapshot().await?;
+        require_managed_bool(&snapshot, TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY)
     }
 
     pub(super) async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {
-        Ok(load_managed_config_snapshot()
-            .await
-            .and_then(|snapshot| snapshot.string("task_runner.sandbox.manager_base_url"))
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| self.config.default_sandbox_manager_base_url.clone())
-            .trim_end_matches('/')
-            .to_string())
+        let snapshot = load_managed_config_snapshot().await?;
+        require_managed_http_base_url(&snapshot, TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY)
     }
 
     pub(super) async fn effective_sandbox_lease_ttl_seconds(&self) -> Result<u64, String> {
-        Ok(load_managed_config_snapshot()
-            .await
-            .and_then(|snapshot| snapshot.u64("task_runner.sandbox.lease_ttl_seconds"))
-            .unwrap_or(self.config.default_sandbox_lease_ttl_seconds)
-            .max(1))
+        let snapshot = load_managed_config_snapshot().await?;
+        require_managed_u64(
+            &snapshot,
+            TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY,
+            1,
+        )
     }
 
     pub async fn list_runs(&self, task_id: Option<&str>) -> Result<Vec<TaskRunRecord>, String> {
@@ -178,48 +156,7 @@ impl RunService {
     }
 
     pub async fn execution_stats(&self) -> Result<RunExecutionStats, String> {
-        let mut stats = RunExecutionStats::default();
-        for run in self.store.list_runs(None).await? {
-            stats.total = stats.total.saturating_add(1);
-            if run.dispatch_paused {
-                stats.dispatch_paused = stats.dispatch_paused.saturating_add(1);
-            }
-            if let Some(callback) = run.chatos_callback_delivery.as_ref() {
-                match callback.status {
-                    ChatosCallbackDeliveryStatus::Pending => {
-                        stats.callback_pending = stats.callback_pending.saturating_add(1);
-                    }
-                    ChatosCallbackDeliveryStatus::Enqueued => {
-                        stats.callback_enqueued = stats.callback_enqueued.saturating_add(1);
-                    }
-                    ChatosCallbackDeliveryStatus::Delivered
-                    | ChatosCallbackDeliveryStatus::Skipped => {}
-                }
-            }
-            match run.status {
-                TaskRunStatus::Queued => {
-                    stats.queued = stats.queued.saturating_add(1);
-                    stats.active = stats.active.saturating_add(1);
-                }
-                TaskRunStatus::Running => {
-                    stats.running = stats.running.saturating_add(1);
-                    stats.active = stats.active.saturating_add(1);
-                }
-                TaskRunStatus::Succeeded => {
-                    stats.succeeded = stats.succeeded.saturating_add(1);
-                }
-                TaskRunStatus::Failed => {
-                    stats.failed = stats.failed.saturating_add(1);
-                }
-                TaskRunStatus::Cancelled => {
-                    stats.cancelled = stats.cancelled.saturating_add(1);
-                }
-                TaskRunStatus::Blocked => {
-                    stats.blocked = stats.blocked.saturating_add(1);
-                }
-            }
-        }
-        Ok(stats)
+        self.store.run_execution_stats().await
     }
 
     pub fn runtime_stats(&self) -> &crate::state::TaskRunnerRuntimeStats {
@@ -287,24 +224,8 @@ impl RunService {
             .await
     }
 
-    pub async fn claim_queued_run_by_id(
-        &self,
-        run_id: &str,
-        worker_id: &str,
-        claim_ttl: Duration,
-    ) -> Result<Option<TaskRunRecord>, String> {
-        let claim_token = Uuid::new_v4().to_string();
-        let claim_until = (chrono::Utc::now()
-            + chrono::Duration::from_std(claim_ttl).map_err(|err| err.to_string())?)
-        .to_rfc3339();
-        self.store
-            .claim_queued_run_by_id(
-                run_id,
-                worker_id,
-                claim_token.as_str(),
-                claim_until.as_str(),
-            )
-            .await
+    pub async fn has_queued_run_waiting_for_execution(&self) -> Result<bool, String> {
+        self.store.has_queued_run_waiting_for_execution().await
     }
 
     pub async fn renew_run_claim(
@@ -438,6 +359,65 @@ impl RunService {
 
     pub(crate) fn signal_local_run_abort(&self, run_id: &str) {
         self.store.signal_local_run_abort(run_id);
+    }
+
+    pub(crate) fn signal_runtime_cancel(&self, run_id: &str) {
+        self.store.signal_local_run_abort(run_id);
+        if let Some(token) = self.runtime_abort_tokens.lock().get(run_id).cloned() {
+            token.cancel();
+        }
+    }
+
+    pub(super) fn register_runtime_abort_token(
+        &self,
+        run_id: &str,
+        token: tokio_util::sync::CancellationToken,
+    ) {
+        self.runtime_abort_tokens
+            .lock()
+            .insert(run_id.to_string(), token.clone());
+        if self.store.is_cancel_requested(run_id) {
+            token.cancel();
+        }
+    }
+
+    pub(super) fn unregister_runtime_abort_token(&self, run_id: &str) {
+        self.runtime_abort_tokens.lock().remove(run_id);
+    }
+
+    pub(super) fn register_run_terminal_waiter(
+        &self,
+        run_id: &str,
+        parent_run_id: &str,
+        token: tokio_util::sync::CancellationToken,
+    ) {
+        self.run_terminal_waiters
+            .lock()
+            .insert((run_id.to_string(), parent_run_id.to_string()), token);
+    }
+
+    pub(super) fn unregister_run_terminal_waiter(&self, run_id: &str, parent_run_id: &str) {
+        self.run_terminal_waiters
+            .lock()
+            .remove(&(run_id.to_string(), parent_run_id.to_string()));
+    }
+
+    pub(crate) fn signal_run_terminal(&self, run_id: &str) {
+        let tokens = self
+            .run_terminal_waiters
+            .lock()
+            .iter()
+            .filter(|((waiting_run_id, _), _)| waiting_run_id == run_id)
+            .map(|(_, token)| token.clone())
+            .collect::<Vec<_>>();
+        for token in tokens {
+            token.cancel();
+        }
+    }
+
+    pub(crate) fn signal_ask_user_resolved(&self, prompt_id: &str) {
+        self.ask_user_prompt_service
+            .signal_prompt_resolved(prompt_id);
     }
 
     pub(crate) fn clear_local_run_abort(&self, run_id: &str) {
@@ -588,8 +568,20 @@ impl RunService {
         self.store.subscribe_run_events()
     }
 
+    pub fn broadcast_run_event(&self, event: TaskRunEventRecord) {
+        self.store.broadcast_run_event(event);
+    }
+
     pub async fn list_run_events(&self, run_id: &str) -> Result<Vec<TaskRunEventRecord>, String> {
         self.store.list_run_events(run_id).await
+    }
+
+    pub async fn get_run_event(
+        &self,
+        run_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskRunEventRecord>, String> {
+        self.store.get_run_event(run_id, event_id).await
     }
 
     pub async fn list_run_events_after(
@@ -604,8 +596,11 @@ impl RunService {
             .await
     }
 
-    pub(crate) fn run_dispatch_mode(&self) -> TaskQueueMode {
-        self.task_queue_topology.run_dispatch_mode
+    pub async fn latest_run_event_cursor(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        self.store.latest_run_event_cursor(run_id).await
     }
 
     pub(crate) fn task_queue_topology(&self) -> &TaskQueueTopology {
@@ -623,7 +618,83 @@ impl RunService {
         }
         crate::run_dispatch_queue::enqueue_run_dispatch(&self.task_queue_topology, run.id.as_str())
             .await?;
+        self.store
+            .acknowledge_run_dispatch_event(run.id.as_str())
+            .await?;
         Ok(true)
+    }
+
+    pub(crate) async fn publish_pending_run_dispatches(
+        &self,
+        limit: usize,
+    ) -> Result<usize, String> {
+        let pending = self.store.list_pending_run_dispatches(limit).await?;
+        let mut published = 0usize;
+        for run in pending {
+            crate::run_dispatch_queue::enqueue_run_dispatch(
+                &self.task_queue_topology,
+                run.id.as_str(),
+            )
+            .await?;
+            self.store
+                .acknowledge_run_dispatch_event(run.id.as_str())
+                .await?;
+            published += 1;
+        }
+        Ok(published)
+    }
+
+    pub(crate) async fn enqueue_run_cancel_event_if_needed(
+        &self,
+        run: &TaskRunRecord,
+    ) -> Result<bool, String> {
+        if !run.cancel_event_pending || run.status != TaskRunStatus::Running {
+            return Ok(false);
+        }
+        crate::worker_control_queue::publish_run_cancel_event(&self.task_queue_topology, run)
+            .await?;
+        self.store
+            .acknowledge_run_cancel_event(run.id.as_str())
+            .await?;
+        Ok(true)
+    }
+
+    pub(crate) async fn publish_pending_run_cancel_events(
+        &self,
+        limit: usize,
+    ) -> Result<usize, String> {
+        let pending = self.store.list_pending_run_cancel_events(limit).await?;
+        let mut published = 0usize;
+        for run in pending {
+            if self.enqueue_run_cancel_event_if_needed(&run).await? {
+                published += 1;
+            }
+        }
+        Ok(published)
+    }
+
+    pub(crate) async fn publish_pending_run_terminal_events(
+        &self,
+        limit: usize,
+    ) -> Result<usize, String> {
+        let pending = self
+            .store
+            .list_pending_run_terminal_subscriptions(limit)
+            .await?;
+        let mut published = 0usize;
+        for (run, subscription) in pending {
+            crate::worker_control_queue::publish_run_terminal_event(
+                &self.task_queue_topology,
+                &run,
+                &subscription,
+            )
+            .await?;
+            self.store
+                .acknowledge_run_terminal_subscription(subscription.id.as_str())
+                .await?;
+            published += 1;
+        }
+        Ok(published)
     }
 
     pub(crate) async fn enqueue_queued_runs_for_tasks(
@@ -640,21 +711,96 @@ impl RunService {
                 if run.status != TaskRunStatus::Queued || run.dispatch_paused {
                     continue;
                 }
-                crate::run_dispatch_queue::enqueue_run_dispatch(
-                    &self.task_queue_topology,
-                    run.id.as_str(),
-                )
-                .await?;
-                enqueued += 1;
+                if self.enqueue_run_dispatch_if_needed(&run).await? {
+                    enqueued += 1;
+                }
             }
         }
         Ok(enqueued)
     }
 }
 
+fn prompt_cache_policy_from_snapshot(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+) -> Result<TaskRunnerPromptCachePolicy, String> {
+    let enabled = snapshot
+        .bool(chatos_agent::TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY)
+        .ok_or_else(|| {
+            format!(
+                "missing or invalid managed configuration key {}",
+                chatos_agent::TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY
+            )
+        })?;
+    let retention_enabled = snapshot
+        .bool(chatos_agent::TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY)
+        .ok_or_else(|| {
+            format!(
+                "missing or invalid managed configuration key {}",
+                chatos_agent::TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY
+            )
+        })?;
+    Ok(TaskRunnerPromptCachePolicy {
+        enabled,
+        retention_enabled,
+    })
+}
+
 #[cfg(test)]
 mod worker_claim_tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    fn prompt_cache_snapshot(
+        values: BTreeMap<String, serde_json::Value>,
+    ) -> chatos_config_sdk::ConfigSnapshot {
+        chatos_config_sdk::ConfigSnapshot {
+            environment: "test".to_string(),
+            service_name: "task-runner".to_string(),
+            revision: 1,
+            checksum: "checksum".to_string(),
+            values,
+            env: BTreeMap::new(),
+            generated_at: "now".to_string(),
+            stale: false,
+            source: Some("configuration_center".to_string()),
+        }
+    }
+
+    #[test]
+    fn prompt_cache_policy_requires_both_managed_values() {
+        let snapshot = prompt_cache_snapshot(BTreeMap::from([(
+            chatos_agent::TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string(),
+            json!(true),
+        )]));
+
+        let error = prompt_cache_policy_from_snapshot(&snapshot).expect_err("missing retention");
+
+        assert!(error.contains(chatos_agent::TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY));
+    }
+
+    #[test]
+    fn prompt_cache_policy_uses_only_managed_values() {
+        let snapshot = prompt_cache_snapshot(BTreeMap::from([
+            (
+                chatos_agent::TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string(),
+                json!(true),
+            ),
+            (
+                chatos_agent::TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string(),
+                json!(false),
+            ),
+        ]));
+
+        assert_eq!(
+            prompt_cache_policy_from_snapshot(&snapshot).expect("managed policy"),
+            TaskRunnerPromptCachePolicy {
+                enabled: true,
+                retention_enabled: false,
+            }
+        );
+    }
 
     #[test]
     fn claim_expiry_grace_is_a_small_clock_skew_window() {

@@ -4,6 +4,57 @@
 use super::*;
 
 impl MongoStore {
+    pub(in crate::store) async fn run_execution_stats(&self) -> Result<RunExecutionStats, String> {
+        let count_when = |condition: Document| {
+            doc! {
+                "$sum": {
+                    "$cond": [condition, 1, 0]
+                }
+            }
+        };
+        let pipeline = vec![doc! {
+            "$group": {
+                "_id": Bson::Null,
+                "total": { "$sum": 1 },
+                "active": count_when(doc! { "$in": ["$status", ["queued", "running"]] }),
+                "queued": count_when(doc! { "$eq": ["$status", "queued"] }),
+                "running": count_when(doc! { "$eq": ["$status", "running"] }),
+                "succeeded": count_when(doc! { "$eq": ["$status", "succeeded"] }),
+                "failed": count_when(doc! { "$eq": ["$status", "failed"] }),
+                "cancelled": count_when(doc! { "$eq": ["$status", "cancelled"] }),
+                "blocked": count_when(doc! { "$eq": ["$status", "blocked"] }),
+                "dispatch_paused": count_when(doc! { "$eq": ["$dispatch_paused", true] }),
+                "callback_pending": count_when(doc! {
+                    "$eq": ["$chatos_callback_delivery.status", "pending"]
+                }),
+                "callback_enqueued": count_when(doc! {
+                    "$eq": ["$chatos_callback_delivery.status", "enqueued"]
+                }),
+                "dispatch_outbox_pending": count_when(doc! {
+                    "$eq": ["$dispatch_event_pending", true]
+                }),
+                "cancellation_outbox_pending": count_when(doc! {
+                    "$eq": ["$cancel_event_pending", true]
+                }),
+                "post_process_outbox_pending": count_when(doc! {
+                    "$eq": ["$post_process_event_pending", true]
+                }),
+                "terminal_cleanup_outbox_pending": count_when(doc! {
+                    "$eq": ["$terminal_cleanup_event_pending", true]
+                }),
+            }
+        }];
+        let Some(document) = self
+            .aggregate_documents(&self.runs, pipeline)
+            .await?
+            .into_iter()
+            .next()
+        else {
+            return Ok(RunExecutionStats::default());
+        };
+        decode_run_execution_stats_document(document)
+    }
+
     pub(in crate::store) async fn list_pending_chatos_callback_runs(
         &self,
         now: &str,
@@ -125,5 +176,46 @@ impl MongoStore {
         id: &str,
     ) -> Result<Option<TaskRunRecord>, String> {
         self.find_by_id(&self.runs, id).await
+    }
+}
+
+fn decode_run_execution_stats_document(
+    mut document: Document,
+) -> Result<RunExecutionStats, String> {
+    document.remove("_id");
+    bson::from_document(document).map_err(|err| err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_run_execution_stats_document;
+    use mongodb::bson::{doc, Bson};
+
+    #[test]
+    fn mongo_run_execution_stats_decode_aggregate_counts() {
+        let stats = decode_run_execution_stats_document(doc! {
+            "_id": Bson::Null,
+            "total": 3,
+            "active": 2,
+            "queued": 1,
+            "running": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "cancelled": 0,
+            "blocked": 0,
+            "dispatch_paused": 0,
+            "callback_pending": 0,
+            "callback_enqueued": 0,
+            "dispatch_outbox_pending": 1,
+            "cancellation_outbox_pending": 1,
+            "post_process_outbox_pending": 1,
+            "terminal_cleanup_outbox_pending": 1,
+        })
+        .expect("decode Mongo aggregation counts");
+
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.active, 2);
+        assert_eq!(stats.dispatch_outbox_pending, 1);
+        assert_eq!(stats.terminal_cleanup_outbox_pending, 1);
     }
 }

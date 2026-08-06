@@ -6,6 +6,7 @@ use crate::mcp_server::support::{
     create_model_config_schema, create_project_execution_tasks_schema,
     create_tasks_with_prerequisites_schema, update_model_config_schema,
 };
+use crate::mcp_server::PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE;
 use crate::mcp_server::{reject_ai_runtime_config, support::remove_internal_task_fields};
 use serde_json::Value;
 
@@ -69,12 +70,15 @@ fn planner_task_creation_schemas_require_explicit_task_nature() {
     assert!(project.pointer("/properties/execution_group_id").is_none());
     assert!(project
         .pointer("/properties/tasks/items/properties/is_planning_task")
-        .is_some());
+        .is_none());
+    assert!(project
+        .pointer("/properties/tasks/items/properties/requires_execution")
+        .is_none());
     let required = project
         .pointer("/properties/tasks/items/required")
         .and_then(|value| value.as_array())
         .expect("project execution task required fields");
-    assert!(required
+    assert!(!required
         .iter()
         .any(|value| value.as_str() == Some("is_planning_task")));
 }
@@ -706,23 +710,40 @@ fn chatos_plan_context_assigns_child_profile_from_task_nature() {
     };
 
     assert_eq!(
-        context
-            .child_task_profile(Some(true), Some(false))
-            .as_deref(),
+        context.child_task_profile(Some(true)).as_deref(),
         Some(TASK_PROFILE_CHATOS_PLAN)
     );
     assert_eq!(
-        context
-            .child_task_profile(Some(false), Some(true))
-            .as_deref(),
+        context.child_task_profile(Some(false)).as_deref(),
         Some(TASK_PROFILE_DEFAULT)
     );
     assert_eq!(
-        context.child_task_profile(None, Some(false)).as_deref(),
+        context.child_task_profile(None).as_deref(),
         Some(TASK_PROFILE_CHATOS_PLAN)
     );
     assert_eq!(
-        context.child_task_profile(None, Some(true)).as_deref(),
+        context.child_task_profile(None).as_deref(),
         Some(TASK_PROFILE_CHATOS_PLAN)
+    );
+}
+
+#[test]
+fn project_execution_planner_always_creates_ordinary_execution_tasks() {
+    let context = McpRequestContext {
+        tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string()),
+        ..McpRequestContext::default()
+    };
+
+    assert_eq!(
+        context.child_task_profile(Some(true)).as_deref(),
+        Some(TASK_PROFILE_DEFAULT)
+    );
+    assert_eq!(
+        context.child_task_profile(Some(false)).as_deref(),
+        Some(TASK_PROFILE_DEFAULT)
+    );
+    assert_eq!(
+        context.child_task_profile(None).as_deref(),
+        Some(TASK_PROFILE_DEFAULT)
     );
 }

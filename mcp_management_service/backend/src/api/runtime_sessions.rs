@@ -15,7 +15,7 @@ use chatos_mcp_management_sdk::{
 use chatos_plugin_management_sdk::{ResolveAgentCapabilitiesRequest, SystemAgentKey};
 use uuid::Uuid;
 
-use crate::auth::require_internal_request;
+use crate::auth::require_internal_request_identity;
 use crate::capabilities::{
     materialize_mcp_candidates, materialize_runtime_tools_with_plugin_components,
     runtime_route_revision,
@@ -34,8 +34,10 @@ pub(super) async fn resolve_runtime_session(
     headers: HeaderMap,
     Json(request): Json<CreateRuntimeSessionRequest>,
 ) -> Result<Json<RuntimeSessionResponse>, ApiError> {
-    let caller_service =
-        require_internal_request(&state.config, &headers, "runtime.sessions.resolve")?;
+    let identity =
+        require_internal_request_identity(&state.config, &headers, "runtime.sessions.resolve")?;
+    let trace_id = identity.require_signed_trace_id()?.to_string();
+    let caller_service = identity.caller.clone();
     validate_session_request(&request)?;
     let sandbox_target = normalize_sandbox_target(request.sandbox_target.clone())?;
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
@@ -77,7 +79,7 @@ pub(super) async fn resolve_runtime_session(
                 Some(runtime_provider.to_string()),
                 None,
             )
-            .with_device_id(device_id);
+            .with_device_id(device_id.clone());
     let mut capabilities = state
         .plugin_management_client
         .resolve_for_service(&capability_request)
@@ -335,10 +337,13 @@ pub(super) async fn resolve_runtime_session(
             sub: caller_service.clone(),
             aud: String::new(),
             session_id: session_id.clone(),
+            trace_id: trace_id.clone(),
+            tenant_id: request.tenant_id.trim().to_string(),
             owner_user_id: request.owner_user_id.trim().to_string(),
             agent_key: agent_key.as_str().to_string(),
             task_profile: normalized(request.task_profile.clone()),
             project_id: request.project_id.trim().to_string(),
+            device_id: device_id.clone(),
             run_id: normalized(request.run_id.clone()),
             turn_id: normalized(request.turn_id.clone()),
             task_id: normalized(request.task_id.clone()),
@@ -367,10 +372,13 @@ pub(super) async fn resolve_runtime_session(
         let snapshot = RuntimeSessionSnapshot {
             session_id: session_id.clone(),
             caller_service,
+            trace_id: trace_id.clone(),
+            tenant_id: request.tenant_id.trim().to_string(),
             owner_user_id: request.owner_user_id.trim().to_string(),
             agent_key: agent_key.as_str().to_string(),
             task_profile: normalized(request.task_profile),
             project_id: request.project_id.trim().to_string(),
+            device_id,
             run_id: normalized(request.run_id),
             turn_id: normalized(request.turn_id),
             task_id: normalized(request.task_id),
@@ -395,11 +403,27 @@ pub(super) async fn resolve_runtime_session(
             expires_at: grant.expires_at.clone(),
             expires_at_unix: grant.expires_at_unix,
         };
+        let session_audit = chatos_service_runtime::InternalResourceAccessAudit {
+            caller_service: identity.caller,
+            audience_service: "mcp-management-service".to_string(),
+            scope: "runtime.sessions.resolve".to_string(),
+            trace_id,
+            represented_user_id: Some(request.owner_user_id.trim().to_string()),
+            tenant_id: Some(request.tenant_id.trim().to_string()),
+            project_id: Some(request.project_id.trim().to_string()),
+            resource_type: "mcp_runtime_session".to_string(),
+            resource_id: session_id.clone(),
+            resource_name: None,
+            action: "resolve".to_string(),
+            outcome: "succeeded".to_string(),
+        };
+        session_audit.validate().map_err(ApiError::internal)?;
         state
             .runtime_sessions
             .insert(snapshot)
             .await
             .map_err(ApiError::internal)?;
+        let _ = chatos_service_runtime::record_internal_resource_access(&session_audit);
         Ok(Json(RuntimeSessionResponse {
             session_id,
             policy_revision: capabilities.policy_revision,
@@ -459,19 +483,21 @@ pub(super) async fn runtime_session_routes(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<Json<RuntimeSessionRoutesResponse>, ApiError> {
-    let caller_service =
-        require_internal_request(&state.config, &headers, "runtime.sessions.read")?;
+    let identity =
+        require_internal_request_identity(&state.config, &headers, "runtime.sessions.read")?;
+    let trace_id = identity.require_signed_trace_id()?.to_string();
     let snapshot = state
         .runtime_sessions
         .get(session_id.trim())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("runtime session was not found or has expired"))?;
-    if snapshot.caller_service != caller_service {
+    if snapshot.caller_service != identity.caller {
         return Err(ApiError::forbidden(
             "runtime session belongs to another caller service",
         ));
     }
+    record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "read", "succeeded");
     Ok(Json(snapshot.routes_response()))
 }
 
@@ -480,8 +506,9 @@ pub(super) async fn close_runtime_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<Json<CloseRuntimeSessionResponse>, ApiError> {
-    let caller_service =
-        require_internal_request(&state.config, &headers, "runtime.sessions.close")?;
+    let identity =
+        require_internal_request_identity(&state.config, &headers, "runtime.sessions.close")?;
+    let trace_id = identity.require_signed_trace_id()?.to_string();
     let session_id = session_id.trim();
     let snapshot = state
         .runtime_sessions
@@ -489,7 +516,7 @@ pub(super) async fn close_runtime_session(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("runtime session was not found or has expired"))?;
-    if snapshot.caller_service != caller_service {
+    if snapshot.caller_service != identity.caller {
         return Err(ApiError::forbidden(
             "runtime session belongs to another caller service",
         ));
@@ -505,10 +532,41 @@ pub(super) async fn close_runtime_session(
         ));
     };
     state.providers.close_session(&snapshot).await;
+    record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "close", "succeeded");
     Ok(Json(CloseRuntimeSessionResponse {
-        session_id: snapshot.session_id,
+        session_id: snapshot.session_id.clone(),
         closed: true,
     }))
+}
+
+fn record_runtime_session_audit(
+    caller_service: &str,
+    trace_id: String,
+    snapshot: &RuntimeSessionSnapshot,
+    action: &str,
+    outcome: &str,
+) {
+    let event = chatos_service_runtime::InternalResourceAccessAudit {
+        caller_service: caller_service.to_string(),
+        audience_service: "mcp-management-service".to_string(),
+        scope: format!("runtime.sessions.{action}"),
+        trace_id,
+        represented_user_id: Some(snapshot.owner_user_id.clone()),
+        tenant_id: Some(snapshot.tenant_id.clone()),
+        project_id: Some(snapshot.project_id.clone()),
+        resource_type: "mcp_runtime_session".to_string(),
+        resource_id: snapshot.session_id.clone(),
+        resource_name: None,
+        action: action.to_string(),
+        outcome: outcome.to_string(),
+    };
+    if let Err(error) = chatos_service_runtime::record_internal_resource_access(&event) {
+        tracing::error!(
+            session_id = snapshot.session_id.as_str(),
+            error = error.as_str(),
+            "record MCP Runtime Session audit failed"
+        );
+    }
 }
 
 fn apply_live_tool_snapshots(
@@ -560,6 +618,7 @@ fn parse_agent_key(value: &str) -> Result<SystemAgentKey, ApiError> {
 
 fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(), ApiError> {
     for (field, value) in [
+        ("tenant_id", request.tenant_id.as_str()),
         ("owner_user_id", request.owner_user_id.as_str()),
         ("agent_key", request.agent_key.as_str()),
         ("project_id", request.project_id.as_str()),

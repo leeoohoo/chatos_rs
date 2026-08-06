@@ -420,7 +420,6 @@ async fn stop_requirement_execution_inner(
         .map_err(|err| HandlerError::bad_gateway("校验 Task Runner 任务状态失败", err))?;
         apply_task_runner_task_snapshot(link, &task);
         sync_execution_link_status(
-            cfg.project_service_base_url.as_str(),
             project_sync_secret.as_str(),
             link,
             task.status.as_str(),
@@ -487,7 +486,6 @@ async fn stop_requirement_execution_inner(
                     })
                     .unwrap_or_else(|| "cancelled".to_string());
                 if let Err(err) = sync_execution_link_status(
-                    cfg.project_service_base_url.as_str(),
                     project_sync_secret.as_str(),
                     link,
                     status.as_str(),
@@ -566,7 +564,6 @@ async fn stop_requirement_execution_inner(
             .remove(reset_requirement_id.as_str())
             .unwrap_or_default();
         sync_requirement_execution_state(
-            cfg.project_service_base_url.as_str(),
             project_sync_secret.as_str(),
             reset_requirement_id.as_str(),
             Some("approved"),

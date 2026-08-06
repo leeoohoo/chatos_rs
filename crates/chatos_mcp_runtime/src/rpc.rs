@@ -6,30 +6,25 @@ use std::error::Error as StdError;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::types::McpStdioServer;
+use crate::types::{McpAsyncResultTransport, McpStdioServer};
 
 const DEFAULT_MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
 const MCP_TOOLS_LIST_ERROR_CACHE_TTL: Duration = Duration::from_secs(10);
 const MCP_HTTP_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const MCP_HTTP_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
-const MCP_MANAGEMENT_POLL_INTERVAL: Duration = Duration::from_millis(300);
-const MCP_MANAGEMENT_POLL_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const MCP_RESULT_REPLY_TO_HEADER: &str = "x-mcp-result-reply-to";
 static MCP_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
     OnceLock::new();
 mod internal_headers;
 mod stdio;
 
-pub use internal_headers::{
-    headers_require_per_request_signing, headers_support_mcp_management_polling,
-    prepare_http_headers,
-};
+pub use internal_headers::{headers_require_per_request_signing, prepare_http_headers};
 
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};
@@ -40,41 +35,28 @@ struct ToolsListCacheEntry {
     result: Result<Vec<Value>, String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RuntimeInvocationPollStatus {
-    Queued,
-    Running,
-    CancelRequested,
-    Completed,
-    Failed,
-    Cancelled,
-    UnknownExecutionState,
-}
-
-#[derive(Debug, Deserialize)]
-struct RuntimeInvocationPollResponse {
-    invocation_id: String,
-    status: RuntimeInvocationPollStatus,
-    #[serde(default)]
-    terminal_result: Option<Value>,
-    #[serde(default)]
-    terminal_error_code: Option<i32>,
-    #[serde(default)]
-    terminal_error_message: Option<String>,
-}
-
 pub async fn list_tools_http(
     url: &str,
     headers: Option<&HashMap<String, String>>,
     timeout: Option<Duration>,
+) -> Result<Vec<Value>, String> {
+    list_tools_http_with_client(url, headers, timeout, None).await
+}
+
+pub async fn list_tools_http_with_client(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    timeout: Option<Duration>,
+    client: Option<&reqwest::Client>,
 ) -> Result<Vec<Value>, String> {
     let cache_key = tools_list_http_cache_key(url, headers, timeout);
     if let Some(cached) = cached_tools_list(cache_key.as_str()) {
         return cached;
     }
     let result = async {
-        let response = jsonrpc_http_call(url, headers, "tools/list", json!({}), timeout).await?;
+        let response =
+            jsonrpc_http_call_with_client(url, headers, "tools/list", json!({}), timeout, client)
+                .await?;
         extract_tools(&response)
     }
     .await;
@@ -116,8 +98,29 @@ pub async fn jsonrpc_http_call(
     params: Value,
     timeout: Option<Duration>,
 ) -> Result<Value, String> {
+    jsonrpc_http_call_with_client(url, headers, method, params, timeout, None).await
+}
+
+pub async fn jsonrpc_http_call_with_client(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    method: &str,
+    params: Value,
+    timeout: Option<Duration>,
+    client: Option<&reqwest::Client>,
+) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
-    jsonrpc_http_call_with_id(url, headers, method, params, timeout, id.as_str()).await
+    jsonrpc_http_call_with_id(
+        url,
+        headers,
+        method,
+        params,
+        timeout,
+        id.as_str(),
+        None,
+        client,
+    )
+    .await
 }
 
 pub async fn jsonrpc_http_tool_call_cancellable(
@@ -125,9 +128,36 @@ pub async fn jsonrpc_http_tool_call_cancellable(
     headers: Option<&HashMap<String, String>>,
     params: Value,
     timeout: Option<Duration>,
+    async_result_transport: McpAsyncResultTransport,
+) -> Result<Value, String> {
+    jsonrpc_http_tool_call_cancellable_with_client(
+        url,
+        headers,
+        params,
+        timeout,
+        async_result_transport,
+        None,
+    )
+    .await
+}
+
+pub async fn jsonrpc_http_tool_call_cancellable_with_client(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    params: Value,
+    timeout: Option<Duration>,
+    async_result_transport: McpAsyncResultTransport,
+    client: Option<&reqwest::Client>,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
-    let mut cancellation_guard = HttpCancellationGuard::new(url, headers, id.as_str(), timeout);
+    let result_waiter = match async_result_transport {
+        McpAsyncResultTransport::Disabled => None,
+        McpAsyncResultTransport::RabbitMq => Some(crate::result_queue::prepare_result_waiter(
+            serde_json::to_string(&Value::String(id.clone())).map_err(|error| error.to_string())?,
+        )?),
+    };
+    let mut cancellation_guard =
+        HttpCancellationGuard::new(url, headers, id.as_str(), timeout, client.cloned());
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
     let started = Instant::now();
     let result = match jsonrpc_http_call_with_id(
@@ -137,21 +167,25 @@ pub async fn jsonrpc_http_tool_call_cancellable(
         params,
         Some(request_timeout),
         id.as_str(),
+        result_waiter.as_ref().map(|waiter| waiter.reply_to()),
+        client,
     )
     .await
     {
         Ok(response) => {
-            if let Some(invocation_id) =
-                accepted_invocation_id(&response).filter(|_| can_poll_mcp_management(headers))
-            {
-                poll_mcp_management_invocation(
-                    url,
-                    headers.expect("polling eligibility requires headers"),
-                    invocation_id,
-                    started,
-                    request_timeout,
-                )
-                .await
+            if let Some(invocation_id) = accepted_invocation_id(&response) {
+                let waiter = result_waiter.ok_or_else(|| {
+                    format!(
+                        "tools/call {url} accepted invocation {invocation_id} without a configured MQ result consumer"
+                    )
+                })?;
+                let remaining = request_timeout.checked_sub(started.elapsed()).ok_or_else(|| {
+                    format!(
+                        "tools/call {url} accepted invocation {invocation_id}, but MQ result delivery exceeded timeout={}s",
+                        request_timeout.as_secs()
+                    )
+                })?;
+                waiter.wait(remaining).await
             } else {
                 Ok(response)
             }
@@ -169,15 +203,27 @@ async fn jsonrpc_http_call_with_id(
     params: Value,
     timeout: Option<Duration>,
     id: &str,
+    result_reply_to: Option<&str>,
+    client: Option<&reqwest::Client>,
 ) -> Result<Value, String> {
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-    let client = mcp_http_client()?;
+    let default_client;
+    let client = match client {
+        Some(client) => client,
+        None => {
+            default_client = mcp_http_client()?;
+            &default_client
+        }
+    };
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
     let mut request = client.post(url).timeout(request_timeout).json(&payload);
     if let Some(headers) = headers {
         for (key, value) in prepare_http_headers(headers)? {
             request = request.header(key.as_str(), value.as_str());
         }
+    }
+    if let Some(reply_to) = result_reply_to {
+        request = request.header(MCP_RESULT_REPLY_TO_HEADER, reply_to);
     }
     let response = request
         .send()
@@ -228,6 +274,7 @@ struct HttpCancellationGuard {
     headers: Option<HashMap<String, String>>,
     request_id: String,
     timeout: Duration,
+    client: Option<reqwest::Client>,
     armed: bool,
 }
 
@@ -237,6 +284,7 @@ impl HttpCancellationGuard {
         headers: Option<&HashMap<String, String>>,
         request_id: &str,
         timeout: Option<Duration>,
+        client: Option<reqwest::Client>,
     ) -> Self {
         Self {
             url: url.to_string(),
@@ -245,6 +293,7 @@ impl HttpCancellationGuard {
             timeout: timeout
                 .unwrap_or(DEFAULT_MCP_RPC_TIMEOUT)
                 .min(Duration::from_secs(5)),
+            client,
             armed: true,
         }
     }
@@ -266,12 +315,14 @@ impl Drop for HttpCancellationGuard {
         let headers = self.headers.clone();
         let request_id = self.request_id.clone();
         let timeout = self.timeout;
+        let client = self.client.clone();
         runtime.spawn(async move {
             if let Err(error) = send_http_cancel_notification(
                 url.as_str(),
                 headers.as_ref(),
                 request_id.as_str(),
                 timeout,
+                client.as_ref(),
             )
             .await
             {
@@ -290,6 +341,7 @@ async fn send_http_cancel_notification(
     headers: Option<&HashMap<String, String>>,
     request_id: &str,
     timeout: Duration,
+    client: Option<&reqwest::Client>,
 ) -> Result<(), String> {
     let payload = json!({
         "jsonrpc": "2.0",
@@ -299,7 +351,14 @@ async fn send_http_cancel_notification(
             "reason": "agent runtime aborted the tool call"
         }
     });
-    let client = mcp_http_client()?;
+    let default_client;
+    let client = match client {
+        Some(client) => client,
+        None => {
+            default_client = mcp_http_client()?;
+            &default_client
+        }
+    };
     let mut request = client.post(url).timeout(timeout).json(&payload);
     if let Some(headers) = headers {
         for (key, value) in prepare_http_headers(headers)? {
@@ -342,150 +401,6 @@ fn accepted_invocation_id(response: &Value) -> Option<&str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn can_poll_mcp_management(headers: Option<&HashMap<String, String>>) -> bool {
-    headers.is_some_and(headers_support_mcp_management_polling)
-}
-
-async fn poll_mcp_management_invocation(
-    mcp_url: &str,
-    headers: &HashMap<String, String>,
-    invocation_id: &str,
-    started: Instant,
-    total_timeout: Duration,
-) -> Result<Value, String> {
-    let poll_url = mcp_management_invocation_poll_url(mcp_url, invocation_id)?;
-    loop {
-        let elapsed = started.elapsed();
-        let Some(remaining) = total_timeout.checked_sub(elapsed) else {
-            return Err(format!(
-                "tools/call {mcp_url} accepted invocation {invocation_id}, but polling exceeded timeout={}s",
-                total_timeout.as_secs()
-            ));
-        };
-        let poll_timeout = remaining.min(MCP_MANAGEMENT_POLL_REQUEST_TIMEOUT);
-        let invocation: RuntimeInvocationPollResponse = http_get_json(
-            poll_url.as_str(),
-            headers,
-            poll_timeout,
-            "MCP Management invocation polling",
-        )
-        .await?;
-        match invocation.status {
-            RuntimeInvocationPollStatus::Queued
-            | RuntimeInvocationPollStatus::Running
-            | RuntimeInvocationPollStatus::CancelRequested => {
-                if remaining <= MCP_MANAGEMENT_POLL_INTERVAL {
-                    return Err(format!(
-                        "tools/call {mcp_url} accepted invocation {invocation_id}, but polling exceeded timeout={}s",
-                        total_timeout.as_secs()
-                    ));
-                }
-                tokio::time::sleep(MCP_MANAGEMENT_POLL_INTERVAL).await;
-            }
-            RuntimeInvocationPollStatus::Completed => {
-                return invocation.terminal_result.ok_or_else(|| {
-                    format!(
-                        "accepted MCP invocation {invocation_id} completed without a terminal result"
-                    )
-                });
-            }
-            RuntimeInvocationPollStatus::Failed => {
-                return Err(format_invocation_terminal_error("failed", &invocation));
-            }
-            RuntimeInvocationPollStatus::Cancelled => {
-                return Err(format_invocation_terminal_error("cancelled", &invocation));
-            }
-            RuntimeInvocationPollStatus::UnknownExecutionState => {
-                return Err(format_invocation_terminal_error(
-                    "unknown_execution_state",
-                    &invocation,
-                ));
-            }
-        }
-    }
-}
-
-fn mcp_management_invocation_poll_url(
-    mcp_url: &str,
-    invocation_id: &str,
-) -> Result<String, String> {
-    let mut url = reqwest::Url::parse(mcp_url)
-        .map_err(|err| format!("invalid MCP Management URL {mcp_url}: {err}"))?;
-    let path = url.path().trim_end_matches('/');
-    let base_path = path.strip_suffix("/mcp").unwrap_or(path);
-    url.set_path(&format!(
-        "{}/api/internal/runtime/invocations/{}",
-        base_path,
-        invocation_id.trim()
-    ));
-    url.set_query(None);
-    url.set_fragment(None);
-    Ok(url.to_string())
-}
-
-async fn http_get_json<T>(
-    url: &str,
-    headers: &HashMap<String, String>,
-    timeout: Duration,
-    request_label: &str,
-) -> Result<T, String>
-where
-    T: serde::de::DeserializeOwned,
-{
-    let client = mcp_http_client()?;
-    let mut request = client.get(url).timeout(timeout);
-    for (key, value) in prepare_http_headers(headers)? {
-        request = request.header(key.as_str(), value.as_str());
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|err| format_http_send_error("GET", url, timeout, &err))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = read_http_response_body_limited(response, MCP_HTTP_ERROR_BODY_PREVIEW_BYTES)
-            .await
-            .map(|body| String::from_utf8_lossy(body.as_slice()).into_owned())
-            .unwrap_or_else(|err| err);
-        return Err(format!(
-            "{request_label} failed after HTTP response: 外部 MCP 返回 HTTP {status}; body={}",
-            response_preview(body.as_str())
-        ));
-    }
-    let body = read_http_response_body_limited(response, MCP_HTTP_RESPONSE_LIMIT_BYTES)
-        .await
-        .map_err(|err| format!("{request_label} failed after HTTP response: {err}"))?;
-    serde_json::from_slice(body.as_slice()).map_err(|err| {
-        let body_text = String::from_utf8_lossy(body.as_slice());
-        format!(
-            "{request_label} failed after HTTP response: 外部 MCP 返回的不是 JSON: {err}; body={}",
-            response_preview(body_text.as_ref())
-        )
-    })
-}
-
-fn format_invocation_terminal_error(
-    outcome: &str,
-    invocation: &RuntimeInvocationPollResponse,
-) -> String {
-    let mut message = format!(
-        "accepted MCP invocation {} ended with status {outcome}",
-        invocation.invocation_id
-    );
-    if let Some(code) = invocation.terminal_error_code {
-        message.push_str(format!(" (code={code})").as_str());
-    }
-    if let Some(detail) = invocation
-        .terminal_error_message
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        message.push_str(format!(": {detail}").as_str());
-    }
-    message
 }
 
 async fn read_http_response_body_limited(

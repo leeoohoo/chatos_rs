@@ -95,9 +95,6 @@ export function SettingsOverviewTab({
           <Descriptions.Item label={t('settings.workerConcurrency')}>
             {config.worker_concurrency}
           </Descriptions.Item>
-          <Descriptions.Item label={t('settings.workerPollInterval')}>
-            {config.worker_poll_interval_ms} ms
-          </Descriptions.Item>
           <Descriptions.Item label={t('settings.workerClaimTtl')}>
             {config.worker_claim_ttl_ms} ms
           </Descriptions.Item>

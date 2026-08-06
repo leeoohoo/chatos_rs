@@ -254,25 +254,15 @@ routes:
       nodes:
         "chatos-frontend:80": 1
 
-  # Compatibility route for the current ChatOS frontend while callers migrate
-  # to the explicit service aliases above.
-  - id: chatos-api-compat
-    priority: 100
+  - id: block-unmatched-api-routes
+    priority: 90
     uri: /api/*
     plugins:
       request-id: *request_id
-      cors: *api_cors
-      client-control: *api_body_limit
-      limit-req: *api_ip_rate_limit
-    enable_websocket: true
-    upstream:
-      type: roundrobin
-      timeout:
-        connect: 5
-        send: 600
-        read: 3600
-      nodes:
-        "chatos-backend:3997": 1
+      fault-injection:
+        abort:
+          http_status: 404
+          body: '{"error":"route not found"}'
 
   - id: official-website-site
     priority: 50

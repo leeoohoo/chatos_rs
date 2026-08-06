@@ -12,7 +12,8 @@ use crate::store::now_rfc3339;
 use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
 
 use super::internal_auth::{
-    require_project_service_internal_request, MODEL_RUNTIME_READ_SCOPE, MODEL_SETTINGS_READ_SCOPE,
+    record_user_service_internal_resource_access, require_project_service_internal_request,
+    UserServiceInternalResourceAudit, MODEL_RUNTIME_READ_SCOPE, MODEL_SETTINGS_READ_SCOPE,
 };
 use super::models::is_supported_provider;
 use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
@@ -53,54 +54,83 @@ pub async fn get_user_model_settings(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> ApiResult<InternalUserModelSettingsResponse> {
-    require_project_service_internal_request(&state.config, &headers, MODEL_SETTINGS_READ_SCOPE)?;
-    let user_id = user_id.trim();
-    if user_id.is_empty() {
-        return Err(bad_request("user_id is required"));
-    }
-    if state
-        .store
-        .find_user_by_id(user_id)
-        .await
-        .map_err(internal_error)?
-        .is_none()
-    {
-        return Err(not_found("user not found"));
-    }
+    let identity = require_project_service_internal_request(
+        &state.config,
+        &headers,
+        MODEL_SETTINGS_READ_SCOPE,
+    )?;
+    let user_id = user_id.trim().to_string();
+    let audit_resource_id = if user_id.is_empty() {
+        "unknown"
+    } else {
+        user_id.as_str()
+    };
+    let result = async {
+        if user_id.is_empty() {
+            return Err(bad_request("user_id is required"));
+        }
+        if state
+            .store
+            .find_user_by_id(user_id.as_str())
+            .await
+            .map_err(internal_error)?
+            .is_none()
+        {
+            return Err(not_found("user not found"));
+        }
 
-    let settings = state
-        .store
-        .get_user_model_settings(user_id)
-        .await
-        .map_err(internal_error)?;
-    Ok(Json(match settings {
-        Some(settings) => InternalUserModelSettingsResponse {
-            user_id: settings.user_id,
-            model_request_max_retries: settings.model_request_max_retries,
-            memory_summary_model_config_id: settings.memory_summary_model_config_id,
-            memory_summary_thinking_level: settings.memory_summary_thinking_level,
-            project_management_agent_model_config_id: settings
-                .project_management_agent_model_config_id,
-            project_management_agent_thinking_level: settings
-                .project_management_agent_thinking_level,
-            environment_initialization_model_config_id: settings
-                .environment_initialization_model_config_id,
-            environment_initialization_thinking_level: settings
-                .environment_initialization_thinking_level,
-            updated_at: settings.updated_at,
+        let settings = state
+            .store
+            .get_user_model_settings(user_id.as_str())
+            .await
+            .map_err(internal_error)?;
+        Ok(Json(match settings {
+            Some(settings) => InternalUserModelSettingsResponse {
+                user_id: settings.user_id,
+                model_request_max_retries: settings.model_request_max_retries,
+                memory_summary_model_config_id: settings.memory_summary_model_config_id,
+                memory_summary_thinking_level: settings.memory_summary_thinking_level,
+                project_management_agent_model_config_id: settings
+                    .project_management_agent_model_config_id,
+                project_management_agent_thinking_level: settings
+                    .project_management_agent_thinking_level,
+                environment_initialization_model_config_id: settings
+                    .environment_initialization_model_config_id,
+                environment_initialization_thinking_level: settings
+                    .environment_initialization_thinking_level,
+                updated_at: settings.updated_at,
+            },
+            None => InternalUserModelSettingsResponse {
+                user_id: user_id.clone(),
+                model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
+                memory_summary_model_config_id: None,
+                memory_summary_thinking_level: None,
+                project_management_agent_model_config_id: None,
+                project_management_agent_thinking_level: None,
+                environment_initialization_model_config_id: None,
+                environment_initialization_thinking_level: None,
+                updated_at: now_rfc3339(),
+            },
+        }))
+    }
+    .await;
+    record_user_service_internal_resource_access(
+        &identity,
+        UserServiceInternalResourceAudit {
+            represented_user_id: (!user_id.is_empty()).then_some(user_id.as_str()),
+            project_id: None,
+            resource_type: "user_model_settings",
+            resource_id: audit_resource_id,
+            resource_name: None,
+            action: "read",
+            outcome: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
         },
-        None => InternalUserModelSettingsResponse {
-            user_id: user_id.to_string(),
-            model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
-            memory_summary_model_config_id: None,
-            memory_summary_thinking_level: None,
-            project_management_agent_model_config_id: None,
-            project_management_agent_thinking_level: None,
-            environment_initialization_model_config_id: None,
-            environment_initialization_thinking_level: None,
-            updated_at: now_rfc3339(),
-        },
-    }))
+    );
+    result
 }
 
 pub async fn get_user_model_runtime_config(
@@ -108,68 +138,97 @@ pub async fn get_user_model_runtime_config(
     headers: HeaderMap,
     Path((user_id, model_config_id)): Path<(String, String)>,
 ) -> ApiResult<InternalModelRuntimeConfigResponse> {
-    require_project_service_internal_request(&state.config, &headers, MODEL_RUNTIME_READ_SCOPE)?;
-    let user_id = user_id.trim();
-    let model_config_id = model_config_id.trim();
-    if user_id.is_empty() {
-        return Err(bad_request("user_id is required"));
-    }
-    if model_config_id.is_empty() {
-        return Err(bad_request("model_config_id is required"));
-    }
-    let Some(model_config) = state
-        .store
-        .find_user_model_config_by_id(model_config_id)
-        .await
-        .map_err(internal_error)?
-    else {
-        return Err(not_found("model config not found"));
+    let identity = require_project_service_internal_request(
+        &state.config,
+        &headers,
+        MODEL_RUNTIME_READ_SCOPE,
+    )?;
+    let user_id = user_id.trim().to_string();
+    let model_config_id = model_config_id.trim().to_string();
+    let audit_resource_id = if model_config_id.is_empty() {
+        "unknown"
+    } else {
+        model_config_id.as_str()
     };
-    if model_config.owner_user_id != user_id {
-        return Err(forbidden("model config does not belong to the target user"));
-    }
-    if !is_supported_provider(model_config.provider.as_str()) {
-        return Err(not_found("model config not found"));
-    }
-    if !model_config.enabled {
-        return Err(bad_request("model config is disabled"));
-    }
-    if model_config.model.trim().is_empty() {
-        return Err(bad_request("model config requires a concrete model name"));
-    }
-    let api_key = model_config
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| bad_request("cloud model config requires a stored API key"))?
-        .to_string();
-    let base_url = model_config
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| bad_request("cloud model config requires a stored base_url"))?
-        .to_string();
-    let prompt_vendor = model_config.prompt_vendor.clone().or_else(|| {
-        normalize_agent_prompt_vendor(None, model_config.provider.as_str())
-            .map(|vendor| vendor.as_str().to_string())
-    });
+    let result = async {
+        if user_id.is_empty() {
+            return Err(bad_request("user_id is required"));
+        }
+        if model_config_id.is_empty() {
+            return Err(bad_request("model_config_id is required"));
+        }
+        let Some(model_config) = state
+            .store
+            .find_user_model_config_by_id(model_config_id.as_str())
+            .await
+            .map_err(internal_error)?
+        else {
+            return Err(not_found("model config not found"));
+        };
+        if model_config.owner_user_id != user_id {
+            return Err(forbidden("model config does not belong to the target user"));
+        }
+        if !is_supported_provider(model_config.provider.as_str()) {
+            return Err(not_found("model config not found"));
+        }
+        if !model_config.enabled {
+            return Err(bad_request("model config is disabled"));
+        }
+        if model_config.model.trim().is_empty() {
+            return Err(bad_request("model config requires a concrete model name"));
+        }
+        let api_key = model_config
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| bad_request("cloud model config requires a stored API key"))?
+            .to_string();
+        let base_url = model_config
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| bad_request("cloud model config requires a stored base_url"))?
+            .to_string();
+        let prompt_vendor = model_config.prompt_vendor.clone().or_else(|| {
+            normalize_agent_prompt_vendor(None, model_config.provider.as_str())
+                .map(|vendor| vendor.as_str().to_string())
+        });
 
-    Ok(Json(InternalModelRuntimeConfigResponse {
-        id: model_config.id,
-        owner_user_id: model_config.owner_user_id,
-        name: model_config.name,
-        provider: model_config.provider,
-        prompt_vendor,
-        base_url,
-        api_key,
-        model: model_config.model,
-        thinking_level: model_config.thinking_level,
-        temperature: model_config.temperature,
-        max_output_tokens: model_config.max_output_tokens,
-        supports_images: model_config.supports_images,
-        supports_reasoning: model_config.supports_reasoning,
-        supports_responses: model_config.supports_responses,
-    }))
+        Ok(Json(InternalModelRuntimeConfigResponse {
+            id: model_config.id,
+            owner_user_id: model_config.owner_user_id,
+            name: model_config.name,
+            provider: model_config.provider,
+            prompt_vendor,
+            base_url,
+            api_key,
+            model: model_config.model,
+            thinking_level: model_config.thinking_level,
+            temperature: model_config.temperature,
+            max_output_tokens: model_config.max_output_tokens,
+            supports_images: model_config.supports_images,
+            supports_reasoning: model_config.supports_reasoning,
+            supports_responses: model_config.supports_responses,
+        }))
+    }
+    .await;
+    record_user_service_internal_resource_access(
+        &identity,
+        UserServiceInternalResourceAudit {
+            represented_user_id: (!user_id.is_empty()).then_some(user_id.as_str()),
+            project_id: None,
+            resource_type: "user_model_runtime_config",
+            resource_id: audit_resource_id,
+            resource_name: None,
+            action: "read",
+            outcome: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        },
+    );
+    result
 }

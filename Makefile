@@ -2,6 +2,7 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 SHELL := /bin/bash
+COMPOSE_VALIDATION_ENV := SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID=compose-validation-client SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY=compose-validation-key
 
 .PHONY: help dev docker-up docker-fast docker-dev docker-rebuild docker-restart docker-restart-fast docker-restart-dev docker-build docker-clean-images docker-down docker-reset docker-logs docker-ps docker-config
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
@@ -92,8 +93,8 @@ docker-ps:
 	@docker/deploy.sh ps
 
 docker-config:
-	@docker compose -f docker/compose.yml config >/dev/null
-	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
 
 local-connector-client:
 	@bash local_connector_client/restart_services.sh restart
@@ -153,11 +154,11 @@ smoke-repo:
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
 	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
-	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
+	@$(COMPOSE_VALIDATION_ENV) docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
 	@bash -n scripts/smoke-mcp-management-cloud.sh scripts/smoke-mcp-management-cloud-discovery.sh
 	@bash -n scripts/smoke-local-project-entry-config.sh
-	@docker compose -f docker/compose.yml config >/dev/null
-	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
+	@$(COMPOSE_VALIDATION_ENV) docker compose -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
+	@$(COMPOSE_VALIDATION_ENV) docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
 	@bash scripts/check-large-files.sh --fail
 
 test-chat-app-server:

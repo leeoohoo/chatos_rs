@@ -3,11 +3,10 @@
 
 use super::*;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
+use crate::trace_context::InternalTraceContextExt;
 use reqwest::StatusCode;
 use std::fmt;
-use std::sync::OnceLock;
 
-static CHATOS_CALLBACK_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 const CHATOS_CALLBACK_RETRY_DELAYS_MS: [u64; 3] = [0, 250, 750];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,24 +45,37 @@ pub(super) async fn send_chatos_task_callback(
     config: AppConfig,
     payload: ChatosTaskCallbackPayload,
 ) -> Result<(), ChatosCallbackDeliveryError> {
-    let Some(url) = config.chatos_callback_url.clone() else {
-        return Err(ChatosCallbackDeliveryError::permanent(
-            "TASK_RUNNER_CHATOS_CALLBACK_URL not configured",
-        ));
-    };
+    let url = config.chatos_callback_url.clone();
+    let secret = config
+        .chatos_internal_api_secret
+        .as_deref()
+        .ok_or_else(|| {
+            ChatosCallbackDeliveryError::permanent(
+                "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET not configured",
+            )
+        })?;
     let mut last_error = None;
     for (attempt_index, delay_ms) in CHATOS_CALLBACK_RETRY_DELAYS_MS.into_iter().enumerate() {
         if delay_ms > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
-        let mut request = chatos_callback_client()
+        let mut request = config
+            .chatos_callback_http_client
             .post(url.as_str())
             .timeout(config.callback_timeout)
             .json(&payload);
-        if let Some(secret) = config.chatos_callback_secret.as_deref() {
-            request = request.header("X-Task-Runner-Callback-Secret", secret);
-        }
-        match request.send().await {
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            "task-runner",
+            "chatos-backend",
+            "task-runner.callback",
+            60,
+        )
+        .map_err(ChatosCallbackDeliveryError::permanent)?;
+        request = request
+            .header("X-Chatos-Internal-Caller", "task-runner")
+            .header("X-Chatos-Internal-Token", token);
+        match request.with_internal_trace_context().send().await {
             Ok(response) if response.status().is_success() => return Ok(()),
             Ok(response) => {
                 let status = response.status();
@@ -91,10 +103,6 @@ pub(super) async fn send_chatos_task_callback(
     Err(ChatosCallbackDeliveryError::retryable(
         last_error.unwrap_or_else(|| "callback request failed".to_string()),
     ))
-}
-
-fn chatos_callback_client() -> &'static reqwest::Client {
-    CHATOS_CALLBACK_CLIENT.get_or_init(reqwest::Client::new)
 }
 
 fn callback_status_is_retryable(status: StatusCode) -> bool {

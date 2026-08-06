@@ -4,6 +4,17 @@
 use super::*;
 
 impl MongoStore {
+    pub(in crate::store) async fn get_run_event(
+        &self,
+        run_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskRunEventRecord>, String> {
+        self.run_events
+            .find_one(doc! { "run_id": run_id, "id": event_id }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
     pub(in crate::store) async fn list_run_events(
         &self,
         run_id: &str,
@@ -49,13 +60,28 @@ impl MongoStore {
         .await
     }
 
+    pub(in crate::store) async fn latest_run_event_cursor(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        let mut events = self
+            .load_collection_items_with_query(
+                &self.run_events,
+                doc! { "run_id": run_id },
+                Some(mongo_find_options(
+                    doc! { "created_at": -1, "id": -1 },
+                    None,
+                    Some(1),
+                )),
+            )
+            .await?;
+        Ok(events.pop().map(|event| (event.created_at, event.id)))
+    }
+
     pub(in crate::store) async fn append_run_event(
         &self,
         event: TaskRunEventRecord,
     ) -> Result<(), String> {
-        self.upsert_by_id(&self.run_events, &event.id, &event)
-            .await?;
-        let _ = self.run_event_sender.send(event);
-        Ok(())
+        self.upsert_by_id(&self.run_events, &event.id, &event).await
     }
 }

@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+groups:
+  - name: chatos-backend-api
+    rules:
+      - alert: ChatosBackendMetricsUnavailable
+        expr: up{job="chatos-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ChatOS backend metrics are unavailable"
+          description: "Prometheus has been unable to scrape the ChatOS backend for more than 2 minutes."
+
+      - alert: ChatosBackendServerErrorRateHigh
+        expr: sum(rate(chatos_http_requests_total{service="chatos-backend",status_class="5xx"}[5m])) / clamp_min(sum(rate(chatos_http_requests_total{service="chatos-backend"}[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS backend server error rate is high"
+          description: "More than 5% of ChatOS backend requests have returned 5xx responses for 5 minutes."
+
+      - alert: ChatosBackendRequestLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(chatos_http_request_duration_seconds_bucket{service="chatos-backend"}[5m]))) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS backend p95 request latency is high"
+          description: "The ChatOS backend p95 request latency has exceeded 2 seconds for 10 minutes."
+
+  - name: chatos-container-resources
+    rules:
+      - record: chatos_container_restarts_15m
+        expr: clamp_min(count by (container_label_com_docker_compose_service, name) (count_over_time(container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_project="chatos-rs",container_label_com_docker_compose_service!="",name!=""}[15m])) - 1, 0)
+
+      - alert: ChatosContainerMetricsUnavailable
+        expr: up{job="cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ChatOS container resource metrics are unavailable"
+          description: "Prometheus has been unable to scrape cAdvisor for more than 2 minutes."
+
+      - alert: ChatosContainerMemoryNearLimit
+        expr: (container_memory_working_set_bytes{job="cadvisor",container_label_com_docker_compose_project="chatos-rs",container_label_com_docker_compose_service!=""} / container_spec_memory_limit_bytes{job="cadvisor",container_label_com_docker_compose_project="chatos-rs",container_label_com_docker_compose_service!=""}) > 0.9 and container_spec_memory_limit_bytes{job="cadvisor",container_label_com_docker_compose_project="chatos-rs",container_label_com_docker_compose_service!=""} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS container memory is near its limit"
+          description: "{{ $labels.container_label_com_docker_compose_service }} has used more than 90% of its configured memory limit for 5 minutes."
+
+      - alert: ChatosContainerOomDetected
+        expr: increase(container_oom_events_total{job="cadvisor",container_label_com_docker_compose_project="chatos-rs",container_label_com_docker_compose_service!=""}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "ChatOS container OOM event detected"
+          description: "{{ $labels.container_label_com_docker_compose_service }} recorded an OOM event within the last 5 minutes."
+
+      - alert: ChatosContainerRestartDetected
+        expr: chatos_container_restarts_15m > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS container restart detected"
+          description: "{{ $labels.container_label_com_docker_compose_service }} restarted {{ $value }} time(s) within the last 15 minutes."
+
+  - name: chatos-rabbitmq-queues
+    rules:
+      - alert: ChatosRabbitMqQueueInspectionUnavailable
+        expr: chatos_rabbitmq_queue_observability_enabled == 1 and chatos_rabbitmq_queue_observability_available == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS RabbitMQ queue inspection is unavailable"
+          description: "{{ $labels.service }} has been unable to inspect RabbitMQ queues for more than 2 minutes."
+
+      - alert: ChatosRabbitMqDeadLetterQueueNotEmpty
+        expr: chatos_rabbitmq_queue_messages{role=~".*dead_letter"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ChatOS RabbitMQ dead-letter queue is not empty"
+          description: "{{ $labels.service }} queue {{ $labels.queue }} contains {{ $value }} dead-letter messages."
+
+      - alert: ChatosRabbitMqQueueBacklogHigh
+        expr: chatos_rabbitmq_queue_messages{role!~".*(retry|dead_letter|schedule).*"} > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS RabbitMQ queue backlog is high"
+          description: "{{ $labels.service }} queue {{ $labels.queue }} has {{ $value }} ready messages for more than 5 minutes."
+
+      - alert: ChatosRabbitMqQueueHasNoConsumers
+        expr: chatos_rabbitmq_queue_messages{role!~".*(retry|dead_letter|schedule).*"} > 0 and chatos_rabbitmq_queue_consumers{role!~".*(retry|dead_letter|schedule).*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ChatOS RabbitMQ queue has messages but no consumers"
+          description: "{{ $labels.service }} queue {{ $labels.queue }} has pending messages and no active consumers."
+
+  - name: chatos-mcp-runtime-cache
+    rules:
+      - alert: ChatosMcpRuntimeSessionMetricsUnavailable
+        expr: chatos_mcp_runtime_session_metrics_available == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS MCP Runtime Session metrics are unavailable"
+          description: "MCP Runtime Session cache and active-session metrics have been unavailable for more than 2 minutes."
+
+      - alert: ChatosMcpRuntimeSessionCacheNearEntryLimit
+        expr: chatos_mcp_runtime_session_cache_entry_limit > 0 and chatos_mcp_runtime_session_cache_entries / chatos_mcp_runtime_session_cache_entry_limit > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS MCP Runtime Session cache is near its entry limit"
+          description: "The MCP Runtime Session cache has remained above 90% of its configured entry limit for 10 minutes."
+
+      - alert: ChatosMcpRuntimeSessionCacheNearByteLimit
+        expr: chatos_mcp_runtime_session_cache_byte_limit > 0 and chatos_mcp_runtime_session_cache_bytes / chatos_mcp_runtime_session_cache_byte_limit > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS MCP Runtime Session cache is near its byte limit"
+          description: "The MCP Runtime Session cache has remained above 90% of its configured byte limit for 10 minutes."
+
+      - alert: ChatosMcpRuntimeSessionCacheEvictingRapidly
+        expr: increase(chatos_mcp_runtime_session_cache_capacity_evictions_total[10m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS MCP Runtime Session cache is evicting rapidly"
+          description: "More than 100 capacity evictions occurred within 10 minutes."

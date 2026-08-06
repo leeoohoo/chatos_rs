@@ -114,7 +114,7 @@ pub(super) async fn agent_prompt_bundle_internal(
 
 fn authorize(state: &AppState, headers: &HeaderMap, scope: &str) -> Result<(), ApiError> {
     let caller = require_internal_caller_service(headers)?;
-    require_internal_api_secret(state, headers, caller, scope)
+    require_internal_api_secret(state, headers, caller, scope).map(|_identity| ())
 }
 
 fn resolved_prompt(record: AgentProviderPromptRecord) -> Result<ResolvedAgentPrompt, ApiError> {

@@ -16,11 +16,14 @@ pub struct RuntimeGrantClaims {
     pub sub: String,
     pub aud: String,
     pub session_id: String,
+    pub trace_id: String,
+    pub tenant_id: String,
     pub owner_user_id: String,
     pub agent_key: String,
     #[serde(default)]
     pub task_profile: Option<String>,
     pub project_id: String,
+    pub device_id: Option<String>,
     pub run_id: Option<String>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
@@ -129,6 +132,8 @@ impl RuntimeGrantService {
         if claims.sub.trim().is_empty() {
             return Err("runtime grant caller is missing".to_string());
         }
+        uuid::Uuid::parse_str(claims.trace_id.trim())
+            .map_err(|_| "runtime grant trace id is invalid".to_string())?;
         if claims.exp <= claims.iat {
             return Err("runtime grant lifetime is invalid".to_string());
         }
@@ -146,10 +151,13 @@ mod tests {
             sub: "task-runner".to_string(),
             aud: String::new(),
             session_id: "session-1".to_string(),
+            trace_id: uuid::Uuid::new_v4().to_string(),
+            tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
             task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
+            device_id: Some("device-1".to_string()),
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
@@ -173,9 +181,16 @@ mod tests {
         let issued = service.issue(claims()).unwrap();
         let verified = service.verify(issued.token.as_str()).unwrap();
         assert_eq!(verified.session_id, "session-1");
+        uuid::Uuid::parse_str(verified.trace_id.as_str()).expect("valid trace id");
+        assert_eq!(verified.tenant_id, "tenant-1");
         assert_eq!(verified.owner_user_id, "user-1");
         assert_eq!(verified.task_profile.as_deref(), Some("default"));
         assert_eq!(verified.route_revision, "route-1");
         assert_eq!(verified.allowed_resource_ids, vec!["mcp-1"]);
+
+        let mut invalid = claims();
+        invalid.trace_id = "not-a-trace".to_string();
+        let invalid = service.issue(invalid).unwrap();
+        assert!(service.verify(invalid.token.as_str()).is_err());
     }
 }

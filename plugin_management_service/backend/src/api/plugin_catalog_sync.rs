@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chatos_plugin_management_sdk::{
@@ -25,8 +26,6 @@ const MAX_CATALOG_PLUGINS: usize = 2_000;
 const MAX_CATALOG_RELEASES: usize = 10_000;
 const MAX_CATALOG_COMPONENT_SNAPSHOTS: usize = 50_000;
 const MAX_CATALOG_SIGNING_KEYS: usize = 2_000;
-
-static ACTIVE_CATALOG_SYNCS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 pub(super) async fn sync_admin_plugin_marketplace(
     State(state): State<AppState>,
@@ -59,45 +58,14 @@ pub(super) async fn sync_plugin_marketplace(
     .map(Json)
 }
 
-pub fn start_plugin_catalog_sync_loop(state: AppState) {
-    if !state.config.plugin_catalog_sync_enabled {
-        return;
-    }
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(state.config.plugin_catalog_sync_interval);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            let marketplaces = match state.store.list_plugin_marketplaces().await {
-                Ok(items) => items,
-                Err(error) => {
-                    tracing::warn!(
-                        error = error.as_str(),
-                        "list Plugin Marketplaces for Catalog sync failed"
-                    );
-                    continue;
-                }
-            };
-            for marketplace in marketplaces
-                .into_iter()
-                .filter(is_syncable_network_marketplace)
-            {
-                if let Err(error) = sync_plugin_marketplace_by_id(
-                    &state,
-                    marketplace.id.as_str(),
-                    SYSTEM_CATALOG_SYNC_ACTOR,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        marketplace_id = marketplace.id.as_str(),
-                        error = error.message.as_str(),
-                        "scheduled Plugin Catalog sync failed"
-                    );
-                }
-            }
-        }
-    });
+pub(crate) async fn run_queued_plugin_catalog_sync(
+    state: &AppState,
+    marketplace_id: &str,
+) -> Result<(), String> {
+    sync_plugin_marketplace_by_id(state, marketplace_id, SYSTEM_CATALOG_SYNC_ACTOR)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.message)
 }
 
 async fn sync_plugin_marketplace_by_id(
@@ -105,8 +73,84 @@ async fn sync_plugin_marketplace_by_id(
     marketplace_id: &str,
     actor: &str,
 ) -> Result<PluginCatalogSyncResponse, ApiError> {
-    let _lease = CatalogSyncLease::acquire(marketplace_id)?;
-    let result = sync_plugin_marketplace_inner(state, marketplace_id).await;
+    let lock_owner = Uuid::new_v4().to_string();
+    let lock_until = mongodb::bson::DateTime::from_system_time(
+        std::time::SystemTime::now() + state.config.plugin_catalog_sync_lock_timeout,
+    );
+    let acquired = state
+        .store
+        .acquire_plugin_catalog_sync_lease(marketplace_id, lock_owner.as_str(), lock_until)
+        .await
+        .map_err(ApiError::internal)?;
+    if !acquired {
+        return Err(ApiError::conflict(
+            "Plugin Marketplace Catalog sync is already in progress",
+        ));
+    }
+    let (stop_lease_heartbeat, mut lease_heartbeat_stopped) = tokio::sync::oneshot::channel();
+    let lease_lost = Arc::new(AtomicBool::new(false));
+    let heartbeat_state = state.clone();
+    let heartbeat_marketplace_id = marketplace_id.to_string();
+    let heartbeat_lock_owner = lock_owner.clone();
+    let heartbeat_lease_lost = lease_lost.clone();
+    let lock_timeout = state.config.plugin_catalog_sync_lock_timeout;
+    let heartbeat = tokio::spawn(async move {
+        let mut interval = tokio::time::interval((lock_timeout / 3).max(Duration::from_secs(1)));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = &mut lease_heartbeat_stopped => break,
+                _ = interval.tick() => {
+                    let lock_until = mongodb::bson::DateTime::from_system_time(
+                        std::time::SystemTime::now() + lock_timeout,
+                    );
+                    match heartbeat_state
+                        .store
+                        .renew_plugin_catalog_sync_lease(
+                            heartbeat_marketplace_id.as_str(),
+                            heartbeat_lock_owner.as_str(),
+                            lock_until,
+                        )
+                        .await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            heartbeat_lease_lost.store(true, Ordering::Release);
+                            break;
+                        }
+                        Err(error) => {
+                            heartbeat_lease_lost.store(true, Ordering::Release);
+                            tracing::warn!(
+                                marketplace_id = heartbeat_marketplace_id.as_str(),
+                                error = error.as_str(),
+                                "renew Plugin Catalog sync lease failed"
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let sync_result = sync_plugin_marketplace_inner(state, marketplace_id).await;
+    let _ = stop_lease_heartbeat.send(());
+    let _ = heartbeat.await;
+    let lease_was_lost = lease_lost.load(Ordering::Acquire);
+    let release_result = state
+        .store
+        .release_plugin_catalog_sync_lease(marketplace_id, lock_owner.as_str())
+        .await;
+    let result = match (sync_result, release_result, lease_was_lost) {
+        (Ok(response), Ok(()), false) => Ok(response),
+        (Ok(_), _, true) => Err(ApiError::internal(
+            "Plugin Catalog sync lease was lost before completion",
+        )),
+        (Err(error), _, _) => Err(error),
+        (Ok(_), Err(error), false) => Err(ApiError::internal(format!(
+            "release Plugin Catalog sync lease failed: {error}"
+        ))),
+    };
     let (outcome, details) = match &result {
         Ok(response) => (
             "success",
@@ -845,7 +889,7 @@ async fn materialize_catalog(
     Ok(())
 }
 
-fn is_syncable_network_marketplace(marketplace: &PluginMarketplaceRecord) -> bool {
+pub(crate) fn is_syncable_network_marketplace(marketplace: &PluginMarketplaceRecord) -> bool {
     marketplace.enabled
         && marketplace.trust_level == PLUGIN_TRUST_TRUSTED
         && marketplace.catalog_url.is_some()
@@ -888,38 +932,6 @@ fn is_public_ipv6(ip: Ipv6Addr) -> bool {
         || (segments[0] & 0xfe00) == 0xfc00
         || (segments[0] & 0xffc0) == 0xfe80
         || (segments[0] == 0x2001 && segments[1] == 0x0db8))
-}
-
-struct CatalogSyncLease {
-    marketplace_id: String,
-}
-
-impl CatalogSyncLease {
-    fn acquire(marketplace_id: &str) -> Result<Self, ApiError> {
-        let mut active = ACTIVE_CATALOG_SYNCS
-            .get_or_init(|| Mutex::new(HashSet::new()))
-            .lock()
-            .map_err(|_| ApiError::internal("Plugin Catalog sync lock is poisoned"))?;
-        if !active.insert(marketplace_id.to_string()) {
-            return Err(ApiError::conflict(
-                "Plugin Marketplace Catalog sync is already in progress",
-            ));
-        }
-        Ok(Self {
-            marketplace_id: marketplace_id.to_string(),
-        })
-    }
-}
-
-impl Drop for CatalogSyncLease {
-    fn drop(&mut self) {
-        if let Ok(mut active) = ACTIVE_CATALOG_SYNCS
-            .get_or_init(|| Mutex::new(HashSet::new()))
-            .lock()
-        {
-            active.remove(self.marketplace_id.as_str());
-        }
-    }
 }
 
 #[cfg(test)]

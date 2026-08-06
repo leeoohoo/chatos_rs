@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=261
-total_endpoint_count=261
+main_backend_endpoint_count=264
+total_endpoint_count=264
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -139,7 +139,10 @@ GET /api/terminals/{id}/history
 GET /api/terminals/{id}/ws
 GET /api/user-settings
 GET /health
+GET /internal/callback
+GET /metrics
 GET /ready
+GET /widgets/{widget_id}
 GET /{application_id}
 PATCH /api/agents/{agent_id}
 PATCH /api/contacts/{contact_id}/task-runner

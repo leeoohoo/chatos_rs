@@ -10,13 +10,13 @@ use crate::state::AppState;
 mod admin_api;
 mod context_api;
 mod health_api;
+mod internal_audit;
 mod internal_auth;
 mod jobs_api;
 mod memory_auth;
 mod model_profile_auth;
 mod operator_auth;
-#[cfg(test)]
-mod operator_auth_tests;
+mod queue_operations_api;
 mod records_api;
 mod router;
 mod sdk_api;
@@ -30,6 +30,10 @@ mod system_api;
 mod thread_snapshots_api;
 mod threads_api;
 
-pub fn router(state: Arc<AppState>) -> Router {
-    router::build_router(state)
+pub fn build_public_router(state: Arc<AppState>) -> Router {
+    router::build_public_router(state)
+}
+
+pub fn build_internal_router(state: Arc<AppState>) -> Router {
+    router::build_internal_router(state)
 }

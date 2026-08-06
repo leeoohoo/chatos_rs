@@ -149,13 +149,9 @@ pub(in super::super) async fn tool_list_dir(
         .and_then(Value::as_u64)
         .map(|value| value.clamp(1, 1000) as usize)
         .unwrap_or(200);
-    let content = match fetch_harness_content(ctx, path.as_str()).await {
-        Ok(content) => content,
-        Err(err) if err.is_empty_repository_root_listing(path.as_str()) => {
-            return Ok(tool_text_result(json!({ "entries": Vec::<Value>::new() })));
-        }
-        Err(err) => return Err(err.to_string()),
-    };
+    let content = fetch_harness_content(ctx, path.as_str())
+        .await
+        .map_err(|err| err.to_string())?;
     if content.kind != "dir" {
         return Err("Target is not a directory.".to_string());
     }

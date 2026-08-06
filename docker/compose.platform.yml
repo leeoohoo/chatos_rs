@@ -13,12 +13,21 @@ services:
       - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${RABBITMQ_PORT:-5672}:5672"
       - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "${RABBITMQ_CPU_LIMIT:-1.0}"
+          memory: ${RABBITMQ_MEMORY_LIMIT:-1G}
+        reservations:
+          cpus: "${RABBITMQ_CPU_RESERVATION:-0.10}"
+          memory: ${RABBITMQ_MEMORY_RESERVATION:-256M}
     networks:
       - cloud
 
@@ -40,6 +49,148 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "${VALKEY_CPU_LIMIT:-1.0}"
+          memory: ${VALKEY_MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: "${VALKEY_CPU_RESERVATION:-0.05}"
+          memory: ${VALKEY_MEMORY_RESERVATION:-64M}
+    networks:
+      - cloud
+
+  cadvisor:
+    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.49.1}
+    restart: unless-stopped
+    privileged: true
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=15s
+      - --max_housekeeping_interval=30s
+      - --enable_metrics=cpu,memory,oom_event
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
+    volumes:
+      - /:/rootfs:ro
+      - ${CADVISOR_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "${CADVISOR_CPU_LIMIT:-0.50}"
+          memory: ${CADVISOR_MEMORY_LIMIT:-256M}
+        reservations:
+          cpus: "${CADVISOR_CPU_RESERVATION:-0.05}"
+          memory: ${CADVISOR_MEMORY_RESERVATION:-64M}
+    networks:
+      - cloud
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.54.1}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      cadvisor:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROMETHEUS_CPU_LIMIT:-1.0}"
+          memory: ${PROMETHEUS_MEMORY_LIMIT:-1G}
+        reservations:
+          cpus: "${PROMETHEUS_CPU_RESERVATION:-0.10}"
+          memory: ${PROMETHEUS_MEMORY_RESERVATION:-128M}
+    networks:
+      - cloud
+
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.27.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    deploy:
+      resources:
+        limits:
+          cpus: "${ALERTMANAGER_CPU_LIMIT:-0.50}"
+          memory: ${ALERTMANAGER_MEMORY_LIMIT:-256M}
+        reservations:
+          cpus: "${ALERTMANAGER_CPU_RESERVATION:-0.05}"
+          memory: ${ALERTMANAGER_MEMORY_RESERVATION:-64M}
+    networks:
+      - cloud
+
+  tempo:
+    image: ${TEMPO_IMAGE:-grafana/tempo:2.6.1}
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/tempo.yml
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${TEMPO_HTTP_PORT:-3200}:3200"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${TEMPO_OTLP_GRPC_PORT:-4317}:4317"
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo.yml:ro
+      - tempo-data:/var/tempo
+    deploy:
+      resources:
+        limits:
+          cpus: "${TEMPO_CPU_LIMIT:-1.0}"
+          memory: ${TEMPO_MEMORY_LIMIT:-1G}
+        reservations:
+          cpus: "${TEMPO_CPU_RESERVATION:-0.10}"
+          memory: ${TEMPO_MEMORY_RESERVATION:-128M}
+    networks:
+      - cloud
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.2.0}
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: "${GRAFANA_CPU_LIMIT:-1.0}"
+          memory: ${GRAFANA_MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: "${GRAFANA_CPU_RESERVATION:-0.05}"
+          memory: ${GRAFANA_MEMORY_RESERVATION:-128M}
     networks:
       - cloud
 
@@ -52,6 +203,14 @@ services:
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
       - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "${APISIX_CPU_LIMIT:-1.0}"
+          memory: ${APISIX_MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: "${APISIX_CPU_RESERVATION:-0.10}"
+          memory: ${APISIX_MEMORY_RESERVATION:-128M}
     networks:
       - cloud
 
@@ -70,7 +229,7 @@ services:
   mcp-management-service-backend:
     environment:
       MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
-      MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS: ${MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS:-chatos-backend,task-runner,project-service,mcp-management-service}
+      MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS: ${MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS:-chatos,task-runner,project-service,configuration-center}
 
   task-runner-backend:
     environment:
@@ -80,7 +239,6 @@ services:
       TASK_RUNNER_RABBITMQ_EXCHANGE: ${TASK_RUNNER_RABBITMQ_EXCHANGE:-task_runner}
       TASK_RUNNER_RUN_DISPATCH_QUEUE: ${TASK_RUNNER_RUN_DISPATCH_QUEUE:-task_runner.run.dispatch}
       TASK_RUNNER_CALLBACK_DELIVERY_QUEUE: ${TASK_RUNNER_CALLBACK_DELIVERY_QUEUE:-task_runner.callback.delivery}
-      TASK_RUNNER_RUN_EVENTS_QUEUE: ${TASK_RUNNER_RUN_EVENTS_QUEUE:-task_runner.run.events}
 
   task-runner-worker:
     environment:
@@ -90,7 +248,6 @@ services:
       TASK_RUNNER_RABBITMQ_EXCHANGE: ${TASK_RUNNER_RABBITMQ_EXCHANGE:-task_runner}
       TASK_RUNNER_RUN_DISPATCH_QUEUE: ${TASK_RUNNER_RUN_DISPATCH_QUEUE:-task_runner.run.dispatch}
       TASK_RUNNER_CALLBACK_DELIVERY_QUEUE: ${TASK_RUNNER_CALLBACK_DELIVERY_QUEUE:-task_runner.callback.delivery}
-      TASK_RUNNER_RUN_EVENTS_QUEUE: ${TASK_RUNNER_RUN_EVENTS_QUEUE:-task_runner.run.events}
 
   task-runner-scheduler:
     environment:
@@ -100,8 +257,11 @@ services:
       TASK_RUNNER_RABBITMQ_EXCHANGE: ${TASK_RUNNER_RABBITMQ_EXCHANGE:-task_runner}
       TASK_RUNNER_RUN_DISPATCH_QUEUE: ${TASK_RUNNER_RUN_DISPATCH_QUEUE:-task_runner.run.dispatch}
       TASK_RUNNER_CALLBACK_DELIVERY_QUEUE: ${TASK_RUNNER_CALLBACK_DELIVERY_QUEUE:-task_runner.callback.delivery}
-      TASK_RUNNER_RUN_EVENTS_QUEUE: ${TASK_RUNNER_RUN_EVENTS_QUEUE:-task_runner.run.events}
 
 volumes:
   rabbitmq-data:
   valkey-data:
+  prometheus-data:
+  alertmanager-data:
+  tempo-data:
+  grafana-data:

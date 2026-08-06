@@ -273,6 +273,7 @@ pub async fn resolve_runtime_context(
 
     let mcp_management_gateway = if runtime_error.is_none() {
         match resolve_mcp_management_gateway(McpManagementGatewayRequest {
+            tenant_id: effective_user_id.as_deref(),
             owner_user_id: effective_user_id.as_deref(),
             agent_profile,
             project_id: task_runner_project_id,

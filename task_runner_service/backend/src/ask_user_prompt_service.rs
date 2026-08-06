@@ -21,10 +21,9 @@ use crate::models::{
     CancelAskUserPromptRequest, PaginatedResponse, PromptListFilters, SubmitAskUserPromptRequest,
     TaskRunEventRecord,
 };
+use crate::platform_queue::TaskQueueTopology;
 use crate::services::sanitize_prompt_list_filters;
 use crate::store::AppStore;
-
-const PROMPT_STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 mod chatos_callbacks;
 mod execution;
@@ -36,6 +35,7 @@ mod waiters;
 pub struct AskUserPromptService {
     store: AppStore,
     config: Option<AppConfig>,
+    task_queue_topology: TaskQueueTopology,
     waiters: AskUserPromptWaiters,
 }
 
@@ -50,16 +50,72 @@ impl AskUserPromptService {
         Self {
             store,
             config: None,
+            task_queue_topology: TaskQueueTopology::inline_defaults(),
             waiters: AskUserPromptWaiters::default(),
         }
     }
 
-    pub(crate) fn new_with_config(store: AppStore, config: AppConfig) -> Self {
+    pub(crate) fn new_with_config(
+        store: AppStore,
+        config: AppConfig,
+        task_queue_topology: TaskQueueTopology,
+    ) -> Self {
         Self {
             store,
             config: Some(config),
+            task_queue_topology,
             waiters: AskUserPromptWaiters::default(),
         }
+    }
+
+    pub(crate) fn signal_prompt_resolved(&self, prompt_id: &str) {
+        self.waiters.wake(prompt_id);
+    }
+
+    pub(crate) async fn publish_resolution_event_if_needed(
+        &self,
+        prompt: &AskUserPromptRecord,
+    ) -> Result<bool, String> {
+        if !prompt.resolution_event_pending {
+            return Ok(false);
+        }
+        let run_id = prompt
+            .run_id
+            .as_deref()
+            .ok_or_else(|| format!("resolved prompt {} has no Run id", prompt.id))?;
+        let run = self.store.get_run(run_id).await?.ok_or_else(|| {
+            format!(
+                "resolved prompt {} references missing Run {run_id}",
+                prompt.id
+            )
+        })?;
+        crate::worker_control_queue::publish_ask_user_resolved_event(
+            &self.task_queue_topology,
+            prompt.id.as_str(),
+            &run,
+        )
+        .await?;
+        self.store
+            .acknowledge_ask_user_resolution_event(prompt.id.as_str())
+            .await?;
+        Ok(true)
+    }
+
+    pub(crate) async fn publish_pending_resolution_events(
+        &self,
+        limit: usize,
+    ) -> Result<usize, String> {
+        let pending = self
+            .store
+            .list_pending_ask_user_resolution_events(limit)
+            .await?;
+        let mut published = 0usize;
+        for prompt in pending {
+            if self.publish_resolution_event_if_needed(&prompt).await? {
+                published += 1;
+            }
+        }
+        Ok(published)
     }
 }
 
@@ -73,7 +129,7 @@ mod tests {
     use chatos_mcp::AskUserStore;
 
     #[tokio::test]
-    async fn execute_prompt_detects_submission_from_another_service_instance() {
+    async fn execute_prompt_consumes_resolution_event_from_another_service_instance() {
         let (run_event_sender, _) = broadcast::channel(8);
         let store = AppStore::InMemory(InMemoryStore::new(run_event_sender));
         let waiting_service = AskUserPromptService::new(store.clone());
@@ -118,6 +174,7 @@ mod tests {
             .await
             .expect("submit prompt should succeed");
         assert!(saved.is_some());
+        waiting_service.signal_prompt_resolved("prompt_cross_instance");
 
         let decision = tokio::time::timeout(Duration::from_secs(2), handle)
             .await
@@ -127,6 +184,55 @@ mod tests {
 
         assert_eq!(decision.status, "submitted");
         assert_eq!(decision.response.values, Some(json!({ "answer": "yes" })));
+    }
+
+    #[tokio::test]
+    async fn resolved_prompt_outbox_is_acknowledgeable() {
+        let (run_event_sender, _) = broadcast::channel(8);
+        let store = AppStore::InMemory(InMemoryStore::new(run_event_sender));
+        let payload = AskUserPromptPayload {
+            prompt_id: "prompt_outbox".to_string(),
+            conversation_id: "task_1".to_string(),
+            conversation_turn_id: "run_1".to_string(),
+            tool_call_id: None,
+            kind: "prompt_key_values".to_string(),
+            title: "Need approval".to_string(),
+            message: "continue?".to_string(),
+            allow_cancel: true,
+            timeout_ms: 2_000,
+            payload: json!({}),
+        };
+        let mut prompt = AskUserPromptRecord::from_payload(
+            payload,
+            Some("task_1".to_string()),
+            Some("run_1".to_string()),
+            now_rfc3339(),
+            None,
+        );
+        prompt.status = AskUserPromptStatus::Submitted;
+        prompt.resolution_event_pending = true;
+        store
+            .save_ask_user_prompt(prompt)
+            .await
+            .expect("save resolved prompt");
+
+        assert_eq!(
+            store
+                .list_pending_ask_user_resolution_events(10)
+                .await
+                .expect("list pending prompt events")
+                .len(),
+            1
+        );
+        assert!(store
+            .acknowledge_ask_user_resolution_event("prompt_outbox")
+            .await
+            .expect("ack prompt event"));
+        assert!(store
+            .list_pending_ask_user_resolution_events(10)
+            .await
+            .expect("list acknowledged prompt events")
+            .is_empty());
     }
 
     #[tokio::test]

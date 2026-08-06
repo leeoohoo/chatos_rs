@@ -9,6 +9,7 @@ default-run = "chat_app_server_rs"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "macros", "multipart", "ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -17,13 +18,19 @@ dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "time", "json"] }
 tracing-appender = "0.2"
+tracing-opentelemetry = { version = "0.33", default-features = false }
 tower-http = { version = "0.7", features = ["cors", "trace", "request-id"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 futures = "0.3"
 tokio-stream = "0.1"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 bytes = "1"
 once_cell = "1"
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["rt-tokio", "trace"] }
 base64 = "0.22"
 mime_guess = "2"
 chrono = { version = "0.4", features = ["serde", "clock"] }
@@ -61,6 +68,7 @@ memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_mcp = { path = "../../mcp" }
+chatos_mcp_gateway = { path = "../../crates/chatos_mcp_gateway" }
 chatos_mcp_management_sdk = { path = "../../crates/chatos_mcp_management_sdk" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
@@ -72,3 +80,6 @@ chatos_project_execution = { path = "../../crates/chatos_project_execution" }
 [features]
 pdf = []
 test-support = []
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

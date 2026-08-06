@@ -22,13 +22,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{config::AppConfig, state::AppState};
 
-use super::{
-    internal_auth::{
-        require_internal_request, scope_for_memory_path, ADMIN_SCOPE, DATA_SCOPE,
-        MODEL_PROFILE_SYNC_SCOPE, SOURCE_SCOPE,
-    },
-    operator_auth,
+use super::internal_auth::{
+    require_internal_request, scope_for_memory_path, ADMIN_SCOPE, DATA_SCOPE,
+    MODEL_PROFILE_SYNC_SCOPE, SOURCE_SCOPE,
 };
+use super::internal_audit::MemoryInternalRequestAudit;
 
 const PRINCIPAL_TYPE_AGENT_ACCOUNT: &str = "agent_account";
 const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";
@@ -245,29 +243,23 @@ pub async fn require_memory_auth(
     let required_scope = scope_for_memory_path(request.uri().path());
     let allowed_callers: &[&str] = match required_scope {
         MODEL_PROFILE_SYNC_SCOPE => &["user-service"],
-        SOURCE_SCOPE => &[
-            "chatos-backend",
-            "task-runner",
-            "project-service",
-            "local-connector-service",
-        ],
+        SOURCE_SCOPE => &["chatos-backend", "task-runner", "project-service"],
         ADMIN_SCOPE => &[],
-        DATA_SCOPE => &[
-            "chatos-backend",
-            "task-runner",
-            "project-service",
-            "local-connector-service",
-        ],
+        DATA_SCOPE => &["chatos-backend", "task-runner", "project-service"],
         _ => &[],
     };
-    if require_internal_request(
+    if let Some(claims) = require_internal_request(
         &state.config,
         request.headers(),
         required_scope,
         allowed_callers,
     )? {
+        let audit = MemoryInternalRequestAudit::from_request(&request, &claims);
+        request.extensions_mut().insert(claims);
         request.extensions_mut().insert(MemoryAuthContext::Operator);
-        return Ok(next.run(request).await);
+        let response = next.run(request).await;
+        audit.record(response.status());
+        return Ok(response);
     }
     if let Some(token) = bearer_token_from_request(&request)? {
         match verify_user_service_principal(token.as_str(), &state.config, &state.user_service_http)
@@ -279,53 +271,58 @@ pub async fn require_memory_auth(
                     .insert(MemoryAuthContext::User(principal));
                 return Ok(next.run(request).await);
             }
-            Err(err) => {
-                if !state.config.require_signed_internal_requests
-                    && state
-                        .config
-                        .operator_token
-                        .as_deref()
-                        .is_some_and(|expected| {
-                            operator_auth::constant_time_equal(expected, &token)
-                        })
-                {
-                    request.extensions_mut().insert(MemoryAuthContext::Operator);
-                    return Ok(next.run(request).await);
-                }
-                return Err(err);
-            }
+            Err(err) => return Err(err),
         }
     }
+    Err((
+        StatusCode::UNAUTHORIZED,
+        "missing authorization header".to_string(),
+    ))
+}
 
-    if state.config.require_signed_internal_requests
-        && operator_auth::extract_operator_token(request.headers()).is_some()
-    {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "signed Memory Engine internal API token is required".to_string(),
-        ));
-    }
-
-    let Some(expected_token) = state.config.operator_token.as_deref() else {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "missing authorization header".to_string(),
-        ));
-    };
-    let provided = operator_auth::extract_operator_token(request.headers()).ok_or_else(|| {
+pub async fn require_user_memory_auth(
+    State(state): State<Arc<AppState>>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Result<Response, (StatusCode, String)> {
+    let token = bearer_token_from_request(&request)?.ok_or_else(|| {
         (
             StatusCode::UNAUTHORIZED,
-            "missing operator token".to_string(),
+            "user Bearer authorization is required on the public Memory Engine API".to_string(),
         )
     })?;
-    if !operator_auth::constant_time_equal(expected_token, provided) {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "invalid operator token".to_string(),
-        ));
-    }
-    request.extensions_mut().insert(MemoryAuthContext::Operator);
+    let principal =
+        verify_user_service_principal(token.as_str(), &state.config, &state.user_service_http)
+            .await?;
+    request
+        .extensions_mut()
+        .insert(MemoryAuthContext::User(principal));
     Ok(next.run(request).await)
+}
+
+pub async fn require_model_profile_internal_auth(
+    State(state): State<Arc<AppState>>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Result<Response, (StatusCode, String)> {
+    let claims = require_internal_request(
+        &state.config,
+        request.headers(),
+        MODEL_PROFILE_SYNC_SCOPE,
+        &["user-service"],
+    )?
+    .ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            "signed Memory Engine model profile token is required".to_string(),
+        )
+    })?;
+    let audit = MemoryInternalRequestAudit::from_request(&request, &claims);
+    request.extensions_mut().insert(claims);
+    request.extensions_mut().insert(MemoryAuthContext::Operator);
+    let response = next.run(request).await;
+    audit.record(response.status());
+    Ok(response)
 }
 
 fn bearer_token_from_request(

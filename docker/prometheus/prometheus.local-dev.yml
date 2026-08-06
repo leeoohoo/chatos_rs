@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  - job_name: rabbitmq-queue-rates
+    metrics_path: /metrics/detailed
+    params:
+      family:
+        - channel_queue_exchange_metrics
+        - channel_queue_metrics
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  - job_name: chatos-backend
+    static_configs:
+      - targets: ["host.docker.internal:3997"]
+
+  - job_name: mcp-management-service
+    static_configs:
+      - targets: ["host.docker.internal:39280"]
+
+  - job_name: task-runner
+    static_configs:
+      - targets: ["host.docker.internal:39090"]
+
+  - job_name: memory-engine
+    static_configs:
+      - targets: ["host.docker.internal:7081"]
+
+  - job_name: plugin-management-service
+    static_configs:
+      - targets: ["host.docker.internal:39260"]

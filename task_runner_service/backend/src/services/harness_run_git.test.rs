@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 #[tokio::test]
-async fn cloud_run_branch_bootstraps_an_empty_harness_repository() {
+async fn cloud_run_branch_rejects_an_uninitialized_harness_repository() {
     let root = TestDirectory::new("empty-cloud-branch");
     let bare_repo = root.path().join("harness.git");
     let prepare = root.path().join("prepare");
@@ -31,22 +31,9 @@ async fn cloud_run_branch_bootstraps_an_empty_harness_repository() {
     .await
     .expect("clone empty Harness repository");
 
-    let base_commit =
-        create_cloud_run_branch(prepare.as_path(), "main", "chatos/runs/first", &[])
-            .await
-            .expect("bootstrap empty repository and create run branch");
-    let refs = run_git_output(
-        vec![
-            "--git-dir".to_string(),
-            bare_repo.to_string_lossy().to_string(),
-            "show-ref".to_string(),
-        ],
-        None,
-        &[],
-    )
-    .await
-    .expect("read bootstrapped refs");
+    let error = create_cloud_run_branch(prepare.as_path(), "main", "chatos/runs/first", &[])
+        .await
+        .expect_err("uninitialized repository must fail before execution");
 
-    assert!(refs.contains(format!("{base_commit} refs/heads/main").as_str()));
-    assert!(refs.contains(format!("{base_commit} refs/heads/chatos/runs/first").as_str()));
+    assert!(error.contains("Harness base branch is unavailable: main"));
 }

@@ -4,6 +4,13 @@
 use super::*;
 
 impl AppStore {
+    pub async fn run_execution_stats(&self) -> Result<RunExecutionStats, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.run_execution_stats()),
+            Self::Mongo(store) => store.run_execution_stats().await,
+        }
+    }
+
     pub async fn list_runs(&self, task_id: Option<&str>) -> Result<Vec<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_runs(task_id)),
@@ -58,6 +65,42 @@ impl AppStore {
         }
     }
 
+    pub(crate) async fn subscribe_run_terminal(
+        &self,
+        subscription: RunTerminalSubscriptionRecord,
+    ) -> Result<TaskRunRecord, String> {
+        match self {
+            Self::InMemory(store) => store.subscribe_run_terminal(subscription),
+            Self::Mongo(store) => store.subscribe_run_terminal(subscription).await,
+        }
+    }
+
+    pub(crate) async fn list_pending_run_terminal_subscriptions(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(TaskRunRecord, RunTerminalSubscriptionRecord)>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_pending_run_terminal_subscriptions(limit)),
+            Self::Mongo(store) => store.list_pending_run_terminal_subscriptions(limit).await,
+        }
+    }
+
+    pub(crate) async fn acknowledge_run_terminal_subscription(
+        &self,
+        subscription_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.acknowledge_run_terminal_subscription(subscription_id))
+            }
+            Self::Mongo(store) => {
+                store
+                    .acknowledge_run_terminal_subscription(subscription_id)
+                    .await
+            }
+        }
+    }
+
     pub async fn save_run(&self, run: TaskRunRecord) -> Result<TaskRunRecord, String> {
         match self {
             Self::InMemory(store) => store.save_run(run),
@@ -83,22 +126,10 @@ impl AppStore {
         }
     }
 
-    pub async fn claim_queued_run_by_id(
-        &self,
-        run_id: &str,
-        worker_id: &str,
-        claim_token: &str,
-        claim_until: &str,
-    ) -> Result<Option<TaskRunRecord>, String> {
+    pub async fn has_queued_run_waiting_for_execution(&self) -> Result<bool, String> {
         match self {
-            Self::InMemory(store) => {
-                Ok(store.claim_queued_run_by_id(run_id, worker_id, claim_token, claim_until))
-            }
-            Self::Mongo(store) => {
-                store
-                    .claim_queued_run_by_id(run_id, worker_id, claim_token, claim_until)
-                    .await
-            }
+            Self::InMemory(store) => Ok(store.has_queued_run_waiting_for_execution()),
+            Self::Mongo(store) => store.has_queued_run_waiting_for_execution().await,
         }
     }
 
@@ -116,6 +147,157 @@ impl AppStore {
                     .set_queued_runs_dispatch_paused(task_ids, paused)
                     .await
             }
+        }
+    }
+
+    pub async fn list_pending_run_dispatches(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_pending_run_dispatches(limit)),
+            Self::Mongo(store) => store.list_pending_run_dispatches(limit).await,
+        }
+    }
+
+    pub async fn acknowledge_run_dispatch_event(&self, run_id: &str) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.acknowledge_run_dispatch_event(run_id)),
+            Self::Mongo(store) => store.acknowledge_run_dispatch_event(run_id).await,
+        }
+    }
+
+    pub(crate) async fn list_pending_run_post_processes(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_pending_run_post_processes(limit)),
+            Self::Mongo(store) => store.list_pending_run_post_processes(limit).await,
+        }
+    }
+
+    pub(crate) async fn acknowledge_run_post_process_event(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.acknowledge_run_post_process_event(run_id)),
+            Self::Mongo(store) => store.acknowledge_run_post_process_event(run_id).await,
+        }
+    }
+
+    pub(crate) async fn record_run_post_process_failure(
+        &self,
+        run_id: &str,
+        error: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.record_run_post_process_failure(run_id, error)),
+            Self::Mongo(store) => store.record_run_post_process_failure(run_id, error).await,
+        }
+    }
+
+    pub(crate) async fn mark_run_memory_summary_processed(
+        &self,
+        run_id: &str,
+        summary_job_run_id: Option<&str>,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.mark_run_memory_summary_processed(run_id, summary_job_run_id))
+            }
+            Self::Mongo(store) => {
+                store
+                    .mark_run_memory_summary_processed(run_id, summary_job_run_id)
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn mark_run_chatos_followup_processed(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.mark_run_chatos_followup_processed(run_id)),
+            Self::Mongo(store) => store.mark_run_chatos_followup_processed(run_id).await,
+        }
+    }
+
+    pub(crate) async fn mark_run_post_process_completed(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.mark_run_post_process_completed(run_id)),
+            Self::Mongo(store) => store.mark_run_post_process_completed(run_id).await,
+        }
+    }
+
+    pub(crate) async fn mark_run_post_process_dead_lettered(
+        &self,
+        run_id: &str,
+        error: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.mark_run_post_process_dead_lettered(run_id, error)),
+            Self::Mongo(store) => {
+                store
+                    .mark_run_post_process_dead_lettered(run_id, error)
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn rearm_run_post_process_dead_letter(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.rearm_run_post_process_dead_letter(run_id)),
+            Self::Mongo(store) => store.rearm_run_post_process_dead_letter(run_id).await,
+        }
+    }
+
+    pub(crate) async fn list_pending_terminal_cleanups(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_pending_terminal_cleanups(limit)),
+            Self::Mongo(store) => store.list_pending_terminal_cleanups(limit).await,
+        }
+    }
+
+    pub(crate) async fn acknowledge_terminal_cleanup_event(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.acknowledge_terminal_cleanup_event(run_id)),
+            Self::Mongo(store) => store.acknowledge_terminal_cleanup_event(run_id).await,
+        }
+    }
+
+    pub(crate) async fn retry_terminal_cleanup(
+        &self,
+        run_id: &str,
+        error: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.retry_terminal_cleanup(run_id, error)),
+            Self::Mongo(store) => store.retry_terminal_cleanup(run_id, error).await,
+        }
+    }
+
+    pub(crate) async fn mark_terminal_cleanup_completed(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.mark_terminal_cleanup_completed(run_id)),
+            Self::Mongo(store) => store.mark_terminal_cleanup_completed(run_id).await,
         }
     }
 
@@ -174,6 +356,17 @@ impl AppStore {
         }
     }
 
+    pub async fn get_run_event(
+        &self,
+        run_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskRunEventRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.get_run_event(run_id, event_id)),
+            Self::Mongo(store) => store.get_run_event(run_id, event_id).await,
+        }
+    }
+
     pub async fn list_run_events_after(
         &self,
         run_id: &str,
@@ -193,14 +386,22 @@ impl AppStore {
         }
     }
 
+    pub async fn latest_run_event_cursor(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.latest_run_event_cursor(run_id)),
+            Self::Mongo(store) => store.latest_run_event_cursor(run_id).await,
+        }
+    }
+
     pub async fn append_run_event(&self, event: TaskRunEventRecord) -> Result<(), String> {
         let publish_event = event.clone();
         match self {
             Self::InMemory(store) => {
                 store.append_run_event(event);
-                if let Err(err) =
-                    crate::run_event_queue::publish_run_event_if_configured(&publish_event).await
-                {
+                if let Err(err) = crate::run_event_queue::publish_run_event(&publish_event).await {
                     warn!(
                         run_id = publish_event.run_id.as_str(),
                         event_id = publish_event.id.as_str(),
@@ -213,9 +414,7 @@ impl AppStore {
             }
             Self::Mongo(store) => {
                 store.append_run_event(event).await?;
-                if let Err(err) =
-                    crate::run_event_queue::publish_run_event_if_configured(&publish_event).await
-                {
+                if let Err(err) = crate::run_event_queue::publish_run_event(&publish_event).await {
                     warn!(
                         run_id = publish_event.run_id.as_str(),
                         event_id = publish_event.id.as_str(),
@@ -236,8 +435,7 @@ impl AppStore {
                 store.append_run_event(event);
                 tokio::spawn(async move {
                     if let Err(err) =
-                        crate::run_event_queue::publish_run_event_if_configured(&publish_event)
-                            .await
+                        crate::run_event_queue::publish_run_event(&publish_event).await
                     {
                         warn!(
                             run_id = publish_event.run_id.as_str(),
@@ -256,8 +454,7 @@ impl AppStore {
                         return;
                     }
                     if let Err(err) =
-                        crate::run_event_queue::publish_run_event_if_configured(&publish_event)
-                            .await
+                        crate::run_event_queue::publish_run_event(&publish_event).await
                     {
                         warn!(
                             run_id = publish_event.run_id.as_str(),
@@ -279,6 +476,30 @@ impl AppStore {
         match self {
             Self::InMemory(store) => Ok(store.mark_cancel_requested(run_id)),
             Self::Mongo(store) => store.mark_cancel_requested(run_id).await,
+        }
+    }
+
+    pub async fn repair_stale_cancel_requested_runs(&self) -> Result<u64, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.repair_stale_cancel_requested_runs() as u64),
+            Self::Mongo(store) => store.repair_stale_cancel_requested_runs().await,
+        }
+    }
+
+    pub async fn list_pending_run_cancel_events(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_pending_run_cancel_events(limit)),
+            Self::Mongo(store) => store.list_pending_run_cancel_events(limit).await,
+        }
+    }
+
+    pub async fn acknowledge_run_cancel_event(&self, run_id: &str) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.acknowledge_run_cancel_event(run_id)),
+            Self::Mongo(store) => store.acknowledge_run_cancel_event(run_id).await,
         }
     }
 
@@ -339,5 +560,13 @@ impl AppStore {
             Self::InMemory(store) => store.run_event_sender.subscribe(),
             Self::Mongo(store) => store.run_event_sender.subscribe(),
         }
+    }
+
+    pub fn broadcast_run_event(&self, event: TaskRunEventRecord) {
+        let sender = match self {
+            Self::InMemory(store) => &store.run_event_sender,
+            Self::Mongo(store) => &store.run_event_sender,
+        };
+        let _ = sender.send(event);
     }
 }

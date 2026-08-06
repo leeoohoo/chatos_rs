@@ -33,7 +33,6 @@ pub struct MemoryEngineClient {
     http: reqwest::Client,
     base_url: String,
     auth: AuthMode,
-    operator_token: Option<String>,
     access_token: Option<String>,
     internal_service_auth: Option<InternalServiceAuth>,
 }
@@ -46,19 +45,26 @@ struct InternalServiceAuth {
 
 impl MemoryEngineClient {
     pub fn new_platform(base_url: impl Into<String>, timeout: Duration) -> Result<Self, String> {
-        Ok(Self {
-            http: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .map_err(|err| err.to_string())?,
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|err| err.to_string())?;
+        Ok(Self::new_platform_with_http_client(base_url, http))
+    }
+
+    pub fn new_platform_with_http_client(
+        base_url: impl Into<String>,
+        http: reqwest::Client,
+    ) -> Self {
+        Self {
+            http,
             base_url: normalize_base_url(base_url.into()),
             auth: AuthMode::Direct {
                 source_id: String::new(),
             },
-            operator_token: None,
             access_token: None,
             internal_service_auth: None,
-        })
+        }
     }
 
     pub fn new_direct(
@@ -66,19 +72,27 @@ impl MemoryEngineClient {
         timeout: Duration,
         source_id: impl Into<String>,
     ) -> Result<Self, String> {
-        Ok(Self {
-            http: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .map_err(|err| err.to_string())?,
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|err| err.to_string())?;
+        Ok(Self::new_direct_with_http_client(base_url, source_id, http))
+    }
+
+    pub fn new_direct_with_http_client(
+        base_url: impl Into<String>,
+        source_id: impl Into<String>,
+        http: reqwest::Client,
+    ) -> Self {
+        Self {
+            http,
             base_url: normalize_base_url(base_url.into()),
             auth: AuthMode::Direct {
                 source_id: source_id.into(),
             },
-            operator_token: None,
             access_token: None,
             internal_service_auth: None,
-        })
+        }
     }
 
     pub fn new_system(
@@ -97,15 +111,9 @@ impl MemoryEngineClient {
                 system_id: system_id.into(),
                 secret_key: secret_key.into(),
             },
-            operator_token: None,
             access_token: None,
             internal_service_auth: None,
         })
-    }
-
-    pub fn with_operator_token(mut self, operator_token: impl Into<String>) -> Self {
-        self.operator_token = normalize_token(operator_token.into());
-        self
     }
 
     pub fn with_bearer_token(mut self, access_token: impl Into<String>) -> Self {
@@ -174,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_operator_token_ignores_blank_values() {
+    fn normalize_token_ignores_blank_values() {
         assert_eq!(normalize_token("".to_string()), None);
         assert_eq!(normalize_token("   ".to_string()), None);
         assert_eq!(

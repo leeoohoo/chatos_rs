@@ -25,14 +25,45 @@ fn catalog_exposes_shared_and_task_runner_iteration_limits() {
         .iter()
         .find(|definition| definition.key == TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
         .expect("task runner iteration definition");
-    assert_eq!(task_runner.scope, "service");
-    assert_eq!(task_runner.service_name.as_deref(), Some("task-runner"));
+    assert_eq!(task_runner.scope, "shared");
+    assert_eq!(task_runner.service_name, None);
     assert_eq!(
         task_runner.default_value,
         json!(DEFAULT_AGENT_MAX_ITERATIONS)
     );
     assert_eq!(task_runner.max, Some(5000));
     assert!(task_runner.env_aliases.is_empty());
+}
+
+#[test]
+fn catalog_exposes_authoritative_pressure_controls() {
+    let definitions = builtin_definitions();
+    let platform = definitions
+        .iter()
+        .find(|definition| definition.key == PLATFORM_PRESSURE_LEVEL_CONFIG_KEY)
+        .expect("platform pressure level definition");
+    assert_eq!(platform.scope, "shared");
+    assert_eq!(platform.reload_mode, "hot_reload");
+    assert_eq!(
+        platform.enum_options,
+        vec!["normal", "elevated", "critical"]
+    );
+
+    for key in [
+        MEMORY_ENGINE_WORKER_PRESSURE_SUMMARY_CONCURRENCY_CONFIG_KEY,
+        MEMORY_ENGINE_WORKER_PRESSURE_REFRESH_INTERVAL_MS_CONFIG_KEY,
+        MEMORY_ENGINE_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+        MEMORY_ENGINE_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing pressure definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(definition.service_name.as_deref(), Some("memory-engine"));
+        assert_eq!(definition.reload_mode, "hot_reload");
+        assert!(definition.env_aliases.is_empty());
+    }
 }
 
 #[test]
@@ -59,10 +90,31 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
     let definitions = builtin_definitions();
     for key in [
         TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
+        TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+        TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+        TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+        TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+        TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing definition for {key}"));
+        assert_eq!(definition.scope, "shared");
+        assert_eq!(definition.service_name, None);
+        assert!(
+            definition.env_aliases.is_empty(),
+            "{key} must be managed from configuration-center values, not env aliases"
+        );
+    }
+
+    for key in [
         TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
         TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
         TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
         TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
+        TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
+        TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
     ] {
         let definition = definitions
             .iter()
@@ -86,6 +138,54 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
         json!(default_task_runner_execution_environment_mode())
     );
     assert_eq!(environment_mode.enum_options, vec!["local", "cloud"]);
+
+    for (key, expected_default) in [
+        (
+            TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED),
+        ),
+        (
+            TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing definition for {key}"));
+        assert_eq!(definition.value_type, "boolean");
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "next_run");
+    }
+}
+
+#[test]
+fn catalog_exposes_task_runner_pressure_controls_without_env_aliases() {
+    let definitions = builtin_definitions();
+    for (key, expected_default) in [
+        (
+            TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+            json!(100),
+        ),
+        (
+            TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+            json!(1_000),
+        ),
+        (
+            TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            json!(5_000),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Task Runner pressure definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
+        assert_eq!(definition.reload_mode, "hot_reload");
+        assert_eq!(definition.default_value, expected_default);
+        assert!(definition.env_aliases.is_empty());
+    }
 }
 
 #[test]
@@ -106,10 +206,52 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "integer",
         ),
         (
+            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_INTERNAL_MTLS_PORT",
+            "integer",
+        ),
+        (
+            CHATOS_OTLP_ENDPOINT_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_OTEL_EXPORTER_OTLP_ENDPOINT",
+            "string",
+        ),
+        (
+            CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_OTEL_TRACE_SAMPLE_RATIO",
+            "number",
+        ),
+        (
+            CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_OTEL_EXPORT_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
             TASK_RUNNER_HOST_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_HOST",
             "string",
+        ),
+        (
+            TASK_RUNNER_OTLP_ENDPOINT_CONFIG_KEY,
+            "task-runner",
+            "TASK_RUNNER_OTEL_EXPORTER_OTLP_ENDPOINT",
+            "string",
+        ),
+        (
+            TASK_RUNNER_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "task-runner",
+            "TASK_RUNNER_OTEL_TRACE_SAMPLE_RATIO",
+            "number",
+        ),
+        (
+            TASK_RUNNER_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "task-runner",
+            "TASK_RUNNER_OTEL_EXPORT_TIMEOUT_MS",
+            "duration_ms",
         ),
         (
             TASK_RUNNER_PORT_CONFIG_KEY,
@@ -163,6 +305,12 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_PROJECT_SERVICE_BASE_URL",
+            "string",
+        ),
+        (
+            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "task-runner",
+            "TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL",
             "string",
         ),
         (
@@ -278,6 +426,18 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "chatos-backend",
             "CHATOS_PROJECT_SERVICE_BASE_URL",
             "string",
+        ),
+        (
+            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL",
+            "string",
+        ),
+        (
+            CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS",
+            "duration_ms",
         ),
         (
             CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
@@ -476,6 +636,21 @@ fn catalog_exposes_project_service_runtime_routes_via_env_projection() {
             "string",
         ),
         (
+            PROJECT_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
+            "PROJECT_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT",
+            "string",
+        ),
+        (
+            PROJECT_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "PROJECT_SERVICE_OTEL_TRACE_SAMPLE_RATIO",
+            "number",
+        ),
+        (
+            PROJECT_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "PROJECT_SERVICE_OTEL_EXPORT_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
             PROJECT_SERVICE_PORT_CONFIG_KEY,
             "PROJECT_SERVICE_PORT",
             "integer",
@@ -578,11 +753,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
     let definitions = builtin_definitions();
     for (key, env_alias, expected_value_type) in [
         (
-            PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_INTERNAL_API_SECRET",
-            "string",
-        ),
-        (
             PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_SERVICE_HOST",
             "string",
@@ -678,6 +848,71 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
             "integer",
         ),
         (
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_QUEUE",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS",
+            "integer",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS",
+            "duration_ms",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS",
+            "duration_ms",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY",
+            "integer",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS",
+            "duration_ms",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE",
+            "integer",
+        ),
+        (
+            PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS",
+            "integer",
+        ),
+        (
             PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS",
             "duration_ms",
@@ -719,9 +954,43 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
 
     let secret_definition = definitions
         .iter()
-        .find(|definition| definition.key == PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY)
-        .expect("plugin management internal api secret definition");
+        .find(|definition| {
+            definition.key == PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY
+        })
+        .expect("plugin management caller-specific secret definition");
     assert_eq!(secret_definition.sensitivity, "secret");
+}
+
+#[test]
+fn catalog_exposes_plugin_management_pressure_controls_without_env_aliases() {
+    let definitions = builtin_definitions();
+    for (key, expected_default) in [
+        (
+            PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
+            json!(100),
+        ),
+        (
+            PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+            json!(1_000),
+        ),
+        (
+            PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            json!(5_000),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Plugin Management pressure definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(
+            definition.service_name.as_deref(),
+            Some("plugin-management-service")
+        );
+        assert_eq!(definition.reload_mode, "hot_reload");
+        assert_eq!(definition.default_value, expected_default);
+        assert!(definition.env_aliases.is_empty());
+    }
 }
 
 #[test]
@@ -741,7 +1010,8 @@ fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
         .iter()
         .find(|definition| definition.key == TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY)
         .expect("missing run event publish mode definition");
-    assert_eq!(run_events_mode.default_value, json!("inline"));
+    assert_eq!(run_events_mode.default_value, json!("rabbitmq"));
+    assert_eq!(run_events_mode.enum_options, vec!["rabbitmq".to_string()]);
     for (key, env_alias) in [
         (
             TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
@@ -760,8 +1030,32 @@ fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
             "TASK_RUNNER_RABBITMQ_EXCHANGE",
         ),
         (
+            TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+            "TASK_RUNNER_RABBITMQ_RECONNECT_MS",
+        ),
+        (
             TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY,
             "TASK_RUNNER_RUN_DISPATCH_QUEUE",
+        ),
+        (
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_QUEUE_CONFIG_KEY,
+            "TASK_RUNNER_RUN_DISPATCH_RETRY_QUEUE",
+        ),
+        (
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_DELAY_MS_CONFIG_KEY,
+            "TASK_RUNNER_RUN_DISPATCH_RETRY_DELAY_MS",
+        ),
+        (
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "TASK_RUNNER_RUN_DISPATCH_OUTBOX_RECONCILE_MS",
+        ),
+        (
+            TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE",
+        ),
+        (
+            TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_CONFIG_KEY,
+            "TASK_RUNNER_WORKER_CONTROL_QUEUE_PREFIX",
         ),
         (
             TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY,
@@ -772,8 +1066,8 @@ fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
             "TASK_RUNNER_RUN_EVENTS_PUBLISH_MODE",
         ),
         (
-            TASK_RUNNER_QUEUE_RUN_EVENTS_QUEUE_CONFIG_KEY,
-            "TASK_RUNNER_RUN_EVENTS_QUEUE",
+            TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY,
+            "TASK_RUNNER_RUN_EVENTS_ROUTING_KEY",
         ),
     ] {
         let definition = definitions
@@ -873,6 +1167,9 @@ fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only()
         LOCAL_CONNECTOR_REMOTE_CONTROL_REQUIRE_SIGNED_CONFIG_KEY,
         LOCAL_CONNECTOR_REMOTE_CONTROL_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
         LOCAL_CONNECTOR_REMOTE_CONTROL_TRUSTED_RELAY_PUBLIC_KEYS_CONFIG_KEY,
+        LOCAL_CONNECTOR_TERMINAL_MAX_ACTIVE_SESSIONS_CONFIG_KEY,
+        LOCAL_CONNECTOR_TERMINAL_NEW_SESSION_SOFT_LIMIT_CONFIG_KEY,
+        LOCAL_CONNECTOR_TERMINAL_MAX_SUBSCRIBERS_PER_SESSION_CONFIG_KEY,
     ] {
         let definition = definitions
             .iter()
@@ -891,6 +1188,38 @@ fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only()
 }
 
 #[test]
+fn catalog_exposes_local_connector_pressure_controls_without_env_aliases() {
+    let definitions = builtin_definitions();
+    for (key, expected_default) in [
+        (
+            LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY,
+            json!(1_000),
+        ),
+        (
+            LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
+            json!(5_000),
+        ),
+        (
+            LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            json!(5_000),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Local Connector pressure definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(
+            definition.service_name.as_deref(),
+            Some("local-connector-service")
+        );
+        assert_eq!(definition.reload_mode, "hot_reload");
+        assert_eq!(definition.default_value, expected_default);
+        assert!(definition.env_aliases.is_empty());
+    }
+}
+
+#[test]
 fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
     let definitions = builtin_definitions();
     for (key, env_alias, expected_value_type) in [
@@ -902,6 +1231,11 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
         (
             LOCAL_CONNECTOR_PORT_CONFIG_KEY,
             "LOCAL_CONNECTOR_SERVICE_PORT",
+            "integer",
+        ),
+        (
+            LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "LOCAL_CONNECTOR_INTERNAL_MTLS_PORT",
             "integer",
         ),
         (
@@ -930,11 +1264,6 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
             "boolean",
         ),
         (
-            LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN_CONFIG_KEY,
-            "LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN",
-            "boolean",
-        ),
-        (
             LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS",
             "duration_ms",
@@ -957,6 +1286,46 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
         (
             LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
             "LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS",
+            "integer",
+        ),
+        (
+            LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY,
+            "LOCAL_CONNECTOR_VALKEY_URL",
+            "string",
+        ),
+        (
+            LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY,
+            "LOCAL_CONNECTOR_VALKEY_KEY_PREFIX",
+            "string",
+        ),
+        (
+            LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY,
+            "LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS",
+            "integer",
+        ),
+        (
+            LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
+            "LOCAL_CONNECTOR_VALKEY_RECONNECT_MS",
+            "duration_ms",
+        ),
+        (
+            LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY,
+            "LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS",
+            "integer",
+        ),
+        (
+            LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY,
+            "LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
+            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY,
+            "LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS",
+            "integer",
+        ),
+        (
+            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY,
+            "LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS",
             "integer",
         ),
         (
@@ -1032,7 +1401,7 @@ fn catalog_exposes_internal_request_security_toggles() {
         assert_eq!(definition.scope, "service");
         assert_eq!(definition.service_name.as_deref(), Some(service_name));
         assert_eq!(definition.value_type, "boolean");
-        assert_eq!(definition.default_value, json!(false));
+        assert_eq!(definition.default_value, json!(true));
         assert_eq!(definition.reload_mode, "restart_required");
         assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
     }
@@ -1047,7 +1416,17 @@ fn catalog_exposes_mcp_management_async_dispatch_controls() {
         MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER_CONFIG_KEY,
         MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
         MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE_CONFIG_KEY,
+        MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY,
         MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY,
+        MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
     ] {
         let definition = definitions
             .iter()
@@ -1072,6 +1451,48 @@ fn catalog_exposes_mcp_management_async_dispatch_controls() {
         rabbitmq_url.default_value,
         json!(DEFAULT_LOCAL_RABBITMQ_URL)
     );
+    let queue_max_length = definitions
+        .iter()
+        .find(|definition| definition.key == MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY)
+        .expect("mcp management queue max length definition");
+    assert_eq!(queue_max_length.default_value, json!(10_000));
+    let queue_max_bytes = definitions
+        .iter()
+        .find(|definition| definition.key == MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY)
+        .expect("mcp management queue max bytes definition");
+    assert_eq!(queue_max_bytes.default_value, json!(256_i64 * 1024 * 1024));
+}
+
+#[test]
+fn catalog_exposes_mcp_management_pressure_controls_without_env_aliases() {
+    let definitions = builtin_definitions();
+    for (key, expected_default) in [
+        (
+            MCP_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_PERCENT_CONFIG_KEY,
+            json!(70),
+        ),
+        (
+            MCP_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_PERCENT_CONFIG_KEY,
+            json!(90),
+        ),
+        (
+            MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
+            json!(5_000),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing MCP pressure definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(
+            definition.service_name.as_deref(),
+            Some("mcp-management-service")
+        );
+        assert_eq!(definition.reload_mode, "hot_reload");
+        assert_eq!(definition.default_value, expected_default);
+        assert!(definition.env_aliases.is_empty());
+    }
 }
 
 #[test]
@@ -1200,21 +1621,103 @@ fn catalog_exposes_mcp_management_runtime_routes_via_env_projection() {
 }
 
 #[test]
+fn catalog_exposes_mcp_runtime_session_cache_limits_without_env_overrides() {
+    let definitions = builtin_definitions();
+    for (key, expected_default) in [
+        (
+            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY,
+            json!(2_048),
+        ),
+        (
+            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY,
+            json!(32 * 1024 * 1024),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing definition for {key}"));
+        assert_eq!(
+            definition.service_name.as_deref(),
+            Some("mcp-management-service")
+        );
+        assert_eq!(definition.value_type, "integer");
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert!(
+            definition.env_aliases.is_empty(),
+            "{key} must be loaded directly from configuration center"
+        );
+    }
+}
+
+#[test]
+fn catalog_exposes_atomic_mcp_invocation_quotas_without_env_overrides() {
+    let definitions = builtin_definitions();
+    for (key, expected_type, expected_default) in [
+        (
+            MCP_MANAGEMENT_INVOCATION_QUOTA_VALKEY_URL_CONFIG_KEY,
+            "string",
+            json!("redis://:change_me_valkey_password@127.0.0.1:6379/0"),
+        ),
+        (
+            MCP_MANAGEMENT_INVOCATION_QUOTA_KEY_PREFIX_CONFIG_KEY,
+            "string",
+            json!("chatos:mcp-management:invocation-quota"),
+        ),
+        (
+            MCP_MANAGEMENT_INVOCATION_TENANT_ACTIVE_LIMIT_CONFIG_KEY,
+            "integer",
+            json!(2_000),
+        ),
+        (
+            MCP_MANAGEMENT_INVOCATION_USER_ACTIVE_LIMIT_CONFIG_KEY,
+            "integer",
+            json!(200),
+        ),
+        (
+            MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY,
+            "integer",
+            json!(100),
+        ),
+        (
+            MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY,
+            "integer",
+            json!(50),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing definition for {key}"));
+        assert_eq!(
+            definition.service_name.as_deref(),
+            Some("mcp-management-service")
+        );
+        assert_eq!(definition.value_type, expected_type);
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert!(
+            definition.env_aliases.is_empty(),
+            "{key} must be loaded directly from configuration center"
+        );
+    }
+}
+
+#[test]
 fn catalog_exposes_mcp_management_internal_security_controls() {
     let definitions = builtin_definitions();
     for (key, env_alias, expected_default, sensitivity) in [
         (
-            MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "MCP_MANAGEMENT_INTERNAL_API_SECRET",
-            json!("change_me_mcp_management_internal_secret"),
+            MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
+            "MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET",
+            json!("change_me_configuration_center_mcp_management_secret"),
             "secret",
         ),
         (
             MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY,
             "MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS",
-            json!(
-                "chatos,task-runner,project-service,memory-engine,local-connector-service,sandbox-manager,plugin-management-service"
-            ),
+            json!("chatos,task-runner,project-service,configuration-center"),
             "public",
         ),
         (
@@ -1335,6 +1838,12 @@ fn catalog_exposes_managed_internal_caller_secrets_for_core_services() {
             json!("change_me_user_service_memory_engine_secret"),
         ),
         (
+            MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
+            "memory-engine",
+            "CONFIGURATION_CENTER_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            json!("change_me_configuration_center_memory_engine_secret"),
+        ),
+        (
             SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
             "sandbox-manager",
             "TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET",
@@ -1366,6 +1875,73 @@ fn catalog_exposes_managed_internal_caller_secrets_for_core_services() {
 }
 
 #[test]
+fn catalog_exposes_configuration_center_memory_engine_route() {
+    let definitions = builtin_definitions();
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.key == CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
+        .expect("Configuration Center Memory Engine route definition");
+    assert_eq!(
+        definition.service_name.as_deref(),
+        Some("configuration-center")
+    );
+    assert_eq!(definition.sensitivity, "public");
+    assert_eq!(
+        definition.env_aliases,
+        vec!["CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL".to_string()]
+    );
+    assert_eq!(
+        definition.default_value,
+        json!("https://memory-engine-backend:7083/api/memory-engine/v1")
+    );
+}
+
+#[test]
+fn catalog_exposes_configuration_center_plugin_management_route() {
+    let definitions = builtin_definitions();
+    let definition = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY
+        })
+        .expect("Configuration Center Plugin Management route definition");
+    assert_eq!(
+        definition.service_name.as_deref(),
+        Some("configuration-center")
+    );
+    assert_eq!(definition.sensitivity, "public");
+    assert!(definition.env_aliases.is_empty());
+    assert_eq!(
+        definition.default_value,
+        json!("http://127.0.0.1:9080/api/plugin")
+    );
+}
+
+#[test]
+fn catalog_exposes_configuration_center_mcp_management_route() {
+    let definitions = builtin_definitions();
+    let definition = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY
+        })
+        .expect("Configuration Center MCP Management route definition");
+    assert_eq!(
+        definition.service_name.as_deref(),
+        Some("configuration-center")
+    );
+    assert_eq!(
+        definition.default_value,
+        json!("https://mcp-management-service-backend:39282")
+    );
+    assert_eq!(definition.sensitivity, "public");
+    assert_eq!(
+        definition.env_aliases,
+        vec!["CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL".to_string()]
+    );
+}
+
+#[test]
 fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_services() {
     let definitions = builtin_definitions();
     for (key, service_name, env_alias, expected_default) in [
@@ -1379,7 +1955,7 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_task_runner_memory_engine_secret"),
         ),
         (
             TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -1391,7 +1967,7 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY),
+            json!("change_me_task_runner_sandbox_manager_secret"),
         ),
         (
             TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY,
@@ -1439,7 +2015,7 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "chatos-backend",
             "CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_chatos_memory_engine_secret"),
         ),
         (
             PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -1505,7 +2081,7 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "user-service",
             "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            json!("change_me_user_service_memory_engine_secret"),
         ),
     ] {
         let definition = definitions
@@ -1543,9 +2119,9 @@ fn catalog_exposes_project_service_downstream_auth_controls() {
             "secret",
         ),
         (
-            PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY,
-            "PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN",
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
+            PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
+            "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
+            json!("change_me_project_service_memory_engine_secret"),
             "secret",
         ),
         (
@@ -1557,7 +2133,7 @@ fn catalog_exposes_project_service_downstream_auth_controls() {
         (
             PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY_CONFIG_KEY,
             "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY",
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY),
+            json!("change_me_project_service_sandbox_manager_secret"),
             "secret",
         ),
     ] {
@@ -1576,43 +2152,13 @@ fn catalog_exposes_project_service_downstream_auth_controls() {
 #[test]
 fn catalog_exposes_managed_memory_and_sandbox_runtime_auth_controls() {
     let definitions = builtin_definitions();
-    for (key, service_name, env_alias, expected_default, sensitivity) in [
-        (
-            MEMORY_ENGINE_OPERATOR_TOKEN_CONFIG_KEY,
-            "memory-engine",
-            "MEMORY_ENGINE_OPERATOR_TOKEN",
-            json!(DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN),
-            "secret",
-        ),
-        (
-            SANDBOX_MANAGER_OPERATOR_TOKEN_CONFIG_KEY,
-            "sandbox-manager",
-            "SANDBOX_MANAGER_OPERATOR_TOKEN",
-            json!(DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN),
-            "secret",
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ID_CONFIG_KEY,
-            "sandbox-manager",
-            "SANDBOX_MANAGER_SYSTEM_CLIENT_ID",
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_ID),
-            "public",
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_KEY_CONFIG_KEY,
-            "sandbox-manager",
-            "SANDBOX_MANAGER_SYSTEM_CLIENT_KEY",
-            json!(DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY),
-            "secret",
-        ),
-        (
-            SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY,
-            "sandbox-manager",
-            "SANDBOX_MANAGER_AGENT_TOKEN_SECRET",
-            json!(DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET),
-            "secret",
-        ),
-    ] {
+    for (key, service_name, env_alias, expected_default, sensitivity) in [(
+        SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY,
+        "sandbox-manager",
+        "SANDBOX_MANAGER_AGENT_TOKEN_SECRET",
+        json!(DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET),
+        "secret",
+    )] {
         let definition = definitions
             .iter()
             .find(|definition| definition.key == key)
@@ -1737,6 +2283,168 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             "integer",
             false,
         ),
+        (
+            MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
+            "MEMORY_ENGINE_RABBITMQ_URL",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
+            "MEMORY_ENGINE_RABBITMQ_EXCHANGE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY,
+            "MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUMMARY_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUMMARY_RETRY_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY,
+            "MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_RETRY_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY,
+            "MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
+            "MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS",
+            "integer",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY,
+            "MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS",
+            "integer",
+            false,
+        ),
     ] {
         let definition = definitions
             .iter()
@@ -1826,26 +2534,6 @@ fn catalog_exposes_sandbox_manager_runtime_routes_via_env_projection() {
             "duration_ms",
         ),
         (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES_CONFIG_KEY,
-            "SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES",
-            "string",
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS_CONFIG_KEY,
-            "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS",
-            "string",
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS_CONFIG_KEY,
-            "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS",
-            "string",
-        ),
-        (
-            SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS_CONFIG_KEY,
-            "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS",
-            "string",
-        ),
-        (
             SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS_CONFIG_KEY,
             "SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS",
             "integer",
@@ -1871,19 +2559,19 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
             USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             "USER_SERVICE_MEMORY_ENGINE_BASE_URL",
             "string",
-            true,
+            false,
         ),
         (
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             "USER_SERVICE_TASK_RUNNER_BASE_URL",
             "string",
-            true,
+            false,
         ),
         (
-            USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY,
-            "USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET",
+            USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
+            "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
             "string",
-            true,
+            false,
         ),
         (
             USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -2032,8 +2720,10 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
 
     let callback_secret = definitions
         .iter()
-        .find(|definition| definition.key == USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET_CONFIG_KEY)
-        .expect("user service task runner callback secret");
+        .find(|definition| {
+            definition.key == USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY
+        })
+        .expect("user service task runner internal secret");
     assert_eq!(callback_secret.sensitivity, "secret");
 }
 

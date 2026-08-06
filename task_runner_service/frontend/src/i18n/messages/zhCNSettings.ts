@@ -23,7 +23,6 @@ export const zhCNSettings: MessageDictionary = {
   'settings.defaultExecutionTimeout': '默认执行超时（秒）',
   'settings.currentExecutionTimeout': '当前执行超时（秒）',
   'settings.workerConcurrency': 'Worker 并发数',
-  'settings.workerPollInterval': 'Worker 轮询间隔',
   'settings.workerClaimTtl': 'Worker Claim TTL',
   'settings.defaultToolResultLimit': '默认单条工具结果上限',
   'settings.currentToolResultLimit': '当前单条工具结果上限',

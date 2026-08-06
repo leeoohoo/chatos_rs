@@ -3,26 +3,26 @@
 
 use serde_json::Value;
 
-pub fn payload_has_prompt_cache_retention(payload: &Value) -> bool {
-    payload.get("prompt_cache_retention").is_some()
+pub fn payload_has_prompt_cache_options(payload: &Value) -> bool {
+    payload.get("prompt_cache_key").is_some() || payload.get("prompt_cache_retention").is_some()
 }
 
-pub fn should_retry_without_prompt_cache_retention<T>(
+pub fn should_retry_without_prompt_cache_options<T>(
     first_attempt: &Result<T, String>,
     payload: &Value,
 ) -> bool {
-    if !payload_has_prompt_cache_retention(payload) {
+    if !payload_has_prompt_cache_options(payload) {
         return false;
     }
     match first_attempt {
         Ok(_) => false,
-        Err(err) => is_prompt_cache_retention_unsupported_error(err.as_str()),
+        Err(err) => is_prompt_cache_option_unsupported_error(err.as_str()),
     }
 }
 
-pub fn is_prompt_cache_retention_unsupported_error(err: &str) -> bool {
+pub fn is_prompt_cache_option_unsupported_error(err: &str) -> bool {
     let normalized = err.to_ascii_lowercase();
-    normalized.contains("prompt_cache_retention")
+    (normalized.contains("prompt_cache_key") || normalized.contains("prompt_cache_retention"))
         && (normalized.contains("unsupported parameter")
             || normalized.contains("unknown parameter")
             || normalized.contains("not supported"))
@@ -38,39 +38,52 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn detects_prompt_cache_retention_in_payload() {
-        assert!(super::payload_has_prompt_cache_retention(&json!({
+    fn detects_prompt_cache_options_in_payload() {
+        assert!(super::payload_has_prompt_cache_options(&json!({
             "prompt_cache_retention": "24h"
         })));
-        assert!(!super::payload_has_prompt_cache_retention(&json!({
+        assert!(super::payload_has_prompt_cache_options(&json!({
+            "prompt_cache_key": "run-1"
+        })));
+        assert!(!super::payload_has_prompt_cache_options(&json!({
             "stream": true
         })));
     }
 
     #[test]
-    fn retries_only_when_payload_has_retention_and_error_matches() {
+    fn retries_only_when_payload_has_cache_options_and_error_matches() {
         let attempt: Result<(), String> = Err(
             "status 400 Bad Request: Unsupported parameter: prompt_cache_retention".to_string(),
         );
-        assert!(super::should_retry_without_prompt_cache_retention(
+        assert!(super::should_retry_without_prompt_cache_options(
             &attempt,
             &json!({"prompt_cache_retention": "24h"})
         ));
-        assert!(!super::should_retry_without_prompt_cache_retention(
+        assert!(!super::should_retry_without_prompt_cache_options(
             &attempt,
             &json!({})
+        ));
+
+        let key_attempt: Result<(), String> =
+            Err("status 400: unknown parameter `prompt_cache_key`".to_string());
+        assert!(super::should_retry_without_prompt_cache_options(
+            &key_attempt,
+            &json!({"prompt_cache_key": "run-1"})
         ));
     }
 
     #[test]
-    fn recognizes_unsupported_retention_errors() {
-        assert!(super::is_prompt_cache_retention_unsupported_error(
+    fn recognizes_unsupported_cache_option_errors() {
+        assert!(super::is_prompt_cache_option_unsupported_error(
             "status 400: unknown parameter `prompt_cache_retention`",
         ));
-        assert!(super::is_prompt_cache_retention_unsupported_error(
+        assert!(super::is_prompt_cache_option_unsupported_error(
             "status 400: prompt_cache_retention is not supported by upstream",
         ));
-        assert!(!super::is_prompt_cache_retention_unsupported_error(
+        assert!(super::is_prompt_cache_option_unsupported_error(
+            "status 400: unsupported parameter prompt_cache_key",
+        ));
+        assert!(!super::is_prompt_cache_option_unsupported_error(
             "status 500: upstream timeout",
         ));
     }

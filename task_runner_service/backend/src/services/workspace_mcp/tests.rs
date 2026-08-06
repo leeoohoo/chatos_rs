@@ -116,7 +116,7 @@ fn legacy_harness_endpoint_cannot_change_plan_capabilities() {
 }
 
 #[test]
-fn legacy_harness_endpoint_cannot_bypass_sandbox_requirement() {
+fn planning_task_never_requires_execution_sandbox() {
     let mut task = sample_task(
         TASK_PROFILE_CHATOS_PLAN,
         vec!["CodeMaintainerRead".to_string(), "AskUser".to_string()],
@@ -126,11 +126,23 @@ fn legacy_harness_endpoint_cannot_bypass_sandbox_requirement() {
         .ephemeral_http_servers
         .push(harness_code_server());
 
-    assert!(crate::services::sandbox_runtime::task_requires_sandbox(
+    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
         &task, true
     ));
-    assert!(crate::services::sandbox_runtime::task_requires_sandbox(
+    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
         &task, false
+    ));
+}
+
+#[test]
+fn execution_task_with_write_capability_requires_sandbox() {
+    let task = sample_task(
+        TASK_PROFILE_DEFAULT,
+        vec!["CodeMaintainerWrite".to_string()],
+    );
+
+    assert!(crate::services::sandbox_runtime::task_requires_sandbox(
+        &task, true
     ));
 }
 

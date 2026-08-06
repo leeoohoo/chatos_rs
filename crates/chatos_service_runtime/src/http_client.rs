@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::path::Path;
 use std::time::Duration;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -55,6 +56,38 @@ pub fn http_client_builder(timeouts: HttpClientTimeouts) -> reqwest::ClientBuild
 
 pub fn build_http_client(timeouts: HttpClientTimeouts) -> Result<reqwest::Client, reqwest::Error> {
     http_client_builder(timeouts).build()
+}
+
+pub fn build_mtls_http_client(
+    timeouts: HttpClientTimeouts,
+    ca_cert_path: &Path,
+    client_identity_path: &Path,
+) -> Result<reqwest::Client, String> {
+    let ca_pem = std::fs::read(ca_cert_path).map_err(|err| {
+        format!(
+            "read mTLS CA certificate {} failed: {err}",
+            ca_cert_path.display()
+        )
+    })?;
+    let identity_pem = std::fs::read(client_identity_path).map_err(|err| {
+        format!(
+            "read mTLS client identity {} failed: {err}",
+            client_identity_path.display()
+        )
+    })?;
+    let ca = reqwest::Certificate::from_pem(ca_pem.as_slice())
+        .map_err(|err| format!("parse mTLS CA certificate failed: {err}"))?;
+    let identity = reqwest::Identity::from_pem(identity_pem.as_slice())
+        .map_err(|err| format!("parse mTLS client identity failed: {err}"))?;
+    http_client_builder(timeouts)
+        .use_rustls_tls()
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .tls_built_in_root_certs(false)
+        .add_root_certificate(ca)
+        .identity(identity)
+        .build()
+        .map_err(|err| format!("build mTLS HTTP client failed: {err}"))
 }
 
 fn non_zero_timeout(timeout: Duration) -> Duration {

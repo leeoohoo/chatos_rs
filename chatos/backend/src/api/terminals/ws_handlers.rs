@@ -5,12 +5,16 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
-use tokio_tungstenite::connect_async;
+use rustls::{ClientConfig, RootCertStore};
+use std::io::BufReader;
+use std::sync::Arc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as ConnectorMessage;
+use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::local_connectors::{parse_local_connector_root_path, LocalConnectorRootRef};
+use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
 use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
@@ -57,6 +61,7 @@ async fn handle_local_connector_terminal_socket(
     access_token: String,
     mut socket: WebSocket,
 ) {
+    let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::Terminal);
     let ws_url = local_connector_terminal_ws_url(&root_ref, terminal.id.as_str());
     let mut request = match ws_url.as_str().into_client_request() {
         Ok(request) => request,
@@ -90,20 +95,32 @@ async fn handle_local_connector_terminal_socket(
         }
     }
 
-    let connector = match connect_async(request).await {
-        Ok((stream, _)) => stream,
+    let tls_connector = match local_connector_tls_connector() {
+        Ok(connector) => connector,
         Err(err) => {
             let _ = socket
                 .send(Message::text(
-                    serde_json::to_string(&WsOutput::Error {
-                        error: format!("Local Connector 终端连接失败: {err}"),
-                    })
-                    .unwrap_or_default(),
+                    serde_json::to_string(&WsOutput::Error { error: err }).unwrap_or_default(),
                 ))
                 .await;
             return;
         }
     };
+    let connector =
+        match connect_async_tls_with_config(request, None, false, Some(tls_connector)).await {
+            Ok((stream, _)) => stream,
+            Err(err) => {
+                let _ = socket
+                    .send(Message::text(
+                        serde_json::to_string(&WsOutput::Error {
+                            error: format!("Local Connector 终端连接失败: {err}"),
+                        })
+                        .unwrap_or_default(),
+                    ))
+                    .await;
+                return;
+            }
+        };
 
     let terminal_for_output = terminal.clone();
     let terminal_for_input = terminal.clone();
@@ -217,7 +234,41 @@ async fn handle_local_connector_terminal_socket(
     }
 }
 
+fn local_connector_tls_connector() -> Result<Connector, String> {
+    let cfg = Config::get();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let ca_pem = std::fs::read(cfg.local_connector_mtls_ca_cert_path.as_path())
+        .map_err(|err| format!("读取 Local Connector mTLS CA 失败: {err}"))?;
+    let mut roots = RootCertStore::empty();
+    for certificate in rustls_pemfile::certs(&mut BufReader::new(ca_pem.as_slice())) {
+        roots
+            .add(certificate.map_err(|err| format!("解析 Local Connector mTLS CA 失败: {err}"))?)
+            .map_err(|err| format!("加载 Local Connector mTLS CA 失败: {err}"))?;
+    }
+    if roots.is_empty() {
+        return Err("Local Connector mTLS CA 不包含证书".to_string());
+    }
+
+    let identity_pem = std::fs::read(cfg.local_connector_mtls_client_identity_path.as_path())
+        .map_err(|err| format!("读取 Local Connector mTLS 客户端身份失败: {err}"))?;
+    let certificates = rustls_pemfile::certs(&mut BufReader::new(identity_pem.as_slice()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("解析 Local Connector mTLS 客户端证书失败: {err}"))?;
+    if certificates.is_empty() {
+        return Err("Local Connector mTLS 客户端身份不包含证书".to_string());
+    }
+    let private_key = rustls_pemfile::private_key(&mut BufReader::new(identity_pem.as_slice()))
+        .map_err(|err| format!("解析 Local Connector mTLS 客户端私钥失败: {err}"))?
+        .ok_or_else(|| "Local Connector mTLS 客户端身份不包含私钥".to_string())?;
+    let tls = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_client_auth_cert(certificates, private_key)
+        .map_err(|err| format!("构建 Local Connector mTLS WebSocket 客户端失败: {err}"))?;
+    Ok(Connector::Rustls(Arc::new(tls)))
+}
+
 async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
+    let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::Terminal);
     let manager = get_terminal_manager();
     let session = match manager.get(&id) {
         Some(session) => Some(session),

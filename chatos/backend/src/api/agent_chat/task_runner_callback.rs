@@ -7,10 +7,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
+use crate::api::internal_audit::{
+    http_outcome, record_chatos_internal_resource_access, ChatosInternalRequestIdentity,
+    ChatosInternalResourceAudit,
+};
 use crate::config::Config;
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
+use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
 use crate::services::ask_user_prompt_manager::{
     upsert_external_ask_user_prompt_record, AskUserPromptRecord, AskUserPromptStatus,
 };
@@ -30,6 +35,7 @@ use self::messages::{
 pub(super) struct TaskRunnerCallbackRequest {
     event: String,
     task_id: String,
+    owner_user_id: Option<String>,
     run_id: Option<String>,
     status: String,
     task_title: String,
@@ -98,13 +104,39 @@ pub(super) async fn task_runner_callback(
     headers: HeaderMap,
     Json(payload): Json<TaskRunnerCallbackRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = verify_task_runner_callback_secret(&headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "accepted": false, "error": err })),
-        );
-    }
+    let identity = match verify_task_runner_callback_token(&headers) {
+        Ok(identity) => identity,
+        Err(err) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "accepted": false, "error": err })),
+            );
+        }
+    };
+    let resource_id = normalize_callback_value(Some(payload.task_id.as_str()))
+        .unwrap_or_else(|| format!("callback:{}", identity.trace_id));
+    let resource_name = normalize_callback_value(Some(payload.event.as_str()));
+    let represented_user_id = normalize_callback_value(payload.owner_user_id.as_deref());
+    let project_id = normalize_callback_value(payload.project_id.as_deref());
+    let response = task_runner_callback_authorized(payload).await;
+    record_chatos_internal_resource_access(
+        &identity,
+        ChatosInternalResourceAudit {
+            represented_user_id: represented_user_id.as_deref(),
+            project_id: project_id.as_deref(),
+            resource_type: "task_runner_task",
+            resource_id: resource_id.as_str(),
+            resource_name: resource_name.as_deref(),
+            action: "callback",
+            outcome: http_outcome(response.0),
+        },
+    );
+    response
+}
 
+async fn task_runner_callback_authorized(
+    payload: TaskRunnerCallbackRequest,
+) -> (StatusCode, Json<Value>) {
     let Some(user_message_id) = normalize_callback_value(payload.source_user_message_id.as_deref())
     else {
         return (
@@ -134,6 +166,27 @@ pub(super) async fn task_runner_callback(
             );
         }
     };
+    let Some(owner_user_id) = normalize_callback_value(payload.owner_user_id.as_deref()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "accepted": false, "error": "missing owner_user_id" })),
+        );
+    };
+    let Some(project_id) = normalize_callback_value(payload.project_id.as_deref()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "accepted": false, "error": "missing project_id" })),
+        );
+    };
+    if !callback_matches_session_scope(&session, owner_user_id.as_str(), project_id.as_str()) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "accepted": false,
+                "error": "task runner callback owner or project does not match the target session",
+            })),
+        );
+    }
     let mut user_message =
         match conversation_messages::get_message_by_id_in_session_including_hidden(
             &session,
@@ -333,6 +386,21 @@ pub(super) async fn task_runner_callback(
     )
 }
 
+fn callback_matches_session_scope(
+    session: &Session,
+    owner_user_id: &str,
+    project_id: &str,
+) -> bool {
+    let session_owner_user_id = session
+        .user_id
+        .as_deref()
+        .and_then(|value| normalize_callback_value(Some(value)));
+    let session_project_id =
+        resolve_session_project_scope(session.project_id.as_deref(), session.metadata.as_ref());
+    session_owner_user_id.as_deref() == Some(owner_user_id.trim())
+        && session_project_id == project_id.trim()
+}
+
 async fn handle_task_runner_ask_user_prompt_callback(
     session: &Session,
     user_message_id: &str,
@@ -430,24 +498,44 @@ async fn handle_task_runner_ask_user_prompt_callback(
     )
 }
 
-fn verify_task_runner_callback_secret(headers: &HeaderMap) -> Result<(), String> {
+fn verify_task_runner_callback_token(
+    headers: &HeaderMap,
+) -> Result<ChatosInternalRequestIdentity, String> {
     let expected = Config::try_get()
         .ok()
         .and_then(|config| config.task_runner_callback_secret.clone());
-    let Some(expected) = expected.filter(|value| !value.trim().is_empty()) else {
-        return Ok(());
-    };
-    let actual = headers
-        .get("x-task-runner-callback-secret")
+    let expected = expected
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "task runner callback signing secret is not configured".to_string())?;
+    let caller = headers
+        .get("x-chatos-internal-caller")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "missing task runner callback secret".to_string())?;
-    if actual == expected {
-        Ok(())
-    } else {
-        Err("invalid task runner callback secret".to_string())
+        .ok_or_else(|| "missing task runner callback caller".to_string())?;
+    if caller != "task-runner" {
+        return Err("invalid task runner callback caller".to_string());
     }
+    let token = headers
+        .get("x-chatos-internal-token")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "missing task runner callback token".to_string())?;
+    let claims = chatos_service_runtime::verify_internal_service_token(
+        token,
+        expected.as_str(),
+        "task-runner",
+        "chatos-backend",
+        "task-runner.callback",
+    )
+    .map_err(|_| "invalid task runner callback token".to_string())?;
+    Ok(ChatosInternalRequestIdentity {
+        caller_service: "task-runner".to_string(),
+        audience_service: "chatos-backend".to_string(),
+        scope: "task-runner.callback".to_string(),
+        trace_id: claims.trace_id,
+    })
 }
 
 async fn sync_project_requirement_execution_status(
@@ -476,7 +564,6 @@ async fn sync_project_requirement_execution_status(
         .clone()
         .or_else(|| Some(payload.status.clone()));
     project_management_api_client::sync_task_runner_task_status(
-        cfg.project_service_base_url.as_str(),
         sync_secret,
         payload.task_id.as_str(),
         &project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {
@@ -563,6 +650,44 @@ fn default_true() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn callback_session() -> Session {
+        Session {
+            id: "session-1".to_string(),
+            title: "Session".to_string(),
+            description: None,
+            metadata: None,
+            selected_model_id: None,
+            selected_agent_id: None,
+            user_id: Some("owner-1".to_string()),
+            project_id: Some("project-1".to_string()),
+            message_count: 0,
+            status: "active".to_string(),
+            archived_at: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    #[test]
+    fn callback_owner_and_project_must_match_target_session() {
+        let session = callback_session();
+        assert!(callback_matches_session_scope(
+            &session,
+            "owner-1",
+            "project-1"
+        ));
+        assert!(!callback_matches_session_scope(
+            &session,
+            "owner-2",
+            "project-1"
+        ));
+        assert!(!callback_matches_session_scope(
+            &session,
+            "owner-1",
+            "project-2"
+        ));
+    }
 
     #[test]
     fn project_requirement_execution_sync_only_applies_to_execution_messages() {

@@ -139,6 +139,44 @@ fn fixed_task_tools_are_not_reported_as_requested_capabilities() {
 }
 
 #[test]
+fn non_execution_task_is_read_only_and_does_not_expose_terminal_controller() {
+    let config = TaskMcpConfig {
+        enabled_builtin_kinds: vec![
+            "CodeMaintainerRead".to_string(),
+            "CodeMaintainerWrite".to_string(),
+            "TerminalController".to_string(),
+        ],
+        requires_execution: false,
+        ..TaskMcpConfig::default()
+    };
+
+    let resolution = resolve_mcp_config(TaskMcpResolutionInput {
+        mcp_config: &config,
+        task_profile: "default",
+        schedule_mode: TaskScheduleMode::Manual,
+        source_session_id: None,
+        source_user_message_id: None,
+        active_host_backends: &[BuiltinHostBackend::HarnessCode],
+        caller_requirements: &[],
+    });
+
+    assert_eq!(
+        resolution.requested_builtin_kinds,
+        vec![BuiltinMcpKind::CodeMaintainerRead]
+    );
+    assert_eq!(
+        hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::HarnessCode),
+        vec![BuiltinMcpKind::CodeMaintainerRead]
+    );
+    assert!(!resolution
+        .server_local_builtin_kinds
+        .contains(&BuiltinMcpKind::TerminalController));
+    assert!(!resolution
+        .requested_builtin_kinds
+        .contains(&BuiltinMcpKind::CodeMaintainerWrite));
+}
+
+#[test]
 fn chatos_async_source_does_not_require_task_manager() {
     let mut task = sample_task(TaskMcpConfig {
         enabled_builtin_kinds: Vec::new(),

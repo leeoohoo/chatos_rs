@@ -13,17 +13,17 @@ use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::config::AppConfig;
 use crate::models::{ProjectRecord, RuntimeEnvironmentProvider};
 use crate::state::AppState;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::routing::{
     find_enabled_local_sandbox_pairing, parse_local_connector_project_root, provider_label,
     RuntimeEnvironmentPlan,
 };
-use super::{CLOUD_SANDBOX_IMAGE_MCP_PATH, LOCAL_SANDBOX_IMAGE_MCP_PATH};
+use super::LOCAL_SANDBOX_IMAGE_MCP_PATH;
 
 pub(super) async fn create_sandbox_image_from_plan(
     state: &AppState,
@@ -45,26 +45,17 @@ pub(super) async fn create_sandbox_image_from_plan(
         RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
     }
     .ok_or_else(|| "当前项目没有可用的沙箱镜像 Provider".to_string())?;
-    let result = chatos_mcp_runtime::jsonrpc_http_call(
-        server.url.as_str(),
-        server.headers.as_ref(),
-        "tools/call",
+    call_sandbox_image_tool(
+        &server,
+        "create_image",
         json!({
-            "name": "create_image",
-            "arguments": {
-                "features": features,
-                "custom_build_script": custom_build_script,
-                "timeout_ms": 7_200_000u64
-            }
+            "features": features,
+            "custom_build_script": custom_build_script,
+            "timeout_ms": 7_200_000u64
         }),
-        Some(Duration::from_secs(2 * 60 * 60)),
+        Duration::from_secs(2 * 60 * 60),
     )
-    .await?;
-    Ok(result
-        .get("structured_content")
-        .cloned()
-        .or_else(|| result.get("_structured_result").cloned())
-        .unwrap_or(result))
+    .await
 }
 
 pub(super) async fn get_sandbox_image_catalog(
@@ -85,15 +76,31 @@ pub(super) async fn get_sandbox_image_catalog(
         RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => None,
     }
     .ok_or_else(|| "当前项目没有可用的沙箱镜像 Provider".to_string())?;
-    let result = chatos_mcp_runtime::jsonrpc_http_call(
+    call_sandbox_image_tool(
+        &server,
+        "get_image_catalog",
+        json!({}),
+        Duration::from_secs(90),
+    )
+    .await
+}
+
+async fn call_sandbox_image_tool(
+    server: &McpHttpServer,
+    tool_name: &str,
+    arguments: Value,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let result = chatos_mcp_runtime::jsonrpc_http_call_with_client(
         server.url.as_str(),
         server.headers.as_ref(),
         "tools/call",
         json!({
-            "name": "get_image_catalog",
-            "arguments": {}
+            "name": tool_name,
+            "arguments": arguments
         }),
-        Some(Duration::from_secs(90)),
+        Some(timeout),
+        server.http_client.as_ref(),
     )
     .await?;
     Ok(result
@@ -136,11 +143,11 @@ pub(super) async fn prepare_sandbox_dependency_images(
         "sandbox.service",
         60,
     )?;
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(30 * 60)))
-        .map_err(|err| format!("创建依赖镜像准备客户端失败: {err}"))?;
-    let request = client
+    let request = state
+        .config
+        .sandbox_manager_http_client
         .post(format!(
-            "{}/api/sandbox-images/prepare-dependencies",
+            "{}/api/internal/sandbox-images/prepare-dependencies",
             state
                 .config
                 .sandbox_manager_base_url
@@ -149,12 +156,15 @@ pub(super) async fn prepare_sandbox_dependency_images(
         ))
         .header("x-sandbox-caller", client_id)
         .header("x-sandbox-internal-token", internal_token)
+        .header(SANDBOX_IMAGE_PROJECT_ID_HEADER, project_id)
+        .header(SANDBOX_IMAGE_RUN_ID_HEADER, run_id)
         .json(&json!({
-            "image_refs": image_refs,
-            "project_id": project_id,
-            "run_id": run_id,
+                "image_refs": image_refs,
+                "project_id": project_id,
+                "run_id": run_id,
         }));
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("准备依赖镜像失败: {err}"))?;
@@ -191,13 +201,14 @@ pub(super) async fn start_local_project_compose_environment(
             .await?
             .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(2 * 60 * 60)))
-        .map_err(|err| format!("创建 Local Connector HTTP 客户端失败: {err}"))?;
-    let response = client
+    let response = state
+        .config
+        .local_connector_http_client
         .post(format!(
             "{}/api/local/sandbox/environments/compose/up",
             facade_base.trim_end_matches('/')
         ))
+        .timeout(Duration::from_secs(2 * 60 * 60))
         .bearer_auth(access_token)
         .json(&json!({
             "project_name": project_name,
@@ -206,6 +217,7 @@ pub(super) async fn start_local_project_compose_environment(
             "application_dockerfiles": application_dockerfiles,
             "env_file": env_file,
         }))
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("启动本地 Docker Compose 环境失败: {err}"))?;
@@ -295,18 +307,20 @@ async fn call_local_project_compose_action(
             .await?
             .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(10 * 60)))
-        .map_err(|err| format!("创建 Local Connector HTTP 客户端失败: {err}"))?;
-    let response = client
+    let response = state
+        .config
+        .local_connector_http_client
         .post(format!(
             "{}/api/local/sandbox/environments/compose/{action}",
             facade_base.trim_end_matches('/')
         ))
+        .timeout(Duration::from_secs(10 * 60))
         .bearer_auth(access_token)
         .json(&json!({
             "project_name": project_name,
             "project_relative_path": project_ref.relative_path,
         }))
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("{operation_label}本地 Docker Compose 环境失败: {err}"))?;
@@ -435,7 +449,7 @@ fn cloud_sandbox_image_mcp_server(
     let url = format!(
         "{}{}",
         config.sandbox_manager_base_url.trim().trim_end_matches('/'),
-        CLOUD_SANDBOX_IMAGE_MCP_PATH
+        "/api/internal/sandbox-images/mcp"
     );
     Ok(Some(
         McpHttpServer::new(
@@ -446,6 +460,7 @@ fn cloud_sandbox_image_mcp_server(
             url,
         )
         .with_headers(headers)
+        .with_http_client(config.sandbox_manager_http_client.clone())
         .with_timeout(config.sandbox_image_mcp_request_timeout),
     ))
 }
@@ -502,4 +517,75 @@ fn required_user_access_token<'a>(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{label} 需要用户访问令牌"))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::routing::post;
+    use axum::{Json, Router};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn sandbox_image_tool_uses_server_http_client() {
+        async fn mcp(headers: HeaderMap, Json(request): Json<Value>) -> (StatusCode, Json<Value>) {
+            if headers
+                .get("x-sandbox-mtls-client")
+                .and_then(|value| value.to_str().ok())
+                != Some("configured")
+            {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": "custom client was not used"})),
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id").cloned().unwrap_or(Value::Null),
+                    "result": {
+                        "structured_content": {"status": "ready"}
+                    }
+                })),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test MCP server");
+        let address = listener.local_addr().expect("test MCP address");
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/mcp", post(mcp)))
+                .await
+                .expect("serve test MCP");
+        });
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        default_headers.insert(
+            "x-sandbox-mtls-client",
+            reqwest::header::HeaderValue::from_static("configured"),
+        );
+        let client = reqwest::Client::builder()
+            .default_headers(default_headers)
+            .build()
+            .expect("build custom client");
+        let server = McpHttpServer::new("sandbox-images", format!("http://{address}/mcp"))
+            .with_http_client(client);
+
+        let result = call_sandbox_image_tool(
+            &server,
+            "get_image_catalog",
+            json!({}),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("custom HTTP client should reach MCP server");
+
+        assert_eq!(
+            result.pointer("/status").and_then(Value::as_str),
+            Some("ready")
+        );
+        server_task.abort();
+    }
 }

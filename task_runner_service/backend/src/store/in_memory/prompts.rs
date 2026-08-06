@@ -59,6 +59,34 @@ impl InMemoryStore {
         prompt
     }
 
+    pub(in crate::store) fn list_pending_ask_user_resolution_events(
+        &self,
+        limit: usize,
+    ) -> Vec<AskUserPromptRecord> {
+        self.inner
+            .read()
+            .ask_user_prompts
+            .values()
+            .filter(|prompt| {
+                prompt.resolution_event_pending && prompt.status != AskUserPromptStatus::Pending
+            })
+            .take(limit.max(1))
+            .cloned()
+            .collect()
+    }
+
+    pub(in crate::store) fn acknowledge_ask_user_resolution_event(&self, prompt_id: &str) -> bool {
+        let mut data = self.inner.write();
+        let Some(prompt) = data.ask_user_prompts.get_mut(prompt_id) else {
+            return false;
+        };
+        if !prompt.resolution_event_pending {
+            return false;
+        }
+        prompt.resolution_event_pending = false;
+        true
+    }
+
     pub(in crate::store) fn list_ask_user_prompt_task_counts(
         &self,
         status: Option<AskUserPromptStatus>,

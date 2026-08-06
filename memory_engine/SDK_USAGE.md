@@ -24,7 +24,7 @@ let client = MemoryEngineClient::new_direct(
     Duration::from_secs(30),
     "your_source_id",
 )?
-.with_operator_token("your_operator_token");
+.with_internal_service_auth("your-caller", "your_caller_specific_secret");
 ```
 
 如果你是“平台直接接管线程和消息数据”的模式，可以使用 `new_platform`：
@@ -34,7 +34,7 @@ let client = MemoryEngineClient::new_platform(
     "http://127.0.0.1:7081",
     Duration::from_secs(30),
 )?
-.with_operator_token("your_operator_token");
+.with_internal_service_auth("your-caller", "your_caller_specific_secret");
 ```
 
 注意：
@@ -42,7 +42,7 @@ let client = MemoryEngineClient::new_platform(
 - `new_platform` 适合不绑定单一 `source_id` 的平台级读查询或按需触发的聚合任务
 - 需要明确 `source_id` 作用域的 direct 写接口或线程级调度接口，应该改用 `new_direct`
 - 如果误用 `new_platform` 调用这类必须绑定 source 的接口，SDK 现在会尽早返回明确错误
-- 如果后端配置了 `MEMORY_ENGINE_OPERATOR_TOKEN`，请在 client 初始化后链式调用 `.with_operator_token(...)`
+- 服务间调用必须使用 `.with_internal_service_auth(caller, secret)` 签发短期 token；用户请求使用 `.with_bearer_token(...)`，不支持静态 operator token
 
 如果你使用系统级账号：
 
@@ -53,7 +53,7 @@ let client = MemoryEngineClient::new_system(
     "your_system_id",
     "your_secret_key",
 )?
-.with_operator_token("your_operator_token");
+.with_internal_service_auth("your-caller", "your_caller_specific_secret");
 ```
 
 ## 3. 常用接口
@@ -220,7 +220,7 @@ if resp.accepted && resp.running {
 - `new_direct`：适合业务方直接按 `source_id` 接入。
 - `new_platform`：适合平台侧不预绑定单一 `source_id` 的 direct 读查询；若要调用依赖明确 source 作用域的写接口，请改用 `new_direct`。
 - `new_system`：适合平台侧或内部系统级调用。
-- 三种模式在后端启用 operator 鉴权时，都可以链式调用 `.with_operator_token("...")` 透传管理令牌。
+- 服务间使用 `.with_internal_service_auth(caller, secret)`，用户请求使用 `.with_bearer_token(...)`；静态 operator token 已移除。
 
 ## 6. 常见约定
 

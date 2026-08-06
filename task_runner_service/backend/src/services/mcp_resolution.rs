@@ -137,6 +137,10 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
             BuiltinMcpKind::ProjectManagement | BuiltinMcpKind::AskUser
         )
     });
+    remove_execution_only_kinds(
+        &mut requested_builtin_kinds,
+        input.mcp_config.requires_execution,
+    );
     let required_builtin_kinds = required_builtin_capabilities(input);
     let required_kinds = required_builtin_kinds
         .iter()
@@ -153,6 +157,7 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
             .collect::<Vec<_>>()
     };
     effective_kinds = complete_builtin_kind_dependencies(effective_kinds);
+    remove_execution_only_kinds(&mut effective_kinds, input.mcp_config.requires_execution);
 
     let hosted_builtin_routes = hosted_builtin_routes(&effective_kinds, input.active_host_backends);
     let server_local_builtin_kinds =
@@ -164,6 +169,18 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
         hosted_builtin_routes,
         server_local_builtin_kinds,
     }
+}
+
+fn remove_execution_only_kinds(kinds: &mut Vec<BuiltinMcpKind>, requires_execution: bool) {
+    if requires_execution {
+        return;
+    }
+    kinds.retain(|kind| {
+        !matches!(
+            kind,
+            BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
+        )
+    });
 }
 
 #[cfg(test)]

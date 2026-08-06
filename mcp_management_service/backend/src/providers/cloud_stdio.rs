@@ -12,11 +12,11 @@ use chatos_plugin_management_sdk::{
     ResolvedAgentCapabilities, ResolvedMcp,
 };
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::runtime::{CloudStdioProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
+use crate::trace_context::InternalTraceContextExt;
 
 use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
@@ -82,6 +82,7 @@ struct CloudStdioCancelResponse {
 
 impl CloudStdioProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: Duration,
         internal_secret: Option<String>,
@@ -90,14 +91,9 @@ impl CloudStdioProvider {
         let base_url = base_url.into();
         let parsed = reqwest::Url::parse(base_url.as_str())
             .map_err(|error| format!("Sandbox Manager cloud stdio base URL is invalid: {error}"))?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err("Sandbox Manager cloud stdio base URL must use http or https".to_string());
+        if !cfg!(test) && parsed.scheme() != "https" {
+            return Err("Sandbox Manager cloud stdio base URL must use https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|error| format!("build cloud stdio Provider client failed: {error}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
@@ -622,7 +618,7 @@ impl CloudStdioProvider {
             "sandboxes"
         };
         let url = format!(
-            "{}/api/{prefix}/{sandbox_id}/cloud-stdio-mcp/{action}",
+            "{}/api/internal/{prefix}/{sandbox_id}/cloud-stdio-mcp/{action}",
             self.base_url
         );
         let mut request = self.authenticated(self.http.post(url))?;
@@ -666,7 +662,8 @@ impl CloudStdioProvider {
         .map_err(ProviderCallError::provider_unavailable)?;
         Ok(request
             .header("x-sandbox-caller", CALLER_SERVICE)
-            .header("x-sandbox-internal-token", token))
+            .header("x-sandbox-internal-token", token)
+            .with_internal_trace_context())
     }
 }
 

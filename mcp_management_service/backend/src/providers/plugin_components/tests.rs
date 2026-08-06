@@ -192,10 +192,13 @@ fn snapshot(
     RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
         caller_service: "task-runner".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
+        device_id: None,
         run_id: Some("run-1".to_string()),
         turn_id: None,
         task_id: Some("task-1".to_string()),
@@ -234,10 +237,13 @@ fn cloud_snapshot(
     RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
         caller_service: "task-runner".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
+        device_id: None,
         run_id: Some("run-1".to_string()),
         turn_id: None,
         task_id: Some("task-1".to_string()),
@@ -386,18 +392,24 @@ async fn local_command_catalog_prepare_is_approval_free_and_invocation_is_argume
     let immutable = command_binding(PluginExecutionHost::Local);
     let (base_url, requests, server) = start_local_connector(SECRET, immutable.clone()).await;
     let provider = PluginComponentProvider::new(
+        reqwest::Client::new(),
         base_url,
         Duration::from_secs(5),
         Some(SECRET.to_string()),
         1024 * 1024,
     )
     .unwrap();
-    let plugin_management = PluginManagementClient::new(PluginManagementClientConfig {
-        base_url: "http://127.0.0.1:1".to_string(),
-        request_timeout: Duration::from_secs(1),
-        internal_api_secret: None,
-        caller_service: CALLER_SERVICE.to_string(),
-    })
+    let plugin_management = PluginManagementClient::new(
+        PluginManagementClientConfig::new(
+            "http://127.0.0.1:1",
+            "https://127.0.0.1:1",
+            Duration::from_secs(1),
+            None,
+            CALLER_SERVICE,
+            reqwest::Client::new(),
+        )
+        .expect("valid Plugin Management test configuration"),
+    )
     .unwrap();
     let mut routes = vec![route(&immutable)];
     let expires_at_unix = chrono::Utc::now().timestamp() + 600;
@@ -515,6 +527,7 @@ fn cloud_agent_bundle_publishes_apply_but_confirmation_commands_fail_closed() {
     let route = route(&agent);
     let snapshot = cloud_snapshot(&agent, bundle, route.clone());
     let provider = PluginComponentProvider::new(
+        reqwest::Client::new(),
         "http://127.0.0.1:1",
         Duration::from_secs(1),
         None,

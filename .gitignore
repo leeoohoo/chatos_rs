@@ -99,8 +99,9 @@ __pycache__/
 /rustup-init.exe
 /.chatos
 /.chatos-local-dev
+/docker/secrets/
 /.chatos-ci-images
-/docs
+/docs/
 !/docs/
 /docs/*
 !/docs/HARNESS_CI.md
@@ -126,3 +127,4 @@ __pycache__/
 !/docs/plan/SYSTEM_AGENT_PROVIDER_PROMPT_MANAGEMENT_IMPLEMENTATION_PLAN.zh-CN.md
 !/docs/plan/TASK_MANAGER_MCP_LIFECYCLE_ANALYSIS.md
 !/docs/plan/UNIFIED_MCP_ARCHITECTURE_IMPLEMENTATION_PLAN.md
+/docs

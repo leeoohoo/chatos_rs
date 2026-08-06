@@ -374,6 +374,27 @@ async fn task_runtime_config_builds_with_memory_engine_config() {
     assert!(runtime.mcp_executor().is_none());
 }
 
+#[tokio::test]
+async fn task_runtime_config_builds_with_injected_memory_http_client() {
+    let memory = TaskMemoryRuntimeConfig::new("https://127.0.0.1:1", "task_runner")
+        .with_record_scope(Some(MemoryRecordScope::message_thread(
+            "tenant_1", "thread_1",
+        )));
+    let config = TaskRuntimeConfig::new()
+        .with_mcp_init_mode(TaskMcpInitMode::Disabled)
+        .with_memory_engine(Some(memory));
+
+    let runtime = config
+        .build_runtime_with_mcp_builder_and_memory_http_client(
+            chatos_mcp_runtime::McpExecutorBuilder::new(),
+            reqwest::Client::new(),
+        )
+        .await
+        .expect("runtime");
+
+    assert!(runtime.mcp_executor().is_none());
+}
+
 #[test]
 fn task_run_execution_serializes_runtime_config_and_spec() {
     let runtime_config = TaskRuntimeConfig::new()

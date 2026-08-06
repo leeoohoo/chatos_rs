@@ -183,6 +183,7 @@ fn binding_rejects_host_environment_and_workspace_escape() {
 #[test]
 fn plugin_stdio_binding_is_permission_bound_and_requires_exact_resolved_secrets() {
     let provider = CloudStdioProvider::new(
+        reqwest::Client::new(),
         "http://127.0.0.1:8095",
         Duration::from_secs(5),
         Some("sandbox-secret".to_string()),
@@ -239,6 +240,7 @@ fn plugin_stdio_binding_is_permission_bound_and_requires_exact_resolved_secrets(
 #[test]
 fn plugin_package_relative_command_and_cwd_bind_the_immutable_artifact() {
     let provider = CloudStdioProvider::new(
+        reqwest::Client::new(),
         "http://127.0.0.1:8095",
         Duration::from_secs(5),
         Some("sandbox-secret".to_string()),
@@ -352,11 +354,11 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
             listener,
             Router::new()
                 .route(
-                    "/api/sandboxes/sandbox-1/cloud-stdio-mcp/call",
+                    "/api/internal/sandboxes/sandbox-1/cloud-stdio-mcp/call",
                     post(handler),
                 )
                 .route(
-                    "/api/sandboxes/sandbox-1/cloud-stdio-mcp/cancel",
+                    "/api/internal/sandboxes/sandbox-1/cloud-stdio-mcp/cancel",
                     post(cancel_handler),
                 ),
         )
@@ -364,6 +366,7 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
         .unwrap();
     });
     let provider = CloudStdioProvider::new(
+        reqwest::Client::new(),
         format!("http://{address}"),
         Duration::from_secs(5),
         Some("a-long-sandbox-secret".to_string()),
@@ -409,10 +412,13 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
     let snapshot = RuntimeSessionSnapshot {
         session_id: "mcp_session_1".to_string(),
         caller_service: "task-runner".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
+        device_id: None,
         run_id: Some("run-1".to_string()),
         turn_id: None,
         task_id: Some("task-1".to_string()),

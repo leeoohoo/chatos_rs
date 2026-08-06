@@ -9,14 +9,16 @@ use axum::{
 };
 
 use crate::api::{
-    context_api, health_api, jobs_api, records_api, sources_api, subject_memories_api,
-    subject_memory_scopes_api, subjects_api, summaries_api, system_api, thread_snapshots_api,
-    threads_api,
+    context_api, health_api, jobs_api, queue_operations_api, records_api, sources_api,
+    subject_memories_api, subject_memory_scopes_api, subjects_api, summaries_api, system_api,
+    thread_snapshots_api, threads_api,
 };
 use crate::state::AppState;
 
 pub fn public_routes() -> Router<Arc<AppState>> {
-    Router::new().route("/health", get(health_api::health))
+    Router::new()
+        .route("/health", get(health_api::health))
+        .route("/metrics", get(system_api::prometheus_metrics))
 }
 
 pub fn operator_routes() -> Router<Arc<AppState>> {
@@ -41,6 +43,10 @@ pub fn operator_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/memory-engine/v1/jobs/subject-memory-scopes/run-once",
             post(jobs_api::run_subject_memory_scopes_once),
+        )
+        .route(
+            "/api/memory-engine/v1/queue-operations/replay",
+            post(queue_operations_api::replay_queue_dead_letter),
         )
 }
 

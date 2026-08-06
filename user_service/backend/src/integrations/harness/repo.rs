@@ -104,7 +104,7 @@ pub async fn create_harness_project_repo(
         default_branch: "main",
         description,
         is_public: false,
-        readme: false,
+        readme: true,
     };
     let endpoint = format!("{base_url}/api/v1/repos");
     let repo = match harness_request_json::<HarnessRepositoryOutput, _>(
@@ -258,7 +258,25 @@ fn is_local_harness_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::rewrite_harness_local_url_host;
+    use super::{rewrite_harness_local_url_host, HarnessCreateRepoRequest};
+
+    #[test]
+    fn harness_repo_creation_initializes_main_with_readme() {
+        let request = HarnessCreateRepoRequest {
+            parent_ref: "space",
+            identifier: "project",
+            default_branch: "main",
+            description: "Project",
+            is_public: false,
+            readme: true,
+        };
+
+        let value = serde_json::to_value(request).expect("serialize Harness create repo request");
+
+        assert_eq!(value["default_branch"], "main");
+        assert_eq!(value["readme"], true);
+        assert_eq!(value["is_public"], false);
+    }
 
     #[test]
     fn harness_repo_git_url_rewrites_localhost_to_configured_base_url() {

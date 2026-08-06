@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::error::Error as _;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpRequestErrorKind {
     Timeout,
@@ -52,9 +54,32 @@ pub fn classify_http_request_error(error: &reqwest::Error) -> HttpRequestErrorKi
     }
 }
 
+pub fn format_http_request_error(context: &str, error: reqwest::Error) -> String {
+    let mut message = format!(
+        "{context} failed (kind={}): {error}",
+        classify_http_request_error(&error).as_str()
+    );
+    let mut source = error.source();
+    let mut source_count = 0usize;
+    while let Some(cause) = source {
+        let detail = cause.to_string();
+        if !detail.is_empty() && !message.ends_with(detail.as_str()) {
+            message.push_str("; caused by: ");
+            message.push_str(detail.as_str());
+        }
+        source = cause.source();
+        source_count += 1;
+        if source_count >= 8 {
+            message.push_str("; source chain truncated");
+            break;
+        }
+    }
+    message
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{classify_http_request_error, HttpRequestErrorKind};
+    use super::{classify_http_request_error, format_http_request_error, HttpRequestErrorKind};
 
     #[test]
     fn classifies_invalid_url_as_builder_error() {
@@ -68,5 +93,17 @@ mod tests {
             HttpRequestErrorKind::Builder
         );
         assert_eq!(HttpRequestErrorKind::Builder.as_str(), "builder");
+    }
+
+    #[test]
+    fn formats_error_kind_and_context_without_request_headers() {
+        let error = reqwest::Client::new()
+            .get("://invalid-url")
+            .build()
+            .expect_err("invalid URL should fail request construction");
+        let message = format_http_request_error("project service request", error);
+
+        assert!(message.starts_with("project service request failed (kind=builder):"));
+        assert!(!message.contains("authorization"));
     }
 }

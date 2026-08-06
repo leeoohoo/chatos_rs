@@ -38,11 +38,43 @@ pub(super) fn apply_hunks(
             .filter(|line| line.starts_with(' ') || line.starts_with('-'))
             .map(|line| line[1..].to_string())
             .collect();
-
-        let start_idx = if expected.is_empty() {
-            pos
+        let desired: Vec<String> = hunk
+            .iter()
+            .filter(|line| !is_ignored_hunk_line(line))
+            .filter(|line| line.starts_with(' ') || line.starts_with('+'))
+            .map(|line| line[1..].to_string())
+            .collect();
+        let has_additions = hunk.iter().any(|line| line.starts_with('+'));
+        let expected_at = if expected.is_empty() {
+            Some(pos)
         } else {
-            find_sequence(original, &expected, pos)?
+            find_sequence(original, &expected, pos).ok()
+        };
+        let desired_at = (has_additions && desired != expected)
+            .then(|| find_sequence(original, &desired, pos).ok())
+            .flatten();
+        let already_applied_at = match (expected_at, desired_at) {
+            (_, Some(desired_at)) if expected.is_empty() => Some(desired_at),
+            (None, Some(desired_at)) => Some(desired_at),
+            (Some(expected_at), Some(desired_at))
+                if desired_at <= expected_at
+                    && expected_at + expected.len() <= desired_at + desired.len() =>
+            {
+                Some(desired_at)
+            }
+            _ => None,
+        };
+        if let Some(already_applied_at) = already_applied_at {
+            let end = already_applied_at + desired.len();
+            out.extend_from_slice(&original[pos..end]);
+            pos = end;
+            continue;
+        }
+
+        let start_idx = if let Some(expected_at) = expected_at {
+            expected_at
+        } else {
+            return Err("Patch context not found in file.".to_string());
         };
         out.extend_from_slice(&original[pos..start_idx]);
         let mut idx = start_idx;

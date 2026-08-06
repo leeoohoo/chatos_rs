@@ -309,6 +309,15 @@ pub struct PluginCatalogSyncResponse {
     pub synced_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginCatalogSyncOutboxEvent {
+    pub marketplace_id: String,
+    pub event_version: i64,
+    pub requested_at: String,
+    #[serde(default)]
+    pub scheduled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginReleasePublicationState {
     pub release_id: String,

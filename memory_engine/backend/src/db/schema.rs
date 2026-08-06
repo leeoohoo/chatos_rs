@@ -108,6 +108,24 @@ async fn ensure_subject_memory_scope_indexes(db: &Db) -> Result<(), String> {
         db.collection("engine_subject_memory_scopes"),
         doc! {"tenant_id": 1, "source_id": 1, "subject_id": 1, "memory_type": 1, "updated_at": -1},
     )
+    .await?;
+    ensure_named_index(
+        db.collection("engine_subject_memory_scopes"),
+        "idx_engine_subject_memory_scopes_source_label_summary_type_status",
+        doc! {"tenant_id": 1, "source_id": 1, "source_thread_label": 1, "source_summary_type": 1, "status": 1},
+    )
+    .await?;
+    ensure_named_index(
+        db.collection("engine_subject_memory_scopes"),
+        "idx_engine_subject_memory_scopes_dispatch_pending_requested_at",
+        doc! {"subject_memory_dispatch_pending": 1, "subject_memory_dispatch_requested_at": 1, "updated_at": 1},
+    )
+    .await?;
+    ensure_named_index(
+        db.collection("engine_subject_memory_scopes"),
+        "idx_engine_subject_memory_scopes_status_lock_expires_at",
+        doc! {"status": 1, "subject_memory_status": 1, "subject_memory_lock_expires_at": 1},
+    )
     .await
 }
 
@@ -171,9 +189,15 @@ async fn ensure_thread_indexes(db: &Db) -> Result<(), String> {
     )
     .await?;
     ensure_named_index(
+          db.collection("engine_threads"),
+          "idx_engine_threads_scope_summary_status_pending_tokens_updated_at",
+          doc! {"tenant_id": 1, "source_id": 1, "summary_status": 1, "pending_summary_tokens": 1, "updated_at": 1},
+      )
+      .await?;
+    ensure_named_index(
         db.collection("engine_threads"),
-        "idx_engine_threads_scope_summary_status_pending_tokens_updated_at",
-        doc! {"tenant_id": 1, "source_id": 1, "summary_status": 1, "pending_summary_tokens": 1, "updated_at": 1},
+        "idx_engine_threads_summary_dispatch_pending_requested_at",
+        doc! {"summary_dispatch_pending": 1, "summary_dispatch_requested_at": 1, "updated_at": 1},
     )
     .await
 }
@@ -207,6 +231,12 @@ async fn ensure_record_indexes(db: &Db) -> Result<(), String> {
         collection.clone(),
         "idx_engine_records_scope_record_id",
         doc! {"tenant_id": 1, "source_id": 1, "id": 1},
+    )
+    .await?;
+    ensure_named_index(
+        collection.clone(),
+        "idx_engine_records_summary_status_thread_scope",
+        doc! {"summary_status": 1, "tenant_id": 1, "source_id": 1, "thread_id": 1},
     )
     .await?;
     drop_index_if_exists(collection.clone(), "thread_id_1_id_1").await?;
@@ -259,6 +289,24 @@ async fn ensure_summary_indexes(db: &Db) -> Result<(), String> {
     ensure_index(
         collection.clone(),
         doc! {"tenant_id": 1, "source_id": 1, "summary_type": 1, "rollup_status": 1, "level": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_named_index(
+        collection.clone(),
+        "idx_engine_summaries_rollup_dispatch_pending_requested_at",
+        doc! {"rollup_dispatch_pending": 1, "rollup_dispatch_requested_at": 1, "updated_at": 1},
+    )
+    .await?;
+    ensure_named_index(
+        collection.clone(),
+        "idx_engine_summaries_subject_memory_source_dispatch_pending_requested_at",
+        doc! {"subject_memory_source_dispatch_pending": 1, "subject_memory_source_dispatch_requested_at": 1, "updated_at": 1},
+    )
+    .await?;
+    ensure_named_index(
+        collection.clone(),
+        "idx_engine_summaries_scope_thread_type_status_subject_memory_scope_keys_created_at",
+        doc! {"tenant_id": 1, "source_id": 1, "thread_id": 1, "summary_type": 1, "status": 1, "subject_memory_scope_keys": 1, "created_at": 1},
     )
     .await?;
     drop_index_if_exists(collection.clone(), "thread_id_1_level_1_created_at_-1").await?;

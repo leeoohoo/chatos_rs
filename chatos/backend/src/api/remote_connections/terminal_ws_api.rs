@@ -11,6 +11,7 @@ use std::sync::mpsc as std_mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
 use crate::core::auth::AuthUser;
 use crate::core::remote_connection_access::{
     ensure_owned_remote_connection, map_remote_connection_access_error,
@@ -70,6 +71,7 @@ async fn handle_remote_terminal_socket(
     verification_code: Option<String>,
     socket: WebSocket,
 ) {
+    let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::RemoteTerminal);
     let has_initial_verification_code = verification_code
         .as_deref()
         .map(str::trim)

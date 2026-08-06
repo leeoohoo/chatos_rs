@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_queue_observability::RabbitMqQueueRuntimeStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,8 +24,18 @@ pub struct TaskRunnerSystemStatsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRunnerRuntimeStatsSnapshot {
     pub worker_claim_failures_total: u64,
+    pub run_dispatch_fairness_deferrals_total: u64,
     pub active_run_event_streams: usize,
     pub pending_sse_tickets: usize,
+    pub rabbitmq_consumer_reconnects_total: u64,
+    pub run_dispatch_consumer_connected: bool,
+    pub worker_control_consumer_connected: bool,
+    pub run_post_process_consumer_connected: bool,
+    pub callback_consumer_connected: bool,
+    pub run_event_consumer_connected: bool,
+    pub run_event_consumer_reconnects_total: u64,
+    pub run_event_consumer_events_total: u64,
+    pub scheduler_pressure_paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,9 +45,25 @@ pub struct TaskRunnerQueueStatsSnapshot {
     pub callback_delivery_mode: String,
     pub run_events_publish_mode: String,
     pub rabbitmq_exchange: String,
+    pub rabbitmq_reconnect_ms: u64,
+    pub rabbitmq_queues: RabbitMqQueueRuntimeStats,
+    pub worker_consumers_expected: bool,
+    pub callback_consumer_expected: bool,
     pub run_dispatch_queue: String,
+    pub run_dispatch_retry_queue: String,
+    pub run_dispatch_retry_delay_ms: u64,
+    pub run_dispatch_outbox_reconcile_ms: u64,
+    pub run_dispatch_outbox_batch_size: usize,
+    pub worker_control_queue_prefix: String,
+    pub run_post_process_queue: String,
+    pub run_post_process_retry_queue: String,
+    pub run_post_process_dead_letter_queue: String,
+    pub run_post_process_max_delivery_attempts: u32,
+    pub run_post_process_retry_delay_ms: u64,
+    pub run_post_process_outbox_reconcile_ms: u64,
+    pub run_post_process_outbox_batch_size: usize,
     pub callback_delivery_queue: String,
-    pub run_events_queue: String,
+    pub run_events_routing_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +79,29 @@ pub struct TaskRunnerRunStatsSnapshot {
     pub dispatch_paused: usize,
     pub callback_pending: usize,
     pub callback_enqueued: usize,
+    pub dispatch_outbox_pending: usize,
+    pub cancellation_outbox_pending: usize,
+    pub post_process_outbox_pending: usize,
+    pub terminal_cleanup_outbox_pending: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunExecutionStats {
+    pub total: usize,
+    pub active: usize,
+    pub queued: usize,
+    pub running: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+    pub blocked: usize,
+    pub dispatch_paused: usize,
+    pub callback_pending: usize,
+    pub callback_enqueued: usize,
+    pub dispatch_outbox_pending: usize,
+    pub cancellation_outbox_pending: usize,
+    pub post_process_outbox_pending: usize,
+    pub terminal_cleanup_outbox_pending: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,7 +120,6 @@ pub struct SystemConfigResponse {
     pub default_execution_timeout_ms: u64,
     pub execution_timeout_ms: u64,
     pub scheduler_poll_interval_ms: u64,
-    pub worker_poll_interval_ms: u64,
     pub worker_claim_ttl_ms: u64,
     pub worker_concurrency: usize,
     pub auto_memory_summary: bool,
@@ -97,8 +146,13 @@ pub struct SystemConfigResponse {
     pub task_queue_run_events_publish_mode: String,
     pub task_queue_rabbitmq_exchange: String,
     pub task_queue_run_dispatch_queue: String,
+    pub task_queue_run_dispatch_retry_queue: String,
+    pub task_queue_run_dispatch_retry_delay_ms: u64,
+    pub task_queue_run_dispatch_outbox_reconcile_ms: u64,
+    pub task_queue_run_dispatch_outbox_batch_size: usize,
+    pub task_queue_worker_control_queue_prefix: String,
     pub task_queue_callback_delivery_queue: String,
-    pub task_queue_run_events_queue: String,
+    pub task_queue_run_events_routing_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

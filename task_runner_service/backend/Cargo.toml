@@ -10,12 +10,15 @@ edition = "2021"
 async-trait = "0.1"
 argon2 = "0.5"
 axum = { version = "0.8", features = ["json"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 base64 = "0.22"
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_mcp = { path = "../../mcp" }
+chatos_mcp_gateway = { path = "../../crates/chatos_mcp_gateway" }
 chatos_mcp_management_sdk = { path = "../../crates/chatos_mcp_management_sdk" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
+chatos_queue_observability = { path = "../../crates/chatos_queue_observability" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_remote_runtime = { path = "../../crates/chatos_remote_runtime" }
 chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
@@ -33,9 +36,14 @@ lapin = { version = "2.5", features = ["rustls", "rustls-native-certs"] }
 libc = "0.2"
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["rt-tokio", "trace"] }
 parking_lot = "0.12"
 rand = "0.10"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
@@ -45,6 +53,10 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7"
 tower-http = { version = "0.7", features = ["cors", "trace"] }
 tracing = "0.1"
+tracing-opentelemetry = { version = "0.33", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

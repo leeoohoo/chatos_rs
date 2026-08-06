@@ -1,0 +1,266 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "sum(chatos_rabbitmq_queue_observability_enabled * (1 - chatos_rabbitmq_queue_observability_available))", "legendFormat": "Unavailable", "range": true, "refId": "A" }],
+      "title": "Queue Inspection Unavailable",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "sum(chatos_rabbitmq_queue_messages{role=~\".*dead_letter\"})", "legendFormat": "DLQ", "range": true, "refId": "A" }],
+      "title": "Dead-Letter Messages",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "chatos_mcp_runtime_sessions_active", "legendFormat": "Active Sessions", "range": true, "refId": "A" }],
+      "title": "Active MCP Sessions",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "editorMode": "code", "expr": "chatos_mcp_runtime_session_cache_bytes", "legendFormat": "Cache Bytes", "range": true, "refId": "A" }],
+      "title": "MCP Cache Bytes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 5,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "editorMode": "code", "expr": "chatos_rabbitmq_queue_messages", "legendFormat": "{{service}} / {{role}} / {{queue}}", "range": true, "refId": "A" }],
+      "title": "RabbitMQ Queue Backlog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 6,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "editorMode": "code", "expr": "chatos_rabbitmq_queue_consumers", "legendFormat": "{{service}} / {{role}} / {{queue}}", "range": true, "refId": "A" }],
+      "title": "RabbitMQ Consumers",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "max": 100, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 }] }, "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 13 },
+      "id": 7,
+      "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "valueMode": "color" },
+      "targets": [{ "editorMode": "code", "expr": "100 * chatos_mcp_runtime_session_cache_entries / clamp_min(chatos_mcp_runtime_session_cache_entry_limit, 1)", "legendFormat": "Entry Utilization", "range": true, "refId": "A" }],
+      "title": "Cache Entry Utilization",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "max": 100, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 }] }, "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 13 },
+      "id": 8,
+      "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "valueMode": "color" },
+      "targets": [{ "editorMode": "code", "expr": "100 * chatos_mcp_runtime_session_cache_bytes / clamp_min(chatos_mcp_runtime_session_cache_byte_limit, 1)", "legendFormat": "Byte Utilization", "range": true, "refId": "A" }],
+      "title": "Cache Byte Utilization",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 13 },
+      "id": 9,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_hits_total[5m])", "legendFormat": "Hits", "range": true, "refId": "A" },
+        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_misses_total[5m])", "legendFormat": "Misses", "range": true, "refId": "B" }
+      ],
+      "title": "MCP Cache Lookup Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 13 },
+      "id": 10,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_capacity_evictions_total[5m])", "legendFormat": "Capacity", "range": true, "refId": "A" },
+        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_expired_evictions_total[5m])", "legendFormat": "Expired", "range": true, "refId": "B" },
+        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_oversized_rejections_total[5m])", "legendFormat": "Oversized", "range": true, "refId": "C" }
+      ],
+      "title": "MCP Cache Eviction and Rejection Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 11,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_queue_messages_published_total[5m]))", "legendFormat": "published / {{queue}}", "range": true, "refId": "A" },
+        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_channel_messages_delivered_ack_total[5m]) + rate(rabbitmq_detailed_channel_messages_delivered_total[5m]))", "legendFormat": "delivered / {{queue}}", "range": true, "refId": "B" },
+        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_channel_messages_acked_total[5m]))", "legendFormat": "acked / {{queue}}", "range": true, "refId": "C" }
+      ],
+      "title": "RabbitMQ Publish and Consumption Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 12,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_queue_messages_published_total{queue=~\".*retry.*\"}[5m]))", "legendFormat": "retry publish / {{queue}}", "range": true, "refId": "A" },
+        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_channel_messages_redelivered_total[5m]))", "legendFormat": "redelivered / {{queue}}", "range": true, "refId": "B" }
+      ],
+      "title": "RabbitMQ Retry and Redelivery Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 13,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=\"chatos-rs\",container_label_com_docker_compose_service!=\"\"})", "legendFormat": "{{container_label_com_docker_compose_service}}", "range": true, "refId": "A" }
+      ],
+      "title": "Container Memory Working Set",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "max": 100, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 }] }, "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 14,
+      "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "valueMode": "color" },
+      "targets": [
+        { "editorMode": "code", "expr": "(100 * sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=\"chatos-rs\",container_label_com_docker_compose_service!=\"\"}) / clamp_min(sum by (container_label_com_docker_compose_service) (container_spec_memory_limit_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=\"chatos-rs\",container_label_com_docker_compose_service!=\"\"}), 1)) and on (container_label_com_docker_compose_service) sum by (container_label_com_docker_compose_service) (container_spec_memory_limit_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=\"chatos-rs\",container_label_com_docker_compose_service!=\"\"}) > 0", "legendFormat": "{{container_label_com_docker_compose_service}}", "range": true, "refId": "A" }
+      ],
+      "title": "Container Memory Limit Utilization",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 36 },
+      "id": 15,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (container_label_com_docker_compose_service) (increase(container_oom_events_total{job=\"cadvisor\",container_label_com_docker_compose_project=\"chatos-rs\",container_label_com_docker_compose_service!=\"\"}[5m]))", "legendFormat": "{{container_label_com_docker_compose_service}}", "range": true, "refId": "A" }
+      ],
+      "title": "Container OOM Events (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 3 }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 43 },
+      "id": 16,
+      "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "valueMode": "color" },
+      "targets": [
+        { "editorMode": "code", "expr": "max by (container_label_com_docker_compose_service) (chatos_container_restarts_15m)", "legendFormat": "{{container_label_com_docker_compose_service}}", "range": true, "refId": "A" }
+      ],
+      "title": "Container Restarts (15m)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "id": 17,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (surface, route, status_class) (rate(chatos_http_requests_total{service=\"chatos-backend\"}[5m]))", "legendFormat": "{{surface}} / {{route}} / {{status_class}}", "range": true, "refId": "A" }
+      ],
+      "title": "ChatOS HTTP Request Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "id": 18,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, surface) (rate(chatos_http_request_duration_seconds_bucket{service=\"chatos-backend\"}[5m])))", "legendFormat": "p95 / {{surface}}", "range": true, "refId": "A" }
+      ],
+      "title": "ChatOS HTTP p95 Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 58 },
+      "id": 19,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [
+        { "editorMode": "code", "expr": "chatos_conversation_turns_active", "legendFormat": "Active Turns", "range": true, "refId": "A" }
+      ],
+      "title": "Active Conversation Turns",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 58 },
+      "id": 20,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(chatos_websocket_connections_active)", "legendFormat": "WebSockets", "range": true, "refId": "A" }
+      ],
+      "title": "Active WebSockets",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 58 },
+      "id": 21,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [
+        { "editorMode": "code", "expr": "chatos_terminal_sessions_active", "legendFormat": "Terminal Sessions", "range": true, "refId": "A" }
+      ],
+      "title": "Active Terminal Sessions",
+      "type": "stat"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["chatos", "http", "rabbitmq", "cache", "containers"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ChatOS Platform Overview",
+  "uid": "chatos-platform-overview",
+  "version": 3,
+  "weekStart": ""
+}

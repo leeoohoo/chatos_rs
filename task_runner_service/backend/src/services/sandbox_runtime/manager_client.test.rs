@@ -4,8 +4,8 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        sandbox_lease_idempotency_key, SandboxLeaseListItem, SandboxManagerAuth,
-        SandboxManagerAuthMode, SandboxManagerClient,
+        apply_sandbox_audit_context, sandbox_lease_idempotency_key, SandboxLeaseListItem,
+        SandboxManagerAuth, SandboxManagerAuthMode, SandboxManagerClient,
     };
     use crate::models::TaskRunRecord;
     use serde_json::json;
@@ -91,6 +91,7 @@ mod tests {
                 client_key: "a-long-task-runner-sandbox-secret".to_string(),
                 mode: SandboxManagerAuthMode::Cloud,
                 owner_user_id: None,
+                cloud_http: Some(reqwest::Client::new()),
             }),
         )
         .expect("client");
@@ -120,5 +121,52 @@ mod tests {
             "sandbox.service",
         )
         .expect("valid token");
+    }
+
+    #[test]
+    fn sandbox_lease_request_includes_audit_context_without_signing_secret() {
+        let client = SandboxManagerClient::new(
+            "http://127.0.0.1:8095".to_string(),
+            Some(SandboxManagerAuth {
+                client_key: "a-long-task-runner-sandbox-secret".to_string(),
+                mode: SandboxManagerAuthMode::Cloud,
+                owner_user_id: None,
+                cloud_http: Some(reqwest::Client::new()),
+            }),
+        )
+        .expect("client");
+        let request = client
+            .apply_auth(
+                client
+                    .client
+                    .post("http://127.0.0.1:8095/api/sandboxes/leases"),
+            )
+            .expect("apply auth");
+        let request = apply_sandbox_audit_context(request, "user-1", "tenant-1", "project-1")
+            .build()
+            .expect("request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-chatos-owner-user-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("user-1")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-chatos-tenant-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("tenant-1")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-chatos-project-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("project-1")
+        );
+        assert!(!request.headers().contains_key("x-sandbox-client-key"));
     }
 }

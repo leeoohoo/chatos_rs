@@ -6,6 +6,7 @@ use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
+use crate::trace_context::InternalTraceContextExt;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +304,7 @@ async fn load_owner_identities_from_user_service(
     let response = client
         .get(endpoint)
         .bearer_auth(access_token.trim())
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("user_service /api/users request failed: {err}"))?;

@@ -16,6 +16,7 @@ impl SandboxManagerAuth {
                 client_key,
                 mode: SandboxManagerAuthMode::Cloud,
                 owner_user_id: None,
+                cloud_http: Some(config.sandbox_manager_http_client.clone()),
             }),
             _ => None,
         }
@@ -24,11 +25,13 @@ impl SandboxManagerAuth {
     pub(in crate::services::sandbox_runtime) fn local_connector(
         client_key: String,
         owner_user_id: String,
+        http: reqwest::Client,
     ) -> Self {
         Self {
             client_key,
             mode: SandboxManagerAuthMode::LocalConnector,
             owner_user_id: Some(owner_user_id),
+            cloud_http: Some(http),
         }
     }
 
@@ -56,6 +59,7 @@ impl SandboxManagerAuth {
                 Ok(Some(Self::local_connector(
                     client_key,
                     owner_user_id.to_string(),
+                    config.local_connector_http_client.clone(),
                 )))
             }
             chatos_mcp_management_sdk::SandboxProviderKind::Cloud => Ok(Self::from_config(config)),

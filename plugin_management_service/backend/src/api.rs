@@ -45,10 +45,12 @@ mod plugin_publishers;
 mod plugin_releases;
 mod plugin_support;
 mod plugins;
+mod queue_operations;
 mod resource_policy;
 mod runtime_agent_prompts;
 mod skill_packages;
 mod skills;
+mod system;
 
 use agent_provider_prompts::{
     agent_prompt_completeness, generate_agent_provider_prompt, get_agent_prompt_version,
@@ -83,7 +85,9 @@ use mcps::{
     update_mcp_provider_skill,
 };
 use plugin_audit::list_plugin_audit;
-pub use plugin_catalog_sync::start_plugin_catalog_sync_loop;
+pub(crate) use plugin_catalog_sync::{
+    is_syncable_network_marketplace, run_queued_plugin_catalog_sync,
+};
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
 use plugin_cloud_bundles::{
     get_plugin_cloud_component_bundle_internal, get_plugin_mcp_cloud_runtime_bundle_internal,
@@ -117,6 +121,7 @@ use plugins::{
     create_plugin_catalog_entry, get_plugin_catalog_entry, list_admin_plugins, list_plugin_catalog,
     update_user_plugin_preference, update_user_plugin_preference_internal,
 };
+use queue_operations::replay_catalog_sync_dead_letter;
 use resource_policy::*;
 use runtime_agent_prompts::{
     agent_prompt_bundle_internal, agent_prompt_bundle_manifest_internal,
@@ -124,6 +129,7 @@ use runtime_agent_prompts::{
 };
 use skill_packages::{get_skill_package, list_skill_packages};
 use skills::{check_skill, get_skill, list_skills};
+use system::{get_system_stats, prometheus_metrics};
 
 const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
     "chatos-backend",
@@ -203,7 +209,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-pub fn build_router(state: AppState) -> Router {
+pub fn build_public_router(state: AppState) -> Router {
     let cors = plugin_management_cors(&state.config.cors_origins);
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
@@ -349,6 +355,10 @@ pub fn build_router(state: AppState) -> Router {
             post(sync_admin_plugin_marketplace),
         )
         .route(
+            "/api/admin/queue-operations/catalog-sync/replay",
+            post(replay_catalog_sync_dead_letter),
+        )
+        .route(
             "/api/admin/plugin-publishers",
             get(list_admin_plugin_publishers),
         )
@@ -371,7 +381,24 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/plugin-audit", get(list_plugin_audit))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
+    apply_common_layers(
+        Router::new()
+            .route("/api/health", get(health_handler))
+            .route("/metrics", get(prometheus_metrics))
+            .route("/api/auth/login", post(login_handler))
+            .route(
+                "/api/plugins/cloud-oauth/callback",
+                get(complete_plugin_cloud_oauth_authorization),
+            )
+            .merge(protected_api)
+            .with_state(state),
+    )
+    .layer(cors)
+}
+
+pub fn build_internal_router(state: AppState) -> Router {
     let internal_api = Router::new()
+        .route("/api/internal/system/stats", get(get_system_stats))
         .route(
             "/api/internal/runtime/agent-prompts/resolve",
             post(resolve_agent_prompt_internal),
@@ -449,16 +476,11 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::put(update_local_connector_mcp_status_batch_internal),
         );
 
-    Router::new()
-        .route("/api/health", get(health_handler))
-        .route("/api/auth/login", post(login_handler))
-        .route(
-            "/api/plugins/cloud-oauth/callback",
-            get(complete_plugin_cloud_oauth_authorization),
-        )
-        .merge(internal_api)
-        .merge(protected_api)
-        .with_state(state)
+    apply_common_layers(internal_api.with_state(state))
+}
+
+fn apply_common_layers(router: Router) -> Router {
+    router
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request<axum::body::Body>| {
@@ -471,7 +493,6 @@ pub fn build_router(state: AppState) -> Router {
                 .on_request(DefaultOnRequest::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
-        .layer(cors)
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
         ))

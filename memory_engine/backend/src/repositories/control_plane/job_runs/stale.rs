@@ -85,9 +85,23 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
                         source_id,
                         thread_id,
                         job.id.as_str(),
-                        "pending",
-                        None,
-                        None,
+                        0,
+                        0,
+                    )
+                    .await;
+                }
+            } else if job.job_type == "rollup" {
+                if let (Some(tenant_id), Some(source_id), Some(thread_id)) = (
+                    job.tenant_id.as_deref(),
+                    job.source_id.as_deref(),
+                    job.thread_id.as_deref(),
+                ) {
+                    let _ = threads::release_rollup_slot(
+                        db,
+                        tenant_id,
+                        source_id,
+                        thread_id,
+                        job.id.as_str(),
                     )
                     .await;
                 }

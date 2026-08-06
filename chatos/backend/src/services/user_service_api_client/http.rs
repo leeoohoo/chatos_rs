@@ -27,17 +27,18 @@ where
 {
     let resolved_base_url =
         chatos_service_runtime::resolve_service_base_url("user-service", base_url).await;
-    let response = build_request(
+    let request = build_request(
         method,
         resolved_base_url.as_str(),
         path,
         access_token,
         body,
         timeout_ms,
-    )?
-    .send()
-    .await
-    .map_err(|err| err.to_string())?;
+    )?;
+    let response = crate::core::trace_context::inject_current_trace_context(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
         let body = read_user_service_body_limited(response, USER_SERVICE_ERROR_BODY_PREVIEW_BYTES)
@@ -67,17 +68,18 @@ where
 {
     let resolved_base_url =
         chatos_service_runtime::resolve_service_base_url("user-service", base_url).await;
-    let response = build_request(
+    let request = build_request(
         method,
         resolved_base_url.as_str(),
         path,
         access_token,
         body,
         timeout_ms,
-    )?
-    .send()
-    .await
-    .map_err(|err| err.to_string())?;
+    )?;
+    let response = crate::core::trace_context::inject_current_trace_context(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
         let body = read_user_service_body_limited(response, USER_SERVICE_ERROR_BODY_PREVIEW_BYTES)

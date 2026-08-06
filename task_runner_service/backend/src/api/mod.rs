@@ -57,9 +57,7 @@ mod runs;
 mod tasks;
 mod tooling;
 
-pub use self::router::build_router;
-
-const RUN_EVENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
+pub use self::router::{build_internal_router, build_public_router};
 
 fn parse_csv_ids(value: &str) -> Vec<String> {
     value

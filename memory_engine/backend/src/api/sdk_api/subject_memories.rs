@@ -30,6 +30,8 @@ pub async fn upsert_subject_memory_scope(
     Json(req): Json<SdkUpsertSubjectMemoryScopeRequest>,
 ) -> Result<Json<EngineSubjectMemoryScope>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    let tenant_id = req.tenant_id.clone();
+    let source_id = auth.source_id().to_string();
     let direct = UpsertSubjectMemoryScopeRequest {
         tenant_id: req.tenant_id,
         source_id: auth.source_id().to_string(),
@@ -42,10 +44,26 @@ pub async fn upsert_subject_memory_scope(
         memory_metadata: req.memory_metadata,
         status: req.status,
     };
-    subject_memory_scopes::upsert_subject_memory_scope(&state.pool, scope_key.as_str(), direct)
-        .await
-        .map(Json)
-        .map_err(internal_error)
+    let scope =
+        subject_memory_scopes::upsert_subject_memory_scope(&state.pool, scope_key.as_str(), direct)
+            .await
+            .map_err(internal_error)?;
+    if let Err(err) = crate::subject_memory_queue::publish_pending_scope(
+        &state.config,
+        &state.pool,
+        tenant_id.as_str(),
+        source_id.as_str(),
+        scope_key.as_str(),
+    )
+    .await
+    {
+        tracing::warn!(
+            scope_key = scope_key.as_str(),
+            error = err.as_str(),
+            "Memory Engine left SDK subject memory scope event in Outbox for recovery"
+        );
+    }
+    Ok(Json(scope))
 }
 
 pub async fn query_subject_memories(

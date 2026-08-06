@@ -4,12 +4,6 @@
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde_json::Value;
 
-use crate::state::AppState;
-
-pub(super) fn build_client(state: &AppState) -> Result<reqwest::Client, String> {
-    build_client_with_timeout(state.config.downstream_request_timeout_ms)
-}
-
 pub(super) fn build_client_with_timeout(timeout_ms: i64) -> Result<reqwest::Client, String> {
     build_http_client(HttpClientTimeouts::new(std::time::Duration::from_millis(
         timeout_ms.max(300) as u64,

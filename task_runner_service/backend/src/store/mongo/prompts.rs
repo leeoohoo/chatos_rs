@@ -72,6 +72,41 @@ impl MongoStore {
         Ok(prompt)
     }
 
+    pub(in crate::store) async fn list_pending_ask_user_resolution_events(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AskUserPromptRecord>, String> {
+        self.load_collection_items_with_query(
+            &self.ask_user_prompts,
+            doc! {
+                "resolution_event_pending": true,
+                "status": { "$ne": "pending" },
+            },
+            Some(
+                FindOptions::builder()
+                    .sort(doc! { "updated_at": 1, "id": 1 })
+                    .limit(i64::try_from(limit.max(1)).unwrap_or(i64::MAX))
+                    .build(),
+            ),
+        )
+        .await
+    }
+
+    pub(in crate::store) async fn acknowledge_ask_user_resolution_event(
+        &self,
+        prompt_id: &str,
+    ) -> Result<bool, String> {
+        self.ask_user_prompts
+            .update_one(
+                doc! { "id": prompt_id, "resolution_event_pending": true },
+                doc! { "$set": { "resolution_event_pending": false } },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
     pub(in crate::store) async fn list_ask_user_prompt_task_counts(
         &self,
         status: Option<AskUserPromptStatus>,

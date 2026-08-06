@@ -21,6 +21,14 @@ pub struct McpToolNameAlias {
     pub public_server_name: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAsyncResultTransport {
+    #[default]
+    Disabled,
+    RabbitMq,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpHttpServer {
     pub name: String,
@@ -39,8 +47,12 @@ pub struct McpHttpServer {
     pub preserve_tool_names: bool,
     #[serde(default)]
     pub fail_on_unavailable: bool,
+    #[serde(default)]
+    pub async_result_transport: McpAsyncResultTransport,
     #[serde(skip)]
     pub header_provider: Option<Arc<dyn McpHttpHeaderProvider>>,
+    #[serde(skip)]
+    pub http_client: Option<reqwest::Client>,
 }
 
 impl McpHttpServer {
@@ -55,7 +67,9 @@ impl McpHttpServer {
             allowed_tool_names: None,
             preserve_tool_names: false,
             fail_on_unavailable: false,
+            async_result_transport: McpAsyncResultTransport::Disabled,
             header_provider: None,
+            http_client: None,
         }
     }
 
@@ -85,6 +99,16 @@ impl McpHttpServer {
         P: McpHttpHeaderProvider + 'static,
     {
         self.header_provider = Some(Arc::new(provider));
+        self
+    }
+
+    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
+        self.http_client = Some(client);
+        self
+    }
+
+    pub fn with_async_result_transport(mut self, transport: McpAsyncResultTransport) -> Self {
+        self.async_result_transport = transport;
         self
     }
 
@@ -252,6 +276,8 @@ pub struct ToolInfo {
     pub server_url: Option<String>,
     pub server_headers: Option<HashMap<String, String>>,
     pub server_header_provider: Option<Arc<dyn McpHttpHeaderProvider>>,
+    pub server_http_client: Option<reqwest::Client>,
+    pub server_async_result_transport: McpAsyncResultTransport,
     pub server_timeout: Option<Duration>,
     pub server_config: Option<McpStdioServer>,
     pub tool_info: Value,

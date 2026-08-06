@@ -240,14 +240,8 @@ pub(crate) async fn execute_prepared_thread_summary_job(
     let output_count = 0_i64;
 
     let result: Result<RunThreadSummaryResponse, String> = async {
-        let skipped_pending_count = selection.oversized.len() as i64;
         let selected_pending_tokens = selection.selected_token_count.max(0);
         let skipped_pending_tokens = selection.oversized_token_count.max(0);
-        let pending_after_skip_count = pending_before_count.saturating_sub(skipped_pending_count);
-        let pending_after_skip_tokens = thread
-            .pending_summary_tokens
-            .max(0)
-            .saturating_sub(skipped_pending_tokens);
         let skipped_count = mark_oversized_records_as_summarized(
             db,
             tenant_id,
@@ -285,13 +279,8 @@ pub(crate) async fn execute_prepared_thread_summary_job(
                 source_id,
                 thread_id,
                 job_run_id,
-                if pending_after_skip_count > 0 {
-                    "pending"
-                } else {
-                    "idle"
-                },
-                Some(pending_before_count.saturating_sub(skipped_count_i64)),
-                Some(pending_after_skip_tokens),
+                skipped_count_i64,
+                skipped_pending_tokens,
             )
             .await;
             return Ok(noop_response(thread_id));
@@ -338,13 +327,8 @@ pub(crate) async fn execute_prepared_thread_summary_job(
                     source_id,
                     thread_id,
                     job_run_id,
-                    if pending_after_skip_count > 0 {
-                        "pending"
-                    } else {
-                        "idle"
-                    },
-                    Some(pending_before_count.saturating_sub(skipped_count_i64)),
-                    Some(pending_after_skip_tokens),
+                    skipped_count_i64,
+                    skipped_pending_tokens,
                 )
                 .await;
                 return Err(err);
@@ -420,13 +404,8 @@ pub(crate) async fn execute_prepared_thread_summary_job(
                     source_id,
                     thread_id,
                     job_run_id,
-                    if pending_after_skip_count > 0 {
-                        "pending"
-                    } else {
-                        "idle"
-                    },
-                    Some(pending_before_count.saturating_sub(skipped_count_i64)),
-                    Some(pending_after_skip_tokens),
+                    skipped_count_i64,
+                    skipped_pending_tokens,
                 )
                 .await;
                 return Err(err);
@@ -435,11 +414,6 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         let pending_after_count = pending_before_count
             .saturating_sub(skipped_count_i64)
             .saturating_sub(marked_messages as i64);
-        let pending_after_tokens = thread
-            .pending_summary_tokens
-            .max(0)
-            .saturating_sub(skipped_pending_tokens)
-            .saturating_sub(selected_pending_tokens);
         finish_thread_summary_job_run(
             db,
             job_run_id,
@@ -469,15 +443,40 @@ pub(crate) async fn execute_prepared_thread_summary_job(
             source_id,
             thread_id,
             job_run_id,
-            if pending_after_count > 0 {
-                "pending"
-            } else {
-                "idle"
-            },
-            Some(pending_after_count),
-            Some(pending_after_tokens),
+            skipped_count_i64.saturating_add(marked_messages as i64),
+            skipped_pending_tokens.saturating_add(selected_pending_tokens),
         )
         .await;
+        if let Err(err) = crate::rollup_queue::publish_pending_rollup_for_summary(
+            config,
+            db,
+            tenant_id,
+            source_id,
+            summary.id.as_str(),
+        )
+        .await
+        {
+            tracing::warn!(
+                summary_id = summary.id.as_str(),
+                error = err.as_str(),
+                "Memory Engine left thread summary rollup event in Outbox for recovery"
+            );
+        }
+        if let Err(err) = crate::subject_memory_queue::publish_pending_source_for_summary(
+            config,
+            db,
+            tenant_id,
+            source_id,
+            summary.id.as_str(),
+        )
+        .await
+        {
+            tracing::warn!(
+                summary_id = summary.id.as_str(),
+                error = err.as_str(),
+                "Memory Engine left thread summary subject-memory event in Outbox for recovery"
+            );
+        }
 
         Ok(RunThreadSummaryResponse {
             thread_id: thread_id.to_string(),
@@ -512,21 +511,9 @@ pub(crate) async fn execute_prepared_thread_summary_job(
             },
         )
         .await;
-        let _ = threads::release_summary_slot(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            job_run_id,
-            if pending_before_count > 0 {
-                "pending"
-            } else {
-                "idle"
-            },
-            Some(pending_before_count),
-            Some(thread.pending_summary_tokens.max(0)),
-        )
-        .await;
+        let _ =
+            threads::release_summary_slot(db, tenant_id, source_id, thread_id, job_run_id, 0, 0)
+                .await;
     }
 
     result

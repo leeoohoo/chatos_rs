@@ -2,10 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
+use std::time::Duration;
 
-use chatos_service_runtime::{
-    env_text, parse_bool_text, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
-};
+use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secret};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -26,7 +25,33 @@ pub struct AppConfig {
     pub worker_rollup_concurrency: usize,
     pub worker_subject_memory_concurrency: usize,
     pub worker_reconcile_concurrency: usize,
-    pub operator_token: Option<String>,
+    pub rabbitmq_url: String,
+    pub rabbitmq_exchange: String,
+    pub rabbitmq_reconnect_delay: Duration,
+    pub summary_queue: String,
+    pub summary_retry_queue: String,
+    pub summary_dead_letter_queue: String,
+    pub summary_max_delivery_attempts: u32,
+    pub summary_retry_delay: Duration,
+    pub summary_outbox_reconcile_interval: Duration,
+    pub summary_outbox_batch_size: i64,
+    pub rollup_queue: String,
+    pub rollup_retry_queue: String,
+    pub rollup_dead_letter_queue: String,
+    pub rollup_max_delivery_attempts: u32,
+    pub rollup_retry_delay: Duration,
+    pub rollup_outbox_reconcile_interval: Duration,
+    pub rollup_outbox_batch_size: i64,
+    pub subject_memory_queue: String,
+    pub subject_memory_retry_queue: String,
+    pub subject_memory_dead_letter_queue: String,
+    pub subject_memory_max_delivery_attempts: u32,
+    pub subject_memory_retry_delay: Duration,
+    pub subject_memory_outbox_reconcile_interval: Duration,
+    pub subject_memory_outbox_batch_size: i64,
+    pub subject_memory_lock_timeout_secs: i64,
+    pub record_sync_lease_timeout_secs: i64,
+    pub rollup_lock_timeout_secs: i64,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
     pub user_service_base_url: String,
@@ -57,7 +82,55 @@ impl AppConfig {
             required_usize("MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY")?.max(1);
         let worker_reconcile_concurrency =
             required_usize("MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY")?.max(1);
-        let operator_token = Some(required_text("MEMORY_ENGINE_OPERATOR_TOKEN")?);
+        let rabbitmq_url = required_text("MEMORY_ENGINE_RABBITMQ_URL")?;
+        let rabbitmq_exchange = required_text("MEMORY_ENGINE_RABBITMQ_EXCHANGE")?;
+        let rabbitmq_reconnect_delay = Duration::from_millis(
+            required_u64("MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS")?.max(100),
+        );
+        let summary_queue = required_text("MEMORY_ENGINE_SUMMARY_QUEUE")?;
+        let summary_retry_queue = required_text("MEMORY_ENGINE_SUMMARY_RETRY_QUEUE")?;
+        let summary_dead_letter_queue = required_text("MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE")?;
+        let summary_max_delivery_attempts =
+            required_u32("MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS")?.max(1);
+        let summary_retry_delay =
+            Duration::from_millis(required_u64("MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS")?.max(100));
+        let summary_outbox_reconcile_interval = Duration::from_millis(
+            required_u64("MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS")?.max(1_000),
+        );
+        let summary_outbox_batch_size =
+            required_i64("MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE")?.max(1);
+        let rollup_queue = required_text("MEMORY_ENGINE_ROLLUP_QUEUE")?;
+        let rollup_retry_queue = required_text("MEMORY_ENGINE_ROLLUP_RETRY_QUEUE")?;
+        let rollup_dead_letter_queue = required_text("MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE")?;
+        let rollup_max_delivery_attempts =
+            required_u32("MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS")?.max(1);
+        let rollup_retry_delay =
+            Duration::from_millis(required_u64("MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS")?.max(100));
+        let rollup_outbox_reconcile_interval = Duration::from_millis(
+            required_u64("MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS")?.max(1_000),
+        );
+        let rollup_outbox_batch_size =
+            required_i64("MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE")?.max(1);
+        let subject_memory_queue = required_text("MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE")?;
+        let subject_memory_retry_queue = required_text("MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE")?;
+        let subject_memory_dead_letter_queue =
+            required_text("MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE")?;
+        let subject_memory_max_delivery_attempts =
+            required_u32("MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS")?.max(1);
+        let subject_memory_retry_delay = Duration::from_millis(
+            required_u64("MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS")?.max(100),
+        );
+        let subject_memory_outbox_reconcile_interval = Duration::from_millis(
+            required_u64("MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS")?.max(1_000),
+        );
+        let subject_memory_outbox_batch_size =
+            required_i64("MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE")?.max(1);
+        let subject_memory_lock_timeout_secs =
+            required_i64("MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS")?.max(30);
+        let record_sync_lease_timeout_secs =
+            required_i64("MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS")?.max(30);
+        let rollup_lock_timeout_secs =
+            required_i64("MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS")?.max(30);
         let user_service_base_url = required_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")?;
         let user_service_request_timeout_ms =
             required_u64("MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
@@ -79,7 +152,33 @@ impl AppConfig {
             worker_rollup_concurrency,
             worker_subject_memory_concurrency,
             worker_reconcile_concurrency,
-            operator_token,
+            rabbitmq_url,
+            rabbitmq_exchange,
+            rabbitmq_reconnect_delay,
+            summary_queue,
+            summary_retry_queue,
+            summary_dead_letter_queue,
+            summary_max_delivery_attempts,
+            summary_retry_delay,
+            summary_outbox_reconcile_interval,
+            summary_outbox_batch_size,
+            rollup_queue,
+            rollup_retry_queue,
+            rollup_dead_letter_queue,
+            rollup_max_delivery_attempts,
+            rollup_retry_delay,
+            rollup_outbox_reconcile_interval,
+            rollup_outbox_batch_size,
+            subject_memory_queue,
+            subject_memory_retry_queue,
+            subject_memory_dead_letter_queue,
+            subject_memory_max_delivery_attempts,
+            subject_memory_retry_delay,
+            subject_memory_outbox_reconcile_interval,
+            subject_memory_outbox_batch_size,
+            subject_memory_lock_timeout_secs,
+            record_sync_lease_timeout_secs,
+            rollup_lock_timeout_secs,
             internal_api_secrets: caller_internal_api_secrets(),
             require_signed_internal_requests: required_managed_bool(
                 "MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
@@ -88,26 +187,21 @@ impl AppConfig {
             user_service_request_timeout_ms,
         };
 
-        if config.require_signed_internal_requests {
-            for caller in [
-                "chatos-backend",
-                "task-runner",
-                "project-service",
-                "user-service",
-            ] {
-                if !config.internal_api_secrets.contains_key(caller) {
-                    return Err(format!(
-                        "dedicated Memory Engine internal secret is required for {caller}"
-                    ));
-                }
-            }
+        if !config.require_signed_internal_requests {
+            return Err("MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string());
         }
-        if config.operator_token.is_some() {
-            validate_production_secret(
-                "MEMORY_ENGINE_OPERATOR_TOKEN",
-                config.operator_token.as_deref(),
-                &[DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN],
-            )?;
+        for caller in [
+            "chatos-backend",
+            "task-runner",
+            "project-service",
+            "user-service",
+            "configuration-center",
+        ] {
+            if !config.internal_api_secrets.contains_key(caller) {
+                return Err(format!(
+                    "dedicated Memory Engine internal secret is required for {caller}"
+                ));
+            }
         }
         for (caller, secret) in &config.internal_api_secrets {
             validate_production_secret(
@@ -118,6 +212,7 @@ impl AppConfig {
                     "change_me_task_runner_memory_engine_secret",
                     "change_me_project_service_memory_engine_secret",
                     "change_me_user_service_memory_engine_secret",
+                    "change_me_configuration_center_memory_engine_secret",
                 ],
             )?;
         }
@@ -139,6 +234,10 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "user-service",
             "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
+        ),
+        (
+            "configuration-center",
+            "CONFIGURATION_CENTER_MEMORY_ENGINE_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()
@@ -173,6 +272,11 @@ fn required_u64(key: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
         .map_err(|err| format!("{key} must be a valid integer: {err}"))
+}
+
+fn required_u32(key: &str) -> Result<u32, String> {
+    let value = required_u64(key)?;
+    u32::try_from(value).map_err(|_| format!("{key} is too large"))
 }
 
 fn required_i64(key: &str) -> Result<i64, String> {

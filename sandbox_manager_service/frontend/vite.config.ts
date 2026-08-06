@@ -15,29 +15,34 @@ function normalizeBasePath(rawValue: string | undefined): string {
 
 function sandboxApiProxy(
   target: string,
-  operatorToken: string,
+  headers: Record<string, string> | undefined,
   rewrite?: ProxyOptions['rewrite'],
 ): ProxyOptions {
   return {
     target,
     changeOrigin: true,
-    headers: operatorToken
-      ? { 'x-sandbox-operator-token': operatorToken }
-      : undefined,
+    ...(headers ? { headers } : {}),
     ...(rewrite ? { rewrite } : {}),
   };
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const base = normalizeBasePath(env.VITE_BASE_PATH || env.SANDBOX_MANAGER_FRONTEND_BASE_PATH);
   const target = env.SANDBOX_MANAGER_API_PROXY_TARGET || 'http://127.0.0.1:8095';
-  const operatorToken =
-    env.SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN ||
-    env.SANDBOX_MANAGER_OPERATOR_TOKEN ||
-    ((env.CHATOS_ENV || 'local').trim().toLowerCase() === 'local'
-      ? 'chatos-sandbox-manager-dev-operator-token'
-      : '');
+  const proxyClientId = (env.SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID || '').trim();
+  const proxyClientKey = (env.SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY || '').trim();
+  if (command === 'serve' && (!proxyClientId || !proxyClientKey)) {
+    throw new Error(
+      'Sandbox Manager frontend proxy credentials are required from Configuration Center',
+    );
+  }
+  const proxyHeaders = proxyClientId && proxyClientKey
+    ? {
+        'x-sandbox-client-id': proxyClientId,
+        'x-sandbox-client-key': proxyClientKey,
+      }
+    : undefined;
   const basePrefix = base === '/' ? '' : base.replace(/\/+$/, '');
 
   return {
@@ -47,11 +52,11 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: Number(env.SANDBOX_MANAGER_FRONTEND_PORT || 8096),
       proxy: {
-        '/api': sandboxApiProxy(target, operatorToken),
+        '/api': sandboxApiProxy(target, proxyHeaders),
         '/health': target,
         ...(basePrefix
           ? {
-              [`${basePrefix}/api`]: sandboxApiProxy(target, operatorToken, (path) =>
+              [`${basePrefix}/api`]: sandboxApiProxy(target, proxyHeaders, (path) =>
                 path.slice(basePrefix.length),
               ),
               [`${basePrefix}/health`]: {

@@ -5,21 +5,30 @@ use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct PluginManagementClientConfig {
-    pub base_url: String,
+    pub public_base_url: String,
+    pub internal_base_url: String,
     pub request_timeout: Duration,
     pub internal_api_secret: Option<String>,
     pub caller_service: String,
+    pub internal_http: reqwest::Client,
 }
 
 impl PluginManagementClientConfig {
     pub async fn from_env(caller_service: impl Into<String>) -> Result<Self, String> {
         let caller_service = caller_service.into();
-        let managed_base_url = required_managed_env("PLUGIN_MANAGEMENT_SERVICE_URL")?;
-        let base_url = chatos_service_runtime::resolve_service_base_url(
+        let managed_public_base_url = required_managed_env("PLUGIN_MANAGEMENT_SERVICE_URL")?;
+        let public_base_url = chatos_service_runtime::resolve_service_base_url(
             "plugin-management-service",
-            managed_base_url.as_str(),
+            managed_public_base_url.as_str(),
         )
         .await;
+        let internal_base_url = normalize_base_url(required_managed_env(
+            "PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL",
+        )?);
+        require_https_base_url(
+            "PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL",
+            internal_base_url.as_str(),
+        )?;
         let timeout_ms = required_managed_env("PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS")?
             .parse::<u64>()
             .map_err(|error| {
@@ -29,21 +38,40 @@ impl PluginManagementClientConfig {
         let secret_env_key = caller_secret_env_key(caller_service.as_str()).ok_or_else(|| {
             format!("plugin management caller service is not configured: {caller_service}")
         })?;
+        let request_timeout = Duration::from_millis(timeout_ms);
+        let internal_http = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(request_timeout),
+            required_bootstrap_path("PLUGIN_MANAGEMENT_MTLS_CA_CERT_PATH")?.as_path(),
+            required_bootstrap_path("PLUGIN_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         Ok(Self {
-            base_url: normalize_base_url(base_url),
-            request_timeout: Duration::from_millis(timeout_ms),
+            public_base_url: normalize_base_url(public_base_url),
+            internal_base_url,
+            request_timeout,
             internal_api_secret: Some(required_managed_env(secret_env_key)?),
             caller_service,
+            internal_http,
         })
     }
 
-    pub fn with_base_url(caller_service: impl Into<String>, base_url: impl Into<String>) -> Self {
-        Self {
-            base_url: normalize_base_url(base_url.into()),
-            request_timeout: Duration::from_secs(5),
-            internal_api_secret: None,
+    pub fn new(
+        public_base_url: impl Into<String>,
+        internal_base_url: impl Into<String>,
+        request_timeout: Duration,
+        internal_api_secret: Option<String>,
+        caller_service: impl Into<String>,
+        internal_http: reqwest::Client,
+    ) -> Result<Self, String> {
+        let internal_base_url = normalize_base_url(internal_base_url.into());
+        require_https_base_url("Plugin Management internal base URL", &internal_base_url)?;
+        Ok(Self {
+            public_base_url: normalize_base_url(public_base_url.into()),
+            internal_base_url,
+            request_timeout,
+            internal_api_secret,
             caller_service: caller_service.into(),
-        }
+            internal_http,
+        })
     }
 }
 
@@ -62,6 +90,30 @@ fn normalize_base_url(value: String) -> String {
     value.trim().trim_end_matches('/').to_string()
 }
 
+fn require_https_base_url(name: &str, value: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(value).map_err(|error| format!("{name} is invalid: {error}"))?;
+    if url.scheme() != "https" {
+        return Err(format!("{name} must use https"));
+    }
+    if url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(format!(
+            "{name} must be an absolute URL without credentials, query, or fragment"
+        ));
+    }
+    Ok(())
+}
+
+fn required_bootstrap_path(key: &str) -> Result<std::path::PathBuf, String> {
+    normalized_env(key)
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| format!("{key} is required as deployment Secret material"))
+}
+
 fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
     match caller_service {
         "chatos-backend" => Some("PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"),
@@ -78,7 +130,7 @@ fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::caller_secret_env_key;
+    use super::{caller_secret_env_key, require_https_base_url};
 
     #[test]
     fn maps_known_callers_to_dedicated_secret_variables() {
@@ -107,5 +159,19 @@ mod tests {
             Some("PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET")
         );
         assert_eq!(caller_secret_env_key("unknown"), None);
+    }
+
+    #[test]
+    fn internal_base_url_requires_https() {
+        assert!(require_https_base_url(
+            "PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL",
+            "https://plugin-management-backend:39262"
+        )
+        .is_ok());
+        assert!(require_https_base_url(
+            "PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL",
+            "http://plugin-management-backend:39262"
+        )
+        .is_err());
     }
 }

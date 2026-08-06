@@ -99,11 +99,6 @@ impl MemoryEngineClient {
                 .header("x-memory-caller", auth.caller.as_str())
                 .header("x-memory-internal-token", token));
         }
-        let req = if let Some(operator_token) = self.operator_token.as_deref() {
-            req.header("x-memory-operator-token", operator_token)
-        } else {
-            req
-        };
         let req = if let Some(access_token) = self.access_token.as_deref() {
             req.bearer_auth(access_token)
         } else {
@@ -268,28 +263,6 @@ mod tests {
         append_optional_bool_query(&mut query, "active", None);
 
         assert!(query.is_empty());
-    }
-
-    #[test]
-    fn with_operator_token_stores_trimmed_header_value() {
-        let client =
-            MemoryEngineClient::new_platform("http://localhost:3000", Duration::from_secs(5))
-                .expect("client")
-                .with_operator_token(" token-1 ");
-
-        let request = client
-            .apply_auth(client.http.get("http://localhost:3000/test"), "/test")
-            .expect("apply auth")
-            .build()
-            .expect("request");
-
-        assert_eq!(
-            request
-                .headers()
-                .get("x-memory-operator-token")
-                .and_then(|value| value.to_str().ok()),
-            Some("token-1")
-        );
     }
 
     #[test]

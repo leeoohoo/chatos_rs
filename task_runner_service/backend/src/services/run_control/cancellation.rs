@@ -25,6 +25,13 @@ impl RunService {
             }
         }
         if current_run.cancel_requested {
+            if let Err(err) = self.enqueue_run_cancel_event_if_needed(&current_run).await {
+                warn!(
+                    run_id = current_run.id.as_str(),
+                    error = err.as_str(),
+                    "failed to republish pending run cancellation event"
+                );
+            }
             if let Err(err) = self
                 .ask_user_prompt_service
                 .cancel_pending_prompts_for_run(run_id, "run cancellation requested")
@@ -61,6 +68,14 @@ impl RunService {
                 None,
             ))
             .await?;
+        if let Err(err) = self.enqueue_run_cancel_event_if_needed(&run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                worker_id = run.worker_id.as_deref().unwrap_or_default(),
+                error = err.as_str(),
+                "failed to publish run cancellation event; outbox reconciliation will retry"
+            );
+        }
         if matches!(run.status, TaskRunStatus::Queued) {
             run.status = TaskRunStatus::Cancelled;
             run.cancel_requested = true;

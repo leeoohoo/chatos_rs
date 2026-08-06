@@ -12,6 +12,16 @@ use super::workspace_mcp::selected_builtin_kinds;
 use super::RunService;
 
 impl RunService {
+    pub(super) fn request_task_terminal_cleanup(&self, task: &TaskRecord, run: &mut TaskRunRecord) {
+        if task_terminal_enabled(task)
+            && run.worker_id.is_some()
+            && !run.terminal_cleanup_completed
+            && !run.terminal_cleanup_event_enqueued
+        {
+            run.terminal_cleanup_event_pending = true;
+        }
+    }
+
     pub(super) async fn ensure_task_terminal_started(
         &self,
         task: &TaskRecord,
@@ -102,31 +112,92 @@ impl RunService {
         }
     }
 
-    pub(super) async fn cleanup_task_terminals(
+    pub(crate) async fn enqueue_terminal_cleanup_if_needed(
         &self,
-        task: &TaskRecord,
         run: &TaskRunRecord,
-        workspace_dir: &str,
-    ) {
-        if !task_terminal_enabled(task) {
-            return;
+    ) -> Result<bool, String> {
+        if !run.terminal_cleanup_event_pending || run.terminal_cleanup_completed {
+            return Ok(false);
         }
-        let context = self.task_terminal_context(task, workspace_dir);
+        let task = self
+            .store
+            .get_task(run.task_id.as_str())
+            .await?
+            .ok_or_else(|| format!("terminal cleanup task not found: {}", run.task_id))?;
+        if !task_terminal_enabled(&task) {
+            self.store
+                .mark_terminal_cleanup_completed(run.id.as_str())
+                .await?;
+            return Ok(false);
+        }
+        let workspace_dir = run
+            .input_snapshot
+            .get("effective_workspace_dir")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "Run {} is missing required effective_workspace_dir for terminal cleanup",
+                    run.id
+                )
+            })?;
+        crate::worker_control_queue::publish_terminal_cleanup_event(
+            &self.task_queue_topology,
+            run,
+            task.id.as_str(),
+            task.subject_id.as_str(),
+            workspace_dir,
+        )
+        .await?;
+        self.store
+            .acknowledge_terminal_cleanup_event(run.id.as_str())
+            .await?;
+        Ok(true)
+    }
+
+    pub(crate) async fn publish_pending_terminal_cleanup_events(
+        &self,
+        limit: usize,
+    ) -> Result<usize, String> {
+        let pending = self.store.list_pending_terminal_cleanups(limit).await?;
+        let mut published = 0usize;
+        for run in pending {
+            if self.enqueue_terminal_cleanup_if_needed(&run).await? {
+                published += 1;
+            }
+        }
+        Ok(published)
+    }
+
+    pub(crate) async fn process_terminal_cleanup_event(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        subject_id: &str,
+        workspace_dir: &str,
+    ) -> Result<(), String> {
+        let context = TerminalControllerContext {
+            root: workspace_dir.into(),
+            user_id: Some(subject_id.to_string()),
+            project_id: Some(task_id.to_string()),
+            idle_timeout_ms: 5_000,
+            max_wait_ms: 60_000,
+            max_output_chars: 20_000,
+        };
         match TaskRunnerTerminalControllerStore
             .kill_sessions_for_context(context)
             .await
         {
             Ok(payload) => {
                 info!(
-                    task_id = task.id.as_str(),
-                    run_id = run.id.as_str(),
-                    workspace_dir,
-                    "task runner cleaned up task terminals"
+                    task_id,
+                    run_id, workspace_dir, "task runner cleaned up task terminals"
                 );
                 if let Err(err) = self
                     .store
                     .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
+                        run_id.to_string(),
                         "terminal_cleanup",
                         Some("已关闭本次任务终端".to_string()),
                         Some(payload),
@@ -135,22 +206,21 @@ impl RunService {
                 {
                     warn!(
                         "failed to append terminal_cleanup event for run {}: {}",
-                        run.id, err
+                        run_id, err
                     );
                 }
+                self.store.mark_terminal_cleanup_completed(run_id).await?;
+                Ok(())
             }
             Err(err) => {
                 warn!(
-                    task_id = task.id.as_str(),
-                    run_id = run.id.as_str(),
-                    workspace_dir,
-                    "failed to clean up task terminals: {}",
-                    err
+                    task_id,
+                    run_id, workspace_dir, "failed to clean up task terminals: {}", err
                 );
                 if let Err(event_err) = self
                     .store
                     .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
+                        run_id.to_string(),
                         "terminal_cleanup_failed",
                         Some(format!("关闭任务终端失败: {err}")),
                         None,
@@ -159,11 +229,21 @@ impl RunService {
                 {
                     warn!(
                         "failed to append terminal_cleanup_failed event for run {}: {}",
-                        run.id, event_err
+                        run_id, event_err
                     );
                 }
+                Err(err)
             }
         }
+    }
+
+    pub(crate) async fn retry_terminal_cleanup(
+        &self,
+        run_id: &str,
+        error: &str,
+    ) -> Result<(), String> {
+        self.store.retry_terminal_cleanup(run_id, error).await?;
+        Ok(())
     }
 
     fn task_terminal_context(

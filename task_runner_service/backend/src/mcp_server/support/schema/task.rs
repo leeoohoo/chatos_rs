@@ -112,7 +112,7 @@ fn requires_execution_schema() -> Value {
     json!({
         "type": "boolean",
         "default": true,
-        "description": "Whether the task must execute commands, start services, or validate runtime behavior. Set false only for file-only inspection or editing; runtime environment preparation is enforced by the program."
+        "description": "Whether the task needs an isolated execution workspace. Set false only for read-only planning or project-management work that will not modify files or run commands."
     })
 }
 
@@ -165,8 +165,6 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "type": "string",
                             "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
                         },
-                        "is_planning_task": planning_task_schema(),
-                        "requires_execution": requires_execution_schema(),
                         "prerequisite_refs": {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
@@ -181,7 +179,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
-                    "required": ["client_ref", "project_task_id", "title", "objective", "is_planning_task"],
+                    "required": ["client_ref", "project_task_id", "title", "objective"],
                     "additionalProperties": false
                 }
             }

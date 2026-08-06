@@ -12,7 +12,7 @@ impl RunService {
         &self,
         task: &TaskRecord,
     ) -> Result<bool, String> {
-        if !task.mcp_config.enabled {
+        if !task.mcp_config.enabled || !task.mcp_config.requires_execution {
             return Ok(false);
         }
         let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
@@ -85,6 +85,21 @@ impl RunService {
         effective_workspace_dir: &str,
         authoritative_policy: bool,
     ) -> Result<Option<SandboxRuntimeContext>, String> {
+        if !task.mcp_config.requires_execution {
+            self.append_sandbox_event(
+                run,
+                "sandbox_skipped",
+                "纯规划任务跳过沙箱准备",
+                Some(json!({
+                    "reason": "planning_only",
+                    "requires_execution": false,
+                    "project_id": task.project_id.as_str(),
+                })),
+            )
+            .await;
+            return Ok(None);
+        }
+
         if !self
             .should_route_task_to_sandbox(task, authoritative_policy)
             .await?

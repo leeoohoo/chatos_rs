@@ -19,7 +19,8 @@ pub(super) async fn connector_get_json<T: DeserializeOwned>(
 ) -> Result<T, (StatusCode, Json<Value>)> {
     let token = current_access_token()?;
     let cfg = Config::get();
-    let request = reqwest::Client::new()
+    let request = cfg
+        .local_connector_http_client
         .get(connector_url(cfg, path))
         .bearer_auth(token)
         .query(query)
@@ -40,7 +41,8 @@ pub(super) async fn connector_put_json<T: DeserializeOwned, B: Serialize + ?Size
 ) -> Result<T, (StatusCode, Json<Value>)> {
     let token = current_access_token()?;
     let cfg = Config::get();
-    let request = reqwest::Client::new()
+    let request = cfg
+        .local_connector_http_client
         .put(connector_url(cfg, path))
         .bearer_auth(token)
         .json(body)
@@ -55,7 +57,8 @@ pub(super) async fn connector_post_json_with_headers<T: DeserializeOwned, B: Ser
 ) -> Result<T, (StatusCode, Json<Value>)> {
     let token = current_access_token()?;
     let cfg = Config::get();
-    let mut request = reqwest::Client::new()
+    let mut request = cfg
+        .local_connector_http_client
         .post(connector_url(cfg, path))
         .bearer_auth(token)
         .json(body)
@@ -69,7 +72,8 @@ pub(super) async fn connector_post_json_with_headers<T: DeserializeOwned, B: Ser
 pub(super) async fn connector_delete_json(path: &str) -> Result<Value, (StatusCode, Json<Value>)> {
     let token = current_access_token()?;
     let cfg = Config::get();
-    let request = reqwest::Client::new()
+    let request = cfg
+        .local_connector_http_client
         .delete(connector_url(cfg, path))
         .bearer_auth(token)
         .timeout(connector_timeout(cfg));
@@ -79,7 +83,7 @@ pub(super) async fn connector_delete_json(path: &str) -> Result<Value, (StatusCo
 async fn send_connector_json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, (StatusCode, Json<Value>)> {
-    let response = request
+    let response = crate::core::trace_context::inject_current_trace_context(request)
         .send()
         .await
         .map_err(|err| connector_unavailable(err.to_string()))?;

@@ -74,6 +74,7 @@ pub struct LocalConnectorSystemStatsResponse {
     pub ok: bool,
     pub service: String,
     pub now: String,
+    pub pressure_level: chatos_config_sdk::PlatformPressureLevel,
     pub relay: LocalConnectorRelayStats,
     pub store: LocalConnectorStoreStats,
 }
@@ -87,6 +88,10 @@ pub struct LocalConnectorRelayStats {
     pub max_pending_requests_per_device: usize,
     pub terminal_max_event_bytes: usize,
     pub terminal_event_channel_capacity: usize,
+    pub terminal_max_active_sessions: usize,
+    pub terminal_new_session_soft_limit: usize,
+    pub new_terminal_sessions_paused: bool,
+    pub terminal_max_subscribers_per_session: usize,
     pub relay_signing_enabled: bool,
 }
 

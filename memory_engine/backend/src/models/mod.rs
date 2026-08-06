@@ -58,8 +58,8 @@ pub use self::summaries::{
     RunThreadSummaryResponse, UpsertThreadSummaryRequest,
 };
 pub use self::system::{
-    MemoryEngineBacklogStats, MemoryEngineReconcileBacklogStats, MemoryEngineRoleStats,
-    MemoryEngineRollupBacklogStats, MemoryEngineSummaryBacklogStats,
+    MemoryEngineBacklogStats, MemoryEnginePressureStats, MemoryEngineReconcileBacklogStats,
+    MemoryEngineRoleStats, MemoryEngineRollupBacklogStats, MemoryEngineSummaryBacklogStats,
     MemoryEngineSystemStatsResponse, MemoryEngineWorkerConfigStats, MemoryEngineWorkerRuntimeStats,
 };
 pub use self::thread_snapshots::{

@@ -137,7 +137,6 @@ fn checkpoint_guidance_message(checkpoint: TaskExecutionReviewCheckpoint) -> Val
 impl RunService {
     pub(super) fn build_runtime_execution_state(
         &self,
-        task_id: &str,
         run: &TaskRunRecord,
         model_config: &ModelConfigRecord,
         run_spec: &TaskRunSpec,
@@ -150,7 +149,6 @@ impl RunService {
             self.config.default_workspace_dir.as_str(),
             effective_workspace_dir,
         );
-        let task_completed_abort = Arc::new(AtomicBool::new(false));
         let pending_stream_event =
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
         let abort_token = tokio_util::sync::CancellationToken::new();
@@ -162,13 +160,10 @@ impl RunService {
             Arc::clone(&progress),
         );
         let cancel_requested = Arc::new(AtomicBool::new(self.store.is_cancel_requested(&run.id)));
-        let (stop_cancel_poll, cancel_poll_handle) = self.start_runtime_abort_polling(
-            task_id,
-            run.id.as_str(),
-            Arc::clone(&cancel_requested),
-            Arc::clone(&task_completed_abort),
-            abort_token.clone(),
-        );
+        if cancel_requested.load(Ordering::Relaxed) {
+            abort_token.cancel();
+        }
+        self.register_runtime_abort_token(run.id.as_str(), abort_token.clone());
         let runtime_options = AiRuntimeOptions::new(Some(run.id.clone()), Some(run.id.clone()))
             .with_caller_model(Some(model_config.model.clone()))
             .with_record_options(run_spec.record_options.clone())
@@ -183,19 +178,12 @@ impl RunService {
             .with_abort_token(Some(abort_token))
             .with_abort_checker(Some(Arc::new({
                 let cancel_requested = Arc::clone(&cancel_requested);
-                let task_completed_abort = Arc::clone(&task_completed_abort);
-                move |_| {
-                    cancel_requested.load(Ordering::Relaxed)
-                        || task_completed_abort.load(Ordering::Relaxed)
-                }
+                move |_| cancel_requested.load(Ordering::Relaxed)
             })));
 
         RuntimeExecutionState {
             runtime_options,
             pending_stream_event,
-            task_completed_abort,
-            stop_cancel_poll,
-            cancel_poll_handle,
         }
     }
 
@@ -349,61 +337,6 @@ impl RunService {
             })),
             on_before_send_model_request: None,
         }
-    }
-
-    pub(super) fn start_runtime_abort_polling(
-        &self,
-        task_id: &str,
-        run_id: &str,
-        cancel_requested: Arc<AtomicBool>,
-        task_completed_abort: Arc<AtomicBool>,
-        abort_token: tokio_util::sync::CancellationToken,
-    ) -> (Arc<AtomicBool>, tokio::task::JoinHandle<()>) {
-        let stop_cancel_poll = Arc::new(AtomicBool::new(false));
-        let cancel_poll_handle = tokio::spawn({
-            let store = self.store.clone();
-            let task_id = task_id.to_string();
-            let run_id = run_id.to_string();
-            let cancel_requested = Arc::clone(&cancel_requested);
-            let task_completed_abort = Arc::clone(&task_completed_abort);
-            let stop_cancel_poll = Arc::clone(&stop_cancel_poll);
-            async move {
-                while !stop_cancel_poll.load(Ordering::Relaxed) {
-                    match store.get_task(&task_id).await {
-                        Ok(Some(task)) if task.status == TaskStatus::Succeeded => {
-                            task_completed_abort.store(true, Ordering::Relaxed);
-                            abort_token.cancel();
-                            break;
-                        }
-                        Ok(_) => {}
-                        Err(err) => {
-                            warn!(
-                                "failed to refresh task completion flag for task {}: {}",
-                                task_id, err
-                            );
-                        }
-                    }
-                    match store.fetch_cancel_requested(&run_id).await {
-                        Ok(is_requested) => {
-                            cancel_requested.store(is_requested, Ordering::Relaxed);
-                            if is_requested {
-                                abort_token.cancel();
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            warn!(
-                                "failed to refresh cancel_requested flag for run {}: {}",
-                                run_id, err
-                            );
-                        }
-                    }
-                    tokio::time::sleep(crate::services::RUN_CANCEL_POLL_INTERVAL).await;
-                }
-            }
-        });
-
-        (stop_cancel_poll, cancel_poll_handle)
     }
 }
 

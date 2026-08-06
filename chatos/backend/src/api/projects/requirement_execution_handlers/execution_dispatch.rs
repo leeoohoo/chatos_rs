@@ -142,7 +142,6 @@ pub(super) async fn confirm_requirement_execution_inner(
                 _ => None,
             });
         sync_execution_link_status(
-            context.cfg.project_service_base_url.as_str(),
             context.project_sync_secret.as_str(),
             link,
             run_status.as_str(),
@@ -170,7 +169,6 @@ pub(super) async fn confirm_requirement_execution_inner(
         .collect::<BTreeSet<_>>();
     for executing_requirement_id in executing_requirement_ids {
         sync_requirement_execution_state(
-            context.cfg.project_service_base_url.as_str(),
             context.project_sync_secret.as_str(),
             executing_requirement_id.as_str(),
             Some("in_progress"),

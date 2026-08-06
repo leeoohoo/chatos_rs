@@ -1,25 +1,20 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::{
-    CreateRuntimeSessionRequest, McpManagementClient, McpManagementClientConfig,
-    RuntimeSessionResponse,
-};
+use chatos_mcp_gateway::McpManagementGatewayBuilder;
+use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
 use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::SystemAgentKey;
 use tracing::{info, warn};
 
 use crate::models::ProjectRecord;
 
-const GATEWAY_SERVER_NAME: &str = "mcp_management";
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 
 pub(super) struct ProjectEnvironmentMcpGateway {
-    client: McpManagementClient,
-    session_id: String,
+    runtime_session: McpManagementRuntimeSessionHandle,
     server: McpHttpServer,
     provider_skills_prompt: Option<String>,
 }
@@ -34,15 +29,12 @@ impl ProjectEnvironmentMcpGateway {
     }
 
     pub(super) async fn close(self, project_id: &str, run_id: &str) {
-        if let Err(error) = self
-            .client
-            .close_runtime_session(self.session_id.as_str())
-            .await
-        {
+        let session_id = self.runtime_session.session_id().to_string();
+        if let Err(error) = self.runtime_session.close().await {
             warn!(
                 project_id,
                 run_id,
-                session_id = self.session_id.as_str(),
+                session_id,
                 error = %error,
                 "close Project Environment MCP Management runtime session failed"
             );
@@ -56,31 +48,26 @@ pub(super) async fn resolve_project_environment_mcp(
     run_id: &str,
     model_config_id: &str,
 ) -> Result<ProjectEnvironmentMcpGateway, String> {
-    let config = McpManagementClientConfig::from_env("project-service").await;
-    let client = McpManagementClient::new(config)
-        .map_err(|error| format!("initialize MCP Management client failed: {error}"))?;
     let request =
         runtime_session_request(owner_user_id, project.id.as_str(), run_id, model_config_id);
-    let session = client
-        .resolve_runtime_session(&request)
+    let resolved = McpManagementGatewayBuilder::new("project-service", request, tool_timeout())
+        .with_async_result_transport(chatos_mcp_runtime::McpAsyncResultTransport::RabbitMq)
+        .resolve()
         .await
-        .map_err(|error| format!("resolve MCP Management runtime session failed: {error}"))?;
+        .map_err(|error| format!("resolve Project Environment MCP gateway failed: {error}"))?;
     info!(
         project_id = project.id.as_str(),
         run_id,
-        session_id = session.session_id.as_str(),
-        route_revision = session.route_revision.as_str(),
-        configured_mcp_count = session.configured_mcp_count,
-        exposed_tool_count = session.exposed_tool_count,
+        session_id = resolved.session_id.as_str(),
+        route_revision = resolved.route_revision.as_str(),
+        configured_mcp_count = resolved.configured_mcp_count,
+        exposed_tool_count = resolved.exposed_tool_count,
         "Project Environment Agent resolved MCP Management runtime session"
     );
-    let provider_skills_prompt = session.provider_skills_prompt.clone();
-    let server = gateway_server(session.clone(), tool_timeout())?;
     Ok(ProjectEnvironmentMcpGateway {
-        client,
-        session_id: session.session_id,
-        server,
-        provider_skills_prompt,
+        runtime_session: resolved.runtime_session,
+        server: resolved.server,
+        provider_skills_prompt: resolved.provider_skills_prompt,
     })
 }
 
@@ -91,6 +78,7 @@ fn runtime_session_request(
     model_config_id: &str,
 ) -> CreateRuntimeSessionRequest {
     CreateRuntimeSessionRequest {
+        tenant_id: owner_user_id.trim().to_string(),
         owner_user_id: owner_user_id.trim().to_string(),
         agent_key: SystemAgentKey::ProjectManagementAgent.as_str().to_string(),
         project_id: project_id.trim().to_string(),
@@ -108,25 +96,6 @@ fn runtime_session_request(
         requested_sandbox_provider: None,
         sandbox_target: None,
     }
-}
-
-fn gateway_server(
-    session: RuntimeSessionResponse,
-    timeout: Duration,
-) -> Result<McpHttpServer, String> {
-    if session.runtime_token.trim().is_empty() {
-        return Err("MCP Management runtime session returned an empty runtime token".to_string());
-    }
-    Ok(
-        McpHttpServer::new(GATEWAY_SERVER_NAME, session.mcp_server_url)
-            .with_headers(HashMap::from([(
-                "authorization".to_string(),
-                format!("Bearer {}", session.runtime_token),
-            )]))
-            .with_timeout(timeout)
-            .with_preserved_tool_names()
-            .with_fail_on_unavailable(),
-    )
 }
 
 fn tool_timeout() -> Duration {
@@ -157,37 +126,5 @@ mod tests {
         assert_eq!(request.locale.as_deref(), Some("zh-CN"));
         assert!(request.sandbox_target.is_none());
         assert!(request.requested_sandbox_provider.is_none());
-    }
-
-    #[test]
-    fn gateway_server_uses_runtime_grant_and_preserves_aggregated_names() {
-        let server = gateway_server(
-            RuntimeSessionResponse {
-                session_id: "session-1".to_string(),
-                policy_revision: "policy-1".to_string(),
-                route_revision: "route-1".to_string(),
-                expires_at: "2099-01-01T00:00:00Z".to_string(),
-                mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
-                runtime_token: "runtime-token".to_string(),
-                configured_mcp_count: 3,
-                exposed_tool_count: 8,
-                effective_mcp_ids: Vec::new(),
-                provider_skills_prompt: None,
-                unavailable_required_mcps: Vec::new(),
-            },
-            Duration::from_secs(30),
-        )
-        .expect("gateway server");
-        assert!(server.preserve_tool_names);
-        assert!(server.fail_on_unavailable);
-        assert_eq!(server.timeout_duration(), Some(Duration::from_secs(30)));
-        assert_eq!(
-            server
-                .headers
-                .as_ref()
-                .and_then(|headers| headers.get("authorization"))
-                .map(String::as_str),
-            Some("Bearer runtime-token")
-        );
     }
 }

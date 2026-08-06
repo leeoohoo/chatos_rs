@@ -3,6 +3,13 @@
 
 use crate::config::Config;
 use once_cell::sync::OnceCell;
+use opentelemetry::global;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+use opentelemetry_sdk::Resource;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -14,6 +21,7 @@ struct LoggerGuards {
     _stdout: tracing_appender::non_blocking::WorkerGuard,
     _file: tracing_appender::non_blocking::WorkerGuard,
     _error: tracing_appender::non_blocking::WorkerGuard,
+    tracer_provider: SdkTracerProvider,
 }
 
 static LOG_GUARDS: OnceCell<LoggerGuards> = OnceCell::new();
@@ -29,6 +37,31 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
 
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.log_level.clone()));
+
+    let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(cfg.otlp_endpoint.clone())
+        .with_timeout(Duration::from_millis(cfg.otlp_export_timeout_ms as u64))
+        .build()
+        .map_err(|err| format!("build OTLP trace exporter failed: {err}"))?;
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_resource(
+            Resource::builder()
+                .with_service_name("chatos-backend")
+                .with_attributes([KeyValue::new(
+                    "deployment.environment.name",
+                    cfg.node_env.clone(),
+                )])
+                .build(),
+        )
+        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
+            cfg.otlp_trace_sample_ratio,
+        ))))
+        .with_batch_exporter(trace_exporter)
+        .build();
+    let tracer = tracer_provider.tracer("chatos-backend");
+    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    global::set_text_map_propagator(TraceContextPropagator::new());
 
     let file_appender = rolling::daily(log_dir.as_path(), "server.log");
     let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
@@ -64,12 +97,15 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
         .with(fmt_layer)
         .with(file_layer)
         .with(error_layer)
-        .init();
+        .with(telemetry_layer)
+        .try_init()
+        .map_err(|err| format!("initialize tracing subscriber failed: {err}"))?;
 
     let _ = LOG_GUARDS.set(LoggerGuards {
         _stdout: stdout_guard,
         _file: file_guard,
         _error: error_guard,
+        tracer_provider,
     });
 
     std::panic::set_hook(Box::new(|panic_info| {
@@ -89,6 +125,16 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
     }));
 
     Ok(())
+}
+
+pub fn shutdown_telemetry() -> Result<(), String> {
+    let guards = LOG_GUARDS
+        .get()
+        .ok_or_else(|| "logger is not initialized".to_string())?;
+    guards
+        .tracer_provider
+        .shutdown()
+        .map_err(|err| format!("shutdown OTLP tracer provider failed: {err}"))
 }
 
 fn resolve_log_dir() -> PathBuf {

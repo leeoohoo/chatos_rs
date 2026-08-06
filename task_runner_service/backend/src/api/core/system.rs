@@ -66,37 +66,12 @@ pub(in crate::api) async fn update_system_config_handler(
     Json(input): Json<UpdateRuntimeSettingsRequest>,
 ) -> Result<Json<SystemConfigResponse>, ApiError> {
     require_admin_user(&current_user)?;
-    let settings = state
+    state
         .task_service
         .update_runtime_settings(input)
         .await
         .map_err(ApiError::bad_request)?;
-    let execution_timeout_ms = settings
-        .execution_timeout_ms
-        .filter(|value| *value > 0)
-        .unwrap_or(state.config.execution_timeout.as_millis() as u64);
-    let execution_environment_mode = state
-        .task_service
-        .effective_execution_environment_mode()
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(system_config(
-        &state.config,
-        &state.task_queue_topology,
-        execution_timeout_ms,
-        chatos_agent::TaskRunnerRuntimeSettings {
-            max_iterations: settings.task_execution_max_iterations,
-            ..chatos_agent::TaskRunnerRuntimeSettings::defaults()
-        },
-        chatos_ai_runtime::ToolResultModelBudgetLimits::new(
-            settings.tool_result_model_max_chars,
-            settings.tool_results_model_total_max_chars,
-        ),
-        execution_environment_mode,
-        settings.sandbox_enabled,
-        settings.sandbox_manager_base_url,
-        settings.sandbox_lease_ttl_seconds,
-    )))
+    system_config_handler(State(state)).await
 }
 
 #[derive(Debug, Deserialize)]

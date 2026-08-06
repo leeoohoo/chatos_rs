@@ -16,7 +16,7 @@ use serde_json::json;
 use std::time::Instant;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, debug_span};
+use tracing::{debug, info_span};
 
 use crate::config::Config;
 use crate::core::auth::{
@@ -43,12 +43,14 @@ mod conversation_semantics;
 mod cors;
 pub mod fs;
 pub mod git;
+mod internal_audit;
 pub mod local_connectors;
 pub mod mcp_management;
 pub mod memory_compat;
 pub mod memory_mappings;
 pub mod message_task_runner;
 pub mod messages;
+pub(crate) mod metrics;
 pub mod notepad;
 pub mod projects;
 pub mod realtime;
@@ -58,9 +60,10 @@ pub mod system_contexts;
 pub mod task_manager;
 pub mod task_runner_plugins;
 pub mod terminals;
+mod trace_context;
 pub mod user_settings;
 
-pub fn router() -> Result<Router, String> {
+pub fn public_router() -> Result<Router, String> {
     let cfg = Config::try_get()?;
     let request_body_limit = default_request_body_limit_bytes();
 
@@ -72,8 +75,13 @@ pub fn router() -> Result<Router, String> {
             let user_id = header_value(req, &HeaderName::from_static("x-user-id"));
             let project_id = header_value(req, &HeaderName::from_static("x-project-id"));
             let conversation_id = header_value(req, &HeaderName::from_static("x-conversation-id"));
-            debug_span!(
+            info_span!(
                 "http.request",
+                otel.kind = "server",
+                otel.name = %format!("{} {}", req.method(), matched_route(req)),
+                http.request.method = %req.method(),
+                http.route = %matched_route(req),
+                server.address = %header_value(req, &HOST),
                 method = %req.method(),
                 uri = %sanitize_request_uri(req.uri()),
                 version = ?req.version(),
@@ -107,6 +115,7 @@ pub fn router() -> Result<Router, String> {
     Ok(Router::new()
         .merge(modules::app_api::public_routes())
         .merge(protected_api)
+        .route("/metrics", axum::routing::get(metrics::prometheus_metrics))
         .route("/health", axum::routing::get(health))
         .route("/ready", axum::routing::get(ready))
         .route("/", axum::routing::get(root))
@@ -117,12 +126,41 @@ pub fn router() -> Result<Router, String> {
             enforce_plugin_ui_resource_origin_namespace,
         ))
         .layer(middleware::from_fn(log_server_error_requests))
+        .layer(middleware::from_fn(metrics::observe_public_http))
+        .layer(middleware::from_fn(trace_context::accept_remote_parent))
         .layer(trace)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
         )))
+}
+
+pub fn internal_router() -> Router {
+    let trace = TraceLayer::new_for_http().make_span_with(|req: &Request<Body>| {
+        info_span!(
+            "http.request",
+            otel.kind = "server",
+            otel.name = %format!("{} {}", req.method(), matched_route(req)),
+            http.request.method = %req.method(),
+            http.route = %matched_route(req),
+            server.address = %header_value(req, &HOST),
+            surface = "internal"
+        )
+    });
+    Router::new()
+        .merge(modules::app_api::internal_routes())
+        .fallback(fallback_404)
+        .layer(DefaultBodyLimit::max(default_request_body_limit_bytes()))
+        .layer(middleware::from_fn(log_server_error_requests))
+        .layer(middleware::from_fn(metrics::observe_internal_http))
+        .layer(middleware::from_fn(trace_context::accept_remote_parent))
+        .layer(trace)
+        .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
+        .layer(SetRequestIdLayer::new(
+            REQUEST_ID_HEADER.clone(),
+            MakeRequestUuid,
+        ))
 }
 
 async fn log_server_error_requests(request: Request<Body>, next: middleware::Next) -> Response {
@@ -313,6 +351,13 @@ fn header_value(req: &Request<Body>, name: &HeaderName) -> String {
         .to_string()
 }
 
+fn matched_route(req: &Request<Body>) -> &str {
+    req.extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(axum::extract::MatchedPath::as_str)
+        .unwrap_or("/unmatched")
+}
+
 fn sanitize_request_uri(uri: &axum::http::Uri) -> String {
     let path = sanitize_sensitive_path(uri.path());
     let Some(query) = uri.query() else {
@@ -426,13 +471,15 @@ fn is_websocket_upgrade(req: &Request<Body>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        plugin_ui_resource_namespace_allowed, remove_plugin_ui_resource_cors_headers,
-        sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth,
+        internal_router, plugin_ui_resource_namespace_allowed,
+        remove_plugin_ui_resource_cors_headers, sanitize_request_uri, websocket_auth_from_query,
+        WebSocketQueryAuth,
     };
     use crate::core::auth::{AuthHeaderError, AuthUser};
     use crate::core::websocket_ticket::issue_websocket_ticket;
     use axum::body::Body;
     use axum::http::{header::UPGRADE, HeaderMap, HeaderValue, Method, Request, Uri};
+    use tower::ServiceExt;
 
     fn websocket_request(uri: &str) -> Request<Body> {
         Request::builder()
@@ -546,5 +593,18 @@ mod tests {
         let request = websocket_request("/api/realtime/ws?access_token=legacy_token");
         let error = websocket_auth_from_query(&request).expect_err("legacy query token rejected");
         assert_eq!(error, AuthHeaderError::MissingAuthorization);
+    }
+
+    #[tokio::test]
+    async fn internal_mtls_router_does_not_expose_metrics_endpoint() {
+        let response = internal_router()
+            .oneshot(
+                Request::get("/metrics")
+                    .body(Body::empty())
+                    .expect("build metrics request"),
+            )
+            .await
+            .expect("route metrics request");
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 }

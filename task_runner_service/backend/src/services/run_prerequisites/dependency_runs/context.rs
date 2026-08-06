@@ -102,7 +102,7 @@ impl RunService {
         };
 
         let completed = self
-            .wait_for_run_terminal(run.id.as_str(), parent_run.id.as_str())
+            .wait_for_run_terminal(run.id.as_str(), parent_run)
             .await?;
         self.store
             .append_run_event(TaskRunEventRecord::new(

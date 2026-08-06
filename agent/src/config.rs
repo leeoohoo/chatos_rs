@@ -13,9 +13,14 @@ pub const TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY: &str =
     "task_runner.runtime.review_checkpoint.missing_read_failures";
 pub const TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY: &str =
     "task_runner.runtime.review_checkpoint.repeat_interval_iterations";
+pub const TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY: &str = "task_runner.ai.prompt_cache.enabled";
+pub const TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY: &str =
+    "task_runner.ai.prompt_cache.retention_enabled";
 pub const DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS: usize = 8;
 pub const DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES: usize = 2;
 pub const DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL: usize = 8;
+pub const DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED: bool = true;
+pub const DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED: bool = true;
 
 #[cfg_attr(feature = "managed-config", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,17 +29,8 @@ pub struct TaskRunnerRuntimeSettings {
     pub review_read_only_iterations: usize,
     pub review_missing_read_failures: usize,
     pub review_repeat_interval_iterations: usize,
-}
-
-impl TaskRunnerRuntimeSettings {
-    pub fn defaults() -> Self {
-        Self {
-            max_iterations: DEFAULT_AGENT_MAX_ITERATIONS,
-            review_read_only_iterations: DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS,
-            review_missing_read_failures: DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
-            review_repeat_interval_iterations: DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
-        }
-    }
+    pub prompt_cache_enabled: bool,
+    pub prompt_cache_retention_enabled: bool,
 }
 
 #[cfg(feature = "managed-config")]
@@ -43,17 +39,6 @@ pub struct RemoteControlTrustConfigBundle {
     pub require_signed_messages: bool,
     pub signature_max_skew_seconds: u64,
     pub trusted_relay_public_keys: std::collections::BTreeMap<String, String>,
-}
-
-#[cfg(feature = "managed-config")]
-impl RemoteControlTrustConfigBundle {
-    pub fn defaults() -> Self {
-        Self {
-            require_signed_messages: true,
-            signature_max_skew_seconds: 300,
-            trusted_relay_public_keys: std::collections::BTreeMap::new(),
-        }
-    }
 }
 
 #[cfg(feature = "managed-config")]
@@ -70,42 +55,62 @@ pub struct ManagedRuntimeConfigBundle {
 }
 
 #[cfg(feature = "managed-config")]
-impl ManagedRuntimeConfigBundle {
-    pub fn from_config_snapshot(snapshot: chatos_config_sdk::ConfigSnapshot) -> Self {
-        let settings =
-            resolve_task_runner_runtime_settings(Some(&snapshot), DEFAULT_AGENT_MAX_ITERATIONS);
-        Self {
-            environment: snapshot.environment,
-            revision: snapshot.revision,
-            checksum: snapshot.checksum,
-            generated_at: snapshot.generated_at,
-            stale: snapshot.stale,
-            source: snapshot.source,
-            task_runner_runtime_settings: settings,
-            remote_control_trust: RemoteControlTrustConfigBundle::defaults(),
-        }
-    }
+pub fn require_task_runner_runtime_settings(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+) -> Result<TaskRunnerRuntimeSettings, String> {
+    Ok(TaskRunnerRuntimeSettings {
+        max_iterations: require_snapshot_usize(snapshot, TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, 2)?,
+        review_read_only_iterations: require_snapshot_usize(
+            snapshot,
+            TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+            1,
+        )?,
+        review_missing_read_failures: require_snapshot_usize(
+            snapshot,
+            TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+            1,
+        )?,
+        review_repeat_interval_iterations: require_snapshot_usize(
+            snapshot,
+            TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+            1,
+        )?,
+        prompt_cache_enabled: require_snapshot_bool(
+            snapshot,
+            TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+        )?,
+        prompt_cache_retention_enabled: require_snapshot_bool(
+            snapshot,
+            TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+        )?,
+    })
+}
 
-    pub fn defaults() -> Self {
-        Self {
-            environment: "local".to_string(),
-            revision: 0,
-            checksum: "defaults".to_string(),
-            generated_at: String::new(),
-            stale: true,
-            source: Some("defaults".to_string()),
-            task_runner_runtime_settings: TaskRunnerRuntimeSettings::defaults(),
-            remote_control_trust: RemoteControlTrustConfigBundle::defaults(),
-        }
+#[cfg(feature = "managed-config")]
+fn require_snapshot_usize(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+    minimum: usize,
+) -> Result<usize, String> {
+    let value = snapshot
+        .usize(key)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
+    if value < minimum {
+        return Err(format!(
+            "managed configuration key {key} must be at least {minimum}, got {value}"
+        ));
     }
+    Ok(value)
+}
 
-    pub fn with_remote_control_trust(
-        mut self,
-        remote_control_trust: RemoteControlTrustConfigBundle,
-    ) -> Self {
-        self.remote_control_trust = remote_control_trust;
-        self
-    }
+#[cfg(feature = "managed-config")]
+fn require_snapshot_bool(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+) -> Result<bool, String> {
+    snapshot
+        .bool(key)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))
 }
 
 #[cfg(feature = "managed-config")]
@@ -117,37 +122,6 @@ pub fn resolve_agent_max_iterations(
         .and_then(|snapshot| snapshot.usize(AGENT_MAX_ITERATIONS_CONFIG_KEY))
         .unwrap_or(fallback)
         .max(1)
-}
-
-#[cfg(feature = "managed-config")]
-pub fn resolve_task_runner_runtime_settings(
-    snapshot: Option<&chatos_config_sdk::ConfigSnapshot>,
-    fallback_max_iterations: usize,
-) -> TaskRunnerRuntimeSettings {
-    TaskRunnerRuntimeSettings {
-        max_iterations: snapshot
-            .and_then(|snapshot| {
-                snapshot
-                    .usize(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
-                    .or_else(|| snapshot.usize(AGENT_MAX_ITERATIONS_CONFIG_KEY))
-            })
-            .unwrap_or(fallback_max_iterations)
-            .max(2),
-        review_read_only_iterations: snapshot
-            .and_then(|snapshot| snapshot.usize(TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY))
-            .unwrap_or(DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS)
-            .max(1),
-        review_missing_read_failures: snapshot
-            .and_then(|snapshot| {
-                snapshot.usize(TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY)
-            })
-            .unwrap_or(DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES)
-            .max(1),
-        review_repeat_interval_iterations: snapshot
-            .and_then(|snapshot| snapshot.usize(TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY))
-            .unwrap_or(DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL)
-            .max(1),
-    }
 }
 
 #[cfg(feature = "managed-config")]
@@ -222,14 +196,17 @@ mod tests {
     }
 
     #[test]
-    fn task_runner_runtime_settings_use_specific_then_shared_values() {
+    fn strict_task_runner_runtime_settings_use_managed_values() {
         let snapshot = ConfigSnapshot {
             environment: "test".to_string(),
             service_name: "task-runner".to_string(),
             revision: 7,
             checksum: "checksum-7".to_string(),
             values: BTreeMap::from([
-                (AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(), json!(650)),
+                (
+                    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
+                    json!(650),
+                ),
                 (
                     TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY.to_string(),
                     json!(12),
@@ -238,6 +215,18 @@ mod tests {
                     TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY.to_string(),
                     json!(3),
                 ),
+                (
+                    TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY.to_string(),
+                    json!(9),
+                ),
+                (
+                    TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string(),
+                    json!(false),
+                ),
+                (
+                    TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string(),
+                    json!(false),
+                ),
             ]),
             env: BTreeMap::new(),
             generated_at: "now".to_string(),
@@ -245,14 +234,51 @@ mod tests {
             source: None,
         };
 
-        let settings = resolve_task_runner_runtime_settings(Some(&snapshot), 100);
+        let settings = require_task_runner_runtime_settings(&snapshot).expect("strict settings");
 
         assert_eq!(settings.max_iterations, 650);
         assert_eq!(settings.review_read_only_iterations, 12);
         assert_eq!(settings.review_missing_read_failures, 3);
-        assert_eq!(
-            settings.review_repeat_interval_iterations,
-            DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL
-        );
+        assert!(!settings.prompt_cache_enabled);
+        assert!(!settings.prompt_cache_retention_enabled);
+        assert_eq!(settings.review_repeat_interval_iterations, 9);
+    }
+
+    #[test]
+    fn strict_task_runner_runtime_settings_reject_missing_managed_values() {
+        let snapshot = ConfigSnapshot {
+            environment: "test".to_string(),
+            service_name: "task-runner".to_string(),
+            revision: 1,
+            checksum: "checksum".to_string(),
+            values: BTreeMap::new(),
+            env: BTreeMap::new(),
+            generated_at: "now".to_string(),
+            stale: false,
+            source: None,
+        };
+
+        let error = require_task_runner_runtime_settings(&snapshot).expect_err("missing config");
+
+        assert!(error.contains(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY));
+    }
+
+    #[test]
+    fn strict_task_runner_runtime_settings_reject_out_of_range_values() {
+        let snapshot = ConfigSnapshot {
+            environment: "test".to_string(),
+            service_name: "task-runner".to_string(),
+            revision: 1,
+            checksum: "checksum".to_string(),
+            values: BTreeMap::from([(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(), json!(1))]),
+            env: BTreeMap::new(),
+            generated_at: "now".to_string(),
+            stale: false,
+            source: None,
+        };
+
+        let error = require_task_runner_runtime_settings(&snapshot).expect_err("invalid config");
+
+        assert!(error.contains("must be at least 2"));
     }
 }
