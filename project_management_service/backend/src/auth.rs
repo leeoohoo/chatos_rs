@@ -15,6 +15,7 @@ use crate::http_body::{
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
 use crate::models::{AgentAccountListItem, AuthUser, LoginRequest, LoginResponse, UserRole};
+use crate::trace_context::InternalTraceContextExt;
 
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
@@ -221,6 +222,7 @@ where
         request = request.json(body);
     }
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("user_service request failed: {err}"))?;

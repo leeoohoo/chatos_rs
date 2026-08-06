@@ -17,6 +17,7 @@ use crate::models::{
     ProjectRuntimeEnvironmentRecord, ProjectRuntimeEnvironmentStatus, RuntimeEnvironmentProvider,
 };
 use crate::state::AppState;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::routing::{find_enabled_local_sandbox_pairing, parse_local_connector_project_root};
 
@@ -218,6 +219,7 @@ async fn fetch_cloud_image_jobs(
                 chatos_mcp::sandbox_images::SANDBOX_IMAGE_PROJECT_ID_HEADER,
                 project_id,
             )
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("query cloud sandbox image jobs failed: {err}"))?,
@@ -273,6 +275,7 @@ async fn fetch_local_image_jobs(
             ))
             .timeout(Duration::from_secs(20))
             .bearer_auth(token)
+            .with_internal_trace_context()
             .send()
             .await
             .map_err(|err| format!("query local sandbox image jobs failed: {err}"))?,

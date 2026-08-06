@@ -10,6 +10,7 @@ use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
+use crate::trace_context::InternalTraceContextExt;
 
 pub(crate) const HARNESS_REPO_WRITE_SCOPE: &str = "harness.repo.write";
 pub(crate) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
@@ -80,6 +81,7 @@ pub async fn get_environment_initialization_model_settings(
         secret,
         MODEL_SETTINGS_READ_SCOPE,
     )?
+    .with_internal_trace_context()
     .send()
     .await
     .map_err(|err| format!("user_service model settings request failed: {err}"))?;
@@ -245,6 +247,7 @@ async fn get_cloud_model_runtime(
         secret,
         MODEL_RUNTIME_READ_SCOPE,
     )?
+    .with_internal_trace_context()
     .send()
     .await
     .map_err(|err| format!("user_service model runtime request failed: {err}"))?;

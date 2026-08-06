@@ -17,6 +17,7 @@ use crate::models::{
     ProjectImportStatus, ProjectRecord, ProjectRuntimeEnvironmentStatus, ProjectSourceType,
     RuntimeEnvironmentProvider,
 };
+use crate::trace_context::InternalTraceContextExt;
 
 #[derive(Debug)]
 pub(super) enum RuntimeEnvironmentDecision {
@@ -201,6 +202,7 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
         ]);
     }
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("query local connector sandbox pairings failed: {err}"))?;

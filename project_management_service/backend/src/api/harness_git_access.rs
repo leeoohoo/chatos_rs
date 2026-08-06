@@ -16,6 +16,7 @@ use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW
 use crate::models::ProjectRecord;
 use crate::services::cloud_import::git::{authenticated_git_url, run_git_output};
 use crate::state::AppState;
+use crate::trace_context::InternalTraceContextExt;
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
 
 const CHATOS_OWNER_USER_ID_HEADER: &str = "x-chatos-owner-user-id";
@@ -284,6 +285,7 @@ async fn fetch_harness_api_access(
         crate::user_model_runtime_client::HARNESS_ACCESS_READ_SCOPE,
     )
     .map_err(ApiError::bad_request)?
+    .with_internal_trace_context()
     .send()
     .await
     .map_err(|err| {

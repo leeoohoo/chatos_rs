@@ -17,6 +17,7 @@ use git::{authenticated_git_url, run_git, run_git_output};
 use crate::config::AppConfig;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::ProjectRecord;
+use crate::trace_context::InternalTraceContextExt;
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,6 +73,7 @@ pub async fn create_harness_repo_for_project(
     )?
     .bearer_auth(access_token.trim())
     .json(&body)
+    .with_internal_trace_context()
     .send()
     .await
     .map_err(|err| format!("user_service harness repo request failed: {err}"))?;

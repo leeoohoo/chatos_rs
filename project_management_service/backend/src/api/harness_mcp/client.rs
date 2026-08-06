@@ -12,6 +12,7 @@ use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
+use crate::trace_context::InternalTraceContextExt;
 
 use super::HarnessMcpContext;
 
@@ -329,6 +330,7 @@ where
         request = request.json(body);
     }
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| HarnessRequestError::from_message(err.to_string()))?;

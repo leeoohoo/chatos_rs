@@ -6,7 +6,8 @@ use axum::http::{HeaderMap, Request};
 use axum::middleware;
 use axum::response::Response;
 use opentelemetry::global;
-use opentelemetry::propagation::Extractor;
+use opentelemetry::propagation::{Extractor, Injector};
+use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderName, HeaderValue};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 struct HeaderExtractor<'a>(&'a HeaderMap);
@@ -18,6 +19,33 @@ impl Extractor for HeaderExtractor<'_> {
 
     fn keys(&self) -> Vec<&str> {
         self.0.keys().map(|name| name.as_str()).collect()
+    }
+}
+
+struct HeaderInjector<'a>(&'a mut ReqwestHeaderMap);
+
+impl Injector for HeaderInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        let name = HeaderName::from_bytes(key.as_bytes())
+            .expect("OpenTelemetry propagator produced an invalid header name");
+        let value = HeaderValue::from_str(value.as_str())
+            .expect("OpenTelemetry propagator produced an invalid header value");
+        self.0.insert(name, value);
+    }
+}
+
+pub(crate) trait InternalTraceContextExt {
+    fn with_internal_trace_context(self) -> Self;
+}
+
+impl InternalTraceContextExt for reqwest::RequestBuilder {
+    fn with_internal_trace_context(self) -> Self {
+        let context = tracing::Span::current().context();
+        let mut headers = ReqwestHeaderMap::new();
+        global::get_text_map_propagator(|propagator| {
+            propagator.inject_context(&context, &mut HeaderInjector(&mut headers));
+        });
+        self.headers(headers)
     }
 }
 

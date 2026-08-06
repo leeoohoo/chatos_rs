@@ -18,6 +18,7 @@ use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW
 use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse};
 use crate::models::{ProjectImportStatus, ProjectRecord, ProjectStatus};
 use crate::state::AppState;
+use crate::trace_context::InternalTraceContextExt;
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
@@ -332,6 +333,7 @@ async fn fetch_harness_api_access(
         secret,
         crate::user_model_runtime_client::HARNESS_ACCESS_READ_SCOPE,
     )?
+    .with_internal_trace_context()
     .send()
     .await
     .map_err(|err| format!("project source access request failed: {err}"))?;

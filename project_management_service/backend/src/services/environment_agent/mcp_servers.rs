@@ -17,6 +17,7 @@ use chatos_service_runtime::http_body::{
 use crate::config::AppConfig;
 use crate::models::{ProjectRecord, RuntimeEnvironmentProvider};
 use crate::state::AppState;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::routing::{
     find_enabled_local_sandbox_pairing, parse_local_connector_project_root, provider_label,
@@ -151,11 +152,12 @@ pub(super) async fn prepare_sandbox_dependency_images(
         .header(SANDBOX_IMAGE_PROJECT_ID_HEADER, project_id)
         .header(SANDBOX_IMAGE_RUN_ID_HEADER, run_id)
         .json(&json!({
-            "image_refs": image_refs,
-            "project_id": project_id,
-            "run_id": run_id,
+                "image_refs": image_refs,
+                "project_id": project_id,
+                "run_id": run_id,
         }));
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("准备依赖镜像失败: {err}"))?;
@@ -208,6 +210,7 @@ pub(super) async fn start_local_project_compose_environment(
             "application_dockerfiles": application_dockerfiles,
             "env_file": env_file,
         }))
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("启动本地 Docker Compose 环境失败: {err}"))?;
@@ -310,6 +313,7 @@ async fn call_local_project_compose_action(
             "project_name": project_name,
             "project_relative_path": project_ref.relative_path,
         }))
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| format!("{operation_label}本地 Docker Compose 环境失败: {err}"))?;
