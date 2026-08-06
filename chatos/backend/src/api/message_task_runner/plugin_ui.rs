@@ -227,7 +227,7 @@ async fn request_local_connector_asset(
     if let Some(workspace_id) = ready.workspace_id.as_deref() {
         request = request.query(&[("workspace_id", workspace_id)]);
     }
-    let response = request
+    let response = crate::core::trace_context::inject_current_trace_context(request)
         .send()
         .await
         .map_err(|_| bad_gateway("Plugin UI asset relay 不可用"))?;
@@ -356,7 +356,7 @@ where
         config.local_connector_service_request_timeout_ms,
     );
     let prepared = prepared?;
-    let response = config
+    let request = config
         .local_connector_http_client
         .post(prepared.url)
         .query(&[("workspace_id", prepared.workspace_id.as_str())])
@@ -364,7 +364,8 @@ where
         .header("x-local-connector-internal-token", prepared.token)
         .header("x-local-connector-owner-user-id", prepared.owner_user_id)
         .timeout(prepared.timeout)
-        .json(body)
+        .json(body);
+    let response = crate::core::trace_context::inject_current_trace_context(request)
         .send()
         .await
         .map_err(|_| bad_gateway("Plugin Artifact relay 不可用"))?;

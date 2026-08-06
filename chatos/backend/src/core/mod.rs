@@ -30,6 +30,7 @@ pub mod task_runner_callback_display;
 pub mod terminal_access;
 pub mod time;
 pub mod tool_call;
+pub mod trace_context;
 pub mod turn_runtime_snapshot;
 pub mod update_fields;
 pub mod user_scope;

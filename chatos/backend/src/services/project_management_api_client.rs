@@ -541,9 +541,10 @@ pub async fn delete_work_item_task_runner_link(
         urlencoding::encode(work_item_id.trim()),
         urlencoding::encode(link_id.trim()),
     );
-    let response = reqwest::Client::new()
+    let request = reqwest::Client::new()
         .delete(endpoint)
-        .bearer_auth(access_token.trim())
+        .bearer_auth(access_token.trim());
+    let response = crate::core::trace_context::inject_current_trace_context(request)
         .send()
         .await
         .map_err(|error| error.to_string())?;

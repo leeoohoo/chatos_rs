@@ -83,7 +83,7 @@ pub(super) async fn connector_delete_json(path: &str) -> Result<Value, (StatusCo
 async fn send_connector_json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, (StatusCode, Json<Value>)> {
-    let response = request
+    let response = crate::core::trace_context::inject_current_trace_context(request)
         .send()
         .await
         .map_err(|err| connector_unavailable(err.to_string()))?;

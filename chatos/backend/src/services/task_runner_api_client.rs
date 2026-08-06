@@ -243,7 +243,10 @@ async fn send_task_runner_response_with_limit<T: for<'de> Deserialize<'de>>(
     response_limit_bytes: usize,
     error_prefix: &str,
 ) -> Result<T, String> {
-    let response = request.send().await.map_err(|err| err.to_string())?;
+    let response = crate::core::trace_context::inject_current_trace_context(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
         let body = read_task_runner_body_limited(response, TASK_RUNNER_ERROR_BODY_PREVIEW_BYTES)
