@@ -26,6 +26,9 @@ hex = "0.4"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 lapin = { version = "2.5", features = ["rustls", "rustls-native-certs"] }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["rt-tokio", "trace"] }
 rand = "0.10"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -37,6 +40,7 @@ sha2 = "0.11"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.7", features = ["trace"] }
 tracing = "0.1"
+tracing-opentelemetry = { version = "0.33", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }

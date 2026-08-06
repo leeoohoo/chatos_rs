@@ -5,17 +5,17 @@ use mcp_management_service_backend::{
     build_internal_router, build_public_router, load_internal_mtls_config,
     load_mcp_management_dotenv, AppConfig, AppState,
 };
-use tracing_subscriber::EnvFilter;
+use opentelemetry::global;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+use opentelemetry_sdk::Resource;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_mcp_management_dotenv();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mcp_management_service_backend=info,tower_http=info".into()),
-        )
-        .init();
 
     chatos_service_runtime::apply_config_center_env("mcp-management-service")
         .await
@@ -32,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &pressure_snapshot,
         )?;
     let config = AppConfig::from_env()?;
+    let _telemetry = init_tracing(&config)?;
     let bind_addr = config.bind_addr();
     let internal_mtls_bind_addr = config.internal_mtls_bind_addr();
     let internal_mtls_config = load_internal_mtls_config(&config)?;
@@ -141,4 +142,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.abort();
     }
     Ok(())
+}
+
+struct TelemetryGuard {
+    tracer_provider: SdkTracerProvider,
+}
+
+impl Drop for TelemetryGuard {
+    fn drop(&mut self) {
+        let _ = self.tracer_provider.shutdown();
+    }
+}
+
+fn init_tracing(config: &AppConfig) -> Result<TelemetryGuard, String> {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("mcp_management_service_backend=info,tower_http=info"));
+    let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(config.otlp_endpoint.clone())
+        .with_timeout(config.otlp_export_timeout)
+        .build()
+        .map_err(|err| format!("build MCP Management OTLP trace exporter failed: {err}"))?;
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_resource(
+            Resource::builder()
+                .with_service_name("mcp-management-service")
+                .build(),
+        )
+        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
+            config.otlp_trace_sample_ratio,
+        ))))
+        .with_batch_exporter(trace_exporter)
+        .build();
+    let tracer = tracer_provider.tracer("mcp-management-service");
+    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(telemetry_layer)
+        .try_init()
+        .map_err(|err| format!("initialize MCP Management tracing subscriber failed: {err}"))?;
+
+    Ok(TelemetryGuard { tracer_provider })
 }

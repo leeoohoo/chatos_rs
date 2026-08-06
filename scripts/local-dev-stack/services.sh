@@ -258,6 +258,7 @@ desired.update({
     "task_runner.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "project_service.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "user_service.observability.otlp_endpoint": "http://127.0.0.1:4317",
+    "mcp_management.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "mcp_management.async_tool.dispatch_mode": "rabbitmq",
     "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
     "mcp_management.security.allowed_internal_callers": "chatos,task-runner,project-service,configuration-center",

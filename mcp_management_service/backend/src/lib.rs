@@ -15,6 +15,7 @@ pub mod result_events;
 pub mod routing;
 pub mod runtime;
 pub mod state;
+mod trace_context;
 
 pub use api::{build_internal_router, build_public_router};
 pub use config::{load_mcp_management_dotenv, AppConfig};

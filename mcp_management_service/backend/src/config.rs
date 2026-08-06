@@ -299,6 +299,9 @@ pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
     pub internal_mtls_port: u16,
+    pub otlp_endpoint: String,
+    pub otlp_trace_sample_ratio: f64,
+    pub otlp_export_timeout: Duration,
     pub mtls_server_cert_path: PathBuf,
     pub mtls_server_key_path: PathBuf,
     pub mtls_client_ca_cert_path: PathBuf,
@@ -353,6 +356,23 @@ impl AppConfig {
             return Err(
                 "MCP_MANAGEMENT_INTERNAL_MTLS_PORT must differ from MCP_MANAGEMENT_PORT"
                     .to_string(),
+            );
+        }
+        let otlp_endpoint = required_text("MCP_MANAGEMENT_OTEL_EXPORTER_OTLP_ENDPOINT")?;
+        require_http_endpoint(
+            "MCP_MANAGEMENT_OTEL_EXPORTER_OTLP_ENDPOINT",
+            otlp_endpoint.as_str(),
+        )?;
+        let otlp_trace_sample_ratio = required_f64("MCP_MANAGEMENT_OTEL_TRACE_SAMPLE_RATIO")?;
+        if !(0.0..=1.0).contains(&otlp_trace_sample_ratio) {
+            return Err(
+                "MCP_MANAGEMENT_OTEL_TRACE_SAMPLE_RATIO must be between 0 and 1".to_string(),
+            );
+        }
+        let otlp_export_timeout_ms = required_u64("MCP_MANAGEMENT_OTEL_EXPORT_TIMEOUT_MS")?;
+        if otlp_export_timeout_ms == 0 {
+            return Err(
+                "MCP_MANAGEMENT_OTEL_EXPORT_TIMEOUT_MS must be greater than zero".to_string(),
             );
         }
         let require_signed_internal_requests =
@@ -550,6 +570,9 @@ impl AppConfig {
             host,
             port,
             internal_mtls_port,
+            otlp_endpoint,
+            otlp_trace_sample_ratio,
+            otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             mtls_server_cert_path: required_path("MCP_MANAGEMENT_MTLS_SERVER_CERT_PATH")?,
             mtls_server_key_path: required_path("MCP_MANAGEMENT_MTLS_SERVER_KEY_PATH")?,
             mtls_client_ca_cert_path: required_path("MCP_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH")?,
@@ -712,6 +735,14 @@ fn require_https_base_url(key: &str, value: String) -> Result<String, String> {
     Ok(value)
 }
 
+fn require_http_endpoint(key: &str, value: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("{key} must use http or https"));
+    }
+    Ok(())
+}
+
 fn parse_callers(value: &str) -> BTreeSet<String> {
     value
         .split(',')
@@ -734,6 +765,12 @@ fn required_u64(key: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
         .map_err(|_| format!("{key} must be an unsigned integer"))
+}
+
+fn required_f64(key: &str) -> Result<f64, String> {
+    required_text(key)?
+        .parse::<f64>()
+        .map_err(|err| format!("{key} must be a valid number: {err}"))
 }
 
 fn required_u16(key: &str) -> Result<u16, String> {

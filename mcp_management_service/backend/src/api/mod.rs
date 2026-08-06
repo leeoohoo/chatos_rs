@@ -18,9 +18,28 @@ use tower_http::trace::TraceLayer;
 
 use crate::state::AppState;
 
-fn router_layers(router: Router) -> Router {
+fn router_layers(router: Router, surface: &'static str) -> Router {
     router
-        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(
+            crate::trace_context::accept_remote_parent,
+        ))
+        .layer(TraceLayer::new_for_http().make_span_with(
+            move |request: &axum::http::Request<axum::body::Body>| {
+                let route = request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .map(axum::extract::MatchedPath::as_str)
+                    .unwrap_or("/unmatched");
+                tracing::info_span!(
+                    "http.request",
+                    otel.kind = "server",
+                    otel.name = %format!("{} {route}", request.method()),
+                    http.request.method = %request.method(),
+                    http.route = route,
+                    surface
+                )
+            },
+        ))
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
         ))
@@ -33,6 +52,7 @@ pub fn build_public_router(state: AppState) -> Router {
             .route("/metrics", get(system::prometheus_metrics))
             .route("/mcp", post(mcp::mcp_entrypoint))
             .with_state(state),
+        "public",
     )
 }
 
@@ -67,6 +87,7 @@ pub fn build_internal_router(state: AppState) -> Router {
                 post(queue_operations::archive_async_tool_dead_letter),
             )
             .with_state(state),
+        "internal",
     )
 }
 
