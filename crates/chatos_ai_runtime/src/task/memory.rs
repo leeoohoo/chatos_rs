@@ -110,9 +110,26 @@ impl TaskMemoryRuntimeConfig {
 
     pub fn apply_to_builder(
         &self,
-        mut builder: TaskRuntimeBuilder,
+        builder: TaskRuntimeBuilder,
     ) -> Result<TaskRuntimeBuilder, String> {
         let client = self.build_client()?;
+        Ok(self.apply_client_to_builder(builder, client))
+    }
+
+    pub fn apply_to_builder_with_http_client(
+        &self,
+        builder: TaskRuntimeBuilder,
+        http_client: reqwest::Client,
+    ) -> Result<TaskRuntimeBuilder, String> {
+        let client = self.build_client_with_http_client(http_client)?;
+        Ok(self.apply_client_to_builder(builder, client))
+    }
+
+    fn apply_client_to_builder(
+        &self,
+        mut builder: TaskRuntimeBuilder,
+        client: memory_engine_sdk::MemoryEngineClient,
+    ) -> TaskRuntimeBuilder {
         if self.compose_context {
             builder = builder.with_memory_composer(
                 crate::memory_context::MemoryContextComposer::from_client(client.clone()),
@@ -134,15 +151,26 @@ impl TaskMemoryRuntimeConfig {
                     )),
             ));
         }
-        Ok(builder)
+        builder
     }
 
     fn build_client(&self) -> Result<memory_engine_sdk::MemoryEngineClient, String> {
-        let mut client = memory_engine_sdk::MemoryEngineClient::new_direct(
+        let http_client = reqwest::Client::builder()
+            .timeout(self.timeout())
+            .build()
+            .map_err(|err| err.to_string())?;
+        self.build_client_with_http_client(http_client)
+    }
+
+    fn build_client_with_http_client(
+        &self,
+        http_client: reqwest::Client,
+    ) -> Result<memory_engine_sdk::MemoryEngineClient, String> {
+        let mut client = memory_engine_sdk::MemoryEngineClient::new_direct_with_http_client(
             self.base_url.clone(),
-            self.timeout(),
             self.source_id.clone(),
-        )?;
+            http_client,
+        );
         if let Some(access_token) = self.access_token.as_deref() {
             client = client.with_bearer_token(access_token);
         } else if let Some(internal_secret) = self.internal_secret.as_deref() {

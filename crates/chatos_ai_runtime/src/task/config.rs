@@ -132,6 +132,19 @@ impl TaskRuntimeConfig {
         }
     }
 
+    pub fn apply_to_builder_with_memory_http_client(
+        &self,
+        builder: TaskRuntimeBuilder,
+        memory_http_client: reqwest::Client,
+    ) -> Result<TaskRuntimeBuilder, String> {
+        let builder = self.apply_to_builder(builder);
+        if let Some(memory_engine) = &self.memory_engine {
+            memory_engine.apply_to_builder_with_http_client(builder, memory_http_client)
+        } else {
+            Ok(builder)
+        }
+    }
+
     pub async fn build_runtime(&self) -> Result<TaskRuntime, String> {
         self.build_runtime_with_mcp_builder(self.to_mcp_executor_builder())
             .await
@@ -142,6 +155,29 @@ impl TaskRuntimeConfig {
         mcp_builder: McpExecutorBuilder,
     ) -> Result<TaskRuntime, String> {
         let builder = self.try_apply_to_builder(TaskRuntimeBuilder::new())?;
+        let builder = match self.mcp_init_mode {
+            TaskMcpInitMode::Full => {
+                builder
+                    .with_initialized_mcp_executor_builder(mcp_builder)
+                    .await?
+            }
+            TaskMcpInitMode::BuiltinOnly => {
+                builder.with_builtin_only_mcp_executor_builder(mcp_builder)?
+            }
+            TaskMcpInitMode::Disabled => builder,
+        };
+        Ok(builder.build())
+    }
+
+    pub async fn build_runtime_with_mcp_builder_and_memory_http_client(
+        &self,
+        mcp_builder: McpExecutorBuilder,
+        memory_http_client: reqwest::Client,
+    ) -> Result<TaskRuntime, String> {
+        let builder = self.apply_to_builder_with_memory_http_client(
+            TaskRuntimeBuilder::new(),
+            memory_http_client,
+        )?;
         let builder = match self.mcp_init_mode {
             TaskMcpInitMode::Full => {
                 builder

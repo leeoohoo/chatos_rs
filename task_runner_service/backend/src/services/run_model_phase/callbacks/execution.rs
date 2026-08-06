@@ -74,7 +74,10 @@ impl RunService {
         let mut report = match tokio::time::timeout(execution_timeout, async {
             let runtime_init_started_at = Instant::now();
             let runtime = match runtime_config
-                .build_runtime_with_mcp_builder(mcp_builder)
+                .build_runtime_with_mcp_builder_and_memory_http_client(
+                    mcp_builder,
+                    self.config.memory_engine_http_client.clone(),
+                )
                 .await
             {
                 Ok(runtime) => runtime,
