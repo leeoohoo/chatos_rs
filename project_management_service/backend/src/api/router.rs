@@ -449,6 +449,9 @@ mod tests {
         AppState::new_without_external_dependencies(AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+            otlp_trace_sample_ratio: 0.0,
+            otlp_export_timeout: Duration::from_secs(1),
             database_url: "mongodb://127.0.0.1:1/project_router_tests".to_string(),
             mcp_result_rabbitmq_url: "amqp://127.0.0.1:1/%2f".to_string(),
             mcp_result_queue_prefix: "project_service.mcp.results.test".to_string(),

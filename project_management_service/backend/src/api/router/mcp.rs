@@ -716,6 +716,9 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+            otlp_trace_sample_ratio: 0.0,
+            otlp_export_timeout: Duration::from_secs(1),
             database_url:
                 "mongodb://admin:admin@127.0.0.1:27018/project_management_test?authSource=admin"
                     .to_string(),
