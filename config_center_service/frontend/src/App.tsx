@@ -20,6 +20,7 @@ import {
   Statistic,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd';
@@ -46,6 +47,51 @@ import type {
 } from './types';
 
 type PageKey = 'dashboard' | 'config' | 'releases' | 'queues' | 'instances' | 'audit';
+
+const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
+  'chatos-backend': { label: 'Chat OS', order: 10 },
+  'task-runner': { label: 'Task Runner', order: 20 },
+  'mcp-management-service': { label: 'MCP 管理', order: 30 },
+  'memory-engine': { label: 'Memory Engine', order: 40 },
+  'project-service': { label: '项目服务', order: 50 },
+  'sandbox-manager': { label: '沙箱管理', order: 60 },
+  'user-service': { label: '用户服务', order: 70 },
+  'plugin-management-service': { label: '插件管理', order: 80 },
+  'local-connector-service': { label: '本地连接器', order: 90 },
+  'configuration-center': { label: '配置中心', order: 100 },
+  'official-website': { label: '官方网站', order: 110 },
+  'platform-shared': { label: '平台与共享', order: 120 },
+  developer: { label: '开发参数', order: 900 },
+};
+
+function configAreaKey(definition: ConfigDefinition) {
+  const serviceName = definition.service_name?.trim();
+  if (serviceName) {
+    return serviceName;
+  }
+  const categoryRoot = definition.category.split('/')[0]?.trim().toLowerCase();
+  if (categoryRoot === 'chat os') return 'chatos-backend';
+  if (categoryRoot === 'task runner') return 'task-runner';
+  if (categoryRoot === 'mcp management') return 'mcp-management-service';
+  if (categoryRoot === 'memory engine') return 'memory-engine';
+  if (categoryRoot === 'project service') return 'project-service';
+  if (categoryRoot === 'sandbox manager') return 'sandbox-manager';
+  if (categoryRoot === 'user service') return 'user-service';
+  if (categoryRoot === 'plugin management') return 'plugin-management-service';
+  if (categoryRoot === 'local connector') return 'local-connector-service';
+  if (categoryRoot === 'configuration center') return 'configuration-center';
+  if (categoryRoot === 'developer') return 'developer';
+  return 'platform-shared';
+}
+
+function configAreaLabel(key: string) {
+  return CONFIG_AREA_META[key]?.label || key;
+}
+
+function configCategoryLabel(category: string) {
+  const [, ...rest] = category.split('/').map((part) => part.trim());
+  return rest.length > 0 ? rest.join(' / ') : category;
+}
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(getToken()));
@@ -241,6 +287,10 @@ function ConfigEditor({ environment }: { environment: string }) {
   const [changes, setChanges] = useState<Record<string, ConfigValue>>({});
   const [publishMessage, setPublishMessage] = useState('');
   const [customOpen, setCustomOpen] = useState(false);
+  const [activeArea, setActiveArea] = useState(
+    localStorage.getItem('chatos.configuration-center.config-area') || 'chatos-backend',
+  );
+  const [configSearch, setConfigSearch] = useState('');
   const [customForm] = Form.useForm<{
     key: string;
     display_name: string;
@@ -318,15 +368,47 @@ function ConfigEditor({ environment }: { environment: string }) {
   });
 
   const definitions = catalog.data || [];
-  const groups = useMemo(() => {
+  const areas = useMemo(() => {
     const next = new Map<string, ConfigDefinition[]>();
     definitions.forEach((definition) => {
+      const key = configAreaKey(definition);
+      const items = next.get(key) || [];
+      items.push(definition);
+      next.set(key, items);
+    });
+    return [...next.entries()]
+      .map(([key, items]) => ({
+        key,
+        label: configAreaLabel(key),
+        items: [...items].sort((left, right) => left.ui_order - right.ui_order),
+      }))
+      .sort((left, right) => {
+        const order = (CONFIG_AREA_META[left.key]?.order ?? 500)
+          - (CONFIG_AREA_META[right.key]?.order ?? 500);
+        return order || left.label.localeCompare(right.label, 'zh-CN');
+      });
+  }, [definitions]);
+  const selectedArea = areas.find((area) => area.key === activeArea) || areas[0];
+  const normalizedSearch = configSearch.trim().toLocaleLowerCase('zh-CN');
+  const visibleDefinitions = (selectedArea?.items || []).filter((definition) => {
+    if (!normalizedSearch) return true;
+    return [
+      definition.display_name,
+      definition.description,
+      definition.key,
+      definition.category,
+      definition.service_name || '',
+    ].some((value) => value.toLocaleLowerCase('zh-CN').includes(normalizedSearch));
+  });
+  const groups = useMemo(() => {
+    const next = new Map<string, ConfigDefinition[]>();
+    visibleDefinitions.forEach((definition) => {
       const items = next.get(definition.category) || [];
       items.push(definition);
       next.set(definition.category, items);
     });
     return [...next.entries()];
-  }, [definitions]);
+  }, [visibleDefinitions]);
 
   if (catalog.isLoading || effective.isLoading || draft.isLoading) {
     return <div className="centered"><Spin size="large" /></div>;
@@ -348,6 +430,12 @@ function ConfigEditor({ environment }: { environment: string }) {
       }
       return next;
     });
+  };
+
+  const selectArea = (key: string) => {
+    localStorage.setItem('chatos.configuration-center.config-area', key);
+    setActiveArea(key);
+    setConfigSearch('');
   };
 
   const confirmPublish = () => {
@@ -393,11 +481,50 @@ function ConfigEditor({ environment }: { environment: string }) {
           </Button>
         </Space>
       </Card>
+      <Card className="config-navigation-card">
+        <div className="config-navigation-header">
+          <div>
+            <Typography.Title level={5} style={{ margin: 0 }}>配置分类</Typography.Title>
+            <Typography.Text type="secondary">
+              按服务域查看配置，当前共 {definitions.length} 项
+            </Typography.Text>
+          </div>
+          <Input.Search
+            allowClear
+            value={configSearch}
+            onChange={(event) => setConfigSearch(event.target.value)}
+            placeholder={`搜索${selectedArea?.label || ''}配置`}
+            className="config-search"
+          />
+        </div>
+        <Tabs
+          activeKey={selectedArea?.key}
+          onChange={selectArea}
+          className="config-area-tabs"
+          items={areas.map((area) => ({
+            key: area.key,
+            label: (
+              <span className="config-tab-label">
+                {area.label}
+                <span className="config-tab-count">{area.items.length}</span>
+              </span>
+            ),
+          }))}
+        />
+      </Card>
       {groups.map(([category, items]) => (
-        <Card key={category} title={category}>
+        <Card
+          key={category}
+          title={(
+            <Space size={8}>
+              <span>{configCategoryLabel(category)}</span>
+              <Tag>{items.length} 项</Tag>
+            </Space>
+          )}
+        >
           <Row gutter={[24, 20]}>
             {items.map((definition) => (
-              <Col span={12} key={definition.key}>
+              <Col xs={24} xl={12} key={definition.key}>
                 <div className="config-field">
                   <Space size={6} wrap>
                     <Typography.Text strong>{definition.display_name}</Typography.Text>
@@ -421,6 +548,11 @@ function ConfigEditor({ environment }: { environment: string }) {
           </Row>
         </Card>
       ))}
+      {groups.length === 0 && (
+        <Card>
+          <Empty description={configSearch ? '当前分类没有匹配的配置' : '当前分类暂无配置'} />
+        </Card>
+      )}
       <Modal
         open={customOpen}
         title="新增开发参数"
