@@ -315,6 +315,14 @@ struct SnapshotQuery {
     environment: Option<String>,
 }
 
+struct ConfigCenterInternalResourceAudit<'a> {
+    resource_type: &'a str,
+    resource_id: &'a str,
+    resource_name: Option<&'a str>,
+    action: &'a str,
+    outcome: &'a str,
+}
+
 async fn internal_snapshot(
     State(state): State<AppState>,
     Extension(caller): Extension<InternalServiceTokenClaims>,
@@ -322,18 +330,48 @@ async fn internal_snapshot(
     Query(query): Query<SnapshotQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(err) =
-        require_matching_service_identity(caller.caller.as_str(), service_name.as_str(), "snapshot")
-    {
-        return error(StatusCode::FORBIDDEN, err);
-    }
     let environment = query
         .environment
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(state.config.default_environment.as_str());
-    match state.snapshot(environment, service_name.as_str()).await {
+        .unwrap_or(state.config.default_environment.as_str())
+        .to_string();
+    let resource_id = format!("{environment}/{service_name}");
+    let response = load_internal_snapshot(
+        &state,
+        &caller,
+        service_name.as_str(),
+        environment.as_str(),
+        &headers,
+    )
+    .await;
+    record_config_center_internal_resource_access(
+        &caller,
+        ConfigCenterInternalResourceAudit {
+            resource_type: "config_snapshot",
+            resource_id: resource_id.as_str(),
+            resource_name: Some(service_name.as_str()),
+            action: "read",
+            outcome: internal_response_outcome(response.status()),
+        },
+    );
+    response
+}
+
+async fn load_internal_snapshot(
+    state: &AppState,
+    caller: &InternalServiceTokenClaims,
+    service_name: &str,
+    environment: &str,
+    headers: &HeaderMap,
+) -> Response {
+    if let Err(err) =
+        require_matching_service_identity(caller.caller.as_str(), service_name, "snapshot")
+    {
+        return error(StatusCode::FORBIDDEN, err);
+    }
+    match state.snapshot(environment, service_name).await {
         Ok(snapshot) => {
             let quoted_etag = snapshot.etag();
             if headers
@@ -357,6 +395,32 @@ async fn instance_heartbeat(
     State(state): State<AppState>,
     Extension(caller): Extension<InternalServiceTokenClaims>,
     Json(input): Json<InstanceHeartbeatRequest>,
+) -> Response {
+    let resource_id = format!(
+        "{}:{}/{}",
+        input.environment.trim(),
+        input.service_name.trim(),
+        input.service_id.trim()
+    );
+    let resource_name = input.service_id.trim().to_string();
+    let response = persist_instance_heartbeat(&state, &caller, input).await;
+    record_config_center_internal_resource_access(
+        &caller,
+        ConfigCenterInternalResourceAudit {
+            resource_type: "config_service_instance",
+            resource_id: resource_id.as_str(),
+            resource_name: Some(resource_name.as_str()),
+            action: "heartbeat",
+            outcome: internal_response_outcome(response.status()),
+        },
+    );
+    response
+}
+
+async fn persist_instance_heartbeat(
+    state: &AppState,
+    caller: &InternalServiceTokenClaims,
+    input: InstanceHeartbeatRequest,
 ) -> Response {
     if let Err(err) = require_matching_service_identity(
         caller.caller.as_str(),
@@ -397,6 +461,55 @@ async fn instance_heartbeat(
         last_seen_at: Utc::now().to_rfc3339(),
     };
     result_json(state.heartbeat(instance).await)
+}
+
+fn record_config_center_internal_resource_access(
+    caller: &InternalServiceTokenClaims,
+    access: ConfigCenterInternalResourceAudit<'_>,
+) {
+    let event = build_config_center_internal_audit_event(caller, access);
+    if let Err(error) = chatos_service_runtime::record_internal_resource_access(&event) {
+        tracing::error!(
+            target: "chatos_internal_audit",
+            trace_id = caller.trace_id.as_str(),
+            error = error.as_str(),
+            "Configuration Center internal resource audit validation failed"
+        );
+    }
+}
+
+fn build_config_center_internal_audit_event(
+    caller: &InternalServiceTokenClaims,
+    access: ConfigCenterInternalResourceAudit<'_>,
+) -> chatos_service_runtime::InternalResourceAccessAudit {
+    chatos_service_runtime::InternalResourceAccessAudit {
+        caller_service: caller.caller.clone(),
+        audience_service: CONFIG_CENTER_AUDIENCE.to_string(),
+        scope: caller.scope.clone(),
+        trace_id: caller.trace_id.clone(),
+        represented_user_id: None,
+        tenant_id: None,
+        project_id: None,
+        resource_type: access.resource_type.to_string(),
+        resource_id: access.resource_id.to_string(),
+        resource_name: access
+            .resource_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        action: access.action.to_string(),
+        outcome: access.outcome.to_string(),
+    }
+}
+
+fn internal_response_outcome(status: StatusCode) -> &'static str {
+    if status.is_success() || status == StatusCode::NOT_MODIFIED {
+        "accepted"
+    } else if status.is_server_error() {
+        "failed"
+    } else {
+        "rejected"
+    }
 }
 
 async fn require_admin(
@@ -514,11 +627,14 @@ fn _type_anchors(_draft: ConfigDraftRecord, _values: BTreeMap<String, Value>) {}
 mod internal_auth_tests {
     use std::collections::BTreeMap;
 
-    use axum::http::{HeaderMap, HeaderValue, Method};
-    use chatos_service_runtime::issue_internal_service_token;
+    use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+    use chatos_service_runtime::{issue_internal_service_token, InternalServiceTokenClaims};
+    use uuid::Uuid;
 
     use super::{
-        authenticate_internal_request, internal_request_scope, require_matching_service_identity,
+        authenticate_internal_request, build_config_center_internal_audit_event,
+        internal_request_scope, internal_response_outcome, require_matching_service_identity,
+        ConfigCenterInternalResourceAudit,
     };
     use chatos_config_sdk::{
         CONFIG_CENTER_AUDIENCE, CONFIG_CENTER_CALLER_HEADER, CONFIG_CENTER_TOKEN_HEADER,
@@ -635,6 +751,52 @@ mod internal_auth_tests {
         assert!(
             require_matching_service_identity("task-runner", "chatos-backend", "heartbeat")
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn internal_audit_uses_verified_trace_scope_and_resource_identity() {
+        let claims = InternalServiceTokenClaims {
+            iss: "task-runner".to_string(),
+            sub: "task-runner".to_string(),
+            caller: "task-runner".to_string(),
+            aud: CONFIG_CENTER_AUDIENCE.to_string(),
+            scope: CONFIG_SNAPSHOT_READ_SCOPE.to_string(),
+            trace_id: Uuid::new_v4().to_string(),
+            iat: 1,
+            exp: 2,
+        };
+        let event = build_config_center_internal_audit_event(
+            &claims,
+            ConfigCenterInternalResourceAudit {
+                resource_type: "config_snapshot",
+                resource_id: "local/task-runner",
+                resource_name: Some("task-runner"),
+                action: "read",
+                outcome: "accepted",
+            },
+        );
+
+        assert!(event.validate().is_ok());
+        assert_eq!(event.trace_id, claims.trace_id);
+        assert_eq!(event.scope, CONFIG_SNAPSHOT_READ_SCOPE);
+        assert_eq!(event.resource_id, "local/task-runner");
+    }
+
+    #[test]
+    fn not_modified_snapshot_is_an_accepted_internal_access() {
+        assert_eq!(internal_response_outcome(StatusCode::OK), "accepted");
+        assert_eq!(
+            internal_response_outcome(StatusCode::NOT_MODIFIED),
+            "accepted"
+        );
+        assert_eq!(
+            internal_response_outcome(StatusCode::BAD_REQUEST),
+            "rejected"
+        );
+        assert_eq!(
+            internal_response_outcome(StatusCode::INTERNAL_SERVER_ERROR),
+            "failed"
         );
     }
 }
