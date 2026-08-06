@@ -78,6 +78,40 @@ fn apply_patch_supports_multiple_operations_in_one_patch() {
 }
 
 #[test]
+fn failed_multi_file_patch_rolls_back_prior_file_changes() {
+    let root = make_temp_root();
+    let first = root.join("first.txt");
+    let second = root.join("second.txt");
+    fs::write(&first, "old first\n").expect("write first target");
+    fs::write(&second, "actual second\n").expect("write second target");
+
+    let patch = "\
+*** Begin Patch
+*** Update File: first.txt
+@@
+-old first
++new first
+*** Update File: second.txt
+@@
+-stale second
++new second
+*** End Patch";
+
+    let err = apply_patch(&root, patch, true).expect_err("second update should fail");
+
+    assert!(err.contains("Patch context not found"));
+    assert_eq!(
+        fs::read_to_string(&first).expect("read first target"),
+        "old first\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&second).expect("read second target"),
+        "actual second\n"
+    );
+    fs::remove_dir_all(&root).expect("cleanup temp root");
+}
+
+#[test]
 fn apply_patch_tolerates_extra_space_after_diff_marker() {
     let root = make_temp_root();
     let target = root.join("file6.cpp");
