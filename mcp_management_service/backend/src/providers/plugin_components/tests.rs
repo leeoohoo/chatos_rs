@@ -392,6 +392,7 @@ async fn local_command_catalog_prepare_is_approval_free_and_invocation_is_argume
     let immutable = command_binding(PluginExecutionHost::Local);
     let (base_url, requests, server) = start_local_connector(SECRET, immutable.clone()).await;
     let provider = PluginComponentProvider::new(
+        reqwest::Client::new(),
         base_url,
         Duration::from_secs(5),
         Some(SECRET.to_string()),
@@ -526,6 +527,7 @@ fn cloud_agent_bundle_publishes_apply_but_confirmation_commands_fail_closed() {
     let route = route(&agent);
     let snapshot = cloud_snapshot(&agent, bundle, route.clone());
     let provider = PluginComponentProvider::new(
+        reqwest::Client::new(),
         "http://127.0.0.1:1",
         Duration::from_secs(1),
         None,

@@ -278,6 +278,69 @@ for identifier in retired_identifiers:
             + ", ".join(locations)
         )
 
+require(
+    "local_connector_service/backend/src/main.rs",
+    "build_public_router",
+    "a dedicated public Local Connector router",
+)
+require(
+    "local_connector_service/backend/src/main.rs",
+    "build_internal_router",
+    "a dedicated internal Local Connector router",
+)
+require(
+    "local_connector_service/backend/src/main.rs",
+    "axum_server::bind_rustls",
+    "mandatory TLS on the Local Connector internal listener",
+)
+for config_path, env_key in [
+    ("chatos/backend/src/config.rs", "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
+    (
+        "task_runner_service/backend/src/config/env_support.rs",
+        "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    ),
+    (
+        "project_management_service/backend/src/config.rs",
+        "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    ),
+    (
+        "mcp_management_service/backend/src/config.rs",
+        "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    ),
+]:
+    require(config_path, f'require_https_base_url(\n            "{env_key}"', "strict HTTPS Local Connector validation")
+    require(
+        config_path,
+        'build_mtls_http_client(',
+        "a certificate-bound Local Connector HTTP client",
+    )
+
+forbid(
+    "mcp_management_service/backend/src/config.rs",
+    ['resolve_service_base_url(\n            "local-connector-service"'],
+    "Local Connector internal mTLS routing must not be replaced by public service discovery",
+)
+require(
+    "chatos/backend/src/api/terminals/ws_handlers.rs",
+    "connect_async_tls_with_config",
+    "mTLS for Local Connector terminal WebSocket forwarding",
+)
+compose = read("docker/compose.yml")
+for env_key in [
+    "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+    "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+]:
+    if f"{env_key}: http://" in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} must never route an internal caller over plain HTTP"
+        )
+    if f"{env_key}: https://local-connector-service-backend:39232" not in compose:
+        ERRORS.append(
+            f"docker/compose.yml: {env_key} is not pinned to the Local Connector mTLS listener"
+        )
+
 if ERRORS:
     print("Agent Tool Plane architecture boundary violations:")
     for error in ERRORS:

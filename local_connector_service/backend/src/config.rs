@@ -13,6 +13,7 @@ use chatos_service_runtime::{parse_bool_text, validate_production_secret};
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
+    pub internal_mtls_port: u16,
     pub database_url: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
@@ -46,6 +47,13 @@ impl AppConfig {
                 format!("LOCAL_CONNECTOR_SERVICE_HOST must be a valid ip address: {err}")
             })?;
         let port = required_u16("LOCAL_CONNECTOR_SERVICE_PORT")?;
+        let internal_mtls_port = required_u16("LOCAL_CONNECTOR_INTERNAL_MTLS_PORT")?;
+        if internal_mtls_port == port {
+            return Err(
+                "LOCAL_CONNECTOR_INTERNAL_MTLS_PORT must differ from LOCAL_CONNECTOR_SERVICE_PORT"
+                    .to_string(),
+            );
+        }
         let timeout_ms = required_u64("LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let relay_timeout_ms = required_u64("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS")?.max(1_000);
         let plugin_hook_relay_timeout_ms =
@@ -79,6 +87,7 @@ impl AppConfig {
         let config = Self {
             host,
             port,
+            internal_mtls_port,
             database_url: required_text("LOCAL_CONNECTOR_DATABASE_URL")?,
             user_service_base_url: required_text("LOCAL_CONNECTOR_USER_SERVICE_BASE_URL")?,
             user_service_request_timeout: Duration::from_millis(timeout_ms),
@@ -176,13 +185,14 @@ impl AppConfig {
         }
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_plugin_artifact_relay_test(secret: &str) -> Self {
         let mut internal_api_secrets = HashMap::new();
         internal_api_secrets.insert("chatos-backend".to_string(), secret.to_string());
         Self {
             host: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             port: 0,
+            internal_mtls_port: 1,
             database_url: "memory://plugin-artifact-relay-test".to_string(),
             user_service_base_url: "http://127.0.0.1.invalid".to_string(),
             user_service_request_timeout: Duration::from_secs(1),

@@ -699,11 +699,8 @@ async fn resolve_local_connector_sandbox_route(
         60,
     )?;
     let service_base = local_connector_service_base_url(config)?;
-    let response = reqwest::Client::builder()
-        .timeout(local_connector_service_request_timeout(config))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|err| format!("build Local Connector sandbox routing client failed: {err}"))?
+    let response = config
+        .local_connector_http_client
         .get(format!(
             "{}/api/local-connectors/sandbox-pairings",
             service_base.trim_end_matches('/')
@@ -773,6 +770,7 @@ fn sandbox_auth_for_task(
         return Ok(Some(SandboxManagerAuth::local_connector(
             local_connector_internal_secret(config)?,
             owner_user_id.to_string(),
+            config.local_connector_http_client.clone(),
         )));
     }
     Ok(SandboxManagerAuth::from_config(config))
@@ -789,12 +787,6 @@ fn local_connector_service_base_url(config: &crate::config::AppConfig) -> Result
             "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL is required from configuration center for local sandbox routing"
                 .to_string()
         })
-}
-
-fn local_connector_service_request_timeout(
-    config: &crate::config::AppConfig,
-) -> std::time::Duration {
-    config.local_connector_service_request_timeout
 }
 
 fn local_connector_internal_secret(config: &crate::config::AppConfig) -> Result<String, String> {

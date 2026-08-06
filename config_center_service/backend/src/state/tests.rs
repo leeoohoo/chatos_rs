@@ -512,6 +512,48 @@ fn user_service_internal_url_is_forced_to_https_without_inserting_draft_keys() {
 }
 
 #[test]
+fn local_connector_internal_urls_are_forced_to_mtls_defaults() {
+    let definitions = builtin_definitions();
+    let cases = [
+        (
+            CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            chatos_service_default_values(&definitions),
+            ensure_chatos_runtime_values
+                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
+        ),
+        (
+            TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            task_runner_service_default_values(&definitions),
+            ensure_task_runner_runtime_values,
+        ),
+        (
+            PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            project_service_runtime_default_values(&definitions),
+            ensure_project_service_runtime_values,
+        ),
+        (
+            MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+            mcp_management_service_default_values(&definitions),
+            ensure_mcp_management_runtime_values,
+        ),
+    ];
+
+    for (key, defaults, ensure_values) in cases {
+        let mut values = BTreeMap::from([(
+            key.to_string(),
+            json!("http://local-connector-service-backend:39230"),
+        )]);
+        let changed_keys = ensure_values(&mut values, &defaults);
+        assert!(changed_keys.contains(&key.to_string()));
+        assert_eq!(values.get(key), defaults.get(key));
+        assert!(values
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "https://127.0.0.1:39232"));
+    }
+}
+
+#[test]
 fn plugin_management_internal_urls_are_forced_to_https_without_inserting_draft_keys() {
     let definitions = builtin_definitions();
     let cases = [

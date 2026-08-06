@@ -24,17 +24,18 @@ use super::{
     list_workspaces, mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
     plugin_artifact_read_relay, plugin_artifact_update_relay, plugin_cancel_relay,
     plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
-    proxy_plugin_release_artifact, require_auth, resolve_local_runtime_capabilities, revoke_device,
-    sandbox_facade_path, sandbox_facade_root, skill_cancel_relay, skill_execute_relay,
-    skill_prepare_relay, sync_user_skill_inventory, system_stats_handler, terminal_exec_relay,
-    terminal_input_relay, terminal_session_create_relay, terminal_ws_relay, update_local_mcp,
-    update_local_mcp_status, update_managed_requirements_assignment,
-    update_managed_requirements_policy, update_plugin_preference, update_project_binding,
-    update_sandbox_pairing, update_user_skill_preference, update_workspace,
-    user_service_protected_proxy, user_service_public_proxy, AuthState,
+    proxy_plugin_release_artifact, require_internal_auth, require_public_auth,
+    resolve_local_runtime_capabilities, revoke_device, sandbox_facade_path, sandbox_facade_root,
+    skill_cancel_relay, skill_execute_relay, skill_prepare_relay, sync_user_skill_inventory,
+    system_stats_handler, terminal_exec_relay, terminal_input_relay, terminal_session_create_relay,
+    terminal_ws_relay, update_local_mcp, update_local_mcp_status,
+    update_managed_requirements_assignment, update_managed_requirements_policy,
+    update_plugin_preference, update_project_binding, update_sandbox_pairing,
+    update_user_skill_preference, update_workspace, user_service_protected_proxy,
+    user_service_public_proxy, AuthState,
 };
 
-pub fn build_router(state: AppState) -> Router {
+fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
     let auth_state = AuthState::from_app_state(&state);
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
@@ -218,23 +219,51 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/local-connectors/sandbox-facade/{pairing_id}/{*path}",
             any(sandbox_facade_path),
-        )
-        .route_layer(middleware::from_fn_with_state(auth_state, require_auth));
+        );
 
-    Router::new()
-        .route("/api/health", get(health_handler))
-        .route("/api/auth/login", post(user_service_public_proxy))
-        .route("/api/auth/register", post(user_service_public_proxy))
-        .route(
-            "/api/auth/register/send-code",
-            post(user_service_public_proxy),
-        )
-        .route(
-            "/api/auth/local-connector-ticket/exchange",
-            post(user_service_public_proxy),
-        )
-        .merge(protected_api)
-        .with_state(state)
+    if internal {
+        protected_api.route_layer(middleware::from_fn_with_state(
+            auth_state,
+            require_internal_auth,
+        ))
+    } else {
+        protected_api.route_layer(middleware::from_fn_with_state(
+            auth_state,
+            require_public_auth,
+        ))
+    }
+}
+
+pub fn build_public_router(state: AppState) -> Router {
+    apply_common_layers(
+        Router::new()
+            .route("/api/health", get(health_handler))
+            .route("/api/auth/login", post(user_service_public_proxy))
+            .route("/api/auth/register", post(user_service_public_proxy))
+            .route(
+                "/api/auth/register/send-code",
+                post(user_service_public_proxy),
+            )
+            .route(
+                "/api/auth/local-connector-ticket/exchange",
+                post(user_service_public_proxy),
+            )
+            .merge(protected_api(&state, false))
+            .with_state(state),
+    )
+}
+
+pub fn build_internal_router(state: AppState) -> Router {
+    apply_common_layers(
+        Router::new()
+            .route("/api/health", get(health_handler))
+            .merge(protected_api(&state, true))
+            .with_state(state),
+    )
+}
+
+fn apply_common_layers(router: Router) -> Router {
+    router
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
@@ -290,7 +319,10 @@ pub fn build_plugin_artifact_relay_test_router(
         scope,
     );
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
-        .route_layer(middleware::from_fn_with_state(auth_state, require_auth))
+        .route_layer(middleware::from_fn_with_state(
+            auth_state,
+            require_public_auth,
+        ))
         .with_state(relay_state))
 }
 
@@ -308,6 +340,9 @@ pub fn build_plugin_artifact_relay_store_test_router(
         store,
     );
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
-        .route_layer(middleware::from_fn_with_state(auth_state, require_auth))
+        .route_layer(middleware::from_fn_with_state(
+            auth_state,
+            require_public_auth,
+        ))
         .with_state(relay_state))
 }

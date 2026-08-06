@@ -208,14 +208,8 @@ async fn request_local_connector_asset(
             .trim_end_matches('/'),
         urlencoding::encode(ready.device_id.as_str())
     );
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_millis(
-            config.local_connector_service_request_timeout_ms.max(300) as u64,
-        ))
-        .build()
-        .map_err(|_| service_unavailable("Plugin UI relay client 创建失败"))?;
-    let mut request = client
+    let mut request = config
+        .local_connector_http_client
         .post(url)
         .header("x-local-connector-caller", "chatos-backend")
         .header("x-local-connector-internal-token", token)
@@ -362,17 +356,14 @@ where
         config.local_connector_service_request_timeout_ms,
     );
     let prepared = prepared?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(prepared.timeout)
-        .build()
-        .map_err(|_| service_unavailable("Plugin Artifact relay client 创建失败"))?;
-    let response = client
+    let response = config
+        .local_connector_http_client
         .post(prepared.url)
         .query(&[("workspace_id", prepared.workspace_id.as_str())])
         .header("x-local-connector-caller", "chatos-backend")
         .header("x-local-connector-internal-token", prepared.token)
         .header("x-local-connector-owner-user-id", prepared.owner_user_id)
+        .timeout(prepared.timeout)
         .json(body)
         .send()
         .await

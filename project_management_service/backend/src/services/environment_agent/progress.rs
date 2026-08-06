@@ -4,7 +4,6 @@
 use std::time::Duration;
 use std::{collections::BTreeMap, str::FromStr};
 
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -264,14 +263,15 @@ async fn fetch_local_image_jobs(
                 .map(ToOwned::to_owned)
         })
         .ok_or_else(|| "Local Connector 沙箱配对缺少 facade_base_url".to_string())?;
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(20)))
-        .map_err(|err| format!("build local sandbox image progress client failed: {err}"))?;
     read_jobs_response(
-        client
+        state
+            .config
+            .local_connector_http_client
             .get(format!(
                 "{}/api/local/sandbox/images/jobs",
                 facade_base.trim_end_matches('/')
             ))
+            .timeout(Duration::from_secs(20))
             .bearer_auth(token)
             .send()
             .await

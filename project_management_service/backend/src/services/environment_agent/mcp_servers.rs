@@ -13,7 +13,6 @@ use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::config::AppConfig;
 use crate::models::{ProjectRecord, RuntimeEnvironmentProvider};
@@ -193,13 +192,14 @@ pub(super) async fn start_local_project_compose_environment(
             .await?
             .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(2 * 60 * 60)))
-        .map_err(|err| format!("创建 Local Connector HTTP 客户端失败: {err}"))?;
-    let response = client
+    let response = state
+        .config
+        .local_connector_http_client
         .post(format!(
             "{}/api/local/sandbox/environments/compose/up",
             facade_base.trim_end_matches('/')
         ))
+        .timeout(Duration::from_secs(2 * 60 * 60))
         .bearer_auth(access_token)
         .json(&json!({
             "project_name": project_name,
@@ -297,13 +297,14 @@ async fn call_local_project_compose_action(
             .await?
             .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(10 * 60)))
-        .map_err(|err| format!("创建 Local Connector HTTP 客户端失败: {err}"))?;
-    let response = client
+    let response = state
+        .config
+        .local_connector_http_client
         .post(format!(
             "{}/api/local/sandbox/environments/compose/{action}",
             facade_base.trim_end_matches('/')
         ))
+        .timeout(Duration::from_secs(10 * 60))
         .bearer_auth(access_token)
         .json(&json!({
             "project_name": project_name,

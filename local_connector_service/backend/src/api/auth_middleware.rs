@@ -27,7 +27,7 @@ impl AuthState {
         }
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn for_test(config: crate::config::AppConfig) -> Result<Self, String> {
         let user_service_http = reqwest::Client::builder()
             .timeout(config.user_service_request_timeout)
@@ -154,7 +154,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-pub(super) async fn require_auth(
+pub(super) async fn require_internal_auth(
     State(state): State<AuthState>,
     mut request: Request<axum::body::Body>,
     next: Next,
@@ -204,6 +204,23 @@ pub(super) async fn require_auth(
     Ok(next.run(request).await)
 }
 
+pub(super) async fn require_public_auth(
+    State(state): State<AuthState>,
+    mut request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, ApiError> {
+    if request.method() == Method::OPTIONS {
+        return Ok(next.run(request).await);
+    }
+    let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
+    let user =
+        verify_token_via_user_service(&state.config, &state.user_service_http, token.as_str())
+            .await
+            .map_err(ApiError::unauthorized)?;
+    request.extensions_mut().insert(user);
+    Ok(next.run(request).await)
+}
+
 fn bearer_token_from_request(request: &Request<axum::body::Body>) -> Result<String, String> {
     if let Ok(token) = bearer_token_from_headers(request.headers()) {
         return Ok(token.to_string());
@@ -230,6 +247,10 @@ fn has_legacy_query_token(query: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use axum::http::header::AUTHORIZATION;
+    use axum::middleware;
+    use axum::routing::get;
+    use axum::Router;
+    use tower::ServiceExt;
 
     use super::*;
 
@@ -276,5 +297,41 @@ mod tests {
             error,
             "URL query access tokens are not supported; use Authorization header"
         );
+    }
+
+    #[tokio::test]
+    async fn public_listener_rejects_internal_service_identity() {
+        let secret = "a-long-public-boundary-test-secret";
+        let config = crate::config::AppConfig::for_plugin_artifact_relay_test(secret);
+        let auth_state = AuthState::for_test(config).expect("test auth state");
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            "chatos-backend",
+            super::super::internal_auth::TOKEN_AUDIENCE,
+            "relay.mcp",
+            60,
+        )
+        .expect("internal token");
+        let app = Router::new()
+            .route(
+                "/api/local-connectors/relay/device-1/mcp",
+                get(|| async { "ok" }),
+            )
+            .route_layer(middleware::from_fn_with_state(
+                auth_state,
+                require_public_auth,
+            ));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/local-connectors/relay/device-1/mcp")
+                    .header("x-local-connector-caller", "chatos-backend")
+                    .header("x-local-connector-internal-token", token)
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("router response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -700,6 +700,7 @@ mod tests {
         AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            internal_mtls_port: 1,
             database_url: "mongodb://127.0.0.1/test".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),

@@ -50,6 +50,9 @@ pub struct Config {
     pub mcp_result_rabbitmq_url: String,
     pub mcp_result_queue_prefix: String,
     pub local_connector_service_base_url: String,
+    pub local_connector_http_client: reqwest::Client,
+    pub local_connector_mtls_ca_cert_path: PathBuf,
+    pub local_connector_mtls_client_identity_path: PathBuf,
     pub local_connector_internal_api_secret: Option<String>,
     pub local_connector_service_request_timeout_ms: i64,
     pub plugin_ui_parent_origin: Option<String>,
@@ -165,12 +168,27 @@ impl Config {
             require_config_center_value("CHATOS_MCP_RESULT_QUEUE_PREFIX")?;
         let local_connector_service_base_url =
             require_config_center_value("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")?;
+        require_https_base_url(
+            "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            local_connector_service_base_url.as_str(),
+        )?;
         let local_connector_internal_api_secret = Some(require_config_center_value(
             "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         )?);
         let local_connector_service_request_timeout_ms =
             require_config_center_i64("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")?
                 .max(300);
+        let local_connector_mtls_ca_cert_path =
+            require_bootstrap_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?;
+        let local_connector_mtls_client_identity_path =
+            require_bootstrap_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?;
+        let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                local_connector_service_request_timeout_ms as u64,
+            )),
+            local_connector_mtls_ca_cert_path.as_path(),
+            local_connector_mtls_client_identity_path.as_path(),
+        )?;
         let plugin_ui_parent_origin = normalize_plugin_ui_origin(
             "CHATOS_PLUGIN_UI_PARENT_ORIGIN",
             optional_config_center_text("CHATOS_PLUGIN_UI_PARENT_ORIGIN"),
@@ -289,6 +307,9 @@ impl Config {
             mcp_result_rabbitmq_url,
             mcp_result_queue_prefix,
             local_connector_service_base_url,
+            local_connector_http_client,
+            local_connector_mtls_ca_cert_path,
+            local_connector_mtls_client_identity_path,
             local_connector_internal_api_secret,
             local_connector_service_request_timeout_ms,
             plugin_ui_parent_origin,

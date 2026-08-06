@@ -1177,6 +1177,11 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
             "integer",
         ),
         (
+            LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "LOCAL_CONNECTOR_INTERNAL_MTLS_PORT",
+            "integer",
+        ),
+        (
             LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
             "LOCAL_CONNECTOR_DATABASE_URL",
             "string",

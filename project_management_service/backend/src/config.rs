@@ -22,6 +22,7 @@ pub struct AppConfig {
     pub user_service_request_timeout: Duration,
     pub user_service_internal_secret: Option<String>,
     pub local_connector_service_base_url: String,
+    pub local_connector_http_client: reqwest::Client,
     pub local_connector_service_request_timeout: Duration,
     pub memory_engine_base_url: String,
     pub memory_engine_source_id: String,
@@ -71,6 +72,19 @@ impl AppConfig {
         )?;
         let local_connector_service_request_timeout_ms =
             required_u64("PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
+        let local_connector_service_base_url =
+            required_text("PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL")?;
+        require_https_base_url(
+            "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            local_connector_service_base_url.as_str(),
+        )?;
+        let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                local_connector_service_request_timeout_ms,
+            )),
+            required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
+            required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let memory_engine_request_timeout_ms =
             required_u64("PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")?.max(300);
         let memory_engine_base_url = required_text("PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL")?;
@@ -115,9 +129,8 @@ impl AppConfig {
             user_service_internal_secret: Some(required_text(
                 "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET",
             )?),
-            local_connector_service_base_url: required_text(
-                "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-            )?,
+            local_connector_service_base_url,
+            local_connector_http_client,
             local_connector_service_request_timeout: Duration::from_millis(
                 local_connector_service_request_timeout_ms,
             ),

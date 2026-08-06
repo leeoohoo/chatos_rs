@@ -14,7 +14,6 @@ use chatos_plugin_management_sdk::{
 };
 use chatos_plugin_package::plugin_cloud_bundle_sha256;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -44,6 +43,7 @@ pub(super) struct PluginComponentProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: Duration,
     response_limit_bytes: usize,
 }
 
@@ -69,6 +69,7 @@ struct PluginPrepareResponse {
 
 impl PluginComponentProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: Duration,
         internal_secret: Option<String>,
@@ -80,17 +81,13 @@ impl PluginComponentProvider {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("Plugin Component Provider base URL must use http or https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|error| format!("build Plugin Component Provider client failed: {error}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
+            request_timeout,
             response_limit_bytes,
         })
     }
@@ -667,6 +664,7 @@ impl PluginComponentProvider {
             .header("x-local-connector-internal-token", token)
             .header("x-local-connector-owner-user-id", owner_user_id)
             .json(&body)
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {

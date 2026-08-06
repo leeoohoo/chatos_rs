@@ -10,7 +10,6 @@ use chatos_mcp_management_sdk::{
 };
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -32,6 +31,7 @@ pub(super) struct LocalSandboxProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: Duration,
     response_limit_bytes: usize,
 }
 
@@ -57,6 +57,7 @@ struct LocalSandboxLeaseBinding {
 
 impl LocalSandboxProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: Duration,
         internal_secret: Option<String>,
@@ -68,17 +69,13 @@ impl LocalSandboxProvider {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("Local Sandbox Provider base URL must use http or https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|error| format!("build Local Sandbox Provider client failed: {error}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
+            request_timeout,
             response_limit_bytes,
         })
     }
@@ -154,6 +151,7 @@ impl LocalSandboxProvider {
                 SANDBOX_ROUTING_SCOPE,
                 context.owner_user_id.as_str(),
             )?
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -223,6 +221,7 @@ impl LocalSandboxProvider {
                 SANDBOX_SERVICE_SCOPE,
                 owner_user_id,
             )?
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -308,6 +307,7 @@ impl LocalSandboxProvider {
                     "arguments": arguments,
                 }
             }))
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -372,6 +372,7 @@ impl LocalSandboxProvider {
                     "reason": "MCP Management runtime cancelled the invocation"
                 }
             }))
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -636,6 +637,7 @@ mod tests {
             .unwrap();
         });
         let provider = LocalSandboxProvider::new(
+            reqwest::Client::new(),
             format!("http://{address}"),
             Duration::from_secs(5),
             Some("a-long-local-connector-secret".to_string()),

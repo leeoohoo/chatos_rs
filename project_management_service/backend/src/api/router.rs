@@ -433,6 +433,7 @@ mod tests {
             user_service_request_timeout: Duration::from_millis(300),
             user_service_internal_secret: None,
             local_connector_service_base_url: "http://127.0.0.1:1".to_string(),
+            local_connector_http_client: reqwest::Client::new(),
             local_connector_service_request_timeout: Duration::from_millis(300),
             memory_engine_base_url: "https://127.0.0.1:1/api/memory-engine/v1".to_string(),
             memory_engine_source_id: "project_router_tests".to_string(),

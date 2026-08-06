@@ -273,6 +273,7 @@ mod tests {
             user_service_request_timeout: Duration::from_secs(1),
             user_service_internal_secret: None,
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
+            local_connector_http_client: reqwest::Client::new(),
             local_connector_service_request_timeout: Duration::from_secs(1),
             memory_engine_base_url: "http://127.0.0.1:7081".to_string(),
             memory_engine_http_client: reqwest::Client::new(),

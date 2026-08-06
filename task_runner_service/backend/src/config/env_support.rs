@@ -72,9 +72,22 @@ impl AppConfig {
         let local_connector_service_base_url = Some(require_config_center_secret(
             "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
         )?);
+        require_https_base_url(
+            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            local_connector_service_base_url
+                .as_deref()
+                .expect("Local Connector base URL was just initialized"),
+        )?;
         let local_connector_service_request_timeout_ms =
             require_config_center_u64("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")?
                 .max(300);
+        let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                local_connector_service_request_timeout_ms,
+            )),
+            required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
+            required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let plugin_relay_timeout_ms =
             require_config_center_u64("TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS")?.clamp(1_000, 120_000);
         let plugin_hook_relay_timeout_ms =
@@ -177,6 +190,7 @@ impl AppConfig {
             user_service_internal_api_secret,
             local_connector_internal_api_secret,
             local_connector_service_base_url,
+            local_connector_http_client,
             local_connector_service_request_timeout: Duration::from_millis(
                 local_connector_service_request_timeout_ms,
             ),

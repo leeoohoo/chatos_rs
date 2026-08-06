@@ -280,6 +280,8 @@ pub const LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str
     "local_connector.downstream.plugin_management_internal_api_secret";
 pub const LOCAL_CONNECTOR_HOST_CONFIG_KEY: &str = "local_connector.runtime.host";
 pub const LOCAL_CONNECTOR_PORT_CONFIG_KEY: &str = "local_connector.runtime.port";
+pub const LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
+    "local_connector.runtime.internal_mtls_port";
 pub const LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY: &str = "local_connector.runtime.database_url";
 pub const LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "local_connector.downstream.user_service_base_url";
@@ -1465,7 +1467,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("chatos-backend"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],
@@ -2771,7 +2773,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("task-runner"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],
@@ -3610,6 +3612,23 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             &[],
             "restart_required",
             &["LOCAL_CONNECTOR_SERVICE_PORT"],
+            319,
+            &now,
+        ),
+        definition(
+            LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY,
+            "Internal mTLS Port",
+            "Local Connector Service 强制双向 TLS 的内部服务监听端口",
+            "Local Connector / Runtime",
+            "service",
+            Some("local-connector-service"),
+            "integer",
+            json!(39232),
+            Some(1),
+            Some(65535),
+            &[],
+            "restart_required",
+            &["LOCAL_CONNECTOR_INTERNAL_MTLS_PORT"],
             319,
             &now,
         ),
@@ -5175,7 +5194,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("mcp-management-service"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],
@@ -6297,7 +6316,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("project-service"),
             "string",
-            json!("http://127.0.0.1:39230"),
+            json!("https://127.0.0.1:39232"),
             None,
             None,
             &[],

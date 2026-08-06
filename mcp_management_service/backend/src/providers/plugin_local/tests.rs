@@ -222,6 +222,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
     const SECRET: &str = "a-long-plugin-local-test-secret";
     let (base_url, actions, server) = start_local_connector(SECRET).await;
     let provider = PluginLocalProvider::new(
+        reqwest::Client::new(),
         base_url,
         Duration::from_secs(5),
         Some(SECRET.to_string()),

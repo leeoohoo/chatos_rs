@@ -103,6 +103,7 @@ impl ProviderDispatcher {
         project_service_internal_secret: Option<String>,
         task_runner: TaskRunnerProviderConfig,
         chatos: ChatosProviderConfig,
+        local_connector_http: reqwest::Client,
         local_connector_service_base_url: impl Into<String>,
         local_connector_internal_secret: Option<String>,
         sandbox_manager_http: reqwest::Client,
@@ -127,24 +128,28 @@ impl ProviderDispatcher {
         );
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
+                local_connector_http.clone(),
                 local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
             local_sandbox: LocalSandboxProvider::new(
+                local_connector_http.clone(),
                 local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
             plugin_local: PluginLocalProvider::new(
+                local_connector_http.clone(),
                 local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
             plugin_components: PluginComponentProvider::new(
+                local_connector_http.clone(),
                 local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,
                 local_connector_internal_secret.clone(),
@@ -185,6 +190,7 @@ impl ProviderDispatcher {
                 sandbox_manager_http,
                 sandbox_manager_service_base_url,
                 sandbox_manager_internal_secret,
+                local_connector_http,
                 local_connector_service_base_url,
                 local_connector_internal_secret,
                 sandbox_manager_request_timeout,

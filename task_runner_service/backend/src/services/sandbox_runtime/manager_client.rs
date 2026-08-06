@@ -312,10 +312,10 @@ impl SandboxManagerClient {
             return Err("sandbox manager base url is empty".to_string());
         }
         let client = match auth.as_ref() {
-            Some(auth) if auth.mode == SandboxManagerAuthMode::Cloud => auth
+            Some(auth) => auth
                 .cloud_http
                 .clone()
-                .ok_or_else(|| "Sandbox Manager cloud mTLS client is not configured".to_string())?,
+                .ok_or_else(|| "Sandbox service mTLS client is not configured".to_string())?,
             _ => build_http_client(HttpClientTimeouts::new(Duration::from_secs(1_800)))
                 .map_err(|err| format!("build sandbox manager http client failed: {err}"))?,
         };

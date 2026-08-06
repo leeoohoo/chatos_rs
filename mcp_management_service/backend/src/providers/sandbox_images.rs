@@ -8,7 +8,6 @@ use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxProviderKind};
 use chatos_mcp_service::METHOD_TOOLS_CALL;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
@@ -46,6 +45,7 @@ impl SandboxImagesProvider {
         cloud_http: reqwest::Client,
         cloud_base_url: impl Into<String>,
         cloud_internal_secret: Option<String>,
+        local_http: reqwest::Client,
         local_base_url: impl Into<String>,
         local_internal_secret: Option<String>,
         request_timeout: Duration,
@@ -58,7 +58,7 @@ impl SandboxImagesProvider {
             cloud_http,
             cloud_base_url,
             cloud_internal_secret: normalized_secret(cloud_internal_secret),
-            local_http: build_client("Local Connector image")?,
+            local_http,
             local_base_url,
             local_internal_secret: normalized_secret(local_internal_secret),
             request_timeout,
@@ -269,14 +269,6 @@ fn normalized_secret(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn build_client(provider: &str) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .redirect(Policy::none())
-        .build()
-        .map_err(|error| format!("build {provider} Provider client failed: {error}"))
-}
-
 fn with_runtime_headers(
     mut request: reqwest::RequestBuilder,
     snapshot: &RuntimeSessionSnapshot,
@@ -481,6 +473,7 @@ mod tests {
             reqwest::Client::new(),
             format!("{base_url}/cloud"),
             Some(CLOUD_SECRET.to_string()),
+            reqwest::Client::new(),
             format!("{base_url}/local"),
             Some(LOCAL_SECRET.to_string()),
             Duration::from_secs(5),

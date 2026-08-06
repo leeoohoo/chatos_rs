@@ -322,6 +322,7 @@ pub struct AppConfig {
     pub chatos_ask_user_request_timeout: Duration,
     pub chatos_browser_request_timeout: Duration,
     pub local_connector_service_base_url: String,
+    pub local_connector_http_client: reqwest::Client,
     pub local_connector_internal_api_secret: Option<String>,
     pub sandbox_manager_service_base_url: String,
     pub sandbox_manager_http_client: reqwest::Client,
@@ -524,6 +525,17 @@ impl AppConfig {
             required_path("PROJECT_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
             required_path("PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
+        let local_connector_service_base_url = require_https_base_url(
+            "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            normalize_base_url(required_text(
+                "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
+            )?),
+        )?;
+        let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(sandbox_image_request_timeout),
+            required_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
+            required_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         Ok(Self {
             host,
             port,
@@ -559,9 +571,8 @@ impl AppConfig {
             chatos_internal_api_secret,
             chatos_ask_user_request_timeout,
             chatos_browser_request_timeout,
-            local_connector_service_base_url: normalize_base_url(required_text(
-                "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-            )?),
+            local_connector_service_base_url,
+            local_connector_http_client,
             local_connector_internal_api_secret,
             sandbox_manager_service_base_url,
             sandbox_manager_http_client,
@@ -593,11 +604,6 @@ impl AppConfig {
         self.chatos_service_base_url = chatos_service_runtime::resolve_service_base_url(
             "chatos-backend",
             self.chatos_service_base_url.as_str(),
-        )
-        .await;
-        self.local_connector_service_base_url = chatos_service_runtime::resolve_service_base_url(
-            "local-connector-service",
-            self.local_connector_service_base_url.as_str(),
         )
         .await;
     }
@@ -652,6 +658,7 @@ impl AppConfig {
             chatos_ask_user_request_timeout: Duration::from_secs(86_700),
             chatos_browser_request_timeout: Duration::from_secs(120),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
+            local_connector_http_client: reqwest::Client::new(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),
             sandbox_manager_http_client: reqwest::Client::new(),

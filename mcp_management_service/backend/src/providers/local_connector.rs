@@ -10,7 +10,6 @@ use chatos_mcp_service::{
     METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL,
 };
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
@@ -31,11 +30,13 @@ pub(super) struct LocalConnectorProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: Duration,
     response_limit_bytes: usize,
 }
 
 impl LocalConnectorProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: Duration,
         internal_secret: Option<String>,
@@ -47,17 +48,13 @@ impl LocalConnectorProvider {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("Local Connector Provider base URL must use http or https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|err| format!("build Local Connector Provider client failed: {err}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
+            request_timeout,
             response_limit_bytes,
         })
     }
@@ -207,6 +204,7 @@ impl LocalConnectorProvider {
                     "arguments": arguments,
                 }
             }))
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|err| {
@@ -252,6 +250,7 @@ impl LocalConnectorProvider {
                     "reason": "MCP Management runtime cancelled the invocation"
                 }
             }))
+            .timeout(self.request_timeout)
             .send()
             .await
             .map_err(|error| {
@@ -567,6 +566,7 @@ mod tests {
         const SECRET: &str = "a-long-local-connector-secret";
         let (base_url, server) = start_local_connector(SECRET, ResponseMode::Valid).await;
         let provider = LocalConnectorProvider::new(
+            reqwest::Client::new(),
             base_url,
             Duration::from_secs(5),
             Some(SECRET.to_string()),
@@ -601,6 +601,7 @@ mod tests {
         const SECRET: &str = "a-long-local-connector-secret";
         let (base_url, server) = start_local_connector(SECRET, ResponseMode::WrongId).await;
         let provider = LocalConnectorProvider::new(
+            reqwest::Client::new(),
             base_url,
             Duration::from_secs(5),
             Some(SECRET.to_string()),
@@ -625,6 +626,7 @@ mod tests {
         const SECRET: &str = "a-long-local-connector-secret";
         let (base_url, server) = start_local_connector(SECRET, ResponseMode::Oversized).await;
         let provider = LocalConnectorProvider::new(
+            reqwest::Client::new(),
             base_url,
             Duration::from_secs(5),
             Some(SECRET.to_string()),

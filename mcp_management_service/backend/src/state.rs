@@ -87,6 +87,7 @@ impl AppState {
                 ask_user_request_timeout: config.chatos_ask_user_request_timeout,
                 browser_request_timeout: config.chatos_browser_request_timeout,
             },
+            config.local_connector_http_client.clone(),
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),
             config.sandbox_manager_http_client.clone(),

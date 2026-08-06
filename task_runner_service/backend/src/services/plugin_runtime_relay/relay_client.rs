@@ -70,11 +70,7 @@ impl PluginRelayClient {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        let http = reqwest::Client::builder()
-            .timeout(service.config.plugin_relay_request_timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| format!("build Plugin relay HTTP client failed: {error}"))?;
+        let http = service.config.local_connector_http_client.clone();
         Ok(Self {
             http,
             base_url,

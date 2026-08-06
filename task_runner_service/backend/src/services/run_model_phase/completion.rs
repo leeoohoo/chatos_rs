@@ -332,6 +332,7 @@ mod tests {
             user_service_internal_api_secret: None,
             local_connector_internal_api_secret: None,
             local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
+            local_connector_http_client: reqwest::Client::new(),
             local_connector_service_request_timeout: Duration::from_millis(5_000),
             plugin_relay_request_timeout: Duration::from_millis(60_000),
             plugin_hook_relay_timeout: Duration::from_millis(330_000),

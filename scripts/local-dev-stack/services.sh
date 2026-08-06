@@ -67,6 +67,9 @@ start_backend() {
     if project_service_identity="$(project_service_client_identity_path "$service_name")"; then
       export PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH="$project_service_identity"
     fi
+    if local_connector_identity="$(local_connector_client_identity_path "$service_name")"; then
+      export LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH="$local_connector_identity"
+    fi
     if user_service_identity="$(user_service_client_identity_path "$service_name")"; then
       export USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH="$user_service_identity"
     fi
@@ -85,6 +88,11 @@ start_backend() {
       export PROJECT_SERVICE_MTLS_SERVER_CERT_PATH="$PROJECT_SERVICE_MTLS_DIR/server.crt"
       export PROJECT_SERVICE_MTLS_SERVER_KEY_PATH="$PROJECT_SERVICE_MTLS_DIR/server.key"
       export PROJECT_SERVICE_MTLS_CLIENT_CA_CERT_PATH="$PROJECT_SERVICE_MTLS_DIR/ca.crt"
+    fi
+    if [[ "$name" == "local-connector-service-backend" ]]; then
+      export LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH="$LOCAL_CONNECTOR_MTLS_DIR/server.crt"
+      export LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH="$LOCAL_CONNECTOR_MTLS_DIR/server.key"
+      export LOCAL_CONNECTOR_MTLS_CLIENT_CA_CERT_PATH="$LOCAL_CONNECTOR_MTLS_DIR/ca.crt"
     fi
     if [[ "$name" == "user-service-backend" ]]; then
       export USER_SERVICE_MTLS_SERVER_CERT_PATH="$USER_SERVICE_MTLS_DIR/server.crt"
@@ -127,6 +135,10 @@ ensure_task_runner_mtls_material() {
 
 ensure_project_service_mtls_material() {
   "$ROOT_DIR/scripts/generate-project-service-mtls.sh" "$PROJECT_SERVICE_MTLS_DIR"
+}
+
+ensure_local_connector_mtls_material() {
+  "$ROOT_DIR/scripts/generate-local-connector-mtls.sh" "$LOCAL_CONNECTOR_MTLS_DIR"
 }
 
 ensure_user_service_mtls_material() {
@@ -750,6 +762,7 @@ start_all() {
   ensure_mcp_management_mtls_material
   ensure_task_runner_mtls_material
   ensure_project_service_mtls_material
+  ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
   ensure_memory_engine_mtls_material
   ensure_plugin_management_mtls_material
