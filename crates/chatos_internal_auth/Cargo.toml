@@ -7,6 +7,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
