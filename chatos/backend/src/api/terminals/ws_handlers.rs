@@ -14,6 +14,7 @@ use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::local_connectors::{parse_local_connector_root_path, LocalConnectorRootRef};
+use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
 use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
@@ -60,6 +61,7 @@ async fn handle_local_connector_terminal_socket(
     access_token: String,
     mut socket: WebSocket,
 ) {
+    let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::Terminal);
     let ws_url = local_connector_terminal_ws_url(&root_ref, terminal.id.as_str());
     let mut request = match ws_url.as_str().into_client_request() {
         Ok(request) => request,
@@ -266,6 +268,7 @@ fn local_connector_tls_connector() -> Result<Connector, String> {
 }
 
 async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
+    let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::Terminal);
     let manager = get_terminal_manager();
     let session = match manager.get(&id) {
         Some(session) => Some(session),

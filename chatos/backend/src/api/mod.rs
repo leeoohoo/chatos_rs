@@ -50,6 +50,7 @@ pub mod memory_compat;
 pub mod memory_mappings;
 pub mod message_task_runner;
 pub mod messages;
+pub(crate) mod metrics;
 pub mod notepad;
 pub mod projects;
 pub mod realtime;
@@ -108,6 +109,7 @@ pub fn public_router() -> Result<Router, String> {
     Ok(Router::new()
         .merge(modules::app_api::public_routes())
         .merge(protected_api)
+        .route("/metrics", axum::routing::get(metrics::prometheus_metrics))
         .route("/health", axum::routing::get(health))
         .route("/ready", axum::routing::get(ready))
         .route("/", axum::routing::get(root))
@@ -118,6 +120,7 @@ pub fn public_router() -> Result<Router, String> {
             enforce_plugin_ui_resource_origin_namespace,
         ))
         .layer(middleware::from_fn(log_server_error_requests))
+        .layer(middleware::from_fn(metrics::observe_public_http))
         .layer(trace)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
@@ -132,6 +135,7 @@ pub fn internal_router() -> Router {
         .fallback(fallback_404)
         .layer(DefaultBodyLimit::max(default_request_body_limit_bytes()))
         .layer(middleware::from_fn(log_server_error_requests))
+        .layer(middleware::from_fn(metrics::observe_internal_http))
         .layer(TraceLayer::new_for_http())
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
@@ -441,13 +445,15 @@ fn is_websocket_upgrade(req: &Request<Body>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        plugin_ui_resource_namespace_allowed, remove_plugin_ui_resource_cors_headers,
-        sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth,
+        internal_router, plugin_ui_resource_namespace_allowed,
+        remove_plugin_ui_resource_cors_headers, sanitize_request_uri, websocket_auth_from_query,
+        WebSocketQueryAuth,
     };
     use crate::core::auth::{AuthHeaderError, AuthUser};
     use crate::core::websocket_ticket::issue_websocket_ticket;
     use axum::body::Body;
     use axum::http::{header::UPGRADE, HeaderMap, HeaderValue, Method, Request, Uri};
+    use tower::ServiceExt;
 
     fn websocket_request(uri: &str) -> Request<Body> {
         Request::builder()
@@ -561,5 +567,18 @@ mod tests {
         let request = websocket_request("/api/realtime/ws?access_token=legacy_token");
         let error = websocket_auth_from_query(&request).expect_err("legacy query token rejected");
         assert_eq!(error, AuthHeaderError::MissingAuthorization);
+    }
+
+    #[tokio::test]
+    async fn internal_mtls_router_does_not_expose_metrics_endpoint() {
+        let response = internal_router()
+            .oneshot(
+                Request::get("/metrics")
+                    .body(Body::empty())
+                    .expect("build metrics request"),
+            )
+            .await
+            .expect("route metrics request");
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 }

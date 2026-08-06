@@ -2,6 +2,35 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 groups:
+  - name: chatos-backend-api
+    rules:
+      - alert: ChatosBackendMetricsUnavailable
+        expr: up{job="chatos-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ChatOS backend metrics are unavailable"
+          description: "Prometheus has been unable to scrape the ChatOS backend for more than 2 minutes."
+
+      - alert: ChatosBackendServerErrorRateHigh
+        expr: sum(rate(chatos_http_requests_total{service="chatos-backend",status_class="5xx"}[5m])) / clamp_min(sum(rate(chatos_http_requests_total{service="chatos-backend"}[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS backend server error rate is high"
+          description: "More than 5% of ChatOS backend requests have returned 5xx responses for 5 minutes."
+
+      - alert: ChatosBackendRequestLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(chatos_http_request_duration_seconds_bucket{service="chatos-backend"}[5m]))) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ChatOS backend p95 request latency is high"
+          description: "The ChatOS backend p95 request latency has exceeded 2 seconds for 10 minutes."
+
   - name: chatos-container-resources
     rules:
       - record: chatos_container_restarts_15m

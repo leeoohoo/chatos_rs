@@ -190,17 +190,77 @@
       ],
       "title": "Container Restarts (15m)",
       "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "id": 17,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (surface, route, status_class) (rate(chatos_http_requests_total{service=\"chatos-backend\"}[5m]))", "legendFormat": "{{surface}} / {{route}} / {{status_class}}", "range": true, "refId": "A" }
+      ],
+      "title": "ChatOS HTTP Request Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "id": 18,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, surface) (rate(chatos_http_request_duration_seconds_bucket{service=\"chatos-backend\"}[5m])))", "legendFormat": "p95 / {{surface}}", "range": true, "refId": "A" }
+      ],
+      "title": "ChatOS HTTP p95 Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 58 },
+      "id": 19,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [
+        { "editorMode": "code", "expr": "chatos_conversation_turns_active", "legendFormat": "Active Turns", "range": true, "refId": "A" }
+      ],
+      "title": "Active Conversation Turns",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 58 },
+      "id": 20,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(chatos_websocket_connections_active)", "legendFormat": "WebSockets", "range": true, "refId": "A" }
+      ],
+      "title": "Active WebSockets",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 58 },
+      "id": 21,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [
+        { "editorMode": "code", "expr": "chatos_terminal_sessions_active", "legendFormat": "Terminal Sessions", "range": true, "refId": "A" }
+      ],
+      "title": "Active Terminal Sessions",
+      "type": "stat"
     }
   ],
   "refresh": "15s",
   "schemaVersion": 39,
-  "tags": ["chatos", "rabbitmq", "cache", "containers"],
+  "tags": ["chatos", "http", "rabbitmq", "cache", "containers"],
   "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "ChatOS Platform Overview",
   "uid": "chatos-platform-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

@@ -107,6 +107,10 @@ impl RuntimeGuidanceManager {
             .unwrap_or(false)
     }
 
+    pub fn active_turn_count(&self) -> usize {
+        self.state.lock().active_turn_by_session.len()
+    }
+
     pub fn enqueue_guidance(
         &self,
         session_id: &str,

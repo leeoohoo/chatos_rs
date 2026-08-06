@@ -31,6 +31,10 @@ scrape_configs:
     static_configs:
       - targets: ["rabbitmq:15692"]
 
+  - job_name: chatos-backend
+    static_configs:
+      - targets: ["chatos-backend:3997"]
+
   - job_name: mcp-management-service
     static_configs:
       - targets: ["mcp-management-service-backend:39280"]

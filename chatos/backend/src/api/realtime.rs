@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
 use crate::core::auth::AuthUser;
 use crate::services::realtime::{
     subscribe_user_events, RealtimeAckMessage, RealtimeClientControlMessage, RealtimeErrorMessage,
@@ -28,6 +29,7 @@ async fn realtime_ws(auth: AuthUser, ws: WebSocketUpgrade) -> impl IntoResponse 
 }
 
 async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
+    let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::Realtime);
     let mut receiver = subscribe_user_events();
     let (mut sender, mut receiver_ws) = socket.split();
     let (outbound_tx, mut outbound_rx) = ws_outbound::channel(REALTIME_WS_OUTBOUND_QUEUE_CAPACITY);

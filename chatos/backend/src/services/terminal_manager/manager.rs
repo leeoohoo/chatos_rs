@@ -36,6 +36,10 @@ impl TerminalsManager {
         self.sessions.get(id).map(|s| s.is_busy())
     }
 
+    pub fn active_session_count(&self) -> usize {
+        self.sessions.len()
+    }
+
     fn should_publish_terminal_list(terminal: &Terminal) -> bool {
         terminal.kind != TERMINAL_KIND_PROJECT_RUN
     }
