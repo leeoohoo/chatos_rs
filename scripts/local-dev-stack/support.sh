@@ -157,6 +157,30 @@ for pid in sorted(matched, reverse=True):
 PY
 }
 
+conflicting_local_dev_task_runner_pids() {
+  python3 - "$ROOT_DIR" <<'PY'
+import os
+import subprocess
+import sys
+
+root = os.path.realpath(sys.argv[1])
+current = os.getpid()
+parent = os.getppid()
+output = subprocess.check_output(["ps", "eww", "-axo", "pid=,command="], text=True)
+for line in output.splitlines():
+    parts = line.strip().split(None, 1)
+    if len(parts) < 2:
+        continue
+    pid, command = int(parts[0]), parts[1]
+    if pid in {current, parent} or root in command:
+        continue
+    executable = command.split(None, 1)[0]
+    if os.path.basename(executable) != "task_runner_service_backend":
+        continue
+    print(pid)
+PY
+}
+
 stop_pid() {
   local pid="$1"
   local name="$2"
@@ -205,6 +229,15 @@ stop_repo_managed_processes() {
   done < <(repo_managed_pids)
 }
 
+stop_conflicting_local_dev_task_runners() {
+  local pid
+  while IFS= read -r pid; do
+    if [[ -n "$pid" ]]; then
+      stop_pid "$pid" "conflicting Task Runner from another local-dev workspace"
+    fi
+  done < <(conflicting_local_dev_task_runner_pids)
+}
+
 stop_managed_ports() {
   local item name unused port
   for item in "${FRONTEND_SERVICES[@]}"; do
@@ -237,9 +270,12 @@ managed_ports_busy() {
 cleanup_local_dev_processes() {
   local attempt
   for attempt in 1 2 3 4 5; do
+    stop_conflicting_local_dev_task_runners
     stop_repo_managed_processes
     stop_managed_ports
-    if ! managed_ports_busy && [[ -z "$(repo_managed_pids)" ]]; then
+    if ! managed_ports_busy \
+      && [[ -z "$(repo_managed_pids)" ]] \
+      && [[ -z "$(conflicting_local_dev_task_runner_pids)" ]]; then
       return 0
     fi
     sleep 1
