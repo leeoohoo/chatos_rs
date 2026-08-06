@@ -12,6 +12,7 @@ use tracing::warn;
 
 use crate::models::{UserModelConfigRecord, UserModelSettingsRecord};
 use crate::state::AppState;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::http::{extract_error_message, normalized_text, normalized_url};
 pub async fn sync_model_config_upsert(
@@ -316,6 +317,7 @@ async fn delete_memory_engine_model_profile(
     );
     let request = memory_engine_client(state)?.request(Method::DELETE, endpoint);
     let response = signed_memory_engine_request(request, operator_token.as_str())?
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -416,6 +418,7 @@ async fn delete_task_runner_model_config(
         urlencoding::encode(model_config_id)
     );
     let response = task_runner_request(state, Method::DELETE, endpoint.as_str())?
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| err.to_string())?;
@@ -450,7 +453,11 @@ where
     if let Some(body) = body {
         request = request.json(body);
     }
-    let response = request.send().await.map_err(|err| err.to_string())?;
+    let response = request
+        .with_internal_trace_context()
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
         let body =
@@ -532,7 +539,11 @@ where
     if let Some(body) = body {
         request = request.json(body);
     }
-    let response = request.send().await.map_err(|err| err.to_string())?;
+    let response = request
+        .with_internal_trace_context()
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
         let body =

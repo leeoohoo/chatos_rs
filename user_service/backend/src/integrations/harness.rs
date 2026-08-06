@@ -18,6 +18,7 @@ use crate::models::{
 use crate::secrets::encrypt_secret;
 use crate::state::AppState;
 use crate::store::now_rfc3339;
+use crate::trace_context::InternalTraceContextExt;
 
 use super::http::{build_client_with_timeout, extract_error_message, normalized_url};
 
@@ -605,6 +606,7 @@ where
     }
 
     let response = request
+        .with_internal_trace_context()
         .send()
         .await
         .map_err(|err| HarnessRequestError::from_error(err.to_string()))?;
