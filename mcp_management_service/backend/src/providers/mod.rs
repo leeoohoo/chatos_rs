@@ -50,6 +50,7 @@ pub(crate) use sandbox_images::{
 use task_runner::TaskRunnerProvider;
 
 pub struct TaskRunnerProviderConfig {
+    pub http: reqwest::Client,
     pub base_url: String,
     pub internal_secret: Option<String>,
     pub request_timeout: Duration,
@@ -97,12 +98,14 @@ pub struct ProviderDispatcher {
 
 impl ProviderDispatcher {
     pub fn new(
+        project_service_http: reqwest::Client,
         project_service_base_url: impl Into<String>,
         project_service_internal_secret: Option<String>,
         task_runner: TaskRunnerProviderConfig,
         chatos: ChatosProviderConfig,
         local_connector_service_base_url: impl Into<String>,
         local_connector_internal_secret: Option<String>,
+        sandbox_manager_http: reqwest::Client,
         sandbox_manager_service_base_url: impl Into<String>,
         sandbox_manager_internal_secret: Option<String>,
         sandbox_manager_request_timeout: Duration,
@@ -112,6 +115,7 @@ impl ProviderDispatcher {
         let local_connector_service_base_url = local_connector_service_base_url.into();
         let sandbox_manager_service_base_url = sandbox_manager_service_base_url.into();
         let cloud_stdio = CloudStdioProvider::new(
+            sandbox_manager_http.clone(),
             sandbox_manager_service_base_url.clone(),
             sandbox_manager_request_timeout,
             sandbox_manager_internal_secret.clone(),
@@ -148,12 +152,13 @@ impl ProviderDispatcher {
             )?,
             plugin_cloud: PluginCloudProvider::new(cloud_stdio.clone(), external_http.clone()),
             project_service: ProjectServiceProvider::new(
+                project_service_http,
                 project_service_base_url,
-                runtime.downstream_request_timeout,
                 project_service_internal_secret,
                 runtime.response_limit_bytes,
             )?,
             task_runner: TaskRunnerProvider::new(
+                task_runner.http,
                 task_runner.base_url,
                 task_runner.request_timeout,
                 task_runner.ask_user_request_timeout,
@@ -169,6 +174,7 @@ impl ProviderDispatcher {
                 runtime.response_limit_bytes,
             )?,
             cloud_sandbox: CloudSandboxProvider::new(
+                sandbox_manager_http.clone(),
                 sandbox_manager_service_base_url.clone(),
                 sandbox_manager_request_timeout,
                 sandbox_manager_internal_secret.clone(),
@@ -176,6 +182,7 @@ impl ProviderDispatcher {
             )?,
             cloud_stdio,
             sandbox_images: SandboxImagesProvider::new(
+                sandbox_manager_http,
                 sandbox_manager_service_base_url,
                 sandbox_manager_internal_secret,
                 local_connector_service_base_url,

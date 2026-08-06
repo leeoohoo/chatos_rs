@@ -6,6 +6,7 @@ pub mod auth;
 pub mod config;
 pub mod domain;
 mod http_body;
+pub mod internal_tls;
 pub mod mcp_server;
 mod mcp_tools;
 pub mod models;
@@ -14,6 +15,6 @@ pub mod state;
 pub mod store;
 pub mod user_model_runtime_client;
 
-pub use api::build_router;
+pub use api::{build_internal_router, build_public_router};
 pub use config::{load_project_service_dotenv, AppConfig};
 pub use state::AppState;

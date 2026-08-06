@@ -95,17 +95,38 @@ cloud_agent_roots = [
 ]
 cloud_agent_files = rust_files(cloud_agent_roots)
 
-expected_runtime_session_resolvers = {
-    "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
-    "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
-    "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
-}
 require_exact_locations(
     "managed Runtime Session resolution",
+    rust_files(["crates/chatos_mcp_gateway/src"]),
+    ".resolve_runtime_session(",
+    {"crates/chatos_mcp_gateway/src/lib.rs"},
+)
+
+require_exact_locations(
+    "shared MCP Management Gateway construction",
+    cloud_agent_files,
+    "McpManagementGatewayBuilder::new(",
+    {
+        "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
+        "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
+        "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
+    },
+)
+require_exact_locations(
+    "cloud Agent direct Runtime Session resolution",
     cloud_agent_files,
     ".resolve_runtime_session(",
-    expected_runtime_session_resolvers,
+    set(),
 )
+for gateway_path in [
+    "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
+    "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
+]:
+    forbid(
+        gateway_path,
+        ["McpManagementClient::new", ".resolve_runtime_session(", "format!(\"Bearer"],
+        "cloud Agent must use the shared MCP Management Gateway builder",
+    )
 
 expected_executor_gateway_assembly = {
     "task_runner_service/backend/src/services/run_model_phase/setup/preparation.rs",
@@ -119,13 +140,10 @@ require_exact_locations(
 )
 
 chatos_runtime_files = rust_files(["chatos/backend/src/modules/conversation_runtime"])
-require_exact_locations(
-    "ChatOS runtime HTTP MCP construction",
-    chatos_runtime_files,
-    "McpHttpServer {",
-    {
-        "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs"
-    },
+forbid(
+    "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
+    ["McpHttpServer {", "McpManagementClient::new", ".resolve_runtime_session("],
+    "ChatOS must use the shared MCP Management Gateway builder",
 )
 forbid(
     "chatos/backend/src/modules/conversation_runtime/runtime_context.rs",

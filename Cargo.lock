@@ -170,6 +170,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -494,6 +503,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum-server"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1ab4a3ec9ea8a657c72d99a03a824af695bd0fb5ec639ccbd9cd3543b41a5f9"
+dependencies = [
+ "arc-swap",
+ "bytes",
+ "fs-err",
+ "http",
+ "http-body",
+ "hyper",
+ "hyper-util",
+ "pin-project-lite",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tower-service",
+]
+
+[[package]]
+name = "backon"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
+dependencies = [
+ "fastrand 2.4.1",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -793,6 +833,7 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_config_sdk",
  "chatos_mcp",
+ "chatos_mcp_gateway",
  "chatos_mcp_management_sdk",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
@@ -880,11 +921,21 @@ dependencies = [
 name = "chatos_config_sdk"
 version = "0.1.0"
 dependencies = [
+ "chatos_internal_auth",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "chatos_internal_auth"
+version = "0.1.0"
+dependencies = [
+ "jsonwebtoken",
+ "serde",
+ "uuid",
 ]
 
 [[package]]
@@ -921,6 +972,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_mcp_gateway"
+version = "0.1.0"
+dependencies = [
+ "chatos_mcp_management_sdk",
+ "chatos_mcp_runtime",
+]
+
+[[package]]
 name = "chatos_mcp_management_sdk"
 version = "0.1.0"
 dependencies = [
@@ -939,8 +998,11 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "chatos_mcp_management_sdk",
  "chatos_service_runtime",
+ "futures-util",
  "hex",
+ "lapin",
  "libc",
  "reqwest",
  "serde",
@@ -1002,6 +1064,15 @@ dependencies = [
  "serde",
  "serde_json",
  "urlencoding",
+]
+
+[[package]]
+name = "chatos_queue_observability"
+version = "0.1.0"
+dependencies = [
+ "lapin",
+ "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -1071,10 +1142,10 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chatos_config_sdk",
+ "chatos_internal_auth",
  "dotenvy",
  "futures-util",
  "http",
- "jsonwebtoken",
  "reqwest",
  "serde",
  "serde_json",
@@ -1158,6 +1229,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "combine"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "memchr",
+ "pin-project-lite",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "compression-codecs"
 version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1189,8 +1274,10 @@ name = "config_center_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "axum-server",
  "chatos_agent",
  "chatos_config_sdk",
+ "chatos_queue_observability",
  "chatos_service_runtime",
  "chrono",
  "futures-util",
@@ -1198,6 +1285,8 @@ dependencies = [
  "memory_engine_sdk",
  "mongodb",
  "reqwest",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2039,6 +2128,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs-err"
+version = "3.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b91aa448ca50d7e79433bdf3ee8d99215430d2ec02ade5aefab2a073a1822e8a"
+dependencies = [
+ "autocfg",
+ "tokio",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2751,6 +2850,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
+name = "itertools"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3037,6 +3145,7 @@ dependencies = [
  "hex",
  "libc",
  "mongodb",
+ "redis",
  "reqwest",
  "ring",
  "serde",
@@ -3178,13 +3287,16 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "axum",
+ "axum-server",
  "chatos_agent",
+ "chatos_config_sdk",
  "chatos_mcp",
  "chatos_mcp_management_sdk",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
  "chatos_plugin_package",
+ "chatos_queue_observability",
  "chatos_service_runtime",
  "chrono",
  "futures-util",
@@ -3193,7 +3305,10 @@ dependencies = [
  "lapin",
  "mongodb",
  "rand 0.10.2",
+ "redis",
  "reqwest",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3861,21 +3976,27 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "axum",
+ "axum-server",
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
+ "chatos_config_sdk",
  "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_plugin_management_sdk",
  "chatos_plugin_package",
+ "chatos_queue_observability",
  "chatos_service_runtime",
  "chrono",
  "futures-util",
  "hex",
+ "lapin",
  "mongodb",
  "rand 0.10.2",
  "reqwest",
  "ring",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -4025,10 +4146,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "axum-server",
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
  "chatos_mcp",
+ "chatos_mcp_gateway",
  "chatos_mcp_management_sdk",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
@@ -4041,6 +4164,8 @@ dependencies = [
  "memory_engine_sdk",
  "mongodb",
  "reqwest",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4289,6 +4414,32 @@ dependencies = [
  "async-trait",
  "futures-core",
  "futures-io",
+]
+
+[[package]]
+name = "redis"
+version = "0.27.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09d8f99a4090c89cc489a94833c901ead69bfbf3877b4867d5482e321ee875bc"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "backon",
+ "bytes",
+ "combine",
+ "futures",
+ "futures-util",
+ "itertools",
+ "itoa",
+ "num-bigint",
+ "percent-encoding",
+ "pin-project-lite",
+ "ryu",
+ "sha1_smol",
+ "socket2 0.5.10",
+ "tokio",
+ "tokio-util",
+ "url",
 ]
 
 [[package]]
@@ -4669,6 +4820,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "axum-server",
  "base64 0.22.1",
  "chatos_mcp",
  "chatos_plugin_management_sdk",
@@ -4678,6 +4830,8 @@ dependencies = [
  "futures-util",
  "mongodb",
  "reqwest",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4991,6 +5145,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5110,6 +5270,16 @@ checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5490,17 +5660,20 @@ dependencies = [
  "argon2",
  "async-trait",
  "axum",
+ "axum-server",
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
  "chatos_config_sdk",
  "chatos_mcp",
+ "chatos_mcp_gateway",
  "chatos_mcp_management_sdk",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
  "chatos_plugin_package",
  "chatos_project_execution",
+ "chatos_queue_observability",
  "chatos_remote_runtime",
  "chatos_sandbox_contract",
  "chatos_service_runtime",
@@ -5516,6 +5689,8 @@ dependencies = [
  "parking_lot",
  "rand 0.10.2",
  "reqwest",
+ "rustls 0.23.41",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5523,6 +5698,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower",
  "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",

@@ -312,7 +312,7 @@ fn compose_response_to_input_items_omits_large_tool_outputs() {
 }
 
 #[test]
-fn compose_response_to_input_items_prioritizes_latest_tool_output_with_total_budget() {
+fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
     let tool_call_record = |record_id: &str, call_id: &str, created_at: &str| EngineRecord {
         id: record_id.to_string(),
         thread_id: "thread-1".to_string(),
@@ -382,7 +382,7 @@ fn compose_response_to_input_items_prioritizes_latest_tool_output_with_total_bud
 
     let items = compose_response_to_input_items_with_budget(
         &response,
-        Some(ToolResultModelBudgetLimits::new(100, 30)),
+        Some(ToolResultModelBudgetLimits::new(100, 45)),
     );
     let outputs = items
         .iter()
@@ -394,11 +394,11 @@ fn compose_response_to_input_items_prioritizes_latest_tool_output_with_total_bud
         .collect::<HashMap<_, _>>();
 
     assert_eq!(
-        outputs.get("call_new").copied(),
-        Some("{\"count\":0,\"tasks\":[]}")
+        outputs.get("call_old").copied(),
+        Some("{\"count\":3,\"tasks\":[\"older-task-state\"]}")
     );
     assert!(outputs
-        .get("call_old")
+        .get("call_new")
         .is_some_and(|output| output.contains("combined tool results exceed")));
 }
 

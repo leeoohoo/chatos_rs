@@ -18,7 +18,6 @@ use crate::config::AppConfig;
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::ProjectRecord;
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HarnessProjectRepoResponse {
@@ -54,17 +53,20 @@ pub async fn create_harness_repo_for_project(
         })?;
     let endpoint = format!(
         "{}/api/internal/harness/repos",
-        config.user_service_base_url.trim().trim_end_matches('/')
+        config
+            .user_service_internal_base_url
+            .trim()
+            .trim_end_matches('/')
     );
     let body = HarnessProjectRepoCreateRequest {
         project_id: project.id.as_str(),
         project_name: project.name.as_str(),
         description: project.description.as_deref(),
     };
-    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
-        .map_err(|err| format!("build user_service client failed: {err}"))?;
     let response = crate::user_model_runtime_client::signed_user_service_request(
-        client.request(Method::POST, endpoint),
+        config
+            .user_service_internal_http_client
+            .request(Method::POST, endpoint),
         secret,
         crate::user_model_runtime_client::HARNESS_REPO_WRITE_SCOPE,
     )?

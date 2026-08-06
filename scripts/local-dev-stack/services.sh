@@ -24,6 +24,18 @@ start_backend() {
   stop_service_pid "$name"
   if [[ -n "$port" && "$port" != "-" ]]; then
     stop_port_if_needed "$port" "$name"
+    if [[ "$name" == "memory-engine-backend" ]]; then
+      stop_port_if_needed "$MEMORY_ENGINE_INTERNAL_MTLS_PORT" "$name internal mTLS"
+    fi
+    if [[ "$name" == "project-management-backend" ]]; then
+      stop_port_if_needed "$PROJECT_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"
+    fi
+    if [[ "$name" == "user-service-backend" ]]; then
+      stop_port_if_needed "$USER_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"
+    fi
+    if [[ "$name" == "plugin-management-backend" ]]; then
+      stop_port_if_needed "$PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT" "$name internal mTLS"
+    fi
     echo "[INFO] starting $name on 127.0.0.1:$port"
   else
     echo "[INFO] starting $name without HTTP listener"
@@ -39,6 +51,56 @@ start_backend() {
     export CHATOS_SERVICE_ID="${service_name}-local"
     export CHATOS_SERVICE_PORT="${port:-0}"
     export CHATOS_SERVICE_HEALTH_PATH="${health_path:-/health}"
+    if config_center_secret="$(config_center_caller_signing_secret "$service_name")"; then
+      export CONFIG_CENTER_CALLER_SIGNING_SECRET="$config_center_secret"
+      export CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH="$(config_center_client_identity_path "$service_name")"
+    fi
+    if mcp_management_identity="$(mcp_management_client_identity_path "$service_name")"; then
+      export MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH="$mcp_management_identity"
+    fi
+    if task_runner_identity="$(task_runner_client_identity_path "$service_name")"; then
+      export TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH="$task_runner_identity"
+    fi
+    if memory_engine_identity="$(memory_engine_client_identity_path "$service_name")"; then
+      export MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH="$memory_engine_identity"
+    fi
+    if project_service_identity="$(project_service_client_identity_path "$service_name")"; then
+      export PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH="$project_service_identity"
+    fi
+    if user_service_identity="$(user_service_client_identity_path "$service_name")"; then
+      export USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH="$user_service_identity"
+    fi
+    if plugin_management_identity="$(plugin_management_client_identity_path "$service_name")"; then
+      export PLUGIN_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH="$plugin_management_identity"
+    fi
+    if sandbox_manager_identity="$(sandbox_manager_client_identity_path "$service_name")"; then
+      export SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH="$sandbox_manager_identity"
+    fi
+    if [[ "$name" == "memory-engine-backend" ]]; then
+      export MEMORY_ENGINE_MTLS_SERVER_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/server.crt"
+      export MEMORY_ENGINE_MTLS_SERVER_KEY_PATH="$MEMORY_ENGINE_MTLS_DIR/server.key"
+      export MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/ca.crt"
+    fi
+    if [[ "$name" == "project-management-backend" ]]; then
+      export PROJECT_SERVICE_MTLS_SERVER_CERT_PATH="$PROJECT_SERVICE_MTLS_DIR/server.crt"
+      export PROJECT_SERVICE_MTLS_SERVER_KEY_PATH="$PROJECT_SERVICE_MTLS_DIR/server.key"
+      export PROJECT_SERVICE_MTLS_CLIENT_CA_CERT_PATH="$PROJECT_SERVICE_MTLS_DIR/ca.crt"
+    fi
+    if [[ "$name" == "user-service-backend" ]]; then
+      export USER_SERVICE_MTLS_SERVER_CERT_PATH="$USER_SERVICE_MTLS_DIR/server.crt"
+      export USER_SERVICE_MTLS_SERVER_KEY_PATH="$USER_SERVICE_MTLS_DIR/server.key"
+      export USER_SERVICE_MTLS_CLIENT_CA_CERT_PATH="$USER_SERVICE_MTLS_DIR/ca.crt"
+    fi
+    if [[ "$name" == "plugin-management-backend" ]]; then
+      export PLUGIN_MANAGEMENT_MTLS_SERVER_CERT_PATH="$PLUGIN_MANAGEMENT_MTLS_DIR/server.crt"
+      export PLUGIN_MANAGEMENT_MTLS_SERVER_KEY_PATH="$PLUGIN_MANAGEMENT_MTLS_DIR/server.key"
+      export PLUGIN_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH="$PLUGIN_MANAGEMENT_MTLS_DIR/ca.crt"
+    fi
+    if [[ "$name" == "sandbox-manager-backend" ]]; then
+      export SANDBOX_MANAGER_MTLS_SERVER_CERT_PATH="$SANDBOX_MANAGER_MTLS_DIR/server.crt"
+      export SANDBOX_MANAGER_MTLS_SERVER_KEY_PATH="$SANDBOX_MANAGER_MTLS_DIR/server.key"
+      export SANDBOX_MANAGER_MTLS_CLIENT_CA_CERT_PATH="$SANDBOX_MANAGER_MTLS_DIR/ca.crt"
+    fi
     if [[ -n "$env_overrides" && "$env_overrides" != "-" ]]; then
       # shellcheck disable=SC2086
       export $env_overrides
@@ -49,6 +111,38 @@ start_backend() {
   if [[ -n "$port" && "$port" != "-" && -n "$health_path" && "$health_path" != "-" ]]; then
     wait_for_http "$name" "http://127.0.0.1:${port}${health_path}" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
   fi
+}
+
+ensure_config_center_mtls_material() {
+  "$ROOT_DIR/scripts/generate-config-center-mtls.sh" "$CONFIG_CENTER_MTLS_DIR"
+}
+
+ensure_mcp_management_mtls_material() {
+  "$ROOT_DIR/scripts/generate-mcp-management-mtls.sh" "$MCP_MANAGEMENT_MTLS_DIR"
+}
+
+ensure_task_runner_mtls_material() {
+  "$ROOT_DIR/scripts/generate-task-runner-mtls.sh" "$TASK_RUNNER_MTLS_DIR"
+}
+
+ensure_project_service_mtls_material() {
+  "$ROOT_DIR/scripts/generate-project-service-mtls.sh" "$PROJECT_SERVICE_MTLS_DIR"
+}
+
+ensure_user_service_mtls_material() {
+  "$ROOT_DIR/scripts/generate-user-service-mtls.sh" "$USER_SERVICE_MTLS_DIR"
+}
+
+ensure_memory_engine_mtls_material() {
+  "$ROOT_DIR/scripts/generate-memory-engine-mtls.sh" "$MEMORY_ENGINE_MTLS_DIR"
+}
+
+ensure_plugin_management_mtls_material() {
+  "$ROOT_DIR/scripts/generate-plugin-management-mtls.sh" "$PLUGIN_MANAGEMENT_MTLS_DIR"
+}
+
+ensure_sandbox_manager_mtls_material() {
+  "$ROOT_DIR/scripts/generate-sandbox-manager-mtls.sh" "$SANDBOX_MANAGER_MTLS_DIR"
 }
 
 ensure_local_dev_managed_runtime_config() {
@@ -221,13 +315,79 @@ PY
   echo "[INFO] published local-dev host runtime settings to configuration center"
 }
 
+issue_config_center_token() {
+  local caller="$1"
+  local scope="$2"
+  local secret
+  secret="$(config_center_caller_signing_secret "$caller")"
+  CONFIG_CENTER_TOKEN_CALLER="$caller" \
+    CONFIG_CENTER_TOKEN_SCOPE="$scope" \
+    CONFIG_CENTER_TOKEN_SECRET="$secret" \
+    python3 <<'PY'
+import base64
+import hashlib
+import hmac
+import json
+import os
+import time
+import uuid
+
+def encode(value):
+    payload = json.dumps(value, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+
+caller = os.environ["CONFIG_CENTER_TOKEN_CALLER"]
+now = int(time.time())
+header = encode({"alg": "HS256", "typ": "JWT"})
+payload = encode({
+    "iss": caller,
+    "sub": caller,
+    "caller": caller,
+    "aud": "configuration-center",
+    "scope": os.environ["CONFIG_CENTER_TOKEN_SCOPE"],
+    "trace_id": str(uuid.uuid4()),
+    "iat": now,
+    "exp": now + 60,
+})
+signature = hmac.new(
+    os.environ["CONFIG_CENTER_TOKEN_SECRET"].encode(),
+    f"{header}.{payload}".encode(),
+    hashlib.sha256,
+).digest()
+print(f"{header}.{payload}.{base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}")
+PY
+}
+
+wait_for_config_center_mtls() {
+  local token deadline
+  deadline=$((SECONDS + ${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}))
+  while (( SECONDS < deadline )); do
+    token="$(issue_config_center_token user-service config.snapshot.read)"
+    if curl -fsS \
+      --max-time 3 \
+      --cacert "$CONFIG_CENTER_MTLS_CA_CERT_PATH" \
+      --cert "$(config_center_client_identity_path user-service)" \
+      -H "x-config-center-caller: user-service" \
+      -H "x-config-center-internal-token: $token" \
+      "${CONFIG_CENTER_BASE_URL%/}/internal/config/v1/snapshots/user-service?environment=${CHATOS_ENV}" \
+      >/dev/null
+    then
+      echo "[INFO] Configuration Center internal mTLS endpoint is ready"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[ERROR] Configuration Center internal mTLS endpoint did not become ready" >&2
+  return 1
+}
+
 ensure_local_connector_control_plane_config() {
-  local config_center_base_url="http://127.0.0.1:${CONFIG_CENTER_PORT}"
+  local config_center_base_url="$CONFIG_CENTER_BASE_URL"
   local environment="${CHATOS_ENV:-local}"
   local key_dir="$STATE_DIR/local-connector"
   local key_path="$key_dir/relay-signing-key.pk8"
   local key_id="${CHATOS_LOCAL_DEV_RELAY_SIGNING_KEY_ID:-relay-key-local-dev}"
-  local public_key snapshot_file draft_file merge_file token desired_json
+  local public_key snapshot_file draft_file merge_file token desired_json snapshot_auth_token
   local login_payload
 
   mkdir -p "$key_dir"
@@ -263,8 +423,12 @@ PY
   )"
 
   snapshot_file="$(mktemp)"
+  snapshot_auth_token="$(issue_config_center_token local-connector-service config.snapshot.read)"
   if curl -fsS \
-    -H "x-config-center-internal-secret: $CONFIG_CENTER_INTERNAL_API_SECRET" \
+    --cacert "$CONFIG_CENTER_MTLS_CA_CERT_PATH" \
+    --cert "$(config_center_client_identity_path local-connector-service)" \
+    -H "x-config-center-caller: local-connector-service" \
+    -H "x-config-center-internal-token: $snapshot_auth_token" \
     "${config_center_base_url}/internal/config/v1/snapshots/local-connector-service?environment=${environment}" \
     >"$snapshot_file"; then
     if python3 - "$snapshot_file" "$desired_json" <<'PY'
@@ -385,16 +549,39 @@ PY
 
 ensure_task_runner_sandbox_base_image() {
   local base_url="http://127.0.0.1:${SANDBOX_MANAGER_PORT}"
+  local user_service_base_url="http://127.0.0.1:${USER_SERVICE_PORT}"
   local image_id="${TASK_RUNNER_SANDBOX_BASE_IMAGE_ID:-default}"
   local feature_list="${CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES:-}"
   local timeout_seconds="${CHATOS_LOCAL_DEV_SANDBOX_IMAGE_TIMEOUT_SECONDS:-900}"
+  local login_payload login_response access_token
   local catalog_file job_file jobs_file job_id built_image_id status error elapsed
   catalog_file="$(mktemp)"
   job_file="$(mktemp)"
   jobs_file="$(mktemp)"
 
+  login_payload="$(python3 - <<'PY'
+import json
+import os
+print(json.dumps({
+    "username": os.environ["CHATOS_ADMIN_USERNAME"],
+    "password": os.environ["CHATOS_ADMIN_PASSWORD"],
+}, separators=(",", ":")))
+PY
+  )"
+  if ! login_response="$(
+    curl -fsS \
+      -H "content-type: application/json" \
+      --data "$login_payload" \
+      "$user_service_base_url/api/auth/login"
+  )"; then
+    rm -f "$catalog_file" "$job_file" "$jobs_file"
+    echo "[ERROR] User Service super-admin login failed during sandbox image initialization" >&2
+    return 1
+  fi
+  access_token="$(printf '%s' "$login_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"
+
   if ! curl -fsS \
-    -H "x-sandbox-operator-token: $SANDBOX_MANAGER_OPERATOR_TOKEN" \
+    -H "authorization: Bearer $access_token" \
     "$base_url/api/sandbox-images" >"$catalog_file"; then
     rm -f "$catalog_file" "$job_file" "$jobs_file"
     echo "[ERROR] failed to inspect Sandbox Manager image catalog" >&2
@@ -428,7 +615,7 @@ PY
   echo "[INFO] initializing Task Runner sandbox base image: $image_id"
   if ! python3 - "$feature_list" <<'PY' | curl -fsS \
     -H "content-type: application/json" \
-    -H "x-sandbox-operator-token: $SANDBOX_MANAGER_OPERATOR_TOKEN" \
+    -H "authorization: Bearer $access_token" \
     --data-binary @- \
     "$base_url/api/sandbox-images/initialize" >"$job_file"
 import json
@@ -461,7 +648,7 @@ PY
   elapsed=0
   while (( elapsed < timeout_seconds )); do
     if ! curl -fsS \
-      -H "x-sandbox-operator-token: $SANDBOX_MANAGER_OPERATOR_TOKEN" \
+      -H "authorization: Bearer $access_token" \
       "$base_url/api/sandbox-images/jobs" >"$jobs_file"; then
       rm -f "$catalog_file" "$job_file" "$jobs_file"
       echo "[ERROR] failed to inspect Sandbox Manager image job $job_id" >&2
@@ -534,6 +721,9 @@ start_frontend() {
   : >"$log_file"
   local spawned_pid
   spawned_pid="$(
+    if [[ "$name" == "chatos-frontend" ]]; then
+      export VITE_API_BASE_URL="http://127.0.0.1:${APISIX_GATEWAY_PORT:-9080}/api/chatos"
+    fi
     spawn_detached "$ROOT_DIR/$app_dir" "$log_file" npm run dev -- --host 0.0.0.0 --port "$port" --strictPort
   )"
   echo "$spawned_pid" >"$pid_file"
@@ -556,6 +746,14 @@ start_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  ensure_config_center_mtls_material
+  ensure_mcp_management_mtls_material
+  ensure_task_runner_mtls_material
+  ensure_project_service_mtls_material
+  ensure_user_service_mtls_material
+  ensure_memory_engine_mtls_material
+  ensure_plugin_management_mtls_material
+  ensure_sandbox_manager_mtls_material
   prepare_local_dev_apisix_config
   cleanup_legacy_local_connector_client_state
   start_infra
@@ -573,6 +771,9 @@ start_all() {
       ensure_local_connector_control_plane_config
     fi
     start_backend "$name" "$service_name" "$package" "$health_path" "$port" "$bin" "$env_overrides"
+    if [[ "$name" == "configuration-center-backend" ]]; then
+      wait_for_config_center_mtls
+    fi
     if [[ "$name" == "user-service-backend" ]]; then
       ensure_local_dev_managed_runtime_config
       if [[ "$LOCAL_DEV_CONFIG_CHANGED" == "true" ]]; then
@@ -609,6 +810,15 @@ stop_all() {
     stop_service_pid "$name"
     if [[ -n "$port" && "$port" != "-" ]]; then
       stop_port_if_needed "$port" "$name"
+      if [[ "$name" == "memory-engine-backend" ]]; then
+        stop_port_if_needed "$MEMORY_ENGINE_INTERNAL_MTLS_PORT" "$name internal mTLS"
+      fi
+      if [[ "$name" == "project-management-backend" ]]; then
+        stop_port_if_needed "$PROJECT_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"
+      fi
+      if [[ "$name" == "user-service-backend" ]]; then
+        stop_port_if_needed "$USER_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"
+      fi
     fi
   done
   cleanup_local_dev_processes
@@ -688,6 +898,9 @@ print_urls() {
 
 Main app:                 http://localhost:8088
 Unified gateway:          http://localhost:${APISIX_GATEWAY_PORT:-9080}
+Prometheus:               http://127.0.0.1:${PROMETHEUS_PORT:-9090}
+Alertmanager:             http://127.0.0.1:${ALERTMANAGER_PORT:-9093}
+Grafana:                  http://127.0.0.1:${GRAFANA_PORT:-3001}
 Main backend:             http://localhost:3997
 Configuration Center:     http://localhost:39271
 Harness:                  http://localhost:3000

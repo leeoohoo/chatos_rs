@@ -167,3 +167,80 @@ fn apply_patch_limited_rejects_oversized_output() {
 
     fs::remove_dir_all(&root).expect("cleanup temp root");
 }
+
+#[test]
+fn applying_the_same_hunk_patch_twice_is_idempotent() {
+    let root = make_temp_root();
+    let target = root.join("repeat.txt");
+    fs::write(&target, "alpha\nold\nomega\n").expect("write source file");
+    let patch = "\
+*** Begin Patch
+*** Update File: repeat.txt
+@@
+ alpha
+-old
++new
+ omega
+*** End Patch";
+
+    let first = apply_patch(&root, patch, true).expect("first patch");
+    let second = apply_patch(&root, patch, true).expect("second patch");
+
+    assert_eq!(first.updated, vec!["repeat.txt"]);
+    assert!(second.updated.is_empty());
+    assert_eq!(
+        fs::read_to_string(&target).expect("read target"),
+        "alpha\nnew\nomega\n"
+    );
+    fs::remove_dir_all(&root).expect("cleanup temp root");
+}
+
+#[test]
+fn applying_the_same_add_only_hunk_twice_does_not_duplicate_lines() {
+    let root = make_temp_root();
+    let target = root.join("append-once.txt");
+    fs::write(&target, "alpha\nomega\n").expect("write source file");
+    let patch = "\
+*** Begin Patch
+*** Update File: append-once.txt
+@@
+ alpha
++inserted
+ omega
+*** End Patch";
+
+    apply_patch(&root, patch, true).expect("first patch");
+    let repeated = apply_patch(&root, patch, true).expect("repeated patch");
+
+    assert!(repeated.updated.is_empty());
+    assert_eq!(
+        fs::read_to_string(&target).expect("read target"),
+        "alpha\ninserted\nomega\n"
+    );
+    fs::remove_dir_all(&root).expect("cleanup temp root");
+}
+
+#[test]
+fn matching_desired_text_elsewhere_does_not_hide_a_real_patch_target() {
+    let root = make_temp_root();
+    let target = root.join("two-targets.txt");
+    fs::write(&target, "start\nnew\nend\nseparator\nstart\nold\nend\n").expect("write source file");
+    let patch = "\
+*** Begin Patch
+*** Update File: two-targets.txt
+@@
+ start
+-old
++new
+ end
+*** End Patch";
+
+    let result = apply_patch(&root, patch, true).expect("apply targeted patch");
+
+    assert_eq!(result.updated, vec!["two-targets.txt"]);
+    assert_eq!(
+        fs::read_to_string(&target).expect("read target"),
+        "start\nnew\nend\nseparator\nstart\nnew\nend\n"
+    );
+    fs::remove_dir_all(&root).expect("cleanup temp root");
+}

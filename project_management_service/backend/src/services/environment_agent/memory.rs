@@ -59,19 +59,19 @@ async fn ensure_project_agent_memory_source(config: &AppConfig) -> Result<(), St
     if source_id.is_empty() {
         return Err("PROJECT_SERVICE_MEMORY_ENGINE_SOURCE_ID is required".to_string());
     }
-    let Some(operator_token) = config
-        .memory_engine_operator_token
+    let Some(internal_api_secret) = config
+        .memory_engine_internal_api_secret
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return Err("PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN is required to register project management agent memory source".to_string());
+        return Err("PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET is required to register project management agent memory source".to_string());
     };
-    let client = memory_engine_sdk::MemoryEngineClient::new_platform(
+    let client = memory_engine_sdk::MemoryEngineClient::new_platform_with_http_client(
         base_url.to_string(),
-        config.memory_engine_request_timeout,
-    )?
-    .with_internal_service_auth("project-service", operator_token.to_string());
+        config.memory_engine_http_client.clone(),
+    )
+    .with_internal_service_auth("project-service", internal_api_secret.to_string());
     client
         .upsert_source(
             source_id,
@@ -148,26 +148,27 @@ fn build_memory_engine_client(
     if source_id.is_empty() {
         return Err("PROJECT_SERVICE_MEMORY_ENGINE_SOURCE_ID is required".to_string());
     }
-    let mut client = memory_engine_sdk::MemoryEngineClient::new_direct(
+    let mut client = memory_engine_sdk::MemoryEngineClient::new_direct_with_http_client(
         base_url.to_string(),
-        config.memory_engine_request_timeout,
         source_id.to_string(),
-    )?;
+        config.memory_engine_http_client.clone(),
+    );
     if let Some(access_token) = user_access_token
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
         client = client.with_bearer_token(access_token.to_string());
-    } else if let Some(operator_token) = config
-        .memory_engine_operator_token
+    } else if let Some(internal_api_secret) = config
+        .memory_engine_internal_api_secret
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        client = client.with_internal_service_auth("project-service", operator_token.to_string());
+        client =
+            client.with_internal_service_auth("project-service", internal_api_secret.to_string());
     } else {
         return Err(
-            "Memory Engine client requires a user access token or PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN"
+            "Memory Engine client requires a user access token or PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"
                 .to_string(),
         );
     }

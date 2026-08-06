@@ -315,13 +315,13 @@ pub async fn get_project_service_runtime_environment_progress(
 }
 
 pub async fn call_project_harness_tool(
-    base_url: &str,
     sync_secret: &str,
     project_id: &str,
     tool_name: &str,
     arguments: Value,
 ) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
+    let config = crate::config::Config::try_get()?;
+    let base_url = config.project_service_internal_base_url.as_str();
     let endpoint = format!(
         "{}/api/chatos-sync/projects/{}/harness/mcp",
         base_url.trim().trim_end_matches('/'),
@@ -329,7 +329,7 @@ pub async fn call_project_harness_tool(
     );
     let response: Value = send_json_with_limit(
         signed_project_service_request(
-            reqwest::Client::new().post(endpoint),
+            config.project_service_internal_http_client.post(endpoint),
             sync_secret,
             PROJECT_HARNESS_SCOPE,
         )?
@@ -539,12 +539,12 @@ pub struct SyncRequirementExecutionStateRequest {
 }
 
 pub async fn sync_work_item_task_runner_status(
-    base_url: &str,
     sync_secret: &str,
     work_item_id: &str,
     request: &SyncTaskRunnerWorkItemStatusRequest,
 ) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
+    let config = crate::config::Config::try_get()?;
+    let base_url = config.project_service_internal_base_url.as_str();
     let endpoint = format!(
         "{}/api/chatos-sync/work-items/{}/task-runner-status",
         base_url.trim().trim_end_matches('/'),
@@ -552,7 +552,7 @@ pub async fn sync_work_item_task_runner_status(
     );
     send_json(
         signed_project_service_request(
-            reqwest::Client::new().post(endpoint),
+            config.project_service_internal_http_client.post(endpoint),
             sync_secret,
             PROJECT_SYNC_SCOPE,
         )?
@@ -562,12 +562,12 @@ pub async fn sync_work_item_task_runner_status(
 }
 
 pub async fn sync_task_runner_task_status(
-    base_url: &str,
     sync_secret: &str,
     task_runner_task_id: &str,
     request: &SyncTaskRunnerWorkItemStatusRequest,
 ) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
+    let config = crate::config::Config::try_get()?;
+    let base_url = config.project_service_internal_base_url.as_str();
     let endpoint = format!(
         "{}/api/chatos-sync/task-runner/tasks/{}/status",
         base_url.trim().trim_end_matches('/'),
@@ -575,7 +575,7 @@ pub async fn sync_task_runner_task_status(
     );
     send_json(
         signed_project_service_request(
-            reqwest::Client::new().post(endpoint),
+            config.project_service_internal_http_client.post(endpoint),
             sync_secret,
             PROJECT_SYNC_SCOPE,
         )?
@@ -585,12 +585,12 @@ pub async fn sync_task_runner_task_status(
 }
 
 pub async fn sync_requirement_execution_state(
-    base_url: &str,
     sync_secret: &str,
     requirement_id: &str,
     request: &SyncRequirementExecutionStateRequest,
 ) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
+    let config = crate::config::Config::try_get()?;
+    let base_url = config.project_service_internal_base_url.as_str();
     let endpoint = format!(
         "{}/api/chatos-sync/requirements/{}/execution-state",
         base_url.trim().trim_end_matches('/'),
@@ -598,7 +598,7 @@ pub async fn sync_requirement_execution_state(
     );
     send_json(
         signed_project_service_request(
-            reqwest::Client::new().post(endpoint),
+            config.project_service_internal_http_client.post(endpoint),
             sync_secret,
             PROJECT_SYNC_SCOPE,
         )?
@@ -608,17 +608,17 @@ pub async fn sync_requirement_execution_state(
 }
 
 pub async fn sync_list_project_service_projects(
-    base_url: &str,
     sync_secret: &str,
     status: Option<&str>,
 ) -> Result<Vec<ProjectServiceProjectRecord>, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
+    let config = crate::config::Config::try_get()?;
+    let base_url = config.project_service_internal_base_url.as_str();
     let endpoint = format!(
         "{}/api/chatos-sync/projects",
         base_url.trim().trim_end_matches('/')
     );
     let mut request = signed_project_service_request(
-        reqwest::Client::new().get(endpoint),
+        config.project_service_internal_http_client.get(endpoint),
         sync_secret,
         PROJECT_READ_SCOPE,
     )?;
@@ -629,18 +629,18 @@ pub async fn sync_list_project_service_projects(
 }
 
 pub async fn sync_get_project_service_project(
-    base_url: &str,
     sync_secret: &str,
     project_id: &str,
 ) -> Result<Option<ProjectServiceProjectRecord>, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
+    let config = crate::config::Config::try_get()?;
+    let base_url = config.project_service_internal_base_url.as_str();
     let endpoint = format!(
         "{}/api/chatos-sync/projects/{}",
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
     );
     send_optional_json(signed_project_service_request(
-        reqwest::Client::new().get(endpoint),
+        config.project_service_internal_http_client.get(endpoint),
         sync_secret,
         PROJECT_READ_SCOPE,
     )?)

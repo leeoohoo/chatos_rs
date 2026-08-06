@@ -36,7 +36,6 @@ pub(in crate::api::projects) async fn ensure_requirement_execution_not_active(
         .map_err(|err| HandlerError::bad_gateway("校验 Task Runner 任务状态失败", err))?;
         apply_task_runner_task_snapshot(link, &task);
         sync_execution_link_status(
-            base_url,
             project_sync_secret,
             link,
             task.status.as_str(),

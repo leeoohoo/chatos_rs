@@ -9,7 +9,7 @@ use crate::models::{now_rfc3339, TaskRecord, TaskRunRecord, TaskRunStatus};
 use crate::store::AppStore;
 
 use super::prerequisite_context::extract_report_content;
-use super::{RunService, TaskScheduleModeExt, TaskService, TaskStatusExt};
+use super::{KeyedAsyncLockHandle, RunService, TaskScheduleModeExt, TaskService, TaskStatusExt};
 
 mod delivery;
 mod dispatch;

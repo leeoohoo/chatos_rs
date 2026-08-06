@@ -92,8 +92,8 @@ docker-ps:
 	@docker/deploy.sh ps
 
 docker-config:
-	@docker compose -f docker/compose.yml config >/dev/null
-	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
 
 local-connector-client:
 	@bash local_connector_client/restart_services.sh restart
@@ -156,8 +156,8 @@ smoke-repo:
 	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
 	@bash -n scripts/smoke-mcp-management-cloud.sh scripts/smoke-mcp-management-cloud-discovery.sh
 	@bash -n scripts/smoke-local-project-entry-config.sh
-	@docker compose -f docker/compose.yml config >/dev/null
-	@docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
 	@bash scripts/check-large-files.sh --fail
 
 test-chat-app-server:

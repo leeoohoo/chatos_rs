@@ -51,8 +51,33 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
         allowed_tool_names: server.allowed_tool_names,
         preserve_tool_names: server.preserve_tool_names,
         fail_on_unavailable: server.fail_on_unavailable,
+        async_result_transport: server.async_result_transport,
         header_provider: server.header_provider,
+        http_client: None,
     }
+}
+
+pub(crate) fn chatos_http_server(
+    server: chatos_mcp_runtime::McpHttpServer,
+) -> Result<ChatosHttpServer, String> {
+    if !server.tool_name_aliases.is_empty() {
+        return Err("ChatOS MCP server does not support runtime tool name aliases".to_string());
+    }
+    if server.http_client.is_some() {
+        return Err("ChatOS MCP server does not support a dedicated HTTP client".to_string());
+    }
+    Ok(ChatosHttpServer {
+        name: server.name,
+        url: server.url,
+        headers: server.headers,
+        timeout_ms: server.timeout_ms,
+        tool_timeout_ms: server.tool_timeout_ms,
+        allowed_tool_names: server.allowed_tool_names,
+        preserve_tool_names: server.preserve_tool_names,
+        fail_on_unavailable: server.fail_on_unavailable,
+        async_result_transport: server.async_result_transport,
+        header_provider: server.header_provider,
+    })
 }
 
 pub(crate) fn shared_stdio_server(server: ChatosStdioServer) -> chatos_mcp_runtime::McpStdioServer {
@@ -223,6 +248,7 @@ mod tests {
             ]),
             preserve_tool_names: true,
             fail_on_unavailable: true,
+            async_result_transport: chatos_mcp_runtime::McpAsyncResultTransport::Disabled,
             header_provider: None,
         };
 
@@ -233,6 +259,10 @@ mod tests {
         assert_eq!(shared.tool_timeout_ms.get("wait"), Some(&60_000));
         assert!(shared.preserve_tool_names);
         assert!(shared.fail_on_unavailable);
+        assert_eq!(
+            shared.async_result_transport,
+            chatos_mcp_runtime::McpAsyncResultTransport::Disabled
+        );
         assert_eq!(
             shared
                 .headers

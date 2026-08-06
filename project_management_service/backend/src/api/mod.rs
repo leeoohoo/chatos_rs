@@ -26,7 +26,7 @@ use serde::Serialize;
 
 use crate::models::ErrorResponse;
 
-pub use router::build_router;
+pub use router::{build_internal_router, build_public_router};
 
 const PROJECT_MANAGEMENT_MCP_SKILL_ZH_CN: &str =
     include_str!("../../../PROJECT_MANAGEMENT_MCP_SKILL.zh-CN.md");

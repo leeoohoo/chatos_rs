@@ -174,7 +174,9 @@ async fn fetch_image_jobs(
     user_access_token: Option<&str>,
 ) -> Result<Vec<SandboxImageJobProgress>, String> {
     match provider {
-        RuntimeEnvironmentProvider::CloudSandboxManager => fetch_cloud_image_jobs(state).await,
+        RuntimeEnvironmentProvider::CloudSandboxManager => {
+            fetch_cloud_image_jobs(state, project.id.as_str()).await
+        }
         RuntimeEnvironmentProvider::LocalConnector => {
             fetch_local_image_jobs(state, project, user_access_token).await
         }
@@ -182,22 +184,23 @@ async fn fetch_image_jobs(
     }
 }
 
-async fn fetch_cloud_image_jobs(state: &AppState) -> Result<Vec<SandboxImageJobProgress>, String> {
+async fn fetch_cloud_image_jobs(
+    state: &AppState,
+    project_id: &str,
+) -> Result<Vec<SandboxImageJobProgress>, String> {
     let client_id = "project-service";
     let client_key = required_config_value(
         state.config.sandbox_manager_client_key.as_deref(),
         "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY",
     )?;
     let url = format!(
-        "{}/api/sandbox-images/jobs",
+        "{}/api/internal/sandbox-images/jobs",
         state
             .config
             .sandbox_manager_base_url
             .trim()
             .trim_end_matches('/')
     );
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(20)))
-        .map_err(|err| format!("build sandbox image progress client failed: {err}"))?;
     let token = chatos_service_runtime::issue_internal_service_token(
         client_key,
         client_id,
@@ -206,10 +209,16 @@ async fn fetch_cloud_image_jobs(state: &AppState) -> Result<Vec<SandboxImageJobP
         60,
     )?;
     read_jobs_response(
-        client
+        state
+            .config
+            .sandbox_manager_http_client
             .get(url)
             .header("x-sandbox-caller", client_id)
             .header("x-sandbox-internal-token", token)
+            .header(
+                chatos_mcp::sandbox_images::SANDBOX_IMAGE_PROJECT_ID_HEADER,
+                project_id,
+            )
             .send()
             .await
             .map_err(|err| format!("query cloud sandbox image jobs failed: {err}"))?,

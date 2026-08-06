@@ -515,7 +515,6 @@ async fn load_harness_git_snapshot(
             )
         })?;
     let value = project_management_api_client::call_project_harness_tool(
-        cfg.project_service_base_url.as_str(),
         sync_secret,
         project_id,
         "list_branches",

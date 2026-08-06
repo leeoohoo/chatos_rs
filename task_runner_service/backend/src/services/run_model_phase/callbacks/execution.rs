@@ -40,7 +40,6 @@ impl RunService {
             runtime_settings.review_repeat_interval_iterations,
         );
         let runtime_execution = self.build_runtime_execution_state(
-            task.id.as_str(),
             run,
             model_config,
             &prepared_execution.run_spec,
@@ -131,22 +130,14 @@ impl RunService {
                 )),
             ),
         };
-        runtime_execution
-            .stop_cancel_poll
-            .store(true, Ordering::Relaxed);
-        runtime_execution.cancel_poll_handle.abort();
+        self.unregister_runtime_abort_token(run.id.as_str());
         flush_pending_stream_event(
             &self.store,
             run.id.as_str(),
             &runtime_execution.pending_stream_event,
             Some(&path_redactor),
         );
-        if report.is_aborted()
-            && (runtime_execution
-                .task_completed_abort
-                .load(Ordering::Relaxed)
-                || self.task_is_already_succeeded(task.id.as_str()).await)
-        {
+        if report.is_aborted() && self.task_is_already_succeeded(task.id.as_str()).await {
             let content = self
                 .store
                 .get_task(&task.id)

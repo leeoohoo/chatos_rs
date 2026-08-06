@@ -280,6 +280,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
     let (project_service_base_url, sync_calls) = test_project_sync_server().await;
     let mut config = test_config();
     config.project_service_base_url = Some(project_service_base_url);
+    config.project_service_internal_base_url = config.project_service_base_url.clone();
     config.project_service_sync_secret = Some("project-sync-secret".to_string());
     let (mcp_service, task_service, project_service) = test_mcp_service_with_config(config).await;
     let current_user = agent_user("owner-a");

@@ -133,6 +133,7 @@ async fn system_stats_handler(
         ok: true,
         service: "local_connector_service".to_string(),
         now: now_rfc3339(),
+        pressure_level: state.pressure.snapshot().level,
         relay,
         store,
     }))
@@ -835,8 +836,10 @@ fn relay_error_to_api_error(error: RelayError) -> ApiError {
         RelayError::Offline => ApiError::service_unavailable(error.message()),
         RelayError::Timeout => ApiError::gateway_timeout(error.message()),
         RelayError::TooManyPendingRequests { .. } => ApiError::too_many_requests(error.message()),
+        RelayError::Coordination(_) => ApiError::service_unavailable(error.message()),
         RelayError::RequestEncode(_)
         | RelayError::Signing(_)
+        | RelayError::DuplicateRequestId(_)
         | RelayError::ResponseChannelClosed => ApiError::bad_gateway(error.message()),
     }
 }

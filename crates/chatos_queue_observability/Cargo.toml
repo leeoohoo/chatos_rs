@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[package]
+name = "chatos_queue_observability"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lapin = { version = "2.5", features = ["rustls", "rustls-native-certs"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["sync"] }

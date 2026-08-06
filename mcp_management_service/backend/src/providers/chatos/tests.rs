@@ -456,10 +456,13 @@ fn snapshot() -> RuntimeSessionSnapshot {
     RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
         caller_service: "chatos".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "chatos_conversation_agent".to_string(),
         task_profile: None,
         project_id: "project-1".to_string(),
+        device_id: None,
         run_id: None,
         turn_id: Some("turn-1".to_string()),
         task_id: None,

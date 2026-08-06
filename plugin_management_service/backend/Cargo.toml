@@ -9,18 +9,24 @@ edition = "2021"
 [dependencies]
 aes-gcm = "0.11"
 axum = { version = "0.8", features = ["json"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_agent = { path = "../../agent", default-features = false }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
+chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_mcp = { path = "../../mcp" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 chatos_plugin_package = { path = "../../crates/chatos_plugin_package" }
+chatos_queue_observability = { path = "../../crates/chatos_queue_observability" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 futures-util = "0.3"
+lapin = "2.5"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 rand = "0.10"
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }

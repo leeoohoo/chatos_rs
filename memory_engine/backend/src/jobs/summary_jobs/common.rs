@@ -7,24 +7,6 @@ use crate::repositories::control_plane;
 
 pub(crate) const SCHEDULER_TRIGGER: &str = "scheduler";
 
-pub(crate) async fn has_recent_scheduler_job_run(
-    db: &Db,
-    job_type: &str,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    interval_seconds: i64,
-) -> Result<bool, String> {
-    control_plane::has_recent_job_run(
-        db,
-        job_type,
-        Some(SCHEDULER_TRIGGER),
-        tenant_id,
-        source_id,
-        interval_seconds,
-    )
-    .await
-}
-
 pub(crate) async fn create_scheduler_job_run(
     db: &Db,
     job_type: &str,

@@ -23,7 +23,7 @@ use super::routing::{
     find_enabled_local_sandbox_pairing, parse_local_connector_project_root, provider_label,
     RuntimeEnvironmentPlan,
 };
-use super::{CLOUD_SANDBOX_IMAGE_MCP_PATH, LOCAL_SANDBOX_IMAGE_MCP_PATH};
+use super::LOCAL_SANDBOX_IMAGE_MCP_PATH;
 
 pub(super) async fn create_sandbox_image_from_plan(
     state: &AppState,
@@ -136,11 +136,11 @@ pub(super) async fn prepare_sandbox_dependency_images(
         "sandbox.service",
         60,
     )?;
-    let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(30 * 60)))
-        .map_err(|err| format!("创建依赖镜像准备客户端失败: {err}"))?;
-    let request = client
+    let request = state
+        .config
+        .sandbox_manager_http_client
         .post(format!(
-            "{}/api/sandbox-images/prepare-dependencies",
+            "{}/api/internal/sandbox-images/prepare-dependencies",
             state
                 .config
                 .sandbox_manager_base_url
@@ -149,6 +149,8 @@ pub(super) async fn prepare_sandbox_dependency_images(
         ))
         .header("x-sandbox-caller", client_id)
         .header("x-sandbox-internal-token", internal_token)
+        .header(SANDBOX_IMAGE_PROJECT_ID_HEADER, project_id)
+        .header(SANDBOX_IMAGE_RUN_ID_HEADER, run_id)
         .json(&json!({
             "image_refs": image_refs,
             "project_id": project_id,
@@ -435,7 +437,7 @@ fn cloud_sandbox_image_mcp_server(
     let url = format!(
         "{}{}",
         config.sandbox_manager_base_url.trim().trim_end_matches('/'),
-        CLOUD_SANDBOX_IMAGE_MCP_PATH
+        "/api/internal/sandbox-images/mcp"
     );
     Ok(Some(
         McpHttpServer::new(
@@ -446,6 +448,7 @@ fn cloud_sandbox_image_mcp_server(
             url,
         )
         .with_headers(headers)
+        .with_http_client(config.sandbox_manager_http_client.clone())
         .with_timeout(config.sandbox_image_mcp_request_timeout),
     ))
 }

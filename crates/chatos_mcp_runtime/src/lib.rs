@@ -10,6 +10,7 @@ pub mod executor;
 pub mod naming;
 pub mod parallelism;
 pub mod registry;
+pub mod result_queue;
 pub mod rpc;
 pub mod schema;
 pub mod stdio_policy;
@@ -50,9 +51,12 @@ pub use execution::{execute_tool_calls_parallel, execute_tool_calls_stream};
 pub use executor::McpExecutor;
 pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
+pub use result_queue::{initialize_mcp_invocation_result_queue, McpInvocationResultQueueConfig};
 pub use rpc::{
-    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_tool_call_cancellable,
-    jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout, list_tools_http, list_tools_stdio,
+    extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_call_with_client,
+    jsonrpc_http_tool_call_cancellable, jsonrpc_http_tool_call_cancellable_with_client,
+    jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout, list_tools_http,
+    list_tools_http_with_client, list_tools_stdio,
 };
 pub use schema::{build_function_tool_schema, parse_mcp_tool_definition, parse_tool_definition};
 pub use stdio_policy::{
@@ -65,8 +69,9 @@ pub use text::{
     to_text_and_structured_result_with_transient,
 };
 pub use types::{
-    McpBuiltinServer, McpHttpHeaderProvider, McpHttpServer, McpStdioServer, McpToolNameAlias,
-    ParsedToolDefinition, ToolAbortCheckCallback, ToolCallContext, ToolCallError,
-    ToolCallerModelRuntime, ToolInfo, ToolLifecycleEvent, ToolLifecycleHook, ToolLifecycleOutcome,
-    ToolResult, ToolResultCallback, ToolStreamChunkCallback, TransientToolModelInput,
+    McpAsyncResultTransport, McpBuiltinServer, McpHttpHeaderProvider, McpHttpServer,
+    McpStdioServer, McpToolNameAlias, ParsedToolDefinition, ToolAbortCheckCallback,
+    ToolCallContext, ToolCallError, ToolCallerModelRuntime, ToolInfo, ToolLifecycleEvent,
+    ToolLifecycleHook, ToolLifecycleOutcome, ToolResult, ToolResultCallback,
+    ToolStreamChunkCallback, TransientToolModelInput,
 };

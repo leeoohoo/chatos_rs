@@ -9,9 +9,11 @@ use tokio::task::JoinSet;
 use tracing::warn;
 
 use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
-use crate::rpc::{extract_tools, jsonrpc_http_call, list_tools_http, list_tools_stdio};
+use crate::rpc::{
+    extract_tools, jsonrpc_http_call_with_client, list_tools_http_with_client, list_tools_stdio,
+};
 use crate::schema::{build_function_tool_schema, parse_tool_definition};
-use crate::types::{McpStdioServer, ParsedToolDefinition, ToolInfo};
+use crate::types::{McpAsyncResultTransport, McpStdioServer, ParsedToolDefinition, ToolInfo};
 
 use super::McpExecutor;
 
@@ -24,6 +26,8 @@ impl McpExecutor {
         server_url: Option<String>,
         server_headers: Option<HashMap<String, String>>,
         server_header_provider: Option<std::sync::Arc<dyn crate::McpHttpHeaderProvider>>,
+        server_http_client: Option<reqwest::Client>,
+        server_async_result_transport: McpAsyncResultTransport,
         server_timeout: Option<Duration>,
         server_config: Option<McpStdioServer>,
         preserve_tool_name: bool,
@@ -53,6 +57,8 @@ impl McpExecutor {
                 server_url,
                 server_headers,
                 server_header_provider,
+                server_http_client,
+                server_async_result_transport,
                 server_timeout,
                 server_config,
                 tool_info: tool,
@@ -126,20 +132,24 @@ impl McpExecutor {
         for (index, server) in self.http_servers.clone().into_iter().enumerate() {
             joins.spawn(async move {
                 let tools = match server.resolved_headers().await {
-                    Ok(headers) if server.header_provider.is_some() => jsonrpc_http_call(
-                        server.url.as_str(),
-                        headers.as_ref(),
-                        "tools/list",
-                        json!({}),
-                        server.timeout_duration(),
-                    )
-                    .await
-                    .and_then(|response| extract_tools(&response)),
+                    Ok(headers) if server.header_provider.is_some() => {
+                        jsonrpc_http_call_with_client(
+                            server.url.as_str(),
+                            headers.as_ref(),
+                            "tools/list",
+                            json!({}),
+                            server.timeout_duration(),
+                            server.http_client.as_ref(),
+                        )
+                        .await
+                        .and_then(|response| extract_tools(&response))
+                    }
                     Ok(headers) => {
-                        list_tools_http(
+                        list_tools_http_with_client(
                             server.url.as_str(),
                             headers.as_ref(),
                             server.timeout_duration(),
+                            server.http_client.as_ref(),
                         )
                         .await
                     }
@@ -173,6 +183,8 @@ impl McpExecutor {
                                 Some(server.url.clone()),
                                 server.headers.clone(),
                                 server.header_provider.clone(),
+                                server.http_client.clone(),
+                                server.async_result_transport,
                                 server.tool_timeout_duration(def.name.as_str()),
                                 None,
                                 server.preserve_tool_names,
@@ -242,6 +254,8 @@ impl McpExecutor {
                                 None,
                                 None,
                                 None,
+                                McpAsyncResultTransport::Disabled,
+                                None,
                                 Some(server.clone()),
                                 false,
                                 def,
@@ -293,6 +307,8 @@ impl McpExecutor {
                         None,
                         None,
                         None,
+                        None,
+                        McpAsyncResultTransport::Disabled,
                         None,
                         None,
                         false,
@@ -353,6 +369,8 @@ mod tests {
             None,
             None,
             None,
+            crate::McpAsyncResultTransport::Disabled,
+            None,
             None,
             false,
             ParsedToolDefinition {
@@ -396,6 +414,8 @@ mod tests {
             Some("http://127.0.0.1:39280/mcp".to_string()),
             None,
             None,
+            None,
+            crate::McpAsyncResultTransport::Disabled,
             None,
             None,
             true,

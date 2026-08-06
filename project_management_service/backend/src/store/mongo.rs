@@ -32,13 +32,19 @@ pub struct MongoStore {
 
 impl MongoStore {
     pub async fn new(database_url: &str) -> Result<Self, String> {
+        let store = Self::connect(database_url).await?;
+        store.ensure_indexes().await?;
+        Ok(store)
+    }
+
+    async fn connect(database_url: &str) -> Result<Self, String> {
         let client = Client::with_uri_str(database_url)
             .await
             .map_err(|err| format!("connect mongodb failed: {err}"))?;
         let database = client
             .default_database()
             .ok_or_else(|| "mongodb connection string must include a database name".to_string())?;
-        let store = Self {
+        Ok(Self {
             projects: database.collection("projects"),
             project_profiles: database.collection("project_profiles"),
             runtime_environments: database.collection("project_runtime_environments"),
@@ -49,9 +55,12 @@ impl MongoStore {
             work_items: database.collection("project_work_items"),
             work_item_dependencies: database.collection("project_work_item_dependencies"),
             task_runner_links: database.collection("project_work_item_task_runner_links"),
-        };
-        store.ensure_indexes().await?;
-        Ok(store)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn new_without_indexes(database_url: &str) -> Result<Self, String> {
+        Self::connect(database_url).await
     }
 
     async fn ensure_indexes(&self) -> Result<(), String> {

@@ -13,7 +13,7 @@ use tracing::warn;
 use crate::models::{UserModelConfigRecord, UserModelSettingsRecord};
 use crate::state::AppState;
 
-use super::http::{build_client, extract_error_message, normalized_text, normalized_url};
+use super::http::{extract_error_message, normalized_text, normalized_url};
 pub async fn sync_model_config_upsert(
     state: &AppState,
     config: &UserModelConfigRecord,
@@ -220,7 +220,7 @@ async fn sync_memory_engine_model_profile(
     let Some(operator_token) =
         normalized_text(state.config.memory_engine_operator_token.as_deref())
     else {
-        return Err("MEMORY_ENGINE_OPERATOR_TOKEN is not configured".to_string());
+        return Err("USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET is not configured".to_string());
     };
 
     let settings = state
@@ -307,14 +307,14 @@ async fn delete_memory_engine_model_profile(
     let Some(operator_token) =
         normalized_text(state.config.memory_engine_operator_token.as_deref())
     else {
-        return Err("MEMORY_ENGINE_OPERATOR_TOKEN is not configured".to_string());
+        return Err("USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET is not configured".to_string());
     };
 
     let endpoint = format!(
         "{memory_engine_base_url}/admin/model-profiles/{}",
         urlencoding::encode(model_config_id)
     );
-    let request = build_client(state)?.request(Method::DELETE, endpoint);
+    let request = memory_engine_client(state)?.request(Method::DELETE, endpoint);
     let response = signed_memory_engine_request(request, operator_token.as_str())?
         .send()
         .await
@@ -444,7 +444,7 @@ where
     TResp: serde::de::DeserializeOwned,
     TBody: Serialize + ?Sized,
 {
-    let client = build_client(state)?;
+    let client = memory_engine_client(state)?;
     let mut request =
         signed_memory_engine_request(client.request(method, endpoint), operator_token)?;
     if let Some(body) = body {
@@ -463,6 +463,13 @@ where
         ));
     }
     read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES).await
+}
+
+fn memory_engine_client(state: &AppState) -> Result<&reqwest::Client, String> {
+    state
+        .memory_engine_http_client
+        .as_ref()
+        .ok_or_else(|| "Memory Engine mTLS client is not configured".to_string())
 }
 
 fn signed_memory_engine_request(
@@ -486,11 +493,29 @@ fn task_runner_request(
     method: Method,
     endpoint: &str,
 ) -> Result<reqwest::RequestBuilder, String> {
-    let mut request = build_client(state)?.request(method, endpoint);
-    if let Some(secret) = normalized_text(state.config.task_runner_callback_secret.as_deref()) {
-        request = request.header("x-chatos-callback-secret", secret);
-    }
-    Ok(request)
+    let client = state
+        .task_runner_http_client
+        .as_ref()
+        .ok_or_else(|| "Task Runner mTLS client is not configured".to_string())?;
+    let secret = normalized_text(state.config.task_runner_internal_api_secret.as_deref())
+        .ok_or_else(|| "User Service Task Runner internal secret is not configured".to_string())?;
+    signed_task_runner_request(client.request(method, endpoint), secret.as_str())
+}
+
+fn signed_task_runner_request(
+    request: reqwest::RequestBuilder,
+    secret: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let token = chatos_service_runtime::issue_internal_service_token(
+        secret.trim(),
+        "user-service",
+        "task-runner",
+        "model-configs.sync",
+        60,
+    )?;
+    Ok(request
+        .header("x-task-runner-caller", "user-service")
+        .header("x-task-runner-internal-token", token))
 }
 
 async fn task_runner_request_json<TResp, TBody>(
@@ -556,7 +581,7 @@ fn ensure_supported_provider(config: &UserModelConfigRecord) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use super::signed_memory_engine_request;
+    use super::{signed_memory_engine_request, signed_task_runner_request};
 
     #[test]
     fn memory_engine_request_uses_scoped_token_without_operator_header() {
@@ -588,5 +613,48 @@ mod tests {
             "model-profile.sync",
         )
         .expect("valid token");
+    }
+
+    #[test]
+    fn task_runner_model_sync_uses_scoped_token_without_raw_secret() {
+        let request = signed_task_runner_request(
+            reqwest::Client::new().post("https://task-runner.test/model-configs"),
+            "a-long-user-service-task-runner-secret",
+        )
+        .expect("signed request")
+        .build()
+        .expect("request");
+
+        assert!(!request
+            .headers()
+            .contains_key("x-task-runner-internal-secret"));
+        assert_eq!(
+            request
+                .headers()
+                .get("x-task-runner-caller")
+                .and_then(|value| value.to_str().ok()),
+            Some("user-service")
+        );
+        let token = request
+            .headers()
+            .get("x-task-runner-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-user-service-task-runner-secret",
+            "user-service",
+            "task-runner",
+            "model-configs.sync",
+        )
+        .expect("valid token");
+        assert!(chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-user-service-task-runner-secret",
+            "user-service",
+            "task-runner",
+            "projects.sync",
+        )
+        .is_err());
     }
 }

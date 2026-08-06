@@ -6,12 +6,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use chatos_internal_auth::issue_internal_service_token;
 use reqwest::header::{HeaderMap, HeaderValue, IF_NONE_MATCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{watch, RwLock};
 
-pub const DEFAULT_CONFIG_CENTER_BASE_URL: &str = "http://127.0.0.1:39270";
+pub const DEFAULT_CONFIG_CENTER_BASE_URL: &str = "https://127.0.0.1:39272";
+pub const CONFIG_CENTER_AUDIENCE: &str = "configuration-center";
+pub const CONFIG_SNAPSHOT_READ_SCOPE: &str = "config.snapshot.read";
+pub const CONFIG_INSTANCE_HEARTBEAT_SCOPE: &str = "config.instance.heartbeat";
+pub const CONFIG_CENTER_CALLER_HEADER: &str = "x-config-center-caller";
+pub const CONFIG_CENTER_TOKEN_HEADER: &str = "x-config-center-internal-token";
+const CONFIG_CENTER_TOKEN_TTL_SECONDS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConfigSnapshot {
@@ -28,6 +35,39 @@ pub struct ConfigSnapshot {
     pub stale: bool,
     #[serde(default)]
     pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformPressureLevel {
+    Normal,
+    Elevated,
+    Critical,
+}
+
+impl PlatformPressureLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Elevated => "elevated",
+            Self::Critical => "critical",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "normal" => Ok(Self::Normal),
+            "elevated" => Ok(Self::Elevated),
+            "critical" => Ok(Self::Critical),
+            _ => Err("pressure level must be normal, elevated, or critical".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServicePressureSignal {
+    pub level: PlatformPressureLevel,
+    pub reason: String,
 }
 
 impl ConfigSnapshot {
@@ -93,7 +133,7 @@ pub struct ConfigClient {
     service_name: String,
     environment: String,
     base_url: String,
-    internal_secret: Option<String>,
+    caller_signing_secret: String,
     timeout: Duration,
     cache_path: PathBuf,
     http: reqwest::Client,
@@ -112,6 +152,7 @@ struct InstanceHeartbeat<'a> {
     pending_restart_keys: &'a [String],
     emergency_override_keys: &'a [String],
     last_error: Option<&'a str>,
+    pressure: Option<&'a ServicePressureSignal>,
 }
 
 impl ConfigClient {
@@ -120,7 +161,12 @@ impl ConfigClient {
         let environment = normalized_env("CHATOS_ENV").unwrap_or_else(|| "local".to_string());
         let base_url = normalized_env("CONFIG_CENTER_BASE_URL")
             .unwrap_or_else(|| DEFAULT_CONFIG_CENTER_BASE_URL.to_string());
-        let internal_secret = normalized_env("CONFIG_CENTER_INTERNAL_API_SECRET");
+        validate_internal_base_url(base_url.as_str())?;
+        let caller_signing_secret = normalized_env("CONFIG_CENTER_CALLER_SIGNING_SECRET")
+            .ok_or_else(|| {
+                "CONFIG_CENTER_CALLER_SIGNING_SECRET is required for Configuration Center authentication"
+                    .to_string()
+            })?;
         let timeout_ms = normalized_env("CONFIG_CENTER_REQUEST_TIMEOUT_MS")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(3_000)
@@ -128,30 +174,39 @@ impl ConfigClient {
         let cache_dir = normalized_env("CONFIG_CENTER_CACHE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("chatos-config-cache"));
-        Self::new(
+        let ca_cert_path = required_env("CONFIG_CENTER_MTLS_CA_CERT_PATH")?;
+        let client_identity_path = required_env("CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH")?;
+        let http = build_mtls_http_client(
+            Duration::from_millis(timeout_ms),
+            Path::new(ca_cert_path.as_str()),
+            Path::new(client_identity_path.as_str()),
+        )?;
+        Self::from_parts(
             service_name,
             environment,
             base_url,
-            internal_secret,
+            caller_signing_secret,
             Duration::from_millis(timeout_ms),
             cache_dir,
+            http,
         )
     }
 
-    pub fn new(
+    fn from_parts(
         service_name: impl Into<String>,
         environment: impl Into<String>,
         base_url: impl Into<String>,
-        internal_secret: Option<String>,
+        caller_signing_secret: impl Into<String>,
         timeout: Duration,
         cache_dir: impl AsRef<Path>,
+        http: reqwest::Client,
     ) -> Result<Self, String> {
         let service_name = service_name.into();
         let environment = environment.into();
-        let http = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|err| format!("build config center client failed: {err}"))?;
+        let caller_signing_secret = caller_signing_secret.into();
+        if caller_signing_secret.trim().is_empty() {
+            return Err("Configuration Center caller signing secret cannot be empty".to_string());
+        }
         let cache_path = cache_dir
             .as_ref()
             .join(format!("{}-{}.json", environment, service_name));
@@ -159,7 +214,7 @@ impl ConfigClient {
             service_name,
             environment,
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            internal_secret,
+            caller_signing_secret,
             timeout,
             cache_path,
             http,
@@ -275,8 +330,51 @@ impl ConfigClient {
         emergency_override_keys: &[String],
         last_error: Option<&str>,
     ) -> Result<(), String> {
+        self.report_instance_with_pressure(
+            snapshot,
+            service_id,
+            running_version,
+            pending_restart_keys,
+            emergency_override_keys,
+            last_error,
+            None,
+        )
+        .await
+    }
+
+    pub async fn report_pressure(
+        &self,
+        service_id: &str,
+        running_version: Option<&str>,
+        signal: &ServicePressureSignal,
+    ) -> Result<(), String> {
+        let snapshot = self.current().await.ok_or_else(|| {
+            "cannot report pressure before loading a configuration snapshot".to_string()
+        })?;
+        self.report_instance_with_pressure(
+            &snapshot,
+            service_id,
+            running_version,
+            &[],
+            &[],
+            None,
+            Some(signal),
+        )
+        .await
+    }
+
+    async fn report_instance_with_pressure(
+        &self,
+        snapshot: &ConfigSnapshot,
+        service_id: &str,
+        running_version: Option<&str>,
+        pending_restart_keys: &[String],
+        emergency_override_keys: &[String],
+        last_error: Option<&str>,
+        pressure: Option<&ServicePressureSignal>,
+    ) -> Result<(), String> {
         let endpoint = format!("{}/internal/config/v1/instances/heartbeat", self.base_url);
-        let mut request = self.http.post(endpoint).json(&InstanceHeartbeat {
+        let request = self.http.post(endpoint).json(&InstanceHeartbeat {
             environment: snapshot.environment.as_str(),
             service_name: self.service_name.as_str(),
             service_id,
@@ -287,10 +385,9 @@ impl ConfigClient {
             pending_restart_keys,
             emergency_override_keys,
             last_error,
+            pressure,
         });
-        if let Some(secret) = self.internal_secret.as_deref() {
-            request = request.header("x-config-center-internal-secret", secret);
-        }
+        let request = self.sign_request(request, CONFIG_INSTANCE_HEARTBEAT_SCOPE)?;
         let response = request.send().await.map_err(|err| err.to_string())?;
         if response.status().is_success() {
             Ok(())
@@ -310,18 +407,6 @@ impl ConfigClient {
             url_component(self.environment.as_str())
         );
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-config-center-service",
-            HeaderValue::from_str(self.service_name.as_str())
-                .map_err(|err| format!("invalid config service header: {err}"))?,
-        );
-        if let Some(secret) = self.internal_secret.as_deref() {
-            headers.insert(
-                "x-config-center-internal-secret",
-                HeaderValue::from_str(secret)
-                    .map_err(|err| format!("invalid config secret header: {err}"))?,
-            );
-        }
         if let Some(etag) = etag {
             headers.insert(
                 IF_NONE_MATCH,
@@ -329,10 +414,9 @@ impl ConfigClient {
                     .map_err(|err| format!("invalid config etag header: {err}"))?,
             );
         }
+        let request = self.http.get(endpoint).headers(headers);
         let response = self
-            .http
-            .get(endpoint)
-            .headers(headers)
+            .sign_request(request, CONFIG_SNAPSHOT_READ_SCOPE)?
             .send()
             .await
             .map_err(|err| err.to_string())?;
@@ -366,6 +450,23 @@ impl ConfigClient {
         *self.current.write().await = Some(snapshot);
     }
 
+    fn sign_request(
+        &self,
+        request: reqwest::RequestBuilder,
+        scope: &str,
+    ) -> Result<reqwest::RequestBuilder, String> {
+        let token = issue_internal_service_token(
+            self.caller_signing_secret.as_str(),
+            self.service_name.as_str(),
+            CONFIG_CENTER_AUDIENCE,
+            scope,
+            CONFIG_CENTER_TOKEN_TTL_SECONDS,
+        )?;
+        Ok(request
+            .header(CONFIG_CENTER_CALLER_HEADER, self.service_name.as_str())
+            .header(CONFIG_CENTER_TOKEN_HEADER, token))
+    }
+
     async fn save_cache(&self, snapshot: &ConfigSnapshot) -> Result<(), String> {
         let Some(parent) = self.cache_path.parent() else {
             return Err("config cache path has no parent".to_string());
@@ -391,6 +492,48 @@ impl ConfigClient {
     }
 }
 
+fn build_mtls_http_client(
+    timeout: Duration,
+    ca_cert_path: &Path,
+    client_identity_path: &Path,
+) -> Result<reqwest::Client, String> {
+    let ca_pem = std::fs::read(ca_cert_path).map_err(|err| {
+        format!(
+            "read Configuration Center mTLS CA certificate {} failed: {err}",
+            ca_cert_path.display()
+        )
+    })?;
+    let identity_pem = std::fs::read(client_identity_path).map_err(|err| {
+        format!(
+            "read Configuration Center mTLS client identity {} failed: {err}",
+            client_identity_path.display()
+        )
+    })?;
+    let ca = reqwest::Certificate::from_pem(ca_pem.as_slice())
+        .map_err(|err| format!("parse Configuration Center mTLS CA certificate failed: {err}"))?;
+    let identity = reqwest::Identity::from_pem(identity_pem.as_slice())
+        .map_err(|err| format!("parse Configuration Center mTLS client identity failed: {err}"))?;
+    reqwest::Client::builder()
+        .use_rustls_tls()
+        .timeout(timeout)
+        .https_only(true)
+        .add_root_certificate(ca)
+        .identity(identity)
+        .build()
+        .map_err(|err| format!("build Configuration Center mTLS client failed: {err}"))
+}
+
+fn validate_internal_base_url(base_url: &str) -> Result<(), String> {
+    if base_url.trim().to_ascii_lowercase().starts_with("https://") {
+        return Ok(());
+    }
+    Err("CONFIG_CENTER_BASE_URL must use https:// because Configuration Center internal APIs require mTLS".to_string())
+}
+
+fn required_env(key: &str) -> Result<String, String> {
+    normalized_env(key).ok_or_else(|| format!("{key} is required"))
+}
+
 fn normalized_env(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()
@@ -413,6 +556,8 @@ fn url_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chatos_internal_auth::verify_internal_service_token;
+
     use super::*;
 
     fn test_snapshot() -> ConfigSnapshot {
@@ -440,6 +585,23 @@ mod tests {
         ))
     }
 
+    fn test_client(cache_dir: &Path, base_url: &str) -> ConfigClient {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .expect("test HTTP client");
+        ConfigClient::from_parts(
+            "task-runner",
+            "test",
+            base_url,
+            "task-runner-config-center-test-secret",
+            Duration::from_millis(300),
+            cache_dir,
+            http,
+        )
+        .expect("client should build")
+    }
+
     #[test]
     fn typed_snapshot_values_are_coerced() {
         let snapshot = ConfigSnapshot {
@@ -461,18 +623,89 @@ mod tests {
         assert_eq!(snapshot.bool("flag"), Some(true));
     }
 
+    #[test]
+    fn platform_pressure_levels_have_a_stable_wire_contract() {
+        assert_eq!(
+            PlatformPressureLevel::parse("elevated").expect("pressure level"),
+            PlatformPressureLevel::Elevated
+        );
+        assert_eq!(PlatformPressureLevel::Critical.as_str(), "critical");
+        assert!(PlatformPressureLevel::parse("overloaded").is_err());
+        assert_eq!(
+            serde_json::to_value(PlatformPressureLevel::Normal).expect("serialize pressure level"),
+            Value::String("normal".to_string())
+        );
+    }
+
+    #[test]
+    fn production_internal_base_url_requires_https() {
+        assert!(validate_internal_base_url("https://configuration-center:39272").is_ok());
+        assert!(validate_internal_base_url("http://configuration-center:39270").is_err());
+    }
+
+    #[test]
+    fn each_request_gets_a_fresh_operation_bound_token_without_raw_secret_headers() {
+        let secret = "task-runner-config-center-test-secret";
+        let cache_dir = unique_cache_dir("signed-headers");
+        let client = test_client(&cache_dir, "http://127.0.0.1:39270");
+        let first = client
+            .sign_request(
+                client.http.get("http://127.0.0.1:39270/first"),
+                CONFIG_SNAPSHOT_READ_SCOPE,
+            )
+            .expect("sign first request")
+            .build()
+            .expect("build first request");
+        let second = client
+            .sign_request(
+                client.http.get("http://127.0.0.1:39270/second"),
+                CONFIG_SNAPSHOT_READ_SCOPE,
+            )
+            .expect("sign second request")
+            .build()
+            .expect("build second request");
+        assert_eq!(
+            first.headers()[CONFIG_CENTER_CALLER_HEADER],
+            HeaderValue::from_static("task-runner")
+        );
+        assert!(first
+            .headers()
+            .get("x-config-center-internal-secret")
+            .is_none());
+        assert!(first
+            .headers()
+            .values()
+            .all(|value| value.as_bytes() != secret.as_bytes()));
+        let first_token = first.headers()[CONFIG_CENTER_TOKEN_HEADER]
+            .to_str()
+            .expect("first token");
+        let second_token = second.headers()[CONFIG_CENTER_TOKEN_HEADER]
+            .to_str()
+            .expect("second token");
+        assert_ne!(first_token, second_token);
+        let claims = verify_internal_service_token(
+            first_token,
+            secret,
+            "task-runner",
+            CONFIG_CENTER_AUDIENCE,
+            CONFIG_SNAPSHOT_READ_SCOPE,
+        )
+        .expect("verify first request token");
+        assert_eq!(claims.caller, "task-runner");
+        assert!(verify_internal_service_token(
+            first_token,
+            secret,
+            "task-runner",
+            CONFIG_CENTER_AUDIENCE,
+            CONFIG_INSTANCE_HEARTBEAT_SCOPE,
+        )
+        .is_err());
+    }
+
     #[tokio::test]
     async fn unavailable_center_uses_and_installs_stale_disk_cache() {
         let cache_dir = unique_cache_dir("disk-fallback");
-        let client = ConfigClient::new(
-            "task-runner",
-            "test",
-            "http://127.0.0.1:9",
-            None,
-            Duration::from_millis(300),
-            &cache_dir,
-        )
-        .expect("client should build");
+        let client = test_client(&cache_dir, "http://127.0.0.1:9");
         tokio::fs::create_dir_all(&cache_dir)
             .await
             .expect("cache directory should be created");
@@ -494,15 +727,7 @@ mod tests {
     #[tokio::test]
     async fn unavailable_center_marks_current_snapshot_as_stale_memory_fallback() {
         let cache_dir = unique_cache_dir("memory-fallback");
-        let client = ConfigClient::new(
-            "task-runner",
-            "test",
-            "http://127.0.0.1:9",
-            None,
-            Duration::from_millis(300),
-            &cache_dir,
-        )
-        .expect("client should build");
+        let client = test_client(&cache_dir, "http://127.0.0.1:9");
         client.install(test_snapshot()).await;
 
         let loaded = client.load().await.expect("memory fallback should load");
@@ -516,15 +741,7 @@ mod tests {
     #[tokio::test]
     async fn strict_load_does_not_fallback_to_local_cache() {
         let cache_dir = unique_cache_dir("strict-no-cache");
-        let client = ConfigClient::new(
-            "task-runner",
-            "test",
-            "http://127.0.0.1:9",
-            None,
-            Duration::from_millis(300),
-            &cache_dir,
-        )
-        .expect("client should build");
+        let client = test_client(&cache_dir, "http://127.0.0.1:9");
         tokio::fs::create_dir_all(&cache_dir)
             .await
             .expect("cache directory should be created");

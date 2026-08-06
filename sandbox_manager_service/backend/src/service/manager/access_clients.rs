@@ -52,6 +52,7 @@ impl SandboxManager {
             allowed_project_ids: record.allowed_project_ids,
             allowed_tools: record.allowed_tools,
             max_lease_ttl_seconds: record.max_lease_ttl_seconds,
+            internal_identity: None,
         }))
     }
 

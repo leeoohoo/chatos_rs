@@ -12,6 +12,8 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::Value;
 use uuid::Uuid;
 
+use chatos_agent::RemoteControlTrustConfigBundle;
+
 use crate::managed_config::PlatformRelaySigningConfig;
 use crate::relay::RelayRequest;
 
@@ -71,6 +73,25 @@ impl PlatformRelaySigner {
             Some(URL_SAFE_NO_PAD.encode(self.keypair.sign(payload.as_slice()).as_ref()));
         Ok(())
     }
+}
+
+pub(crate) fn validate_active_relay_signer_trust(
+    signer: &PlatformRelaySigner,
+    trust: &RemoteControlTrustConfigBundle,
+) -> Result<(), String> {
+    let Some(trusted_public_key) = trust.trusted_relay_public_keys.get(signer.key_id()) else {
+        return Err(format!(
+            "active relay signing key id {} is missing from trusted relay public keys",
+            signer.key_id()
+        ));
+    };
+    if trusted_public_key != signer.public_key() {
+        return Err(format!(
+            "active relay signing public key for key id {} does not match the trusted relay public key",
+            signer.key_id()
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn relay_request_signature_payload(request: &RelayRequest) -> Result<Vec<u8>, String> {
@@ -225,6 +246,29 @@ mod tests {
     use super::*;
     use crate::relay::RelayRequest;
 
+    fn test_signer(key_id: &str) -> PlatformRelaySigner {
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).expect("generate key");
+        let keypair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).expect("load keypair");
+        PlatformRelaySigner {
+            key_id: key_id.to_string(),
+            public_key: format!(
+                "ed25519:{}",
+                URL_SAFE_NO_PAD.encode(keypair.public_key().as_ref())
+            ),
+            keypair,
+        }
+    }
+
+    fn trust_bundle(
+        trusted_relay_public_keys: BTreeMap<String, String>,
+    ) -> RemoteControlTrustConfigBundle {
+        RemoteControlTrustConfigBundle {
+            require_signed_messages: true,
+            signature_max_skew_seconds: 120,
+            trusted_relay_public_keys,
+        }
+    }
+
     #[test]
     fn canonical_json_sorts_object_keys_recursively() {
         let value = serde_json::json!({
@@ -243,16 +287,7 @@ mod tests {
 
     #[test]
     fn sign_request_sets_signature_fields_and_signature_verifies() {
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).expect("generate key");
-        let keypair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).expect("load keypair");
-        let signer = PlatformRelaySigner {
-            key_id: "relay-key-1".to_string(),
-            public_key: format!(
-                "ed25519:{}",
-                URL_SAFE_NO_PAD.encode(keypair.public_key().as_ref())
-            ),
-            keypair,
-        };
+        let signer = test_signer("relay-key-1");
         let mut request = RelayRequest {
             message_type: "plugin_execute_request".to_string(),
             request_id: "request-1".to_string(),
@@ -293,5 +328,60 @@ mod tests {
         UnparsedPublicKey::new(&ED25519, signer.keypair.public_key().as_ref())
             .verify(payload.as_slice(), signature.as_slice())
             .expect("signature should verify");
+    }
+
+    #[test]
+    fn active_relay_signer_trust_accepts_exact_key_match() {
+        let signer = test_signer("relay-key-1");
+        let trust = trust_bundle(BTreeMap::from([(
+            signer.key_id().to_string(),
+            signer.public_key().to_string(),
+        )]));
+
+        validate_active_relay_signer_trust(&signer, &trust).expect("matching trust");
+    }
+
+    #[test]
+    fn active_relay_signer_trust_rejects_missing_key_id() {
+        let signer = test_signer("relay-key-1");
+        let trust = trust_bundle(BTreeMap::from([(
+            "relay-key-2".to_string(),
+            signer.public_key().to_string(),
+        )]));
+
+        let error = validate_active_relay_signer_trust(&signer, &trust)
+            .expect_err("missing active key id must fail");
+        assert!(error.contains("relay-key-1"));
+        assert!(error.contains("missing"));
+    }
+
+    #[test]
+    fn active_relay_signer_trust_rejects_public_key_mismatch() {
+        let signer = test_signer("relay-key-1");
+        let other_signer = test_signer("relay-key-1");
+        let trust = trust_bundle(BTreeMap::from([(
+            signer.key_id().to_string(),
+            other_signer.public_key().to_string(),
+        )]));
+
+        let error = validate_active_relay_signer_trust(&signer, &trust)
+            .expect_err("mismatched public key must fail");
+        assert!(error.contains("does not match"));
+    }
+
+    #[test]
+    fn active_relay_signer_trust_allows_additional_rotation_keys() {
+        let signer = test_signer("relay-key-1");
+        let next_signer = test_signer("relay-key-2");
+        let trust = trust_bundle(BTreeMap::from([
+            (signer.key_id().to_string(), signer.public_key().to_string()),
+            (
+                next_signer.key_id().to_string(),
+                next_signer.public_key().to_string(),
+            ),
+        ]));
+
+        validate_active_relay_signer_trust(&signer, &trust)
+            .expect("staged rotation trust should accept the active key");
     }
 }

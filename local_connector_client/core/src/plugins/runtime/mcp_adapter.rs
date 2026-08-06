@@ -476,6 +476,7 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
                             Some(headers.as_map()),
                             params,
                             Some(*timeout),
+                            chatos_mcp_runtime::McpAsyncResultTransport::Disabled,
                         )
                         .await
                         .map_err(anyhow::Error::msg)

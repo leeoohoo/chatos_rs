@@ -10,7 +10,7 @@ use crate::models::{FinishEngineJobRunRequest, RunPendingRollupsResponse};
 use crate::repositories::{control_plane, summaries};
 use crate::services::{control_plane as cp_service, summary};
 
-use super::common::{create_scheduler_job_run, finish_job_run, has_recent_scheduler_job_run};
+use super::common::{create_scheduler_job_run, finish_job_run};
 
 enum RollupExecutionOutcome {
     Success {
@@ -26,23 +26,6 @@ enum RollupExecutionOutcome {
         marked: usize,
         error: String,
     },
-}
-
-pub async fn run_pending_thread_rollups_due(
-    db: &Db,
-    config: &AppConfig,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    max_threads: i64,
-    settings: &summary::RollupSettings,
-) -> Result<RunPendingRollupsResponse, String> {
-    let policy = control_plane::get_effective_job_policy(db, "rollup").await?;
-    let interval_seconds = policy.interval_seconds.unwrap_or(60).max(3);
-    if has_recent_scheduler_job_run(db, "rollup", tenant_id, source_id, interval_seconds).await? {
-        return Ok(empty_response());
-    }
-    run_pending_thread_rollups_internal(db, config, tenant_id, source_id, max_threads, settings)
-        .await
 }
 
 pub async fn run_pending_thread_rollups(

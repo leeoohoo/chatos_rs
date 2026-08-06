@@ -364,7 +364,17 @@ export const api = {
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
     ),
-  getRunEvents: (runId: string) => request<TaskRunEventRecord[]>(`/api/runs/${runId}/events`),
+  getRunEvents: (
+    runId: string,
+    cursor?: { after_created_at: string; after_id: string; limit?: number },
+  ) =>
+    request<TaskRunEventRecord[]>(
+      withQuery(`/api/runs/${runId}/events`, {
+        after_created_at: cursor?.after_created_at,
+        after_id: cursor?.after_id,
+        limit: cursor?.limit === undefined ? undefined : String(cursor.limit),
+      }),
+    ),
   listRunPrompts: (
     runId: string,
     filters?: Omit<PromptListFilters, 'taskId' | 'runId'>,

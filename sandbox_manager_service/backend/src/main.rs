@@ -4,7 +4,8 @@
 use tracing_subscriber::EnvFilter;
 
 use sandbox_manager_service_backend::{
-    build_router, load_sandbox_manager_dotenv, AppConfig, AppState,
+    build_internal_router, build_public_router, load_internal_mtls_config,
+    load_sandbox_manager_dotenv, AppConfig, AppState, SandboxManagerInternalTlsConfig,
 };
 
 #[tokio::main]
@@ -23,6 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await;
     tracing::info!("sandbox backend selected: {}", config.backend.as_str());
     let bind_addr = config.bind_addr();
+    let internal_tls = SandboxManagerInternalTlsConfig::from_env(config.host, config.port)?;
+    let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let state = AppState::new(config.clone()).await?;
     let maintenance_config = config.clone();
     tokio::spawn(async move {
@@ -36,7 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let cleanup_handle = state.spawn_cleanup_worker();
-    let app = build_router(state);
+    let public_app = build_public_router(state.clone());
+    let internal_app = build_internal_router(state);
     let _service_runtime =
         chatos_service_runtime::register_current_service("sandbox-manager", config.port, "/health")
             .await;
@@ -47,8 +51,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.host,
         config.port
     );
+    tracing::info!(
+        "sandbox_manager_service_backend internal mTLS listening on https://{}",
+        internal_tls.bind_addr
+    );
 
-    axum::serve(listener, app).await?;
+    tokio::select! {
+        result = axum::serve(listener, public_app) => {
+            result?;
+        }
+        result = axum_server::bind_rustls(internal_tls.bind_addr, internal_mtls_config)
+            .serve(internal_app.into_make_service()) => {
+            result?;
+        }
+    }
     cleanup_handle.abort();
     Ok(())
 }

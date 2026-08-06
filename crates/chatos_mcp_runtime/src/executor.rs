@@ -386,8 +386,8 @@ mod tests {
 
     use crate::{
         BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
-        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpHttpServer, McpStdioServer,
-        ToolCallContext, ToolInfo, ToolResultCallback, ToolStreamChunkCallback,
+        BuiltinToolRegistry, McpAsyncResultTransport, McpBuiltinServer, McpExecutor, McpHttpServer,
+        McpStdioServer, ToolCallContext, ToolInfo, ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -573,6 +573,8 @@ mod tests {
                 server_url: Some("https://example.test/mcp".to_string()),
                 server_headers: None,
                 server_header_provider: None,
+                server_http_client: None,
+                server_async_result_transport: McpAsyncResultTransport::Disabled,
                 server_timeout: None,
                 server_config: None,
                 tool_info: json!({}),

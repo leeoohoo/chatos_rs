@@ -98,3 +98,57 @@ export interface ServiceInstance {
   last_error?: string | null;
   last_seen_at: string;
 }
+
+export interface QueueRuntimeDepth {
+  role: 'main' | 'retry' | 'dead_letter';
+  name: string;
+  messages: number;
+  consumers: number;
+}
+
+export interface QueueRuntimeStats {
+  enabled: boolean;
+  available: boolean;
+  queues: QueueRuntimeDepth[];
+  error?: string | null;
+}
+
+export interface QueueOperationsStream {
+  service: string;
+  stream: string;
+  main_queue: string;
+  retry_queue: string;
+  dead_letter_queue: string;
+  runtime: QueueRuntimeStats;
+}
+
+export interface QueueOperationsResponse {
+  environment: string;
+  release_id: string;
+  revision: number;
+  streams: QueueOperationsStream[];
+}
+
+export interface QueueReplayResponse {
+  operation_id: string;
+  service: string;
+  stream: string;
+  item_id: string;
+  tenant_id?: string | null;
+  source_id?: string | null;
+  version?: number | null;
+  event_type?: string | null;
+  event_enqueued: boolean;
+  dead_letter_archived: boolean;
+}
+
+export interface QueueReplayRequest {
+  service: string;
+  stream: string;
+  item_id: string;
+  tenant_id?: string;
+  source_id?: string;
+  version?: number;
+  event_type?: string;
+  reason: string;
+}

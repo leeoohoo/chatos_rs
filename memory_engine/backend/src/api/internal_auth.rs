@@ -17,11 +17,11 @@ pub(crate) fn require_internal_request(
     headers: &HeaderMap,
     required_scope: &str,
     allowed_callers: &[&str],
-) -> Result<bool, (StatusCode, String)> {
+) -> Result<Option<chatos_service_runtime::InternalServiceTokenClaims>, (StatusCode, String)> {
     let caller = header_text(headers, "x-memory-caller");
     let token = header_text(headers, "x-memory-internal-token");
     if caller.is_none() && token.is_none() {
-        return Ok(false);
+        return Ok(None);
     }
     let caller = caller.ok_or_else(|| {
         (
@@ -53,7 +53,7 @@ pub(crate) fn require_internal_request(
                 "Memory Engine internal API is disabled for caller".to_string(),
             )
         })?;
-    chatos_service_runtime::verify_internal_service_token(
+    let claims = chatos_service_runtime::verify_internal_service_token(
         token,
         secret,
         caller,
@@ -66,7 +66,7 @@ pub(crate) fn require_internal_request(
             "invalid Memory Engine internal API token".to_string(),
         )
     })?;
-    Ok(true)
+    Ok(Some(claims))
 }
 
 pub(crate) fn scope_for_memory_path(path: &str) -> &'static str {
@@ -118,10 +118,10 @@ mod tests {
             "x-memory-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
-        assert!(
-            require_internal_request(&config, &headers, DATA_SCOPE, &["task-runner"])
-                .expect("valid token")
-        );
+        let claims = require_internal_request(&config, &headers, DATA_SCOPE, &["task-runner"])
+            .expect("valid token")
+            .expect("signed identity");
+        assert_eq!(claims.caller, "task-runner");
         assert!(
             require_internal_request(&config, &headers, OPERATOR_SCOPE, &["task-runner"]).is_err()
         );
@@ -146,7 +146,33 @@ mod tests {
             worker_rollup_concurrency: 1,
             worker_subject_memory_concurrency: 1,
             worker_reconcile_concurrency: 1,
-            operator_token: Some("legacy-memory-token".to_string()),
+            rabbitmq_url: "amqp://127.0.0.1/%2f".to_string(),
+            rabbitmq_exchange: "memory_engine_test".to_string(),
+            rabbitmq_reconnect_delay: std::time::Duration::from_millis(100),
+            summary_queue: "memory_engine_test.summary".to_string(),
+            summary_retry_queue: "memory_engine_test.summary.retry".to_string(),
+            summary_dead_letter_queue: "memory_engine_test.summary.dead".to_string(),
+            summary_max_delivery_attempts: 3,
+            summary_retry_delay: std::time::Duration::from_millis(100),
+            summary_outbox_reconcile_interval: std::time::Duration::from_secs(1),
+            summary_outbox_batch_size: 10,
+            rollup_queue: "memory_engine_test.rollup".to_string(),
+            rollup_retry_queue: "memory_engine_test.rollup.retry".to_string(),
+            rollup_dead_letter_queue: "memory_engine_test.rollup.dead".to_string(),
+            rollup_max_delivery_attempts: 3,
+            rollup_retry_delay: std::time::Duration::from_millis(100),
+            rollup_outbox_reconcile_interval: std::time::Duration::from_secs(1),
+            rollup_outbox_batch_size: 10,
+            subject_memory_queue: "memory_engine_test.subject_memory".to_string(),
+            subject_memory_retry_queue: "memory_engine_test.subject_memory.retry".to_string(),
+            subject_memory_dead_letter_queue: "memory_engine_test.subject_memory.dead".to_string(),
+            subject_memory_max_delivery_attempts: 3,
+            subject_memory_retry_delay: std::time::Duration::from_millis(100),
+            subject_memory_outbox_reconcile_interval: std::time::Duration::from_secs(1),
+            subject_memory_outbox_batch_size: 10,
+            subject_memory_lock_timeout_secs: 300,
+            record_sync_lease_timeout_secs: 300,
+            rollup_lock_timeout_secs: 300,
             internal_api_secrets: HashMap::new(),
             require_signed_internal_requests: false,
             user_service_base_url: "http://127.0.0.1:39190".to_string(),

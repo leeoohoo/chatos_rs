@@ -39,8 +39,17 @@ pub(super) async fn sync_plugin_oauth_status_internal(
     headers: HeaderMap,
     Json(mut payload): Json<PluginOAuthStatusSyncPayload>,
 ) -> Result<Json<PluginOAuthConnectionRecord>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, PLUGIN_OAUTH_MANAGE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, PLUGIN_OAUTH_MANAGE_SCOPE)?;
     normalize_oauth_payload(&mut payload)?;
+    let mut internal_audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(payload.owner_user_id.as_str()),
+        "plugin_oauth_connection",
+        payload.plugin_id.as_str(),
+        "sync",
+    );
+    internal_audit.resource_name(Some(payload.provider.as_str()));
     let plugin = state
         .store
         .get_plugin_catalog_entry(payload.plugin_id.as_str())
@@ -104,6 +113,7 @@ pub(super) async fn sync_plugin_oauth_status_internal(
         .insert_plugin_audit(&audit)
         .await
         .map_err(ApiError::internal)?;
+    internal_audit.succeeded();
     Ok(Json(record))
 }
 

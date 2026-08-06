@@ -73,9 +73,17 @@ node <<'NODE'
 const crypto = require('crypto');
 
 const baseUrl = process.env.MCP_MANAGEMENT_SMOKE_BASE_URL;
-const internalSecret =
-  process.env.MCP_MANAGEMENT_INTERNAL_API_SECRET ||
-  'change_me_mcp_management_internal_secret';
+const internalSecrets = {
+  chatos:
+    process.env.MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET ||
+    'change_me_mcp_management_chatos_secret',
+  'task-runner':
+    process.env.MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET ||
+    'change_me_mcp_management_task_runner_secret',
+  'project-service':
+    process.env.MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET ||
+    'change_me_mcp_management_project_service_secret',
+};
 const projectServiceBaseUrl = (
   process.env.MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL ||
   process.env.PROJECT_SERVICE_BASE_URL ||
@@ -119,10 +127,12 @@ function issueSignedToken(caller, audience, scope, secret) {
   const payload = encodedJson({
     iss: caller,
     sub: caller,
+    caller,
     aud: audience,
     scope,
     iat: now,
     exp: now + 60,
+    trace_id: crypto.randomUUID(),
   });
   const signature = crypto
     .createHmac('sha256', secret)
@@ -132,11 +142,13 @@ function issueSignedToken(caller, audience, scope, secret) {
 }
 
 function issueInternalToken(caller, scope) {
+  const secret = internalSecrets[caller];
+  assert(secret, `missing MCP Management caller secret for ${caller}`);
   return issueSignedToken(
     caller,
     'mcp-management-service',
     scope,
-    internalSecret,
+    secret,
   );
 }
 
@@ -182,7 +194,6 @@ async function projectExecutionContext(project, owner) {
       headers: {
         'x-project-service-caller': caller,
         'x-project-service-internal-token': token,
-        'x-project-service-sync-secret': projectServiceSecret,
       },
     },
   );

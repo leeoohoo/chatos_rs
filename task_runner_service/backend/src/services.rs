@@ -2,14 +2,16 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+#[cfg(not(test))]
+use std::sync::OnceLock;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::PluginManagementClient;
 use chrono::{DateTime, Utc};
-use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::info;
 use uuid::Uuid;
 
@@ -17,13 +19,12 @@ use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    normalize_execution_environment_mode, normalize_project_id, now_rfc3339,
-    BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
-    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
-    ChatosProjectImportRequest, CreateTaskProjectRequest, CreateTaskRequest, HealthResponse,
-    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskClosureState,
-    TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse,
+    normalize_project_id, now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem,
+    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
+    CancelTaskRequest, CancelTaskResponse, ChatosProjectImportRequest, CreateTaskProjectRequest,
+    CreateTaskRequest, HealthResponse, PaginatedResponse, RecordTaskProcessRequest, RunListFilters,
+    RunSummaryRecord, RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse,
+    TaskClosureState, TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse,
     TaskProjectRecord, TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord,
     TaskRunStatus, TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
     TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest,
@@ -32,25 +33,189 @@ use crate::models::{
 use crate::platform_queue::TaskQueueTopology;
 use crate::store::AppStore;
 
-fn managed_config_client() -> Option<&'static chatos_config_sdk::ConfigClient> {
-    static CLIENT: OnceLock<Option<chatos_config_sdk::ConfigClient>> = OnceLock::new();
+#[cfg(not(test))]
+fn managed_config_client() -> Result<&'static chatos_config_sdk::ConfigClient, String> {
+    static CLIENT: OnceLock<Result<chatos_config_sdk::ConfigClient, String>> = OnceLock::new();
     CLIENT
-        .get_or_init(|| chatos_config_sdk::ConfigClient::from_env("task-runner").ok())
+        .get_or_init(|| chatos_config_sdk::ConfigClient::from_env("task-runner"))
         .as_ref()
+        .map_err(|error| {
+            format!("failed to initialize task runner configuration center client: {error}")
+        })
 }
 
-async fn load_managed_config_snapshot() -> Option<chatos_config_sdk::ConfigSnapshot> {
+#[cfg(not(test))]
+async fn load_managed_config_snapshot() -> Result<chatos_config_sdk::ConfigSnapshot, String> {
     let client = managed_config_client()?;
-    match client.load().await {
-        Ok(snapshot) => Some(snapshot),
-        Err(err) => {
-            tracing::warn!(
-                error = err.as_str(),
-                "failed to load task runner managed configuration; using startup defaults"
-            );
-            None
-        }
+    client
+        .load_strict()
+        .await
+        .map_err(|err| format!("failed to load fresh task runner managed configuration: {err}"))
+}
+
+#[cfg(test)]
+async fn load_managed_config_snapshot() -> Result<chatos_config_sdk::ConfigSnapshot, String> {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    Ok(chatos_config_sdk::ConfigSnapshot {
+        environment: "test".to_string(),
+        service_name: "task-runner".to_string(),
+        revision: 1,
+        checksum: "task-runner-test-config".to_string(),
+        values: BTreeMap::from([
+            (
+                chatos_agent::TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
+                json!(600),
+            ),
+            (
+                chatos_agent::TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY.to_string(),
+                json!(8),
+            ),
+            (
+                chatos_agent::TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY.to_string(),
+                json!(2),
+            ),
+            (
+                chatos_agent::TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY.to_string(),
+                json!(8),
+            ),
+            (
+                chatos_agent::TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string(),
+                json!(true),
+            ),
+            (
+                chatos_agent::TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string(),
+                json!(true),
+            ),
+            (
+                TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY.to_string(),
+                json!(7_200_000),
+            ),
+            (
+                TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY.to_string(),
+                json!("local"),
+            ),
+            (
+                TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string(),
+                json!(8_000),
+            ),
+            (
+                TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY.to_string(),
+                json!(48_000),
+            ),
+            (
+                TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY.to_string(),
+                json!(256),
+            ),
+            (
+                TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY.to_string(),
+                json!(64 * 1024 * 1024),
+            ),
+            (
+                TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY.to_string(),
+                json!(false),
+            ),
+            (
+                TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
+                json!("http://127.0.0.1:8095"),
+            ),
+            (
+                TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY.to_string(),
+                json!(7_200),
+            ),
+        ]),
+        env: BTreeMap::new(),
+        generated_at: "test".to_string(),
+        stale: false,
+        source: Some("test_fixture".to_string()),
+    })
+}
+
+fn require_managed_usize(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+    minimum: usize,
+) -> Result<usize, String> {
+    let value = snapshot
+        .usize(key)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
+    if value < minimum {
+        return Err(format!(
+            "managed configuration key {key} must be at least {minimum}, got {value}"
+        ));
     }
+    Ok(value)
+}
+
+fn require_managed_u64(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+    minimum: u64,
+) -> Result<u64, String> {
+    let value = snapshot
+        .u64(key)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
+    if value < minimum {
+        return Err(format!(
+            "managed configuration key {key} must be at least {minimum}, got {value}"
+        ));
+    }
+    Ok(value)
+}
+
+fn require_managed_bool(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+) -> Result<bool, String> {
+    snapshot
+        .bool(key)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))
+}
+
+fn require_managed_string(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+) -> Result<String, String> {
+    let value = snapshot
+        .string(key)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("managed configuration key {key} must not be empty"));
+    }
+    Ok(value.to_string())
+}
+
+fn require_managed_execution_environment_mode(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+) -> Result<String, String> {
+    let value =
+        require_managed_string(snapshot, TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY)?
+            .to_ascii_lowercase();
+    match value.as_str() {
+        "local" | "cloud" => Ok(value),
+        _ => Err(format!(
+            "managed configuration key {} must be local or cloud, got {value}",
+            TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY
+        )),
+    }
+}
+
+fn require_managed_http_base_url(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+) -> Result<String, String> {
+    let value = require_managed_string(snapshot, key)?;
+    let url = reqwest::Url::parse(value.as_str())
+        .map_err(|error| format!("managed configuration key {key} is not a valid URL: {error}"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(format!(
+            "managed configuration key {key} must be an absolute HTTP(S) URL"
+        ));
+    }
+    Ok(value.trim_end_matches('/').to_string())
 }
 
 mod batch_ops;
@@ -82,6 +247,7 @@ mod remote_servers;
 mod run_control;
 mod run_execution_support;
 mod run_model_phase;
+mod run_post_process;
 mod run_prerequisites;
 mod run_recovery;
 mod run_service;
@@ -120,7 +286,6 @@ use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filter
 pub(crate) use self::plugin_management_policy::TaskRunnerCapabilityPolicy;
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
-pub use self::run_service::RunExecutionStats;
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
 use self::task_tenant_scope::{
@@ -129,8 +294,8 @@ use self::task_tenant_scope::{
 use self::workspace_mcp::{
     ensure_workspace_dir_available, sanitize_task_mcp_config, task_mcp_resolution_response,
 };
+pub use crate::models::RunExecutionStats;
 
-const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
 const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
 const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
@@ -138,6 +303,15 @@ const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
 const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str = "task_runner.ai.tool_result_max_chars";
 const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_results_total_max_chars";
+const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
+    "task_runner.cache.plugin_cloud_bundle_max_entries";
+const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY: &str =
+    "task_runner.cache.plugin_cloud_bundle_max_bytes";
+const TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY: &str = "task_runner.sandbox.enabled";
+const TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY: &str =
+    "task_runner.sandbox.manager_base_url";
+const TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
+    "task_runner.sandbox.lease_ttl_seconds";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunTriggerSource {
@@ -185,10 +359,74 @@ pub struct RunService {
     plugin_management_client: Option<PluginManagementClient>,
     ask_user_prompt_service: AskUserPromptService,
     runtime_stats: crate::state::TaskRunnerRuntimeStats,
-    start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
-    callback_delivery_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
+    start_locks: Arc<KeyedAsyncLockRegistry>,
+    callback_delivery_locks: Arc<KeyedAsyncLockRegistry>,
+    runtime_abort_tokens:
+        Arc<parking_lot::Mutex<HashMap<String, tokio_util::sync::CancellationToken>>>,
+    run_terminal_waiters:
+        Arc<parking_lot::Mutex<HashMap<(String, String), tokio_util::sync::CancellationToken>>>,
     plugin_cloud_bundle_cache:
         Arc<parking_lot::Mutex<plugin_cloud_runtime::PluginCloudBundleCache>>,
+}
+
+#[derive(Default)]
+struct KeyedAsyncLockRegistry {
+    locks: parking_lot::Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
+}
+
+pub(crate) struct KeyedAsyncLockHandle {
+    key: String,
+    lock: Arc<AsyncMutex<()>>,
+    registry: Arc<KeyedAsyncLockRegistry>,
+}
+
+pub(crate) struct KeyedAsyncLockGuard {
+    _guard: OwnedMutexGuard<()>,
+    _handle: KeyedAsyncLockHandle,
+}
+
+impl KeyedAsyncLockRegistry {
+    fn handle(self: &Arc<Self>, key: &str) -> KeyedAsyncLockHandle {
+        let mut locks = self.locks.lock();
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        let lock = locks.get(key).and_then(Weak::upgrade).unwrap_or_else(|| {
+            let lock = Arc::new(AsyncMutex::new(()));
+            locks.insert(key.to_string(), Arc::downgrade(&lock));
+            lock
+        });
+        KeyedAsyncLockHandle {
+            key: key.to_string(),
+            lock,
+            registry: Arc::clone(self),
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.locks.lock().len()
+    }
+}
+
+impl KeyedAsyncLockHandle {
+    pub(crate) async fn lock_owned(self) -> KeyedAsyncLockGuard {
+        let guard = Arc::clone(&self.lock).lock_owned().await;
+        KeyedAsyncLockGuard {
+            _guard: guard,
+            _handle: self,
+        }
+    }
+}
+
+impl Drop for KeyedAsyncLockHandle {
+    fn drop(&mut self) {
+        let mut locks = self.registry.locks.lock();
+        let remove = locks.get(self.key.as_str()).is_some_and(|current| {
+            Weak::ptr_eq(current, &Arc::downgrade(&self.lock)) && Arc::strong_count(&self.lock) == 1
+        });
+        if remove {
+            locks.remove(self.key.as_str());
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -236,7 +474,6 @@ pub fn system_config(
         default_execution_timeout_ms: config.execution_timeout.as_millis() as u64,
         execution_timeout_ms,
         scheduler_poll_interval_ms: config.scheduler_poll_interval.as_millis() as u64,
-        worker_poll_interval_ms: config.worker_poll_interval.as_millis() as u64,
         worker_claim_ttl_ms: config.worker_claim_ttl.as_millis() as u64,
         worker_concurrency: config.worker_concurrency,
         auto_memory_summary: config.auto_memory_summary,
@@ -274,8 +511,20 @@ pub fn system_config(
             .to_string(),
         task_queue_rabbitmq_exchange: task_queue_topology.rabbitmq_exchange.clone(),
         task_queue_run_dispatch_queue: task_queue_topology.run_dispatch_queue.clone(),
+        task_queue_run_dispatch_retry_queue: task_queue_topology.run_dispatch_retry_queue.clone(),
+        task_queue_run_dispatch_retry_delay_ms: task_queue_topology
+            .run_dispatch_retry_delay
+            .as_millis() as u64,
+        task_queue_run_dispatch_outbox_reconcile_ms: task_queue_topology
+            .run_dispatch_outbox_reconcile_interval
+            .as_millis() as u64,
+        task_queue_run_dispatch_outbox_batch_size: task_queue_topology
+            .run_dispatch_outbox_batch_size,
+        task_queue_worker_control_queue_prefix: task_queue_topology
+            .worker_control_queue_prefix
+            .clone(),
         task_queue_callback_delivery_queue: task_queue_topology.callback_delivery_queue.clone(),
-        task_queue_run_events_queue: task_queue_topology.run_events_queue.clone(),
+        task_queue_run_events_routing_key: task_queue_topology.run_events_routing_key.clone(),
     }
 }
 
@@ -447,8 +696,10 @@ fn validate_required(label: &str, value: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::workspace_mcp::{ensure_workspace_dir_available, resolve_workspace_dir_with_base};
+    use super::KeyedAsyncLockRegistry;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use uuid::Uuid;
 
     fn make_temp_dir(prefix: &str) -> PathBuf {
@@ -494,5 +745,23 @@ mod tests {
                 .expect_err("file path should be rejected");
 
         assert!(err.contains("工作目录不是目录"));
+    }
+
+    #[tokio::test]
+    async fn keyed_async_lock_serializes_same_key_and_removes_idle_entry() {
+        let registry = Arc::new(KeyedAsyncLockRegistry::default());
+        let first_guard = registry.handle("task-1").lock_owned().await;
+        let second_handle = registry.handle("task-1");
+        assert_eq!(registry.len(), 1);
+
+        let second = tokio::spawn(async move {
+            let _guard = second_handle.lock_owned().await;
+        });
+        tokio::task::yield_now().await;
+        assert!(!second.is_finished());
+
+        drop(first_guard);
+        second.await.expect("second keyed lock task");
+        assert_eq!(registry.len(), 0);
     }
 }

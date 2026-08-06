@@ -9,6 +9,7 @@ use chatos_mcp_management_sdk::{
 
 fn request() -> CreateRuntimeSessionRequest {
     CreateRuntimeSessionRequest {
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         project_id: "project-1".to_string(),

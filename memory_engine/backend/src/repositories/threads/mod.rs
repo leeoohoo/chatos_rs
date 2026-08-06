@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod common;
+mod dispatch;
 mod queries;
 mod writes;
 
@@ -23,6 +24,13 @@ pub struct ListThreadsQuery<'a> {
     pub offset: i64,
 }
 
+pub use dispatch::{
+    get_pending_summary_dispatch, get_summary_dispatch_state, list_pending_summary_dispatches,
+    mark_summary_dispatch_consumed, mark_summary_dispatch_dead_lettered,
+    mark_summary_dispatch_failed, mark_summary_dispatch_published,
+    rearm_summary_dispatch_if_eligible, replay_dead_lettered_summary_dispatch,
+    SummaryDispatchOutbox,
+};
 #[allow(unused_imports)]
 pub use queries::{
     get_thread, get_thread_by_id, list_threads, list_threads_by_label,
@@ -30,6 +38,7 @@ pub use queries::{
 };
 #[allow(unused_imports)]
 pub use writes::{
-    apply_summary_queue_state_delta, delete_thread, refresh_summary_queue_state,
-    release_summary_slot, try_acquire_summary_slot, upsert_thread,
+    apply_summary_queue_state_delta, begin_record_sync, delete_thread, finish_record_sync,
+    refresh_summary_queue_state, release_rollup_slot, release_summary_slot,
+    try_acquire_rollup_slot, try_acquire_summary_slot, upsert_thread,
 };

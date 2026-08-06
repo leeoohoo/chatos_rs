@@ -7,7 +7,6 @@ use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxExecutionTarget};
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -59,6 +58,7 @@ fn default_lease_kind() -> String {
 
 impl CloudSandboxProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: Duration,
         internal_secret: Option<String>,
@@ -67,14 +67,9 @@ impl CloudSandboxProvider {
         let base_url = base_url.into();
         let parsed = reqwest::Url::parse(base_url.as_str())
             .map_err(|err| format!("Sandbox Manager Provider base URL is invalid: {err}"))?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err("Sandbox Manager Provider base URL must use http or https".to_string());
+        if !cfg!(test) && parsed.scheme() != "https" {
+            return Err("Sandbox Manager Provider base URL must use https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|err| format!("build Sandbox Manager Provider client failed: {err}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
@@ -117,10 +112,10 @@ impl CloudSandboxProvider {
             })?;
         let sandbox_id = urlencoding::encode(target.sandbox_id.trim());
         let response = self
-            .authenticated(
-                self.http
-                    .get(format!("{}/api/sandboxes/{sandbox_id}", self.base_url)),
-            )?
+            .authenticated(self.http.get(format!(
+                "{}/api/internal/sandboxes/{sandbox_id}",
+                self.base_url
+            )))?
             .send()
             .await
             .map_err(|err| {
@@ -190,9 +185,9 @@ impl CloudSandboxProvider {
 
         let sandbox_id = urlencoding::encode(target.sandbox_id.trim());
         let path = if target.is_environment {
-            format!("/api/sandbox-environments/{sandbox_id}/mcp")
+            format!("/api/internal/sandbox-environments/{sandbox_id}/mcp")
         } else {
-            format!("/api/sandboxes/{sandbox_id}/mcp")
+            format!("/api/internal/sandboxes/{sandbox_id}/mcp")
         };
         let mut request = self.authenticated(self.http.post(format!("{}{path}", self.base_url)))?;
         if let Some(service_id) = target.service_id.as_deref() {
@@ -271,9 +266,9 @@ impl CloudSandboxProvider {
         }
         let sandbox_id = urlencoding::encode(target.sandbox_id.trim());
         let path = if target.is_environment {
-            format!("/api/sandbox-environments/{sandbox_id}/mcp")
+            format!("/api/internal/sandbox-environments/{sandbox_id}/mcp")
         } else {
-            format!("/api/sandboxes/{sandbox_id}/mcp")
+            format!("/api/internal/sandboxes/{sandbox_id}/mcp")
         };
         let mut request = self.authenticated(self.http.post(format!("{}{path}", self.base_url)))?;
         if let Some(service_id) = target.service_id.as_deref() {
@@ -521,13 +516,14 @@ mod tests {
             axum::serve(
                 listener,
                 Router::new()
-                    .route("/api/sandboxes/sandbox-1", get(lease))
-                    .route("/api/sandboxes/sandbox-1/mcp", post(mcp)),
+                    .route("/api/internal/sandboxes/sandbox-1", get(lease))
+                    .route("/api/internal/sandboxes/sandbox-1/mcp", post(mcp)),
             )
             .await
             .unwrap();
         });
         let provider = CloudSandboxProvider::new(
+            reqwest::Client::new(),
             format!("http://{address}"),
             Duration::from_secs(5),
             Some("a-long-sandbox-secret".to_string()),
@@ -538,10 +534,13 @@ mod tests {
         let snapshot = RuntimeSessionSnapshot {
             session_id: "session-1".to_string(),
             caller_service: "task-runner".to_string(),
+            trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
             task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
+            device_id: None,
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),

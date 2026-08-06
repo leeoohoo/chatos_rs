@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use chatos_plugin_management_sdk::{PluginPublisher, PLUGIN_SIGNING_KEY_USAGE_RELEASE};
 
+use super::plugin_catalog_sync::is_syncable_network_marketplace;
 use super::plugin_marketplaces::{
     validate_marketplace_signing_key_progression, validate_marketplace_signing_keys,
 };
@@ -318,13 +319,26 @@ async fn approve_publisher_signing_keys(
     updated.trusted_signing_keys = merged;
     let replaced = state
         .store
-        .replace_plugin_marketplace_if_matches(&marketplace, &updated)
+        .replace_plugin_marketplace_if_matches_with_catalog_sync(
+            &marketplace,
+            &updated,
+            is_syncable_network_marketplace(&updated),
+        )
         .await
         .map_err(ApiError::internal)?;
     if !replaced {
         return Err(ApiError::conflict(
             "Plugin marketplace changed concurrently; reload before approving publisher",
         ));
+    }
+    if let Err(error) =
+        crate::catalog_sync_queue::publish_pending_marketplace(state, updated.id.as_str()).await
+    {
+        tracing::warn!(
+            marketplace_id = updated.id.as_str(),
+            error = error.as_str(),
+            "Plugin Management left Catalog sync event in Outbox after publisher approval"
+        );
     }
     Ok(())
 }

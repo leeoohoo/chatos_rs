@@ -9,8 +9,7 @@ use std::time::Duration;
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{
     env_flag as env_bool, parse_bool_text, validate_production_secret,
-    DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET, DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN,
-    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
+    DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,15 +77,8 @@ pub struct AppConfig {
     pub docker_build_cache_reserved_space: String,
     pub docker_build_cache_timeout: Duration,
     pub require_auth: bool,
-    pub operator_token: Option<String>,
     pub user_service_base_url: String,
     pub user_service_request_timeout_ms: u64,
-    pub system_client_id: Option<String>,
-    pub system_client_key: Option<String>,
-    pub system_client_scopes: Vec<String>,
-    pub system_client_allowed_tenant_ids: Vec<String>,
-    pub system_client_allowed_project_ids: Vec<String>,
-    pub system_client_allowed_tools: Vec<String>,
     pub system_client_max_lease_ttl_seconds: u64,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
@@ -189,24 +181,11 @@ impl AppConfig {
                 required_u64("SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS")?.max(30),
             ),
             require_auth: required_managed_bool("SANDBOX_MANAGER_REQUIRE_AUTH")?,
-            operator_token: Some(required_text("SANDBOX_MANAGER_OPERATOR_TOKEN")?),
             user_service_base_url: required_text("SANDBOX_MANAGER_USER_SERVICE_BASE_URL")?,
             user_service_request_timeout_ms: required_u64(
                 "SANDBOX_MANAGER_USER_SERVICE_REQUEST_TIMEOUT_MS",
             )?
             .max(300),
-            system_client_id: Some(required_text("SANDBOX_MANAGER_SYSTEM_CLIENT_ID")?),
-            system_client_key: Some(required_text("SANDBOX_MANAGER_SYSTEM_CLIENT_KEY")?),
-            system_client_scopes: required_csv("SANDBOX_MANAGER_SYSTEM_CLIENT_SCOPES")?,
-            system_client_allowed_tenant_ids: required_csv(
-                "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TENANT_IDS",
-            )?,
-            system_client_allowed_project_ids: required_csv(
-                "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_PROJECT_IDS",
-            )?,
-            system_client_allowed_tools: required_csv(
-                "SANDBOX_MANAGER_SYSTEM_CLIENT_ALLOWED_TOOLS",
-            )?,
             system_client_max_lease_ttl_seconds,
             internal_api_secrets: caller_internal_api_secrets(),
             require_signed_internal_requests: required_managed_bool(
@@ -215,53 +194,105 @@ impl AppConfig {
             agent_token_secret: required_text("SANDBOX_MANAGER_AGENT_TOKEN_SECRET")?,
         };
 
-        if config.require_auth {
-            if config.operator_token.is_some() {
-                validate_production_secret(
-                    "SANDBOX_MANAGER_OPERATOR_TOKEN",
-                    config.operator_token.as_deref(),
-                    &[DEFAULT_SANDBOX_MANAGER_OPERATOR_TOKEN],
-                )?;
+        if !config.require_auth {
+            return Err("SANDBOX_MANAGER_REQUIRE_AUTH must be true".to_string());
+        }
+        if !config.require_signed_internal_requests {
+            return Err(
+                "SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string(),
+            );
+        }
+        for caller in ["task-runner", "project-service", "mcp-management-service"] {
+            if !config.internal_api_secrets.contains_key(caller) {
+                return Err(format!(
+                    "dedicated Sandbox Manager internal secret is required for {caller}"
+                ));
             }
-            if config.system_client_key.is_some() {
-                validate_production_secret(
-                    "SANDBOX_MANAGER_SYSTEM_CLIENT_KEY",
-                    config.system_client_key.as_deref(),
-                    &[DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY],
-                )?;
-            }
-            if config.require_signed_internal_requests {
-                for caller in ["task-runner", "project-service", "mcp-management-service"] {
-                    if !config.internal_api_secrets.contains_key(caller) {
-                        return Err(format!(
-                            "dedicated Sandbox Manager internal secret is required for {caller}"
-                        ));
-                    }
-                }
-            }
-            for (caller, secret) in &config.internal_api_secrets {
-                validate_production_secret(
-                    format!("Sandbox Manager internal secret for {caller}").as_str(),
-                    Some(secret.as_str()),
-                    &[
-                        "change_me_task_runner_sandbox_manager_secret",
-                        "change_me_project_service_sandbox_manager_secret",
-                        "change_me_mcp_management_sandbox_manager_secret",
-                    ],
-                )?;
-            }
+        }
+        for (caller, secret) in &config.internal_api_secrets {
             validate_production_secret(
-                "SANDBOX_MANAGER_AGENT_TOKEN_SECRET",
-                Some(config.agent_token_secret.as_str()),
-                &[DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET],
+                format!("Sandbox Manager internal secret for {caller}").as_str(),
+                Some(secret.as_str()),
+                &[
+                    "change_me_task_runner_sandbox_manager_secret",
+                    "change_me_project_service_sandbox_manager_secret",
+                    "change_me_mcp_management_sandbox_manager_secret",
+                ],
             )?;
         }
+        validate_production_secret(
+            "SANDBOX_MANAGER_AGENT_TOKEN_SECRET",
+            Some(config.agent_token_secret.as_str()),
+            &[DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET],
+        )?;
 
         Ok(config)
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
+    }
+}
+
+#[cfg(test)]
+impl AppConfig {
+    pub(crate) fn for_tests() -> Self {
+        let image_build_context = default_image_build_context();
+        Self {
+            host: "127.0.0.1".parse().expect("test host"),
+            port: 8095,
+            database_url: "mongodb://127.0.0.1/sandbox_manager_test".to_string(),
+            mongodb_database: "sandbox_manager_test".to_string(),
+            backend: SandboxBackendKind::Mock,
+            work_root: std::env::temp_dir().join("chatos-sandbox-manager-tests"),
+            pool_max_active: 8,
+            pool_max_pending: 80,
+            lease_ttl: Duration::from_secs(7_200),
+            cleanup_interval: Duration::from_secs(45),
+            agent_port: 49_888,
+            docker_image: "chatos-sandbox-agent:test".to_string(),
+            docker_network_mode: "bridge".to_string(),
+            docker_agent_endpoint_mode: DockerAgentEndpointMode::Published,
+            docker_agent_publish: false,
+            docker_agent_bind_host: "127.0.0.1".to_string(),
+            docker_agent_connect_host: "127.0.0.1".to_string(),
+            docker_config: None,
+            docker_host: None,
+            kata_container_cli: "nerdctl".to_string(),
+            kata_runtime: "io.containerd.kata.v2".to_string(),
+            kata_image: "chatos-sandbox-agent:test".to_string(),
+            kata_network_mode: "bridge".to_string(),
+            image_tag_prefix: "chatos-sandbox-agent".to_string(),
+            image_dockerfile: image_build_context
+                .join("sandbox_manager_service")
+                .join("sandbox_agent")
+                .join("Dockerfile"),
+            image_build_context,
+            docker_maintenance_enabled: true,
+            docker_build_cache_max_used_space: "32gb".to_string(),
+            docker_build_cache_reserved_space: "8gb".to_string(),
+            docker_build_cache_timeout: Duration::from_secs(180),
+            require_auth: true,
+            user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_request_timeout_ms: 5_000,
+            system_client_max_lease_ttl_seconds: 7_200,
+            internal_api_secrets: HashMap::from([
+                (
+                    "task-runner".to_string(),
+                    "test-task-runner-sandbox-manager-secret".to_string(),
+                ),
+                (
+                    "project-service".to_string(),
+                    "test-project-service-sandbox-manager-secret".to_string(),
+                ),
+                (
+                    "mcp-management-service".to_string(),
+                    "test-mcp-management-sandbox-manager-secret".to_string(),
+                ),
+            ]),
+            require_signed_internal_requests: true,
+            agent_token_secret: "test-sandbox-agent-token-secret".to_string(),
+        }
     }
 }
 
@@ -312,19 +343,6 @@ fn required_u16(key: &str) -> Result<u16, String> {
 fn required_usize(key: &str) -> Result<usize, String> {
     let value = required_u64(key)?;
     usize::try_from(value).map_err(|_| format!("{key} is too large"))
-}
-
-fn required_csv(key: &str) -> Result<Vec<String>, String> {
-    let values = required_text(key)?
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    if values.is_empty() {
-        return Err(format!("{key} must contain at least one value"));
-    }
-    Ok(values)
 }
 
 fn required_storage_limit_text(key: &str) -> Result<String, String> {

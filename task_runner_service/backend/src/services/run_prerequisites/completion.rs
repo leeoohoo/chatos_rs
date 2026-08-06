@@ -8,7 +8,7 @@ impl RunService {
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
-        workspace_dir: &str,
+        _workspace_dir: &str,
         message: String,
     ) {
         run.status = TaskRunStatus::Blocked;
@@ -17,6 +17,7 @@ impl RunService {
         run.error_message = Some(message.clone());
         run.result_summary = Some(message.clone());
         run.cancel_requested = false;
+        self.request_task_terminal_cleanup(task, run);
         match self.store.save_run(run.clone()).await {
             Ok(saved) => {
                 *run = saved;
@@ -64,14 +65,14 @@ impl RunService {
         if !task_already_cancelled {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
         }
-        self.cleanup_task_terminals(task, run, workspace_dir).await;
+        self.enqueue_terminal_side_effects(run).await;
     }
 
     pub(in crate::services) async fn finish_failed_before_execution(
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
-        workspace_dir: &str,
+        _workspace_dir: &str,
         message: String,
     ) {
         run.status = TaskRunStatus::Failed;
@@ -80,6 +81,7 @@ impl RunService {
         run.error_message = Some(message.clone());
         run.result_summary = Some(message.clone());
         run.cancel_requested = false;
+        self.request_task_terminal_cleanup(task, run);
         match self.store.save_run(run.clone()).await {
             Ok(saved) => {
                 *run = saved;
@@ -117,6 +119,6 @@ impl RunService {
         if !task_already_cancelled {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
         }
-        self.cleanup_task_terminals(task, run, workspace_dir).await;
+        self.enqueue_terminal_side_effects(run).await;
     }
 }

@@ -154,10 +154,15 @@ impl AppState {
         environment: &str,
         service_name: &str,
     ) -> Result<ConfigSnapshot, String> {
-        self.store
+        let mut snapshot = self
+            .store
             .get_active_snapshot(environment, service_name)
             .await?
-            .ok_or_else(|| format!("No published snapshot for {environment}/{service_name}"))
+            .ok_or_else(|| format!("No published snapshot for {environment}/{service_name}"))?;
+        if let Some(pressure) = self.store.get_pressure_state(environment).await? {
+            overlay_pressure_state(&mut snapshot, &pressure)?;
+        }
+        Ok(snapshot)
     }
 
     pub(super) async fn publish_values(
@@ -310,6 +315,253 @@ impl AppState {
                 );
             }
         }
+        let elevated = values
+            .get(MEMORY_ENGINE_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let critical = values
+            .get(MEMORY_ENGINE_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if let (Some(elevated), Some(critical)) = (elevated, critical) {
+            if critical <= elevated {
+                errors.push(
+                    "memory_engine.pressure.queue_critical_messages must be greater than memory_engine.pressure.queue_elevated_messages"
+                        .to_string(),
+                );
+            }
+        }
+        let controller_interval_ms = values
+            .get(PLATFORM_PRESSURE_CONTROLLER_INTERVAL_MS_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let signal_ttl_seconds = values
+            .get(PLATFORM_PRESSURE_SIGNAL_TTL_SECONDS_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if let (Some(interval_ms), Some(ttl_seconds)) = (controller_interval_ms, signal_ttl_seconds)
+        {
+            if ttl_seconds.saturating_mul(1_000) <= interval_ms {
+                errors.push(
+                    "platform.pressure.controller.signal_ttl_seconds must exceed platform.pressure.controller.interval_ms"
+                        .to_string(),
+                );
+            }
+        }
+        for key in [
+            SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
+            CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
+        ] {
+            let is_https = values
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim().starts_with("https://"));
+            if !is_https {
+                errors.push(format!(
+                    "{key} must use https:// because MCP Management internal APIs require mTLS"
+                ));
+            }
+        }
+        for key in [
+            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
+        ] {
+            let is_https = values
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim().starts_with("https://"));
+            if !is_https {
+                errors.push(format!(
+                    "{key} must use https:// because Project Service internal APIs require mTLS"
+                ));
+            }
+        }
+        let user_service_internal_is_https = values
+            .get(PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.trim().starts_with("https://"));
+        if !user_service_internal_is_https {
+            errors.push(format!(
+                "{} must use https:// because User Service internal APIs require mTLS",
+                PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY
+            ));
+        }
+        for key in [
+            MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
+            SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
+        ] {
+            let is_https = values
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim().starts_with("https://"));
+            if !is_https {
+                errors.push(format!(
+                    "{key} must use https:// because Plugin Management internal APIs require mTLS"
+                ));
+            }
+        }
+        validate_sandbox_manager_mtls_invariants(values, &mut errors);
+        for key in [
+            CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+        ] {
+            let is_https = values
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim().starts_with("https://"));
+            if !is_https {
+                errors.push(format!(
+                    "{key} must use https:// because Memory Engine internal APIs require mTLS"
+                ));
+            }
+        }
+        for key in [
+            CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY,
+            MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY,
+            PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+            USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
+        ] {
+            let is_https = values
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim().starts_with("https://"));
+            if !is_https {
+                errors.push(format!(
+                    "{key} must use https:// because Task Runner internal APIs require mTLS"
+                ));
+            }
+        }
+        let public_port = values
+            .get(MCP_MANAGEMENT_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let internal_mtls_port = values
+            .get(MCP_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if public_port.is_some() && public_port == internal_mtls_port {
+            errors.push(
+                "mcp_management.runtime.internal_mtls_port must differ from mcp_management.runtime.port"
+                    .to_string(),
+            );
+        }
+        let task_runner_public_port = values
+            .get(TASK_RUNNER_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let task_runner_internal_mtls_port = values
+            .get(TASK_RUNNER_INTERNAL_MTLS_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if task_runner_public_port.is_some()
+            && task_runner_public_port == task_runner_internal_mtls_port
+        {
+            errors.push(
+                "task_runner.runtime.internal_mtls_port must differ from task_runner.runtime.port"
+                    .to_string(),
+            );
+        }
+        let memory_engine_public_port = values
+            .get(MEMORY_ENGINE_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let memory_engine_internal_mtls_port = values
+            .get(MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if memory_engine_public_port.is_some()
+            && memory_engine_public_port == memory_engine_internal_mtls_port
+        {
+            errors.push(
+                "memory_engine.runtime.internal_mtls_port must differ from memory_engine.runtime.port"
+                    .to_string(),
+            );
+        }
+        let project_service_public_port = values
+            .get(PROJECT_SERVICE_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let project_service_internal_mtls_port = values
+            .get(PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if project_service_public_port.is_some()
+            && project_service_public_port == project_service_internal_mtls_port
+        {
+            errors.push(
+                "project_service.runtime.internal_mtls_port must differ from project_service.runtime.port"
+                .to_string(),
+            );
+        }
+        let user_service_public_port = values
+            .get(USER_SERVICE_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let user_service_internal_mtls_port = values
+            .get(USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if user_service_public_port.is_some()
+            && user_service_public_port == user_service_internal_mtls_port
+        {
+            errors.push(
+                "user_service.runtime.internal_mtls_port must differ from user_service.runtime.port"
+                    .to_string(),
+            );
+        }
+        let plugin_management_public_port = values
+            .get(PLUGIN_MANAGEMENT_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        let plugin_management_internal_mtls_port = values
+            .get(PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY)
+            .and_then(Value::as_i64);
+        if plugin_management_public_port.is_some()
+            && plugin_management_public_port == plugin_management_internal_mtls_port
+        {
+            errors.push(
+                "plugin_management.runtime.internal_mtls_port must differ from plugin_management.runtime.port"
+                    .to_string(),
+            );
+        }
         Ok(errors)
     }
+}
+
+pub(super) fn validate_sandbox_manager_mtls_invariants(
+    values: &BTreeMap<String, Value>,
+    errors: &mut Vec<String>,
+) {
+    for key in [
+        TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+        PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+        MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
+    ] {
+        let is_https = values
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.trim().starts_with("https://"));
+        if !is_https {
+            errors.push(format!(
+                "{key} must use https:// because Sandbox Manager internal APIs require mTLS"
+            ));
+        }
+    }
+
+    let public_port = values
+        .get(SANDBOX_MANAGER_PORT_CONFIG_KEY)
+        .and_then(Value::as_i64);
+    let internal_mtls_port = values
+        .get(SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY)
+        .and_then(Value::as_i64);
+    if public_port.is_some() && public_port == internal_mtls_port {
+        errors.push(
+            "sandbox_manager.runtime.internal_mtls_port must differ from sandbox_manager.runtime.port"
+                .to_string(),
+        );
+    }
+}
+
+pub(super) fn overlay_pressure_state(
+    snapshot: &mut ConfigSnapshot,
+    pressure: &PlatformPressureStateRecord,
+) -> Result<(), String> {
+    snapshot.values.insert(
+        PLATFORM_PRESSURE_LEVEL_CONFIG_KEY.to_string(),
+        json!(pressure.level.as_str()),
+    );
+    snapshot.checksum = checksum(&json!({
+        "values": snapshot.values,
+        "env": snapshot.env,
+    }))?;
+    Ok(())
 }

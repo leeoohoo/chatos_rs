@@ -3,30 +3,33 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
-use chatos_service_runtime::{
-    parse_bool_text, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
-    DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
-};
+use chatos_service_runtime::{parse_bool_text, validate_production_secret};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
     pub database_url: String,
+    pub mcp_result_rabbitmq_url: String,
+    pub mcp_result_queue_prefix: String,
     pub user_service_base_url: String,
+    pub user_service_internal_base_url: String,
+    pub user_service_internal_http_client: reqwest::Client,
     pub user_service_request_timeout: Duration,
     pub user_service_internal_secret: Option<String>,
     pub local_connector_service_base_url: String,
     pub local_connector_service_request_timeout: Duration,
     pub memory_engine_base_url: String,
     pub memory_engine_source_id: String,
-    pub memory_engine_operator_token: Option<String>,
+    pub memory_engine_internal_api_secret: Option<String>,
+    pub memory_engine_http_client: reqwest::Client,
     pub memory_engine_request_timeout: Duration,
     pub sandbox_manager_base_url: String,
+    pub sandbox_manager_http_client: reqwest::Client,
     pub sandbox_manager_client_id: Option<String>,
     pub sandbox_manager_client_key: Option<String>,
     pub sandbox_image_mcp_request_timeout: Duration,
@@ -53,12 +56,49 @@ impl AppConfig {
             required_u64("PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let task_runner_request_timeout_ms =
             required_u64("PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS")?.max(300);
+        let user_service_internal_base_url =
+            required_text("PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL")?;
+        require_https_base_url(
+            "PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL",
+            user_service_internal_base_url.as_str(),
+        )?;
+        let user_service_internal_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                user_service_request_timeout_ms,
+            )),
+            required_bootstrap_path("USER_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
+            required_bootstrap_path("USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let local_connector_service_request_timeout_ms =
             required_u64("PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let memory_engine_request_timeout_ms =
             required_u64("PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")?.max(300);
+        let memory_engine_base_url = required_text("PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL")?;
+        require_https_base_url(
+            "PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL",
+            memory_engine_base_url.as_str(),
+        )?;
+        let memory_engine_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                memory_engine_request_timeout_ms,
+            )),
+            required_bootstrap_path("MEMORY_ENGINE_MTLS_CA_CERT_PATH")?.as_path(),
+            required_bootstrap_path("MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let sandbox_image_mcp_request_timeout_ms =
             required_u64("PROJECT_SERVICE_SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS")?.max(10_000);
+        let sandbox_manager_base_url = required_text("PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL")?;
+        require_https_base_url(
+            "PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL",
+            sandbox_manager_base_url.as_str(),
+        )?;
+        let sandbox_manager_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                sandbox_image_mcp_request_timeout_ms,
+            )),
+            required_bootstrap_path("SANDBOX_MANAGER_MTLS_CA_CERT_PATH")?.as_path(),
+            required_bootstrap_path("SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let cloud_project_git_timeout_ms =
             required_u64("PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS")?.max(1_000);
 
@@ -66,7 +106,11 @@ impl AppConfig {
             host,
             port,
             database_url: required_text("PROJECT_SERVICE_DATABASE_URL")?,
+            mcp_result_rabbitmq_url: required_text("PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL")?,
+            mcp_result_queue_prefix: required_text("PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX")?,
             user_service_base_url: required_text("PROJECT_SERVICE_USER_SERVICE_BASE_URL")?,
+            user_service_internal_base_url,
+            user_service_internal_http_client,
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
             user_service_internal_secret: Some(required_text(
                 "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET",
@@ -77,15 +121,17 @@ impl AppConfig {
             local_connector_service_request_timeout: Duration::from_millis(
                 local_connector_service_request_timeout_ms,
             ),
-            memory_engine_base_url: required_text("PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL")?,
+            memory_engine_base_url,
             memory_engine_source_id: normalized_env("PROJECT_SERVICE_MEMORY_ENGINE_SOURCE_ID")
                 .or_else(|| normalized_env("MEMORY_ENGINE_SOURCE_ID"))
                 .unwrap_or_else(|| "project_management_agent".to_string()),
-            memory_engine_operator_token: Some(required_text(
-                "PROJECT_SERVICE_MEMORY_ENGINE_OPERATOR_TOKEN",
+            memory_engine_internal_api_secret: Some(required_text(
+                "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
             )?),
+            memory_engine_http_client,
             memory_engine_request_timeout: Duration::from_millis(memory_engine_request_timeout_ms),
-            sandbox_manager_base_url: required_text("PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL")?,
+            sandbox_manager_base_url,
+            sandbox_manager_http_client,
             sandbox_manager_client_id: Some(required_text(
                 "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID",
             )?),
@@ -118,36 +164,33 @@ impl AppConfig {
             )?,
         };
 
-        if config.require_signed_internal_requests {
-            for caller_service in [
-                "chatos-backend",
-                "task-runner",
-                "project-service",
-                "mcp-management-service",
-            ] {
-                if !config.internal_api_secrets.contains_key(caller_service) {
-                    return Err(format!(
-                        "dedicated project service internal secret is required for {caller_service}"
-                    ));
-                }
+        if !config.require_signed_internal_requests {
+            return Err(
+                "PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string(),
+            );
+        }
+        for caller_service in [
+            "chatos-backend",
+            "task-runner",
+            "project-service",
+            "mcp-management-service",
+        ] {
+            if !config.internal_api_secrets.contains_key(caller_service) {
+                return Err(format!(
+                    "dedicated project service internal secret is required for {caller_service}"
+                ));
             }
         }
 
         validate_production_secret(
             "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            config.memory_engine_operator_token.as_deref(),
-            &[
-                DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
-                "change_me_project_service_memory_engine_secret",
-            ],
+            config.memory_engine_internal_api_secret.as_deref(),
+            &["change_me_project_service_memory_engine_secret"],
         )?;
         validate_production_secret(
             "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
             config.sandbox_manager_client_key.as_deref(),
-            &[
-                DEFAULT_SANDBOX_MANAGER_SYSTEM_CLIENT_KEY,
-                "change_me_project_service_sandbox_manager_secret",
-            ],
+            &["change_me_project_service_sandbox_manager_secret"],
         )?;
         if config.user_service_internal_secret.is_some() {
             validate_production_secret(
@@ -198,6 +241,20 @@ impl AppConfig {
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
+}
+
+fn required_bootstrap_path(key: &str) -> Result<PathBuf, String> {
+    normalized_env(key)
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("{key} is required as deployment Secret material"))
+}
+
+fn require_https_base_url(key: &str, value: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if parsed.scheme() != "https" {
+        return Err(format!("{key} must use https"));
+    }
+    Ok(())
 }
 
 fn caller_internal_api_secrets() -> HashMap<String, String> {

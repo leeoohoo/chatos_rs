@@ -9,6 +9,8 @@ use serde_json::Value;
 use std::{sync::OnceLock, time::Duration};
 
 static TASK_RUNNER_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static TASK_RUNNER_INTERNAL_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> =
+    OnceLock::new();
 
 const TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
@@ -264,6 +266,20 @@ fn task_runner_http_client() -> &'static reqwest::Client {
     TASK_RUNNER_HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
+fn task_runner_internal_http_client() -> Result<&'static reqwest::Client, String> {
+    match TASK_RUNNER_INTERNAL_HTTP_CLIENT.get_or_init(|| {
+        let config = Config::try_get()?;
+        chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(task_runner_request_timeout()),
+            config.task_runner_mtls_ca_cert_path.as_path(),
+            config.task_runner_mtls_client_identity_path.as_path(),
+        )
+    }) {
+        Ok(client) => Ok(client),
+        Err(error) => Err(error.clone()),
+    }
+}
+
 fn task_runner_request_timeout() -> Duration {
     let timeout_ms = Config::try_get()
         .map(|cfg| cfg.task_runner_request_timeout_ms)
@@ -273,15 +289,15 @@ fn task_runner_request_timeout() -> Duration {
 }
 
 async fn get_internal_json(
-    base_url: &str,
+    _base_url: &str,
     path: &str,
     query: &[(&str, &str)],
 ) -> Result<Value, String> {
-    let base_url = resolve_task_runner_base_url(base_url).await;
+    let base_url = Config::try_get()?.task_runner_internal_base_url.as_str();
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
     send_task_runner_response_with_limit(
         signed_chatos_internal_request(
-            task_runner_http_client()
+            task_runner_internal_http_client()?
                 .get(endpoint)
                 .timeout(task_runner_request_timeout()),
         )?
@@ -301,16 +317,16 @@ async fn post_internal_json<T: Serialize + ?Sized>(
 }
 
 async fn post_internal_json_with_scope<T: Serialize + ?Sized>(
-    base_url: &str,
+    _base_url: &str,
     path: &str,
     body: &T,
     scope: &str,
 ) -> Result<Value, String> {
-    let base_url = resolve_task_runner_base_url(base_url).await;
+    let base_url = Config::try_get()?.task_runner_internal_base_url.as_str();
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
     send_task_runner_response_with_limit(
         signed_chatos_internal_request_with_scope(
-            task_runner_http_client()
+            task_runner_internal_http_client()?
                 .post(endpoint)
                 .timeout(task_runner_request_timeout()),
             scope,

@@ -101,7 +101,6 @@ pub(super) async fn rerun_requirement_execution_inner(
         contact_runtime.task_runner_base_url.as_str(),
         contact_runtime.task_runner_agent_token.as_str(),
         context.access_token.as_str(),
-        context.cfg.project_service_base_url.as_str(),
         context.project_sync_secret.as_str(),
         identity.conversation_id.as_str(),
         identity.execution_group_id.as_str(),
@@ -253,7 +252,6 @@ pub(super) async fn rerun_requirement_execution_inner(
     let mut new_links = Vec::new();
     for (project_task_id, task_runner_task_id) in parsed_mappings {
         let sync_result = project_management_api_client::sync_work_item_task_runner_status(
-            context.cfg.project_service_base_url.as_str(),
             context.project_sync_secret.as_str(),
             project_task_id.as_str(),
             &project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {
@@ -395,7 +393,6 @@ pub(super) async fn rerun_requirement_execution_inner(
             link.task_runner_run_id = Some(run_id.clone());
             link.task_runner_status = Some(run_status.clone());
             if let Err(error) = sync_execution_link_status(
-                context.cfg.project_service_base_url.as_str(),
                 context.project_sync_secret.as_str(),
                 link,
                 run_status.as_str(),
@@ -429,7 +426,6 @@ pub(super) async fn rerun_requirement_execution_inner(
         );
         for (executing_requirement_id, work_item_ids) in work_item_ids_by_requirement {
             if let Err(error) = sync_requirement_execution_state(
-                context.cfg.project_service_base_url.as_str(),
                 context.project_sync_secret.as_str(),
                 executing_requirement_id.as_str(),
                 Some("in_progress"),

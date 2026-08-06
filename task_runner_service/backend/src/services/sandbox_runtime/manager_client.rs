@@ -296,6 +296,7 @@ pub(super) struct SandboxManagerAuth {
     pub(super) client_key: String,
     mode: SandboxManagerAuthMode,
     owner_user_id: Option<String>,
+    cloud_http: Option<reqwest::Client>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,8 +311,14 @@ impl SandboxManagerClient {
         if base_url.is_empty() {
             return Err("sandbox manager base url is empty".to_string());
         }
-        let client = build_http_client(HttpClientTimeouts::new(Duration::from_secs(1_800)))
-            .map_err(|err| format!("build sandbox manager http client failed: {err}"))?;
+        let client = match auth.as_ref() {
+            Some(auth) if auth.mode == SandboxManagerAuthMode::Cloud => auth
+                .cloud_http
+                .clone()
+                .ok_or_else(|| "Sandbox Manager cloud mTLS client is not configured".to_string())?,
+            _ => build_http_client(HttpClientTimeouts::new(Duration::from_secs(1_800)))
+                .map_err(|err| format!("build sandbox manager http client failed: {err}"))?,
+        };
         Ok(Self {
             base_url,
             client,
@@ -355,15 +362,23 @@ impl SandboxManagerClient {
             policy,
         };
         let idempotency_key = sandbox_lease_idempotency_key("sandbox-lease", run);
-        let url = format!("{}/api/sandboxes/leases", self.base_url);
+        let url = format!("{}{}", self.base_url, self.api_path("/sandboxes/leases"));
         for attempt in 0..6 {
-            let response = self
+            let request = self
                 .apply_auth(self.client.post(url.as_str()))?
-                .header("x-idempotency-key", idempotency_key.as_str())
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| format!("request sandbox lease failed: {err}"))?;
+                .header("x-idempotency-key", idempotency_key.as_str());
+            let response = apply_sandbox_audit_context(
+                request,
+                task.owner_user_id
+                    .as_deref()
+                    .unwrap_or(task.subject_id.as_str()),
+                task.tenant_id.as_str(),
+                task.project_id.as_str(),
+            )
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| format!("request sandbox lease failed: {err}"))?;
             let status = response.status();
             if !status.is_success() {
                 let body = read_error_body(response).await;
@@ -404,19 +419,28 @@ impl SandboxManagerClient {
             ttl_seconds,
             policy,
         };
-        let prepared_response = self
-            .apply_auth(
-                self.client
-                    .post(format!("{}/api/sandbox-environments/leases", self.base_url)),
-            )?
+        let request = self
+            .apply_auth(self.client.post(format!(
+                "{}{}",
+                self.base_url,
+                self.api_path("/sandbox-environments/leases")
+            )))?
             .header(
                 "x-idempotency-key",
                 sandbox_lease_idempotency_key("sandbox-environment-lease", run),
-            )
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| format!("request sandbox environment lease failed: {err}"))?;
+            );
+        let prepared_response = apply_sandbox_audit_context(
+            request,
+            task.owner_user_id
+                .as_deref()
+                .unwrap_or(task.subject_id.as_str()),
+            task.tenant_id.as_str(),
+            task.project_id.as_str(),
+        )
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| format!("request sandbox environment lease failed: {err}"))?;
         let prepared: SandboxEnvironmentLeaseResponse =
             decode_success_json(prepared_response, "sandbox environment lease request").await?;
 
@@ -489,8 +513,11 @@ impl SandboxManagerClient {
         };
         let start_response = match self
             .apply_auth(self.client.post(format!(
-                "{}/api/sandbox-environments/{}/start",
-                self.base_url, prepared.environment_id
+                "{}{}",
+                self.base_url,
+                self.api_path(
+                    format!("/sandbox-environments/{}/start", prepared.environment_id).as_str()
+                )
             )))?
             .json(&start_payload)
             .send()
@@ -563,10 +590,11 @@ impl SandboxManagerClient {
 
     async fn get_sandbox(&self, sandbox_id: &str) -> Result<SandboxLeaseRecordResponse, String> {
         let response = self
-            .apply_auth(
-                self.client
-                    .get(format!("{}/api/sandboxes/{}", self.base_url, sandbox_id)),
-            )?
+            .apply_auth(self.client.get(format!(
+                "{}{}",
+                self.base_url,
+                self.api_path(format!("/sandboxes/{sandbox_id}").as_str())
+            )))?
             .send()
             .await
             .map_err(|err| format!("request sandbox detail failed: {err}"))?;
@@ -579,8 +607,9 @@ impl SandboxManagerClient {
     ) -> Result<SandboxEnvironmentLeaseResponse, String> {
         let response = self
             .apply_auth(self.client.get(format!(
-                "{}/api/sandbox-environments/{}",
-                self.base_url, environment_id
+                "{}{}",
+                self.base_url,
+                self.api_path(format!("/sandbox-environments/{environment_id}").as_str())
             )))?
             .send()
             .await
@@ -593,7 +622,11 @@ impl SandboxManagerClient {
         run_id: &str,
     ) -> Result<Vec<SandboxLeaseListItem>, String> {
         let response = self
-            .apply_auth(self.client.get(format!("{}/api/sandboxes", self.base_url)))?
+            .apply_auth(self.client.get(format!(
+                "{}{}",
+                self.base_url,
+                self.api_path("/sandboxes")
+            )))?
             .query(&[("run_id", run_id), ("limit", "100")])
             .send()
             .await
@@ -614,8 +647,9 @@ impl SandboxManagerClient {
         };
         let response = self
             .apply_auth(self.client.post(format!(
-                "{}/api/sandboxes/{}/release",
-                self.base_url, record.sandbox_id
+                "{}{}",
+                self.base_url,
+                self.api_path(format!("/sandboxes/{}/release", record.sandbox_id).as_str())
             )))?
             .json(&payload)
             .send()
@@ -630,8 +664,9 @@ impl SandboxManagerClient {
     ) -> Result<SandboxHealthResult, String> {
         let response = self
             .apply_auth(self.client.get(format!(
-                "{}/api/sandboxes/{}/health",
-                self.base_url, context.sandbox_id
+                "{}{}",
+                self.base_url,
+                self.api_path(format!("/sandboxes/{}/health", context.sandbox_id).as_str())
             )))?
             .send()
             .await
@@ -660,8 +695,11 @@ impl SandboxManagerClient {
         };
         let response = self
             .apply_auth(self.client.post(format!(
-                "{}/api/sandbox-environments/{}/renew",
-                self.base_url, context.sandbox_id
+                "{}{}",
+                self.base_url,
+                self.api_path(
+                    format!("/sandbox-environments/{}/renew", context.sandbox_id).as_str()
+                )
             )))?
             .json(&payload)
             .send()
@@ -685,8 +723,9 @@ impl SandboxManagerClient {
         };
         let response = self
             .apply_auth(self.client.post(format!(
-                "{}/api/sandboxes/{}/release",
-                self.base_url, context.sandbox_id
+                "{}{}",
+                self.base_url,
+                self.api_path(format!("/sandboxes/{}/release", context.sandbox_id).as_str())
             )))?
             .json(&payload)
             .send()
@@ -708,8 +747,9 @@ impl SandboxManagerClient {
         };
         let response = self
             .apply_auth(self.client.post(format!(
-                "{}/api/sandboxes/{}/release",
-                self.base_url, response.sandbox_id
+                "{}{}",
+                self.base_url,
+                self.api_path(format!("/sandboxes/{}/release", response.sandbox_id).as_str())
             )))?
             .json(&payload)
             .send()
@@ -731,14 +771,23 @@ impl SandboxManagerClient {
         };
         let response = self
             .apply_auth(self.client.post(format!(
-                "{}/api/sandboxes/{}/release",
-                self.base_url, response.environment_id
+                "{}{}",
+                self.base_url,
+                self.api_path(format!("/sandboxes/{}/release", response.environment_id).as_str())
             )))?
             .json(&payload)
             .send()
             .await
             .map_err(|err| format!("request sandbox environment release failed: {err}"))?;
         decode_success_json(response, "sandbox environment release request").await
+    }
+
+    fn api_path(&self, path: &str) -> String {
+        let prefix = match self.auth.as_ref().map(|auth| auth.mode) {
+            Some(SandboxManagerAuthMode::Cloud) => "/api/internal",
+            _ => "/api",
+        };
+        format!("{prefix}{path}")
     }
 
     fn apply_auth(
@@ -776,6 +825,18 @@ impl SandboxManagerClient {
             Ok(request)
         }
     }
+}
+
+fn apply_sandbox_audit_context(
+    request: reqwest::RequestBuilder,
+    represented_user_id: &str,
+    tenant_id: &str,
+    project_id: &str,
+) -> reqwest::RequestBuilder {
+    request
+        .header("x-chatos-owner-user-id", represented_user_id)
+        .header("x-chatos-tenant-id", tenant_id)
+        .header("x-chatos-project-id", project_id)
 }
 
 fn sandbox_lease_idempotency_key(prefix: &str, run: &TaskRunRecord) -> String {

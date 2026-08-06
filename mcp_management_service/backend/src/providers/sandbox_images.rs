@@ -43,6 +43,7 @@ pub(super) struct SandboxImagesProvider {
 impl SandboxImagesProvider {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
+        cloud_http: reqwest::Client,
         cloud_base_url: impl Into<String>,
         cloud_internal_secret: Option<String>,
         local_base_url: impl Into<String>,
@@ -54,7 +55,7 @@ impl SandboxImagesProvider {
         let cloud_base_url = normalized_base_url(cloud_base_url.into(), "Sandbox Manager")?;
         let local_base_url = normalized_base_url(local_base_url.into(), "Local Connector")?;
         Ok(Self {
-            cloud_http: build_client("Sandbox Manager image")?,
+            cloud_http,
             cloud_base_url,
             cloud_internal_secret: normalized_secret(cloud_internal_secret),
             local_http: build_client("Local Connector image")?,
@@ -172,7 +173,10 @@ impl SandboxImagesProvider {
         .map_err(ProviderCallError::provider_unavailable)?;
         Ok(with_runtime_headers(
             self.cloud_http
-                .post(format!("{}/api/sandbox-images/mcp", self.cloud_base_url))
+                .post(format!(
+                    "{}/api/internal/sandbox-images/mcp",
+                    self.cloud_base_url
+                ))
                 .header("x-sandbox-caller", CALLER_SERVICE)
                 .header("x-sandbox-internal-token", token),
             snapshot,
@@ -344,10 +348,13 @@ mod tests {
         RuntimeSessionSnapshot {
             session_id: "session-1".to_string(),
             caller_service: "task-runner".to_string(),
+            trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
             task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
+            device_id: None,
             run_id: Some("run-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
@@ -392,7 +399,7 @@ mod tests {
             Json(request): Json<Value>,
         ) -> Json<Value> {
             let (caller_header, token_header, secret, audience) = if path
-                == "cloud/api/sandbox-images/mcp"
+                == "cloud/api/internal/sandbox-images/mcp"
             {
                 (
                     "x-sandbox-caller",
@@ -471,6 +478,7 @@ mod tests {
 
     fn provider(base_url: &str) -> SandboxImagesProvider {
         SandboxImagesProvider::new(
+            reqwest::Client::new(),
             format!("{base_url}/cloud"),
             Some(CLOUD_SECRET.to_string()),
             format!("{base_url}/local"),

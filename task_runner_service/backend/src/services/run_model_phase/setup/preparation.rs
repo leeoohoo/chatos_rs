@@ -98,6 +98,10 @@ pub(super) async fn prepare_model_execution(
         .effective_tool_result_model_budget_limits()
         .await
         .map_err(|err| format!("加载运行时配置失败: {err}"))?;
+    let prompt_cache_policy = service
+        .effective_prompt_cache_policy()
+        .await
+        .map_err(|err| format!("加载模型缓存配置失败: {err}"))?;
     let runtime_config =
         build_runtime_config(service, task, run, command_constraints.max_iterations).await?;
 
@@ -134,6 +138,7 @@ pub(super) async fn prepare_model_execution(
         metadata,
         task_process_logging_enabled,
         prefixed_input_items,
+        prompt_cache_policy,
     );
     if sandbox_context.is_some() {
         run_spec
@@ -238,10 +243,16 @@ fn build_run_spec(
     metadata: serde_json::Value,
     task_process_logging_enabled: bool,
     external_mcp_prefixed_input_items: Vec<Value>,
+    prompt_cache_policy: crate::services::run_service::TaskRunnerPromptCachePolicy,
 ) -> TaskRunSpec {
     let mut effective_model_config = runtime_model_config.clone();
     effective_model_config.request_cwd = None;
     let mut model_runtime_config = effective_model_config.to_runtime_config(None);
+    apply_prompt_cache_policy(
+        &mut model_runtime_config,
+        run.id.as_str(),
+        prompt_cache_policy,
+    );
     model_runtime_config.instructions = Some(
         match model_runtime_config
             .instructions
@@ -271,6 +282,74 @@ fn build_run_spec(
         )
         .with_prefixed_input_items(prefixed_input_items),
     )
+}
+
+fn apply_prompt_cache_policy(
+    model_runtime_config: &mut chatos_ai_runtime::ModelRuntimeConfig,
+    run_id: &str,
+    policy: crate::services::run_service::TaskRunnerPromptCachePolicy,
+) {
+    if policy.enabled {
+        model_runtime_config.prompt_cache_key = Some(format!("task-runner:{run_id}"));
+        model_runtime_config.include_prompt_cache_retention = policy.retention_enabled;
+    } else {
+        model_runtime_config.prompt_cache_key = None;
+        model_runtime_config.include_prompt_cache_retention = false;
+    }
+}
+
+#[cfg(test)]
+mod prompt_cache_tests {
+    use super::apply_prompt_cache_policy;
+    use crate::services::run_service::TaskRunnerPromptCachePolicy;
+
+    fn runtime_config() -> chatos_ai_runtime::ModelRuntimeConfig {
+        chatos_ai_runtime::ModelRuntimeConfig::openai_compatible(
+            "https://api.openai.com/v1",
+            "secret",
+            "gpt-test",
+            "openai",
+        )
+    }
+
+    #[test]
+    fn same_run_uses_stable_cache_key_and_different_runs_are_isolated() {
+        let policy = TaskRunnerPromptCachePolicy {
+            enabled: true,
+            retention_enabled: true,
+        };
+        let mut first = runtime_config();
+        let mut repeated = runtime_config();
+        let mut different = runtime_config();
+
+        apply_prompt_cache_policy(&mut first, "run-1", policy);
+        apply_prompt_cache_policy(&mut repeated, "run-1", policy);
+        apply_prompt_cache_policy(&mut different, "run-2", policy);
+
+        assert_eq!(first.prompt_cache_key, repeated.prompt_cache_key);
+        assert_ne!(first.prompt_cache_key, different.prompt_cache_key);
+        assert_eq!(first.prompt_cache_key.as_deref(), Some("task-runner:run-1"));
+        assert!(first.include_prompt_cache_retention);
+    }
+
+    #[test]
+    fn managed_policy_can_disable_all_cache_options_without_model_fallback() {
+        let mut config = runtime_config()
+            .with_prompt_cache_key(Some("model-default".to_string()))
+            .with_prompt_cache_retention(true);
+
+        apply_prompt_cache_policy(
+            &mut config,
+            "run-1",
+            TaskRunnerPromptCachePolicy {
+                enabled: false,
+                retention_enabled: true,
+            },
+        );
+
+        assert_eq!(config.prompt_cache_key, None);
+        assert!(!config.include_prompt_cache_retention);
+    }
 }
 
 fn task_runner_agent_for_task(task: &TaskRecord) -> TaskRunnerAgent {
@@ -502,6 +581,7 @@ mod tests {
             memory_engine_base_url: None,
             memory_engine_source_id: "task".to_string(),
             memory_engine_operator_token: None,
+            memory_engine_http_client: reqwest::Client::new(),
             default_tenant_id: "tenant".to_string(),
             default_subject_id: "subject".to_string(),
             default_workspace_dir: ".".to_string(),
@@ -509,7 +589,6 @@ mod tests {
             execution_timeout: Duration::from_millis(30_000),
             scheduler_poll_interval: Duration::from_millis(1_000),
             worker_id: "test-worker".to_string(),
-            worker_poll_interval: Duration::from_millis(1_000),
             worker_claim_ttl: Duration::from_millis(120_000),
             worker_concurrency: 4,
             auto_memory_summary: false,
@@ -518,14 +597,15 @@ mod tests {
             default_tool_results_model_total_max_chars: 1_000,
             default_execution_environment_mode: "local".to_string(),
             default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
+            sandbox_manager_http_client: reqwest::Client::new(),
             sandbox_manager_client_id: None,
             sandbox_manager_client_key: None,
             default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: None,
-            chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
+            user_service_internal_api_secret: None,
             local_connector_internal_api_secret: None,
             local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
             local_connector_service_request_timeout: Duration::from_millis(5_000),
@@ -539,6 +619,8 @@ mod tests {
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5_000),
             project_service_base_url: Some("http://127.0.0.1:39210".to_string()),
+            project_service_internal_base_url: Some("http://127.0.0.1:39210".to_string()),
+            project_service_internal_http_client: reqwest::Client::new(),
             project_service_sync_secret: Some("sync-secret".to_string()),
             project_service_request_timeout: Duration::from_millis(5_000),
         }
@@ -619,7 +701,22 @@ mod tests {
             usage: None,
             report: None,
             cancel_requested: false,
+            cancel_event_pending: false,
             dispatch_paused: false,
+            dispatch_event_pending: false,
+            post_process_event_pending: false,
+            post_process_event_enqueued: false,
+            post_process_completed: false,
+            post_process_dead_lettered: false,
+            post_process_attempt_count: 0,
+            post_process_last_error: None,
+            memory_summary_processed: false,
+            chatos_followup_processed: false,
+            terminal_cleanup_event_pending: false,
+            terminal_cleanup_event_enqueued: false,
+            terminal_cleanup_completed: false,
+            terminal_cleanup_attempt_count: 0,
+            terminal_cleanup_last_error: None,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,

@@ -11,7 +11,7 @@ import {
 
 import { api, buildEventSourceUrl } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
-import type { TaskRunStatus } from '../types';
+import type { TaskRunEventRecord, TaskRunStatus } from '../types';
 import {
   type RunStatusFilter,
 } from './runs/runPageUtils';
@@ -19,6 +19,38 @@ import { RunDetailDrawer } from './runs/RunDetailDrawer';
 import { RunListTable } from './runs/RunListTable';
 import { RunListToolbar } from './runs/RunListToolbar';
 import { useRunsPageData } from './runs/useRunsPageData';
+
+const RUN_EVENT_SYNC_BATCH_SIZE = 200;
+const RUN_EVENT_RECONNECT_DELAY_MS = 1000;
+
+async function loadRunEventSuffix(
+  runId: string,
+  cursor: TaskRunEventRecord,
+  collected: TaskRunEventRecord[] = [],
+): Promise<TaskRunEventRecord[]> {
+  const batch = await api.getRunEvents(runId, {
+    after_created_at: cursor.created_at,
+    after_id: cursor.id,
+    limit: RUN_EVENT_SYNC_BATCH_SIZE,
+  });
+  const next = [...collected, ...batch];
+  if (batch.length < RUN_EVENT_SYNC_BATCH_SIZE) {
+    return next;
+  }
+  const nextCursor = batch[batch.length - 1];
+  return nextCursor ? loadRunEventSuffix(runId, nextCursor, next) : next;
+}
+
+function appendUniqueRunEvents(
+  current: TaskRunEventRecord[],
+  incoming: TaskRunEventRecord[],
+): TaskRunEventRecord[] {
+  if (incoming.length === 0) {
+    return current;
+  }
+  const knownIds = new Set(current.map((event) => event.id));
+  return [...current, ...incoming.filter((event) => !knownIds.has(event.id))];
+}
 
 export function RunsPage() {
   const { t } = useI18n();
@@ -88,36 +120,87 @@ export function RunsPage() {
 
     let closed = false;
     let eventSource: EventSource | null = null;
+    let reconnectTimer: number | undefined;
+    let eventSync = Promise.resolve();
+    const syncRunEvents = async () => {
+      const queryKey = ['run-events', selectedRunId] as const;
+      const current = queryClient.getQueryData<TaskRunEventRecord[]>(queryKey);
+      const cursor = current?.[current.length - 1];
+      if (!current || !cursor) {
+        await queryClient.invalidateQueries({ queryKey });
+        return;
+      }
+      const incoming = await loadRunEventSuffix(selectedRunId, cursor);
+      queryClient.setQueryData<TaskRunEventRecord[]>(queryKey, (existing = []) =>
+        appendUniqueRunEvents(existing, incoming),
+      );
+    };
     const refresh = () => {
+      eventSync = eventSync
+        .then(syncRunEvents)
+        .catch(() => queryClient.invalidateQueries({ queryKey: ['run-events', selectedRunId] }));
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ['runs'] }),
         queryClient.invalidateQueries({ queryKey: ['run-index'] }),
         queryClient.invalidateQueries({ queryKey: ['run', selectedRunId] }),
-        queryClient.invalidateQueries({ queryKey: ['run-events', selectedRunId] }),
         queryClient.invalidateQueries({ queryKey: ['run-prompts', selectedRunId] }),
       ]);
     };
-
-    void api
-      .issueSseTicket()
-      .then(({ ticket }) => {
+    const connect = async () => {
+      try {
+        const queryKey = ['run-events', selectedRunId] as const;
+        let current = queryClient.getQueryData<TaskRunEventRecord[]>(queryKey);
+        if (current === undefined) {
+          current = await api.getRunEvents(selectedRunId);
+          queryClient.setQueryData(queryKey, current);
+        }
+        const cursor = current[current.length - 1];
+        const streamQuery = new URLSearchParams();
+        if (cursor) {
+          streamQuery.set('after_created_at', cursor.created_at);
+          streamQuery.set('after_id', cursor.id);
+        } else {
+          streamQuery.set('from_start', 'true');
+        }
+        const { ticket } = await api.issueSseTicket();
         if (closed) {
           return;
         }
         eventSource = new EventSource(
-          buildEventSourceUrl(`/api/runs/${selectedRunId}/stream`, ticket),
+          buildEventSourceUrl(
+            `/api/runs/${selectedRunId}/stream?${streamQuery.toString()}`,
+            ticket,
+          ),
         );
         eventSource.addEventListener('run_event', refresh);
         eventSource.onerror = () => {
+          eventSource?.removeEventListener('run_event', refresh);
           eventSource?.close();
+          eventSource = null;
+          if (!closed && reconnectTimer === undefined) {
+            reconnectTimer = window.setTimeout(() => {
+              reconnectTimer = undefined;
+              void connect();
+            }, RUN_EVENT_RECONNECT_DELAY_MS);
+          }
         };
-      })
-      .catch(() => {
-        // The normal query refresh path will surface auth/network errors.
-      });
+      } catch {
+        if (!closed && reconnectTimer === undefined) {
+          reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = undefined;
+            void connect();
+          }, RUN_EVENT_RECONNECT_DELAY_MS);
+        }
+      }
+    };
+
+    void connect();
 
     return () => {
       closed = true;
+      if (reconnectTimer !== undefined) {
+        window.clearTimeout(reconnectTimer);
+      }
       eventSource?.removeEventListener('run_event', refresh);
       eventSource?.close();
     };

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::HeaderMap;
 use axum::middleware;
 use axum::routing::{delete, get, patch, post};
 use axum::Router;
@@ -15,7 +14,13 @@ use super::core::{
     system_config_handler, task_runner_internal_prompt_preview_handler,
     update_system_config_handler, update_user,
 };
-use super::internal::{get_system_stats, get_user_execution_options};
+use super::internal::{
+    get_system_stats, get_user_execution_options, prometheus_metrics, replay_run_post_process,
+};
+use super::internal_auth::{
+    require_task_runner_internal_request, CHATOS_CALLER, MODEL_CONFIGS_SYNC_SCOPE,
+    PROJECTS_SYNC_SCOPE, USER_SERVICE_CALLER,
+};
 use super::mcp::{
     get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog, list_plugin_connectors,
     list_task_capability_catalog, mcp_entrypoint, mcp_management_entrypoint, preview_mcp_prompt,
@@ -57,7 +62,7 @@ use super::tooling::{
 use super::*;
 use crate::models::{ChatosSyncedModelConfigRequest, ModelConfigRecord};
 
-pub fn build_router(state: AppState) -> Router {
+pub fn build_public_router(state: AppState) -> Router {
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/auth/logout", post(logout_handler))
@@ -171,6 +176,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/runs/{id}/stream", get(stream_run_events))
         .route("/api/runs/{id}/cancel", post(cancel_run))
         .route("/api/runs/{id}/retry", post(retry_run))
+        .route(
+            "/api/queue-operations/run-post-process/replay",
+            post(replay_run_post_process),
+        )
         .route("/api/prompts", get(list_prompts))
         .route("/api/prompts/page", get(list_prompts_page))
         .route("/api/prompts/task-counts", get(list_prompt_task_counts))
@@ -209,6 +218,7 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/api/health", get(health_handler))
+        .route("/metrics", get(prometheus_metrics))
         .route(
             "/api/mcp/provider-descriptor",
             get(get_mcp_provider_descriptor),
@@ -216,6 +226,28 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/system/config", get(system_config_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/agent-token", post(agent_token_handler))
+        .merge(protected_api)
+        .route("/mcp", post(mcp_entrypoint))
+        .with_state(state)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+                .on_request(DefaultOnRequest::new().level(Level::DEBUG))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+        .layer(middleware::from_fn(
+            chatos_service_runtime::request_id_middleware,
+        ))
+}
+
+pub fn build_internal_router(state: AppState) -> Router {
+    Router::new()
         .route(
             "/api/chatos-sync/model-configs",
             post(chatos_sync_upsert_model_config),
@@ -239,8 +271,6 @@ pub fn build_router(state: AppState) -> Router {
             post(mcp_management_entrypoint),
         )
         .merge(chatos_internal::router())
-        .merge(protected_api)
-        .route("/mcp", post(mcp_entrypoint))
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
@@ -248,42 +278,26 @@ pub fn build_router(state: AppState) -> Router {
                 .on_request(DefaultOnRequest::new().level(Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
         ))
 }
 
-pub(super) fn require_chatos_sync_secret(
+pub(super) fn require_chatos_project_sync(
     state: &AppState,
-    headers: &HeaderMap,
+    headers: &axum::http::HeaderMap,
 ) -> Result<(), ApiError> {
-    let Some(expected) = state
-        .config
-        .chatos_callback_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Err(ApiError::forbidden(
-            "chatos callback secret is not configured",
-        ));
-    };
-    let provided = headers
-        .get("x-chatos-callback-secret")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::unauthorized("missing chatos callback secret"))?;
-    if provided != expected {
-        return Err(ApiError::unauthorized("invalid chatos callback secret"));
-    }
-    Ok(())
+    require_task_runner_internal_request(
+        &state.config,
+        headers,
+        &[CHATOS_CALLER],
+        PROJECTS_SYNC_SCOPE,
+    )
+    .map(|_| ())
+    .map_err(|error| ApiError {
+        status: error.status,
+        message: error.message,
+    })
 }
 
 async fn chatos_sync_upsert_model_config(
@@ -291,7 +305,16 @@ async fn chatos_sync_upsert_model_config(
     headers: HeaderMap,
     Json(request): Json<ChatosSyncedModelConfigRequest>,
 ) -> Result<Json<ModelConfigRecord>, ApiError> {
-    require_chatos_sync_secret(&state, &headers)?;
+    require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[USER_SERVICE_CALLER],
+        MODEL_CONFIGS_SYNC_SCOPE,
+    )
+    .map_err(|error| ApiError {
+        status: error.status,
+        message: error.message,
+    })?;
     let record = state
         .model_config_service
         .upsert_chatos_model_config(request)
@@ -305,7 +328,16 @@ async fn chatos_sync_delete_model_config(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    require_chatos_sync_secret(&state, &headers)?;
+    require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[USER_SERVICE_CALLER],
+        MODEL_CONFIGS_SYNC_SCOPE,
+    )
+    .map_err(|error| ApiError {
+        status: error.status,
+        message: error.message,
+    })?;
     let deleted = state
         .model_config_service
         .delete_model_config(id.trim())

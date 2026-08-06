@@ -8,10 +8,10 @@ pub type UpsertEngineSourceRequestDto = memory_engine_sdk::UpsertSourceRequest;
 
 fn build_client() -> Result<memory_engine_sdk::MemoryEngineClient, String> {
     let cfg = Config::try_get()?;
-    let mut client = memory_engine_sdk::MemoryEngineClient::new_platform(
+    let mut client = memory_engine_sdk::MemoryEngineClient::new_platform_with_http_client(
         cfg.memory_engine_base_url.clone(),
-        std::time::Duration::from_millis(cfg.memory_engine_request_timeout_ms.max(300) as u64),
-    )?;
+        cfg.memory_engine_http_client.clone(),
+    );
     if let Some(operator_token) = cfg.memory_engine_operator_token.as_deref() {
         client = client.with_internal_service_auth("chatos-backend", operator_token);
     }

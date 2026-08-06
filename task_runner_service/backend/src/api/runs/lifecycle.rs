@@ -40,6 +40,7 @@ pub(in crate::api) async fn get_run(
 
 pub(in crate::api) async fn list_run_events(
     Path(id): Path<String>,
+    Query(query): Query<RunEventListQuery>,
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
 ) -> Result<Json<Vec<TaskRunEventRecord>>, ApiError> {
@@ -50,12 +51,30 @@ pub(in crate::api) async fn list_run_events(
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
     ensure_run_access(&state, &run, &current_user).await?;
-    let events = state
-        .run_service
-        .list_run_events(&id)
-        .await
-        .map_err(ApiError::bad_request)?;
+    let events = match (query.after_created_at.as_deref(), query.after_id.as_deref()) {
+        (Some(created_at), Some(event_id)) => {
+            state
+                .run_service
+                .list_run_events_after(
+                    &id,
+                    Some(created_at),
+                    Some(event_id),
+                    query.limit.unwrap_or(200).clamp(1, 500),
+                )
+                .await
+        }
+        (None, None) => state.run_service.list_run_events(&id).await,
+        _ => Err("after_created_at and after_id must be supplied together".to_string()),
+    }
+    .map_err(ApiError::bad_request)?;
     Ok(Json(redact_workspace_paths(&state, events)?))
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(in crate::api) struct RunEventListQuery {
+    after_created_at: Option<String>,
+    after_id: Option<String>,
+    limit: Option<usize>,
 }
 
 pub(in crate::api) async fn cancel_run(

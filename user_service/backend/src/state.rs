@@ -11,10 +11,50 @@ pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
     pub login_throttle: LoginThrottle,
+    pub memory_engine_http_client: Option<reqwest::Client>,
+    pub task_runner_http_client: Option<reqwest::Client>,
 }
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
+        let memory_engine_http_client = match (
+            config.memory_engine_base_url.as_ref(),
+            config.memory_engine_mtls_ca_cert_path.as_ref(),
+            config.memory_engine_mtls_client_identity_path.as_ref(),
+        ) {
+            (Some(_), Some(ca), Some(identity)) => {
+                Some(chatos_service_runtime::build_mtls_http_client(
+                    chatos_service_runtime::HttpClientTimeouts::new(
+                        std::time::Duration::from_millis(
+                            config.downstream_request_timeout_ms.max(300) as u64,
+                        ),
+                    ),
+                    ca.as_path(),
+                    identity.as_path(),
+                )?)
+            }
+            (None, _, _) => None,
+            _ => return Err("Memory Engine mTLS client material is incomplete".to_string()),
+        };
+        let task_runner_http_client = match (
+            config.task_runner_base_url.as_ref(),
+            config.task_runner_mtls_ca_cert_path.as_ref(),
+            config.task_runner_mtls_client_identity_path.as_ref(),
+        ) {
+            (Some(_), Some(ca), Some(identity)) => {
+                Some(chatos_service_runtime::build_mtls_http_client(
+                    chatos_service_runtime::HttpClientTimeouts::new(
+                        std::time::Duration::from_millis(
+                            config.downstream_request_timeout_ms.max(300) as u64,
+                        ),
+                    ),
+                    ca.as_path(),
+                    identity.as_path(),
+                )?)
+            }
+            (None, _, _) => None,
+            _ => return Err("Task Runner mTLS client material is incomplete".to_string()),
+        };
         let db = connect_database(&config).await?;
         let store = AppStore::new(db);
         store.initialize().await?;
@@ -23,6 +63,22 @@ impl AppState {
             config,
             store,
             login_throttle: LoginThrottle::default(),
+            memory_engine_http_client,
+            task_runner_http_client,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn new_without_external_dependencies(
+        config: AppConfig,
+    ) -> Result<Self, String> {
+        let db = connect_database(&config).await?;
+        Ok(Self {
+            config,
+            store: AppStore::new(db),
+            login_throttle: LoginThrottle::default(),
+            memory_engine_http_client: None,
+            task_runner_http_client: None,
         })
     }
 }

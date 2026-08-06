@@ -11,14 +11,17 @@ mod implementations;
 pub use catalog::{agent_descriptor, system_agent_catalog, AgentDescriptor};
 #[cfg(feature = "managed-config")]
 pub use config::{
-    load_agent_max_iterations, resolve_agent_max_iterations, resolve_task_runner_runtime_settings,
+    load_agent_max_iterations, require_task_runner_runtime_settings, resolve_agent_max_iterations,
     ManagedRuntimeConfigBundle, RemoteControlTrustConfigBundle,
 };
 pub use config::{
     TaskRunnerRuntimeSettings, AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS,
+    DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED, DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED,
     DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
     DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS, DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
-    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+    TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+    TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
     TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
     TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };

@@ -8,6 +8,7 @@
 - Docker Compose v2，也就是 `docker compose`
 - Git，可选；如果不是通过 git 获取部署文件，可以不装
 - Bash
+- OpenSSL（生成和校验 Configuration Center mTLS 证书）
 - 可选：`make`
 
 服务器部署使用镜像运行文件：`docker/compose.yml`。本地源码构建只在 `docker/compose.build.yml` overlay 里启用。
@@ -25,12 +26,23 @@ cp docker/.env.example docker/.env
 - `MONGODB_PASSWORD`
 - `AUTH_JWT_SECRET`
 - `USER_SERVICE_JWT_SECRET`
-- `USER_SERVICE_INTERNAL_API_SECRET`
-- `TASK_RUNNER_INTERNAL_API_SECRET`
-- `TASK_RUNNER_CHATOS_CALLBACK_SECRET`
+- `PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET`
+- `PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET`
+- `CHATOS_TASK_RUNNER_INTERNAL_API_SECRET`
+- `USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET`
 - `HARNESS_ADMIN_PASSWORD`
+- 10 个 `CONFIG_CENTER_*_CALLER_SIGNING_SECRET`
 
-Memory Engine operator token、Sandbox Manager operator token、Sandbox system client id/key、Sandbox agent token secret 都有内部默认值，单机 Docker 部署不需要手动配置。共享环境和生产环境如果需要轮换这些内部凭证，可以在 `docker/.env` 里显式覆盖。
+Configuration Center 的内部 Snapshot/heartbeat 只监听独立 mTLS 端口。Compose 从
+`CONFIG_CENTER_MTLS_DIR` 挂载私有 CA、服务端证书和每个调用方独立的客户端身份；这些
+文件不得提交到 Git。非生产环境执行 `docker/deploy.sh up` 时会在缺失时生成，生产环境
+必须提前从部署 Secret 系统提供。也可以显式生成：
+
+```bash
+scripts/generate-config-center-mtls.sh docker/secrets/config-center-mtls
+```
+
+内部服务使用调用方专属启动签名根和短期 token；浏览器管理接口使用 User Service Bearer，不再使用全局 operator token 或内置 system client。
 
 开发环境可以先用默认值跑通；共享环境和生产环境必须把上面列出的外部可见密钥换成强随机密钥。
 
@@ -108,12 +120,13 @@ make local-dev-status
 make local-dev-stop
 ```
 
-这个入口只用 Docker 启动 MongoDB/Harness 等基础依赖，业务服务在宿主机运行。DB Connection Hub 已归档到 `docs/db_connection_hub/`，不会启动。
+这个入口只用 Docker 启动 MongoDB/Harness 等基础依赖，业务服务在宿主机运行，并自动在 `.chatos-local-dev/config-center-mtls/` 生成本机开发证书。DB Connection Hub 已归档到 `docs/db_connection_hub/`，不会启动。
 
 ## 5. 默认端口
 
 - 主应用：`8088`
 - 主后端：`3997`
+- Configuration Center 内部 mTLS：`39272`（仅服务调用，不对浏览器开放）
 - Harness Web：`3000`
 - Harness SSH：`3022`
 - User Service：`39191`

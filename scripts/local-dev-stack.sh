@@ -29,7 +29,7 @@ fi
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-chatos-rs}"
 export CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH="${CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH:-$STATE_DIR/apisix.yaml}"
 
-INFRA_SERVICES=(consul mongodb rabbitmq valkey harness apisix-gateway)
+INFRA_SERVICES=(consul mongodb rabbitmq valkey cadvisor prometheus alertmanager grafana harness apisix-gateway)
 DOCKER_APP_SERVICES=(
   configuration-center-backend
   user-service-backend

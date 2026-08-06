@@ -119,6 +119,21 @@ impl AppStore {
             doc! { "visibility": 1, "owner_user_id": 1, "enabled": 1, "trust_level": 1 },
         )
         .await?;
+        create_index(
+            &self.plugin_marketplaces,
+            doc! { "catalog_sync_event_pending": 1, "catalog_sync_event_requested_at": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_marketplaces,
+            doc! { "enabled": 1, "trust_level": 1, "source_kind": 1, "catalog_sync_event_version": 1, "catalog_sync_event_consumed_version": 1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_marketplaces,
+            doc! { "catalog_sync_lock_until": 1 },
+        )
+        .await?;
 
         create_unique_index(&self.plugin_publishers, doc! { "id": 1 }).await?;
         create_unique_index(

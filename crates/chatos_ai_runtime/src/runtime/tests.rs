@@ -835,7 +835,7 @@ fn refreshed_context_keeps_every_tool_batch_from_the_current_turn() {
 }
 
 #[test]
-fn current_turn_tool_history_budget_prefers_newest_results_without_forgetting_old_calls() {
+fn current_turn_tool_history_budget_preserves_existing_prefix_and_pending_latest_result() {
     let calls = vec![
         json!({"type":"function_call","call_id":"call_old","name":"read_page","arguments":"{\"offset\":0}"}),
         json!({"type":"function_call","call_id":"call_new","name":"read_page","arguments":"{\"offset\":4}"}),
@@ -845,7 +845,28 @@ fn current_turn_tool_history_budget_prefers_newest_results_without_forgetting_ol
         json!({"type":"function_call_output","call_id":"call_new","output":"latest-page"}),
     ];
 
-    let merged = merge_current_turn_tool_history_into_input(
+    let first_iteration = merge_current_turn_tool_history_into_input(
+        json!([]),
+        &calls[..1],
+        &outputs[..1],
+        Some(crate::tool_runtime::ToolResultModelBudgetLimits::new(
+            100, 11,
+        )),
+    );
+    let first_old_output = first_iteration
+        .as_array()
+        .expect("first iteration items")
+        .iter()
+        .find(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some("call_old")
+        })
+        .and_then(|item| item.get("output"))
+        .and_then(Value::as_str)
+        .expect("first old output")
+        .to_string();
+
+    let history_merged = merge_current_turn_tool_history_into_input(
         json!([]),
         calls.as_slice(),
         outputs.as_slice(),
@@ -853,6 +874,8 @@ fn current_turn_tool_history_budget_prefers_newest_results_without_forgetting_ol
             100, 11,
         )),
     );
+    let merged =
+        merge_pending_tool_turn_into_input(history_merged, Some(&calls[1..]), Some(&outputs[1..]));
     let items = merged.as_array().expect("items");
     let old_output = items
         .iter()
@@ -873,7 +896,8 @@ fn current_turn_tool_history_budget_prefers_newest_results_without_forgetting_ol
         .and_then(Value::as_str)
         .expect("new output");
 
-    assert!(old_output.contains("combined tool results exceed"));
+    assert_eq!(old_output, first_old_output);
+    assert_eq!(old_output, "older-page");
     assert_eq!(new_output, "latest-page");
     assert_eq!(
         items

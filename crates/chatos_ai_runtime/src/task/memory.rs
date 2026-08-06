@@ -19,7 +19,7 @@ pub struct TaskMemoryRuntimeConfig {
     #[serde(default, skip_serializing)]
     pub access_token: Option<String>,
     #[serde(default, skip_serializing)]
-    pub operator_token: Option<String>,
+    pub internal_secret: Option<String>,
     #[serde(default, skip_serializing)]
     pub internal_caller: Option<String>,
     #[serde(default = "default_memory_timeout_ms")]
@@ -42,7 +42,7 @@ impl TaskMemoryRuntimeConfig {
             base_url: base_url.into(),
             source_id: source_id.into(),
             access_token: None,
-            operator_token: None,
+            internal_secret: None,
             internal_caller: None,
             timeout_ms: default_memory_timeout_ms(),
             compose_context: default_memory_compose_context(),
@@ -73,18 +73,13 @@ impl TaskMemoryRuntimeConfig {
         self
     }
 
-    pub fn with_operator_token(mut self, operator_token: Option<String>) -> Self {
-        self.operator_token = normalize_optional_token(operator_token);
-        self
-    }
-
     pub fn with_internal_service_auth(
         mut self,
         caller: impl Into<String>,
         secret: Option<String>,
     ) -> Self {
         self.internal_caller = normalize_optional_token(Some(caller.into()));
-        self.operator_token = normalize_optional_token(secret);
+        self.internal_secret = normalize_optional_token(secret);
         self
     }
 
@@ -150,12 +145,12 @@ impl TaskMemoryRuntimeConfig {
         )?;
         if let Some(access_token) = self.access_token.as_deref() {
             client = client.with_bearer_token(access_token);
-        } else if let Some(operator_token) = self.operator_token.as_deref() {
-            client = if let Some(caller) = self.internal_caller.as_deref() {
-                client.with_internal_service_auth(caller, operator_token)
-            } else {
-                client.with_operator_token(operator_token)
-            };
+        } else if let Some(internal_secret) = self.internal_secret.as_deref() {
+            let caller = self.internal_caller.as_deref().ok_or_else(|| {
+                "Memory Engine internal caller is required when a signing secret is configured"
+                    .to_string()
+            })?;
+            client = client.with_internal_service_auth(caller, internal_secret);
         }
         Ok(client)
     }

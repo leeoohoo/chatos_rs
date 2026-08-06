@@ -9,6 +9,7 @@ use mongodb::{
 };
 use tokio::task::JoinSet;
 
+use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{BatchSyncRecordsRequest, EngineRecord, UpsertRecordInput};
 use crate::repositories::threads;
@@ -83,6 +84,35 @@ impl CompactTurnKey {
 }
 
 pub async fn batch_sync_records(
+    config: &AppConfig,
+    db: &Db,
+    thread_id: &str,
+    req: &BatchSyncRecordsRequest,
+) -> Result<usize, String> {
+    threads::begin_record_sync(
+        db,
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id,
+        config.record_sync_lease_timeout_secs,
+    )
+    .await?;
+    let result = batch_sync_records_inner(db, thread_id, req).await;
+    let finish_result = threads::finish_record_sync(
+        db,
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id,
+    )
+    .await;
+    match (result, finish_result) {
+        (Ok(count), Ok(())) => Ok(count),
+        (Err(err), _) => Err(err),
+        (Ok(_), Err(err)) => Err(format!("release record sync lease failed: {err}")),
+    }
+}
+
+async fn batch_sync_records_inner(
     db: &Db,
     thread_id: &str,
     req: &BatchSyncRecordsRequest,
@@ -121,7 +151,7 @@ pub async fn batch_sync_records(
     rebuild_compact_turns(db, compact_turn_keys).await?;
 
     if !summary_queue_delta.is_zero() {
-        let _ = threads::apply_summary_queue_state_delta(
+        threads::apply_summary_queue_state_delta(
             db,
             req.tenant_id.as_str(),
             req.source_id.as_str(),
@@ -129,7 +159,7 @@ pub async fn batch_sync_records(
             summary_queue_delta.pending_record_count_delta,
             summary_queue_delta.pending_summary_tokens_delta,
         )
-        .await;
+        .await?;
     }
 
     Ok(upserted_count)

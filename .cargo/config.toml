@@ -3,3 +3,13 @@
 
 [build]
 target-dir = "target-shared"
+
+# This monorepo shares one target directory across many binaries and workspaces.
+# Incremental object trees grow far faster than they can be reused in this setup.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false

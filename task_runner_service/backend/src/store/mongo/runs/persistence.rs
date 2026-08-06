@@ -39,10 +39,9 @@ impl MongoStore {
 
     pub(in crate::store) async fn save_run(
         &self,
-        run: TaskRunRecord,
+        mut run: TaskRunRecord,
     ) -> Result<TaskRunRecord, String> {
         if let Some(claim_token) = run.claim_token.as_deref() {
-            let persisted = prepare_run_for_claim_guarded_persist(run.clone());
             let mut filter = doc! {
                 "id": &run.id,
                 "claim_token": claim_token,
@@ -50,6 +49,17 @@ impl MongoStore {
             if let Some(worker_id) = run.worker_id.as_deref() {
                 filter.insert("worker_id", worker_id);
             }
+            let current = self
+                .runs
+                .find_one(filter.clone(), None)
+                .await
+                .map_err(|err| err.to_string())?
+                .ok_or_else(|| lost_run_claim_error(&run.id))?;
+            if current.cancel_requested {
+                run.cancel_requested = true;
+                run.cancel_event_pending |= current.cancel_event_pending;
+            }
+            let persisted = prepare_run_for_claim_guarded_persist(run.clone());
             let result = self
                 .runs
                 .replace_one(filter, &persisted, None)
@@ -62,6 +72,14 @@ impl MongoStore {
             return Ok(persisted);
         }
 
+        if let Some(current) = self
+            .runs
+            .find_one(doc! { "id": &run.id }, None)
+            .await
+            .map_err(|err| err.to_string())?
+        {
+            merge_run_async_progress(&mut run, &current);
+        }
         let run = prepare_run_for_claim_guarded_persist(run);
         self.runs
             .replace_one(
@@ -105,6 +123,7 @@ impl MongoStore {
                 doc! {
                     "$set": {
                         "status": "running",
+                        "dispatch_event_pending": false,
                         "worker_id": worker_id,
                         "claim_token": claim_token,
                         "claim_until": claim_until,
@@ -131,46 +150,23 @@ impl MongoStore {
         }
     }
 
-    pub(in crate::store) async fn claim_queued_run_by_id(
+    pub(in crate::store) async fn has_queued_run_waiting_for_execution(
         &self,
-        run_id: &str,
-        worker_id: &str,
-        claim_token: &str,
-        claim_until: &str,
-    ) -> Result<Option<TaskRunRecord>, String> {
-        let now = Utc::now().to_rfc3339();
-        let mut filter = self.queued_run_claim_filter().await?;
-        filter.insert("id", run_id);
-        match self
-            .runs
-            .find_one_and_update(
-                filter,
+    ) -> Result<bool, String> {
+        self.runs
+            .clone_with_type::<Document>()
+            .find_one(
                 doc! {
-                    "$set": {
-                        "status": "running",
-                        "worker_id": worker_id,
-                        "claim_token": claim_token,
-                        "claim_until": claim_until,
-                        "started_at": now.as_str(),
-                        "updated_at": now.as_str(),
-                    },
-                    "$inc": { "attempt": 1_i64 },
-                    "$unset": {
-                        "finished_at": "",
-                        "result_summary": "",
-                        "error_message": "",
-                    },
+                    "status": "queued",
+                    "dispatch_paused": { "$ne": true },
                 },
-                FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
+                FindOneOptions::builder()
+                    .projection(doc! { "_id": 1 })
                     .build(),
             )
             .await
-        {
-            Ok(run) => Ok(run),
-            Err(err) if is_mongo_execution_lane_conflict(&err.to_string()) => Ok(None),
-            Err(err) => Err(err.to_string()),
-        }
+            .map(|run| run.is_some())
+            .map_err(|err| err.to_string())
     }
 
     pub(in crate::store) async fn set_queued_runs_dispatch_paused(
@@ -190,6 +186,7 @@ impl MongoStore {
                 doc! {
                     "$set": {
                         "dispatch_paused": paused,
+                        "dispatch_event_pending": !paused,
                         "updated_at": Utc::now().to_rfc3339(),
                     }
                 },
@@ -197,6 +194,351 @@ impl MongoStore {
             )
             .await
             .map(|result| result.modified_count)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn list_pending_run_dispatches(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        self.runs
+            .find(
+                doc! {
+                    "status": "queued",
+                    "dispatch_paused": { "$ne": true },
+                    "dispatch_event_pending": { "$ne": false },
+                },
+                FindOptions::builder()
+                    .sort(doc! { "created_at": 1, "id": 1 })
+                    .limit(i64::try_from(limit.max(1)).unwrap_or(i64::MAX))
+                    .build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<TaskRunRecord>>()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn acknowledge_run_dispatch_event(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "status": "queued",
+                    "dispatch_event_pending": { "$ne": false },
+                },
+                doc! { "$set": { "dispatch_event_pending": false } },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn list_pending_run_post_processes(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        self.runs
+            .find(
+                doc! {
+                    "status": "succeeded",
+                    "post_process_event_pending": true,
+                    "post_process_dead_lettered": { "$ne": true },
+                },
+                FindOptions::builder()
+                    .sort(doc! { "updated_at": 1, "id": 1 })
+                    .limit(i64::try_from(limit.max(1)).unwrap_or(i64::MAX))
+                    .build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<TaskRunRecord>>()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn acknowledge_run_post_process_event(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "post_process_event_pending": true,
+                    "post_process_completed": { "$ne": true },
+                    "post_process_dead_lettered": { "$ne": true },
+                },
+                doc! {
+                    "$set": {
+                        "post_process_event_pending": false,
+                        "post_process_event_enqueued": true,
+                        "updated_at": now_rfc3339(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn record_run_post_process_failure(
+        &self,
+        run_id: &str,
+        error: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "post_process_completed": { "$ne": true },
+                    "post_process_dead_lettered": { "$ne": true },
+                },
+                doc! {
+                    "$set": {
+                        "post_process_last_error": error,
+                        "updated_at": now_rfc3339(),
+                    },
+                    "$inc": { "post_process_attempt_count": 1_i64 },
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn mark_run_memory_summary_processed(
+        &self,
+        run_id: &str,
+        summary_job_run_id: Option<&str>,
+    ) -> Result<bool, String> {
+        let mut set_doc = doc! {
+            "memory_summary_processed": true,
+            "updated_at": now_rfc3339(),
+        };
+        if let Some(summary_job_run_id) = summary_job_run_id {
+            set_doc.insert("summary_job_run_id", summary_job_run_id);
+        }
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "post_process_dead_lettered": { "$ne": true },
+                },
+                doc! { "$set": set_doc },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn mark_run_chatos_followup_processed(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "post_process_dead_lettered": { "$ne": true },
+                },
+                doc! {
+                    "$set": {
+                        "chatos_followup_processed": true,
+                        "updated_at": now_rfc3339(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn mark_run_post_process_completed(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "post_process_dead_lettered": { "$ne": true },
+                },
+                doc! {
+                    "$set": {
+                        "post_process_event_pending": false,
+                        "post_process_event_enqueued": false,
+                        "post_process_completed": true,
+                        "updated_at": now_rfc3339(),
+                    },
+                    "$unset": { "post_process_last_error": "" },
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn mark_run_post_process_dead_lettered(
+        &self,
+        run_id: &str,
+        error: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "post_process_completed": { "$ne": true },
+                },
+                doc! {
+                    "$set": {
+                        "post_process_event_pending": false,
+                        "post_process_event_enqueued": false,
+                        "post_process_dead_lettered": true,
+                        "post_process_last_error": error,
+                        "updated_at": now_rfc3339(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn rearm_run_post_process_dead_letter(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "status": "succeeded",
+                    "post_process_completed": { "$ne": true },
+                    "post_process_dead_lettered": true,
+                },
+                doc! {
+                    "$set": {
+                        "post_process_dead_lettered": false,
+                        "post_process_attempt_count": 0_i64,
+                        "post_process_event_pending": true,
+                        "post_process_event_enqueued": false,
+                        "updated_at": now_rfc3339(),
+                    },
+                    "$unset": { "post_process_last_error": "" },
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn list_pending_terminal_cleanups(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        self.runs
+            .find(
+                doc! {
+                    "terminal_cleanup_event_pending": true,
+                    "worker_id": { "$type": "string" },
+                },
+                FindOptions::builder()
+                    .sort(doc! { "updated_at": 1, "id": 1 })
+                    .limit(i64::try_from(limit.max(1)).unwrap_or(i64::MAX))
+                    .build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<TaskRunRecord>>()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn acknowledge_terminal_cleanup_event(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "terminal_cleanup_event_pending": true,
+                    "terminal_cleanup_completed": { "$ne": true },
+                },
+                doc! {
+                    "$set": {
+                        "terminal_cleanup_event_pending": false,
+                        "terminal_cleanup_event_enqueued": true,
+                        "updated_at": now_rfc3339(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn retry_terminal_cleanup(
+        &self,
+        run_id: &str,
+        error: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "terminal_cleanup_completed": { "$ne": true },
+                },
+                doc! {
+                    "$set": {
+                        "terminal_cleanup_event_pending": true,
+                        "terminal_cleanup_event_enqueued": false,
+                        "terminal_cleanup_last_error": error,
+                        "updated_at": now_rfc3339(),
+                    },
+                    "$inc": { "terminal_cleanup_attempt_count": 1_i64 },
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn mark_terminal_cleanup_completed(
+        &self,
+        run_id: &str,
+    ) -> Result<bool, String> {
+        self.runs
+            .update_one(
+                doc! { "id": run_id },
+                doc! {
+                    "$set": {
+                        "terminal_cleanup_event_pending": false,
+                        "terminal_cleanup_event_enqueued": false,
+                        "terminal_cleanup_completed": true,
+                        "updated_at": now_rfc3339(),
+                    },
+                    "$unset": { "terminal_cleanup_last_error": "" },
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count > 0)
             .map_err(|err| err.to_string())
     }
 
@@ -281,6 +623,7 @@ impl MongoStore {
                 };
             let mut set_doc = doc! {
                 "status": next_status_text,
+                "dispatch_event_pending": should_requeue && !run.dispatch_paused,
                 "updated_at": reconciled_at,
                 "result_summary": result_summary.as_str(),
                 "cancel_requested": false,

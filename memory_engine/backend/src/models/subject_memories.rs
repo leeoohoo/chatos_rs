@@ -57,6 +57,8 @@ pub struct RunSubjectMemoryJobRequest {
     pub keep_level0_count: Option<i64>,
     pub max_level: Option<i64>,
     pub memory_metadata: Option<Value>,
+    #[serde(default)]
+    pub scope_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

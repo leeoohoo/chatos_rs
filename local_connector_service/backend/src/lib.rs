@@ -7,10 +7,12 @@ pub mod config;
 mod managed_config;
 mod managed_requirements;
 pub mod models;
+pub mod pressure;
 pub mod relay;
 mod relay_signature;
 pub mod state;
 pub mod store;
+mod valkey_coordination;
 
 pub use api::build_router;
 #[cfg(feature = "test-support")]

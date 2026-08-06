@@ -16,6 +16,7 @@ impl SandboxManagerAuth {
                 client_key,
                 mode: SandboxManagerAuthMode::Cloud,
                 owner_user_id: None,
+                cloud_http: Some(config.sandbox_manager_http_client.clone()),
             }),
             _ => None,
         }
@@ -29,6 +30,7 @@ impl SandboxManagerAuth {
             client_key,
             mode: SandboxManagerAuthMode::LocalConnector,
             owner_user_id: Some(owner_user_id),
+            cloud_http: None,
         }
     }
 

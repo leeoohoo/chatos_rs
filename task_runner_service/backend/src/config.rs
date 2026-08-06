@@ -40,6 +40,7 @@ pub struct AppConfig {
     pub memory_engine_base_url: Option<String>,
     pub memory_engine_source_id: String,
     pub memory_engine_operator_token: Option<String>,
+    pub memory_engine_http_client: reqwest::Client,
     pub default_tenant_id: String,
     pub default_subject_id: String,
     pub default_workspace_dir: String,
@@ -47,7 +48,6 @@ pub struct AppConfig {
     pub execution_timeout: Duration,
     pub scheduler_poll_interval: Duration,
     pub worker_id: String,
-    pub worker_poll_interval: Duration,
     pub worker_claim_ttl: Duration,
     pub worker_concurrency: usize,
     pub auto_memory_summary: bool,
@@ -56,14 +56,15 @@ pub struct AppConfig {
     pub default_tool_results_model_total_max_chars: usize,
     pub default_execution_environment_mode: String,
     pub default_sandbox_manager_base_url: String,
+    pub sandbox_manager_http_client: reqwest::Client,
     pub sandbox_manager_client_id: Option<String>,
     pub sandbox_manager_client_key: Option<String>,
     pub default_sandbox_lease_ttl_seconds: u64,
     pub chatos_callback_url: Option<String>,
-    pub chatos_callback_secret: Option<String>,
     pub internal_api_secret: Option<String>,
     pub chatos_internal_api_secret: Option<String>,
     pub mcp_management_internal_api_secret: Option<String>,
+    pub user_service_internal_api_secret: Option<String>,
     pub local_connector_internal_api_secret: Option<String>,
     pub local_connector_service_base_url: Option<String>,
     pub local_connector_service_request_timeout: Duration,
@@ -77,6 +78,8 @@ pub struct AppConfig {
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub project_service_base_url: Option<String>,
+    pub project_service_internal_base_url: Option<String>,
+    pub project_service_internal_http_client: reqwest::Client,
     pub project_service_sync_secret: Option<String>,
     pub project_service_request_timeout: Duration,
 }
@@ -114,11 +117,11 @@ impl AppConfig {
         let Some(base_url) = self.memory_engine_base_url.clone() else {
             return Ok(None);
         };
-        let mut client = MemoryEngineClient::new_direct(
+        let mut client = MemoryEngineClient::new_direct_with_http_client(
             base_url,
-            self.memory_timeout,
             self.memory_engine_source_id.clone(),
-        )?;
+            self.memory_engine_http_client.clone(),
+        );
         if let Some(access_token) = crate::auth::get_current_access_token() {
             client = client.with_bearer_token(access_token);
         } else if let Some(token) = self.memory_engine_operator_token.clone() {
@@ -222,6 +225,7 @@ mod tests {
             memory_engine_base_url: None,
             memory_engine_source_id: "task".to_string(),
             memory_engine_operator_token: None,
+            memory_engine_http_client: reqwest::Client::new(),
             default_tenant_id: "tenant".to_string(),
             default_subject_id: "subject".to_string(),
             default_workspace_dir: "/tmp/task-runner".to_string(),
@@ -229,7 +233,6 @@ mod tests {
             execution_timeout: std::time::Duration::from_secs(10),
             scheduler_poll_interval: std::time::Duration::from_secs(1),
             worker_id: "worker".to_string(),
-            worker_poll_interval: std::time::Duration::from_secs(1),
             worker_claim_ttl: std::time::Duration::from_secs(30),
             worker_concurrency: 1,
             auto_memory_summary: false,
@@ -238,14 +241,15 @@ mod tests {
             default_tool_results_model_total_max_chars: 1,
             default_execution_environment_mode: "local".to_string(),
             default_sandbox_manager_base_url: "http://sandbox".to_string(),
+            sandbox_manager_http_client: reqwest::Client::new(),
             sandbox_manager_client_id: None,
             sandbox_manager_client_key: None,
             default_sandbox_lease_ttl_seconds: 60,
             chatos_callback_url: None,
-            chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
+            user_service_internal_api_secret: None,
             local_connector_internal_api_secret: None,
             local_connector_service_base_url: None,
             local_connector_service_request_timeout: std::time::Duration::from_secs(1),
@@ -259,6 +263,8 @@ mod tests {
             user_service_base_url: "http://user".to_string(),
             user_service_request_timeout: std::time::Duration::from_secs(1),
             project_service_base_url: None,
+            project_service_internal_base_url: None,
+            project_service_internal_http_client: reqwest::Client::new(),
             project_service_sync_secret: None,
             project_service_request_timeout: std::time::Duration::from_secs(1),
         };

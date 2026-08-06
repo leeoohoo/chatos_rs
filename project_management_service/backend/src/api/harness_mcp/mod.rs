@@ -4,13 +4,15 @@
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use chatos_mcp::code_maintainer::{classify_file_modification_error, FileModificationOutcome};
 use chatos_mcp_service::{HostCapabilityPolicy, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER};
 use reqwest::Method;
 use serde_json::{json, Value};
 
 use super::internal_auth::{
-    require_project_internal_request, CHATOS_CALLER, MCP_MANAGEMENT_CALLER, PROJECT_HARNESS_SCOPE,
-    PROJECT_SERVICE_CALLER, TASK_RUNNER_CALLER,
+    record_project_internal_resource_access, require_project_internal_request,
+    ProjectInternalRequestIdentity, ProjectInternalResourceAudit, CHATOS_CALLER,
+    MCP_MANAGEMENT_CALLER, PROJECT_HARNESS_SCOPE, PROJECT_SERVICE_CALLER, TASK_RUNNER_CALLER,
 };
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::mcp_server::{self, JsonRpcRequest, JsonRpcResponse};
@@ -36,6 +38,7 @@ use self::tools::{
 const SERVER_NAME: &str = "harness_code";
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const TASK_RUNNER_PROJECT_ID_HEADER: &str = "x-task-runner-project-id";
+const MCP_MANAGEMENT_RUN_ID_HEADER: &str = "x-mcp-management-run-id";
 const DEFAULT_MAX_WRITE_BYTES: i64 = 5 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -45,6 +48,7 @@ struct HarnessMcpContext {
     access: HarnessApiAccessResponse,
     client: reqwest::Client,
     enabled_tools: HostCapabilityPolicy,
+    run_id: Option<String>,
 }
 
 pub(in crate::api) async fn harness_project_mcp_entrypoint(
@@ -54,7 +58,7 @@ pub(in crate::api) async fn harness_project_mcp_entrypoint(
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = request.id.clone().unwrap_or(Value::Null);
-    if let Err(err) = require_project_internal_request(
+    let identity = match require_project_internal_request(
         &state.config,
         &headers,
         &[
@@ -65,20 +69,96 @@ pub(in crate::api) async fn harness_project_mcp_entrypoint(
         ],
         PROJECT_HARNESS_SCOPE,
     ) {
-        return Json(mcp_server::jsonrpc_error_response(
-            err.status,
-            id,
-            err.message,
-        ));
-    }
+        Ok(identity) => identity,
+        Err(err) => {
+            return Json(mcp_server::jsonrpc_error_response(
+                err.status,
+                id,
+                err.message,
+            ));
+        }
+    };
+    let write_tool = requested_harness_write_tool(&request).map(ToOwned::to_owned);
+    let represented_user_id = represented_user_id_from_headers(&headers);
     if let Err(message) = ensure_project_header_matches(&headers, project_id.as_str()) {
+        record_harness_write_audit(
+            &identity,
+            represented_user_id.as_deref(),
+            project_id.as_str(),
+            write_tool.as_deref(),
+            "failed",
+        );
         return Json(mcp_server::jsonrpc_error_response(
             StatusCode::FORBIDDEN,
             id,
             message,
         ));
     }
-    Json(handle_harness_jsonrpc(state, project_id, headers, request).await)
+    let response = handle_harness_jsonrpc(state, project_id.clone(), headers, request).await;
+    let outcome = if response.error.is_some() {
+        "failed"
+    } else {
+        "succeeded"
+    };
+    record_harness_write_audit(
+        &identity,
+        represented_user_id.as_deref(),
+        project_id.as_str(),
+        write_tool.as_deref(),
+        outcome,
+    );
+    Json(response)
+}
+
+fn requested_harness_write_tool(request: &JsonRpcRequest) -> Option<&str> {
+    if request.method != "tools/call" {
+        return None;
+    }
+    request
+        .params
+        .as_ref()
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| {
+            matches!(
+                *name,
+                "write_file" | "edit_file" | "append_file" | "delete_path" | "apply_patch"
+            )
+        })
+}
+
+fn represented_user_id_from_headers(headers: &HeaderMap) -> Option<String> {
+    [
+        "x-task-runner-owner-user-id",
+        "x-mcp-management-owner-user-id",
+    ]
+    .into_iter()
+    .find_map(|key| header_text(headers, key))
+}
+
+fn record_harness_write_audit(
+    identity: &ProjectInternalRequestIdentity,
+    represented_user_id: Option<&str>,
+    project_id: &str,
+    tool_name: Option<&str>,
+    outcome: &str,
+) {
+    let Some(tool_name) = tool_name else {
+        return;
+    };
+    record_project_internal_resource_access(
+        identity,
+        ProjectInternalResourceAudit {
+            represented_user_id,
+            project_id: Some(project_id),
+            resource_type: "project_workspace",
+            resource_id: project_id,
+            resource_name: Some(tool_name),
+            action: tool_name,
+            outcome,
+        },
+    );
 }
 
 async fn handle_harness_jsonrpc(
@@ -89,6 +169,7 @@ async fn handle_harness_jsonrpc(
 ) -> JsonRpcResponse {
     let id = request.id.clone().unwrap_or(Value::Null);
     let enabled_tools = enabled_harness_tools_from_headers(&headers);
+    let run_id = header_text(&headers, MCP_MANAGEMENT_RUN_ID_HEADER);
     let result = match request.method.as_str() {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
@@ -102,7 +183,9 @@ async fn handle_harness_jsonrpc(
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_definitions(&enabled_tools) })),
-        "tools/call" => match build_harness_mcp_context(state, project_id, enabled_tools).await {
+        "tools/call" => match build_harness_mcp_context(state, project_id, enabled_tools, run_id)
+            .await
+        {
             Ok(ctx) => call_harness_tool(&ctx, request.params.unwrap_or_else(|| json!({}))).await,
             Err(err) => Err(err),
         },
@@ -131,6 +214,7 @@ async fn build_harness_mcp_context(
     state: AppState,
     project_id: String,
     enabled_tools: HostCapabilityPolicy,
+    run_id: Option<String>,
 ) -> Result<HarnessMcpContext, String> {
     if !enabled_tools.code_read && !enabled_tools.code_write {
         return Err("CodeMaintainer has no enabled project workspace capabilities".to_string());
@@ -162,6 +246,7 @@ async fn build_harness_mcp_context(
         access,
         client,
         enabled_tools,
+        run_id,
     })
 }
 
@@ -234,17 +319,16 @@ async fn fetch_harness_api_access(
         "{}/api/internal/harness/users/{}/access",
         state
             .config
-            .user_service_base_url
+            .user_service_internal_base_url
             .trim()
             .trim_end_matches('/'),
         urlencoding::encode(owner_user_id.trim())
     );
-    let client = build_http_client(HttpClientTimeouts::new(
-        state.config.user_service_request_timeout,
-    ))
-    .map_err(|err| format!("build user_service client failed: {err}"))?;
     let response = crate::user_model_runtime_client::signed_user_service_request(
-        client.request(Method::GET, endpoint),
+        state
+            .config
+            .user_service_internal_http_client
+            .request(Method::GET, endpoint),
         secret,
         crate::user_model_runtime_client::HARNESS_ACCESS_READ_SCOPE,
     )?
@@ -275,7 +359,7 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    match name {
+    let invocation = match name {
         "read_file_raw" => {
             ensure_read_allowed(ctx)?;
             tool_read_file_raw(ctx, &arguments).await
@@ -313,7 +397,52 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
             tool_apply_patch(ctx, &arguments).await
         }
         other => Err(format!("Tool not found: {other}")),
+    };
+    if matches!(name, "edit_file" | "apply_patch") {
+        record_file_modification_outcome(ctx, name, &invocation);
     }
+    invocation
+}
+
+fn record_file_modification_outcome(
+    ctx: &HarnessMcpContext,
+    tool: &str,
+    invocation: &Result<Value, String>,
+) {
+    let (outcome, success, changed, changed_target_count) = match invocation {
+        Ok(value) => {
+            let payload = value.get("_structured_result").unwrap_or(value);
+            let changed = payload
+                .get("changed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let outcome = payload
+                .get("outcome")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| FileModificationOutcome::from_changed(changed).as_str());
+            let changed_target_count = payload
+                .get("changed_target_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::from(changed));
+            (outcome, true, changed, changed_target_count)
+        }
+        Err(error) => {
+            let outcome = classify_file_modification_error(error);
+            (outcome.as_str(), outcome.is_success(), false, 0)
+        }
+    };
+    tracing::info!(
+        event = "file_modification_outcome",
+        source = "project_harness",
+        tool,
+        project_id = ctx.project_id,
+        run_id = ctx.run_id.as_deref().unwrap_or(""),
+        outcome,
+        success,
+        changed,
+        changed_target_count,
+        "file modification completed"
+    );
 }
 
 fn enabled_harness_tools_from_headers(headers: &HeaderMap) -> HostCapabilityPolicy {
@@ -425,5 +554,25 @@ mod tests {
         let enabled = enabled_harness_tools_from_headers(&headers);
         assert!(enabled.code_read);
         assert!(enabled.code_write);
+    }
+
+    #[test]
+    fn only_workspace_mutations_are_selected_for_internal_audit() {
+        let request = |name: &str| JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(json!({ "name": name, "arguments": { "content": "secret" } })),
+        };
+
+        assert_eq!(
+            requested_harness_write_tool(&request("apply_patch")),
+            Some("apply_patch")
+        );
+        assert_eq!(
+            requested_harness_write_tool(&request("read_file_raw")),
+            None
+        );
+        assert_eq!(requested_harness_write_tool(&request("unknown")), None);
     }
 }

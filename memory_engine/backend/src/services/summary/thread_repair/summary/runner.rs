@@ -301,6 +301,36 @@ async fn run_thread_repair_summary_job(
             thread_id,
         )
         .await;
+        if let Err(err) = crate::rollup_queue::publish_pending_rollup_for_summary(
+            config,
+            db,
+            tenant_id,
+            source_id,
+            summary.id.as_str(),
+        )
+        .await
+        {
+            warn!(
+                summary_id = summary.id.as_str(),
+                error = err.as_str(),
+                "Memory Engine left repair summary rollup event in Outbox for recovery"
+            );
+        }
+        if let Err(err) = crate::subject_memory_queue::publish_pending_source_for_summary(
+            config,
+            db,
+            tenant_id,
+            source_id,
+            summary.id.as_str(),
+        )
+        .await
+        {
+            warn!(
+                summary_id = summary.id.as_str(),
+                error = err.as_str(),
+                "Memory Engine left repair summary subject-memory event in Outbox for recovery"
+            );
+        }
         info!(
             "[MEMORY-ENGINE-REPAIR] completed thread_id={} job_run_id={} summary_id={} pending_after_count={} processed_count={}",
             thread_id,

@@ -12,15 +12,27 @@ use crate::services::{
 };
 use crate::store::AppStore;
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
+use chatos_queue_observability::RabbitMqQueueInspector;
 use memory_engine_sdk::UpsertSourceRequest;
 use serde_json::json;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Default)]
 pub struct TaskRunnerRuntimeStats {
     worker_claim_failures_total: Arc<AtomicU64>,
+    run_dispatch_fairness_deferrals_total: Arc<AtomicU64>,
     active_run_event_streams: Arc<AtomicUsize>,
+    rabbitmq_consumer_reconnects_total: Arc<AtomicU64>,
+    run_dispatch_consumer_connected: Arc<AtomicBool>,
+    worker_control_consumer_connected: Arc<AtomicBool>,
+    run_post_process_consumer_connected: Arc<AtomicBool>,
+    callback_consumer_connected: Arc<AtomicBool>,
+    run_event_consumer_connected: Arc<AtomicBool>,
+    run_event_consumer_reconnects_total: Arc<AtomicU64>,
+    run_event_consumer_events_total: Arc<AtomicU64>,
+    scheduler_pressure_paused: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,8 +50,103 @@ impl TaskRunnerRuntimeStats {
         self.worker_claim_failures_total.load(Ordering::Relaxed)
     }
 
+    pub fn record_run_dispatch_fairness_deferral(&self) {
+        self.run_dispatch_fairness_deferrals_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn run_dispatch_fairness_deferrals_total(&self) -> u64 {
+        self.run_dispatch_fairness_deferrals_total
+            .load(Ordering::Relaxed)
+    }
+
     pub fn active_run_event_streams(&self) -> usize {
         self.active_run_event_streams.load(Ordering::Relaxed)
+    }
+
+    pub fn record_rabbitmq_consumer_reconnect(&self) {
+        self.rabbitmq_consumer_reconnects_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn rabbitmq_consumer_reconnects_total(&self) -> u64 {
+        self.rabbitmq_consumer_reconnects_total
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn set_run_dispatch_consumer_connected(&self, connected: bool) {
+        self.run_dispatch_consumer_connected
+            .store(connected, Ordering::Relaxed);
+    }
+
+    pub fn run_dispatch_consumer_connected(&self) -> bool {
+        self.run_dispatch_consumer_connected.load(Ordering::Relaxed)
+    }
+
+    pub fn set_worker_control_consumer_connected(&self, connected: bool) {
+        self.worker_control_consumer_connected
+            .store(connected, Ordering::Relaxed);
+    }
+
+    pub fn worker_control_consumer_connected(&self) -> bool {
+        self.worker_control_consumer_connected
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn set_run_post_process_consumer_connected(&self, connected: bool) {
+        self.run_post_process_consumer_connected
+            .store(connected, Ordering::Relaxed);
+    }
+
+    pub fn run_post_process_consumer_connected(&self) -> bool {
+        self.run_post_process_consumer_connected
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn set_callback_consumer_connected(&self, connected: bool) {
+        self.callback_consumer_connected
+            .store(connected, Ordering::Relaxed);
+    }
+
+    pub fn callback_consumer_connected(&self) -> bool {
+        self.callback_consumer_connected.load(Ordering::Relaxed)
+    }
+
+    pub fn set_run_event_consumer_connected(&self, connected: bool) {
+        self.run_event_consumer_connected
+            .store(connected, Ordering::Relaxed);
+    }
+
+    pub fn run_event_consumer_connected(&self) -> bool {
+        self.run_event_consumer_connected.load(Ordering::Relaxed)
+    }
+
+    pub fn record_run_event_consumer_reconnect(&self) {
+        self.run_event_consumer_reconnects_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn run_event_consumer_reconnects_total(&self) -> u64 {
+        self.run_event_consumer_reconnects_total
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn record_run_event_consumed(&self) {
+        self.run_event_consumer_events_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn run_event_consumer_events_total(&self) -> u64 {
+        self.run_event_consumer_events_total.load(Ordering::Relaxed)
+    }
+
+    pub fn set_scheduler_pressure_paused(&self, paused: bool) {
+        self.scheduler_pressure_paused
+            .store(paused, Ordering::Relaxed);
+    }
+
+    pub fn scheduler_pressure_paused(&self) -> bool {
+        self.scheduler_pressure_paused.load(Ordering::Relaxed)
     }
 
     pub fn acquire_run_event_stream(&self) -> ActiveRunEventStreamLease {
@@ -48,6 +155,38 @@ impl TaskRunnerRuntimeStats {
         ActiveRunEventStreamLease {
             active_run_event_streams: Arc::clone(&self.active_run_event_streams),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskRunnerRuntimeStats;
+
+    #[test]
+    fn rabbitmq_consumer_runtime_stats_track_connection_lifecycle() {
+        let stats = TaskRunnerRuntimeStats::default();
+
+        stats.set_run_dispatch_consumer_connected(true);
+        stats.set_worker_control_consumer_connected(true);
+        stats.set_run_post_process_consumer_connected(true);
+        stats.set_callback_consumer_connected(true);
+        stats.set_run_event_consumer_connected(true);
+        stats.record_run_dispatch_fairness_deferral();
+        stats.record_rabbitmq_consumer_reconnect();
+        stats.record_run_event_consumer_reconnect();
+        stats.record_run_event_consumed();
+        stats.set_scheduler_pressure_paused(true);
+
+        assert!(stats.run_dispatch_consumer_connected());
+        assert!(stats.worker_control_consumer_connected());
+        assert!(stats.run_post_process_consumer_connected());
+        assert!(stats.callback_consumer_connected());
+        assert!(stats.run_event_consumer_connected());
+        assert_eq!(stats.run_dispatch_fairness_deferrals_total(), 1);
+        assert_eq!(stats.rabbitmq_consumer_reconnects_total(), 1);
+        assert_eq!(stats.run_event_consumer_reconnects_total(), 1);
+        assert_eq!(stats.run_event_consumer_events_total(), 1);
+        assert!(stats.scheduler_pressure_paused());
     }
 }
 
@@ -74,12 +213,27 @@ pub struct AppState {
     pub auth_service: AuthService,
     pub sse_tickets: SseTicketStore,
     pub runtime_stats: TaskRunnerRuntimeStats,
+    pub rabbitmq_queue_inspector: Option<RabbitMqQueueInspector>,
+    pub run_event_resync_sender: broadcast::Sender<()>,
 }
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
         ensure_task_runner_memory_engine_source(&config).await?;
         let task_queue_topology = TaskQueueTopology::from_managed_env()?;
+        let (run_event_resync_sender, _) = broadcast::channel(128);
+        crate::run_event_queue::initialize_run_event_bus(
+            task_queue_topology.clone(),
+            run_event_resync_sender.clone(),
+        )?;
+        let rabbitmq_queue_inspector = if task_queue_topology.uses_rabbitmq() {
+            let rabbitmq_url = task_queue_topology.rabbitmq_url.as_deref().ok_or_else(|| {
+                "Task Runner RabbitMQ queue inspector requires the managed RabbitMQ URL".to_string()
+            })?;
+            Some(RabbitMqQueueInspector::new(rabbitmq_url)?)
+        } else {
+            None
+        };
         let store = AppStore::new(&config).await?;
         let auth_service = AuthService::new(config.clone(), store.clone());
         auth_service.ensure_default_admin(&config).await?;
@@ -98,8 +252,11 @@ impl AppState {
             TaskProjectService::new_with_config(store.clone(), config.clone());
         task_project_service.ensure_public_project().await?;
         let remote_server_service = RemoteServerService::new(store.clone());
-        let ask_user_prompt_service =
-            AskUserPromptService::new_with_config(store.clone(), config.clone());
+        let ask_user_prompt_service = AskUserPromptService::new_with_config(
+            store.clone(),
+            config.clone(),
+            task_queue_topology.clone(),
+        );
         let runtime_stats = TaskRunnerRuntimeStats::default();
         let run_service = RunService::new_with_plugin_management(
             config.clone(),
@@ -133,6 +290,8 @@ impl AppState {
             auth_service,
             sse_tickets: SseTicketStore::default(),
             runtime_stats,
+            rabbitmq_queue_inspector,
+            run_event_resync_sender,
         })
     }
 }

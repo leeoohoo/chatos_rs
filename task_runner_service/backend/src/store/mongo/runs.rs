@@ -7,6 +7,7 @@ mod cancellation;
 mod events;
 mod listing;
 mod persistence;
+mod terminal_subscriptions;
 
 impl MongoStore {
     fn run_summary_projection_stage() -> Document {

@@ -65,11 +65,12 @@ older releases before ownership labels were added.
 
 ## Auth
 
-`/health` is public. All other API routes require auth by default. Authentication can only be
-disabled explicitly for isolated local tests:
+`/health` is public. All other API routes require authentication. The service refuses to start
+unless both user authentication and signed internal requests are enabled:
 
 ```env
 SANDBOX_MANAGER_REQUIRE_AUTH=true
+SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS=true
 ```
 
 The Docker stack binds the backend host port to `127.0.0.1` by default. Set
@@ -77,11 +78,12 @@ The Docker stack binds the backend host port to `127.0.0.1` by default. Set
 
 Supported callers:
 
-- system client: `x-sandbox-client-id` + `x-sandbox-client-key`
-- operator: `x-sandbox-operator-token`
+- internal service: caller-specific short-lived signed token
+- managed access client: `x-sandbox-client-id` + `x-sandbox-client-key`
 - user token: `Authorization: Bearer ...`, verified through `user_service`
 
-Task Runner uses the system client credentials from `docker/.env`.
+Task Runner, Project Service, and MCP Management sign each request with their dedicated
+Configuration Center secret. Raw signing secrets are never transmitted to Sandbox Manager.
 
 ## API Examples
 

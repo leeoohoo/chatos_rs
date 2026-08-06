@@ -25,7 +25,8 @@ use crate::{
 };
 
 use super::internal_auth::{
-    require_task_runner_internal_request, CHATOS_CALLER, CHATOS_EXECUTION_START_SCOPE,
+    require_task_runner_internal_request, TaskRunnerInternalAuditGuard,
+    TaskRunnerInternalRequestIdentity, CHATOS_CALLER, CHATOS_EXECUTION_START_SCOPE,
     CHATOS_MESSAGES_READ_SCOPE,
 };
 
@@ -826,7 +827,7 @@ async fn confirm_chatos_project_execution(
     headers: HeaderMap,
     Json(request): Json<ConfirmChatosProjectExecutionRequest>,
 ) -> Result<Json<Value>, InternalApiError> {
-    require_task_runner_internal_request(
+    let identity = require_task_runner_internal_request(
         &state.config,
         &headers,
         &[CHATOS_CALLER],
@@ -849,6 +850,13 @@ async fn confirm_chatos_project_execution(
             "project_id, requirement_id, source_session_id and source_user_message_id are required",
         ));
     }
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        Some(project_id),
+        "project_execution",
+        requirement_id,
+        "confirm",
+    );
 
     let tasks = state
         .task_service
@@ -860,6 +868,7 @@ async fn confirm_chatos_project_execution(
             "project execution task graph is not ready",
         ));
     }
+    enrich_project_execution_audit(&mut audit, tasks.as_slice());
     for task in &tasks {
         let payload = task.input_payload.as_ref();
         let payload_source = payload
@@ -937,7 +946,7 @@ async fn confirm_chatos_project_execution(
             .map_err(InternalApiError::internal)?
     };
     let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
-    Ok(Json(redact_workspace_paths_internal(
+    let response = Json(redact_workspace_paths_internal(
         &state,
         json!({
             "success": true,
@@ -950,7 +959,9 @@ async fn confirm_chatos_project_execution(
             "root_task_ids": root_task_ids,
             "started_runs": started_runs,
         }),
-    )?))
+    )?);
+    audit.succeeded();
+    Ok(response)
 }
 
 async fn pause_chatos_project_execution(
@@ -975,12 +986,19 @@ async fn mutate_chatos_project_execution_pause(
     request: MutateChatosProjectExecutionRequest,
     paused: bool,
 ) -> Result<Json<Value>, InternalApiError> {
-    require_chatos_execution_mutation(&state, &headers)?;
+    let identity = require_chatos_execution_mutation(&state, &headers)?;
     let project_id = required_internal_text(request.project_id, "project_id")?;
     let requirement_id = required_internal_text(request.requirement_id, "requirement_id")?;
     let source_session_id = required_internal_text(request.source_session_id, "source_session_id")?;
     let source_user_message_id =
         required_internal_text(request.source_user_message_id, "source_user_message_id")?;
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        Some(project_id.as_str()),
+        "project_execution",
+        requirement_id.as_str(),
+        if paused { "pause" } else { "resume" },
+    );
     let tasks = state
         .task_service
         .list_tasks_for_chatos_source(
@@ -995,6 +1013,7 @@ async fn mutate_chatos_project_execution_pause(
             "project execution task graph is not ready",
         ));
     }
+    enrich_project_execution_audit(&mut audit, tasks.as_slice());
     for task in &tasks {
         validate_project_execution_task(task, project_id.as_str(), requirement_id.as_str())?;
     }
@@ -1028,7 +1047,7 @@ async fn mutate_chatos_project_execution_pause(
             }
         }
     }
-    Ok(Json(redact_workspace_paths_internal(
+    let response = Json(redact_workspace_paths_internal(
         &state,
         json!({
             "success": true,
@@ -1045,7 +1064,9 @@ async fn mutate_chatos_project_execution_pause(
             "queued_count": queued_count,
             "started_runs": started_runs,
         }),
-    )?))
+    )?);
+    audit.succeeded();
+    Ok(response)
 }
 
 async fn clone_chatos_project_execution(
@@ -1053,7 +1074,7 @@ async fn clone_chatos_project_execution(
     headers: HeaderMap,
     Json(request): Json<CloneChatosProjectExecutionRequest>,
 ) -> Result<Json<Value>, InternalApiError> {
-    require_chatos_execution_mutation(&state, &headers)?;
+    let identity = require_chatos_execution_mutation(&state, &headers)?;
     let project_id = required_internal_text(request.project_id, "project_id")?;
     let requirement_id = required_internal_text(request.requirement_id, "requirement_id")?;
     let old_source_session_id =
@@ -1068,6 +1089,13 @@ async fn clone_chatos_project_execution(
         request.new_source_user_message_id,
         "new_source_user_message_id",
     )?;
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        Some(project_id.as_str()),
+        "project_execution",
+        requirement_id.as_str(),
+        "clone",
+    );
     let cloned = state
         .task_service
         .clone_stopped_project_execution_tasks(
@@ -1084,6 +1112,7 @@ async fn clone_chatos_project_execution(
         .iter()
         .map(|item| item.task.clone())
         .collect::<Vec<_>>();
+    enrich_project_execution_audit(&mut audit, tasks.as_slice());
     let task_mappings = cloned
         .iter()
         .map(|item| {
@@ -1096,7 +1125,7 @@ async fn clone_chatos_project_execution(
             })
         })
         .collect::<Vec<_>>();
-    Ok(Json(redact_workspace_paths_internal(
+    let response = Json(redact_workspace_paths_internal(
         &state,
         json!({
             "success": true,
@@ -1110,7 +1139,9 @@ async fn clone_chatos_project_execution(
             "root_task_ids": tasks.iter().filter(|task| task.prerequisite_task_ids.is_empty()).map(|task| task.id.clone()).collect::<Vec<_>>(),
             "started_runs": [],
         }),
-    )?))
+    )?);
+    audit.succeeded();
+    Ok(response)
 }
 
 async fn retire_chatos_project_execution(
@@ -1118,12 +1149,19 @@ async fn retire_chatos_project_execution(
     headers: HeaderMap,
     Json(request): Json<RetireChatosProjectExecutionRequest>,
 ) -> Result<Json<Value>, InternalApiError> {
-    require_chatos_execution_mutation(&state, &headers)?;
+    let identity = require_chatos_execution_mutation(&state, &headers)?;
     let project_id = required_internal_text(request.project_id, "project_id")?;
     let requirement_id = required_internal_text(request.requirement_id, "requirement_id")?;
     let source_session_id = required_internal_text(request.source_session_id, "source_session_id")?;
     let source_user_message_id =
         required_internal_text(request.source_user_message_id, "source_user_message_id")?;
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        Some(project_id.as_str()),
+        "project_execution",
+        requirement_id.as_str(),
+        "retire",
+    );
     let tasks = state
         .task_service
         .list_tasks_for_chatos_source(
@@ -1133,6 +1171,7 @@ async fn retire_chatos_project_execution(
         )
         .await
         .map_err(InternalApiError::internal)?;
+    enrich_project_execution_audit(&mut audit, tasks.as_slice());
     for task in &tasks {
         validate_project_execution_task(task, project_id.as_str(), requirement_id.as_str())?;
         if state
@@ -1180,7 +1219,7 @@ async fn retire_chatos_project_execution(
             deleted_task_ids.push(task.id.clone());
         }
     }
-    Ok(Json(json!({
+    let response = Json(json!({
         "success": true,
         "project_id": project_id,
         "requirement_id": requirement_id,
@@ -1188,7 +1227,22 @@ async fn retire_chatos_project_execution(
         "source_user_message_id": source_user_message_id,
         "deleted_task_ids": deleted_task_ids,
         "cleaned_artifacts": cleaned_artifacts,
-    })))
+    }));
+    audit.succeeded();
+    Ok(response)
+}
+
+fn enrich_project_execution_audit(
+    audit: &mut TaskRunnerInternalAuditGuard,
+    tasks: &[crate::models::TaskRecord],
+) {
+    let represented_user_id = tasks.iter().find_map(|task| {
+        task.owner_user_id
+            .as_deref()
+            .or(task.creator_user_id.as_deref())
+    });
+    audit.represented_user_id(represented_user_id);
+    audit.tenant_id(tasks.first().map(|task| task.tenant_id.as_str()));
 }
 
 fn required_internal_text(value: String, field: &str) -> Result<String, InternalApiError> {
@@ -1204,7 +1258,7 @@ fn required_internal_text(value: String, field: &str) -> Result<String, Internal
 fn require_chatos_execution_mutation(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(), InternalApiError> {
+) -> Result<TaskRunnerInternalRequestIdentity, InternalApiError> {
     require_task_runner_internal_request(
         &state.config,
         headers,
@@ -1345,7 +1399,10 @@ async fn retry_chatos_message_run(
     headers: HeaderMap,
     Json(request): Json<RetryChatosMessageRunRequest>,
 ) -> Result<(StatusCode, Json<Value>), InternalApiError> {
-    require_chatos_execution_mutation(&state, &headers)?;
+    let identity = require_chatos_execution_mutation(&state, &headers)?;
+    let run_id = required_internal_text(run_id, "run_id")?;
+    let mut audit =
+        TaskRunnerInternalAuditGuard::new(&identity, None, "task_run", run_id.as_str(), "retry");
     let (source_session_id, source_user_message_id, source_turn_id) =
         validate_chatos_message_query(&request.source)?;
     let retry_instruction = request
@@ -1370,12 +1427,22 @@ async fn retry_chatos_message_run(
     }
     let run = require_chatos_message_run(
         &state,
-        run_id.trim(),
+        run_id.as_str(),
         source_session_id,
         source_user_message_id,
         source_turn_id,
     )
     .await?;
+    if let Ok(Some(task)) = state.task_service.get_task(run.task_id.as_str()).await {
+        audit.represented_user_id(
+            task.owner_user_id
+                .as_deref()
+                .or(task.creator_user_id.as_deref()),
+        );
+        audit.tenant_id(Some(task.tenant_id.as_str()));
+        audit.project_id(Some(task.project_id.as_str()));
+        audit.resource_name(Some(task.title.as_str()));
+    }
     require_retryable_message_run(&run.status)?;
     let retried = state
         .run_service
@@ -1387,13 +1454,15 @@ async fn retry_chatos_message_run(
         .await
         .map_err(InternalApiError::bad_request)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    Ok((
+    let response = (
         StatusCode::CREATED,
         Json(json!({
             "success": true,
             "run": ChatosMessageTaskRun::from(retried),
         })),
-    ))
+    );
+    audit.succeeded();
+    Ok(response)
 }
 
 fn require_retryable_message_run(status: &TaskRunStatus) -> Result<(), InternalApiError> {
@@ -1581,7 +1650,7 @@ async fn get_chatos_message_graph_run(
 fn require_chatos_internal_auth(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(), InternalApiError> {
+) -> Result<TaskRunnerInternalRequestIdentity, InternalApiError> {
     require_task_runner_internal_request(
         &state.config,
         headers,

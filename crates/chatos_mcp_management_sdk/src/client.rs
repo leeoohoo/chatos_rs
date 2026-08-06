@@ -5,6 +5,7 @@ use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::fmt;
+use std::fs;
 
 use crate::config::McpManagementClientConfig;
 use crate::dto::{
@@ -14,7 +15,6 @@ use crate::dto::{
 };
 use crate::error::McpManagementClientError;
 
-const INTERNAL_SECRET_HEADER: &str = "x-mcp-management-internal-secret";
 const INTERNAL_TOKEN_HEADER: &str = "x-mcp-management-internal-token";
 const CALLER_SERVICE_HEADER: &str = "x-mcp-management-caller-service";
 const INTERNAL_TOKEN_AUDIENCE: &str = "mcp-management-service";
@@ -69,14 +69,41 @@ impl McpManagementClient {
     pub fn new(config: McpManagementClientConfig) -> Result<Self, McpManagementClientError> {
         let base_url = reqwest::Url::parse(config.base_url.as_str())
             .map_err(|err| McpManagementClientError::InvalidBaseUrl(err.to_string()))?;
-        if !matches!(base_url.scheme(), "http" | "https") {
+        if base_url.scheme() != "https" {
             return Err(McpManagementClientError::InvalidBaseUrl(
-                "MCP Management base URL must use http or https".to_string(),
+                "MCP Management internal base URL must use https because mTLS is mandatory"
+                    .to_string(),
             ));
         }
+        let ca_pem = fs::read(config.mtls_ca_cert_path.as_path()).map_err(|err| {
+            McpManagementClientError::InvalidMtlsConfiguration(format!(
+                "read CA certificate {} failed: {err}",
+                config.mtls_ca_cert_path.display()
+            ))
+        })?;
+        let identity_pem = fs::read(config.mtls_client_identity_path.as_path()).map_err(|err| {
+            McpManagementClientError::InvalidMtlsConfiguration(format!(
+                "read client identity {} failed: {err}",
+                config.mtls_client_identity_path.display()
+            ))
+        })?;
+        let ca = reqwest::Certificate::from_pem(ca_pem.as_slice()).map_err(|err| {
+            McpManagementClientError::InvalidMtlsConfiguration(format!(
+                "parse CA certificate failed: {err}"
+            ))
+        })?;
+        let identity = reqwest::Identity::from_pem(identity_pem.as_slice()).map_err(|err| {
+            McpManagementClientError::InvalidMtlsConfiguration(format!(
+                "parse client identity failed: {err}"
+            ))
+        })?;
         let http = reqwest::Client::builder()
+            .use_rustls_tls()
+            .https_only(true)
             .timeout(config.request_timeout)
             .redirect(reqwest::redirect::Policy::none())
+            .add_root_certificate(ca)
+            .identity(identity)
             .build()?;
         Ok(Self { http, config })
     }
@@ -193,7 +220,6 @@ impl McpManagementClient {
         Ok(self
             .http
             .request(method, url)
-            .header(INTERNAL_SECRET_HEADER, secret)
             .header(INTERNAL_TOKEN_HEADER, token)
             .header(CALLER_SERVICE_HEADER, self.config.caller_service.as_str()))
     }
@@ -233,4 +259,106 @@ fn default_error_message(status: StatusCode) -> String {
         .canonical_reason()
         .unwrap_or("MCP management request failed")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn internal_request_sends_only_signed_identity_headers() {
+        let material_dir = std::env::temp_dir().join(format!(
+            "chatos-mcp-management-sdk-test-{}",
+            std::process::id()
+        ));
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/generate-mcp-management-mtls.sh");
+        assert!(Command::new(script)
+            .arg(&material_dir)
+            .status()
+            .unwrap()
+            .success());
+        let secret = "a-long-mcp-management-test-secret";
+        let caller_service = "task-runner";
+        let client = McpManagementClient::new(McpManagementClientConfig {
+            base_url: "https://mcp-management.test".to_string(),
+            request_timeout: Duration::from_secs(1),
+            internal_api_secret: Some(secret.to_string()),
+            caller_service: caller_service.to_string(),
+            mtls_ca_cert_path: material_dir.join("ca.crt"),
+            mtls_client_identity_path: material_dir.join("task-runner.identity.pem"),
+        })
+        .expect("valid client configuration");
+
+        let request = client
+            .internal_request(
+                Method::POST,
+                "https://mcp-management.test/api/internal/test".to_string(),
+                ROUTES_RESOLVE_SCOPE,
+            )
+            .expect("signed internal request")
+            .build()
+            .expect("build internal request");
+
+        assert!(request
+            .headers()
+            .get("x-mcp-management-internal-secret")
+            .is_none());
+        assert_eq!(
+            request
+                .headers()
+                .get(CALLER_SERVICE_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some(caller_service)
+        );
+        let token = request
+            .headers()
+            .get(INTERNAL_TOKEN_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .expect("signed token header");
+        let claims = chatos_service_runtime::verify_internal_service_token(
+            token,
+            secret,
+            caller_service,
+            INTERNAL_TOKEN_AUDIENCE,
+            ROUTES_RESOLVE_SCOPE,
+        )
+        .expect("valid signed token");
+        assert_eq!(claims.caller, caller_service);
+        assert!(!claims.trace_id.is_empty());
+        let _ = std::fs::remove_dir_all(material_dir);
+    }
+
+    #[test]
+    fn plaintext_or_missing_mtls_material_is_rejected() {
+        let plaintext = McpManagementClientConfig {
+            base_url: "http://127.0.0.1:39282".to_string(),
+            request_timeout: Duration::from_secs(1),
+            internal_api_secret: Some("test-secret".to_string()),
+            caller_service: "task-runner".to_string(),
+            mtls_ca_cert_path: PathBuf::new(),
+            mtls_client_identity_path: PathBuf::new(),
+        };
+        assert!(matches!(
+            McpManagementClient::new(plaintext),
+            Err(McpManagementClientError::InvalidBaseUrl(_))
+        ));
+
+        let tls_without_material = McpManagementClientConfig {
+            base_url: "https://127.0.0.1:39282".to_string(),
+            request_timeout: Duration::from_secs(1),
+            internal_api_secret: Some("test-secret".to_string()),
+            caller_service: "task-runner".to_string(),
+            mtls_ca_cert_path: PathBuf::new(),
+            mtls_client_identity_path: PathBuf::new(),
+        };
+        assert!(matches!(
+            McpManagementClient::new(tls_without_material),
+            Err(McpManagementClientError::InvalidMtlsConfiguration(_))
+        ));
+    }
 }

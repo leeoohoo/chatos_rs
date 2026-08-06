@@ -77,7 +77,37 @@ pub struct TaskRunRecord {
     pub report: Option<Value>,
     pub cancel_requested: bool,
     #[serde(default)]
+    pub cancel_event_pending: bool,
+    #[serde(default)]
     pub dispatch_paused: bool,
+    #[serde(default)]
+    pub dispatch_event_pending: bool,
+    #[serde(default)]
+    pub post_process_event_pending: bool,
+    #[serde(default)]
+    pub post_process_event_enqueued: bool,
+    #[serde(default)]
+    pub post_process_completed: bool,
+    #[serde(default)]
+    pub post_process_dead_lettered: bool,
+    #[serde(default)]
+    pub post_process_attempt_count: u32,
+    #[serde(default)]
+    pub post_process_last_error: Option<String>,
+    #[serde(default)]
+    pub memory_summary_processed: bool,
+    #[serde(default)]
+    pub chatos_followup_processed: bool,
+    #[serde(default)]
+    pub terminal_cleanup_event_pending: bool,
+    #[serde(default)]
+    pub terminal_cleanup_event_enqueued: bool,
+    #[serde(default)]
+    pub terminal_cleanup_completed: bool,
+    #[serde(default)]
+    pub terminal_cleanup_attempt_count: u32,
+    #[serde(default)]
+    pub terminal_cleanup_last_error: Option<String>,
     pub summary_job_run_id: Option<String>,
     #[serde(default)]
     pub worker_id: Option<String>,
@@ -122,7 +152,22 @@ impl TaskRunRecord {
             usage: None,
             report: None,
             cancel_requested: false,
+            cancel_event_pending: false,
             dispatch_paused: false,
+            dispatch_event_pending: true,
+            post_process_event_pending: false,
+            post_process_event_enqueued: false,
+            post_process_completed: false,
+            post_process_dead_lettered: false,
+            post_process_attempt_count: 0,
+            post_process_last_error: None,
+            memory_summary_processed: false,
+            chatos_followup_processed: false,
+            terminal_cleanup_event_pending: false,
+            terminal_cleanup_event_enqueued: false,
+            terminal_cleanup_completed: false,
+            terminal_cleanup_attempt_count: 0,
+            terminal_cleanup_last_error: None,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,
@@ -204,6 +249,8 @@ pub struct AskUserPromptRecord {
     #[serde(default)]
     pub response: Option<AskUserResponseSubmission>,
     pub status: AskUserPromptStatus,
+    #[serde(default)]
+    pub resolution_event_pending: bool,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
@@ -233,6 +280,7 @@ impl AskUserPromptRecord {
             payload: payload.payload,
             response: None,
             status: AskUserPromptStatus::Pending,
+            resolution_event_pending: false,
             created_at: created_at.clone(),
             updated_at: created_at,
             expires_at,

@@ -69,6 +69,7 @@ mod tests {
             memory_engine_base_url: None,
             memory_engine_source_id: "task".to_string(),
             memory_engine_operator_token: None,
+            memory_engine_http_client: reqwest::Client::new(),
             default_tenant_id: "tenant".to_string(),
             default_subject_id: "subject".to_string(),
             default_workspace_dir: default_workspace_dir.to_string_lossy().to_string(),
@@ -76,7 +77,6 @@ mod tests {
             execution_timeout: Duration::from_millis(30_000),
             scheduler_poll_interval: Duration::from_millis(1_000),
             worker_id: "test-worker".to_string(),
-            worker_poll_interval: Duration::from_millis(1_000),
             worker_claim_ttl: Duration::from_millis(120_000),
             worker_concurrency: 4,
             auto_memory_summary: false,
@@ -85,14 +85,15 @@ mod tests {
             default_tool_results_model_total_max_chars: 1_000,
             default_execution_environment_mode: "local".to_string(),
             default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
+            sandbox_manager_http_client: reqwest::Client::new(),
             sandbox_manager_client_id: None,
             sandbox_manager_client_key: None,
             default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: None,
-            chatos_callback_secret: None,
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
+            user_service_internal_api_secret: None,
             local_connector_internal_api_secret: None,
             local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
             local_connector_service_request_timeout: Duration::from_millis(5_000),
@@ -106,6 +107,8 @@ mod tests {
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
             project_service_base_url: None,
+            project_service_internal_base_url: None,
+            project_service_internal_http_client: reqwest::Client::new(),
             project_service_sync_secret: None,
             project_service_request_timeout: Duration::from_millis(5000),
         }
@@ -163,6 +166,7 @@ mod tests {
 
         let mut config = test_config(default_workspace);
         config.project_service_base_url = Some("http://127.0.0.1:39210".to_string());
+        config.project_service_internal_base_url = Some("http://127.0.0.1:39210".to_string());
         config.project_service_sync_secret = Some("sync-secret".to_string());
         let store = AppStore::new(&config).await.expect("create store");
         let task_service = TaskService::new(config, store.clone());

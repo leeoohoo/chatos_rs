@@ -5,6 +5,7 @@ use super::*;
 use crate::catalog::{
     DEFAULT_LOCAL_RABBITMQ_URL, TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY, TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
 };
 
 impl AppState {
@@ -188,22 +189,9 @@ impl AppState {
             );
             let changed_keys =
                 ensure_task_runner_runtime_values(&mut release.values, &release_defaults);
-            let release_values = release_defaults
-                .iter()
-                .map(|(key, fallback)| {
-                    (
-                        key.clone(),
-                        release
-                            .values
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_else(|| fallback.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
             values_by_release.insert(
                 (release.environment.clone(), release.revision),
-                release_values,
+                release.values.clone(),
             );
             if !changed_keys.is_empty() {
                 for key in changed_keys {
@@ -213,43 +201,28 @@ impl AppState {
             }
         }
 
-        for mut snapshot in self.store.list_all_snapshots().await? {
-            if snapshot.service_name != "task-runner" {
-                continue;
-            }
-            let mut snapshot_defaults = values_by_release
+        for snapshot in self.store.list_all_snapshots().await? {
+            let all_values = values_by_release
                 .get(&(snapshot.environment.clone(), snapshot.revision))
-                .cloned()
-                .unwrap_or_else(|| task_runner_defaults.clone());
-            if !snapshot
-                .values
-                .contains_key(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
+                .ok_or_else(|| {
+                    format!(
+                        "release values are unavailable for snapshot {}/{} revision {}",
+                        snapshot.environment, snapshot.service_name, snapshot.revision
+                    )
+                })?;
+            let mut rebuilt = build_snapshot(
+                snapshot.environment.as_str(),
+                snapshot.service_name.as_str(),
+                snapshot.revision,
+                &definitions,
+                all_values,
+            )?;
+            rebuilt.generated_at = snapshot.generated_at.clone();
+            if rebuilt.values != snapshot.values
+                || rebuilt.env != snapshot.env
+                || rebuilt.checksum != snapshot.checksum
             {
-                if let Some(shared_max_iterations) = snapshot
-                    .values
-                    .get(AGENT_MAX_ITERATIONS_CONFIG_KEY)
-                    .cloned()
-                {
-                    snapshot_defaults.insert(
-                        TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-                        shared_max_iterations,
-                    );
-                }
-            }
-            let changed =
-                !ensure_task_runner_runtime_values(&mut snapshot.values, &snapshot_defaults)
-                    .is_empty();
-            let previous_env = snapshot.env.clone();
-            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
-                definition.scope == "shared"
-                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
-            });
-            if changed || snapshot.env != previous_env {
-                snapshot.checksum = checksum(&json!({
-                    "values": snapshot.values,
-                    "env": snapshot.env,
-                }))?;
-                self.store.save_snapshot(&snapshot).await?;
+                self.store.save_snapshot(&rebuilt).await?;
             }
         }
 
@@ -260,12 +233,39 @@ impl AppState {
             ) | migrate_task_runner_queue_mode_draft(
                 &mut draft.changes,
                 TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
+            ) | migrate_task_runner_queue_mode_draft(
+                &mut draft.changes,
+                TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
             ) | ensure_root_vhost_rabbitmq_url(
                 &mut draft.changes,
                 TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
                 task_runner_defaults
                     .get(TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY)
                     .unwrap_or(&json!(DEFAULT_LOCAL_RABBITMQ_URL)),
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+                task_runner_defaults
+                    .get(TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "Task Runner Memory Engine HTTPS default is missing".to_string()
+                    })?,
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+                task_runner_defaults
+                    .get(TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "Task Runner Project Service HTTPS default is missing".to_string()
+                    })?,
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+                task_runner_defaults
+                    .get(TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "Task Runner Sandbox Manager HTTPS default is missing".to_string()
+                    })?,
             );
             if changed {
                 draft.validation_status = "pending".to_string();
@@ -295,7 +295,7 @@ impl AppState {
     pub(super) async fn migrate_mcp_management_runtime_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = mcp_management_service_default_values(&definitions);
-        if defaults.len() != 37 {
+        if defaults.len() != MCP_MANAGEMENT_RUNTIME_CONFIG_KEYS.len() {
             return Err(
                 "MCP Management runtime configuration definitions are incomplete".to_string(),
             );
@@ -361,6 +361,30 @@ impl AppState {
                 defaults
                     .get(MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY)
                     .unwrap_or(&json!(DEFAULT_LOCAL_RABBITMQ_URL)),
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
+                defaults
+                    .get(MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "MCP Management Project Service HTTPS default is missing".to_string()
+                    })?,
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
+                defaults
+                    .get(MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "MCP Management Plugin Management HTTPS default is missing".to_string()
+                    })?,
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
+                defaults
+                    .get(MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "MCP Management Sandbox Manager HTTPS default is missing".to_string()
+                    })?,
             ) {
                 draft.validation_status = "pending".to_string();
                 draft.validation_errors.clear();
@@ -377,7 +401,8 @@ impl AppState {
 
         tracing::info!(
             dispatch_mode_key = MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
-            internal_secret_key = MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+            configuration_center_secret_key =
+                MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
             allowed_callers_key = MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY,
             rabbitmq_url_key = MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
             dispatch_queue_key = MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
@@ -544,7 +569,7 @@ impl AppState {
     pub(super) async fn migrate_sandbox_manager_runtime_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = sandbox_manager_runtime_default_values(&definitions);
-        if defaults.len() != 19 {
+        if defaults.len() != 16 {
             return Err(
                 "Sandbox Manager runtime configuration definitions are incomplete".to_string(),
             );
@@ -622,7 +647,7 @@ impl AppState {
     pub(super) async fn migrate_memory_engine_runtime_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = memory_engine_runtime_default_values(&definitions);
-        if defaults.len() != 19 {
+        if defaults.len() != MEMORY_ENGINE_RUNTIME_CONFIG_KEYS.len() {
             return Err(
                 "memory engine runtime configuration definitions are incomplete".to_string(),
             );
@@ -695,10 +720,74 @@ impl AppState {
         Ok(())
     }
 
+    pub(super) async fn migrate_platform_pressure_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = platform_pressure_default_values(&definitions);
+        if defaults.len() != PLATFORM_PRESSURE_CONFIG_KEYS.len() {
+            return Err("platform pressure configuration definitions are incomplete".to_string());
+        }
+        let mut values_by_release = BTreeMap::new();
+
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_platform_pressure_values(&mut release.values, &defaults);
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                defaults
+                    .iter()
+                    .map(|(key, default)| {
+                        (
+                            key.clone(),
+                            release
+                                .values
+                                .get(key)
+                                .cloned()
+                                .unwrap_or_else(|| default.clone()),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            let snapshot_defaults = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .cloned()
+                .unwrap_or_else(|| defaults.clone());
+            let changed =
+                !ensure_platform_pressure_values(&mut snapshot.values, &snapshot_defaults)
+                    .is_empty();
+            if changed {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add authoritative platform pressure state",
+        )
+        .await?;
+
+        tracing::info!(
+            pressure_level_key = PLATFORM_PRESSURE_LEVEL_CONFIG_KEY,
+            "Platform pressure state is present in all configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
     pub(super) async fn migrate_internal_request_security_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = internal_request_security_default_values(&definitions);
-        if defaults.len() != 60 {
+        if defaults.len() != 65 {
             return Err(
                 "internal request security configuration definitions are incomplete".to_string(),
             );
@@ -770,6 +859,35 @@ impl AppState {
             }
         }
 
+        for mut draft in self.store.list_drafts().await? {
+            let Some(value) = draft
+                .changes
+                .get(CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
+            else {
+                continue;
+            };
+            if value
+                .as_str()
+                .is_some_and(|value| value.trim().starts_with("https://"))
+            {
+                continue;
+            }
+            let replacement = defaults
+                .get(CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
+                .cloned()
+                .ok_or_else(|| {
+                    "Configuration Center Memory Engine HTTPS default is missing".to_string()
+                })?;
+            draft.changes.insert(
+                CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
+                replacement,
+            );
+            draft.validation_status = "pending".to_string();
+            draft.validation_errors.clear();
+            draft.updated_at = Utc::now().to_rfc3339();
+            self.store.save_draft(&draft).await?;
+        }
+
         self.republish_active_releases_to_consul(
             &definitions,
             "add internal request security configuration",
@@ -779,6 +897,7 @@ impl AppState {
         tracing::info!(
             local_connector_key = LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             mcp_management_key = MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
+            plugin_management_key = PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             project_service_key = PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             memory_engine_key = MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             sandbox_manager_key = SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
@@ -867,7 +986,7 @@ impl AppState {
     pub(super) async fn migrate_user_service_runtime_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = user_service_runtime_default_values(&definitions);
-        if defaults.len() != 25 {
+        if defaults.len() != 27 {
             return Err(
                 "user service runtime configuration definitions are incomplete".to_string(),
             );
@@ -926,6 +1045,33 @@ impl AppState {
             }
         }
 
+        for mut draft in self.store.list_drafts().await? {
+            let Some(value) = draft
+                .changes
+                .get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
+            else {
+                continue;
+            };
+            if value
+                .as_str()
+                .is_some_and(|value| value.trim().starts_with("https://"))
+            {
+                continue;
+            }
+            let replacement = defaults
+                .get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
+                .cloned()
+                .ok_or_else(|| "User Service Memory Engine HTTPS default is missing".to_string())?;
+            draft.changes.insert(
+                USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
+                replacement,
+            );
+            draft.validation_status = "pending".to_string();
+            draft.validation_errors.clear();
+            draft.updated_at = Utc::now().to_rfc3339();
+            self.store.save_draft(&draft).await?;
+        }
+
         self.republish_active_releases_to_consul(
             &definitions,
             "add User Service runtime configuration",
@@ -933,6 +1079,7 @@ impl AppState {
         .await?;
 
         tracing::info!(
+            internal_mtls_port_key = USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
             memory_engine_base_url_key = USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             task_runner_base_url_key = USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             harness_enabled_key = USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
@@ -1003,6 +1150,26 @@ impl AppState {
             }
         }
 
+        for mut draft in self.store.list_drafts().await? {
+            let mut changed = false;
+            for key in [
+                PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+                PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+            ] {
+                let replacement = defaults
+                    .get(key)
+                    .ok_or_else(|| format!("Project Service HTTPS default is missing: {key}"))?;
+                changed |= migrate_https_url_draft(&mut draft.changes, key, replacement);
+            }
+            if changed {
+                draft.validation_status = "pending".to_string();
+                draft.validation_errors.clear();
+                draft.updated_at = Utc::now().to_rfc3339();
+                self.store.save_draft(&draft).await?;
+            }
+        }
+
         self.republish_active_releases_to_consul(
             &definitions,
             "add Project Service runtime configuration",
@@ -1011,6 +1178,8 @@ impl AppState {
 
         tracing::info!(
             user_service_base_url_key = PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            user_service_internal_base_url_key =
+                PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
             local_connector_base_url_key =
                 PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
             memory_engine_base_url_key = PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
@@ -1084,6 +1253,22 @@ impl AppState {
             }
         }
 
+        for mut draft in self.store.list_drafts().await? {
+            let replacement = defaults
+                .get(SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY)
+                .ok_or_else(|| "Plugin Management internal HTTPS default is missing".to_string())?;
+            if migrate_https_url_draft(
+                &mut draft.changes,
+                SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
+                replacement,
+            ) {
+                draft.validation_status = "pending".to_string();
+                draft.validation_errors.clear();
+                draft.updated_at = Utc::now().to_rfc3339();
+                self.store.save_draft(&draft).await?;
+            }
+        }
+
         self.republish_active_releases_to_consul(
             &definitions,
             "add Plugin Management runtime configuration",
@@ -1096,6 +1281,8 @@ impl AppState {
             oauth_public_base_url_key = PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
             catalog_request_timeout_key = PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             shared_service_url_key = SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
+            shared_internal_service_url_key =
+                SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
             shared_request_timeout_key = SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "Plugin Management runtime configuration is present in releases and snapshots"
         );
@@ -1157,6 +1344,28 @@ impl AppState {
                     "env": snapshot.env,
                 }))?;
                 self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        for mut draft in self.store.list_drafts().await? {
+            let replacement = defaults
+                .get(CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
+                .ok_or_else(|| "ChatOS Memory Engine HTTPS default is missing".to_string())?;
+            if migrate_https_url_draft(
+                &mut draft.changes,
+                CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+                replacement,
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+                defaults
+                    .get(CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| "ChatOS Project Service HTTPS default is missing".to_string())?,
+            ) {
+                draft.validation_status = "pending".to_string();
+                draft.validation_errors.clear();
+                draft.updated_at = Utc::now().to_rfc3339();
+                self.store.save_draft(&draft).await?;
             }
         }
 

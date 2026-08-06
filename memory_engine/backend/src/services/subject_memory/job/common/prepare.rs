@@ -25,19 +25,37 @@ pub(crate) async fn prepare_subject_memory_job(
     req: &RunSubjectMemoryJobRequest,
 ) -> Result<SubjectMemoryPreparation, String> {
     let settings = build_settings_with_policy(db, req).await?;
-    let pending_summaries = summaries::list_summaries_by_thread_label(
-        db,
-        req.tenant_id.as_str(),
-        req.source_id.as_str(),
-        req.source_thread_label.as_str(),
-        Some(settings.source_summary_type.as_str()),
-        Some("done"),
-        None,
-        Some(0),
-        DEFAULT_MAX_SOURCE_SUMMARIES,
-        0,
-    )
-    .await?
+    let pending_summaries = if let Some(scope_key) = req
+        .scope_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        summaries::list_summaries_by_thread_label_for_subject_memory_scope(
+            db,
+            req.tenant_id.as_str(),
+            req.source_id.as_str(),
+            req.source_thread_label.as_str(),
+            settings.source_summary_type.as_str(),
+            scope_key,
+            DEFAULT_MAX_SOURCE_SUMMARIES,
+        )
+        .await?
+    } else {
+        summaries::list_summaries_by_thread_label(
+            db,
+            req.tenant_id.as_str(),
+            req.source_id.as_str(),
+            req.source_thread_label.as_str(),
+            Some(settings.source_summary_type.as_str()),
+            Some("done"),
+            None,
+            Some(0),
+            DEFAULT_MAX_SOURCE_SUMMARIES,
+            0,
+        )
+        .await?
+    }
     .into_iter()
     .map(|item| PendingSourceSummary {
         id: item.id,

@@ -9,7 +9,6 @@ use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST};
 use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
@@ -75,6 +74,7 @@ pub(super) struct TaskRunnerProvider {
 
 impl TaskRunnerProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: Duration,
         ask_user_request_timeout: Duration,
@@ -87,11 +87,6 @@ impl TaskRunnerProvider {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("Task Runner Provider base URL must use http or https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|err| format!("build Task Runner Provider client failed: {err}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),

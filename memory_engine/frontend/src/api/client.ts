@@ -36,16 +36,11 @@ const resolveDefaultBaseUrl = () => {
 };
 
 const baseURL = (import.meta.env.VITE_MEMORY_ENGINE_API_BASE || '').trim() || resolveDefaultBaseUrl();
-const operatorToken = import.meta.env.VITE_MEMORY_ENGINE_OPERATOR_TOKEN;
 
 export const client = axios.create({
   baseURL,
   timeout: 30000,
 });
-
-if (operatorToken?.trim()) {
-  client.defaults.headers.common['x-memory-operator-token'] = operatorToken.trim();
-}
 
 client.interceptors.request.use((config) => {
   const authToken = getAuthToken()?.trim();

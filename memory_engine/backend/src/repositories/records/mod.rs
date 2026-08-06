@@ -10,8 +10,8 @@ mod writes;
 pub(crate) use common::estimate_pending_record_tokens;
 #[allow(unused_imports)]
 pub use queries::{
-    count_records, get_record_by_id, list_compact_turn_slices, list_pending_records,
-    list_records_page, list_turn_process_records,
+    count_records, get_record_by_id, list_compact_turn_slices, list_pending_record_thread_scopes,
+    list_pending_records, list_records_page, list_turn_process_records, PendingRecordThreadScope,
 };
 #[allow(unused_imports)]
 pub use status::{mark_records_summarized, reset_records_summary_by_summary_id};

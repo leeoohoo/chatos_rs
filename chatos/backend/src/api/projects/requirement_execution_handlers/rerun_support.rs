@@ -191,7 +191,6 @@ pub(super) async fn ensure_old_cloud_execution_batch_ready_for_replacement(
     task_runner_base_url: &str,
     task_runner_agent_token: &str,
     user_access_token: &str,
-    project_service_base_url: &str,
     project_sync_secret: &str,
     conversation_id: &str,
     execution_group_id: &str,
@@ -209,7 +208,6 @@ pub(super) async fn ensure_old_cloud_execution_batch_ready_for_replacement(
         .map_err(|err| HandlerError::bad_gateway("校验旧执行批次 Task Runner 状态失败", err))?;
         apply_task_runner_task_snapshot(link, &task);
         sync_execution_link_status(
-            project_service_base_url,
             project_sync_secret,
             link,
             task.status.as_str(),
@@ -289,7 +287,6 @@ pub(super) async fn ensure_old_cloud_execution_batch_ready_for_replacement(
                     })
                     .unwrap_or_else(|| "cancelled".to_string());
                 if let Err(error) = sync_execution_link_status(
-                    project_service_base_url,
                     project_sync_secret,
                     link,
                     status.as_str(),
@@ -530,7 +527,6 @@ pub(super) async fn reconcile_requirement_planner_outcome(
             .cloned()
             .collect::<Vec<_>>();
         sync_requirement_execution_state(
-            recovery.project_service_base_url.as_str(),
             recovery.project_sync_secret.as_str(),
             requirement_id.as_str(),
             Some("approved"),

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use chatos_plugin_management_sdk::{
     PluginCloudComponentBundle, PluginComponentKind, PluginExecutionHost,
@@ -11,35 +12,47 @@ use chatos_plugin_package::plugin_cloud_bundle_sha256;
 use serde_json::{json, Value};
 
 use super::plugin_runtime_relay::PreparedPluginRuntime;
-use super::RunService;
+use super::{
+    load_managed_config_snapshot, require_managed_usize, RunService,
+    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
+    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
+};
 use crate::models::TaskRunRecord;
 
-const MAX_CACHED_BUNDLES: usize = 256;
-const MAX_CACHED_BUNDLE_BYTES: usize = 64 * 1024 * 1024;
+#[derive(Debug, Clone, Copy)]
+struct PluginCloudBundleCacheLimits {
+    max_entries: usize,
+    max_bytes: usize,
+}
 
 #[derive(Default)]
 pub(super) struct PluginCloudBundleCache {
-    entries: VecDeque<(String, PluginCloudComponentBundle, usize)>,
+    entries: VecDeque<(String, Arc<PluginCloudComponentBundle>, usize)>,
     total_bytes: usize,
 }
 
 impl PluginCloudBundleCache {
-    fn get(&mut self, key: &str) -> Option<PluginCloudComponentBundle> {
+    fn get(&mut self, key: &str) -> Option<Arc<PluginCloudComponentBundle>> {
         let index = self.entries.iter().position(|(entry, _, _)| entry == key)?;
         let entry = self.entries.remove(index)?;
-        let bundle = entry.1.clone();
+        let bundle = Arc::clone(&entry.1);
         self.entries.push_back(entry);
         Some(bundle)
     }
 
-    fn insert(&mut self, key: String, bundle: PluginCloudComponentBundle) {
+    fn insert(
+        &mut self,
+        key: String,
+        bundle: Arc<PluginCloudComponentBundle>,
+        limits: PluginCloudBundleCacheLimits,
+    ) {
         let size = bundle.primary_text.len()
             + bundle
                 .resources
                 .iter()
                 .map(|resource| resource.text.len())
                 .sum::<usize>();
-        if size > MAX_CACHED_BUNDLE_BYTES {
+        if size > limits.max_bytes {
             return;
         }
         if let Some(index) = self.entries.iter().position(|(entry, _, _)| entry == &key) {
@@ -47,8 +60,8 @@ impl PluginCloudBundleCache {
                 self.total_bytes = self.total_bytes.saturating_sub(previous_size);
             }
         }
-        while self.entries.len() >= MAX_CACHED_BUNDLES
-            || self.total_bytes.saturating_add(size) > MAX_CACHED_BUNDLE_BYTES
+        while self.entries.len() >= limits.max_entries
+            || self.total_bytes.saturating_add(size) > limits.max_bytes
         {
             let Some((_, _, removed_size)) = self.entries.pop_front() else {
                 break;
@@ -68,6 +81,7 @@ impl RunService {
         let client = self.plugin_management_client.as_ref().ok_or_else(|| {
             "Plugin Management client is required for cloud Plugin execution".to_string()
         })?;
+        let cache_limits = self.effective_plugin_cloud_bundle_cache_limits().await?;
         let mut selected = run
             .plugin_snapshots
             .iter()
@@ -109,31 +123,53 @@ impl RunService {
             let bundle = if let Some(bundle) = cached {
                 bundle
             } else {
-                let bundle = client
-                    .get_plugin_cloud_component_bundle_for_service(
-                        plugin.plugin_id.as_str(),
-                        plugin.release_id.as_str(),
-                        component.component_key.as_str(),
-                    )
-                    .await
-                    .map_err(|error| {
-                        format!(
-                            "load immutable Plugin cloud Bundle failed for {}:{}: {error}",
-                            plugin.plugin_id, component.component_key
+                let bundle = Arc::new(
+                    client
+                        .get_plugin_cloud_component_bundle_for_service(
+                            plugin.plugin_id.as_str(),
+                            plugin.release_id.as_str(),
+                            component.component_key.as_str(),
                         )
-                    })?;
-                validate_bundle(plugin, component, &bundle)?;
-                self.plugin_cloud_bundle_cache
-                    .lock()
-                    .insert(cache_key, bundle.clone());
+                        .await
+                        .map_err(|error| {
+                            format!(
+                                "load immutable Plugin cloud Bundle failed for {}:{}: {error}",
+                                plugin.plugin_id, component.component_key
+                            )
+                        })?,
+                );
+                validate_bundle(plugin, component, bundle.as_ref())?;
+                self.plugin_cloud_bundle_cache.lock().insert(
+                    cache_key,
+                    Arc::clone(&bundle),
+                    cache_limits,
+                );
                 bundle
             };
-            validate_bundle(plugin, component, &bundle)?;
+            validate_bundle(plugin, component, bundle.as_ref())?;
             runtime
                 .prompt_items
-                .push(prompt_item(plugin, component, &bundle));
+                .push(prompt_item(plugin, component, bundle.as_ref()));
         }
         Ok(runtime)
+    }
+
+    async fn effective_plugin_cloud_bundle_cache_limits(
+        &self,
+    ) -> Result<PluginCloudBundleCacheLimits, String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        Ok(PluginCloudBundleCacheLimits {
+            max_entries: require_managed_usize(
+                &snapshot,
+                TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
+                1,
+            )?,
+            max_bytes: require_managed_usize(
+                &snapshot,
+                TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
+                1,
+            )?,
+        })
     }
 }
 
@@ -369,5 +405,36 @@ mod tests {
         assert!(text.starts_with("[Third-Party Plugin Instructions]"));
         assert!(text.contains("Arguments for this Run:\nsrc/lib.rs"));
         assert!(text.ends_with("Review carefully."));
+    }
+
+    #[test]
+    fn plugin_cloud_bundle_cache_respects_managed_entry_budget() {
+        let mut cache = PluginCloudBundleCache::default();
+        let limits = PluginCloudBundleCacheLimits {
+            max_entries: 1,
+            max_bytes: usize::MAX,
+        };
+        cache.insert("first".to_string(), Arc::new(bundle()), limits);
+        cache.insert("second".to_string(), Arc::new(bundle()), limits);
+
+        assert!(cache.get("first").is_none());
+        assert!(cache.get("second").is_some());
+        assert_eq!(cache.entries.len(), 1);
+    }
+
+    #[test]
+    fn plugin_cloud_bundle_cache_rejects_bundle_over_managed_byte_budget() {
+        let mut cache = PluginCloudBundleCache::default();
+        cache.insert(
+            "oversized".to_string(),
+            Arc::new(bundle()),
+            PluginCloudBundleCacheLimits {
+                max_entries: 10,
+                max_bytes: 1,
+            },
+        );
+
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.total_bytes, 0);
     }
 }

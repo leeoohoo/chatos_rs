@@ -104,7 +104,6 @@ export function useRunsPageData({
     queryKey: ['run-events', selectedRunId],
     queryFn: () => api.getRunEvents(selectedRunId!),
     enabled: Boolean(selectedRunId),
-    refetchInterval: activeRefreshInterval(isActiveRunStatus(selectedRunQuery.data?.status)),
   });
   const runPromptsQuery = useQuery({
     queryKey: ['run-prompts', selectedRunId, runPromptPage, runPromptPageSize],

@@ -6,9 +6,6 @@ mod rollups;
 mod summaries;
 
 #[allow(unused_imports)]
-pub use rollups::{run_pending_thread_rollups, run_pending_thread_rollups_due};
+pub use rollups::run_pending_thread_rollups;
 #[allow(unused_imports)]
-pub use summaries::{
-    run_pending_thread_summaries, run_pending_thread_summaries_due,
-    run_pending_thread_summaries_with_limit,
-};
+pub use summaries::{run_pending_thread_summaries, run_pending_thread_summaries_with_limit};

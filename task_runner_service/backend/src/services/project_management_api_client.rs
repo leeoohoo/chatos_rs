@@ -155,14 +155,16 @@ pub async fn get_project_from_project_service(
     config: &AppConfig,
     project_id: &str,
 ) -> Result<Option<TaskProjectRecord>, String> {
-    let Some(base_url) = project_service_base_url(config) else {
-        return Ok(None);
-    };
-    let client = project_service_client(config)?;
-
     let project = if let Some(access_token) = auth::get_current_access_token() {
+        let Some(base_url) = project_service_base_url(config) else {
+            return Ok(None);
+        };
+        let client = project_service_client(config)?;
         get_project_with_access_token(&client, base_url, access_token.as_str(), project_id).await?
     } else {
+        let Some(base_url) = project_service_internal_base_url(config) else {
+            return Ok(None);
+        };
         let Some(sync_secret) = config
             .project_service_sync_secret
             .as_deref()
@@ -174,7 +176,13 @@ pub async fn get_project_from_project_service(
                     .to_string(),
             );
         };
-        get_project_with_sync_secret(&client, base_url, sync_secret, project_id).await?
+        get_project_with_sync_secret(
+            &config.project_service_internal_http_client,
+            base_url,
+            sync_secret,
+            project_id,
+        )
+        .await?
     };
 
     Ok(project.map(Into::into))
@@ -277,9 +285,9 @@ pub async fn sync_list_projects(
     config: &AppConfig,
     status: Option<TaskProjectStatus>,
 ) -> Result<Vec<TaskProjectRecord>, String> {
-    let base_url = required_project_service_base_url(config)?;
+    let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
-    let client = project_service_client(config)?;
+    let client = config.project_service_internal_http_client.clone();
     let status = status.map(|status| status.as_str().to_string());
     let projects =
         list_projects_with_sync_secret(&client, base_url, sync_secret, status.as_deref()).await?;
@@ -290,9 +298,9 @@ pub async fn sync_get_project(
     config: &AppConfig,
     project_id: &str,
 ) -> Result<Option<TaskProjectRecord>, String> {
-    let base_url = required_project_service_base_url(config)?;
+    let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
-    let client = project_service_client(config)?;
+    let client = config.project_service_internal_http_client.clone();
     get_project_with_sync_secret(&client, base_url, sync_secret, project_id)
         .await
         .map(|project| project.map(Into::into))
@@ -302,7 +310,7 @@ pub async fn get_project_harness_git_access(
     config: &AppConfig,
     project_id: &str,
 ) -> Result<ProjectHarnessGitAccess, String> {
-    let base_url = required_project_service_base_url(config)?;
+    let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
         "{}/api/chatos-sync/projects/{}/harness/git-access",
@@ -310,7 +318,7 @@ pub async fn get_project_harness_git_access(
         urlencoding::encode(project_id.trim())
     );
     send_json(signed_project_service_request(
-        project_service_client(config)?.get(endpoint),
+        config.project_service_internal_http_client.get(endpoint),
         sync_secret,
         PROJECT_HARNESS_SCOPE,
     )?)
@@ -331,7 +339,7 @@ pub(crate) async fn get_project_sandbox_runtime_settings(
     config: &AppConfig,
     project_id: &str,
 ) -> Result<ProjectSandboxRuntimeSettings, String> {
-    let base_url = required_project_service_base_url(config)?;
+    let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
         "{}/api/chatos-sync/projects/{}/runtime-environment",
@@ -339,7 +347,7 @@ pub(crate) async fn get_project_sandbox_runtime_settings(
         urlencoding::encode(project_id.trim())
     );
     let response = send_json::<ProjectRuntimeEnvironmentResponse>(signed_project_service_request(
-        project_service_client(config)?.get(endpoint),
+        config.project_service_internal_http_client.get(endpoint),
         sync_secret,
         PROJECT_READ_SCOPE,
     )?)
@@ -368,7 +376,7 @@ pub async fn sync_work_item_task_runner_status(
     work_item_id: &str,
     input: &SyncTaskRunnerWorkItemStatusRequest,
 ) -> Result<serde_json::Value, String> {
-    let base_url = required_project_service_base_url(config)?;
+    let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
         "{}/api/chatos-sync/work-items/{}/task-runner-status",
@@ -377,7 +385,7 @@ pub async fn sync_work_item_task_runner_status(
     );
     send_json(
         signed_project_service_request(
-            project_service_client(config)?.post(endpoint),
+            config.project_service_internal_http_client.post(endpoint),
             sync_secret,
             PROJECT_SYNC_SCOPE,
         )?
@@ -390,7 +398,7 @@ pub async fn import_project(
     config: &AppConfig,
     input: &ChatosProjectImportRequest,
 ) -> Result<TaskProjectRecord, String> {
-    let base_url = required_project_service_base_url(config)?;
+    let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
         "{}/api/chatos-sync/projects",
@@ -398,7 +406,7 @@ pub async fn import_project(
     );
     send_json::<ProjectServiceProjectRecord>(
         signed_project_service_request(
-            project_service_client(config)?.post(endpoint),
+            config.project_service_internal_http_client.post(endpoint),
             sync_secret,
             PROJECT_SYNC_SCOPE,
         )?
@@ -419,6 +427,19 @@ fn project_service_base_url(config: &AppConfig) -> Option<&str> {
 fn required_project_service_base_url(config: &AppConfig) -> Result<&str, String> {
     project_service_base_url(config)
         .ok_or_else(|| "project service base url is not configured".to_string())
+}
+
+fn project_service_internal_base_url(config: &AppConfig) -> Option<&str> {
+    config
+        .project_service_internal_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn required_project_service_internal_base_url(config: &AppConfig) -> Result<&str, String> {
+    project_service_internal_base_url(config)
+        .ok_or_else(|| "project service internal base url is not configured".to_string())
 }
 
 fn required_access_token() -> Result<String, String> {

@@ -1,24 +1,22 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::time::Duration;
 
 use chatos_agent::ChatosAgentProfile;
-use chatos_mcp_management_sdk::{
-    CreateRuntimeSessionRequest, McpManagementClient, McpManagementClientConfig,
-    McpManagementRuntimeSessionHandle, RuntimeSessionResponse,
-};
+use chatos_mcp_gateway::McpManagementGatewayBuilder;
+use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
 use chatos_plugin_management_sdk::SystemMcpKey;
 use tracing::{info, warn};
 
 use crate::services::mcp_loader::McpHttpServer;
 
-const GATEWAY_SERVER_NAME: &str = "mcp_management";
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
     chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
 
 pub(super) struct McpManagementGatewayRequest<'a> {
+    pub(super) tenant_id: Option<&'a str>,
     pub(super) owner_user_id: Option<&'a str>,
     pub(super) agent_profile: ChatosAgentProfile,
     pub(super) project_id: Option<&'a str>,
@@ -59,18 +57,18 @@ impl McpManagementGateway {
 pub(super) async fn resolve_mcp_management_gateway(
     request: McpManagementGatewayRequest<'_>,
 ) -> Result<McpManagementGateway, String> {
+    let tenant_id = required_text(request.tenant_id, "tenant_id")?;
     let owner_user_id = required_text(request.owner_user_id, "owner_user_id")?;
     let project_id = required_text(request.project_id, "project_id")?;
     let source_session_id = required_text(request.source_session_id, "source_session_id")?;
     let turn_id = required_text(request.turn_id, "turn_id")?;
     let source_user_message_id =
         required_text(request.source_user_message_id, "source_user_message_id")?;
-    let config = McpManagementClientConfig::from_env("chatos").await;
-    let client = McpManagementClient::new(config)
-        .map_err(|err| format!("initialize MCP Management client failed: {err}"))?;
+    let agent_key = request.agent_profile.key().as_str().to_string();
     let session_request = CreateRuntimeSessionRequest {
+        tenant_id: tenant_id.to_string(),
         owner_user_id: owner_user_id.to_string(),
-        agent_key: request.agent_profile.key().as_str().to_string(),
+        agent_key: agent_key.clone(),
         project_id: project_id.to_string(),
         run_id: None,
         turn_id: Some(turn_id.to_string()),
@@ -89,25 +87,60 @@ pub(super) async fn resolve_mcp_management_gateway(
         requested_sandbox_provider: None,
         sandbox_target: None,
     };
-    let session = client
-        .resolve_runtime_session(&session_request)
+    let timeout = Duration::from_millis(
+        std::env::var("CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_TOOL_TIMEOUT_MS)
+            .clamp(1_000, 2 * 60 * 60 * 1_000),
+    );
+    let ask_user_timeout = Duration::from_millis(
+        std::env::var("CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(ASK_USER_TRANSPORT_TIMEOUT_MS)
+            .clamp(
+                chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+                7 * 24 * 60 * 60 * 1_000,
+            ),
+    );
+    let mut builder = McpManagementGatewayBuilder::new("chatos", session_request, timeout)
+        .with_async_result_transport(chatos_mcp_runtime::McpAsyncResultTransport::RabbitMq);
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser);
+    for tool in chatos_mcp::system_mcp_static_tools(SystemMcpKey::AskUser)? {
+        let Some(name) = tool.get("name").and_then(serde_json::Value::as_str) else {
+            return Err("Ask User MCP tool catalog contains a tool without a name".to_string());
+        };
+        builder = builder.with_tool_timeout(
+            format!("{}_{}", descriptor.server_name, name.trim()),
+            ask_user_timeout,
+        );
+    }
+    let terminal_descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::TerminalController);
+    let terminal_wait_timeout =
+        Duration::from_millis(chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000);
+    for tool_name in ["process_wait", "process"] {
+        builder = builder.with_tool_timeout(
+            format!("{}_{}", terminal_descriptor.server_name, tool_name),
+            terminal_wait_timeout,
+        );
+    }
+    let resolved = builder
+        .resolve()
         .await
-        .map_err(|err| format!("resolve MCP Management runtime session failed: {err}"))?;
+        .map_err(|error| format!("resolve ChatOS MCP gateway failed: {error}"))?;
     info!(
         source_session_id,
         turn_id,
-        agent_key = request.agent_profile.key().as_str(),
-        session_id = session.session_id.as_str(),
-        route_revision = session.route_revision.as_str(),
-        configured_mcp_count = session.configured_mcp_count,
-        exposed_tool_count = session.exposed_tool_count,
+        agent_key = agent_key.as_str(),
+        session_id = resolved.session_id.as_str(),
+        route_revision = resolved.route_revision.as_str(),
+        configured_mcp_count = resolved.configured_mcp_count,
+        exposed_tool_count = resolved.exposed_tool_count,
         "ChatOS resolved MCP Management runtime session"
     );
-    let effective_mcp_ids = session.effective_mcp_ids.clone();
-    let provider_skills_prompt = session.provider_skills_prompt.clone();
-    let runtime_session =
-        McpManagementRuntimeSessionHandle::new(client, session.session_id.clone());
-    let server = match gateway_server(session) {
+    let runtime_session = resolved.runtime_session;
+    let server = match crate::services::shared_mcp_runtime::chatos_http_server(resolved.server) {
         Ok(server) => server,
         Err(error) => {
             let mcp_session_id = runtime_session.session_id().to_string();
@@ -125,58 +158,9 @@ pub(super) async fn resolve_mcp_management_gateway(
     };
     Ok(McpManagementGateway {
         server,
-        effective_mcp_ids,
-        provider_skills_prompt,
+        effective_mcp_ids: resolved.effective_mcp_ids,
+        provider_skills_prompt: resolved.provider_skills_prompt,
         runtime_session,
-    })
-}
-
-fn gateway_server(session: RuntimeSessionResponse) -> Result<McpHttpServer, String> {
-    let timeout_ms = std::env::var("CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_TOOL_TIMEOUT_MS)
-        .clamp(1_000, 2 * 60 * 60 * 1_000);
-    let ask_user_timeout_ms = std::env::var("CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(ASK_USER_TRANSPORT_TIMEOUT_MS)
-        .clamp(
-            chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
-            7 * 24 * 60 * 60 * 1_000,
-        );
-    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser);
-    let mut tool_timeout_ms = HashMap::new();
-    for tool in chatos_mcp::system_mcp_static_tools(SystemMcpKey::AskUser)? {
-        let Some(name) = tool.get("name").and_then(serde_json::Value::as_str) else {
-            return Err("Ask User MCP tool catalog contains a tool without a name".to_string());
-        };
-        tool_timeout_ms.insert(
-            format!("{}_{}", descriptor.server_name, name.trim()),
-            ask_user_timeout_ms,
-        );
-    }
-    let terminal_descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::TerminalController);
-    let terminal_wait_timeout_ms = chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000;
-    for tool_name in ["process_wait", "process"] {
-        tool_timeout_ms.insert(
-            format!("{}_{}", terminal_descriptor.server_name, tool_name),
-            terminal_wait_timeout_ms,
-        );
-    }
-    Ok(McpHttpServer {
-        name: GATEWAY_SERVER_NAME.to_string(),
-        url: session.mcp_server_url,
-        headers: Some(HashMap::from([(
-            "authorization".to_string(),
-            format!("Bearer {}", session.runtime_token),
-        )])),
-        timeout_ms: Some(timeout_ms),
-        tool_timeout_ms,
-        allowed_tool_names: None,
-        preserve_tool_names: true,
-        fail_on_unavailable: true,
-        header_provider: None,
     })
 }
 
@@ -208,49 +192,6 @@ fn normalized_unique(values: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn gateway_server_uses_runtime_grant_and_preserves_aggregated_names() {
-        let server = gateway_server(RuntimeSessionResponse {
-            session_id: "session-1".to_string(),
-            policy_revision: "policy-1".to_string(),
-            route_revision: "route-1".to_string(),
-            expires_at: "2099-01-01T00:00:00Z".to_string(),
-            mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
-            runtime_token: "runtime-token".to_string(),
-            configured_mcp_count: 1,
-            exposed_tool_count: 1,
-            effective_mcp_ids: Vec::new(),
-            provider_skills_prompt: None,
-            unavailable_required_mcps: Vec::new(),
-        })
-        .expect("gateway server");
-        assert!(server.preserve_tool_names);
-        assert!(server.fail_on_unavailable);
-        assert_eq!(server.timeout_ms, Some(DEFAULT_TOOL_TIMEOUT_MS));
-        assert_eq!(
-            server
-                .tool_timeout_ms
-                .get("ask_user_prompt_choices")
-                .copied(),
-            Some(ASK_USER_TRANSPORT_TIMEOUT_MS)
-        );
-        assert_eq!(
-            server
-                .tool_timeout_ms
-                .get("terminal_controller_process_wait")
-                .copied(),
-            Some(chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000)
-        );
-        assert_eq!(
-            server
-                .headers
-                .as_ref()
-                .and_then(|headers| headers.get("authorization"))
-                .map(String::as_str),
-            Some("Bearer runtime-token")
-        );
-    }
 
     #[test]
     fn expected_project_task_ids_are_trimmed_and_deduplicated() {

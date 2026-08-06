@@ -45,14 +45,23 @@ pub(super) async fn update_user_skill_preference_internal(
     Path(skill_id): Path<String>,
     Json(payload): Json<UpdateUserSkillPreferencePayload>,
 ) -> Result<Json<UserSkillCatalogItem>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
     let owner_user_id = required_text(Some(payload.owner_user_id.as_str()), "owner_user_id")?;
+    let mut audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "user_skill_preference",
+        skill_id.as_str(),
+        "update",
+    );
     let skill = state
         .store
         .get_skill(skill_id.as_str())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("Skill not found"))?;
+    audit.resource_name(Some(skill.display_name.as_str()));
     ensure_internal_bundle_skill(&skill)?;
     let (available, status, reason, installation) =
         availability_for_skill(&state, &skill, owner_user_id.as_str()).await?;
@@ -92,14 +101,16 @@ pub(super) async fn update_user_skill_preference_internal(
         .replace_user_skill_preference(&preference)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(UserSkillCatalogItem {
+    let response = Json(UserSkillCatalogItem {
         skill,
         user_enabled: preference.enabled,
         available,
         status,
         reason,
         installation,
-    }))
+    });
+    audit.succeeded();
+    Ok(response)
 }
 
 pub(super) async fn sync_skill_inventory_internal(
@@ -107,10 +118,19 @@ pub(super) async fn sync_skill_inventory_internal(
     headers: HeaderMap,
     Json(payload): Json<LocalConnectorSkillInventoryPayload>,
 ) -> Result<Json<Vec<SkillInstallationRecord>>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, LOCAL_CONNECTOR_WRITE_SCOPE)?;
     let owner_user_id = required_text(Some(payload.owner_user_id.as_str()), "owner_user_id")?;
     let device_id = required_text(Some(payload.device_id.as_str()), "device_id")?;
     let platform = required_text(Some(payload.platform.as_str()), "platform")?;
+    let mut audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "skill_inventory",
+        device_id.as_str(),
+        "sync",
+    );
+    audit.resource_name(Some(platform.as_str()));
     if payload.items.len() > 200 {
         return Err(ApiError::bad_request(
             "local connector Skill inventory exceeds 200 items",
@@ -153,6 +173,7 @@ pub(super) async fn sync_skill_inventory_internal(
         .replace_device_skill_installations(owner_user_id.as_str(), device_id.as_str(), &records)
         .await
         .map_err(ApiError::internal)?;
+    audit.succeeded();
     Ok(Json(records))
 }
 

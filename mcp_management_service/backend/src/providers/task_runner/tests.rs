@@ -49,6 +49,7 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
             .expect("serve mock Task Runner");
     });
     let provider = TaskRunnerProvider::new(
+        reqwest::Client::new(),
         format!("http://{address}"),
         Duration::from_secs(2),
         Duration::from_secs(60),
@@ -183,6 +184,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
             .expect("serve mock Task Runner");
     });
     let provider = TaskRunnerProvider::new(
+        reqwest::Client::new(),
         format!("http://{address}"),
         Duration::from_secs(2),
         Duration::from_secs(60),
@@ -249,6 +251,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
 #[test]
 fn provider_supports_task_runner_owned_and_callback_system_mcps() {
     let provider = TaskRunnerProvider::new(
+        reqwest::Client::new(),
         "http://127.0.0.1:39090",
         Duration::from_secs(2),
         Duration::from_secs(60),
@@ -285,10 +288,13 @@ fn snapshot() -> RuntimeSessionSnapshot {
     RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
         caller_service: "task-runner".to_string(),
+        trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+        tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
         agent_key: "task_runner_run_phase".to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
+        device_id: None,
         run_id: Some("run-1".to_string()),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),

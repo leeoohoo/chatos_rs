@@ -133,10 +133,43 @@ pub async fn upsert_thread_summary(
 ) -> Result<Json<EngineSummary>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    summaries::upsert_thread_summary(&state.pool, thread_id.as_str(), summary_id.as_str(), req)
-        .await
-        .map(Json)
-        .map_err(internal_error)
+    let tenant_id = req.tenant_id.clone();
+    let source_id = req.source_id.clone();
+    let summary =
+        summaries::upsert_thread_summary(&state.pool, thread_id.as_str(), summary_id.as_str(), req)
+            .await
+            .map_err(internal_error)?;
+    if let Err(err) = crate::rollup_queue::publish_pending_rollup_for_summary(
+        &state.config,
+        &state.pool,
+        tenant_id.as_str(),
+        source_id.as_str(),
+        summary_id.as_str(),
+    )
+    .await
+    {
+        tracing::warn!(
+            summary_id = summary_id.as_str(),
+            error = err.as_str(),
+            "Memory Engine left upserted summary rollup event in Outbox for recovery"
+        );
+    }
+    if let Err(err) = crate::subject_memory_queue::publish_pending_source_for_summary(
+        &state.config,
+        &state.pool,
+        tenant_id.as_str(),
+        source_id.as_str(),
+        summary_id.as_str(),
+    )
+    .await
+    {
+        tracing::warn!(
+            summary_id = summary_id.as_str(),
+            error = err.as_str(),
+            "Memory Engine left upserted summary subject-memory event in Outbox for recovery"
+        );
+    }
+    Ok(Json(summary))
 }
 
 pub async fn run_thread_active_summary(

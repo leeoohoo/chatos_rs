@@ -42,7 +42,6 @@ pub(super) async fn call_harness_tool(
             )
         })?;
     project_management_api_client::call_project_harness_tool(
-        cfg.project_service_base_url.as_str(),
         sync_secret,
         path.project_id.as_str(),
         tool_name,

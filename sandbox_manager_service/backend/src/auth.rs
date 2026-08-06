@@ -42,6 +42,14 @@ pub struct SandboxSystemClient {
     pub allowed_project_ids: Vec<String>,
     pub allowed_tools: Vec<String>,
     pub max_lease_ttl_seconds: u64,
+    pub internal_identity: Option<SandboxInternalIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxInternalIdentity {
+    pub caller_service: String,
+    pub scope: String,
+    pub trace_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -56,8 +64,6 @@ pub struct SandboxPrincipal {
 
 #[derive(Debug, Clone)]
 pub enum SandboxAuthContext {
-    Disabled,
-    Operator,
     System(SandboxSystemClient),
     User(SandboxPrincipal),
 }
@@ -106,6 +112,13 @@ impl SandboxPrincipal {
 }
 
 impl SandboxAuthContext {
+    pub fn internal_identity(&self) -> Option<&SandboxInternalIdentity> {
+        match self {
+            Self::System(client) => client.internal_identity.as_ref(),
+            Self::User(_) => None,
+        }
+    }
+
     pub fn system_client_id(&self) -> Option<&str> {
         match self {
             Self::System(client) => Some(client.client_id.as_str()),
@@ -115,7 +128,6 @@ impl SandboxAuthContext {
 
     pub fn require_admin(&self) -> Result<(), ApiError> {
         match self {
-            Self::Disabled | Self::Operator => Ok(()),
             Self::System(client) if client.has_scope(SCOPE_ADMIN) => Ok(()),
             Self::User(principal) if principal.is_super_admin() => Ok(()),
             _ => Err(ApiError::forbidden("sandbox admin permission required")),
@@ -124,7 +136,6 @@ impl SandboxAuthContext {
 
     pub fn require_scope(&self, scope: &str) -> Result<(), ApiError> {
         match self {
-            Self::Disabled | Self::Operator => Ok(()),
             Self::System(client) if client.has_scope(scope) => Ok(()),
             Self::System(client) if client.has_scope(SCOPE_ADMIN) => Ok(()),
             Self::User(principal) if principal.is_super_admin() => Ok(()),
@@ -141,7 +152,6 @@ impl SandboxAuthContext {
     ) -> Result<(), ApiError> {
         self.require_scope(SCOPE_LEASE_CREATE)?;
         match self {
-            Self::Disabled | Self::Operator => Ok(()),
             Self::System(client) => client.ensure_create_lease_allowed(input),
             Self::User(principal) => {
                 ensure_user_owns_tenant(principal, input.tenant_id.as_str())?;
@@ -167,7 +177,6 @@ impl SandboxAuthContext {
     ) -> Result<(), ApiError> {
         self.require_scope(SCOPE_LEASE_CREATE)?;
         match self {
-            Self::Disabled | Self::Operator => Ok(()),
             Self::System(client) => client.ensure_create_environment_lease_allowed(input),
             Self::User(principal) => {
                 ensure_user_owns_tenant(principal, input.tenant_id.as_str())?;
@@ -192,7 +201,6 @@ impl SandboxAuthContext {
         mut query: ListSandboxQuery,
     ) -> Result<ListSandboxQuery, ApiError> {
         match self {
-            Self::Disabled | Self::Operator => Ok(query),
             Self::System(client) => {
                 client.ensure_query_allowed(&query)?;
                 if query
@@ -235,7 +243,6 @@ impl SandboxAuthContext {
     ) -> Result<(), ApiError> {
         self.require_scope(scope)?;
         match self {
-            Self::Disabled | Self::Operator => Ok(()),
             Self::System(client) => client.ensure_lease_allowed(record),
             Self::User(principal) => {
                 if principal.is_super_admin() {
@@ -365,7 +372,7 @@ impl SandboxSystemClient {
     }
 }
 
-pub async fn require_sandbox_auth(
+pub async fn require_public_sandbox_auth(
     State(state): State<AppState>,
     mut request: Request<Body>,
     next: Next,
@@ -373,34 +380,159 @@ pub async fn require_sandbox_auth(
     if request.method() == Method::OPTIONS {
         return Ok(next.run(request).await);
     }
-    let auth = authenticate_request(&state, request.headers()).await?;
+    let auth = authenticate_public_request(&state, request.headers()).await?;
     request.extensions_mut().insert(auth);
     Ok(next.run(request).await)
 }
 
-async fn authenticate_request(
+pub async fn require_internal_sandbox_auth(
+    State(state): State<AppState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let method = request.method().clone();
+    let resource_path = request.uri().path().to_string();
+    let auth = authenticate_internal_request(&state, request.headers())?;
+    let audit_event = auth.internal_identity().map(|identity| {
+        sandbox_internal_audit_event(
+            identity,
+            request.headers(),
+            method.as_str(),
+            resource_path.as_str(),
+            "pending",
+        )
+    });
+    request.extensions_mut().insert(auth);
+    let response = next.run(request).await;
+    if let Some(mut event) = audit_event {
+        event.outcome = response.status().as_u16().to_string();
+        if let Err(error) = chatos_service_runtime::record_internal_resource_access(&event) {
+            tracing::error!(
+                target: "chatos_internal_audit",
+                trace_id = event.trace_id.as_str(),
+                error = error.as_str(),
+                "record Sandbox Manager internal access audit failed"
+            );
+        }
+    }
+    Ok(response)
+}
+
+fn sandbox_internal_audit_event(
+    identity: &SandboxInternalIdentity,
+    headers: &HeaderMap,
+    method: &str,
+    resource_path: &str,
+    outcome: &str,
+) -> chatos_service_runtime::InternalResourceAccessAudit {
+    let represented_user_id = match identity.caller_service.as_str() {
+        "task-runner" => first_audit_header(
+            headers,
+            &["x-chatos-owner-user-id", "x-task-runner-owner-user-id"],
+        ),
+        "mcp-management-service" => {
+            first_audit_header(headers, &["x-mcp-management-owner-user-id"])
+        }
+        "project-service" => first_audit_header(headers, &["x-project-service-owner-user-id"]),
+        _ => None,
+    };
+    let tenant_id = match identity.caller_service.as_str() {
+        "task-runner" => first_audit_header(headers, &["x-chatos-tenant-id"]),
+        _ => None,
+    };
+    let project_id = match identity.caller_service.as_str() {
+        "task-runner" => first_audit_header(headers, &["x-chatos-project-id"]),
+        "mcp-management-service" => first_audit_header(headers, &["x-mcp-management-project-id"]),
+        "project-service" => first_audit_header(
+            headers,
+            &[
+                "x-chatos-sandbox-project-id",
+                "x-project-service-project-id",
+            ],
+        ),
+        _ => None,
+    };
+
+    chatos_service_runtime::InternalResourceAccessAudit {
+        caller_service: identity.caller_service.clone(),
+        audience_service: INTERNAL_TOKEN_AUDIENCE.to_string(),
+        scope: identity.scope.clone(),
+        trace_id: identity.trace_id.clone(),
+        represented_user_id,
+        tenant_id,
+        project_id,
+        resource_type: sandbox_resource_type(resource_path).to_string(),
+        resource_id: bounded_audit_text(resource_path),
+        resource_name: None,
+        action: bounded_audit_text(method),
+        outcome: bounded_audit_text(outcome),
+    }
+}
+
+fn sandbox_resource_type(path: &str) -> &'static str {
+    let path = path
+        .strip_prefix("/api/internal")
+        .or_else(|| path.strip_prefix("/api"))
+        .unwrap_or(path);
+    if path.starts_with("/sandbox-environments/") {
+        "sandbox_environment"
+    } else if path.starts_with("/sandboxes/") {
+        "sandbox"
+    } else if path.starts_with("/sandbox-images") {
+        "sandbox_image_control_plane"
+    } else if path.starts_with("/sandbox-pool") {
+        "sandbox_pool"
+    } else if path.starts_with("/access-clients") {
+        "sandbox_access_client"
+    } else {
+        "sandbox_internal_route"
+    }
+}
+
+fn first_audit_header(headers: &HeaderMap, names: &[&'static str]) -> Option<String> {
+    names
+        .iter()
+        .find_map(|name| header_text(headers, name))
+        .map(|value| bounded_audit_text(value.as_str()))
+}
+
+fn bounded_audit_text(value: &str) -> String {
+    value.trim().chars().take(256).collect()
+}
+
+async fn authenticate_public_request(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<SandboxAuthContext, ApiError> {
-    let config = state.manager.config();
-    if !config.require_auth {
-        return Ok(SandboxAuthContext::Disabled);
+    if header_text(headers, "x-sandbox-caller").is_some()
+        || header_text(headers, "x-sandbox-internal-token").is_some()
+    {
+        return Err(ApiError::unauthorized(
+            "signed internal requests are not accepted on the public listener",
+        ));
     }
-
-    if let Some(client) = authenticate_internal_service(config, headers)? {
+    if let Some(client) = authenticate_system_client(state, headers).await? {
         return Ok(SandboxAuthContext::System(client));
-    }
-    if let Some(client) = authenticate_system_client(state, config, headers).await? {
-        return Ok(SandboxAuthContext::System(client));
-    }
-    if authenticate_operator(config, headers)? {
-        return Ok(SandboxAuthContext::Operator);
     }
     if let Some(token) = bearer_token(headers)? {
-        return verify_user_service_principal(config, state.user_service_http(), token).await;
+        return verify_user_service_principal(
+            state.manager.config(),
+            state.user_service_http(),
+            token,
+        )
+        .await;
     }
 
     Err(ApiError::unauthorized("missing sandbox authorization"))
+}
+
+fn authenticate_internal_request(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<SandboxAuthContext, ApiError> {
+    authenticate_internal_service(state.manager.config(), headers)?
+        .map(SandboxAuthContext::System)
+        .ok_or_else(|| ApiError::unauthorized("signed Sandbox Manager internal request required"))
 }
 
 fn authenticate_internal_service(
@@ -427,7 +559,7 @@ fn authenticate_internal_service(
         .ok_or_else(|| {
             ApiError::unauthorized("Sandbox Manager internal API is disabled for caller")
         })?;
-    chatos_service_runtime::verify_internal_service_token(
+    let claims = chatos_service_runtime::verify_internal_service_token(
         token.as_str(),
         secret,
         caller.as_str(),
@@ -467,12 +599,16 @@ fn authenticate_internal_service(
         allowed_project_ids: vec!["*".to_string()],
         allowed_tools: vec!["*".to_string()],
         max_lease_ttl_seconds: config.system_client_max_lease_ttl_seconds,
+        internal_identity: Some(SandboxInternalIdentity {
+            caller_service: claims.caller,
+            scope: claims.scope,
+            trace_id: claims.trace_id,
+        }),
     }))
 }
 
 async fn authenticate_system_client(
     state: &AppState,
-    config: &AppConfig,
     headers: &HeaderMap,
 ) -> Result<Option<SandboxSystemClient>, ApiError> {
     let Some(client_id) = header_text(headers, "x-sandbox-client-id") else {
@@ -489,48 +625,7 @@ async fn authenticate_system_client(
         return Ok(Some(client));
     }
 
-    if config.require_signed_internal_requests {
-        return Err(ApiError::unauthorized(
-            "signed Sandbox Manager internal API token is required",
-        ));
-    }
-
-    let expected_id = config
-        .system_client_id
-        .as_deref()
-        .ok_or_else(|| ApiError::unauthorized("sandbox system client is not configured"))?;
-    let expected_key = config
-        .system_client_key
-        .as_deref()
-        .ok_or_else(|| ApiError::unauthorized("sandbox system client key is not configured"))?;
-    if !constant_time_equal(expected_id, client_id.as_str())
-        || !constant_time_equal(expected_key, client_key.as_str())
-    {
-        return Err(ApiError::unauthorized("invalid sandbox system credentials"));
-    }
-
-    Ok(Some(SandboxSystemClient {
-        client_id,
-        scopes: config.system_client_scopes.clone(),
-        allowed_tenant_ids: config.system_client_allowed_tenant_ids.clone(),
-        allowed_project_ids: config.system_client_allowed_project_ids.clone(),
-        allowed_tools: config.system_client_allowed_tools.clone(),
-        max_lease_ttl_seconds: config.system_client_max_lease_ttl_seconds,
-    }))
-}
-
-fn authenticate_operator(config: &AppConfig, headers: &HeaderMap) -> Result<bool, ApiError> {
-    let Some(expected) = config.operator_token.as_deref() else {
-        return Ok(false);
-    };
-    let Some(provided) = header_text(headers, "x-sandbox-operator-token") else {
-        return Ok(false);
-    };
-    if constant_time_equal(expected, provided.as_str()) {
-        Ok(true)
-    } else {
-        Err(ApiError::unauthorized("invalid sandbox operator token"))
-    }
+    Err(ApiError::unauthorized("invalid sandbox system credentials"))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
@@ -632,15 +727,79 @@ fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn constant_time_equal(expected: &str, provided: &str) -> bool {
-    let expected = expected.as_bytes();
-    let provided = provided.as_bytes();
-    if expected.len() != provided.len() {
-        return false;
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use super::*;
+
+    #[test]
+    fn signed_internal_request_preserves_verified_audit_identity() {
+        let config = AppConfig::for_tests();
+        let secret = config
+            .internal_api_secrets
+            .get("task-runner")
+            .expect("task runner secret");
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            "task-runner",
+            INTERNAL_TOKEN_AUDIENCE,
+            INTERNAL_SERVICE_SCOPE,
+            60,
+        )
+        .expect("signed token");
+        let mut headers = HeaderMap::new();
+        headers.insert("x-sandbox-caller", HeaderValue::from_static("task-runner"));
+        headers.insert(
+            "x-sandbox-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+
+        let client = authenticate_internal_service(&config, &headers)
+            .expect("authentication result")
+            .expect("internal client");
+        let identity = client.internal_identity.expect("audit identity");
+
+        assert_eq!(identity.caller_service, "task-runner");
+        assert_eq!(identity.scope, INTERNAL_SERVICE_SCOPE);
+        assert!(uuid::Uuid::parse_str(identity.trace_id.as_str()).is_ok());
     }
-    let mut diff = 0u8;
-    for (left, right) in expected.iter().zip(provided.iter()) {
-        diff |= left ^ right;
+
+    #[test]
+    fn audit_context_only_accepts_headers_for_the_verified_caller() {
+        let identity = SandboxInternalIdentity {
+            caller_service: "task-runner".to_string(),
+            scope: INTERNAL_SERVICE_SCOPE.to_string(),
+            trace_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-chatos-owner-user-id",
+            HeaderValue::from_static("task-user"),
+        );
+        headers.insert("x-chatos-tenant-id", HeaderValue::from_static("tenant-1"));
+        headers.insert("x-chatos-project-id", HeaderValue::from_static("project-1"));
+        headers.insert(
+            "x-mcp-management-owner-user-id",
+            HeaderValue::from_static("spoofed-user"),
+        );
+        headers.insert(
+            "x-mcp-management-project-id",
+            HeaderValue::from_static("spoofed-project"),
+        );
+
+        let event = sandbox_internal_audit_event(
+            &identity,
+            &headers,
+            "POST",
+            "/api/sandboxes/leases",
+            "201",
+        );
+
+        assert_eq!(event.represented_user_id.as_deref(), Some("task-user"));
+        assert_eq!(event.tenant_id.as_deref(), Some("tenant-1"));
+        assert_eq!(event.project_id.as_deref(), Some("project-1"));
+        assert_eq!(event.resource_type, "sandbox");
+        assert!(event.validate().is_ok());
     }
-    diff == 0
 }

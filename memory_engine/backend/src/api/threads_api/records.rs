@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use tracing::warn;
 
 use super::error::internal_error;
 use super::queries::{
@@ -30,9 +31,24 @@ pub async fn batch_sync_records(
 ) -> Result<Json<BatchSyncRecordsResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    let upserted_count = records::batch_sync_records(&state.pool, thread_id.as_str(), &req)
-        .await
-        .map_err(internal_error)?;
+    let upserted_count =
+        records::batch_sync_records(&state.config, &state.pool, thread_id.as_str(), &req)
+            .await
+            .map_err(internal_error)?;
+    if let Err(err) = crate::summary_queue::publish_pending_summary_for_thread(
+        &state,
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id.as_str(),
+    )
+    .await
+    {
+        warn!(
+            thread_id = thread_id.as_str(),
+            error = err.as_str(),
+            "Memory Engine left summary event in Outbox for recovery"
+        );
+    }
     Ok(Json(BatchSyncRecordsResponse {
         thread_id,
         received_count: req.records.len(),

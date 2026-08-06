@@ -15,7 +15,6 @@ use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW
 use crate::models::ProjectRecord;
 use crate::state::AppState;
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 #[derive(Debug, Deserialize)]
 struct HarnessApiAccessResponse {
@@ -122,17 +121,16 @@ async fn fetch_harness_api_access(
         "{}/api/internal/harness/users/{}/access",
         state
             .config
-            .user_service_base_url
+            .user_service_internal_base_url
             .trim()
             .trim_end_matches('/'),
         urlencoding::encode(owner_user_id.trim())
     );
-    let client = build_http_client(HttpClientTimeouts::new(
-        state.config.user_service_request_timeout,
-    ))
-    .map_err(|err| ApiError::bad_request(format!("build user_service client failed: {err}")))?;
     let response = crate::user_model_runtime_client::signed_user_service_request(
-        client.request(Method::GET, endpoint),
+        state
+            .config
+            .user_service_internal_http_client
+            .request(Method::GET, endpoint),
         secret,
         crate::user_model_runtime_client::HARNESS_ACCESS_READ_SCOPE,
     )

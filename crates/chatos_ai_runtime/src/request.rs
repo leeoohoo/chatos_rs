@@ -14,7 +14,7 @@ use crate::request_payload::response_items_to_chat_messages;
 use crate::request_payload::{
     build_chat_completions_request_payload, build_responses_request_payload,
 };
-use crate::request_retry::should_retry_without_prompt_cache_retention;
+use crate::request_retry::should_retry_without_prompt_cache_options;
 use http::{
     log_preview, read_error_response_text_limited, retry_after_delay_ms, send_json_request,
     serialize_request_payload, validate_request_payload_size,
@@ -165,9 +165,10 @@ impl AiRequestHandler {
             .await;
 
         if transport == AiTransport::Responses
-            && should_retry_without_prompt_cache_retention(&first_attempt, &first_payload)
+            && should_retry_without_prompt_cache_options(&first_attempt, &first_payload)
         {
             let mut retry_options = options.clone();
+            retry_options.prompt_cache_key = None;
             retry_options.include_prompt_cache_retention = false;
             let retry_payload = build_request_payload(
                 transport,

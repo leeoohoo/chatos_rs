@@ -72,7 +72,8 @@ pub use active_summary::{get_thread_active_summary_status, run_thread_active_sum
 #[allow(unused_imports)]
 pub use rollup::default_rollup_settings;
 pub(crate) use rollup::{
-    prepare_thread_rollup, run_thread_rollups_until_drained, SCHEDULER_TRIGGER,
+    prepare_thread_rollup, run_prepared_thread_rollup, run_thread_rollups_until_drained,
+    SCHEDULER_TRIGGER,
 };
 pub use thread_repair::run_thread_repair_summary;
 pub use thread_summary::run_thread_summary;

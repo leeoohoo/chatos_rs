@@ -3,7 +3,11 @@
 
 use tracing_subscriber::EnvFilter;
 
-use user_service_backend::{build_router, load_user_service_dotenv, AppConfig, AppState};
+use user_service_backend::{
+    build_internal_router, build_public_router,
+    internal_tls::{load_internal_mtls_config, UserServiceInternalTlsConfig},
+    load_user_service_dotenv, AppConfig, AppState,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,8 +20,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = AppConfig::from_env()?;
     resolve_downstream_services(&mut config).await;
     let bind_addr = config.bind_addr();
+    let internal_tls = UserServiceInternalTlsConfig::from_env(config.host, config.port)?;
+    let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let state = AppState::new(config.clone()).await?;
-    let app = build_router(state);
+    let public_app = build_public_router(state.clone());
+    let internal_app = build_internal_router(state);
     let _service_runtime = chatos_service_runtime::register_current_service(
         "user-service",
         config.port,
@@ -32,31 +39,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.port
     );
 
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
+    tracing::info!(
+        "User Service internal API listening with mandatory mTLS on https://{}",
+        internal_tls.bind_addr
+    );
+
+    tokio::select! {
+        result = axum::serve(
+            listener,
+            public_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        ) => {
+            result?;
+        }
+        result = axum_server::bind_rustls(internal_tls.bind_addr, internal_mtls_config)
+            .serve(internal_app.into_make_service()) => {
+            result?;
+        }
+    }
     Ok(())
 }
 
 async fn resolve_downstream_services(config: &mut AppConfig) {
-    if let Some(base_url) = config.memory_engine_base_url.clone() {
-        config.memory_engine_base_url = Some(
-            chatos_service_runtime::resolve_service_url(
-                "memory-engine",
-                base_url.as_str(),
-                "/api/memory-engine/v1",
-            )
-            .await,
-        );
-    }
-    if let Some(base_url) = config.task_runner_base_url.clone() {
-        config.task_runner_base_url = Some(
-            chatos_service_runtime::resolve_service_base_url("task-runner", base_url.as_str())
-                .await,
-        );
-    }
     if let Some(base_url) = config.harness_base_url.clone() {
         config.harness_base_url = Some(
             chatos_service_runtime::resolve_service_base_url("harness", base_url.as_str()).await,

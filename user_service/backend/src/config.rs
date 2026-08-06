@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 
 use chatos_service_runtime::{
     env_text as read_env, validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
@@ -24,8 +25,12 @@ pub struct AppConfig {
     pub super_admin_display_name: String,
     pub memory_engine_base_url: Option<String>,
     pub memory_engine_operator_token: Option<String>,
+    pub memory_engine_mtls_ca_cert_path: Option<PathBuf>,
+    pub memory_engine_mtls_client_identity_path: Option<PathBuf>,
     pub task_runner_base_url: Option<String>,
-    pub task_runner_callback_secret: Option<String>,
+    pub task_runner_internal_api_secret: Option<String>,
+    pub task_runner_mtls_ca_cert_path: Option<PathBuf>,
+    pub task_runner_mtls_client_identity_path: Option<PathBuf>,
     pub downstream_request_timeout_ms: i64,
     pub harness_provisioning_enabled: bool,
     pub harness_base_url: Option<String>,
@@ -69,10 +74,7 @@ impl AppConfig {
                 .unwrap_or_else(|| "127.0.0.1".to_string())
                 .parse()
                 .map_err(|err| format!("invalid USER_SERVICE_HOST: {err}"))?,
-            port: read_env("USER_SERVICE_PORT")
-                .unwrap_or_else(|| "39190".to_string())
-                .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_PORT: {err}"))?,
+            port: require_config_center_u16("USER_SERVICE_PORT")?,
             database_url,
             mongodb_database,
             jwt_secret: require_config_center_secret("USER_SERVICE_JWT_SECRET")?,
@@ -92,15 +94,25 @@ impl AppConfig {
             super_admin_display_name: require_config_center_text(
                 "USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME",
             )?,
-            memory_engine_base_url: optional_config_center_text(
+            memory_engine_base_url: Some(require_config_center_text(
                 "USER_SERVICE_MEMORY_ENGINE_BASE_URL",
-            ),
+            )?),
             memory_engine_operator_token: Some(require_config_center_secret(
                 "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
             )?),
+            memory_engine_mtls_ca_cert_path: Some(required_bootstrap_path(
+                "MEMORY_ENGINE_MTLS_CA_CERT_PATH",
+            )?),
+            memory_engine_mtls_client_identity_path: Some(required_bootstrap_path(
+                "MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH",
+            )?),
             task_runner_base_url: optional_config_center_text("USER_SERVICE_TASK_RUNNER_BASE_URL"),
-            task_runner_callback_secret: optional_config_center_text(
-                "USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET",
+            task_runner_internal_api_secret: optional_config_center_text(
+                "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
+            ),
+            task_runner_mtls_ca_cert_path: optional_bootstrap_path("TASK_RUNNER_MTLS_CA_CERT_PATH"),
+            task_runner_mtls_client_identity_path: optional_bootstrap_path(
+                "TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH",
             ),
             downstream_request_timeout_ms: require_config_center_i64(
                 "USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS",
@@ -171,6 +183,21 @@ impl AppConfig {
                 "change_me_user_service_memory_engine_secret",
             ],
         )?;
+        if let Some(base_url) = config.memory_engine_base_url.as_deref() {
+            let parsed = reqwest::Url::parse(base_url)
+                .map_err(|err| format!("USER_SERVICE_MEMORY_ENGINE_BASE_URL is invalid: {err}"))?;
+            if parsed.scheme() != "https" {
+                return Err("USER_SERVICE_MEMORY_ENGINE_BASE_URL must use https".to_string());
+            }
+            if config.memory_engine_mtls_ca_cert_path.is_none()
+                || config.memory_engine_mtls_client_identity_path.is_none()
+            {
+                return Err(
+                    "Memory Engine mTLS CA and client identity paths are required when USER_SERVICE_MEMORY_ENGINE_BASE_URL is configured"
+                        .to_string(),
+                );
+            }
+        }
         validate_production_secret(
             "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
             config.user_service_internal_api_secret.as_deref(),
@@ -181,16 +208,36 @@ impl AppConfig {
         )?;
         if config.task_runner_base_url.is_some()
             && config
-                .task_runner_callback_secret
+                .task_runner_internal_api_secret
                 .as_deref()
                 .map(str::trim)
                 .is_none_or(str::is_empty)
         {
             return Err(
-                "USER_SERVICE_TASK_RUNNER_CALLBACK_SECRET is required when USER_SERVICE_TASK_RUNNER_BASE_URL is configured"
+                "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET is required when USER_SERVICE_TASK_RUNNER_BASE_URL is configured"
                     .to_string(),
             );
         }
+        if let Some(base_url) = config.task_runner_base_url.as_deref() {
+            let parsed = reqwest::Url::parse(base_url)
+                .map_err(|err| format!("USER_SERVICE_TASK_RUNNER_BASE_URL is invalid: {err}"))?;
+            if parsed.scheme() != "https" {
+                return Err("USER_SERVICE_TASK_RUNNER_BASE_URL must use https".to_string());
+            }
+            if config.task_runner_mtls_ca_cert_path.is_none()
+                || config.task_runner_mtls_client_identity_path.is_none()
+            {
+                return Err(
+                    "Task Runner mTLS CA and client identity paths are required when USER_SERVICE_TASK_RUNNER_BASE_URL is configured"
+                        .to_string(),
+                );
+            }
+        }
+        validate_production_secret(
+            "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
+            config.task_runner_internal_api_secret.as_deref(),
+            &["change_me_user_service_task_runner_secret"],
+        )?;
         if config.harness_provisioning_enabled
             && config
                 .harness_base_url
@@ -210,6 +257,15 @@ impl AppConfig {
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
+}
+
+fn optional_bootstrap_path(key: &str) -> Option<PathBuf> {
+    read_env(key).map(PathBuf::from)
+}
+
+fn required_bootstrap_path(key: &str) -> Result<PathBuf, String> {
+    optional_bootstrap_path(key)
+        .ok_or_else(|| format!("{key} is required as deployment Secret material"))
 }
 
 fn validate_login_throttle_config(config: &AppConfig) -> Result<(), String> {

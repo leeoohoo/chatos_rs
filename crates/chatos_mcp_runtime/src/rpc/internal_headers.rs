@@ -18,11 +18,6 @@ const SANDBOX_MANAGER_CALLER_HEADER: &str = "x-sandbox-caller";
 const SANDBOX_MANAGER_TOKEN_HEADER: &str = "x-sandbox-internal-token";
 const SANDBOX_MANAGER_SCOPE_HEADER: &str = "x-sandbox-internal-scope";
 const SANDBOX_MANAGER_TOKEN_AUDIENCE: &str = "sandbox-manager";
-const MCP_MANAGEMENT_SECRET_HEADER: &str = "x-mcp-management-internal-secret";
-const MCP_MANAGEMENT_CALLER_HEADER: &str = "x-mcp-management-caller-service";
-const MCP_MANAGEMENT_TOKEN_HEADER: &str = "x-mcp-management-internal-token";
-const MCP_MANAGEMENT_SCOPE_HEADER: &str = "x-mcp-management-internal-scope";
-const MCP_MANAGEMENT_TOKEN_AUDIENCE: &str = "mcp-management-service";
 
 pub fn prepare_http_headers(
     headers: &HashMap<String, String>,
@@ -45,17 +40,10 @@ pub fn prepare_http_headers(
         SANDBOX_MANAGER_SCOPE_HEADER,
         "Sandbox Manager",
     )?;
-    reject_static_token_without_scope(
-        headers,
-        MCP_MANAGEMENT_TOKEN_HEADER,
-        MCP_MANAGEMENT_SCOPE_HEADER,
-        "MCP Management",
-    )?;
     let signing_profile_count = [
         SANDBOX_MANAGER_SCOPE_HEADER,
         LOCAL_CONNECTOR_SCOPE_HEADER,
         PROJECT_SERVICE_SCOPE_HEADER,
-        MCP_MANAGEMENT_SCOPE_HEADER,
     ]
     .into_iter()
     .filter(|scope_header| header_value(headers, scope_header).is_some())
@@ -74,21 +62,6 @@ pub fn prepare_http_headers(
                 audience: SANDBOX_MANAGER_TOKEN_AUDIENCE,
                 service_label: "Sandbox Manager",
                 extra_private_headers: &["x-sandbox-client-id"],
-            },
-            scope,
-        );
-    }
-    if let Some(scope) = header_value(headers, MCP_MANAGEMENT_SCOPE_HEADER) {
-        return sign_headers(
-            headers,
-            HeaderSigningProfile {
-                caller_header: MCP_MANAGEMENT_CALLER_HEADER,
-                secret_header: MCP_MANAGEMENT_SECRET_HEADER,
-                token_header: MCP_MANAGEMENT_TOKEN_HEADER,
-                scope_header: MCP_MANAGEMENT_SCOPE_HEADER,
-                audience: MCP_MANAGEMENT_TOKEN_AUDIENCE,
-                service_label: "MCP Management",
-                extra_private_headers: &[],
             },
             scope,
         );
@@ -131,16 +104,9 @@ pub fn headers_require_per_request_signing(headers: &HashMap<String, String>) ->
         SANDBOX_MANAGER_SCOPE_HEADER,
         LOCAL_CONNECTOR_SCOPE_HEADER,
         PROJECT_SERVICE_SCOPE_HEADER,
-        MCP_MANAGEMENT_SCOPE_HEADER,
     ]
     .into_iter()
     .any(|scope_header| header_value(headers, scope_header).is_some())
-}
-
-pub fn headers_support_mcp_management_polling(headers: &HashMap<String, String>) -> bool {
-    header_value(headers, MCP_MANAGEMENT_SCOPE_HEADER).is_some()
-        && header_value(headers, MCP_MANAGEMENT_CALLER_HEADER).is_some()
-        && header_value(headers, MCP_MANAGEMENT_SECRET_HEADER).is_some()
 }
 
 fn reject_static_token_without_scope(

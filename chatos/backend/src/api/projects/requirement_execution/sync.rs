@@ -50,7 +50,6 @@ pub(in crate::api::projects) async fn load_execution_links_for_work_items(
 }
 
 pub(in crate::api::projects) async fn sync_requirement_execution_state(
-    base_url: &str,
     sync_secret: &str,
     requirement_id: &str,
     requirement_status: Option<&str>,
@@ -59,7 +58,6 @@ pub(in crate::api::projects) async fn sync_requirement_execution_state(
     skip_done_work_items: bool,
 ) -> Result<(), HandlerError> {
     project_management_api_client::sync_requirement_execution_state(
-        base_url,
         sync_secret,
         requirement_id,
         &project_management_api_client::SyncRequirementExecutionStateRequest {
@@ -75,14 +73,12 @@ pub(in crate::api::projects) async fn sync_requirement_execution_state(
 }
 
 pub(in crate::api::projects) async fn sync_execution_link_status(
-    base_url: &str,
     sync_secret: &str,
     link: &ExecutionLink,
     task_runner_status: &str,
     callback_event: Option<&str>,
 ) -> Result<(), HandlerError> {
     project_management_api_client::sync_work_item_task_runner_status(
-        base_url,
         sync_secret,
         link.work_item_id.as_str(),
         &project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {

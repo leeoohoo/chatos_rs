@@ -19,14 +19,13 @@
 
 - 建立整改进度文档
 - 增加 `rust-toolchain.toml`，固定 Rust 工具链为 `1.93.0`
-- 为 `admin` / `core` 路由增加 operator 级认证能力
-- 新增 `MEMORY_ENGINE_OPERATOR_TOKEN` 配置项
-- 管理台支持通过 `VITE_MEMORY_ENGINE_OPERATOR_TOKEN` 透传 operator token
+- 为 `admin` 路由增加 caller 专属短期签名认证，`core` 路由支持内部签名身份或真实用户 Bearer
+- 删除 `MEMORY_ENGINE_OPERATOR_TOKEN` 与浏览器内嵌 operator token，禁止静态管理凭据回退
 - SDK 认证上下文新增租户一致性校验
 - SDK 的 `threads` / `records` / `context` / `subject_memories` / `jobs` / `snapshots` / `summaries` 入口已接入租户校验
 - 管理台 source 表单改为显式维护 `tenant_id`
 - `summaries` 仓储新增按 `tenant_id` / `source_id` 的过滤能力，优先用于 SDK 摘要读取与删除路径
-- 补充了 SDK 租户校验和 operator token 比对的最小测试
+- 补充了 SDK 租户校验和内部签名身份的最小测试
 - `records` 仓储的 pending / mark / reset / upsert / delete 路径已统一收口到 `tenant_id + source_id + thread_id`
 - `thread summary` / `repair summary` / `compose context` / `subject memory` / `rollup` 已接入新的 records / summaries 完整作用域
 - `summaries` 的内部读取与状态回写已收口到 `tenant_id + source_id + thread_id`
@@ -84,7 +83,7 @@
 - SDK `new_platform()` 模式已补一轮契约收口：允许省略 `source_id` 的 direct 读接口不再注入空 `source_id` 查询，必须依赖 source 作用域的写/调度接口则会尽早返回清晰错误，避免“静默带空过滤”与“平台模式误用直连写接口”混在一起
 - `model profile` 管理链路已补齐单项按 id 读取接口，SDK 不再通过“先拉全量列表再本地筛选”的方式模拟单项查询，补上了一处 admin 客户端/服务端能力不对称和一个低收益的额外列表请求
 - SDK 使用文档已补充 `new_platform / new_direct / new_system` 的适用边界，明确了平台模式下哪些 direct 接口可以安全使用、哪些必须改走显式 `source_id` 模式，降低错误接入的概率
-- SDK 已补可选 `operator token` 透传能力，`new_direct / new_platform / new_system` 现在都可以链式调用 `.with_operator_token(...)` 与后端 `MEMORY_ENGINE_OPERATOR_TOKEN` 鉴权对齐，避免启用 operator 认证后 direct/platform 调用天然 401
+- SDK 已删除静态 operator token 透传能力，`new_direct / new_platform / new_system` 的服务调用统一使用 `.with_internal_service_auth(...)` 签发短期 token。
 - 后端 `records / summaries / threads` 的删除入口已统一补上 `source_guard::ensure_write_source_allowed(...)` 校验，避免部分破坏性写操作仍绕过 source 写权限收口
 - SDK `admin` 契约已继续补齐：`EngineModelProfile` / `UpsertEngineModelProfileRequest` 现已对齐后端 `is_default` 字段，同时新增 `list_job_policies`、`get_job_runs_bundle`、`get_dashboard_overview` 客户端入口，减少“后端已有能力但 SDK 无法直连”的封装缺口
 - `job runs` 管理查询的 `trigger_type` 过滤已从后端能力面继续向 SDK 与前端请求层透传，修复了 bundle / 列表查询对该过滤条件的参数丢失问题

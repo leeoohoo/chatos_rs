@@ -2,8 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use plugin_management_service_backend::{
-    build_router, load_plugin_management_dotenv, start_plugin_catalog_sync_loop, AppConfig,
-    AppState,
+    build_internal_router, build_public_router,
+    internal_tls::{load_internal_mtls_config, PluginManagementInternalTlsConfig},
+    load_plugin_management_dotenv, start_plugin_catalog_sync_queue, AppConfig, AppState,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -15,12 +16,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     chatos_service_runtime::apply_config_center_env("plugin-management-service")
         .await
         .map_err(|err| format!("apply managed config failed: {err}"))?;
+    let pressure_config_client =
+        chatos_config_sdk::ConfigClient::from_env("plugin-management-service").map_err(|err| {
+            format!("build Plugin Management pressure config client failed: {err}")
+        })?;
+    let pressure_snapshot = pressure_config_client
+        .load_strict()
+        .await
+        .map_err(|err| format!("load Plugin Management pressure config failed: {err}"))?;
+    let pressure_policy =
+        plugin_management_service_backend::pressure::PluginManagementPressurePolicy::from_snapshot(
+            &pressure_snapshot,
+        )?;
+    let pressure_state =
+        plugin_management_service_backend::pressure::PluginManagementPressureState::new(
+            pressure_policy,
+        );
     let mut config = AppConfig::from_env()?;
     resolve_downstream_services(&mut config).await;
     let bind_addr = config.bind_addr();
-    let state = AppState::new(config.clone()).await?;
-    start_plugin_catalog_sync_loop(state.clone());
-    let app = build_router(state);
+    let internal_tls = PluginManagementInternalTlsConfig::from_env(config.host, config.port)?;
+    let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
+    let state = AppState::new(config.clone(), pressure_state).await?;
+    start_plugin_catalog_sync_queue(state.clone());
+    let service_id = std::env::var("CHATOS_SERVICE_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("plugin-management-service-{}", std::process::id()));
+    let running_version = std::env::var("CHATOS_SERVICE_VERSION").ok();
+    let _pressure_reporter = plugin_management_service_backend::pressure::start_pressure_reporter(
+        state.clone(),
+        pressure_config_client,
+        service_id,
+        running_version,
+    );
+    let public_app = build_public_router(state.clone());
+    let internal_app = build_internal_router(state);
     let _service_runtime = chatos_service_runtime::register_current_service(
         "plugin-management-service",
         config.port,
@@ -35,7 +66,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.port
     );
 
-    axum::serve(listener, app).await?;
+    tracing::info!(
+        "Plugin Management internal API listening with mandatory mTLS on https://{}",
+        internal_tls.bind_addr
+    );
+
+    tokio::select! {
+        result = axum::serve(listener, public_app) => {
+            result?;
+        }
+        result = axum_server::bind_rustls(internal_tls.bind_addr, internal_mtls_config)
+            .serve(internal_app.into_make_service()) => {
+            result?;
+        }
+    }
     Ok(())
 }
 

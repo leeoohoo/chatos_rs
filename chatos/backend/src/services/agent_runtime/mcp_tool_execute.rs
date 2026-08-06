@@ -111,6 +111,7 @@ mod tests {
                 allowed_tool_names: None,
                 preserve_tool_names: false,
                 fail_on_unavailable: false,
+                async_result_transport: chatos_mcp_runtime::McpAsyncResultTransport::Disabled,
                 header_provider: None,
             }],
             vec![McpStdioServer {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_mcp::code_maintainer::FileModificationOutcome;
 use serde_json::{json, Value};
 
 use super::super::client::{
@@ -77,6 +78,22 @@ pub(in super::super) async fn tool_edit_file(
     let new_text = required_string(args, "new_text")?;
     let file = read_harness_file(ctx, path.as_str()).await?;
     let edit = apply_text_edit(file.content.as_str(), args, old_text, new_text)?;
+    if !edit.changed {
+        return Ok(tool_text_result(json!({
+            "outcome": FileModificationOutcome::AlreadyApplied,
+            "changed": false,
+            "changed_target_count": 0,
+            "result": {
+                "path": path,
+                "bytes": file.size,
+                "sha256": file.sha256,
+                "changed": false,
+                "already_applied": true
+            },
+            "match": edit.info,
+            "message": "The requested edit is already present. No project files were changed."
+        })));
+    }
     ensure_write_size(edit.content.as_str())?;
     commit_single_file_action(
         ctx,
@@ -88,6 +105,9 @@ pub(in super::super) async fn tool_edit_file(
     )
     .await?;
     let mut payload = write_result_payload(path.as_str(), edit.content.as_str(), "UPDATE");
+    payload["outcome"] = json!(FileModificationOutcome::Changed);
+    payload["changed"] = json!(true);
+    payload["changed_target_count"] = json!(1);
     payload["match"] = edit.info;
     Ok(tool_text_result(payload))
 }

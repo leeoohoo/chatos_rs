@@ -12,6 +12,9 @@ impl AskUserStore for AskUserPromptService {
         on_stream_chunk: Option<AskUserStreamChunkCallback>,
     ) -> Result<AskUserDecision, String> {
         let (task_id, run_id) = self.resolve_context_ids(&payload).await?;
+        if self.config.is_some() && run_id.is_none() {
+            return Err("ask_user requires an active Run for Worker event routing".to_string());
+        }
         let created_at = now_rfc3339();
         let expires_at = if payload.timeout_ms > 0 {
             Some(
@@ -48,21 +51,30 @@ impl AskUserStore for AskUserPromptService {
         }
 
         let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
-        loop {
-            let Some(current) = self.store.get_ask_user_prompt(&prompt_id).await? else {
-                return Err(format!("提示不存在: {prompt_id}"));
-            };
-            if current.status != AskUserPromptStatus::Pending {
-                return Ok(prompt_to_decision(current));
-            }
+        let current = self
+            .store
+            .get_ask_user_prompt(&prompt_id)
+            .await?
+            .ok_or_else(|| format!("提示不存在: {prompt_id}"))?;
+        if current.status != AskUserPromptStatus::Pending {
+            return Ok(prompt_to_decision(current));
+        }
 
-            tokio::select! {
-                _ = notify.notified() => {}
-                _ = tokio::time::sleep(PROMPT_STATUS_POLL_INTERVAL) => {}
-                _ = tokio::time::sleep_until(deadline) => {
-                    let timed_out = self.timeout_prompt(&prompt_id).await?;
-                    return Ok(prompt_to_decision(timed_out));
+        tokio::select! {
+            _ = notify.notified() => {
+                let resolved = self
+                    .store
+                    .get_ask_user_prompt(&prompt_id)
+                    .await?
+                    .ok_or_else(|| format!("提示不存在: {prompt_id}"))?;
+                if resolved.status == AskUserPromptStatus::Pending {
+                    return Err(format!("提示解决事件与持久化状态不一致: {prompt_id}"));
                 }
+                Ok(prompt_to_decision(resolved))
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                let timed_out = self.timeout_prompt(&prompt_id).await?;
+                Ok(prompt_to_decision(timed_out))
             }
         }
     }

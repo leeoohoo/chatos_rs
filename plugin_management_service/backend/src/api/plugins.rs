@@ -187,16 +187,25 @@ pub(super) async fn update_user_plugin_preference_internal(
     Path(plugin_id): Path<String>,
     Json(request): Json<UpdateUserPluginPreferenceRequest>,
 ) -> Result<Json<UpdateUserPluginPreferenceResponse>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
     let owner_user_id = required_text(Some(request.owner_user_id.as_str()), "owner_user_id")?;
+    let mut internal_audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(owner_user_id.as_str()),
+        "user_plugin_preference",
+        plugin_id.as_str(),
+        "update",
+    );
     let plugin = state
         .store
         .get_plugin_catalog_entry(plugin_id.as_str())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("Plugin not found"))?;
+    internal_audit.resource_name(Some(plugin.display_name.as_str()));
     ensure_catalog_visible_to_owner(owner_user_id.as_str(), &plugin)?;
-    persist_user_plugin_preference(
+    let response = persist_user_plugin_preference(
         &state,
         owner_user_id.as_str(),
         &plugin,
@@ -208,7 +217,9 @@ pub(super) async fn update_user_plugin_preference_internal(
         },
     )
     .await
-    .map(Json)
+    .map(Json)?;
+    internal_audit.succeeded();
+    Ok(response)
 }
 
 async fn persist_user_plugin_preference(

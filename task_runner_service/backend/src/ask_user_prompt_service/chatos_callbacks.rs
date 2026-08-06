@@ -187,6 +187,10 @@ async fn send_chatos_ask_user_prompt_callback(
     let Some(url) = config.chatos_callback_url.clone() else {
         return Err("TASK_RUNNER_CHATOS_CALLBACK_URL not configured".to_string());
     };
+    let secret = config
+        .chatos_internal_api_secret
+        .as_deref()
+        .ok_or_else(|| "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET not configured".to_string())?;
     let client = build_http_client(HttpClientTimeouts::new(config.callback_timeout))
         .map_err(|err| err.to_string())?;
     let mut last_error: Option<String> = None;
@@ -195,9 +199,16 @@ async fn send_chatos_ask_user_prompt_callback(
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         }
         let mut request = client.post(url.clone()).json(&payload);
-        if let Some(secret) = config.chatos_callback_secret.clone() {
-            request = request.header("X-Task-Runner-Callback-Secret", secret);
-        }
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            "task-runner",
+            "chatos-backend",
+            "task-runner.callback",
+            60,
+        )?;
+        request = request
+            .header("X-Chatos-Internal-Caller", "task-runner")
+            .header("X-Chatos-Internal-Token", token);
         let response = match request.send().await {
             Ok(response) => response,
             Err(err) => {

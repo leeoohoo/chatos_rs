@@ -30,16 +30,13 @@ use crate::runtime::{
     PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
 };
 
-const SNAPSHOT_SCHEMA_VERSION: i32 = 3;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 5;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_HEADERS: usize = 64;
 const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
 const MAX_PERSISTED_TOOL_POLICY_ITEMS: usize = 512;
 const MAX_PERSISTED_TOOL_NAME_BYTES: usize = 256;
 const MAX_PERSISTED_SNAPSHOT_BYTES: usize = 12 * 1024 * 1024;
-const MAX_RUNTIME_SESSION_CACHE_ENTRIES: usize = 2_048;
-const MAX_RUNTIME_SESSION_CACHE_BYTES: usize = 32 * 1024 * 1024;
-
 #[derive(Clone)]
 pub struct ExternalHttpProviderBinding {
     pub provider_ref: String,
@@ -122,10 +119,13 @@ impl fmt::Debug for CloudStdioProviderBinding {
 pub struct RuntimeSessionSnapshot {
     pub session_id: String,
     pub caller_service: String,
+    pub trace_id: String,
+    pub tenant_id: String,
     pub owner_user_id: String,
     pub agent_key: String,
     pub task_profile: Option<String>,
     pub project_id: String,
+    pub device_id: Option<String>,
     pub run_id: Option<String>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
@@ -155,9 +155,11 @@ impl RuntimeSessionSnapshot {
     pub fn routes_response(&self) -> RuntimeSessionRoutesResponse {
         RuntimeSessionRoutesResponse {
             session_id: self.session_id.clone(),
+            tenant_id: self.tenant_id.clone(),
             owner_user_id: self.owner_user_id.clone(),
             agent_key: self.agent_key.clone(),
             project_id: self.project_id.clone(),
+            device_id: self.device_id.clone(),
             run_id: self.run_id.clone(),
             policy_revision: self.policy_revision.clone(),
             route_revision: self.route_revision.clone(),
@@ -183,10 +185,15 @@ pub struct RuntimeSessionStoreStats {
     pub cached_p95_snapshot_bytes: usize,
     pub cache_entry_limit: Option<usize>,
     pub cache_byte_limit: Option<usize>,
+    pub cache_hits_total: u64,
+    pub cache_misses_total: u64,
+    pub cache_capacity_evictions_total: u64,
+    pub cache_expired_evictions_total: u64,
+    pub cache_oversized_rejections_total: u64,
 }
 
 enum RuntimeSessionStoreBackend {
-    Memory(RwLock<HashMap<String, RuntimeSessionSnapshot>>),
+    Memory(RwLock<HashMap<String, Arc<RuntimeSessionSnapshot>>>),
     Mongo(MongoRuntimeSessionStore),
 }
 
@@ -194,13 +201,35 @@ struct MongoRuntimeSessionStore {
     collection: Collection<StoredRuntimeSessionDocument>,
     cipher: SnapshotCipher,
     external_http_request_timeout: Duration,
+    cache_limits: RuntimeSessionCacheLimits,
     cache: RwLock<RuntimeSessionCache>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeSessionCacheLimits {
+    pub max_entries: usize,
+    pub max_bytes: usize,
+}
+
+impl RuntimeSessionCacheLimits {
+    pub fn new(max_entries: usize, max_bytes: usize) -> Result<Self, String> {
+        if max_entries == 0 {
+            return Err("Runtime Session cache max entries must be at least 1".to_string());
+        }
+        if max_bytes == 0 {
+            return Err("Runtime Session cache max bytes must be at least 1".to_string());
+        }
+        Ok(Self {
+            max_entries,
+            max_bytes,
+        })
+    }
 }
 
 #[derive(Clone)]
 struct CachedRuntimeSessionSnapshot {
     envelope_digest: [u8; 32],
-    snapshot: RuntimeSessionSnapshot,
+    snapshot: Arc<RuntimeSessionSnapshot>,
     approx_size_bytes: usize,
     last_access_tick: u64,
 }
@@ -210,6 +239,11 @@ struct RuntimeSessionCache {
     entries: HashMap<String, CachedRuntimeSessionSnapshot>,
     total_bytes: usize,
     next_access_tick: u64,
+    hits_total: u64,
+    misses_total: u64,
+    capacity_evictions_total: u64,
+    expired_evictions_total: u64,
+    oversized_rejections_total: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,11 +261,14 @@ struct StoredRuntimeSessionDocument {
 struct PersistedRuntimeSessionSnapshot {
     session_id: String,
     caller_service: String,
+    trace_id: String,
+    tenant_id: String,
     owner_user_id: String,
     agent_key: String,
     #[serde(default)]
     task_profile: Option<String>,
     project_id: String,
+    device_id: Option<String>,
     run_id: Option<String>,
     turn_id: Option<String>,
     task_id: Option<String>,
@@ -292,6 +329,7 @@ impl RuntimeSessionStore {
         database_url: &str,
         encryption_secret: &str,
         external_http_request_timeout: Duration,
+        cache_limits: RuntimeSessionCacheLimits,
     ) -> Result<Self, String> {
         let client = Client::with_uri_str(database_url)
             .await
@@ -322,6 +360,7 @@ impl RuntimeSessionStore {
                     collection,
                     cipher: SnapshotCipher::new(encryption_secret)?,
                     external_http_request_timeout,
+                    cache_limits,
                     cache: RwLock::new(RuntimeSessionCache::default()),
                 },
             )),
@@ -334,7 +373,7 @@ impl RuntimeSessionStore {
                 let now = chrono::Utc::now().timestamp();
                 let mut sessions = sessions.write().await;
                 sessions.retain(|_, value| value.expires_at_unix > now);
-                sessions.insert(snapshot.session_id.clone(), snapshot);
+                sessions.insert(snapshot.session_id.clone(), Arc::new(snapshot));
                 Ok(())
             }
             RuntimeSessionStoreBackend::Mongo(store) => {
@@ -353,13 +392,16 @@ impl RuntimeSessionStore {
                     .await
                     .map_err(|error| format!("persist Runtime Session Snapshot failed: {error}"))?;
                 let mut cache = store.cache.write().await;
-                cache_snapshot(&mut cache, envelope_digest, snapshot);
+                cache_snapshot(&mut cache, envelope_digest, snapshot, store.cache_limits);
                 Ok(())
             }
         }
     }
 
-    pub async fn get(&self, session_id: &str) -> Result<Option<RuntimeSessionSnapshot>, String> {
+    pub async fn get(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<RuntimeSessionSnapshot>>, String> {
         match self.backend.as_ref() {
             RuntimeSessionStoreBackend::Memory(sessions) => {
                 let now = chrono::Utc::now().timestamp();
@@ -402,14 +444,23 @@ impl RuntimeSessionStore {
                 let snapshot = store
                     .cipher
                     .decrypt(document, store.external_http_request_timeout)?;
+                let snapshot = Arc::new(snapshot);
                 let mut cache = store.cache.write().await;
-                cache_snapshot(&mut cache, envelope_digest, snapshot.clone());
+                cache_snapshot_arc(
+                    &mut cache,
+                    envelope_digest,
+                    snapshot.clone(),
+                    store.cache_limits,
+                );
                 Ok(Some(snapshot))
             }
         }
     }
 
-    pub async fn remove(&self, session_id: &str) -> Result<Option<RuntimeSessionSnapshot>, String> {
+    pub async fn remove(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<RuntimeSessionSnapshot>>, String> {
         match self.backend.as_ref() {
             RuntimeSessionStoreBackend::Memory(sessions) => {
                 Ok(sessions.write().await.remove(session_id))
@@ -436,6 +487,7 @@ impl RuntimeSessionStore {
                 store
                     .cipher
                     .decrypt(document, store.external_http_request_timeout)
+                    .map(Arc::new)
                     .map(Some)
             }
         }
@@ -449,7 +501,7 @@ impl RuntimeSessionStore {
                 sessions.retain(|_, snapshot| snapshot.expires_at_unix > now);
                 let snapshot_sizes = sessions
                     .values()
-                    .map(estimate_snapshot_cache_bytes)
+                    .map(|snapshot| estimate_snapshot_cache_bytes(snapshot.as_ref()))
                     .collect::<Vec<_>>();
                 let size_stats = summarize_snapshot_sizes(snapshot_sizes.as_slice());
                 Ok(RuntimeSessionStoreStats {
@@ -461,6 +513,11 @@ impl RuntimeSessionStore {
                     cached_p95_snapshot_bytes: size_stats.p95_bytes,
                     cache_entry_limit: None,
                     cache_byte_limit: None,
+                    cache_hits_total: 0,
+                    cache_misses_total: 0,
+                    cache_capacity_evictions_total: 0,
+                    cache_expired_evictions_total: 0,
+                    cache_oversized_rejections_total: 0,
                 })
             }
             RuntimeSessionStoreBackend::Mongo(store) => {
@@ -485,8 +542,13 @@ impl RuntimeSessionStore {
                     cached_total_bytes: cache.total_bytes,
                     cached_avg_snapshot_bytes: size_stats.avg_bytes,
                     cached_p95_snapshot_bytes: size_stats.p95_bytes,
-                    cache_entry_limit: Some(MAX_RUNTIME_SESSION_CACHE_ENTRIES),
-                    cache_byte_limit: Some(MAX_RUNTIME_SESSION_CACHE_BYTES),
+                    cache_entry_limit: Some(store.cache_limits.max_entries),
+                    cache_byte_limit: Some(store.cache_limits.max_bytes),
+                    cache_hits_total: cache.hits_total,
+                    cache_misses_total: cache.misses_total,
+                    cache_capacity_evictions_total: cache.capacity_evictions_total,
+                    cache_expired_evictions_total: cache.expired_evictions_total,
+                    cache_oversized_rejections_total: cache.oversized_rejections_total,
                 })
             }
         }
@@ -508,29 +570,40 @@ fn cache_snapshot(
     cache: &mut RuntimeSessionCache,
     envelope_digest: [u8; 32],
     snapshot: RuntimeSessionSnapshot,
+    limits: RuntimeSessionCacheLimits,
+) {
+    cache_snapshot_arc(cache, envelope_digest, Arc::new(snapshot), limits);
+}
+
+fn cache_snapshot_arc(
+    cache: &mut RuntimeSessionCache,
+    envelope_digest: [u8; 32],
+    snapshot: Arc<RuntimeSessionSnapshot>,
+    limits: RuntimeSessionCacheLimits,
 ) {
     cache_snapshot_with_limits(
         cache,
         envelope_digest,
         snapshot,
-        MAX_RUNTIME_SESSION_CACHE_ENTRIES,
-        MAX_RUNTIME_SESSION_CACHE_BYTES,
+        limits.max_entries,
+        limits.max_bytes,
     );
 }
 
 fn cache_snapshot_with_limits(
     cache: &mut RuntimeSessionCache,
     envelope_digest: [u8; 32],
-    snapshot: RuntimeSessionSnapshot,
+    snapshot: Arc<RuntimeSessionSnapshot>,
     max_entries: usize,
     max_bytes: usize,
 ) {
     let now = chrono::Utc::now().timestamp();
     cache.retain_unexpired(now);
-    let approx_size_bytes = estimate_snapshot_cache_bytes(&snapshot);
+    let approx_size_bytes = estimate_snapshot_cache_bytes(snapshot.as_ref());
     let session_id = snapshot.session_id.clone();
     cache.remove(session_id.as_str());
     if approx_size_bytes > max_bytes {
+        cache.oversized_rejections_total = cache.oversized_rejections_total.saturating_add(1);
         return;
     }
     let last_access_tick = cache.allocate_access_tick();
@@ -595,17 +668,22 @@ impl RuntimeSessionCache {
         session_id: &str,
         envelope_digest: [u8; 32],
         now: i64,
-    ) -> Option<RuntimeSessionSnapshot> {
+    ) -> Option<Arc<RuntimeSessionSnapshot>> {
         self.retain_unexpired(now);
-        let cached = self.entries.get(session_id)?;
+        let Some(cached) = self.entries.get(session_id) else {
+            self.misses_total = self.misses_total.saturating_add(1);
+            return None;
+        };
         if cached.envelope_digest != envelope_digest {
             self.remove(session_id);
+            self.misses_total = self.misses_total.saturating_add(1);
             return None;
         }
         let access_tick = self.allocate_access_tick();
         let cached = self.entries.get_mut(session_id)?;
         cached.last_access_tick = access_tick;
-        Some(cached.snapshot.clone())
+        self.hits_total = self.hits_total.saturating_add(1);
+        Some(Arc::clone(&cached.snapshot))
     }
 
     fn remove(&mut self, session_id: &str) -> Option<CachedRuntimeSessionSnapshot> {
@@ -622,7 +700,9 @@ impl RuntimeSessionCache {
             .map(|(session_id, _)| session_id.clone())
             .collect::<Vec<_>>();
         for session_id in expired {
-            self.remove(session_id.as_str());
+            if self.remove(session_id.as_str()).is_some() {
+                self.expired_evictions_total = self.expired_evictions_total.saturating_add(1);
+            }
         }
     }
 
@@ -638,7 +718,9 @@ impl RuntimeSessionCache {
             else {
                 break;
             };
-            self.remove(session_id.as_str());
+            if self.remove(session_id.as_str()).is_some() {
+                self.capacity_evictions_total = self.capacity_evictions_total.saturating_add(1);
+            }
         }
     }
 }
@@ -758,10 +840,13 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
         Ok(Self {
             session_id: snapshot.session_id.clone(),
             caller_service: snapshot.caller_service.clone(),
+            trace_id: snapshot.trace_id.clone(),
+            tenant_id: snapshot.tenant_id.clone(),
             owner_user_id: snapshot.owner_user_id.clone(),
             agent_key: snapshot.agent_key.clone(),
             task_profile: snapshot.task_profile.clone(),
             project_id: snapshot.project_id.clone(),
+            device_id: snapshot.device_id.clone(),
             run_id: snapshot.run_id.clone(),
             turn_id: snapshot.turn_id.clone(),
             task_id: snapshot.task_id.clone(),
@@ -809,10 +894,13 @@ impl PersistedRuntimeSessionSnapshot {
         Ok(RuntimeSessionSnapshot {
             session_id: self.session_id,
             caller_service: self.caller_service,
+            trace_id: self.trace_id,
+            tenant_id: self.tenant_id,
             owner_user_id: self.owner_user_id,
             agent_key: self.agent_key,
             task_profile: self.task_profile,
             project_id: self.project_id,
+            device_id: self.device_id,
             run_id: self.run_id,
             turn_id: self.turn_id,
             task_id: self.task_id,

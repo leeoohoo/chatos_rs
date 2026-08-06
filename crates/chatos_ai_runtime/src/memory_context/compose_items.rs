@@ -145,10 +145,9 @@ fn sanitize_recent_tool_outputs(
         .unwrap_or_else(ToolResultModelBudget::from_env);
     let mut outputs = HashMap::new();
 
-    // Prefer the newest evidence when the cumulative history budget is full.
-    // The model needs the latest state-changing result (for example an empty
-    // task board) more than an older, already-consumed file dump.
-    for (record_index, record) in records.iter().enumerate().rev() {
+    // Preserve the oldest retained outputs first so appending a new record does
+    // not rewrite an earlier model-input prefix and invalidate prompt caching.
+    for (record_index, record) in records.iter().enumerate() {
         if record.role.trim() != "tool" {
             continue;
         }

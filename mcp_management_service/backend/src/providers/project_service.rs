@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
-
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 use chatos_mcp_service::{
@@ -11,7 +9,6 @@ use chatos_mcp_service::{
     METHOD_TOOLS_CALL,
 };
 use chatos_service_runtime::http_body::read_response_bytes_limited;
-use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
@@ -64,8 +61,8 @@ pub(super) struct ProjectServiceProvider {
 
 impl ProjectServiceProvider {
     pub(super) fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
-        request_timeout: Duration,
         internal_secret: Option<String>,
         response_limit_bytes: usize,
     ) -> Result<Self, String> {
@@ -75,11 +72,6 @@ impl ProjectServiceProvider {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("project service Provider base URL must use http or https".to_string());
         }
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .redirect(Policy::none())
-            .build()
-            .map_err(|err| format!("build project service Provider client failed: {err}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
@@ -144,7 +136,6 @@ impl ProjectServiceProvider {
             .post(url)
             .header("x-project-service-caller", CALLER_SERVICE)
             .header("x-project-service-internal-token", token)
-            .header("x-project-service-sync-secret", secret)
             .header(
                 "x-mcp-management-owner-user-id",
                 snapshot.owner_user_id.as_str(),
@@ -239,7 +230,6 @@ impl ProjectServiceProvider {
             .post(url)
             .header("x-project-service-caller", CALLER_SERVICE)
             .header("x-project-service-internal-token", token)
-            .header("x-project-service-sync-secret", secret)
             .header(
                 "x-mcp-management-owner-user-id",
                 snapshot.owner_user_id.as_str(),
@@ -401,10 +391,13 @@ mod tests {
         RuntimeSessionSnapshot {
             session_id: "session-1".to_string(),
             caller_service: "task-runner".to_string(),
+            trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
             task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
+            device_id: None,
             run_id: Some("run-1".to_string()),
             turn_id: Some("turn-1".to_string()),
             task_id: Some("task-1".to_string()),
@@ -500,6 +493,7 @@ mod tests {
                 PROJECT_MCP_SCOPE,
             )
             .expect("valid project service token");
+            assert!(headers.get("x-project-service-sync-secret").is_none());
             Json(json!({
                 "jsonrpc": "2.0",
                 "id": request.get("id").cloned().unwrap_or(Value::Null),
@@ -570,8 +564,8 @@ mod tests {
         const SECRET: &str = "a-long-project-service-secret";
         let (base_url, server) = start_project_service(SECRET).await;
         let provider = ProjectServiceProvider::new(
+            reqwest::Client::new(),
             base_url,
-            Duration::from_secs(5),
             Some(SECRET.to_string()),
             1024 * 1024,
         )
@@ -629,8 +623,8 @@ mod tests {
     #[test]
     fn harness_route_uses_the_project_scoped_harness_endpoint() {
         let provider = ProjectServiceProvider::new(
+            reqwest::Client::new(),
             "http://127.0.0.1:39210",
-            Duration::from_secs(5),
             Some("a-long-project-service-secret".to_string()),
             1024 * 1024,
         )
@@ -654,8 +648,8 @@ mod tests {
     #[test]
     fn project_environment_route_uses_the_run_bound_internal_endpoint() {
         let provider = ProjectServiceProvider::new(
+            reqwest::Client::new(),
             "http://127.0.0.1:39210",
-            Duration::from_secs(5),
             Some("a-long-project-service-secret".to_string()),
             1024 * 1024,
         )

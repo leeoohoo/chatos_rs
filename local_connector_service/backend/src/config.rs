@@ -21,11 +21,17 @@ pub struct AppConfig {
     pub sandbox_image_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
-    pub require_signed_internal_requests: bool,
     pub require_device_connect_signature: bool,
-    pub allow_device_connect_query_token: bool,
     pub device_connect_signature_max_skew: Duration,
     pub active_session_lease_ttl: Duration,
+    pub valkey_url: String,
+    pub valkey_key_prefix: String,
+    pub device_presence_ttl: Duration,
+    pub valkey_reconnect_delay: Duration,
+    pub relay_correlation_grace_ttl: Duration,
+    pub relay_delivery_ack_timeout: Duration,
+    pub terminal_subscriber_ttl: Duration,
+    pub terminal_subscriber_refresh_interval: Duration,
     pub managed_requirements_toml_path: Option<PathBuf>,
     pub managed_requirements_signing_key_path: Option<PathBuf>,
     pub managed_requirements_signing_key_id: Option<String>,
@@ -51,9 +57,24 @@ impl AppConfig {
             required_u64("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")?.clamp(30, 3600);
         let active_session_lease_ttl_seconds =
             required_u64("LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS")?.clamp(30, 600);
+        let device_presence_ttl_seconds =
+            required_u64("LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS")?.clamp(30, 600);
+        let valkey_reconnect_ms =
+            required_u64("LOCAL_CONNECTOR_VALKEY_RECONNECT_MS")?.clamp(100, 60_000);
+        let relay_correlation_grace_seconds =
+            required_u64("LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS")?.clamp(5, 600);
+        let relay_delivery_ack_timeout_ms =
+            required_u64("LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS")?.clamp(100, 10_000);
+        let terminal_subscriber_ttl_seconds =
+            required_u64("LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS")?.clamp(15, 600);
+        let terminal_subscriber_refresh_seconds =
+            required_u64("LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS")?.clamp(5, 300);
         let managed_requirements_bundle_ttl_seconds =
             required_u64("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS")?
                 .clamp(300, 7 * 24 * 60 * 60);
+        let require_signed_internal_requests =
+            required_managed_bool("LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS")?;
+        ensure_signed_internal_requests_required(require_signed_internal_requests)?;
 
         let config = Self {
             host,
@@ -68,17 +89,21 @@ impl AppConfig {
             ),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
             internal_api_secrets: caller_internal_api_secrets(),
-            require_signed_internal_requests: required_managed_bool(
-                "LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-            )?,
             require_device_connect_signature: required_managed_bool(
                 "LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE",
             )?,
-            allow_device_connect_query_token: required_managed_bool(
-                "LOCAL_CONNECTOR_ALLOW_DEVICE_CONNECT_QUERY_TOKEN",
-            )?,
             device_connect_signature_max_skew: Duration::from_secs(signature_skew_seconds),
             active_session_lease_ttl: Duration::from_secs(active_session_lease_ttl_seconds),
+            valkey_url: required_text("LOCAL_CONNECTOR_VALKEY_URL")?,
+            valkey_key_prefix: required_text("LOCAL_CONNECTOR_VALKEY_KEY_PREFIX")?,
+            device_presence_ttl: Duration::from_secs(device_presence_ttl_seconds),
+            valkey_reconnect_delay: Duration::from_millis(valkey_reconnect_ms),
+            relay_correlation_grace_ttl: Duration::from_secs(relay_correlation_grace_seconds),
+            relay_delivery_ack_timeout: Duration::from_millis(relay_delivery_ack_timeout_ms),
+            terminal_subscriber_ttl: Duration::from_secs(terminal_subscriber_ttl_seconds),
+            terminal_subscriber_refresh_interval: Duration::from_secs(
+                terminal_subscriber_refresh_seconds,
+            ),
             managed_requirements_toml_path: optional_text(
                 "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH",
             )
@@ -95,19 +120,32 @@ impl AppConfig {
             ),
         };
 
-        if config.require_signed_internal_requests {
-            for caller in [
-                "chatos-backend",
-                "task-runner",
-                "project-service",
-                "mcp-management-service",
-            ] {
-                if !config.internal_api_secrets.contains_key(caller) {
-                    return Err(format!(
-                        "dedicated Local Connector internal secret is required for {caller}"
-                    ));
-                }
+        for caller in [
+            "chatos-backend",
+            "task-runner",
+            "project-service",
+            "mcp-management-service",
+        ] {
+            if !config.internal_api_secrets.contains_key(caller) {
+                return Err(format!(
+                    "dedicated Local Connector internal secret is required for {caller}"
+                ));
             }
+        }
+        if config.valkey_key_prefix.trim().is_empty() {
+            return Err("LOCAL_CONNECTOR_VALKEY_KEY_PREFIX must not be empty".to_string());
+        }
+        if config.device_presence_ttl < config.active_session_lease_ttl {
+            return Err(
+                "LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS must be greater than or equal to LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS"
+                    .to_string(),
+            );
+        }
+        if config.terminal_subscriber_refresh_interval >= config.terminal_subscriber_ttl {
+            return Err(
+                "LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS must be less than LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS"
+                    .to_string(),
+            );
         }
         for (caller, secret) in &config.internal_api_secrets {
             validate_production_secret(
@@ -153,11 +191,17 @@ impl AppConfig {
             sandbox_image_relay_request_timeout: Duration::from_secs(2),
             public_base_url: None,
             internal_api_secrets,
-            require_signed_internal_requests: true,
             require_device_connect_signature: true,
-            allow_device_connect_query_token: false,
             device_connect_signature_max_skew: Duration::from_secs(300),
             active_session_lease_ttl: Duration::from_secs(90),
+            valkey_url: "redis://127.0.0.1:6379/0".to_string(),
+            valkey_key_prefix: "chatos:local-connector:test".to_string(),
+            device_presence_ttl: Duration::from_secs(120),
+            valkey_reconnect_delay: Duration::from_secs(2),
+            relay_correlation_grace_ttl: Duration::from_secs(30),
+            relay_delivery_ack_timeout: Duration::from_secs(3),
+            terminal_subscriber_ttl: Duration::from_secs(60),
+            terminal_subscriber_refresh_interval: Duration::from_secs(20),
             managed_requirements_toml_path: None,
             managed_requirements_signing_key_path: None,
             managed_requirements_signing_key_id: None,
@@ -224,4 +268,26 @@ fn required_managed_bool(key: &str) -> Result<bool, String> {
     let value = normalized_env(key)
         .ok_or_else(|| format!("{key} is required from configuration center"))?;
     parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+fn ensure_signed_internal_requests_required(value: bool) -> Result<(), String> {
+    if value {
+        Ok(())
+    } else {
+        Err("LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_signed_internal_requests_required;
+
+    #[test]
+    fn local_connector_cannot_start_with_unsigned_internal_requests() {
+        assert!(ensure_signed_internal_requests_required(true).is_ok());
+        assert_eq!(
+            ensure_signed_internal_requests_required(false).unwrap_err(),
+            "LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true"
+        );
+    }
 }

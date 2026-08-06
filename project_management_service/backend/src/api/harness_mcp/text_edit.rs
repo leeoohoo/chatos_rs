@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 pub(super) struct TextEditResult {
     pub(super) content: String,
     pub(super) info: Value,
+    pub(super) changed: bool,
 }
 
 pub(super) fn apply_text_edit(
@@ -54,6 +55,17 @@ pub(super) fn apply_text_edit(
         }
         matches.push((start, end));
     }
+    if matches.is_empty() {
+        return already_applied_edit(
+            content,
+            new_text,
+            start_line,
+            end_line,
+            before_context,
+            after_context,
+            expected_matches,
+        );
+    }
     if let Some(expected) = expected_matches {
         if matches.len() != expected {
             return Err(format!(
@@ -83,8 +95,55 @@ pub(super) fn apply_text_edit(
             "start_line": byte_line_number(content, start),
             "end_line": byte_line_number(content, end),
             "old_text_bytes": old_text.len(),
-            "new_text_bytes": new_text.len()
+            "new_text_bytes": new_text.len(),
+            "already_applied": false
         }),
+        changed: true,
+    })
+}
+
+fn already_applied_edit(
+    content: &str,
+    new_text: &str,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    before_context: Option<&str>,
+    after_context: Option<&str>,
+    expected_matches: Option<usize>,
+) -> Result<TextEditResult, String> {
+    if new_text.is_empty() {
+        return Err("old_text not found in file.".to_string());
+    }
+    let matches = content
+        .match_indices(new_text)
+        .filter_map(|(start, _)| {
+            let end = start + new_text.len();
+            if start_line.is_some_and(|min| byte_line_number(content, start) < min)
+                || end_line.is_some_and(|max| byte_line_number(content, end) > max)
+                || before_context.is_some_and(|before| !content[..start].ends_with(before))
+                || after_context.is_some_and(|after| !content[end..].starts_with(after))
+            {
+                return None;
+            }
+            Some((start, end))
+        })
+        .collect::<Vec<_>>();
+    let expected = expected_matches.unwrap_or(1);
+    if matches.len() != expected || matches.len() != 1 {
+        return Err("old_text not found in file.".to_string());
+    }
+    let (start, end) = matches[0];
+    Ok(TextEditResult {
+        content: content.to_string(),
+        info: json!({
+            "replacements": 0,
+            "start_line": byte_line_number(content, start),
+            "end_line": byte_line_number(content, end),
+            "old_text_bytes": 0,
+            "new_text_bytes": new_text.len(),
+            "already_applied": true
+        }),
+        changed: false,
     })
 }
 
@@ -108,5 +167,24 @@ mod tests {
         });
         let err = apply_text_edit("hello\nhello\n", &args, "hello", "hi").unwrap_err();
         assert!(err.contains("matched 2 locations"));
+    }
+
+    #[test]
+    fn repeated_edit_is_a_successful_noop() {
+        let args = json!({
+            "old_text": "old",
+            "new_text": "new",
+            "start_line": 2,
+            "end_line": 2,
+            "before_context": "alpha\n",
+            "after_context": "\nomega",
+            "expected_matches": 1
+        });
+
+        let result =
+            apply_text_edit("alpha\nnew\nomega\n", &args, "old", "new").expect("already applied");
+
+        assert!(!result.changed);
+        assert_eq!(result.info["already_applied"], json!(true));
     }
 }

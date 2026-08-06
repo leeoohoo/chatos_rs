@@ -3,7 +3,6 @@
 
 use chatos_ai_runtime::ModelRuntimeConfig;
 use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::Deserialize;
 
 use crate::config::AppConfig;
@@ -70,16 +69,20 @@ pub async fn get_environment_initialization_model_settings(
     let secret = user_service_internal_secret(config)?;
     let endpoint = format!(
         "{}/api/internal/users/{}/model-settings",
-        config.user_service_base_url.trim().trim_end_matches('/'),
+        config
+            .user_service_internal_base_url
+            .trim()
+            .trim_end_matches('/'),
         urlencoding::encode(owner_user_id)
     );
-    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
-        .map_err(|err| format!("build user_service client failed: {err}"))?;
-    let response =
-        signed_user_service_request(client.get(endpoint), secret, MODEL_SETTINGS_READ_SCOPE)?
-            .send()
-            .await
-            .map_err(|err| format!("user_service model settings request failed: {err}"))?;
+    let response = signed_user_service_request(
+        config.user_service_internal_http_client.get(endpoint),
+        secret,
+        MODEL_SETTINGS_READ_SCOPE,
+    )?
+    .send()
+    .await
+    .map_err(|err| format!("user_service model settings request failed: {err}"))?;
     let status = response.status();
     if !status.is_success() {
         let body =
@@ -230,17 +233,21 @@ async fn get_cloud_model_runtime(
     let secret = user_service_internal_secret(config)?;
     let endpoint = format!(
         "{}/api/internal/users/{}/model-configs/{}/runtime",
-        config.user_service_base_url.trim().trim_end_matches('/'),
+        config
+            .user_service_internal_base_url
+            .trim()
+            .trim_end_matches('/'),
         urlencoding::encode(owner_user_id),
         urlencoding::encode(model_config_id),
     );
-    let client = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
-        .map_err(|err| format!("build user_service client failed: {err}"))?;
-    let response =
-        signed_user_service_request(client.get(endpoint), secret, MODEL_RUNTIME_READ_SCOPE)?
-            .send()
-            .await
-            .map_err(|err| format!("user_service model runtime request failed: {err}"))?;
+    let response = signed_user_service_request(
+        config.user_service_internal_http_client.get(endpoint),
+        secret,
+        MODEL_RUNTIME_READ_SCOPE,
+    )?
+    .send()
+    .await
+    .map_err(|err| format!("user_service model runtime request failed: {err}"))?;
     let status = response.status();
     if !status.is_success() {
         let body =

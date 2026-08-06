@@ -98,7 +98,7 @@ pub(super) async fn task_runner_callback(
     headers: HeaderMap,
     Json(payload): Json<TaskRunnerCallbackRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = verify_task_runner_callback_secret(&headers) {
+    if let Err(err) = verify_task_runner_callback_token(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "accepted": false, "error": err })),
@@ -430,24 +430,37 @@ async fn handle_task_runner_ask_user_prompt_callback(
     )
 }
 
-fn verify_task_runner_callback_secret(headers: &HeaderMap) -> Result<(), String> {
+fn verify_task_runner_callback_token(headers: &HeaderMap) -> Result<(), String> {
     let expected = Config::try_get()
         .ok()
         .and_then(|config| config.task_runner_callback_secret.clone());
-    let Some(expected) = expected.filter(|value| !value.trim().is_empty()) else {
-        return Ok(());
-    };
-    let actual = headers
-        .get("x-task-runner-callback-secret")
+    let expected = expected
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "task runner callback signing secret is not configured".to_string())?;
+    let caller = headers
+        .get("x-chatos-internal-caller")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "missing task runner callback secret".to_string())?;
-    if actual == expected {
-        Ok(())
-    } else {
-        Err("invalid task runner callback secret".to_string())
+        .ok_or_else(|| "missing task runner callback caller".to_string())?;
+    if caller != "task-runner" {
+        return Err("invalid task runner callback caller".to_string());
     }
+    let token = headers
+        .get("x-chatos-internal-token")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "missing task runner callback token".to_string())?;
+    chatos_service_runtime::verify_internal_service_token(
+        token,
+        expected.as_str(),
+        "task-runner",
+        "chatos-backend",
+        "task-runner.callback",
+    )
+    .map(|_| ())
+    .map_err(|_| "invalid task runner callback token".to_string())
 }
 
 async fn sync_project_requirement_execution_status(
@@ -476,7 +489,6 @@ async fn sync_project_requirement_execution_status(
         .clone()
         .or_else(|| Some(payload.status.clone()));
     project_management_api_client::sync_task_runner_task_status(
-        cfg.project_service_base_url.as_str(),
         sync_secret,
         payload.task_id.as_str(),
         &project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {

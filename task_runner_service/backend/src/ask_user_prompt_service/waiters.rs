@@ -35,7 +35,7 @@ impl AskUserPromptWaiters {
 
     pub(super) fn wake(&self, prompt_id: &str) {
         if let Some(notify) = self.inner.lock().get(prompt_id).cloned() {
-            notify.notify_waiters();
+            notify.notify_one();
         }
     }
 

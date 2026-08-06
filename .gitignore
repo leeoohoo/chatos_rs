@@ -99,6 +99,7 @@ __pycache__/
 /rustup-init.exe
 /.chatos
 /.chatos-local-dev
+/docker/secrets/
 /.chatos-ci-images
 /docs
 !/docs/

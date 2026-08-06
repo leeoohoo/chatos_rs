@@ -10,7 +10,7 @@ use crate::models::{FinishEngineJobRunRequest, RunPendingSummariesResponse};
 use crate::repositories::{control_plane, threads};
 use crate::services::summary;
 
-use super::common::{create_scheduler_job_run, finish_job_run, has_recent_scheduler_job_run};
+use super::common::{create_scheduler_job_run, finish_job_run};
 
 enum SummaryExecutionOutcome {
     Generated {
@@ -46,30 +46,6 @@ pub async fn run_pending_thread_summaries(
         None,
         policy.token_limit.unwrap_or(6000).max(128),
         limit,
-    )
-    .await
-}
-
-pub async fn run_pending_thread_summaries_due(
-    db: &Db,
-    config: &AppConfig,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    token_threshold: i64,
-    max_threads: i64,
-) -> Result<RunPendingSummariesResponse, String> {
-    let policy = control_plane::get_effective_job_policy(db, "summary").await?;
-    let interval_seconds = policy.interval_seconds.unwrap_or(30).max(3);
-    if has_recent_scheduler_job_run(db, "summary", tenant_id, source_id, interval_seconds).await? {
-        return Ok(empty_response());
-    }
-    run_pending_thread_summaries_internal(
-        db,
-        config,
-        tenant_id,
-        source_id,
-        token_threshold,
-        max_threads,
     )
     .await
 }

@@ -51,6 +51,14 @@ pub(super) async fn send_chatos_task_callback(
             "TASK_RUNNER_CHATOS_CALLBACK_URL not configured",
         ));
     };
+    let secret = config
+        .chatos_internal_api_secret
+        .as_deref()
+        .ok_or_else(|| {
+            ChatosCallbackDeliveryError::permanent(
+                "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET not configured",
+            )
+        })?;
     let mut last_error = None;
     for (attempt_index, delay_ms) in CHATOS_CALLBACK_RETRY_DELAYS_MS.into_iter().enumerate() {
         if delay_ms > 0 {
@@ -60,9 +68,17 @@ pub(super) async fn send_chatos_task_callback(
             .post(url.as_str())
             .timeout(config.callback_timeout)
             .json(&payload);
-        if let Some(secret) = config.chatos_callback_secret.as_deref() {
-            request = request.header("X-Task-Runner-Callback-Secret", secret);
-        }
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            "task-runner",
+            "chatos-backend",
+            "task-runner.callback",
+            60,
+        )
+        .map_err(ChatosCallbackDeliveryError::permanent)?;
+        request = request
+            .header("X-Chatos-Internal-Caller", "task-runner")
+            .header("X-Chatos-Internal-Token", token);
         match request.send().await {
             Ok(response) if response.status().is_success() => return Ok(()),
             Ok(response) => {

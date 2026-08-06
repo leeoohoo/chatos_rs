@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use async_trait::async_trait;
 use chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS;
 use serde_json::Value;
+use std::sync::Arc;
 use tracing::warn;
 
 use crate::config::Config;
@@ -54,11 +52,11 @@ pub fn build_shared_contextual_turn_runner_with_max_iterations(
     let cfg = Config::try_get()?;
     let runtime = build_shared_ai_runtime_with_chatos_records(tool_executor, message_manager)
         .with_max_iterations(max_iterations);
-    let memory_client = memory_engine_sdk::MemoryEngineClient::new_direct(
+    let memory_client = memory_engine_sdk::MemoryEngineClient::new_direct_with_http_client(
         cfg.memory_engine_base_url.clone(),
-        Duration::from_millis(cfg.memory_engine_request_timeout_ms.max(300) as u64),
         CHATOS_COMPAT_SOURCE_ID.to_string(),
-    )?;
+        cfg.memory_engine_http_client.clone(),
+    );
     let memory_client = apply_data_auth(memory_client, cfg);
     let composer = chatos_ai_runtime::MemoryContextComposer::from_client(memory_client);
     Ok(chatos_ai_runtime::ContextualTurnRunner::new(

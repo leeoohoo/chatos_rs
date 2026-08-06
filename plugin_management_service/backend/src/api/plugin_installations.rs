@@ -27,8 +27,17 @@ pub(super) async fn sync_plugin_installation_internal(
     headers: HeaderMap,
     Json(mut payload): Json<PluginInstallationSyncPayload>,
 ) -> Result<Json<PluginInstallationRecord>, ApiError> {
-    require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
+    let identity =
+        require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
     normalize_installation_payload(&mut payload)?;
+    let mut internal_audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        Some(payload.owner_user_id.as_str()),
+        "plugin_installation",
+        payload.plugin_id.as_str(),
+        "sync",
+    );
+    internal_audit.resource_name(Some(payload.platform.as_str()));
     let plugin = state
         .store
         .get_plugin_catalog_entry(payload.plugin_id.as_str())
@@ -128,6 +137,7 @@ pub(super) async fn sync_plugin_installation_internal(
         .insert_plugin_audit(&audit)
         .await
         .map_err(ApiError::internal)?;
+    internal_audit.succeeded();
     Ok(Json(record))
 }
 

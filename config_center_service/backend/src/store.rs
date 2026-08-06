@@ -6,11 +6,11 @@ use mongodb::bson::doc;
 use mongodb::options::{FindOptions, IndexOptions, ReplaceOptions};
 use mongodb::{Collection, Database, IndexModel};
 
-use chatos_config_sdk::ConfigSnapshot;
+use chatos_config_sdk::{ConfigSnapshot, PlatformPressureLevel};
 
 use crate::models::{
     ActiveReleaseRecord, AuditEventRecord, ConfigDefinitionRecord, ConfigDraftRecord,
-    ConfigReleaseRecord, ServiceInstanceRecord,
+    ConfigReleaseRecord, PlatformPressureStateRecord, ServiceInstanceRecord,
 };
 
 #[derive(Clone)]
@@ -23,6 +23,7 @@ pub struct AppStore {
     active_releases: Collection<ActiveReleaseRecord>,
     audit_events: Collection<AuditEventRecord>,
     instances: Collection<ServiceInstanceRecord>,
+    pressure_states: Collection<PlatformPressureStateRecord>,
 }
 
 impl AppStore {
@@ -35,6 +36,7 @@ impl AppStore {
             active_releases: database.collection("config_active_releases"),
             audit_events: database.collection("config_audit_events"),
             instances: database.collection("config_service_instances"),
+            pressure_states: database.collection("config_platform_pressure_states"),
             database,
         }
     }
@@ -54,7 +56,8 @@ impl AppStore {
             &self.instances,
             doc! { "environment": 1, "service_name": 1, "service_id": 1 },
         )
-        .await
+        .await?;
+        unique_index(&self.pressure_states, doc! { "environment": 1 }).await
     }
 
     pub async fn ping(&self) -> Result<(), String> {
@@ -380,6 +383,51 @@ impl AppStore {
             .map_err(|err| err.to_string())?
             .try_collect()
             .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn get_pressure_state(
+        &self,
+        environment: &str,
+    ) -> Result<Option<PlatformPressureStateRecord>, String> {
+        self.pressure_states
+            .find_one(doc! { "environment": environment }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn upsert_pressure_state(
+        &self,
+        state: &PlatformPressureStateRecord,
+    ) -> Result<(), String> {
+        self.pressure_states
+            .replace_one(
+                doc! { "environment": &state.environment },
+                state,
+                ReplaceOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn replace_pressure_state_if_level(
+        &self,
+        environment: &str,
+        expected: PlatformPressureLevel,
+        next: &PlatformPressureStateRecord,
+    ) -> Result<bool, String> {
+        self.pressure_states
+            .replace_one(
+                doc! {
+                    "environment": environment,
+                    "level": expected.as_str(),
+                },
+                next,
+                None,
+            )
+            .await
+            .map(|result| result.matched_count == 1)
             .map_err(|err| err.to_string())
     }
 }

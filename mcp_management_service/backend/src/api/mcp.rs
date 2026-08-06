@@ -2,29 +2,35 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeSet;
-use std::time::Duration;
 use std::time::Instant;
 
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
+use chatos_mcp::{system_mcp_descriptor, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, RuntimeToolDescriptor};
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, CancelledNotificationParams, JsonRpcRequest, JsonRpcResponse,
-    MCP_ERROR_AUTH_REQUIRED, MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS,
-    MCP_ERROR_INVOCATION_CANCELLED, MCP_ERROR_METHOD_NOT_FOUND, MCP_ERROR_UNKNOWN_EXECUTION_STATE,
-    METHOD_INITIALIZE, METHOD_NOTIFICATIONS_CANCELLED, METHOD_NOTIFICATIONS_INITIALIZED,
-    METHOD_PING, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
+    MCP_ERROR_AUTH_REQUIRED, MCP_ERROR_CAPACITY_EXHAUSTED, MCP_ERROR_INTERNAL,
+    MCP_ERROR_INVALID_PARAMS, MCP_ERROR_INVOCATION_CANCELLED, MCP_ERROR_METHOD_NOT_FOUND,
+    MCP_ERROR_UNKNOWN_EXECUTION_STATE, METHOD_INITIALIZE, METHOD_NOTIFICATIONS_CANCELLED,
+    METHOD_NOTIFICATIONS_INITIALIZED, METHOD_PING, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
 };
 use mongodb::bson::DateTime;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::async_dispatch::QueuedAsyncToolCallEnvelope;
+use crate::async_dispatch::{AsyncToolEnqueueError, QueuedAsyncToolCallEnvelope};
 use crate::capabilities::route_allows_system_tool;
 use crate::providers::ProviderCancelOutcome;
-use crate::runtime::{RuntimeInvocationRecord, RuntimeInvocationStatus, RuntimeSessionSnapshot};
+use crate::runtime::{
+    RuntimeInvocationRecord, RuntimeInvocationRegisterError, RuntimeInvocationStatus,
+    RuntimeSessionSnapshot,
+};
 use crate::state::AppState;
+use std::sync::Arc;
+
+const MCP_RESULT_REPLY_TO_HEADER: &str = "x-mcp-result-reply-to";
 
 pub(super) async fn mcp_entrypoint(
     State(state): State<AppState>,
@@ -81,13 +87,15 @@ pub(super) async fn mcp_entrypoint(
             "runtime session grant does not match its route snapshot",
         ));
     }
-    Json(handle_session_request(request, &snapshot, &state).await)
+    let result_reply_to = result_reply_to_from_headers(&headers);
+    Json(handle_session_request(request, &snapshot, &state, result_reply_to).await)
 }
 
 async fn handle_session_request(
     request: JsonRpcRequest,
     snapshot: &RuntimeSessionSnapshot,
     state: &AppState,
+    result_reply_to: Result<Option<String>, String>,
 ) -> JsonRpcResponse {
     let id = request.id.unwrap_or(Value::Null);
     match request.method.as_str() {
@@ -113,7 +121,13 @@ async fn handle_session_request(
                     .collect::<Vec<_>>()
             }),
         ),
-        METHOD_TOOLS_CALL => handle_tool_call(id, request.params, snapshot, state).await,
+        METHOD_TOOLS_CALL => {
+            let result_reply_to = match result_reply_to {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
+            };
+            handle_tool_call(id, request.params, snapshot, state, result_reply_to).await
+        }
         other => jsonrpc_error(
             id,
             MCP_ERROR_METHOD_NOT_FOUND,
@@ -127,6 +141,7 @@ async fn handle_tool_call(
     params: Value,
     snapshot: &RuntimeSessionSnapshot,
     state: &AppState,
+    result_reply_to: Option<String>,
 ) -> JsonRpcResponse {
     let request_id_key = match request_id_key(&id) {
         Ok(value) => value,
@@ -179,6 +194,14 @@ async fn handle_tool_call(
             "tools/call.arguments must be an object",
         );
     }
+    let async_execution = should_execute_async(route, tool);
+    if async_execution && result_reply_to.is_none() {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "async tools/call requires an MCP result queue reply target",
+        );
+    }
     let invocation_id = format!("mcp_invocation_{}", Uuid::new_v4().simple());
     let mutation_may_have_started = route.allow_writes
         && tool
@@ -191,18 +214,23 @@ async fn handle_tool_call(
         session_id: snapshot.session_id.clone(),
         request_id_key,
         caller_service: snapshot.caller_service.clone(),
+        tenant_id: snapshot.tenant_id.clone(),
+        owner_user_id: snapshot.owner_user_id.clone(),
+        project_id: snapshot.project_id.clone(),
+        device_id: snapshot.device_id.clone(),
         resource_id: route.resource_id.clone(),
         exposed_tool_name: tool.exposed_name.clone(),
+        original_tool_name: tool.original_name.clone(),
         mutation_may_have_started,
         cancel_supported: route.cancel_supported,
-        status: if should_execute_async(route, tool) {
+        status: if async_execution {
             RuntimeInvocationStatus::Queued
         } else {
             RuntimeInvocationStatus::Running
         },
-        async_execution: should_execute_async(route, tool),
+        async_execution,
         created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-        started_at_unix_ms: if should_execute_async(route, tool) {
+        started_at_unix_ms: if async_execution {
             None
         } else {
             Some(chrono::Utc::now().timestamp_millis())
@@ -211,23 +239,34 @@ async fn handle_tool_call(
         terminal_result: None,
         terminal_error_code: None,
         terminal_error_message: None,
+        file_modification_outcome: None,
+        result_reply_to,
+        result_event_id: None,
+        result_event_pending: false,
         expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
         expires_at_unix: snapshot.expires_at_unix,
     };
     if let Err(error) = state.runtime_invocations.register(invocation).await {
+        let (code, message) = match &error {
+            RuntimeInvocationRegisterError::CapacityExhausted { .. } => (
+                MCP_ERROR_CAPACITY_EXHAUSTED,
+                "runtime invocation capacity is exhausted",
+            ),
+            RuntimeInvocationRegisterError::Store(_) => (
+                MCP_ERROR_INTERNAL,
+                "runtime invocation registry is unavailable or request id is already active",
+            ),
+        };
         tracing::error!(
             invocation_id = invocation_id.as_str(),
             session_id = snapshot.session_id.as_str(),
-            error = error.as_str(),
+            error = %error,
             "register Runtime Invocation failed"
         );
-        return jsonrpc_error(
-            id,
-            MCP_ERROR_INTERNAL,
-            "runtime invocation registry is unavailable or request id is already active",
-        );
+        return jsonrpc_error(id, code, message);
     }
-    if should_execute_async(route, tool) {
+    if async_execution {
+        record_tool_access_audit(snapshot, route, tool.exposed_name.as_str(), "queued");
         if let Err(error) = state
             .async_tool_dispatch
             .enqueue(QueuedAsyncToolCallEnvelope {
@@ -237,15 +276,23 @@ async fn handle_tool_call(
                 exposed_tool_name: tool.exposed_name.clone(),
                 arguments,
                 mutation_may_have_started,
+                delivery_attempt: 1,
             })
             .await
         {
+            let (error_code, public_message) = public_async_enqueue_error(&error);
+            record_tool_access_audit(
+                snapshot,
+                route,
+                tool.exposed_name.as_str(),
+                "enqueue_failed",
+            );
             let _ = state
                 .runtime_invocations
                 .fail(
                     invocation_id.as_str(),
-                    MCP_ERROR_INTERNAL,
-                    format!("async tool dispatch enqueue failed: {error}"),
+                    error_code,
+                    public_message.to_string(),
                 )
                 .await;
             tracing::error!(
@@ -253,14 +300,10 @@ async fn handle_tool_call(
                 session_id = snapshot.session_id.as_str(),
                 resource_id = route.resource_id.as_str(),
                 exposed_tool_name = tool.exposed_name.as_str(),
-                error = error.as_str(),
+                error = %error,
                 "enqueue async MCP Provider invocation failed"
             );
-            return jsonrpc_error(
-                id,
-                MCP_ERROR_INTERNAL,
-                "async tool dispatch queue is unavailable",
-            );
+            return jsonrpc_error(id, error_code, public_message);
         }
         return jsonrpc_ok(
             id,
@@ -295,6 +338,12 @@ async fn handle_tool_call(
             .await
         }
         DispatchResult::RegistryFailed(error) => {
+            record_tool_access_audit(
+                snapshot,
+                route,
+                tool.exposed_name.as_str(),
+                "registry_failed",
+            );
             tracing::error!(
                 invocation_id = invocation_id.as_str(),
                 session_id = snapshot.session_id.as_str(),
@@ -309,6 +358,7 @@ async fn handle_tool_call(
             )
         }
         DispatchResult::Completed(Ok(outcome)) => {
+            record_tool_access_audit(snapshot, route, tool.exposed_name.as_str(), "succeeded");
             tracing::info!(
                 invocation_id = invocation_id.as_str(),
                 session_id = snapshot.session_id.as_str(),
@@ -323,6 +373,7 @@ async fn handle_tool_call(
             jsonrpc_ok(id, outcome.result)
         }
         DispatchResult::Completed(Err(error)) => {
+            record_tool_access_audit(snapshot, route, tool.exposed_name.as_str(), "failed");
             tracing::warn!(
                 invocation_id = invocation_id.as_str(),
                 session_id = snapshot.session_id.as_str(),
@@ -337,6 +388,70 @@ async fn handle_tool_call(
             jsonrpc_error(id, error.code, error.message)
         }
     }
+}
+
+fn public_async_enqueue_error(error: &AsyncToolEnqueueError) -> (i32, &'static str) {
+    match error {
+        AsyncToolEnqueueError::CapacityExhausted => (
+            MCP_ERROR_CAPACITY_EXHAUSTED,
+            "MCP async execution capacity is currently full",
+        ),
+        AsyncToolEnqueueError::Unavailable(_) => (
+            MCP_ERROR_INTERNAL,
+            "async tool dispatch queue is unavailable",
+        ),
+    }
+}
+
+fn record_tool_access_audit(
+    snapshot: &RuntimeSessionSnapshot,
+    route: &ResolvedMcpRoute,
+    tool_name: &str,
+    outcome: &str,
+) {
+    let event = chatos_service_runtime::InternalResourceAccessAudit {
+        caller_service: snapshot.caller_service.clone(),
+        audience_service: "mcp-management-service".to_string(),
+        scope: "runtime.tools.call".to_string(),
+        trace_id: snapshot.trace_id.clone(),
+        represented_user_id: Some(snapshot.owner_user_id.clone()),
+        tenant_id: Some(snapshot.tenant_id.clone()),
+        project_id: Some(snapshot.project_id.clone()),
+        resource_type: "mcp_tool".to_string(),
+        resource_id: route.resource_id.clone(),
+        resource_name: Some(tool_name.to_string()),
+        action: "call".to_string(),
+        outcome: outcome.to_string(),
+    };
+    if let Err(error) = chatos_service_runtime::record_internal_resource_access(&event) {
+        tracing::error!(
+            session_id = snapshot.session_id.as_str(),
+            resource_id = route.resource_id.as_str(),
+            tool_name,
+            error = error.as_str(),
+            "record MCP tool access audit failed"
+        );
+    }
+}
+
+fn result_reply_to_from_headers(headers: &HeaderMap) -> Result<Option<String>, String> {
+    let Some(value) = headers.get(MCP_RESULT_REPLY_TO_HEADER) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| "MCP result reply target header is invalid".to_string())?
+        .trim();
+    if value.is_empty() || value.len() > 200 {
+        return Err("MCP result reply target is invalid".to_string());
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err("MCP result reply target contains unsupported characters".to_string());
+    }
+    Ok(Some(value.to_string()))
 }
 
 fn should_execute_async(route: &ResolvedMcpRoute, tool: &RuntimeToolDescriptor) -> bool {
@@ -364,6 +479,27 @@ async fn dispatch_provider_call(
     invocation_id: &str,
 ) -> (DispatchResult, u64) {
     let started = Instant::now();
+    if route_waits_for_user(route) {
+        match state
+            .runtime_invocations
+            .mark_waiting_for_user(invocation_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return (
+                    DispatchResult::CancelRequested,
+                    started.elapsed().as_millis() as u64,
+                )
+            }
+            Err(error) => {
+                return (
+                    DispatchResult::RegistryFailed(error),
+                    started.elapsed().as_millis() as u64,
+                )
+            }
+        }
+    }
     let dispatch = {
         let outcome = state.providers.call_tool(
             snapshot,
@@ -399,26 +535,30 @@ async fn dispatch_provider_call(
     (dispatch, started.elapsed().as_millis() as u64)
 }
 
+fn route_waits_for_user(route: &ResolvedMcpRoute) -> bool {
+    route.resource_id == system_mcp_descriptor(SystemMcpKey::AskUser).resource_id
+}
+
 pub(crate) async fn execute_async_tool_call(
     state: AppState,
-    snapshot: RuntimeSessionSnapshot,
+    snapshot: Arc<RuntimeSessionSnapshot>,
     route: ResolvedMcpRoute,
     tool: RuntimeToolDescriptor,
     arguments: Value,
     invocation_id: String,
     mutation_may_have_started: bool,
-) {
+) -> Result<(), String> {
     match state
         .runtime_invocations
         .cancellation_requested(invocation_id.as_str())
         .await
     {
         Ok(true) => {
-            let _ = state
+            state
                 .runtime_invocations
                 .cancel_without_start(invocation_id.as_str())
-                .await;
-            return;
+                .await?;
+            return Ok(());
         }
         Ok(false) => {}
         Err(error) => {
@@ -427,7 +567,9 @@ pub(crate) async fn execute_async_tool_call(
                 error = error.as_str(),
                 "load queued Runtime Invocation cancellation state failed"
             );
-            return;
+            return Err(format!(
+                "load queued Runtime Invocation cancellation state failed: {error}"
+            ));
         }
     }
     match state
@@ -437,7 +579,7 @@ pub(crate) async fn execute_async_tool_call(
     {
         Ok(true) => {}
         Ok(false) => {
-            return;
+            return Ok(());
         }
         Err(error) => {
             tracing::error!(
@@ -445,7 +587,9 @@ pub(crate) async fn execute_async_tool_call(
                 error = error.as_str(),
                 "mark queued Runtime Invocation as running failed"
             );
-            return;
+            return Err(format!(
+                "mark queued Runtime Invocation as running failed: {error}"
+            ));
         }
     }
     let (dispatch, duration_ms) = dispatch_provider_call(
@@ -472,6 +616,12 @@ pub(crate) async fn execute_async_tool_call(
             .await;
         }
         DispatchResult::RegistryFailed(error) => {
+            record_tool_access_audit(
+                &snapshot,
+                &route,
+                tool.exposed_name.as_str(),
+                "registry_failed",
+            );
             tracing::error!(
                 invocation_id = invocation_id.as_str(),
                 session_id = snapshot.session_id.as_str(),
@@ -481,6 +631,7 @@ pub(crate) async fn execute_async_tool_call(
             );
         }
         DispatchResult::Completed(Ok(outcome)) => {
+            record_tool_access_audit(&snapshot, &route, tool.exposed_name.as_str(), "succeeded");
             tracing::info!(
                 invocation_id = invocation_id.as_str(),
                 session_id = snapshot.session_id.as_str(),
@@ -495,6 +646,7 @@ pub(crate) async fn execute_async_tool_call(
             );
         }
         DispatchResult::Completed(Err(error)) => {
+            record_tool_access_audit(&snapshot, &route, tool.exposed_name.as_str(), "failed");
             tracing::warn!(
                 invocation_id = invocation_id.as_str(),
                 session_id = snapshot.session_id.as_str(),
@@ -509,6 +661,7 @@ pub(crate) async fn execute_async_tool_call(
             );
         }
     }
+    Ok(())
 }
 
 enum DispatchResult {
@@ -518,16 +671,10 @@ enum DispatchResult {
 }
 
 async fn wait_for_cancellation(state: &AppState, invocation_id: &str) -> Result<(), String> {
-    loop {
-        if state
-            .runtime_invocations
-            .cancellation_requested(invocation_id)
-            .await?
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    state
+        .runtime_invocations
+        .wait_for_cancellation(invocation_id)
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -571,6 +718,7 @@ async fn handle_cancelled_tool_call(
             "cancel_requested",
         ),
     };
+    record_tool_access_audit(snapshot, route, exposed_tool_name, status);
     if let Some(terminal_status) = terminal_status {
         if let Err(error) = state
             .runtime_invocations
@@ -642,6 +790,24 @@ async fn handle_cancel_notification(
     let Some(record) = record else {
         return jsonrpc_ok(id, json!({"status": "invocation_not_found"}));
     };
+    if record.status == RuntimeInvocationStatus::CancelRequested {
+        if let Err(error) = state
+            .async_tool_dispatch
+            .publish_cancellation(record.invocation_id.as_str())
+            .await
+        {
+            tracing::error!(
+                invocation_id = record.invocation_id.as_str(),
+                error = %error,
+                "publish Runtime Invocation cancellation event failed"
+            );
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INTERNAL,
+                "runtime invocation cancellation event is unavailable",
+            );
+        }
+    }
     jsonrpc_ok(
         id,
         json!({
@@ -655,6 +821,7 @@ pub(super) fn cancel_response_status(record: &RuntimeInvocationRecord) -> &'stat
     match record.status {
         RuntimeInvocationStatus::Queued
         | RuntimeInvocationStatus::Running
+        | RuntimeInvocationStatus::WaitingForUser
         | RuntimeInvocationStatus::CancelRequested => {
             if record.mutation_may_have_started && !record.cancel_supported {
                 "unknown_execution_state"
@@ -692,10 +859,13 @@ fn grant_matches_snapshot(
         .collect::<BTreeSet<_>>();
     claims.session_id == snapshot.session_id
         && claims.sub == snapshot.caller_service
+        && claims.trace_id == snapshot.trace_id
+        && claims.tenant_id == snapshot.tenant_id
         && claims.owner_user_id == snapshot.owner_user_id
         && claims.agent_key == snapshot.agent_key
         && claims.task_profile == snapshot.task_profile
         && claims.project_id == snapshot.project_id
+        && claims.device_id == snapshot.device_id
         && claims.run_id == snapshot.run_id
         && claims.turn_id == snapshot.turn_id
         && claims.task_id == snapshot.task_id

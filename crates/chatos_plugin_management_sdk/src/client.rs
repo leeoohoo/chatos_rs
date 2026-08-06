@@ -23,7 +23,6 @@ use crate::plugin_runtime::{
 };
 use crate::plugin_runtime::{PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload};
 
-const INTERNAL_SECRET_HEADER: &str = "x-plugin-management-internal-secret";
 const INTERNAL_TOKEN_HEADER: &str = "x-plugin-management-internal-token";
 const CALLER_SERVICE_HEADER: &str = "x-plugin-management-caller-service";
 const INTERNAL_TOKEN_AUDIENCE: &str = "plugin-management-service";
@@ -39,18 +38,31 @@ const PLUGIN_CLOUD_CREDENTIALS_RESOLVE_SCOPE: &str = "plugin.cloud.credentials.r
 
 #[derive(Clone)]
 pub struct PluginManagementClient {
-    http: reqwest::Client,
+    public_http: reqwest::Client,
+    internal_http: reqwest::Client,
     config: PluginManagementClientConfig,
 }
 
 impl PluginManagementClient {
     pub fn new(config: PluginManagementClientConfig) -> Result<Self, PluginManagementClientError> {
-        reqwest::Url::parse(config.base_url.as_str())
+        reqwest::Url::parse(config.public_base_url.as_str())
             .map_err(|err| PluginManagementClientError::InvalidBaseUrl(err.to_string()))?;
-        let http = reqwest::Client::builder()
+        let internal_url = reqwest::Url::parse(config.internal_base_url.as_str())
+            .map_err(|err| PluginManagementClientError::InvalidBaseUrl(err.to_string()))?;
+        if internal_url.scheme() != "https" {
+            return Err(PluginManagementClientError::InvalidBaseUrl(
+                "Plugin Management internal base URL must use https".to_string(),
+            ));
+        }
+        let public_http = reqwest::Client::builder()
             .timeout(config.request_timeout)
             .build()?;
-        Ok(Self { http, config })
+        let internal_http = config.internal_http.clone();
+        Ok(Self {
+            public_http,
+            internal_http,
+            config,
+        })
     }
 
     pub fn config(&self) -> &PluginManagementClientConfig {
@@ -62,7 +74,10 @@ impl PluginManagementClient {
         request: &ResolveAgentCapabilitiesRequest,
         bearer_token: &str,
     ) -> Result<ResolvedAgentCapabilities, PluginManagementClientError> {
-        let url = format!("{}/api/runtime/agent-capabilities", self.config.base_url);
+        let url = format!(
+            "{}/api/runtime/agent-capabilities",
+            self.config.public_base_url
+        );
         let token = bearer_token
             .trim()
             .strip_prefix("Bearer ")
@@ -95,7 +110,7 @@ impl PluginManagementClient {
             query.push(("device_id", value));
         }
         let response = self
-            .http
+            .public_http
             .request(Method::GET, url)
             .bearer_auth(token)
             .query(&query)
@@ -110,7 +125,7 @@ impl PluginManagementClient {
     ) -> Result<ResolvedAgentCapabilities, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/runtime/agent-capabilities/resolve",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::POST, url, CAPABILITIES_RESOLVE_SCOPE)?
@@ -126,7 +141,7 @@ impl PluginManagementClient {
     ) -> Result<ResolvedAgentPrompt, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/runtime/agent-prompts/resolve",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::POST, url, AGENT_PROMPTS_RESOLVE_SCOPE)?
@@ -141,7 +156,7 @@ impl PluginManagementClient {
     ) -> Result<AgentPromptBundleManifest, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/runtime/agent-prompts/manifest",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::GET, url, AGENT_PROMPTS_SYNC_SCOPE)?
@@ -155,7 +170,7 @@ impl PluginManagementClient {
     ) -> Result<AgentPromptBundle, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/runtime/agent-prompts/bundle",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::GET, url, AGENT_PROMPTS_SYNC_SCOPE)?
@@ -169,7 +184,10 @@ impl PluginManagementClient {
         owner_user_id: &str,
         device_id: &str,
     ) -> Result<LocalConnectorMcpListResponse, PluginManagementClientError> {
-        let url = format!("{}/api/internal/local-connector/mcps", self.config.base_url);
+        let url = format!(
+            "{}/api/internal/local-connector/mcps",
+            self.config.internal_base_url
+        );
         let response = self
             .internal_request(Method::GET, url, LOCAL_CONNECTOR_READ_SCOPE)?
             .query(&[("owner_user_id", owner_user_id), ("device_id", device_id)])
@@ -182,7 +200,10 @@ impl PluginManagementClient {
         &self,
         request: &LocalConnectorMcpSyncRequest,
     ) -> Result<McpRecord, PluginManagementClientError> {
-        let url = format!("{}/api/internal/local-connector/mcps", self.config.base_url);
+        let url = format!(
+            "{}/api/internal/local-connector/mcps",
+            self.config.internal_base_url
+        );
         let response = self
             .internal_request(Method::POST, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
             .json(request)
@@ -198,7 +219,7 @@ impl PluginManagementClient {
     ) -> Result<McpRecord, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/mcps/{}",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(mcp_id)
         );
         let response = self
@@ -218,7 +239,7 @@ impl PluginManagementClient {
     ) -> Result<(), PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/mcps/{}",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(mcp_id)
         );
         let response = self
@@ -240,7 +261,7 @@ impl PluginManagementClient {
     ) -> Result<ResourceCheckRecord, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/mcps/{}/status",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(mcp_id)
         );
         let response = self
@@ -257,7 +278,7 @@ impl PluginManagementClient {
     ) -> Result<Vec<ResourceCheckRecord>, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/mcps/status/batch",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
@@ -274,7 +295,7 @@ impl PluginManagementClient {
     ) -> Result<UserSkillCatalogResponse, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/skills/catalog",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let mut query = vec![("owner_user_id", owner_user_id)];
         if let Some(device_id) = device_id {
@@ -295,7 +316,7 @@ impl PluginManagementClient {
     ) -> Result<UserSkillCatalogItem, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/skills/{}/preference",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(skill_id)
         );
         let response = self
@@ -312,7 +333,7 @@ impl PluginManagementClient {
     ) -> Result<Vec<SkillInstallationRecord>, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/skills/inventory",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
@@ -328,7 +349,7 @@ impl PluginManagementClient {
     ) -> Result<PluginOAuthConnectionRecord, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/plugins/oauth",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::PUT, url, PLUGIN_OAUTH_MANAGE_SCOPE)?
@@ -344,7 +365,7 @@ impl PluginManagementClient {
     ) -> Result<PluginInstallSourceList, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/plugins/install-sources",
-            self.config.base_url
+            self.config.internal_base_url
         );
         let response = self
             .internal_request(Method::GET, url, PLUGIN_INSTALL_MANAGE_SCOPE)?
@@ -362,7 +383,7 @@ impl PluginManagementClient {
     ) -> Result<PluginInstallSource, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/plugins/install-sources/{}/{}",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(plugin_id),
             urlencoding::encode(release_id),
         );
@@ -381,7 +402,7 @@ impl PluginManagementClient {
     ) -> Result<UpdateUserPluginPreferenceResponse, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/local-connector/plugins/{}/preference",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(plugin_id),
         );
         let response = self
@@ -400,7 +421,7 @@ impl PluginManagementClient {
     ) -> Result<PluginCloudComponentBundle, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/plugins/{}/releases/{}/cloud-components/{}",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(plugin_id),
             urlencoding::encode(release_id),
             urlencoding::encode(component_key),
@@ -420,7 +441,7 @@ impl PluginManagementClient {
     ) -> Result<PluginMcpCloudRuntimeBundle, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/plugins/{}/releases/{}/cloud-mcp-components/{}",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(plugin_id),
             urlencoding::encode(release_id),
             urlencoding::encode(component_key),
@@ -441,7 +462,7 @@ impl PluginManagementClient {
     ) -> Result<ResolvedPluginMcpCloudCredentials, PluginManagementClientError> {
         let url = format!(
             "{}/api/internal/plugins/{}/releases/{}/cloud-mcp-components/{}/credentials",
-            self.config.base_url,
+            self.config.internal_base_url,
             urlencoding::encode(plugin_id),
             urlencoding::encode(release_id),
             urlencoding::encode(component_key),
@@ -474,9 +495,8 @@ impl PluginManagementClient {
         )
         .map_err(PluginManagementClientError::InternalToken)?;
         Ok(self
-            .http
+            .internal_http
             .request(method, url)
-            .header(INTERNAL_SECRET_HEADER, secret)
             .header(INTERNAL_TOKEN_HEADER, token)
             .header(CALLER_SERVICE_HEADER, self.config.caller_service.as_str()))
     }
@@ -536,4 +556,66 @@ fn default_error_message(status: StatusCode) -> String {
         .canonical_reason()
         .unwrap_or("unknown plugin management error")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn internal_request_sends_only_signed_identity_headers() {
+        let secret = "a-long-plugin-management-test-secret";
+        let caller_service = "task-runner";
+        let client = PluginManagementClient::new(
+            PluginManagementClientConfig::new(
+                "http://plugin-management.test",
+                "https://plugin-management.test",
+                Duration::from_secs(1),
+                Some(secret.to_string()),
+                caller_service,
+                reqwest::Client::new(),
+            )
+            .expect("valid client configuration"),
+        )
+        .expect("valid client configuration");
+
+        let request = client
+            .internal_request(
+                Method::POST,
+                "https://plugin-management.test/api/internal/test".to_string(),
+                CAPABILITIES_RESOLVE_SCOPE,
+            )
+            .expect("signed internal request")
+            .build()
+            .expect("build internal request");
+
+        assert!(request
+            .headers()
+            .get("x-plugin-management-internal-secret")
+            .is_none());
+        assert_eq!(
+            request
+                .headers()
+                .get(CALLER_SERVICE_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some(caller_service)
+        );
+        let token = request
+            .headers()
+            .get(INTERNAL_TOKEN_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .expect("signed token header");
+        let claims = chatos_service_runtime::verify_internal_service_token(
+            token,
+            secret,
+            caller_service,
+            INTERNAL_TOKEN_AUDIENCE,
+            CAPABILITIES_RESOLVE_SCOPE,
+        )
+        .expect("valid signed token");
+        assert_eq!(claims.caller, caller_service);
+        assert!(!claims.trace_id.is_empty());
+    }
 }

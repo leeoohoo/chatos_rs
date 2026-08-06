@@ -8,6 +8,9 @@ import type {
   DraftResponse,
   EffectiveConfig,
   LoginResponse,
+  QueueOperationsResponse,
+  QueueReplayRequest,
+  QueueReplayResponse,
   ServiceInstance,
 } from './types';
 
@@ -92,5 +95,17 @@ export const api = {
       { method: 'POST', body: '{}' },
     ),
   audit: () => request<AuditEvent[]>('/api/config/v1/audit-events?limit=300'),
+  queueOperations: (environment: string) =>
+    request<QueueOperationsResponse>(
+      `/api/config/v1/environments/${encodeURIComponent(environment)}/queue-operations`,
+    ),
+  replayQueueItem: (
+    environment: string,
+    payload: QueueReplayRequest,
+  ) =>
+    request<QueueReplayResponse>(
+      `/api/config/v1/environments/${encodeURIComponent(environment)}/queue-operations`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
   instances: () => request<ServiceInstance[]>('/api/config/v1/instances'),
 };

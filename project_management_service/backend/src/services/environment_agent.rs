@@ -39,7 +39,6 @@ use self::routing::{
 pub(crate) use self::tool_provider::{
     ensure_project_environment_agent_run, ProjectEnvironmentToolProvider,
 };
-const CLOUD_SANDBOX_IMAGE_MCP_PATH: &str = "/api/sandbox-images/mcp";
 const LOCAL_SANDBOX_IMAGE_MCP_PATH: &str = "/api/local/sandbox/images/mcp";
 const PROJECT_COMPOSE_FILE_PATH: &str = ".chatos/runtime-environment/docker-compose.chatos.yml";
 

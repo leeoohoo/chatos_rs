@@ -2,5 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub use super::memory_auth::{
-    require_memory_auth as require_model_profile_auth, MemoryAuthContext as ModelProfileAuthContext,
+    require_model_profile_internal_auth, require_user_memory_auth,
+    MemoryAuthContext as ModelProfileAuthContext,
 };

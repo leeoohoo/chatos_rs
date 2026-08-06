@@ -62,6 +62,10 @@ pub async fn upsert_thread(
                     "summary_lock_expires_at": Bson::Null,
                     "pending_record_count": 0,
                     "pending_summary_tokens": 0,
+                    "summary_dispatch_version": 0,
+                    "summary_dispatch_published_version": 0,
+                    "summary_dispatch_consumed_version": 0,
+                    "summary_dispatch_pending": false,
                 }
             },
         )
@@ -187,7 +191,11 @@ pub async fn apply_summary_queue_state_delta(
     let now = now_rfc3339();
     thread_collection(db)
         .find_one_and_update(
-            summary_queue_updatable_filter(tenant_id, source_id, thread_id),
+            doc! {
+                "tenant_id": tenant_id,
+                "source_id": source_id,
+                "id": thread_id,
+            },
             vec![
                 doc! {
                     "$set": {
@@ -220,9 +228,41 @@ pub async fn apply_summary_queue_state_delta(
                     "$set": {
                         "summary_status": {
                             "$cond": [
+                                { "$eq": ["$summary_status", "running"] },
+                                "running",
+                                {
+                                    "$cond": [
+                                        { "$gt": ["$pending_record_count", 0] },
+                                        "pending",
+                                        "idle",
+                                    ]
+                                },
+                            ]
+                        },
+                        "summary_dispatch_version": {
+                            "$cond": [
                                 { "$gt": ["$pending_record_count", 0] },
-                                "pending",
-                                "idle",
+                                {
+                                    "$add": [
+                                        { "$ifNull": ["$summary_dispatch_version", 0] },
+                                        1,
+                                    ]
+                                },
+                                { "$ifNull": ["$summary_dispatch_version", 0] },
+                            ]
+                        },
+                        "summary_dispatch_requested_at": {
+                            "$cond": [
+                                { "$gt": ["$pending_record_count", 0] },
+                                &now,
+                                { "$ifNull": ["$summary_dispatch_requested_at", Bson::Null] },
+                            ]
+                        },
+                        "summary_dispatch_pending": {
+                            "$cond": [
+                                { "$gt": ["$pending_record_count", 0] },
+                                true,
+                                { "$ifNull": ["$summary_dispatch_pending", false] },
                             ]
                         }
                     }
@@ -232,6 +272,87 @@ pub async fn apply_summary_queue_state_delta(
         .return_document(mongodb::options::ReturnDocument::After)
         .await
         .map_err(|err| err.to_string())
+}
+
+pub async fn begin_record_sync(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    lease_timeout_secs: i64,
+) -> Result<(), String> {
+    let now = now_rfc3339();
+    let expires_at = now_plus_seconds_rfc3339(lease_timeout_secs.max(30));
+    let result = thread_collection(db)
+        .update_one(
+            doc! {
+                "tenant_id": tenant_id,
+                "source_id": source_id,
+                "id": thread_id,
+            },
+            doc! {
+                "$inc": { "record_sync_inflight": 1 },
+                "$set": {
+                    "record_sync_lease_expires_at": expires_at,
+                    "updated_at": now,
+                }
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    if result.matched_count == 0 {
+        return Err("thread not found for record sync".to_string());
+    }
+    Ok(())
+}
+
+pub async fn finish_record_sync(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<(), String> {
+    let now = now_rfc3339();
+    thread_collection(db)
+        .update_one(
+            doc! {
+                "tenant_id": tenant_id,
+                "source_id": source_id,
+                "id": thread_id,
+            },
+            vec![
+                doc! {
+                    "$set": {
+                        "record_sync_inflight": {
+                            "$max": [
+                                0,
+                                {
+                                    "$subtract": [
+                                        { "$ifNull": ["$record_sync_inflight", 0] },
+                                        1,
+                                    ]
+                                },
+                            ]
+                        },
+                        "updated_at": &now,
+                    }
+                },
+                doc! {
+                    "$set": {
+                        "record_sync_lease_expires_at": {
+                            "$cond": [
+                                { "$gt": ["$record_sync_inflight", 0] },
+                                "$record_sync_lease_expires_at",
+                                Bson::Null,
+                            ]
+                        }
+                    }
+                },
+            ],
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 pub async fn try_acquire_summary_slot(
@@ -281,21 +402,10 @@ pub async fn release_summary_slot(
     source_id: &str,
     thread_id: &str,
     job_run_id: &str,
-    next_status: &str,
-    pending_record_count: Option<i64>,
-    pending_summary_tokens: Option<i64>,
+    consumed_record_count: i64,
+    consumed_summary_tokens: i64,
 ) -> Result<Option<EngineThread>, String> {
     let now = now_rfc3339();
-    let mut set_doc = doc! {
-        "summary_status": next_status,
-        "updated_at": &now,
-    };
-    if let Some(value) = pending_record_count {
-        set_doc.insert("pending_record_count", value.max(0));
-    }
-    if let Some(value) = pending_summary_tokens {
-        set_doc.insert("pending_summary_tokens", value.max(0));
-    }
     thread_collection(db)
         .find_one_and_update(
             doc! {
@@ -304,18 +414,120 @@ pub async fn release_summary_slot(
                 "id": thread_id,
                 "summary_job_run_id": job_run_id,
             },
+            vec![
+                doc! {
+                    "$set": {
+                        "pending_record_count": {
+                            "$max": [
+                                0,
+                                {
+                                    "$subtract": [
+                                        { "$ifNull": ["$pending_record_count", 0] },
+                                        consumed_record_count.max(0),
+                                    ]
+                                },
+                            ]
+                        },
+                        "pending_summary_tokens": {
+                            "$max": [
+                                0,
+                                {
+                                    "$subtract": [
+                                        { "$ifNull": ["$pending_summary_tokens", 0] },
+                                        consumed_summary_tokens.max(0),
+                                    ]
+                                },
+                            ]
+                        },
+                    }
+                },
+                doc! {
+                    "$set": {
+                        "summary_status": {
+                            "$cond": [
+                                { "$gt": ["$pending_record_count", 0] },
+                                "pending",
+                                "idle",
+                            ]
+                        },
+                        "summary_job_run_id": Bson::Null,
+                        "summary_locked_at": Bson::Null,
+                        "summary_lock_expires_at": Bson::Null,
+                        "updated_at": &now,
+                    }
+                },
+            ],
+        )
+        .return_document(mongodb::options::ReturnDocument::After)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+pub async fn try_acquire_rollup_slot(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    job_run_id: &str,
+    lock_timeout_secs: i64,
+) -> Result<Option<EngineThread>, String> {
+    let now = now_rfc3339();
+    let expires_at = now_plus_seconds_rfc3339(lock_timeout_secs.max(30));
+    thread_collection(db)
+        .find_one_and_update(
             doc! {
-                "$set": set_doc,
-                "$unset": {
-                    "summary_job_run_id": "",
-                    "summary_locked_at": "",
-                    "summary_lock_expires_at": "",
+                "tenant_id": tenant_id,
+                "source_id": source_id,
+                "id": thread_id,
+                "$or": [
+                    { "rollup_job_run_id": { "$exists": false } },
+                    { "rollup_job_run_id": Bson::Null },
+                    { "rollup_lock_expires_at": { "$exists": false } },
+                    { "rollup_lock_expires_at": Bson::Null },
+                    { "rollup_lock_expires_at": { "$lte": &now } },
+                ],
+            },
+            doc! {
+                "$set": {
+                    "rollup_job_run_id": job_run_id,
+                    "rollup_locked_at": &now,
+                    "rollup_lock_expires_at": &expires_at,
+                    "updated_at": &now,
                 }
             },
         )
         .return_document(mongodb::options::ReturnDocument::After)
         .await
         .map_err(|err| err.to_string())
+}
+
+pub async fn release_rollup_slot(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    job_run_id: &str,
+) -> Result<(), String> {
+    thread_collection(db)
+        .update_one(
+            doc! {
+                "tenant_id": tenant_id,
+                "source_id": source_id,
+                "id": thread_id,
+                "rollup_job_run_id": job_run_id,
+            },
+            doc! {
+                "$set": {
+                    "rollup_job_run_id": Bson::Null,
+                    "rollup_locked_at": Bson::Null,
+                    "rollup_lock_expires_at": Bson::Null,
+                    "updated_at": now_rfc3339(),
+                }
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 fn summary_queue_updatable_filter(tenant_id: &str, source_id: &str, thread_id: &str) -> Document {

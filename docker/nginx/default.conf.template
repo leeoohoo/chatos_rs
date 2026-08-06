@@ -61,9 +61,6 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
-    proxy_set_header x-sandbox-client-id "${SANDBOX_MANAGER_API_PROXY_CLIENT_ID}";
-    proxy_set_header x-sandbox-client-key "${SANDBOX_MANAGER_API_PROXY_CLIENT_KEY}";
-    proxy_set_header x-sandbox-operator-token "${SANDBOX_MANAGER_API_PROXY_OPERATOR_TOKEN}";
     proxy_buffering off;
     proxy_read_timeout 3600s;
   }

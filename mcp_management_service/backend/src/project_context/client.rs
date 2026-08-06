@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
-
 use chatos_mcp_management_sdk::ProjectExecutionContext;
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
@@ -20,17 +18,13 @@ pub struct ProjectContextClient {
 
 impl ProjectContextClient {
     pub fn new(
+        http: reqwest::Client,
         base_url: impl Into<String>,
-        request_timeout: Duration,
         internal_api_secret: Option<String>,
     ) -> Result<Self, String> {
         let base_url = base_url.into();
         reqwest::Url::parse(base_url.as_str())
             .map_err(|err| format!("project service base URL is invalid: {err}"))?;
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .build()
-            .map_err(|err| format!("build project context client failed: {err}"))?;
         Ok(Self {
             http,
             base_url: base_url.trim().trim_end_matches('/').to_string(),
@@ -65,7 +59,6 @@ impl ProjectContextClient {
             .query(&[("owner_user_id", owner_user_id.trim())])
             .header("x-project-service-caller", CALLER_SERVICE)
             .header("x-project-service-internal-token", token)
-            .header("x-project-service-sync-secret", secret)
             .send()
             .await
             .map_err(|err| format!("project context request failed: {err}"))?;

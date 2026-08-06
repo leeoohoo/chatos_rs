@@ -7,9 +7,7 @@ use super::payload::{build_chatos_task_callback_payload, load_task_snapshot_for_
 use super::publisher::{publish_chatos_task_callback, CallbackPublishOutcome};
 use crate::models::{ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus};
 use chrono::Utc;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex as AsyncMutex;
 
 const CALLBACK_RETRY_DELAYS: [Duration; 6] = [
     Duration::from_secs(2),
@@ -46,6 +44,18 @@ impl RunService {
         let Some(event) = terminal_callback_event_for_status(run.status) else {
             return;
         };
+        if let Err(err) = self
+            .publish_pending_run_terminal_events(
+                self.task_queue_topology.run_dispatch_outbox_batch_size,
+            )
+            .await
+        {
+            warn!(
+                run_id = run.id.as_str(),
+                error = err.as_str(),
+                "failed to publish pending dependency run terminal events"
+            );
+        }
         if run.task_id != task_id {
             warn!(
                 run_id = run.id.as_str(),
@@ -64,8 +74,10 @@ impl RunService {
         expected_event: &str,
         force: bool,
     ) -> bool {
-        let delivery_lock = self.callback_delivery_lock_for_run(run_id);
-        let _guard = delivery_lock.lock().await;
+        let _guard = self
+            .callback_delivery_lock_for_run(run_id)
+            .lock_owned()
+            .await;
         let Some(mut run) = self.store.get_run(run_id).await.ok().flatten() else {
             return false;
         };
@@ -236,12 +248,8 @@ impl RunService {
         true
     }
 
-    fn callback_delivery_lock_for_run(&self, run_id: &str) -> Arc<AsyncMutex<()>> {
-        let mut locks = self.callback_delivery_locks.lock();
-        locks
-            .entry(run_id.to_string())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-            .clone()
+    fn callback_delivery_lock_for_run(&self, run_id: &str) -> KeyedAsyncLockHandle {
+        self.callback_delivery_locks.handle(run_id)
     }
 
     async fn update_callback_delivery(

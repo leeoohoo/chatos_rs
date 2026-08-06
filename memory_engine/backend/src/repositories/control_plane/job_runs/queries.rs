@@ -57,39 +57,6 @@ pub async fn get_job_run_by_id(db: &Db, job_run_id: &str) -> Result<Option<Engin
         .map_err(|err| err.to_string())
 }
 
-pub async fn has_recent_job_run(
-    db: &Db,
-    job_type: &str,
-    trigger_type: Option<&str>,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    within_secs: i64,
-) -> Result<bool, String> {
-    let normalized_job_type = job_type.trim();
-    if normalized_job_type.is_empty() {
-        return Ok(false);
-    }
-
-    let since = (chrono::Utc::now() - chrono::Duration::seconds(within_secs.max(1))).to_rfc3339();
-    let mut filter = doc! {
-        "job_type": normalized_job_type,
-        "$or": [
-            { "status": "running" },
-            { "started_at": {"$gte": since} },
-        ],
-    };
-    insert_optional_filter(&mut filter, "trigger_type", trigger_type);
-    insert_optional_filter(&mut filter, "tenant_id", tenant_id);
-    insert_optional_filter(&mut filter, "source_id", source_id);
-
-    let row = job_run_collection(db)
-        .find_one(filter)
-        .sort(doc! {"started_at": -1, "id": 1})
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(row.is_some())
-}
-
 async fn enrich_thread_display_names(
     db: &Db,
     mut items: Vec<EngineJobRun>,

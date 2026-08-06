@@ -22,6 +22,60 @@ pub async fn list_summaries_by_thread_label(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<EngineSummary>, String> {
+    list_summaries_by_thread_label_internal(
+        db,
+        tenant_id,
+        source_id,
+        thread_label,
+        summary_type,
+        status,
+        level,
+        subject_memory_summarized,
+        None,
+        limit,
+        offset,
+    )
+    .await
+}
+
+pub async fn list_summaries_by_thread_label_for_subject_memory_scope(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_label: &str,
+    summary_type: &str,
+    scope_key: &str,
+    limit: i64,
+) -> Result<Vec<EngineSummary>, String> {
+    list_summaries_by_thread_label_internal(
+        db,
+        tenant_id,
+        source_id,
+        thread_label,
+        Some(summary_type),
+        Some("done"),
+        None,
+        None,
+        Some(scope_key),
+        limit,
+        0,
+    )
+    .await
+}
+
+async fn list_summaries_by_thread_label_internal(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_label: &str,
+    summary_type: Option<&str>,
+    status: Option<&str>,
+    level: Option<i64>,
+    subject_memory_summarized: Option<i64>,
+    subject_memory_scope_key: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<EngineSummary>, String> {
     let normalized_label = thread_label.trim();
     if normalized_label.is_empty() {
         return Ok(Vec::new());
@@ -62,6 +116,12 @@ pub async fn list_summaries_by_thread_label(
     }
     if let Some(value) = subject_memory_summarized {
         filter.insert("subject_memory_summarized", value.max(0));
+    }
+    if let Some(value) = subject_memory_scope_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        filter.insert("subject_memory_scope_keys", doc! {"$ne": value});
     }
 
     let cursor = summary_collection(db)
