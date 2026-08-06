@@ -107,6 +107,9 @@ mod tests {
         AppConfig {
             host: "127.0.0.1".parse().unwrap(),
             port: 39190,
+            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+            otlp_trace_sample_ratio: 1.0,
+            otlp_export_timeout: std::time::Duration::from_secs(1),
             database_url: "mongodb://127.0.0.1:27017/test".to_string(),
             mongodb_database: "test".to_string(),
             jwt_secret: "test-secret".to_string(),

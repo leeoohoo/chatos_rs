@@ -184,7 +184,6 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) tags: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) default_model_config_id: Option<String>,
-    pub(in crate::mcp_server) is_planning_task: bool,
     #[serde(default)]
     // Rejected if present; retained for explicit fail-closed compatibility.
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,

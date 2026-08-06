@@ -165,10 +165,6 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "type": "string",
                             "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
                         },
-                        "is_planning_task": {
-                            "type": "boolean",
-                            "description": "Set true only for a read-only planning or analysis task. The service derives requires_execution=false and routes it to the planning Agent. Set false for implementation, file modification, testing, validation, deployment, and delivery; the service derives requires_execution=true and requires the project sandbox."
-                        },
                         "prerequisite_refs": {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
@@ -183,7 +179,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
-                    "required": ["client_ref", "project_task_id", "title", "objective", "is_planning_task"],
+                    "required": ["client_ref", "project_task_id", "title", "objective"],
                     "additionalProperties": false
                 }
             }

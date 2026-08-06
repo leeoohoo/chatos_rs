@@ -70,7 +70,7 @@ fn planner_task_creation_schemas_require_explicit_task_nature() {
     assert!(project.pointer("/properties/execution_group_id").is_none());
     assert!(project
         .pointer("/properties/tasks/items/properties/is_planning_task")
-        .is_some());
+        .is_none());
     assert!(project
         .pointer("/properties/tasks/items/properties/requires_execution")
         .is_none());
@@ -78,7 +78,7 @@ fn planner_task_creation_schemas_require_explicit_task_nature() {
         .pointer("/properties/tasks/items/required")
         .and_then(|value| value.as_array())
         .expect("project execution task required fields");
-    assert!(required
+    assert!(!required
         .iter()
         .any(|value| value.as_str() == Some("is_planning_task")));
 }
@@ -728,7 +728,7 @@ fn chatos_plan_context_assigns_child_profile_from_task_nature() {
 }
 
 #[test]
-fn project_execution_planner_assigns_child_profile_from_task_nature() {
+fn project_execution_planner_always_creates_ordinary_execution_tasks() {
     let context = McpRequestContext {
         tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string()),
         ..McpRequestContext::default()
@@ -736,7 +736,7 @@ fn project_execution_planner_assigns_child_profile_from_task_nature() {
 
     assert_eq!(
         context.child_task_profile(Some(true)).as_deref(),
-        Some(TASK_PROFILE_CHATOS_PLAN)
+        Some(TASK_PROFILE_DEFAULT)
     );
     assert_eq!(
         context.child_task_profile(Some(false)).as_deref(),

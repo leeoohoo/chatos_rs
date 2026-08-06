@@ -133,10 +133,6 @@ impl HarnessRequestError {
         self.status == Some(StatusCode::NOT_FOUND)
             || self.message.to_ascii_lowercase().contains("not found")
     }
-
-    pub(super) fn is_empty_repository_root_listing(&self, requested_path: &str) -> bool {
-        requested_path.is_empty() && self.is_not_found()
-    }
 }
 
 impl std::fmt::Display for HarnessRequestError {
@@ -242,28 +238,15 @@ pub(super) async fn list_harness_paths(
         ctx.access.base_url.trim().trim_end_matches('/'),
         encode_path_segments(ctx.repo_path.as_str())
     );
-    normalize_harness_paths_result(
-        harness_request_json::<HarnessListPathsResponse, ()>(
-            &ctx.client,
-            Method::GET,
-            endpoint.as_str(),
-            ctx.access.access_token.as_str(),
-            None,
-        )
-        .await,
+    harness_request_json::<HarnessListPathsResponse, ()>(
+        &ctx.client,
+        Method::GET,
+        endpoint.as_str(),
+        ctx.access.access_token.as_str(),
+        None,
     )
-}
-
-fn normalize_harness_paths_result(
-    result: Result<HarnessListPathsResponse, HarnessRequestError>,
-) -> Result<HarnessListPathsResponse, String> {
-    match result {
-        Ok(paths) => Ok(paths),
-        Err(err) if err.is_empty_repository_root_listing("") => {
-            Ok(HarnessListPathsResponse { files: Vec::new() })
-        }
-        Err(err) => Err(err.to_string()),
-    }
+    .await
+    .map_err(|err| err.to_string())
 }
 
 pub(super) async fn commit_single_file_action(
@@ -432,47 +415,5 @@ mod tests {
         let value = serde_json::to_value(body).expect("serialize body");
 
         assert!(value.get("branch").is_none());
-    }
-
-    #[test]
-    fn identifies_an_empty_repository_missing_its_initial_revision() {
-        let error = HarnessRequestError {
-            status: Some(StatusCode::NOT_FOUND),
-            message: r#"{"message":"revision \"main\" not found"}"#.to_string(),
-        };
-
-        assert!(error.is_empty_repository_root_listing(""));
-    }
-
-    #[test]
-    fn empty_repository_paths_are_returned_as_an_empty_listing() {
-        let paths = normalize_harness_paths_result(Err(HarnessRequestError {
-            status: Some(StatusCode::NOT_FOUND),
-            message: r#"{"message":"revision \"main\" not found"}"#.to_string(),
-        }))
-        .expect("empty repository should be readable as an empty workspace");
-
-        assert!(paths.files.is_empty());
-    }
-
-    #[test]
-    fn does_not_treat_an_ordinary_missing_path_as_an_empty_repository() {
-        let error = HarnessRequestError {
-            status: Some(StatusCode::NOT_FOUND),
-            message: r#"{"message":"path src/main.rs not found"}"#.to_string(),
-        };
-
-        assert!(!error.is_empty_repository_root_listing("src"));
-    }
-
-    #[test]
-    fn treats_a_missing_root_path_as_an_empty_repository_listing() {
-        let error = HarnessRequestError {
-            status: Some(StatusCode::NOT_FOUND),
-            message: r#"{"message":"path './' wasn't found in the repo"}"#.to_string(),
-        };
-
-        assert!(error.is_empty_repository_root_listing(""));
-        assert!(!error.is_empty_repository_root_listing("src"));
     }
 }

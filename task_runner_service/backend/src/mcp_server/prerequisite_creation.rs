@@ -158,8 +158,8 @@ impl TaskRunnerMcpService {
                     priority: item.priority,
                     tags: item.tags,
                     default_model_config_id: item.default_model_config_id,
-                    requires_execution: Some(!item.is_planning_task),
-                    is_planning_task: Some(item.is_planning_task),
+                    requires_execution: Some(true),
+                    is_planning_task: Some(false),
                     // Requirement planning only materializes a deferred DAG. A due
                     // ContactAsync schedule would let the global scheduler start it
                     // before Chatos receives explicit user confirmation.

@@ -331,7 +331,6 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "project_task_id": "project-task-1",
                         "title": "Prepare implementation",
                         "objective": "Inspect the current implementation and prepare the change.",
-                        "is_planning_task": true,
                         "default_model_config_id": "model-that-must-be-overridden",
                         "input_payload": {
                             "requirement_id": "child-requirement-1",
@@ -343,7 +342,6 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "project_task_id": "project-task-1",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
-                        "is_planning_task": false,
                         "default_model_config_id": "another-model-that-must-be-overridden",
                         "prerequisite_refs": ["prepare"],
                         "context_refs": ["prepare"],
@@ -478,8 +476,8 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
     );
     assert_eq!(prepare_task.project_id, project.id);
     assert_eq!(implement_task.project_id, project.id);
-    assert_eq!(prepare_task.task_profile, TASK_PROFILE_CHATOS_PLAN);
-    assert!(!prepare_task.mcp_config.requires_execution);
+    assert_eq!(prepare_task.task_profile, TASK_PROFILE_DEFAULT);
+    assert!(prepare_task.mcp_config.requires_execution);
     assert_eq!(implement_task.task_profile, TASK_PROFILE_DEFAULT);
     assert!(implement_task.mcp_config.requires_execution);
     assert_eq!(prepare_task.source_session_id.as_deref(), Some("session-1"));
@@ -569,15 +567,13 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "client_ref": "prepare",
                         "project_task_id": "project-task-1",
                         "title": "Prepare implementation",
-                        "objective": "Inspect the current implementation and prepare the change.",
-                        "is_planning_task": true
+                        "objective": "Inspect the current implementation and prepare the change."
                     },
                     {
                         "client_ref": "implement",
                         "project_task_id": "project-task-1",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
-                        "is_planning_task": false,
                         "prerequisite_refs": ["prepare"]
                     }
                 ]
