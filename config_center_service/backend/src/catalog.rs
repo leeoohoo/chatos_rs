@@ -151,6 +151,11 @@ pub const TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY: &str =
     "task_runner.downstream.chatos_callback_url";
 pub const TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.callback_timeout_ms";
+pub const TASK_RUNNER_OTLP_ENDPOINT_CONFIG_KEY: &str = "task_runner.observability.otlp_endpoint";
+pub const TASK_RUNNER_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "task_runner.observability.trace_sample_ratio";
+pub const TASK_RUNNER_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str =
+    "task_runner.observability.export_timeout_ms";
 pub const TASK_RUNNER_HOST_CONFIG_KEY: &str = "task_runner.runtime.host";
 pub const TASK_RUNNER_PORT_CONFIG_KEY: &str = "task_runner.runtime.port";
 pub const TASK_RUNNER_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
@@ -3191,6 +3196,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_CALLBACK_TIMEOUT_MS"],
             294,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "Task Runner OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "Task Runner / Observability",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            295,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "Task Runner 根链路按 Trace ID 采样的比例",
+            "Task Runner / Observability",
+            "service",
+            Some("task-runner"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_OTEL_TRACE_SAMPLE_RATIO"],
+            296,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "Task Runner 导出一批 trace 的超时毫秒数",
+            "Task Runner / Observability",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["TASK_RUNNER_OTEL_EXPORT_TIMEOUT_MS"],
+            297,
             &now,
         ),
         definition(

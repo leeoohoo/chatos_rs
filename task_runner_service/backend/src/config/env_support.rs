@@ -24,6 +24,21 @@ impl AppConfig {
             .parse::<IpAddr>()
             .map_err(|err| format!("TASK_RUNNER_HOST must be a valid ip address: {err}"))?;
         let port = require_config_center_u16("TASK_RUNNER_PORT")?;
+        let otlp_endpoint = require_config_center_text("TASK_RUNNER_OTEL_EXPORTER_OTLP_ENDPOINT")?;
+        require_http_endpoint(
+            "TASK_RUNNER_OTEL_EXPORTER_OTLP_ENDPOINT",
+            otlp_endpoint.as_str(),
+        )?;
+        let otlp_trace_sample_ratio =
+            require_config_center_f64("TASK_RUNNER_OTEL_TRACE_SAMPLE_RATIO")?;
+        if !(0.0..=1.0).contains(&otlp_trace_sample_ratio) {
+            return Err("TASK_RUNNER_OTEL_TRACE_SAMPLE_RATIO must be between 0 and 1".to_string());
+        }
+        let otlp_export_timeout_ms =
+            require_config_center_u64("TASK_RUNNER_OTEL_EXPORT_TIMEOUT_MS")?;
+        if otlp_export_timeout_ms == 0 {
+            return Err("TASK_RUNNER_OTEL_EXPORT_TIMEOUT_MS must be greater than zero".to_string());
+        }
         let role = TaskRunnerRole::from_env(normalized_env("TASK_RUNNER_ROLE").as_deref());
         let timeout_ms = require_config_center_u64("TASK_RUNNER_MEMORY_TIMEOUT_MS")?.max(1_000);
         let memory_engine_base_url =
@@ -159,6 +174,9 @@ impl AppConfig {
         let config = Self {
             host,
             port,
+            otlp_endpoint,
+            otlp_trace_sample_ratio,
+            otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             role,
             store_mode,
             database_url: normalize_database_url(
@@ -299,6 +317,14 @@ fn require_https_base_url(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn require_http_endpoint(key: &str, value: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("{key} must use http or https"));
+    }
+    Ok(())
+}
+
 fn require_config_center_text(key: &str) -> Result<String, String> {
     normalized_env(key).ok_or_else(|| format!("{key} is required from configuration center"))
 }
@@ -315,6 +341,13 @@ fn require_config_center_u16(key: &str) -> Result<u16, String> {
     value
         .parse::<u16>()
         .map_err(|err| format!("{key} must be a valid integer: {err}"))
+}
+
+fn require_config_center_f64(key: &str) -> Result<f64, String> {
+    let value = require_config_center_secret(key)?;
+    value
+        .parse::<f64>()
+        .map_err(|err| format!("{key} must be a valid number: {err}"))
 }
 
 fn require_config_center_bool(key: &str) -> Result<bool, String> {

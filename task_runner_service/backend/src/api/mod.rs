@@ -56,6 +56,7 @@ mod router;
 mod runs;
 mod tasks;
 mod tooling;
+mod trace_context;
 
 pub use self::router::{build_internal_router, build_public_router};
 

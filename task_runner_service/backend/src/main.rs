@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use tracing_subscriber::EnvFilter;
+use opentelemetry::global;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+use opentelemetry_sdk::Resource;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use task_runner_service_backend::{
     build_internal_router, build_public_router,
@@ -21,7 +27,6 @@ const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_task_runner_dotenv();
-    init_tracing();
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -47,6 +52,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let pressure_state =
         task_runner_service_backend::pressure::TaskRunnerPressureState::new(pressure_policy);
     let mut config = AppConfig::from_env()?;
+    let _telemetry = init_tracing(&config)?;
     resolve_downstream_services(&mut config).await;
     let app_state = AppState::new(config.clone()).await?;
     if config.worker_enabled() {
@@ -273,9 +279,43 @@ async fn resolve_downstream_services(config: &mut AppConfig) {
     }
 }
 
-fn init_tracing() {
+struct TelemetryGuard {
+    tracer_provider: SdkTracerProvider,
+}
+
+impl Drop for TelemetryGuard {
+    fn drop(&mut self) {
+        let _ = self.tracer_provider.shutdown();
+    }
+}
+
+fn init_tracing(config: &AppConfig) -> Result<TelemetryGuard, String> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("task_runner_service_backend=info,chatos_ai_runtime=info,tower_http=info")
     });
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(config.otlp_endpoint.clone())
+        .with_timeout(config.otlp_export_timeout)
+        .build()
+        .map_err(|err| format!("build Task Runner OTLP trace exporter failed: {err}"))?;
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_resource(Resource::builder().with_service_name("task-runner").build())
+        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
+            config.otlp_trace_sample_ratio,
+        ))))
+        .with_batch_exporter(trace_exporter)
+        .build();
+    let tracer = tracer_provider.tracer("task-runner");
+    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(telemetry_layer)
+        .try_init()
+        .map_err(|err| format!("initialize Task Runner tracing subscriber failed: {err}"))?;
+
+    Ok(TelemetryGuard { tracer_provider })
 }

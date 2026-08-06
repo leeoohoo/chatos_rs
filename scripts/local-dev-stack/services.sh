@@ -255,6 +255,7 @@ desired.update({
     "task_runner.queue.run_dispatch_mode": "rabbitmq",
     "task_runner.queue.callback_delivery_mode": "rabbitmq",
     "task_runner.queue.rabbitmq_url": rabbitmq_url,
+    "task_runner.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "mcp_management.async_tool.dispatch_mode": "rabbitmq",
     "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
     "chatos.observability.otlp_endpoint": "http://127.0.0.1:4317",

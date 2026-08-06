@@ -36,6 +36,9 @@ lapin = { version = "2.5", features = ["rustls", "rustls-native-certs"] }
 libc = "0.2"
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["rt-tokio", "trace"] }
 parking_lot = "0.12"
 rand = "0.10"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
@@ -50,6 +53,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7"
 tower-http = { version = "0.7", features = ["cors", "trace"] }
 tracing = "0.1"
+tracing-opentelemetry = { version = "0.33", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }

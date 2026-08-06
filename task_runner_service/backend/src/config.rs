@@ -34,6 +34,9 @@ pub enum TaskRunnerRole {
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
+    pub otlp_endpoint: String,
+    pub otlp_trace_sample_ratio: f64,
+    pub otlp_export_timeout: Duration,
     pub role: TaskRunnerRole,
     pub store_mode: StoreMode,
     pub database_url: String,
