@@ -28,7 +28,9 @@ pub use http_auth::{bearer_token_from_headers, query_has_nonempty_parameter, Bea
 pub use http_client::{
     build_http_client, build_mtls_http_client, http_client_builder, HttpClientTimeouts,
 };
-pub use http_error::{classify_http_request_error, HttpRequestErrorKind};
+pub use http_error::{
+    classify_http_request_error, format_http_request_error, HttpRequestErrorKind,
+};
 pub use identity::{normalize_owned_identity_text, normalized_identity_text};
 pub use internal_audit::{record_internal_resource_access, InternalResourceAccessAudit};
 pub use internal_token::{

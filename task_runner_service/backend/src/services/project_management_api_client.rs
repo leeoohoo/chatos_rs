@@ -594,7 +594,9 @@ async fn send_json<T: for<'de> Deserialize<'de>>(
         .with_internal_trace_context()
         .send()
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| {
+            chatos_service_runtime::format_http_request_error("Project service request", err)
+        })?;
     let status = response.status();
     if !status.is_success() {
         let body =
@@ -611,7 +613,9 @@ async fn send_optional_json<T: for<'de> Deserialize<'de>>(
         .with_internal_trace_context()
         .send()
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| {
+            chatos_service_runtime::format_http_request_error("Project service request", err)
+        })?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
