@@ -98,6 +98,7 @@ pub async fn run_server_from_env() -> Result<(), String> {
             result.map_err(|err| format!("Internal mTLS server error: {err}"))?;
         }
     }
+    logger::shutdown_telemetry()?;
     Ok(())
 }
 

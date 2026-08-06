@@ -212,6 +212,24 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "integer",
         ),
         (
+            CHATOS_OTLP_ENDPOINT_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_OTEL_EXPORTER_OTLP_ENDPOINT",
+            "string",
+        ),
+        (
+            CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_OTEL_TRACE_SAMPLE_RATIO",
+            "number",
+        ),
+        (
+            CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_OTEL_EXPORT_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
             TASK_RUNNER_HOST_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_HOST",

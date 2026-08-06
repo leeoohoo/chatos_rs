@@ -18,6 +18,9 @@ pub struct Config {
     pub host: String,
     pub log_level: String,
     pub log_max_files: String,
+    pub otlp_endpoint: String,
+    pub otlp_trace_sample_ratio: f64,
+    pub otlp_export_timeout_ms: i64,
     pub cors_origins: Vec<String>,
     pub summary_enabled: bool,
     pub summary_message_limit: i64,
@@ -104,6 +107,16 @@ impl Config {
 
         let log_level = require_config_center_value("LOG_LEVEL")?;
         let log_max_files = require_config_center_value("LOG_MAX_FILES")?;
+        let otlp_endpoint = require_config_center_value("CHATOS_OTEL_EXPORTER_OTLP_ENDPOINT")?;
+        validate_http_endpoint("CHATOS_OTEL_EXPORTER_OTLP_ENDPOINT", &otlp_endpoint)?;
+        let otlp_trace_sample_ratio = require_config_center_f64("CHATOS_OTEL_TRACE_SAMPLE_RATIO")?;
+        if !(0.0..=1.0).contains(&otlp_trace_sample_ratio) {
+            return Err("CHATOS_OTEL_TRACE_SAMPLE_RATIO must be between 0 and 1".to_string());
+        }
+        let otlp_export_timeout_ms = require_config_center_i64("CHATOS_OTEL_EXPORT_TIMEOUT_MS")?;
+        if otlp_export_timeout_ms <= 0 {
+            return Err("CHATOS_OTEL_EXPORT_TIMEOUT_MS must be greater than zero".to_string());
+        }
         let cors_origins = require_config_center_csv("CORS_ORIGINS")?;
 
         let summary_enabled = require_config_center_bool("SUMMARY_ENABLED")?;
@@ -280,6 +293,9 @@ impl Config {
             host,
             log_level,
             log_max_files,
+            otlp_endpoint,
+            otlp_trace_sample_ratio,
+            otlp_export_timeout_ms,
             cors_origins,
             summary_enabled,
             summary_message_limit,
@@ -405,6 +421,14 @@ fn require_https_base_url(key: &str, value: &str) -> Result<(), String> {
     let parsed = Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
     if parsed.scheme() != "https" {
         return Err(format!("{key} must use https"));
+    }
+    Ok(())
+}
+
+fn validate_http_endpoint(key: &str, value: &str) -> Result<(), String> {
+    let parsed = Url::parse(value).map_err(|err| format!("{key} is invalid: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err(format!("{key} must be an absolute http(s) endpoint"));
     }
     Ok(())
 }

@@ -257,6 +257,7 @@ desired.update({
     "task_runner.queue.rabbitmq_url": rabbitmq_url,
     "mcp_management.async_tool.dispatch_mode": "rabbitmq",
     "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
+    "chatos.observability.otlp_endpoint": "http://127.0.0.1:4317",
 })
 
 legacy_user_service_secret = os.environ.get("USER_SERVICE_JWT_SECRET", "").strip()

@@ -141,6 +141,28 @@ services:
     networks:
       - cloud
 
+  tempo:
+    image: ${TEMPO_IMAGE:-grafana/tempo:2.6.1}
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/tempo.yml
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${TEMPO_HTTP_PORT:-3200}:3200"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${TEMPO_OTLP_GRPC_PORT:-4317}:4317"
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo.yml:ro
+      - tempo-data:/var/tempo
+    deploy:
+      resources:
+        limits:
+          cpus: "${TEMPO_CPU_LIMIT:-1.0}"
+          memory: ${TEMPO_MEMORY_LIMIT:-1G}
+        reservations:
+          cpus: "${TEMPO_CPU_RESERVATION:-0.10}"
+          memory: ${TEMPO_MEMORY_RESERVATION:-128M}
+    networks:
+      - cloud
+
   grafana:
     image: ${GRAFANA_IMAGE:-grafana/grafana:11.2.0}
     restart: unless-stopped
@@ -158,6 +180,8 @@ services:
       - grafana-data:/var/lib/grafana
     depends_on:
       prometheus:
+        condition: service_started
+      tempo:
         condition: service_started
     deploy:
       resources:
@@ -239,4 +263,5 @@ volumes:
   valkey-data:
   prometheus-data:
   alertmanager-data:
+  tempo-data:
   grafana-data:

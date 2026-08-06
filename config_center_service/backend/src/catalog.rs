@@ -234,6 +234,10 @@ pub const CHATOS_AUTH_COMPAT_SECRET_CONFIG_KEY: &str = "chatos.auth.compat_secre
 pub const CHATOS_AUTH_ACCESS_TOKEN_TTL_SECONDS_CONFIG_KEY: &str =
     "chatos.auth.access_token_ttl_seconds";
 pub const CHATOS_LOG_MAX_FILES_CONFIG_KEY: &str = "chatos.logging.max_files";
+pub const CHATOS_OTLP_ENDPOINT_CONFIG_KEY: &str = "chatos.observability.otlp_endpoint";
+pub const CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
+    "chatos.observability.trace_sample_ratio";
+pub const CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str = "chatos.observability.export_timeout_ms";
 pub const CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY: &str = "chatos.mcp.result_rabbitmq_url";
 pub const CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY: &str = "chatos.mcp.result_queue_prefix";
 pub const CHATOS_CORS_ORIGINS_CONFIG_KEY: &str = "chatos.http.cors_origins";
@@ -1880,6 +1884,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOG_MAX_FILES"],
             193,
+            &now,
+        ),
+        definition(
+            CHATOS_OTLP_ENDPOINT_CONFIG_KEY,
+            "OTLP Endpoint",
+            "ChatOS OpenTelemetry trace exporter 使用的 OTLP gRPC 地址",
+            "Chat OS / Observability",
+            "service",
+            Some("chatos-backend"),
+            "string",
+            json!("http://tempo:4317"),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["CHATOS_OTEL_EXPORTER_OTLP_ENDPOINT"],
+            194,
+            &now,
+        ),
+        definition(
+            CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
+            "Trace Sample Ratio",
+            "ChatOS 根链路按 Trace ID 采样的比例",
+            "Chat OS / Observability",
+            "service",
+            Some("chatos-backend"),
+            "number",
+            json!(0.1),
+            Some(0),
+            Some(1),
+            &[],
+            "restart_required",
+            &["CHATOS_OTEL_TRACE_SAMPLE_RATIO"],
+            195,
+            &now,
+        ),
+        definition(
+            CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
+            "OTLP Export Timeout",
+            "ChatOS 导出一批 trace 的超时毫秒数",
+            "Chat OS / Observability",
+            "service",
+            Some("chatos-backend"),
+            "duration_ms",
+            json!(5_000),
+            Some(100),
+            Some(60_000),
+            &[],
+            "restart_required",
+            &["CHATOS_OTEL_EXPORT_TIMEOUT_MS"],
+            196,
             &now,
         ),
         definition(

@@ -16,7 +16,7 @@ use serde_json::json;
 use std::time::Instant;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, debug_span};
+use tracing::{debug, info_span};
 
 use crate::config::Config;
 use crate::core::auth::{
@@ -60,6 +60,7 @@ pub mod system_contexts;
 pub mod task_manager;
 pub mod task_runner_plugins;
 pub mod terminals;
+mod trace_context;
 pub mod user_settings;
 
 pub fn public_router() -> Result<Router, String> {
@@ -74,8 +75,13 @@ pub fn public_router() -> Result<Router, String> {
             let user_id = header_value(req, &HeaderName::from_static("x-user-id"));
             let project_id = header_value(req, &HeaderName::from_static("x-project-id"));
             let conversation_id = header_value(req, &HeaderName::from_static("x-conversation-id"));
-            debug_span!(
+            info_span!(
                 "http.request",
+                otel.kind = "server",
+                otel.name = %format!("{} {}", req.method(), matched_route(req)),
+                http.request.method = %req.method(),
+                http.route = %matched_route(req),
+                server.address = %header_value(req, &HOST),
                 method = %req.method(),
                 uri = %sanitize_request_uri(req.uri()),
                 version = ?req.version(),
@@ -121,6 +127,7 @@ pub fn public_router() -> Result<Router, String> {
         ))
         .layer(middleware::from_fn(log_server_error_requests))
         .layer(middleware::from_fn(metrics::observe_public_http))
+        .layer(middleware::from_fn(trace_context::accept_remote_parent))
         .layer(trace)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
@@ -130,13 +137,25 @@ pub fn public_router() -> Result<Router, String> {
 }
 
 pub fn internal_router() -> Router {
+    let trace = TraceLayer::new_for_http().make_span_with(|req: &Request<Body>| {
+        info_span!(
+            "http.request",
+            otel.kind = "server",
+            otel.name = %format!("{} {}", req.method(), matched_route(req)),
+            http.request.method = %req.method(),
+            http.route = %matched_route(req),
+            server.address = %header_value(req, &HOST),
+            surface = "internal"
+        )
+    });
     Router::new()
         .merge(modules::app_api::internal_routes())
         .fallback(fallback_404)
         .layer(DefaultBodyLimit::max(default_request_body_limit_bytes()))
         .layer(middleware::from_fn(log_server_error_requests))
         .layer(middleware::from_fn(metrics::observe_internal_http))
-        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(trace_context::accept_remote_parent))
+        .layer(trace)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
@@ -330,6 +349,13 @@ fn header_value(req: &Request<Body>, name: &HeaderName) -> String {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("-")
         .to_string()
+}
+
+fn matched_route(req: &Request<Body>) -> &str {
+    req.extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(axum::extract::MatchedPath::as_str)
+        .unwrap_or("/unmatched")
 }
 
 fn sanitize_request_uri(uri: &axum::http::Uri) -> String {
