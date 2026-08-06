@@ -407,13 +407,14 @@ wait_for_config_center_mtls() {
 }
 
 ensure_local_connector_control_plane_config() {
-  local config_center_base_url="$CONFIG_CENTER_BASE_URL"
+  local config_center_internal_base_url="$CONFIG_CENTER_BASE_URL"
+  local config_center_public_base_url="http://127.0.0.1:${CONFIG_CENTER_PORT}"
   local environment="${CHATOS_ENV:-local}"
   local key_dir="$STATE_DIR/local-connector"
   local key_path="$key_dir/relay-signing-key.pk8"
   local key_id="${CHATOS_LOCAL_DEV_RELAY_SIGNING_KEY_ID:-relay-key-local-dev}"
   local public_key snapshot_file draft_file merge_file token desired_json snapshot_auth_token
-  local login_payload
+  local login_payload login_response
 
   mkdir -p "$key_dir"
   if [[ ! -f "$key_path" ]]; then
@@ -454,7 +455,7 @@ PY
     --cert "$(config_center_client_identity_path local-connector-service)" \
     -H "x-config-center-caller: local-connector-service" \
     -H "x-config-center-internal-token: $snapshot_auth_token" \
-    "${config_center_base_url}/internal/config/v1/snapshots/local-connector-service?environment=${environment}" \
+    "${config_center_internal_base_url}/internal/config/v1/snapshots/local-connector-service?environment=${environment}" \
     >"$snapshot_file"; then
     if python3 - "$snapshot_file" "$desired_json" <<'PY'
 import json
@@ -484,19 +485,25 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
   )"
-  token="$(
+  if ! login_response="$(
     curl -fsS \
       -H "content-type: application/json" \
       --data "$login_payload" \
-      "${config_center_base_url}/api/auth/login" \
-      | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])'
-  )"
+      "${config_center_public_base_url}/api/auth/login"
+  )"; then
+    echo "[ERROR] configuration center admin login failed during Local Connector relay trust bootstrap" >&2
+    return 1
+  fi
+  if ! token="$(printf '%s' "$login_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"; then
+    echo "[ERROR] configuration center admin login returned an invalid response during Local Connector relay trust bootstrap" >&2
+    return 1
+  fi
 
   draft_file="$(mktemp)"
   merge_file="$(mktemp)"
   curl -fsS \
     -H "authorization: Bearer $token" \
-    "${config_center_base_url}/api/config/v1/environments/${environment}/draft" \
+    "${config_center_public_base_url}/api/config/v1/environments/${environment}/draft" \
     >"$draft_file"
   python3 - "$draft_file" "$desired_json" >"$merge_file" <<'PY'
 import json
@@ -516,14 +523,14 @@ PY
     -H "authorization: Bearer $token" \
     -H "content-type: application/json" \
     --data-binary "@$merge_file" \
-    "${config_center_base_url}/api/config/v1/environments/${environment}/draft" \
+    "${config_center_public_base_url}/api/config/v1/environments/${environment}/draft" \
     >/dev/null
   curl -fsS \
     -X POST \
     -H "authorization: Bearer $token" \
     -H "content-type: application/json" \
     --data '{"message":"Local dev bootstrap Local Connector relay trust"}' \
-    "${config_center_base_url}/api/config/v1/environments/${environment}/draft/publish" \
+    "${config_center_public_base_url}/api/config/v1/environments/${environment}/draft/publish" \
     >/dev/null
   rm -f "$draft_file" "$merge_file"
   echo "[INFO] published local connector managed relay trust settings to configuration center"
