@@ -25,7 +25,7 @@ const skillCatalog = path.join(
 );
 const skillRoot = path.join(clientDir, 'skill_bundles', 'internal');
 
-function runTool(output, extra = [], catalog = pluginCatalog) {
+function runTool(output, extra = [], catalog = pluginCatalog, env = {}) {
   return spawnSync(process.execPath, [
     tool,
     ...extra,
@@ -37,7 +37,28 @@ function runTool(output, extra = [], catalog = pluginCatalog) {
   ], {
     cwd: clientDir,
     encoding: 'utf8',
+    env: { ...process.env, ...env },
   });
+}
+
+function writeAppleDoublePreload(temp) {
+  const preload = path.join(temp, 'simulate-appledouble.cjs');
+  fs.writeFileSync(preload, `
+const fs = require('node:fs');
+const path = require('node:path');
+const originalWriteFileSync = fs.writeFileSync;
+const root = process.env.CHATOS_TEST_APPLEDOUBLE_ROOT;
+fs.writeFileSync = function writeFileSyncWithAppleDouble(file, ...args) {
+  const result = originalWriteFileSync.call(this, file, ...args);
+  const resolved = path.resolve(String(file));
+  if (root && resolved.startsWith(path.resolve(root) + path.sep)) {
+    const sidecar = path.join(path.dirname(resolved), '._' + path.basename(resolved));
+    originalWriteFileSync.call(this, sidecar, 'simulated AppleDouble metadata');
+  }
+  return result;
+};
+`);
+  return preload;
 }
 
 test('stages complete Plugin Bundles and rejects staged file tampering', () => {
@@ -245,6 +266,31 @@ test('stages complete Plugin Bundles and rejects staged file tampering', () => {
     const rejected = runTool(output, ['--verify-only']);
     assert.notEqual(rejected.status, 0);
     assert.match(rejected.stderr, /checksum mismatch/i);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('removes AppleDouble metadata generated while staging on ExFAT', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-plugin-appledouble-'));
+  try {
+    const output = path.join(temp, 'output');
+    const preload = writeAppleDoublePreload(temp);
+    const staged = runTool(output, [], pluginCatalog, {
+      CHATOS_TEST_APPLEDOUBLE_ROOT: output,
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require=${preload}`.trim(),
+    });
+    assert.equal(staged.status, 0, staged.stderr);
+    const metadata = [];
+    fs.readdirSync(output, { recursive: true, withFileTypes: true }).forEach((entry) => {
+      if (entry.name === '.DS_Store' || entry.name.startsWith('._')) {
+        metadata.push(entry.name);
+      }
+    });
+    assert.deepEqual(metadata, []);
+
+    const verified = runTool(output, ['--verify-only']);
+    assert.equal(verified.status, 0, verified.stderr);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
