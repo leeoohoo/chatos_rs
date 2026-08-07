@@ -27,18 +27,22 @@ async function loadRunEventSuffix(
   runId: string,
   cursor: TaskRunEventRecord,
   collected: TaskRunEventRecord[] = [],
+  signal?: AbortSignal,
 ): Promise<TaskRunEventRecord[]> {
   const batch = await api.getRunEvents(runId, {
     after_created_at: cursor.created_at,
     after_id: cursor.id,
     limit: RUN_EVENT_SYNC_BATCH_SIZE,
-  });
+  }, signal);
+  if (batch.some((event) => event.run_id !== runId)) {
+    throw new Error(`Run event response contained events outside Run ${runId}`);
+  }
   const next = [...collected, ...batch];
   if (batch.length < RUN_EVENT_SYNC_BATCH_SIZE) {
     return next;
   }
   const nextCursor = batch[batch.length - 1];
-  return nextCursor ? loadRunEventSuffix(runId, nextCursor, next) : next;
+  return nextCursor ? loadRunEventSuffix(runId, nextCursor, next, signal) : next;
 }
 
 function appendUniqueRunEvents(
@@ -122,6 +126,7 @@ export function RunsPage() {
     let eventSource: EventSource | null = null;
     let reconnectTimer: number | undefined;
     let eventSync = Promise.resolve();
+    let syncAbortController: AbortController | null = null;
     const syncRunEvents = async () => {
       const queryKey = ['run-events', selectedRunId] as const;
       const current = queryClient.getQueryData<TaskRunEventRecord[]>(queryKey);
@@ -130,12 +135,30 @@ export function RunsPage() {
         await queryClient.invalidateQueries({ queryKey });
         return;
       }
-      const incoming = await loadRunEventSuffix(selectedRunId, cursor);
+      syncAbortController?.abort();
+      syncAbortController = new AbortController();
+      const incoming = await loadRunEventSuffix(
+        selectedRunId,
+        cursor,
+        [],
+        syncAbortController.signal,
+      );
+      if (closed) {
+        return;
+      }
       queryClient.setQueryData<TaskRunEventRecord[]>(queryKey, (existing = []) =>
         appendUniqueRunEvents(existing, incoming),
       );
     };
-    const refresh = () => {
+    const refresh = (event: MessageEvent<string>) => {
+      try {
+        const notification = JSON.parse(event.data) as { run_id?: string };
+        if (notification.run_id !== selectedRunId) {
+          return;
+        }
+      } catch {
+        return;
+      }
       eventSync = eventSync
         .then(syncRunEvents)
         .catch(() => queryClient.invalidateQueries({ queryKey: ['run-events', selectedRunId] }));
@@ -152,6 +175,9 @@ export function RunsPage() {
         let current = queryClient.getQueryData<TaskRunEventRecord[]>(queryKey);
         if (current === undefined) {
           current = await api.getRunEvents(selectedRunId);
+          if (current.some((event) => event.run_id !== selectedRunId)) {
+            throw new Error(`Run event response contained events outside Run ${selectedRunId}`);
+          }
           queryClient.setQueryData(queryKey, current);
         }
         const cursor = current[current.length - 1];
@@ -203,6 +229,7 @@ export function RunsPage() {
       }
       eventSource?.removeEventListener('run_event', refresh);
       eventSource?.close();
+      syncAbortController?.abort();
     };
   }, [queryClient, selectedRunId]);
 
@@ -277,7 +304,14 @@ export function RunsPage() {
             next.delete('model_config_id');
             setSearchParams(next);
           }}
-          onRefresh={() => runsQuery.refetch()}
+          onRefresh={() => {
+            void Promise.all([
+              runsQuery.refetch(),
+              selectedRunId ? selectedRunQuery.refetch() : Promise.resolve(),
+              selectedRunId ? runEventsQuery.refetch() : Promise.resolve(),
+              selectedRunId ? runPromptsQuery.refetch() : Promise.resolve(),
+            ]);
+          }}
         />
 
         <RunListTable
