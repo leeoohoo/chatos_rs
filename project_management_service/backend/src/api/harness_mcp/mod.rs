@@ -400,7 +400,10 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
         }
         other => Err(format!("Tool not found: {other}")),
     };
-    if matches!(name, "edit_file" | "apply_patch") {
+    if matches!(
+        name,
+        "write_file" | "edit_file" | "append_file" | "delete_path" | "apply_patch"
+    ) {
         record_file_modification_outcome(ctx, name, &invocation);
     }
     invocation

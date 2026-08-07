@@ -79,20 +79,24 @@ fn write_tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "write_file",
-            "description": "Write file content to the current project workspace. Use this for new files or full-file replacement when the target path is known.",
+            "description": "Write file content to the current project workspace. expected_sha256 must be the latest read hash for an existing file, or null only for a path confirmed absent.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "content": { "type": "string" }
+                    "content": { "type": "string" },
+                    "expected_sha256": {
+                        "type": ["string", "null"],
+                        "pattern": "^[0-9a-f]{64}$"
+                    }
                 },
                 "additionalProperties": false,
-                "required": ["path", "content"]
+                "required": ["path", "content", "expected_sha256"]
             }
         }),
         json!({
             "name": "edit_file",
-            "description": "Safely edit a file in the current project workspace by replacing old_text with new_text. Use before_context / after_context or start_line/end_line when old_text appears multiple times. Context may be supplied as adjacent whole lines without manually adding the boundary newline.",
+            "description": "Safely edit a file in the current project workspace by replacing old_text with new_text. expected_sha256 must be the latest read hash. Use before_context / after_context or start_line/end_line when old_text appears multiple times.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -103,47 +107,66 @@ fn write_tool_definitions() -> Vec<Value> {
                     "end_line": { "type": "integer", "minimum": 1 },
                     "before_context": { "type": "string" },
                     "after_context": { "type": "string" },
-                    "expected_matches": { "type": "integer", "minimum": 1 }
+                    "expected_matches": { "type": "integer", "minimum": 1 },
+                    "expected_sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                    }
                 },
                 "additionalProperties": false,
-                "required": ["path", "old_text", "new_text"]
+                "required": ["path", "old_text", "new_text", "expected_sha256"]
             }
         }),
         json!({
             "name": "append_file",
-            "description": "Append content to a file in the current project workspace.",
+            "description": "Append content to a file in the current project workspace. expected_sha256 must be the latest read hash for an existing file, or null only for a path confirmed absent.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "content": { "type": "string" }
+                    "content": { "type": "string" },
+                    "expected_sha256": {
+                        "type": ["string", "null"],
+                        "pattern": "^[0-9a-f]{64}$"
+                    }
                 },
                 "additionalProperties": false,
-                "required": ["path", "content"]
+                "required": ["path", "content", "expected_sha256"]
             }
         }),
         json!({
             "name": "delete_path",
-            "description": "Delete a file or directory recursively from the current project workspace.",
+            "description": "Delete a file or directory recursively from the current project workspace. expected_sha256 is required for files and null for directories or confirmed-absent paths.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" }
+                    "path": { "type": "string" },
+                    "expected_sha256": {
+                        "type": ["string", "null"],
+                        "pattern": "^[0-9a-f]{64}$"
+                    }
                 },
                 "additionalProperties": false,
-                "required": ["path"]
+                "required": ["path", "expected_sha256"]
             }
         }),
         json!({
             "name": "apply_patch",
-            "description": "Apply a patch to one or more files in the current project workspace. Supported formats match the builtin CodeMaintainer apply_patch tool.",
+            "description": "Apply a patch to one or more files in the current project workspace. expected_sha256_by_path must contain the latest read hash for every existing target.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "patch": { "type": "string", "minLength": 1 }
+                    "patch": { "type": "string", "minLength": 1 },
+                    "expected_sha256_by_path": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                        }
+                    }
                 },
                 "additionalProperties": false,
-                "required": ["patch"]
+                "required": ["patch", "expected_sha256_by_path"]
             }
         }),
     ]
