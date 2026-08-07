@@ -296,6 +296,23 @@ fn structured_outcome_result_summary(
             ));
         }
     }
+    let supply_chain_evidence = outcome
+        .verification_evidence
+        .iter()
+        .filter(|evidence| evidence.starts_with("Node.js supply-chain audit status:"))
+        .map(|evidence| path_redactor.redact_text(evidence))
+        .collect::<Vec<_>>();
+    if !supply_chain_evidence.is_empty() {
+        sections.push(format!(
+            "{}：{}",
+            if english {
+                "Supply-chain audit"
+            } else {
+                "供应链审计"
+            },
+            supply_chain_evidence.join(if english { "; " } else { "；" })
+        ));
+    }
     sections
         .into_iter()
         .filter(|section| !section.trim().is_empty())
@@ -561,6 +578,25 @@ mod tests {
             project_service_sync_secret: None,
             project_service_request_timeout: Duration::from_millis(5000),
         }
+    }
+
+    #[test]
+    fn structured_summary_exposes_supply_chain_audit_evidence() {
+        let outcome = TaskExecutionOutcome::succeeded(
+            "implemented",
+            vec![
+                "tests passed".to_string(),
+                "Node.js supply-chain audit status: passed; baseline baseline-2026-08; command `npm audit --audit-level=high --json` exited 0; vulnerabilities total=0, high=0, critical=0".to_string(),
+            ],
+        );
+        let summary = structured_outcome_result_summary(
+            &outcome,
+            false,
+            &crate::services::path_redaction::WorkspacePathRedactor::for_workspace(".", "."),
+        );
+
+        assert!(summary.contains("供应链审计"));
+        assert!(summary.contains("critical=0"));
     }
 
     async fn test_services() -> (TaskService, RunService) {

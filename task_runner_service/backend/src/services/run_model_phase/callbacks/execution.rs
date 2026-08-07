@@ -34,6 +34,20 @@ impl RunService {
                 return report;
             }
         };
+        let supply_chain_policy = match self.effective_node_supply_chain_policy().await {
+            Ok(policy) => policy,
+            Err(err) => {
+                let report = TaskRunReport::from_ai_report(
+                    task.id.clone(),
+                    run.id.clone(),
+                    Some(model_config.id.clone()),
+                    AiTurnReport::failed(format!("failed to resolve supply-chain policy: {err}")),
+                );
+                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
+                    .await;
+                return report;
+            }
+        };
         let review_policy = TaskExecutionReviewPolicy::new(
             runtime_settings.review_read_only_iterations,
             runtime_settings.review_missing_read_failures,
@@ -68,6 +82,13 @@ impl RunService {
             }
         };
         let mut run_spec = prepared_execution.run_spec;
+        if task.mcp_config.requires_execution {
+            run_spec.prefixed_input_items.push(
+                crate::services::run_model_phase::supply_chain::policy_guidance(
+                    &supply_chain_policy,
+                ),
+            );
+        }
         let agent = prepared_execution.agent;
         let runtime_config = prepared_execution.runtime_config;
         let mcp_builder = prepared_execution.mcp_builder;
@@ -136,6 +157,24 @@ impl RunService {
         };
         if report.is_completed() {
             report.execution_outcome = runtime_execution.execution_outcome.lock().clone();
+        }
+        if task.mcp_config.requires_execution {
+            let supply_chain_report = runtime_execution
+                .supply_chain_evidence
+                .lock()
+                .evaluate(&supply_chain_policy);
+            if supply_chain_report.applicable {
+                apply_supply_chain_outcome_gate(&mut report, &supply_chain_report);
+                self.store.append_run_event_sync(TaskRunEventRecord::new(
+                    run.id.clone(),
+                    "supply_chain_audit",
+                    Some(match supply_chain_report.status {
+                        "passed" => "Node.js 供应链审计通过".to_string(),
+                        _ => "Node.js 供应链审计未通过".to_string(),
+                    }),
+                    Some(supply_chain_report.event_payload()),
+                ));
+            }
         }
         self.unregister_runtime_abort_token(run.id.as_str());
         flush_pending_stream_event(
@@ -231,6 +270,128 @@ impl RunService {
                 "failed to persist MCP runtime snapshot: {err}"
             );
         }
+    }
+}
+
+fn apply_supply_chain_outcome_gate(
+    report: &mut TaskRunReport,
+    supply_chain: &crate::services::run_model_phase::supply_chain::SupplyChainAuditReport,
+) {
+    let evidence = supply_chain.evidence_summary();
+    let Some(outcome) = report.execution_outcome.as_mut() else {
+        return;
+    };
+    if !outcome
+        .verification_evidence
+        .iter()
+        .any(|item| item == &evidence)
+    {
+        outcome.verification_evidence.push(evidence);
+    }
+    if supply_chain.status == "passed"
+        || outcome.status != chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded
+    {
+        return;
+    }
+    outcome.status = chatos_ai_runtime::TaskExecutionOutcomeStatus::Blocked;
+    outcome.blocking_reason = Some(supply_chain.blocking_reasons.join("; "));
+    outcome.unmet_acceptance_criteria = supply_chain.blocking_reasons.clone();
+}
+
+#[cfg(test)]
+mod supply_chain_gate_tests {
+    use super::*;
+    use crate::services::run_model_phase::supply_chain::{
+        NodeVulnerabilityCounts, SupplyChainAuditReport,
+    };
+
+    fn report(status: &'static str, blocking_reasons: Vec<String>) -> SupplyChainAuditReport {
+        SupplyChainAuditReport {
+            applicable: true,
+            status,
+            baseline_revision: "baseline-2026-08".to_string(),
+            audit_level: "high".to_string(),
+            package_manager: Some("npm".to_string()),
+            lockfile_observed: true,
+            install_command: Some("npm ci --ignore-scripts".to_string()),
+            install_exit_code: Some(0),
+            approved_install_script_packages: vec!["esbuild".to_string()],
+            audit_command: Some("npm audit --audit-level=high --json".to_string()),
+            audit_exit_code: Some(if status == "passed" { 0 } else { 1 }),
+            vulnerabilities: Some(NodeVulnerabilityCounts {
+                total: if status == "passed" { 0 } else { 1 },
+                critical: if status == "passed" { 0 } else { 1 },
+                ..NodeVulnerabilityCounts::default()
+            }),
+            blocking_reasons,
+        }
+    }
+
+    fn task_report() -> TaskRunReport {
+        let mut report = TaskRunReport::from_ai_report(
+            "task-1",
+            "run-1",
+            Some("model-1".to_string()),
+            AiTurnReport::completed(chatos_ai_runtime::AiRuntimeResult {
+                content: "implemented".to_string(),
+                reasoning: None,
+                tool_calls: None,
+                finish_reason: Some("stop".to_string()),
+                usage: None,
+                response_id: None,
+            }),
+        );
+        report.execution_outcome = Some(chatos_ai_runtime::TaskExecutionOutcome::succeeded(
+            "implemented",
+            vec!["tests passed".to_string()],
+        ));
+        report
+    }
+
+    #[test]
+    fn blocked_supply_chain_report_overrides_claimed_success() {
+        let mut task_report = task_report();
+        apply_supply_chain_outcome_gate(
+            &mut task_report,
+            &report(
+                "blocked",
+                vec![
+                    "Node.js dependency audit found 0 high and 1 critical vulnerabilities"
+                        .to_string(),
+                ],
+            ),
+        );
+
+        let outcome = task_report.execution_outcome.unwrap();
+        assert_eq!(
+            outcome.status,
+            chatos_ai_runtime::TaskExecutionOutcomeStatus::Blocked
+        );
+        assert!(outcome
+            .blocking_reason
+            .as_deref()
+            .unwrap()
+            .contains("critical"));
+        assert!(outcome
+            .verification_evidence
+            .iter()
+            .any(|evidence| evidence.contains("audit status: blocked")));
+    }
+
+    #[test]
+    fn passed_supply_chain_report_adds_receipt_evidence() {
+        let mut task_report = task_report();
+        apply_supply_chain_outcome_gate(&mut task_report, &report("passed", Vec::new()));
+
+        let outcome = task_report.execution_outcome.unwrap();
+        assert_eq!(
+            outcome.status,
+            chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded
+        );
+        assert!(outcome
+            .verification_evidence
+            .iter()
+            .any(|evidence| evidence.contains("high=0, critical=0")));
     }
 }
 

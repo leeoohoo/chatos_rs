@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::run_model_phase::supply_chain::SupplyChainEvidenceState;
 use async_trait::async_trait;
 use chatos_ai_runtime::{
     AiResponse, RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
@@ -251,11 +252,14 @@ impl RunService {
         let abort_token = tokio_util::sync::CancellationToken::new();
         let progress = Arc::new(TaskExecutionProgressState::new(review_policy));
         let execution_outcome = Arc::new(parking_lot::Mutex::new(None));
+        let supply_chain_evidence =
+            Arc::new(parking_lot::Mutex::new(SupplyChainEvidenceState::default()));
         let callbacks = self.build_runtime_callbacks(
             run.id.clone(),
             Arc::clone(&pending_stream_event),
             path_redactor.clone(),
             Arc::clone(&progress),
+            Arc::clone(&supply_chain_evidence),
         );
         let cancel_requested = Arc::new(AtomicBool::new(self.store.is_cancel_requested(&run.id)));
         if cancel_requested.load(Ordering::Relaxed) {
@@ -285,6 +289,7 @@ impl RunService {
             runtime_options,
             pending_stream_event,
             execution_outcome,
+            supply_chain_evidence,
         }
     }
 
@@ -294,6 +299,7 @@ impl RunService {
         pending_stream_event: PendingRunStreamState,
         path_redactor: crate::services::path_redaction::WorkspacePathRedactor,
         progress: Arc<TaskExecutionProgressState>,
+        supply_chain_evidence: Arc<parking_lot::Mutex<SupplyChainEvidenceState>>,
     ) -> RuntimeCallbacks {
         let store_for_callbacks = self.store.clone();
         let run_id_for_chunk = run_id.clone();
@@ -372,8 +378,10 @@ impl RunService {
                 let run_id = run_id.clone();
                 let path_redactor = path_redactor.clone();
                 let progress = Arc::clone(&progress);
+                let supply_chain_evidence = Arc::clone(&supply_chain_evidence);
                 move |payload| {
                     progress.observe_tool_result(&payload);
+                    supply_chain_evidence.lock().observe_tool_result(&payload);
                     let mut payload = sanitize_runtime_event_payload(payload);
                     path_redactor.redact_value(&mut payload);
                     let browser_session = browser_session_event_payload(&payload);

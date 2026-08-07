@@ -47,6 +47,7 @@ use super::{summarized_report_content, RunService};
 mod callbacks;
 mod completion;
 mod setup;
+pub(super) mod supply_chain;
 
 const HARNESS_MERGE_CONFLICT_MAX_RUNS: usize = 3;
 const SANDBOX_INFRASTRUCTURE_MAX_RETRIES: usize = 3;

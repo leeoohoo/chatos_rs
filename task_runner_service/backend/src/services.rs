@@ -11,6 +11,7 @@ use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::PluginManagementClient;
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::info;
 use uuid::Uuid;
@@ -126,6 +127,18 @@ async fn load_managed_config_snapshot() -> Result<chatos_config_sdk::ConfigSnaps
                 TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY.to_string(),
                 json!(7_200),
             ),
+            (
+                TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY.to_string(),
+                json!("baseline-2026-08"),
+            ),
+            (
+                TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY.to_string(),
+                json!("high"),
+            ),
+            (
+                TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY.to_string(),
+                json!(["esbuild"]),
+            ),
         ]),
         env: BTreeMap::new(),
         generated_at: "test".to_string(),
@@ -187,6 +200,30 @@ fn require_managed_string(
         return Err(format!("managed configuration key {key} must not be empty"));
     }
     Ok(value.to_string())
+}
+
+fn require_managed_string_set(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let values = snapshot
+        .values
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
+    values
+        .iter()
+        .map(|value| {
+            let value = value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    format!("managed configuration key {key} must contain only non-empty strings")
+                })?;
+            Ok(value.to_string())
+        })
+        .collect()
 }
 
 fn require_managed_execution_environment_mode(
@@ -313,6 +350,12 @@ const TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY: &str =
     "task_runner.sandbox.manager_base_url";
 const TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
     "task_runner.sandbox.lease_ttl_seconds";
+const TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY: &str =
+    "task_runner.supply_chain.baseline_revision";
+const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_audit_level";
+const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
+    "task_runner.supply_chain.install_script_allowlist";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunTriggerSource {

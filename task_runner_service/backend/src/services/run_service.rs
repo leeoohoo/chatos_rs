@@ -90,6 +90,36 @@ impl RunService {
         chatos_agent::require_task_runner_runtime_settings(&snapshot)
     }
 
+    pub(super) async fn effective_node_supply_chain_policy(
+        &self,
+    ) -> Result<super::run_model_phase::supply_chain::NodeSupplyChainPolicy, String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        let audit_level = require_managed_string(
+            &snapshot,
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
+        )?
+        .to_ascii_lowercase();
+        if audit_level != "high" {
+            return Err(format!(
+                "managed configuration key {} must be high",
+                TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY
+            ));
+        }
+        Ok(
+            super::run_model_phase::supply_chain::NodeSupplyChainPolicy {
+                baseline_revision: require_managed_string(
+                    &snapshot,
+                    TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
+                )?,
+                audit_level,
+                install_script_allowlist: require_managed_string_set(
+                    &snapshot,
+                    TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
+                )?,
+            },
+        )
+    }
+
     pub(super) async fn effective_prompt_cache_policy(
         &self,
     ) -> Result<TaskRunnerPromptCachePolicy, String> {

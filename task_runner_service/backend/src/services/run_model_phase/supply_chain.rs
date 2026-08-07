@@ -1,0 +1,686 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use std::collections::BTreeSet;
+
+use serde::Serialize;
+use serde_json::{json, Value};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NodeSupplyChainPolicy {
+    pub(crate) baseline_revision: String,
+    pub(crate) audit_level: String,
+    pub(crate) install_script_allowlist: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct SupplyChainEvidenceState {
+    node_project_observed: bool,
+    lockfile_observed: bool,
+    package_manager: Option<String>,
+    install: Option<CommandEvidence>,
+    unsafe_install_commands: Vec<String>,
+    rebuilds: Vec<RebuildEvidence>,
+    audit: Option<AuditEvidence>,
+}
+
+#[derive(Debug, Clone)]
+struct CommandEvidence {
+    command: String,
+    exit_code: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+struct AuditEvidence {
+    command: String,
+    exit_code: Option<i64>,
+    output_truncated: bool,
+    vulnerabilities: Option<NodeVulnerabilityCounts>,
+}
+
+#[derive(Debug, Clone)]
+struct RebuildEvidence {
+    command: String,
+    exit_code: Option<i64>,
+    packages: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TerminalCommandResult {
+    command: String,
+    exit_code: Option<i64>,
+    output: String,
+    output_truncated: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub(super) struct NodeVulnerabilityCounts {
+    pub(super) total: u64,
+    pub(super) low: u64,
+    pub(super) moderate: u64,
+    pub(super) high: u64,
+    pub(super) critical: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(super) struct SupplyChainAuditReport {
+    pub(super) applicable: bool,
+    pub(super) status: &'static str,
+    pub(super) baseline_revision: String,
+    pub(super) audit_level: String,
+    pub(super) package_manager: Option<String>,
+    pub(super) lockfile_observed: bool,
+    pub(super) install_command: Option<String>,
+    pub(super) install_exit_code: Option<i64>,
+    pub(super) approved_install_script_packages: Vec<String>,
+    pub(super) audit_command: Option<String>,
+    pub(super) audit_exit_code: Option<i64>,
+    pub(super) vulnerabilities: Option<NodeVulnerabilityCounts>,
+    pub(super) blocking_reasons: Vec<String>,
+}
+
+impl SupplyChainEvidenceState {
+    pub(super) fn observe_tool_result(&mut self, payload: &Value) {
+        if payload.get("success").and_then(Value::as_bool) == Some(true)
+            && payload.get("is_error").and_then(Value::as_bool) != Some(true)
+        {
+            observe_project_paths(payload, self);
+        }
+        let Some(name) = payload.get("name").and_then(Value::as_str) else {
+            return;
+        };
+        if !name.ends_with("terminal_controller_execute_command") {
+            return;
+        }
+        let Some(result) = terminal_result(payload) else {
+            return;
+        };
+        let command = result.command.as_str();
+        let normalized = command.to_ascii_lowercase();
+        let exit_code = result.exit_code;
+
+        if let Some(manager) = node_package_manager(&normalized) {
+            self.node_project_observed = true;
+            self.package_manager = Some(manager.to_string());
+        }
+        if is_lockfile_command(&normalized) {
+            self.lockfile_observed = exit_code == Some(0);
+        }
+        if is_node_install_command(&normalized) {
+            self.install = Some(CommandEvidence {
+                command: command.to_string(),
+                exit_code,
+            });
+            if exit_code == Some(0) && !normalized.contains("--no-package-lock") {
+                self.lockfile_observed = true;
+            }
+            if !install_scripts_are_disabled(&normalized, self.package_manager.as_deref()) {
+                self.unsafe_install_commands.push(command.to_string());
+            }
+        }
+        if let Some(packages) = approved_rebuild_packages(&normalized) {
+            self.rebuilds.push(RebuildEvidence {
+                command: command.to_string(),
+                exit_code,
+                packages,
+            });
+        }
+        if is_node_audit_command(&normalized) {
+            self.audit = Some(AuditEvidence {
+                command: command.to_string(),
+                exit_code,
+                output_truncated: result.output_truncated,
+                vulnerabilities: parse_vulnerability_counts(result.output.as_str()),
+            });
+        }
+    }
+
+    pub(super) fn evaluate(&self, policy: &NodeSupplyChainPolicy) -> SupplyChainAuditReport {
+        if !self.node_project_observed {
+            return SupplyChainAuditReport {
+                applicable: false,
+                status: "not_applicable",
+                baseline_revision: policy.baseline_revision.clone(),
+                audit_level: policy.audit_level.clone(),
+                package_manager: None,
+                lockfile_observed: false,
+                install_command: None,
+                install_exit_code: None,
+                approved_install_script_packages: Vec::new(),
+                audit_command: None,
+                audit_exit_code: None,
+                vulnerabilities: None,
+                blocking_reasons: Vec::new(),
+            };
+        }
+
+        let mut blocking_reasons = Vec::new();
+        if !self.lockfile_observed {
+            blocking_reasons.push("Node.js dependency lockfile was not verified".to_string());
+        }
+        match self.install.as_ref() {
+            Some(install)
+                if install.exit_code == Some(0)
+                    && !command_masks_failure(install.command.as_str()) => {}
+            Some(_) => blocking_reasons.push("Node.js dependency installation failed".to_string()),
+            None => blocking_reasons.push(
+                "Node.js dependency installation was not executed with recorded evidence"
+                    .to_string(),
+            ),
+        }
+        if !self.unsafe_install_commands.is_empty() {
+            blocking_reasons.push(format!(
+                "Node.js dependency installation executed scripts outside the approved policy: {}",
+                self.unsafe_install_commands.join("; ")
+            ));
+        }
+        let rebuilt_packages = self
+            .rebuilds
+            .iter()
+            .flat_map(|rebuild| rebuild.packages.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        let unapproved_rebuilds = rebuilt_packages
+            .difference(&policy.install_script_allowlist)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unapproved_rebuilds.is_empty() {
+            blocking_reasons.push(format!(
+                "Node.js install scripts were requested for packages outside the allowlist: {}",
+                unapproved_rebuilds.join(", ")
+            ));
+        }
+        let failed_rebuilds = self
+            .rebuilds
+            .iter()
+            .filter(|rebuild| {
+                rebuild.exit_code != Some(0) || command_masks_failure(rebuild.command.as_str())
+            })
+            .map(|rebuild| rebuild.command.clone())
+            .collect::<Vec<_>>();
+        if !failed_rebuilds.is_empty() {
+            blocking_reasons.push(format!(
+                "Node.js approved install scripts did not complete successfully: {}",
+                failed_rebuilds.join("; ")
+            ));
+        }
+
+        match self.audit.as_ref() {
+            Some(audit)
+                if audit_command_matches_level(&audit.command, policy.audit_level.as_str())
+                    && !command_masks_failure(audit.command.as_str())
+                    && !audit.output_truncated
+                    && audit.vulnerabilities.is_some() =>
+            {
+                let vulnerabilities = audit.vulnerabilities.as_ref().expect("checked above");
+                if vulnerabilities.high > 0 || vulnerabilities.critical > 0 {
+                    blocking_reasons.push(format!(
+                        "Node.js dependency audit found {} high and {} critical vulnerabilities",
+                        vulnerabilities.high, vulnerabilities.critical
+                    ));
+                } else if audit.exit_code != Some(0) {
+                    blocking_reasons.push(format!(
+                        "Node.js dependency audit exited with code {}",
+                        audit
+                            .exit_code
+                            .map(|code| code.to_string())
+                            .unwrap_or_else(|| "unknown".to_string())
+                    ));
+                }
+            }
+            Some(_) => blocking_reasons.push(
+                "Node.js dependency audit did not produce complete JSON vulnerability evidence"
+                    .to_string(),
+            ),
+            None => blocking_reasons.push(
+                "Node.js dependency audit was not executed with recorded evidence".to_string(),
+            ),
+        }
+
+        SupplyChainAuditReport {
+            applicable: true,
+            status: if blocking_reasons.is_empty() {
+                "passed"
+            } else {
+                "blocked"
+            },
+            baseline_revision: policy.baseline_revision.clone(),
+            audit_level: policy.audit_level.clone(),
+            package_manager: self.package_manager.clone(),
+            lockfile_observed: self.lockfile_observed,
+            install_command: self.install.as_ref().map(|item| item.command.clone()),
+            install_exit_code: self.install.as_ref().and_then(|item| item.exit_code),
+            approved_install_script_packages: rebuilt_packages.into_iter().collect(),
+            audit_command: self.audit.as_ref().map(|item| item.command.clone()),
+            audit_exit_code: self.audit.as_ref().and_then(|item| item.exit_code),
+            vulnerabilities: self
+                .audit
+                .as_ref()
+                .and_then(|item| item.vulnerabilities.clone()),
+            blocking_reasons,
+        }
+    }
+}
+
+impl SupplyChainAuditReport {
+    pub(super) fn evidence_summary(&self) -> String {
+        let Some(vulnerabilities) = self.vulnerabilities.as_ref() else {
+            return format!(
+                "Node.js supply-chain audit status: {}; baseline {}; audit evidence incomplete",
+                self.status, self.baseline_revision
+            );
+        };
+        format!(
+            "Node.js supply-chain audit status: {}; baseline {}; command `{}` exited {}; vulnerabilities total={}, high={}, critical={}",
+            self.status,
+            self.baseline_revision,
+            self.audit_command.as_deref().unwrap_or("not executed"),
+            self.audit_exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            vulnerabilities.total,
+            vulnerabilities.high,
+            vulnerabilities.critical,
+        )
+    }
+
+    pub(super) fn event_payload(&self) -> Value {
+        serde_json::to_value(self).unwrap_or_else(|_| json!({"status": "serialization_failed"}))
+    }
+}
+
+pub(super) fn policy_guidance(policy: &NodeSupplyChainPolicy) -> Value {
+    let allowlist = if policy.install_script_allowlist.is_empty() {
+        "none".to_string()
+    } else {
+        policy
+            .install_script_allowlist
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": format!(
+            "[Node.js supply-chain requirements]\nFor any Node.js project, keep the dependency lockfile, install dependencies with lifecycle scripts disabled, run lifecycle scripts only for these approved packages: {allowlist}, and finish with a JSON dependency audit at `{}` severity. The active dependency baseline revision is `{}`. A Node.js implementation is not complete until installation and audit commands have successful, parseable terminal results and high/critical vulnerabilities are zero.",
+            policy.audit_level,
+            policy.baseline_revision,
+        ),
+    })
+}
+
+fn observe_project_paths(value: &Value, evidence: &mut SupplyChainEvidenceState) {
+    match value {
+        Value::String(value) => {
+            let normalized = value.replace('\\', "/").to_ascii_lowercase();
+            if normalized.ends_with("package.json") {
+                evidence.node_project_observed = true;
+            }
+            if [
+                "package-lock.json",
+                "pnpm-lock.yaml",
+                "yarn.lock",
+                "bun.lock",
+                "bun.lockb",
+            ]
+            .iter()
+            .any(|lockfile| normalized.ends_with(lockfile))
+            {
+                evidence.node_project_observed = true;
+                evidence.lockfile_observed = true;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                observe_project_paths(item, evidence);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values() {
+                observe_project_paths(item, evidence);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn terminal_result(payload: &Value) -> Option<TerminalCommandResult> {
+    let content = payload
+        .get("content")
+        .and_then(Value::as_str)
+        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .filter(Value::is_object);
+    let result = payload.get("result").filter(|value| value.is_object());
+    let command = content
+        .as_ref()
+        .and_then(|value| value.get("common").or_else(|| value.get("command")))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            result
+                .and_then(|value| value.get("common").or_else(|| value.get("command")))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|command| !command.is_empty())?;
+    let exit_code = result
+        .and_then(|value| value.get("exit_code"))
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("exit_code"))
+                .and_then(Value::as_i64)
+        });
+    let output = result
+        .and_then(|value| value.get("output"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("output"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or_default();
+    let output_truncated = result
+        .and_then(|value| value.get("truncated"))
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("truncated"))
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(false);
+    Some(TerminalCommandResult {
+        command: command.to_string(),
+        exit_code,
+        output: output.to_string(),
+        output_truncated,
+    })
+}
+
+fn node_package_manager(command: &str) -> Option<&'static str> {
+    if command.contains("pnpm ") {
+        Some("pnpm")
+    } else if command.contains("yarn ") {
+        Some("yarn")
+    } else if command.contains("bun ") {
+        Some("bun")
+    } else if command.contains("npm ") {
+        Some("npm")
+    } else {
+        None
+    }
+}
+
+fn is_node_install_command(command: &str) -> bool {
+    [
+        "npm ci",
+        "npm install",
+        "pnpm install",
+        "yarn install",
+        "bun install",
+    ]
+    .iter()
+    .any(|needle| command.contains(needle))
+        && !command.contains("--package-lock-only")
+}
+
+fn install_scripts_are_disabled(command: &str, package_manager: Option<&str>) -> bool {
+    match package_manager {
+        Some("yarn") => {
+            command.contains("--mode=skip-builds") || command.contains("--mode skip-builds")
+        }
+        Some("npm" | "pnpm" | "bun") | None => command.contains("--ignore-scripts"),
+        Some(_) => false,
+    }
+}
+
+fn command_masks_failure(command: &str) -> bool {
+    let compact = command
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    compact.contains("||true") || compact.contains(";true")
+}
+
+fn is_lockfile_command(command: &str) -> bool {
+    command.contains("--package-lock-only")
+        || command.contains("pnpm install --lockfile-only")
+        || command.contains("yarn install --mode=update-lockfile")
+}
+
+fn approved_rebuild_packages(command: &str) -> Option<Vec<String>> {
+    let marker = if command.contains("npm rebuild ") {
+        "npm rebuild "
+    } else if command.contains("pnpm rebuild ") {
+        "pnpm rebuild "
+    } else {
+        return None;
+    };
+    let packages = command
+        .split_once(marker)?
+        .1
+        .split_whitespace()
+        .take_while(|value| !value.starts_with('-') && !matches!(*value, "&&" | ";" | "||"))
+        .map(|value| value.trim_matches(|character| matches!(character, '\'' | '"')))
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    Some(packages)
+}
+
+fn is_node_audit_command(command: &str) -> bool {
+    command.contains("npm audit")
+        || command.contains("pnpm audit")
+        || command.contains("yarn npm audit")
+}
+
+fn audit_command_matches_level(command: &str, audit_level: &str) -> bool {
+    let command = command.to_ascii_lowercase();
+    command.contains("--json")
+        && (command.contains(format!("--audit-level={audit_level}").as_str())
+            || command.contains(format!("--audit-level {audit_level}").as_str())
+            || command.contains(format!("--severity={audit_level}").as_str())
+            || command.contains(format!("--severity {audit_level}").as_str()))
+}
+
+fn parse_vulnerability_counts(output: &str) -> Option<NodeVulnerabilityCounts> {
+    let value = serde_json::from_str::<Value>(output.trim())
+        .ok()
+        .or_else(|| {
+            let start = output.find('{')?;
+            let end = output.rfind('}')?;
+            serde_json::from_str::<Value>(&output[start..=end]).ok()
+        })?;
+    let vulnerabilities = value.pointer("/metadata/vulnerabilities")?;
+    Some(NodeVulnerabilityCounts {
+        total: vulnerabilities
+            .get("total")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        low: vulnerabilities
+            .get("low")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        moderate: vulnerabilities
+            .get("moderate")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        high: vulnerabilities
+            .get("high")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        critical: vulnerabilities
+            .get("critical")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy() -> NodeSupplyChainPolicy {
+        NodeSupplyChainPolicy {
+            baseline_revision: "baseline-2026-08".to_string(),
+            audit_level: "high".to_string(),
+            install_script_allowlist: BTreeSet::from(["esbuild".to_string()]),
+        }
+    }
+
+    fn terminal_result(command: &str, exit_code: i64, output: &str) -> Value {
+        json!({
+            "name": "sandbox_terminal_controller_execute_command",
+            "success": exit_code == 0,
+            "is_error": exit_code != 0,
+            "result": {
+                "common": command,
+                "exit_code": exit_code,
+                "output": output,
+            }
+        })
+    }
+
+    fn split_terminal_result(command: &str, exit_code: i64, output: &str) -> Value {
+        json!({
+            "name": "sandbox_terminal_controller_execute_command",
+            "success": exit_code == 0,
+            "is_error": exit_code != 0,
+            "content": serde_json::to_string(&json!({
+                "common": command,
+                "output": output,
+            })).expect("terminal content"),
+            "result": {
+                "exit_code": exit_code,
+                "truncated": false,
+            }
+        })
+    }
+
+    #[test]
+    fn clean_audit_passes_with_safe_install_and_lockfile() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_result(&json!({"result": {"changed_files": [{"path": "package.json"}, {"path": "package-lock.json"}]}}));
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&terminal_result("npm rebuild esbuild", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":1,"low":1,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "passed");
+        assert!(report.blocking_reasons.is_empty());
+    }
+
+    #[test]
+    fn critical_vulnerability_blocks_success() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --audit-level=high --json",
+            1,
+            r#"{"metadata":{"vulnerabilities":{"total":1,"low":0,"moderate":0,"high":0,"critical":1}}}"#,
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "blocked");
+        assert!(report.blocking_reasons[0].contains("critical"));
+    }
+
+    #[test]
+    fn unavailable_audit_and_unsafe_install_are_not_treated_as_clean() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_result(&terminal_result("npm install", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --audit-level=high --json || true",
+            0,
+            "network unavailable",
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "blocked");
+        assert!(report
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("outside the approved policy")));
+        assert!(report
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("complete JSON")));
+    }
+
+    #[test]
+    fn split_terminal_payload_is_merged_before_evaluation() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_result(&split_terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&split_terminal_result(
+            "npm audit --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        assert_eq!(evidence.evaluate(&policy()).status, "passed");
+    }
+
+    #[test]
+    fn failed_or_masked_rebuild_blocks_success() {
+        for (command, exit_code) in [
+            ("npm rebuild esbuild", 1),
+            ("npm rebuild esbuild ||true", 0),
+        ] {
+            let mut evidence = SupplyChainEvidenceState::default();
+            evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+            evidence.observe_tool_result(&terminal_result(command, exit_code, ""));
+            evidence.observe_tool_result(&terminal_result(
+                "npm audit --audit-level=high --json",
+                0,
+                r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+            ));
+
+            let report = evidence.evaluate(&policy());
+            assert_eq!(report.status, "blocked");
+            assert!(report
+                .blocking_reasons
+                .iter()
+                .any(|reason| reason.contains("did not complete successfully")));
+        }
+    }
+
+    #[test]
+    fn failed_file_read_does_not_make_supply_chain_gate_applicable() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_result(&json!({
+            "name": "code_maintainer_read_read_file",
+            "success": false,
+            "is_error": true,
+            "result": { "path": "package.json", "message": "not found" },
+        }));
+
+        assert!(!evidence.evaluate(&policy()).applicable);
+    }
+
+    #[test]
+    fn truncated_audit_output_is_incomplete_evidence() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        let mut audit = terminal_result(
+            "npm audit --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        );
+        audit["result"]["truncated"] = json!(true);
+        evidence.observe_tool_result(&audit);
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "blocked");
+        assert!(report
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("complete JSON")));
+    }
+}

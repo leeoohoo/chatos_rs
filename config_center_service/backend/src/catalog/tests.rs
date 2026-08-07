@@ -115,6 +115,9 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
         TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
         TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
         TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
+        TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
+        TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
+        TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
     ] {
         let definition = definitions
             .iter()
@@ -138,6 +141,23 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
         json!(default_task_runner_execution_environment_mode())
     );
     assert_eq!(environment_mode.enum_options, vec!["local", "cloud"]);
+
+    let audit_level = definitions
+        .iter()
+        .find(|definition| definition.key == TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY)
+        .expect("task runner Node.js audit level definition");
+    assert_eq!(audit_level.value_type, "enum");
+    assert_eq!(audit_level.default_value, json!("high"));
+    assert_eq!(audit_level.enum_options, vec!["high"]);
+
+    let install_script_allowlist = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY
+        })
+        .expect("task runner install script allowlist definition");
+    assert_eq!(install_script_allowlist.value_type, "json");
+    assert_eq!(install_script_allowlist.default_value, json!(["esbuild"]));
 
     for (key, expected_default) in [
         (

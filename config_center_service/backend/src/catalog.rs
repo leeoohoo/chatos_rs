@@ -43,6 +43,12 @@ pub const PLATFORM_PRESSURE_RECOVERY_STABLE_SECONDS_CONFIG_KEY: &str =
 pub const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
 pub const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
     "task_runner.execution.environment_mode";
+pub const TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY: &str =
+    "task_runner.supply_chain.baseline_revision";
+pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_audit_level";
+pub const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
+    "task_runner.supply_chain.install_script_allowlist";
 pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY: &str =
     "task_runner.queue.run_dispatch_mode";
 pub const TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY: &str =
@@ -2222,6 +2228,57 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             215,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
+            "Node.js 依赖基线修订号",
+            "Task Runner 验收生成 Node.js 项目时使用的集中依赖基线修订号",
+            "Task Runner / Supply Chain",
+            "service",
+            Some("task-runner"),
+            "string",
+            json!("baseline-2026-08"),
+            None,
+            None,
+            &[],
+            "next_run",
+            &[],
+            216,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
+            "Node.js 审计阻断级别",
+            "生成 Node.js 项目完成前必须执行的依赖审计阻断级别",
+            "Task Runner / Supply Chain",
+            "service",
+            Some("task-runner"),
+            "enum",
+            json!("high"),
+            None,
+            None,
+            &["high"],
+            "next_run",
+            &[],
+            217,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
+            "Node.js 安装脚本白名单",
+            "允许在禁用默认生命周期脚本后单独执行 rebuild 的依赖包名称列表",
+            "Task Runner / Supply Chain",
+            "service",
+            Some("task-runner"),
+            "json",
+            json!(["esbuild"]),
+            None,
+            None,
+            &[],
+            "next_run",
+            &[],
+            218,
             &now,
         ),
         definition(
