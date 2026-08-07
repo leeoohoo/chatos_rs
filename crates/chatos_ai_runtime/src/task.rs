@@ -24,7 +24,7 @@ pub use self::progress_review::{
     tool_result_is_placeholder_progress_write, TaskExecutionProgressState,
     TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
 };
-pub use self::report::TaskRunReport;
+pub use self::report::{TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskRunReport};
 pub use self::runtime_builder::TaskRuntimeBuilder;
 pub use self::spec::TaskRunSpec;
 

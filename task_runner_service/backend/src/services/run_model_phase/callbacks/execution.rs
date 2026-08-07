@@ -46,6 +46,7 @@ impl RunService {
             prepared_execution.tool_result_model_budget_limits,
             max_iterations,
             review_policy,
+            task.mcp_config.requires_execution,
             prepared_execution.effective_workspace_dir.as_str(),
         );
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
@@ -133,6 +134,9 @@ impl RunService {
                 )),
             ),
         };
+        if report.is_completed() {
+            report.execution_outcome = runtime_execution.execution_outcome.lock().clone();
+        }
         self.unregister_runtime_abort_token(run.id.as_str());
         flush_pending_stream_event(
             &self.store,
@@ -150,6 +154,10 @@ impl RunService {
                 .and_then(|task| task.result_summary)
                 .unwrap_or_else(|| "任务已完成。".to_string());
             report.status = chatos_ai_runtime::AiTurnStatus::Completed;
+            report.execution_outcome = Some(chatos_ai_runtime::TaskExecutionOutcome::succeeded(
+                content.clone(),
+                vec!["task status was already persisted as succeeded".to_string()],
+            ));
             report.content = Some(path_redactor.redact_text(content.as_str()));
             report.error = None;
         }

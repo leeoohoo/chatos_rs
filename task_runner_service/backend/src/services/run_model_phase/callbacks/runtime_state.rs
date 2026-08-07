@@ -4,15 +4,22 @@
 use super::*;
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    RuntimeBeforeModelRequest, RuntimeIterationContext, RuntimeLifecycleHook,
-    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
-    TaskExecutionReviewTrigger,
+    AiResponse, RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
+    RuntimeIterationContext, RuntimeLifecycleHook, TaskExecutionOutcome,
+    TaskExecutionOutcomeStatus, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
+    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
 };
+
+const TASK_OUTCOME_REVIEW_REASON: &str = "task_execution_outcome_review";
+const TASK_EXECUTION_OUTCOME_METADATA_KEY: &str = "task_execution_outcome";
 
 struct TaskRunnerLifecycleHook {
     finalization: TaskFinalizationLifecycleHook,
     progress: Arc<TaskExecutionProgressState>,
     active_review: parking_lot::Mutex<Option<TaskExecutionReviewCheckpoint>>,
+    visible_response: parking_lot::Mutex<Option<AiResponse>>,
+    execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+    requires_execution: bool,
     store: crate::store::AppStore,
     run_id: String,
 }
@@ -21,6 +28,8 @@ impl TaskRunnerLifecycleHook {
     fn new(
         max_iterations: usize,
         progress: Arc<TaskExecutionProgressState>,
+        execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+        requires_execution: bool,
         store: crate::store::AppStore,
         run_id: String,
     ) -> Self {
@@ -28,6 +37,9 @@ impl TaskRunnerLifecycleHook {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
             progress,
             active_review: parking_lot::Mutex::new(None),
+            visible_response: parking_lot::Mutex::new(None),
+            execution_outcome,
+            requires_execution,
             store,
             run_id,
         }
@@ -65,6 +77,11 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
         self.progress.begin_iteration(context.iteration);
+        if context.reason == TASK_OUTCOME_REVIEW_REASON {
+            return Ok(RuntimeBeforeModelRequest::unchanged()
+                .with_stream_output(false)
+                .with_tools_enabled(false));
+        }
         let iteration = context.iteration;
         let mut before = self.finalization.before_model_request(context).await?;
         if !before.tools_enabled {
@@ -86,6 +103,85 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         }
         Ok(before)
     }
+
+    async fn after_final_response(
+        &self,
+        context: RuntimeFinalResponseContext,
+    ) -> Result<RuntimeFinalResponseAction, String> {
+        if context.reason == TASK_OUTCOME_REVIEW_REASON {
+            let outcome = parse_task_execution_outcome(context.response.content.as_str())?;
+            *self.execution_outcome.lock() = Some(outcome);
+            let visible_response =
+                self.visible_response.lock().take().ok_or_else(|| {
+                    "task execution outcome review lost visible response".to_string()
+                })?;
+            return Ok(RuntimeFinalResponseAction::Replace(Box::new(
+                visible_response,
+            )));
+        }
+
+        *self.visible_response.lock() = Some(context.response.clone());
+        Ok(RuntimeFinalResponseAction::Continue {
+            input_items: vec![
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": context.response.content
+                    }]
+                }),
+                task_execution_outcome_review_message(self.requires_execution),
+            ],
+            reason: TASK_OUTCOME_REVIEW_REASON.to_string(),
+        })
+    }
+
+    async fn final_response_metadata(
+        &self,
+        _context: RuntimeFinalResponseContext,
+    ) -> Result<Option<Value>, String> {
+        self.execution_outcome
+            .lock()
+            .clone()
+            .map(|outcome| {
+                serde_json::to_value(outcome)
+                    .map(|outcome| json!({(TASK_EXECUTION_OUTCOME_METADATA_KEY): outcome}))
+                    .map_err(|err| format!("failed to serialize task execution outcome: {err}"))
+            })
+            .transpose()
+    }
+}
+
+fn task_execution_outcome_review_message(requires_execution: bool) -> Value {
+    let evidence_rule = if requires_execution {
+        "This task requires execution. Success evidence must cite actual tool results, changed project files, and necessary command or test results; prose claims are not evidence."
+    } else {
+        "This is a non-execution planning task. Success evidence may cite concrete sections of the delivered planning response that satisfy the requested artifacts; do not require file changes, a sandbox, or command execution unless the task explicitly requested them."
+    };
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule} Return exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"]}}\nSet status to succeeded only when every required acceptance criterion has concrete evidence and all necessary verification has passed. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
+        }]
+    })
+}
+
+fn parse_task_execution_outcome(content: &str) -> Result<TaskExecutionOutcome, String> {
+    let outcome = serde_json::from_str::<TaskExecutionOutcome>(content.trim())
+        .map_err(|err| format!("invalid task execution outcome JSON: {err}"))?;
+    if !matches!(
+        outcome.status,
+        TaskExecutionOutcomeStatus::Succeeded | TaskExecutionOutcomeStatus::Blocked
+    ) {
+        return Err(
+            "task execution outcome review may only return succeeded or blocked".to_string(),
+        );
+    }
+    outcome.validate()?;
+    Ok(outcome)
 }
 
 fn persistent_review_checkpoint(
@@ -143,6 +239,7 @@ impl RunService {
         tool_result_model_budget_limits: ToolResultModelBudgetLimits,
         max_iterations: usize,
         review_policy: TaskExecutionReviewPolicy,
+        requires_execution: bool,
         effective_workspace_dir: &str,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
@@ -153,6 +250,7 @@ impl RunService {
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
         let abort_token = tokio_util::sync::CancellationToken::new();
         let progress = Arc::new(TaskExecutionProgressState::new(review_policy));
+        let execution_outcome = Arc::new(parking_lot::Mutex::new(None));
         let callbacks = self.build_runtime_callbacks(
             run.id.clone(),
             Arc::clone(&pending_stream_event),
@@ -171,6 +269,8 @@ impl RunService {
             .with_lifecycle_hook(Some(Arc::new(TaskRunnerLifecycleHook::new(
                 max_iterations,
                 progress,
+                Arc::clone(&execution_outcome),
+                requires_execution,
                 self.store.clone(),
                 run.id.clone(),
             ))))
@@ -184,6 +284,7 @@ impl RunService {
         RuntimeExecutionState {
             runtime_options,
             pending_stream_event,
+            execution_outcome,
         }
     }
 
@@ -583,6 +684,46 @@ mod tests {
         assert!(content.contains("最近一次成功读取的目标内容作为权威版本"));
         assert!(content.contains("直接生成基于该文本的精确编辑"));
         assert!(content.contains("写入成功后转入必要验证"));
+    }
+
+    #[test]
+    fn task_outcome_review_accepts_strict_succeeded_contract() {
+        let outcome = parse_task_execution_outcome(
+            r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["cargo test passed"]}"#,
+        )
+        .expect("valid outcome");
+
+        assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Succeeded);
+        assert_eq!(outcome.verification_evidence, ["cargo test passed"]);
+    }
+
+    #[test]
+    fn task_outcome_review_rejects_success_without_evidence() {
+        let error = parse_task_execution_outcome(
+            r#"{"status":"succeeded","summary":"claimed completion","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":[]}"#,
+        )
+        .expect_err("missing evidence must fail closed");
+
+        assert!(error.contains("verification evidence"));
+    }
+
+    #[test]
+    fn task_outcome_review_rejects_markdown_wrapped_json() {
+        let error = parse_task_execution_outcome("```json\n{\"status\":\"blocked\"}\n```")
+            .expect_err("review response must be strict JSON");
+
+        assert!(error.contains("invalid task execution outcome JSON"));
+    }
+
+    #[test]
+    fn task_outcome_review_distinguishes_execution_and_planning_evidence() {
+        let execution = task_execution_outcome_review_message(true).to_string();
+        let planning = task_execution_outcome_review_message(false).to_string();
+
+        assert!(execution.contains("actual tool results"));
+        assert!(execution.contains("changed project files"));
+        assert!(planning.contains("non-execution planning task"));
+        assert!(planning.contains("do not require file changes"));
     }
 
     #[test]

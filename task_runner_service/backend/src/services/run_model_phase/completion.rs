@@ -28,6 +28,7 @@ impl RunService {
         report.error = report
             .error
             .map(|error| path_redactor.redact_text(error.as_str()));
+        let terminal_status = resolve_report_terminal_status(&mut report);
         let report_json =
             report_json_with_outputs(&report, sandbox_output.as_ref(), harness_output.as_ref())
                 .map(|mut value| {
@@ -38,19 +39,41 @@ impl RunService {
         let task_already_succeeded = existing_task
             .as_ref()
             .is_some_and(|task| task.status == TaskStatus::Succeeded);
-        let mut result_summary = summarized_report_content(&report.content);
+        let outcome_summary = report
+            .execution_outcome
+            .as_ref()
+            .map(|outcome| path_redactor.redact_text(outcome.summary.trim()))
+            .filter(|summary| !summary.is_empty());
+        let mut result_summary = match terminal_status {
+            TaskRunStatus::Succeeded | TaskRunStatus::Blocked => outcome_summary
+                .clone()
+                .or_else(|| summarized_report_content(&report.content)),
+            TaskRunStatus::Failed => report
+                .error
+                .clone()
+                .or(outcome_summary)
+                .or_else(|| summarized_report_content(&report.content)),
+            TaskRunStatus::Cancelled => report.error.clone(),
+            TaskRunStatus::Queued | TaskRunStatus::Running => None,
+        };
         run.updated_at = now_rfc3339();
         run.finished_at = Some(report.completed_at.clone());
         run.result_summary = result_summary.clone();
-        run.error_message = report.error.clone();
+        run.error_message = match terminal_status {
+            TaskRunStatus::Blocked | TaskRunStatus::Failed => report
+                .execution_outcome
+                .as_ref()
+                .and_then(|outcome| outcome.blocking_reason.as_deref())
+                .map(|reason| path_redactor.redact_text(reason.trim()))
+                .filter(|reason| !reason.is_empty())
+                .or_else(|| report.error.clone())
+                .or_else(|| result_summary.clone()),
+            _ => report.error.clone(),
+        };
         run.usage = report.usage.clone();
         run.report = report_json.clone();
         run.cancel_requested = false;
-        run.status = match report.status {
-            chatos_ai_runtime::AiTurnStatus::Completed => TaskRunStatus::Succeeded,
-            chatos_ai_runtime::AiTurnStatus::Failed => TaskRunStatus::Failed,
-            chatos_ai_runtime::AiTurnStatus::Aborted => TaskRunStatus::Cancelled,
-        };
+        run.status = terminal_status;
         if task_already_succeeded && run.status != TaskRunStatus::Succeeded {
             run.status = TaskRunStatus::Succeeded;
             run.error_message = None;
@@ -88,6 +111,11 @@ impl RunService {
                         "任务执行受阻：{}",
                         run.error_message.as_deref().unwrap_or("存在终态阻塞子任务")
                     ),
+                    TaskRunStatus::Failed => format!(
+                        "任务执行失败：{}",
+                        run.error_message.as_deref().unwrap_or("未知错误")
+                    ),
+                    TaskRunStatus::Cancelled => "任务已取消。".to_string(),
                     _ => report.user_message(),
                 }),
                 report_json.clone(),
@@ -123,6 +151,37 @@ impl RunService {
         }
         self.enqueue_terminal_side_effects(run).await;
         self.store.clear_cancel_requested(&run.id);
+    }
+}
+
+fn resolve_report_terminal_status(report: &mut TaskRunReport) -> TaskRunStatus {
+    match report.status {
+        chatos_ai_runtime::AiTurnStatus::Failed => TaskRunStatus::Failed,
+        chatos_ai_runtime::AiTurnStatus::Aborted => TaskRunStatus::Cancelled,
+        chatos_ai_runtime::AiTurnStatus::Completed => {
+            let Some(outcome) = report.execution_outcome.as_ref() else {
+                report.status = chatos_ai_runtime::AiTurnStatus::Failed;
+                report.error = Some(
+                    "task runtime completed without a structured execution outcome".to_string(),
+                );
+                return TaskRunStatus::Failed;
+            };
+            if let Err(err) = outcome.validate() {
+                report.status = chatos_ai_runtime::AiTurnStatus::Failed;
+                report.error = Some(format!("invalid structured task execution outcome: {err}"));
+                return TaskRunStatus::Failed;
+            }
+            match outcome.status {
+                chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded => {
+                    TaskRunStatus::Succeeded
+                }
+                chatos_ai_runtime::TaskExecutionOutcomeStatus::Blocked => TaskRunStatus::Blocked,
+                chatos_ai_runtime::TaskExecutionOutcomeStatus::Failed => TaskRunStatus::Failed,
+                chatos_ai_runtime::TaskExecutionOutcomeStatus::Cancelled => {
+                    TaskRunStatus::Cancelled
+                }
+            }
+        }
     }
 }
 
@@ -290,7 +349,7 @@ mod tests {
     use crate::models::{CreateTaskRequest, TaskClosureState, TaskManagerScope};
     use crate::services::TaskService;
     use crate::store::AppStore;
-    use chatos_ai_runtime::AiTurnStatus;
+    use chatos_ai_runtime::{AiTurnStatus, TaskExecutionOutcome, TaskExecutionOutcomeStatus};
     use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
@@ -492,6 +551,10 @@ mod tests {
             run_id: run.id.clone(),
             model_config_id: Some(run.model_config_id.clone()),
             status: AiTurnStatus::Completed,
+            execution_outcome: Some(TaskExecutionOutcome::succeeded(
+                "done",
+                vec!["focused test passed".to_string()],
+            )),
             content: Some("done".to_string()),
             reasoning: None,
             error: None,
@@ -523,6 +586,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_runtime_without_structured_outcome_fails_closed() {
+        let (task_service, run_service) = test_services().await;
+        let task = create_task(&task_service, "missing outcome", TaskStatus::Ready).await;
+        let mut run = run_record(&task);
+        run_service
+            .store
+            .save_run(run.clone())
+            .await
+            .expect("save run");
+        let report = TaskRunReport {
+            task_id: task.id.clone(),
+            run_id: run.id.clone(),
+            model_config_id: Some(run.model_config_id.clone()),
+            status: AiTurnStatus::Completed,
+            execution_outcome: None,
+            content: Some("claimed success".to_string()),
+            reasoning: None,
+            error: None,
+            tool_calls: None,
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            response_id: None,
+            completed_at: now_rfc3339(),
+        };
+
+        run_service
+            .finalize_model_phase(&task, &mut run, report, ".", None, None)
+            .await;
+
+        let saved_run = run_service
+            .store
+            .get_run(run.id.as_str())
+            .await
+            .expect("get run")
+            .expect("run");
+        assert_eq!(saved_run.status, TaskRunStatus::Failed);
+        assert!(saved_run
+            .error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("structured execution outcome")));
+        assert!(saved_run
+            .result_summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("structured execution outcome")));
+        let saved_task = task_service
+            .get_task(task.id.as_str())
+            .await
+            .expect("get task")
+            .expect("task");
+        assert_eq!(saved_task.status, TaskStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn structured_blocked_outcome_persists_blocked_terminal_state() {
+        let (task_service, run_service) = test_services().await;
+        let task = create_task(&task_service, "blocked outcome", TaskStatus::Ready).await;
+        let mut run = run_record(&task);
+        run_service
+            .store
+            .save_run(run.clone())
+            .await
+            .expect("save run");
+        let report = TaskRunReport {
+            task_id: task.id.clone(),
+            run_id: run.id.clone(),
+            model_config_id: Some(run.model_config_id.clone()),
+            status: AiTurnStatus::Completed,
+            execution_outcome: Some(TaskExecutionOutcome {
+                status: TaskExecutionOutcomeStatus::Blocked,
+                summary: "implementation could not be verified".to_string(),
+                blocking_reason: Some("required upstream service is unavailable".to_string()),
+                unmet_acceptance_criteria: vec!["integration verification passes".to_string()],
+                verification_evidence: vec![
+                    "health request returned connection refused".to_string()
+                ],
+            }),
+            content: Some("work stopped before verification".to_string()),
+            reasoning: None,
+            error: None,
+            tool_calls: None,
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            response_id: None,
+            completed_at: now_rfc3339(),
+        };
+
+        run_service
+            .finalize_model_phase(&task, &mut run, report, ".", None, None)
+            .await;
+
+        let saved_run = run_service
+            .store
+            .get_run(run.id.as_str())
+            .await
+            .expect("get run")
+            .expect("run");
+        assert_eq!(saved_run.status, TaskRunStatus::Blocked);
+        assert_eq!(
+            saved_run.error_message.as_deref(),
+            Some("required upstream service is unavailable")
+        );
+        let saved_task = task_service
+            .get_task(task.id.as_str())
+            .await
+            .expect("get task")
+            .expect("task");
+        assert_eq!(saved_task.status, TaskStatus::Blocked);
+    }
+
+    #[tokio::test]
     async fn harness_promotion_failure_fails_completed_model_run() {
         let (task_service, run_service) = test_services().await;
         let task = create_task(&task_service, "harness failure", TaskStatus::Ready).await;
@@ -537,6 +710,10 @@ mod tests {
             run_id: run.id.clone(),
             model_config_id: Some(run.model_config_id.clone()),
             status: AiTurnStatus::Completed,
+            execution_outcome: Some(TaskExecutionOutcome::succeeded(
+                "model completed",
+                vec!["model phase completed".to_string()],
+            )),
             content: Some("model completed".to_string()),
             reasoning: None,
             error: None,
@@ -621,6 +798,10 @@ mod tests {
             run_id: run.id.clone(),
             model_config_id: Some(run.model_config_id.clone()),
             status: AiTurnStatus::Completed,
+            execution_outcome: Some(TaskExecutionOutcome::succeeded(
+                "done",
+                vec!["focused test passed".to_string()],
+            )),
             content: Some("done".to_string()),
             reasoning: None,
             error: None,
@@ -698,6 +879,10 @@ mod tests {
             run_id: run.id.clone(),
             model_config_id: Some(run.model_config_id.clone()),
             status: AiTurnStatus::Completed,
+            execution_outcome: Some(TaskExecutionOutcome::succeeded(
+                "done",
+                vec!["focused test passed".to_string()],
+            )),
             content: Some("done".to_string()),
             reasoning: None,
             error: None,
@@ -775,6 +960,10 @@ mod tests {
             run_id: run.id.clone(),
             model_config_id: Some(run.model_config_id.clone()),
             status: AiTurnStatus::Completed,
+            execution_outcome: Some(TaskExecutionOutcome::succeeded(
+                "done",
+                vec!["focused test passed".to_string()],
+            )),
             content: Some("done".to_string()),
             reasoning: None,
             error: None,
@@ -830,6 +1019,7 @@ mod tests {
             run_id: run.id.clone(),
             model_config_id: Some(run.model_config_id.clone()),
             status: AiTurnStatus::Aborted,
+            execution_outcome: None,
             content: None,
             reasoning: None,
             error: Some("aborted".to_string()),

@@ -6,12 +6,112 @@ use serde_json::Value;
 
 use crate::runtime::{AiTurnReport, AiTurnStatus};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskExecutionOutcomeStatus {
+    Succeeded,
+    Blocked,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskExecutionOutcome {
+    pub status: TaskExecutionOutcomeStatus,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking_reason: Option<String>,
+    #[serde(default)]
+    pub unmet_acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub verification_evidence: Vec<String>,
+}
+
+impl TaskExecutionOutcome {
+    pub fn succeeded(summary: impl Into<String>, verification_evidence: Vec<String>) -> Self {
+        Self {
+            status: TaskExecutionOutcomeStatus::Succeeded,
+            summary: summary.into(),
+            blocking_reason: None,
+            unmet_acceptance_criteria: Vec::new(),
+            verification_evidence,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.summary.trim().is_empty() {
+            return Err("task execution outcome summary must not be empty".to_string());
+        }
+        if matches!(
+            self.status,
+            TaskExecutionOutcomeStatus::Succeeded | TaskExecutionOutcomeStatus::Blocked
+        ) && self
+            .verification_evidence
+            .iter()
+            .all(|evidence| evidence.trim().is_empty())
+        {
+            return Err(
+                "task execution outcome must include concrete verification evidence".to_string(),
+            );
+        }
+        match self.status {
+            TaskExecutionOutcomeStatus::Succeeded => {
+                if self
+                    .blocking_reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty())
+                {
+                    return Err(
+                        "succeeded task execution outcome must not include a blocking reason"
+                            .to_string(),
+                    );
+                }
+                if self
+                    .unmet_acceptance_criteria
+                    .iter()
+                    .any(|criterion| !criterion.trim().is_empty())
+                {
+                    return Err(
+                        "succeeded task execution outcome must not include unmet acceptance criteria"
+                            .to_string(),
+                    );
+                }
+            }
+            TaskExecutionOutcomeStatus::Blocked => {
+                if self
+                    .blocking_reason
+                    .as_deref()
+                    .is_none_or(|reason| reason.trim().is_empty())
+                {
+                    return Err(
+                        "blocked task execution outcome must include a blocking reason".to_string(),
+                    );
+                }
+                if self
+                    .unmet_acceptance_criteria
+                    .iter()
+                    .all(|criterion| criterion.trim().is_empty())
+                {
+                    return Err(
+                        "blocked task execution outcome must include unmet acceptance criteria"
+                            .to_string(),
+                    );
+                }
+            }
+            TaskExecutionOutcomeStatus::Failed | TaskExecutionOutcomeStatus::Cancelled => {}
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRunReport {
     pub task_id: String,
     pub run_id: String,
     pub model_config_id: Option<String>,
     pub status: AiTurnStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_outcome: Option<TaskExecutionOutcome>,
     pub content: Option<String>,
     pub reasoning: Option<String>,
     pub error: Option<String>,
@@ -34,6 +134,7 @@ impl TaskRunReport {
             run_id: run_id.into(),
             model_config_id,
             status: report.status,
+            execution_outcome: None,
             content: report.content,
             reasoning: report.reasoning,
             error: report.error,
