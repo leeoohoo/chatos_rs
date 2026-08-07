@@ -255,13 +255,7 @@ fn tool_result_is_project_mutation(payload: &Value) -> bool {
     ) {
         return write_result_has_meaningful_project_path(payload);
     }
-    if name.ends_with("process_write") {
-        return false;
-    }
-    if !name.ends_with("terminal_controller_execute_command") {
-        return false;
-    }
-    terminal_result_has_mutation_command(payload)
+    false
 }
 
 fn tool_result_is_validation(payload: &Value) -> bool {
@@ -522,22 +516,6 @@ fn terminal_result_exit_succeeded(payload: &Value) -> bool {
     direct_exit_code.or(content_exit_code) == Some(0)
 }
 
-fn terminal_result_has_mutation_command(payload: &Value) -> bool {
-    if !terminal_result_exit_succeeded(payload) {
-        return false;
-    }
-    let command = terminal_result_command(payload);
-    [
-        "git apply",
-        "apply_patch",
-        "sed -i",
-        ".write_text(",
-        ".write_bytes(",
-    ]
-    .iter()
-    .any(|needle| command.contains(needle))
-}
-
 fn terminal_result_has_validation_command(payload: &Value) -> bool {
     let command = terminal_result_command(payload);
     [
@@ -734,6 +712,20 @@ mod tests {
             "is_error": false,
             "content": serde_json::to_string(&json!({
                 "common": "python -m unittest discover -s tests -v",
+                "exit_code": 0,
+            })).expect("content"),
+            "result": { "exit_code": 0 },
+        })));
+    }
+
+    #[test]
+    fn terminal_file_overwrite_is_not_meaningful_engineering_progress() {
+        assert!(!tool_result_is_meaningful_engineering_action(&json!({
+            "name": "terminal_controller_execute_command",
+            "success": true,
+            "is_error": false,
+            "content": serde_json::to_string(&json!({
+                "common": "python3 -c \"from pathlib import Path; Path('a').write_text('x')\"",
                 "exit_code": 0,
             })).expect("content"),
             "result": { "exit_code": 0 },

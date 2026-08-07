@@ -4,6 +4,10 @@
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+mod mutation;
+
+use self::mutation::validate_file_mutation_contract;
+
 const NODE_DEPENDENCY_MARKERS: [&str; 9] = [
     "node_modules/.package-lock.json",
     "node_modules/.modules.yaml",
@@ -27,6 +31,7 @@ pub(super) fn validate_command_preflight(
     requested_path: &str,
     command: &str,
 ) -> Result<(), String> {
+    validate_file_mutation_contract(workspace_root, command)?;
     if !contains_node_validation(command) {
         return Ok(());
     }
