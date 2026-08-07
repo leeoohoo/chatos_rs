@@ -69,27 +69,32 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
 
     await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
       context as never,
+      'local_connector',
       'device-1',
     );
 
     expect(request).toHaveBeenCalledWith(
-      '/task-runner/available-plugins?device_id=device-1',
+      '/task-runner/available-plugins?runtime_provider=local_connector&device_id=device-1',
     );
 
     await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
       context as never,
+      'local_connector',
       'device-1',
       true,
     );
     expect(request).toHaveBeenLastCalledWith(
-      '/task-runner/available-plugins?device_id=device-1&plan_mode=true',
+      '/task-runner/available-plugins?runtime_provider=local_connector&device_id=device-1&plan_mode=true',
     );
 
     await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
       context as never,
+      'cloud',
       null,
     );
-    expect(request).toHaveBeenLastCalledWith('/task-runner/available-plugins');
+    expect(request).toHaveBeenLastCalledWith(
+      '/task-runner/available-plugins?runtime_provider=cloud',
+    );
   });
 
   it('creates a cloud-managed project for the selected local workspace', async () => {

@@ -80,6 +80,7 @@ pub async fn get_task_runner_task(
 pub async fn list_task_runner_available_plugins(
     base_url: &str,
     access_token: &str,
+    runtime_provider: &str,
     device_id: Option<&str>,
     plan_mode: bool,
 ) -> Result<Value, String> {
@@ -92,6 +93,7 @@ pub async fn list_task_runner_available_plugins(
             "requires_execution",
             if plan_mode { "false" } else { "true" },
         ),
+        ("runtime_provider", runtime_provider),
     ];
     if let Some(device_id) = device_id.map(str::trim).filter(|value| !value.is_empty()) {
         query.push(("device_id", device_id));

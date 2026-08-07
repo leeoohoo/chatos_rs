@@ -317,13 +317,16 @@ fn resolve_plugin_records(
             "Plugin catalog entry is disabled".to_string(),
         );
     }
-    let Some(preference_ref) = preference.as_ref() else {
+    if preference.is_none() && portable_uses_local {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
-            "Plugin user preference is missing".to_string(),
+            "Plugin user preference is missing for Local Connector execution".to_string(),
         );
-    };
-    if !preference_ref.enabled {
+    }
+    if preference
+        .as_ref()
+        .is_some_and(|preference| !preference.enabled)
+    {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
             "Plugin is disabled by user preference".to_string(),
@@ -347,7 +350,10 @@ fn resolve_plugin_records(
             "Plugin Release is revoked".to_string(),
         );
     }
-    if preference_ref.release_channel != release_ref.release_channel {
+    if preference
+        .as_ref()
+        .is_some_and(|preference| preference.release_channel != release_ref.release_channel)
+    {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
             "active Plugin Release does not match the preferred release channel".to_string(),

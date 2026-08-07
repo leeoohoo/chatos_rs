@@ -451,6 +451,8 @@ export function TasksPage() {
         task={selectedTask}
         loading={selectedTaskQuery.isLoading}
         detailLastRunId={detailLastRunId}
+        detailLastRun={detailLastRunQuery.data}
+        detailLastRunLoading={detailLastRunQuery.isLoading}
         detailResultSummary={detailResultSummary}
         remoteOperations={detailRemoteOperations}
         remoteOperationStats={detailRemoteOperationStats}

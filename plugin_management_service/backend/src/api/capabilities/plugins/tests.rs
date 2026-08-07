@@ -178,6 +178,52 @@ fn cloud_mcp_component_uses_immutable_runtime_bundle_without_local_installation(
     );
 }
 
+#[test]
+fn cloud_plugin_is_enabled_by_agent_binding_without_local_user_preference() {
+    let mut records = plugin_records();
+    records.release.components[0].execution_host = PluginExecutionHost::Cloud;
+    let snapshots = component_snapshots(&records);
+    let resolved = resolve_plugin_records(
+        records.catalog,
+        Some(records.release),
+        records.binding,
+        None,
+        None,
+        snapshots,
+        Vec::new(),
+        None,
+        &std::collections::HashSet::from(["main".to_string()]),
+        false,
+    );
+
+    assert!(resolved.available);
+    assert!(resolved.preference.is_none());
+}
+
+#[test]
+fn local_plugin_still_requires_an_explicit_user_preference() {
+    let records = plugin_records();
+    let snapshots = component_snapshots(&records);
+    let resolved = resolve_plugin_records(
+        records.catalog,
+        Some(records.release),
+        records.binding,
+        Some(records.installation),
+        None,
+        snapshots,
+        Vec::new(),
+        Some("device-1"),
+        &std::collections::HashSet::new(),
+        true,
+    );
+
+    assert!(!resolved.available);
+    assert!(resolved
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("Local Connector")));
+}
+
 fn component_snapshots(records: &PluginRecords) -> Vec<PluginComponentSnapshot> {
     records
         .release

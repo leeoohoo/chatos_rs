@@ -12,6 +12,7 @@ export type TaskRunStatus =
 export interface RunPluginComponentSnapshot {
   component_key: string;
   kind: string;
+  execution_host: 'cloud' | 'local' | 'portable';
   content_sha256: string;
   runtime: Record<string, unknown>;
 }
@@ -21,7 +22,7 @@ export interface RunPluginSnapshot {
   release_id: string;
   version: string;
   artifact_sha256: string;
-  device_id: string;
+  device_id?: string | null;
   workspace_id?: string | null;
   component_snapshots: RunPluginComponentSnapshot[];
   permission_snapshot: string[];

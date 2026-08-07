@@ -25,6 +25,13 @@ import {
   utf8ByteLength,
 } from './pluginCommands';
 import { filterPluginMentionOptions } from './pluginMentions';
+import {
+  filterPluginsForRuntime,
+  pluginRequiresLocalWorkspace,
+  pluginUsesLocalConnector,
+  taskPluginPickerEnabled,
+  type TaskPluginRuntimeProvider,
+} from './pluginRuntimeScope';
 import { useDismissiblePopover } from './useDismissiblePopover';
 
 const deviceStatus = (device: LocalConnectorDeviceResponse): string => (
@@ -43,7 +50,7 @@ const normalizeError = (error: unknown): string => (
   error instanceof Error ? error.message : String(error || 'Unknown error')
 );
 
-const PLUGIN_SELECTION_STORAGE_PREFIX = 'chatos.task-plugin-selection.v2';
+const PLUGIN_SELECTION_STORAGE_PREFIX = 'chatos.task-plugin-selection.v3';
 
 interface PersistedTaskPluginSelection {
   deviceId: string | null;
@@ -96,13 +103,18 @@ export const useTaskPluginPicker = ({
   conversationId,
   disabled,
   planMode,
+  localConnectorEnabled,
 }: {
   client: ApiClient;
   conversationId?: string | null;
   disabled: boolean;
   planMode: boolean;
+  localConnectorEnabled: boolean;
 }) => {
-  const enabled = Boolean(conversationId);
+  const enabled = taskPluginPickerEnabled(conversationId, localConnectorEnabled);
+  const runtimeProvider: TaskPluginRuntimeProvider = localConnectorEnabled
+    ? 'local_connector'
+    : 'cloud';
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,18 +134,25 @@ export const useTaskPluginPicker = ({
   const hydratedSelectionScopeRef = useRef<string | null>(null);
   const selectionStorageKey = useMemo(() => (
     conversationId
-      ? `${PLUGIN_SELECTION_STORAGE_PREFIX}:${conversationId}:${planMode ? 'plan' : 'run'}`
+      ? `${PLUGIN_SELECTION_STORAGE_PREFIX}:${conversationId}:${planMode ? 'plan' : 'run'}:${runtimeProvider}`
       : null
-  ), [conversationId, planMode]);
+  ), [conversationId, planMode, runtimeProvider]);
 
   const pickerRef = useDismissiblePopover<HTMLDivElement>(open, () => setOpen(false));
 
   const loadPluginsForDevice = useCallback(async (deviceId: string | null) => {
-    const response = await client.listTaskRunnerAvailablePlugins(deviceId, planMode);
+    const effectiveDeviceId = localConnectorEnabled ? deviceId : null;
+    const response = await client.listTaskRunnerAvailablePlugins(
+      runtimeProvider,
+      effectiveDeviceId,
+      planMode,
+    );
     const plugins = Array.isArray(response?.selectable_plugins)
-      ? response.selectable_plugins.filter((plugin) => (
-        !plugin.requires_device || plugin.device_id === deviceId
-      ))
+      ? filterPluginsForRuntime(
+        response.selectable_plugins,
+        runtimeProvider,
+        effectiveDeviceId,
+      )
       : [];
     setAvailablePlugins(plugins);
     setSelectedPluginIds((current) => current.filter((pluginId) => (
@@ -158,9 +177,12 @@ export const useTaskPluginPicker = ({
         ? current
         : null;
     });
-  }, [client, planMode]);
+  }, [client, localConnectorEnabled, planMode, runtimeProvider]);
 
   const selectDevice = useCallback(async (deviceId: string) => {
+    if (!localConnectorEnabled) {
+      return;
+    }
     const normalized = deviceId.trim();
     setSelectedDeviceId(normalized || null);
     const deviceDependentPluginIds = new Set(availablePlugins
@@ -200,7 +222,7 @@ export const useTaskPluginPicker = ({
     } finally {
       setLoading(false);
     }
-  }, [availablePlugins, loadPluginsForDevice, workspaces]);
+  }, [availablePlugins, loadPluginsForDevice, localConnectorEnabled, workspaces]);
 
   const loadPicker = useCallback(async () => {
     if (!enabled || disabled) {
@@ -209,7 +231,7 @@ export const useTaskPluginPicker = ({
     setLoading(true);
     setError(null);
     try {
-      const [deviceItems, workspaceItems] = localRuntimeBridgeAvailable()
+      const [deviceItems, workspaceItems] = localConnectorEnabled && localRuntimeBridgeAvailable()
         ? await Promise.all([
           client.listLocalConnectorDevices(),
           client.listLocalConnectorWorkspaces(),
@@ -242,7 +264,15 @@ export const useTaskPluginPicker = ({
     } finally {
       setLoading(false);
     }
-  }, [client, disabled, enabled, loadPluginsForDevice, selectedDeviceId, selectedWorkspaceId]);
+  }, [
+    client,
+    disabled,
+    enabled,
+    loadPluginsForDevice,
+    localConnectorEnabled,
+    selectedDeviceId,
+    selectedWorkspaceId,
+  ]);
 
   const toggleOpen = useCallback(() => {
     if (!enabled || disabled) {
@@ -519,11 +549,13 @@ export const useTaskPluginPicker = ({
   const pluginSuggestions = useCallback((query: string) => (
     filterPluginMentionOptions(availablePlugins, query)
   ), [availablePlugins]);
-  const browserWorkspaceRequired = selectedPlugins.some((plugin) => plugin.plugin_key === 'browser')
+  const requiresDevice = selectedPlugins.some(pluginUsesLocalConnector);
+  const workspaceRequired = selectedPlugins.some(pluginRequiresLocalWorkspace)
     && !selectedWorkspaceId;
 
   return {
     enabled,
+    localConnectorEnabled,
     open,
     pickerRef,
     loading,
@@ -544,7 +576,8 @@ export const useTaskPluginPicker = ({
     commandArgumentIssue,
     commandMessageFallback,
     search,
-    browserWorkspaceRequired,
+    requiresDevice,
+    workspaceRequired,
     setSearch,
     setSelectedWorkspaceId,
     toggleOpen,

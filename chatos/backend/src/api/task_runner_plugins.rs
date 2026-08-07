@@ -22,6 +22,7 @@ pub fn router() -> Router {
 #[derive(Debug, Deserialize)]
 struct AvailablePluginsQuery {
     device_id: Option<String>,
+    runtime_provider: String,
     #[serde(default)]
     plan_mode: bool,
 }
@@ -30,11 +31,24 @@ async fn list_available_plugins(
     _auth: AuthUser,
     Query(query): Query<AvailablePluginsQuery>,
 ) -> (StatusCode, Json<Value>) {
+    let runtime_provider = query.runtime_provider.trim().to_ascii_lowercase();
+    if !matches!(runtime_provider.as_str(), "cloud" | "local_connector") {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "runtime_provider must be cloud or local_connector",
+        );
+    }
     let device_id = query
         .device_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    if runtime_provider == "cloud" && device_id.is_some() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "cloud Plugin discovery must not include a Local Connector device",
+        );
+    }
     let Some(access_token) = access_token_scope::get_current_access_token() else {
         return error(
             StatusCode::UNAUTHORIZED,
@@ -48,6 +62,7 @@ async fn list_available_plugins(
     match task_runner_api_client::list_task_runner_available_plugins(
         config.task_runner_base_url.as_str(),
         access_token.as_str(),
+        runtime_provider.as_str(),
         device_id,
         query.plan_mode,
     )

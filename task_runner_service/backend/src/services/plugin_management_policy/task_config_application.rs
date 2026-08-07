@@ -105,6 +105,21 @@ impl TaskRunnerCapabilityPolicy {
                 });
             }
         }
+        if !self.portable_uses_local {
+            for plugin in self.selectable_plugins() {
+                if !effective
+                    .iter()
+                    .any(|selected| selected.plugin_id == plugin.catalog.id)
+                {
+                    effective.push(SelectedPluginRef {
+                        plugin_id: plugin.catalog.id.clone(),
+                        selected_skill_ids: Vec::new(),
+                        selected_command_ids: Vec::new(),
+                        selected_agent_ids: Vec::new(),
+                    });
+                }
+            }
+        }
         for plugin in self.capabilities.required_plugins().filter(|plugin| {
             plugin.available
                 || plugin.status

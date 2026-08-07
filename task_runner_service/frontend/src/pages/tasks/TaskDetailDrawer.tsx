@@ -48,6 +48,8 @@ type TaskDetailDrawerProps = {
   task: TaskRecord | null;
   loading: boolean;
   detailLastRunId?: string | null;
+  detailLastRun?: TaskRunRecord;
+  detailLastRunLoading: boolean;
   detailResultSummary?: string | null;
   remoteOperations: TaskRemoteOperationView[];
   remoteOperationStats: TaskRemoteOperationStats;
@@ -87,6 +89,8 @@ export function TaskDetailDrawer({
   task,
   loading,
   detailLastRunId,
+  detailLastRun,
+  detailLastRunLoading,
   detailResultSummary,
   remoteOperations,
   remoteOperationStats,
@@ -240,7 +244,19 @@ export function TaskDetailDrawer({
               <Tag color="processing">{t('tasks.mcpProgramManaged')}</Tag>
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.pluginTarget')}>
-              {task.plugin_config?.device_id ? (
+              {detailLastRunLoading && detailLastRunId ? (
+                t('common.loading')
+              ) : detailLastRun?.plugin_snapshots?.length ? (
+                <Space wrap>
+                  {Array.from(new Set(detailLastRun.plugin_snapshots.map((plugin) => (
+                    plugin.device_id || t('tasks.detail.pluginCloudRuntime')
+                  )))).map((target) => (
+                    <Tag key={target} color={target === t('tasks.detail.pluginCloudRuntime') ? 'blue' : 'cyan'}>
+                      {target}
+                    </Tag>
+                  ))}
+                </Space>
+              ) : task.plugin_config?.device_id ? (
                 <Space wrap>
                   <Tag color="cyan">{task.plugin_config.device_id}</Tag>
                   {task.plugin_config.workspace_id ? (
@@ -252,11 +268,31 @@ export function TaskDetailDrawer({
               )}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.plugins')}>
-              {task.plugin_config?.selected_plugins?.length ? (
+              {detailLastRunLoading && detailLastRunId ? (
+                t('common.loading')
+              ) : detailLastRun?.plugin_snapshots?.length ? (
+                <Space wrap>
+                  {detailLastRun.plugin_snapshots.map((plugin) => (
+                    <Space key={`${plugin.plugin_id}:${plugin.release_id}`} wrap size={4}>
+                      <Tag color="purple">{plugin.plugin_id}</Tag>
+                      <Tag>v{plugin.version}</Tag>
+                      <Tag color={plugin.device_id ? 'cyan' : 'blue'}>
+                        {plugin.device_id || t('tasks.detail.pluginCloudRuntime')}
+                      </Tag>
+                      <Tag color="geekblue">
+                        {t('tasks.detail.pluginComponentCount', {
+                          count: plugin.component_snapshots.length,
+                        })}
+                      </Tag>
+                    </Space>
+                  ))}
+                </Space>
+              ) : task.plugin_config?.selected_plugins?.length ? (
                 <Space wrap>
                   {task.plugin_config.selected_plugins.map((plugin) => (
                     <Space key={plugin.plugin_id} wrap size={4}>
                       <Tag color="purple">{plugin.plugin_id}</Tag>
+                      <Tag>{t('tasks.detail.pluginPendingSnapshot')}</Tag>
                       {(plugin.selected_command_ids || []).map((commandId) => (
                         <Tag key={`${plugin.plugin_id}:${commandId}`} color="orange">
                           /{commandId}
@@ -270,6 +306,8 @@ export function TaskDetailDrawer({
                     </Space>
                   ))}
                 </Space>
+              ) : !detailLastRunId ? (
+                t('tasks.detail.pluginsPendingRun')
               ) : (
                 t('common.noData')
               )}

@@ -479,3 +479,40 @@ fn required_plugin_is_injected_into_effective_task_config() {
         "plugin-browser"
     );
 }
+
+#[test]
+fn cloud_runtime_injects_enabled_agent_plugins_without_user_selection() {
+    let mut capabilities = local_runtime_capabilities();
+    let mut plugin = resolved_plugin(false);
+    plugin.catalog.name = "ponytail".to_string();
+    for component in &mut plugin.components {
+        component.component.execution_host =
+            chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
+    }
+    for snapshot in &mut plugin.component_snapshots {
+        snapshot.component.execution_host =
+            chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
+    }
+    if let Some(release) = plugin.release.as_mut() {
+        for component in &mut release.components {
+            component.execution_host = chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
+        }
+    }
+    capabilities.plugins = vec![plugin];
+    let policy = TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, false)
+        .expect("cloud Plugin policy");
+    let mut task = task();
+
+    policy
+        .apply_to_task(&mut task)
+        .expect("apply cloud Plugin policy");
+    let snapshots = policy.plugin_snapshots(&task).expect("Plugin snapshots");
+
+    assert_eq!(task.plugin_config.selected_plugins.len(), 1);
+    assert_eq!(
+        task.plugin_config.selected_plugins[0].plugin_id,
+        "plugin-browser"
+    );
+    assert_eq!(snapshots.len(), 1);
+    assert!(snapshots[0].device_id.is_none());
+}

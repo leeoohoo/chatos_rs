@@ -15,6 +15,7 @@ import {
 import { useI18n } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
+import { isCloudProjectSource } from '../../lib/domain/projectSource';
 import type { InputAreaProps } from '../../types';
 import { useAttachmentsInput } from './useAttachmentsInput';
 import { useDismissiblePopover } from './useDismissiblePopover';
@@ -108,12 +109,6 @@ export function useInputAreaController({
   const pluginMentionDiscoveryRequestedRef = useRef(false);
   const client = useApiClient();
   const { alert } = useDialogService();
-  const pluginPicker = useTaskPluginPicker({
-    client,
-    conversationId,
-    disabled,
-    planMode: planModeEnabled,
-  });
   const normalizeNullableText = useCallback((value: string | null | undefined) => {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : null;
@@ -261,6 +256,14 @@ export function useInputAreaController({
     isGuidingMode: false,
     showProjectFileButton,
   });
+  const pluginPicker = useTaskPluginPicker({
+    client,
+    conversationId,
+    disabled,
+    planMode: planModeEnabled,
+    localConnectorEnabled: Boolean(selectedRuntimeProject)
+      && !isCloudProjectSource(selectedRuntimeProject),
+  });
 
   useEffect(() => {
     if (
@@ -357,7 +360,7 @@ export function useInputAreaController({
     if (pluginPicker.selectedPluginIds.length === 0) {
       return false;
     }
-    if (!pluginPicker.selectedDeviceId) {
+    if (pluginPicker.requiresDevice && !pluginPicker.selectedDeviceId) {
       void alert({
         title: t('inputArea.plugin.invalidTitle'),
         message: t('inputArea.plugin.deviceRequired'),
@@ -365,10 +368,10 @@ export function useInputAreaController({
       });
       return true;
     }
-    if (pluginPicker.browserWorkspaceRequired) {
+    if (pluginPicker.workspaceRequired) {
       void alert({
         title: t('inputArea.plugin.invalidTitle'),
-        message: t('inputArea.plugin.browserNeedsWorkspace'),
+        message: t('inputArea.plugin.workspaceRequired'),
         type: 'warning',
       });
       return true;
@@ -384,10 +387,11 @@ export function useInputAreaController({
     return false;
   }, [
     alert,
-    pluginPicker.browserWorkspaceRequired,
     pluginPicker.commandArgumentIssue,
+    pluginPicker.requiresDevice,
     pluginPicker.selectedDeviceId,
     pluginPicker.selectedPluginIds.length,
+    pluginPicker.workspaceRequired,
     t,
   ]);
 
@@ -408,8 +412,8 @@ export function useInputAreaController({
     onSend,
     requireModelSelection,
     requireValidPluginSelection,
-    pluginDeviceId: pluginPicker.selectedDeviceId,
-    pluginWorkspaceId: pluginPicker.selectedWorkspaceId,
+    pluginDeviceId: pluginPicker.requiresDevice ? pluginPicker.selectedDeviceId : null,
+    pluginWorkspaceId: pluginPicker.requiresDevice ? pluginPicker.selectedWorkspaceId : null,
     selectedPluginIds: pluginPicker.selectedPluginIds,
     pluginCommandInvocations: pluginPicker.pluginCommandInvocations,
     pluginAgentSelection: pluginPicker.selectedAgentSelection,
