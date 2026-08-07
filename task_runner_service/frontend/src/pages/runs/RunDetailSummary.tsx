@@ -65,6 +65,9 @@ export function RunDetailSummary({
       : agentKey === 'task_runner_run_phase'
         ? t('runs.detail.cloudExecutionAgent')
         : '-';
+  const totalDuration = run.started_at
+    ? formatDuration(run.started_at, run.finished_at || undefined)
+    : '-';
 
   return (
     <>
@@ -146,6 +149,9 @@ export function RunDetailSummary({
         <Descriptions.Item label={t('runs.column.finishedAt')}>
           {run.finished_at ? dayjs(run.finished_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
         </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.totalDuration')}>
+          {totalDuration}
+        </Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.resultSummary')}>
           {formatUserVisibleRunText(run.result_summary, t)}
         </Descriptions.Item>
@@ -182,4 +188,14 @@ export function RunDetailSummary({
       </Descriptions>
     </>
   );
+}
+
+function formatDuration(startedAt: string, finishedAt?: string): string {
+  const seconds = Math.max(0, dayjs(finishedAt).diff(dayjs(startedAt), 'second'));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  return [hours, minutes, remainingSeconds]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
 }

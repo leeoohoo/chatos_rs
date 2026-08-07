@@ -22,6 +22,7 @@ impl RunService {
         );
         let mut report = report;
         harness::fail_report_when_promotion_failed(&mut report, harness_output.as_ref());
+        run.bind_current_attempt_model_response(report.response_id.as_deref());
         let reference_workspace_dir = sandbox_output
             .as_ref()
             .and_then(|output| output.output_workspace.as_deref())
@@ -677,6 +678,7 @@ mod tests {
             claim_token: None,
             claim_until: None,
             attempt: 0,
+            attempts: Vec::new(),
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,

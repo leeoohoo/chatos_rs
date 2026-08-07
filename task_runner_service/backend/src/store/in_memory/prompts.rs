@@ -295,6 +295,7 @@ mod tests {
             claim_token: None,
             claim_until: None,
             attempt: 0,
+            attempts: Vec::new(),
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,

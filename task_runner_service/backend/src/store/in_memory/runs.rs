@@ -257,11 +257,13 @@ impl InMemoryStore {
         run.claim_token = Some(claim_token.to_string());
         run.claim_until = Some(claim_until.to_string());
         run.attempt += 1;
+        let attempt_started_at = now_rfc3339();
+        run.begin_attempt(claim_token, attempt_started_at.as_str());
         run.finished_at = None;
         run.result_summary = None;
         run.error_message = None;
         if run.started_at.is_none() {
-            run.started_at = Some(now_rfc3339());
+            run.started_at = Some(attempt_started_at);
         }
         run.updated_at = now_rfc3339();
         Some(run.clone())
@@ -584,6 +586,14 @@ impl InMemoryStore {
             }
             let was_cancel_requested =
                 run.cancel_requested || cancel_requested_runs.contains(run.id.as_str());
+            let attempt_status = if was_cancel_requested {
+                TaskRunAttemptStatus::Cancelled
+            } else if run.attempt < max_attempts.max(1) {
+                TaskRunAttemptStatus::Interrupted
+            } else {
+                TaskRunAttemptStatus::Failed
+            };
+            run.finish_current_attempt(attempt_status, reconciled_at);
             if was_cancel_requested {
                 run.status = TaskRunStatus::Cancelled;
                 run.result_summary =
@@ -932,6 +942,7 @@ mod tests {
             claim_token: None,
             claim_until: None,
             attempt: 0,
+            attempts: Vec::new(),
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,
@@ -1076,6 +1087,9 @@ mod tests {
         let saved = store.save_run(claimed).expect("save terminal run");
 
         assert_eq!(saved.status, TaskRunStatus::Succeeded);
+        assert_eq!(saved.attempts.len(), 1);
+        assert_eq!(saved.attempts[0].status, TaskRunAttemptStatus::Succeeded);
+        assert!(saved.attempts[0].finished_at.is_some());
         assert_eq!(saved.worker_id.as_deref(), Some("worker-1"));
         assert!(saved.claim_token.is_none());
         assert!(saved.claim_until.is_none());
@@ -1307,7 +1321,13 @@ mod tests {
         let first_claim = store
             .claim_next_queued_run("worker-1", "claim-1", "2000-01-01T00:00:00Z")
             .expect("claim run");
-        let original_started_at = first_claim.started_at.expect("first start time");
+        let original_started_at = first_claim.started_at.clone().expect("first start time");
+        assert_eq!(first_claim.attempts.len(), 1);
+        assert_eq!(first_claim.attempts[0].attempt_id, "claim-1");
+        assert_eq!(
+            first_claim.attempts[0].status,
+            TaskRunAttemptStatus::Running
+        );
 
         let reconciled =
             store.reconcile_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z", 3);
@@ -1315,6 +1335,15 @@ mod tests {
         assert_eq!(reconciled.len(), 1);
         assert_eq!(reconciled[0].status, TaskRunStatus::Queued);
         assert_eq!(reconciled[0].attempt, 1);
+        assert_eq!(reconciled[0].attempts.len(), 1);
+        assert_eq!(
+            reconciled[0].attempts[0].status,
+            TaskRunAttemptStatus::Interrupted
+        );
+        assert_eq!(
+            reconciled[0].attempts[0].finished_at.as_deref(),
+            Some("2001-01-01T00:01:00Z")
+        );
         assert_eq!(
             reconciled[0].started_at.as_deref(),
             Some(original_started_at.as_str())
@@ -1327,6 +1356,14 @@ mod tests {
             .claim_next_queued_run("worker-2", "claim-2", "2002-01-01T00:00:00Z")
             .expect("reclaim recovered run");
         assert_eq!(reclaimed.attempt, 2);
+        assert_eq!(reclaimed.attempts.len(), 2);
+        assert_eq!(reclaimed.attempts[1].attempt_id, "claim-2");
+        assert_eq!(reclaimed.attempts[1].sequence, 2);
+        assert_eq!(
+            reclaimed.attempts[1].recovery_reason.as_deref(),
+            Some("worker_claim_expired")
+        );
+        assert_eq!(reclaimed.attempts[1].status, TaskRunAttemptStatus::Running);
         assert_eq!(
             reclaimed.started_at.as_deref(),
             Some(original_started_at.as_str())

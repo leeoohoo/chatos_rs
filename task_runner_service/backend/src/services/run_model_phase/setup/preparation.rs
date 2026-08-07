@@ -58,6 +58,15 @@ pub(super) async fn prepare_model_execution(
             authoritative_policy,
         )
         .await?;
+    if let Some(context) = sandbox_context.as_ref() {
+        run.bind_current_attempt_environment(&context.sandbox_id, &context.lease_id);
+        run.updated_at = now_rfc3339();
+        *run = service
+            .store
+            .save_run(run.clone())
+            .await
+            .map_err(|err| format!("保存 Run Attempt 沙箱归属失败: {err}"))?;
+    }
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -727,6 +736,7 @@ mod tests {
             claim_token: None,
             claim_until: None,
             attempt: 0,
+            attempts: Vec::new(),
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,
