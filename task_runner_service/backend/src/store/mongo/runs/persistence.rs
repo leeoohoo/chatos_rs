@@ -127,7 +127,6 @@ impl MongoStore {
                         "worker_id": worker_id,
                         "claim_token": claim_token,
                         "claim_until": claim_until,
-                        "started_at": now.as_str(),
                         "updated_at": now.as_str(),
                     },
                     "$inc": { "attempt": 1_i64 },
@@ -144,7 +143,32 @@ impl MongoStore {
             )
             .await
         {
-            Ok(run) => Ok(run),
+            Ok(Some(mut run)) => {
+                if run.started_at.is_none() {
+                    let result = self
+                        .runs
+                        .update_one(
+                            doc! {
+                                "id": run.id.as_str(),
+                                "claim_token": claim_token,
+                            },
+                            doc! {
+                                "$set": {
+                                    "started_at": now.as_str(),
+                                }
+                            },
+                            None,
+                        )
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    if result.modified_count == 0 {
+                        return Err(lost_run_claim_error(&run.id));
+                    }
+                    run.started_at = Some(now);
+                }
+                Ok(Some(run))
+            }
+            Ok(None) => Ok(None),
             Err(err) if is_mongo_execution_lane_conflict(&err.to_string()) => Ok(None),
             Err(err) => Err(err.to_string()),
         }
@@ -651,7 +675,6 @@ impl MongoStore {
                 "claim_until": "",
             };
             if should_requeue {
-                unset_doc.insert("started_at", "");
                 unset_doc.insert("finished_at", "");
                 unset_doc.insert("error_message", "");
                 unset_doc.insert("usage", "");
@@ -681,9 +704,6 @@ impl MongoStore {
                 continue;
             }
             run.status = next_status;
-            if should_requeue {
-                run.started_at = None;
-            }
             run.finished_at = (!should_requeue).then(|| reconciled_at.to_string());
             run.updated_at = reconciled_at.to_string();
             run.result_summary = Some(result_summary);

@@ -595,7 +595,6 @@ impl InMemoryStore {
             } else if run.attempt < max_attempts.max(1) {
                 run.status = TaskRunStatus::Queued;
                 run.dispatch_event_pending = !run.dispatch_paused;
-                run.started_at = None;
                 run.finished_at = None;
                 run.result_summary = Some("任务运行节点中断，已自动重新排队恢复".to_string());
                 run.error_message = None;
@@ -1305,9 +1304,10 @@ mod tests {
     fn expired_claim_is_requeued_before_attempt_limit() {
         let store = test_store();
         store.save_run(queued_run()).expect("save queued run");
-        store
+        let first_claim = store
             .claim_next_queued_run("worker-1", "claim-1", "2000-01-01T00:00:00Z")
             .expect("claim run");
+        let original_started_at = first_claim.started_at.expect("first start time");
 
         let reconciled =
             store.reconcile_expired_run_claims("2001-01-01T00:00:00Z", "2001-01-01T00:01:00Z", 3);
@@ -1315,6 +1315,10 @@ mod tests {
         assert_eq!(reconciled.len(), 1);
         assert_eq!(reconciled[0].status, TaskRunStatus::Queued);
         assert_eq!(reconciled[0].attempt, 1);
+        assert_eq!(
+            reconciled[0].started_at.as_deref(),
+            Some(original_started_at.as_str())
+        );
         assert!(reconciled[0].finished_at.is_none());
         assert!(reconciled[0].claim_token.is_none());
         assert!(reconciled[0].claim_until.is_none());
@@ -1323,6 +1327,10 @@ mod tests {
             .claim_next_queued_run("worker-2", "claim-2", "2002-01-01T00:00:00Z")
             .expect("reclaim recovered run");
         assert_eq!(reclaimed.attempt, 2);
+        assert_eq!(
+            reclaimed.started_at.as_deref(),
+            Some(original_started_at.as_str())
+        );
         assert!(reclaimed.result_summary.is_none());
     }
 
