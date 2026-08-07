@@ -164,61 +164,55 @@ export const TaskProcessTimeline: FC<{ items: TaskProcessTimelineItem[] }> = ({ 
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-muted/20 px-4 py-3">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-1 pb-2.5">
         <div>
           <p className="text-sm font-semibold text-foreground">执行时间线</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">按时间顺序展示任务执行期间记录的关键节点</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">按时间顺序展示任务执行期间记录的关键节点</p>
         </div>
-        <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground">
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
           {items.length} 个节点
         </span>
       </div>
 
-      <ol className="relative space-y-0 before:absolute before:bottom-5 before:left-[17px] before:top-5 before:w-px before:bg-border">
+      <ol className="relative space-y-0 before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-border">
         {items.map((item, index) => {
           const tone = processStatusTone(item.status);
           const Icon = processStatusIcon(item.status);
           return (
-            <li key={item.id} className="relative pb-4 pl-12 last:pb-0">
+            <li key={item.id} className="relative pb-2.5 pl-7 last:pb-0">
               <span
                 className={cn(
-                  'absolute left-0 top-3 z-10 grid h-9 w-9 place-items-center rounded-full border-4 border-card',
+                  'absolute left-0 top-2.5 z-10 grid h-4 w-4 place-items-center rounded-full border-2 border-card',
                   tone.dot,
                 )}
                 aria-hidden="true"
               >
-                <Icon className={cn('h-3.5 w-3.5', tone.icon, isRunningStatus(item.status) && 'animate-spin')} />
+                <Icon className={cn('h-2.5 w-2.5', tone.icon, isRunningStatus(item.status) && 'animate-spin')} />
               </span>
 
-              <article className={cn('rounded-xl border bg-background p-4 shadow-sm', tone.card)}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="break-words text-sm font-semibold text-foreground">{item.title}</h3>
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', tone.badge)}>
-                        {processStatusLabel(item.status)}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{item.source === 'task' ? '任务记录' : '执行节点'}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>节点 {index + 1}</span>
-                    </div>
+              <article className={cn('rounded-lg border px-3 py-2.5', tone.card)}>
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <h3 className="break-words text-[13px] font-semibold text-foreground">{item.title}</h3>
+                    <span className={cn('rounded-full border px-1.5 py-px text-[10px] font-medium leading-4', tone.badge)}>
+                      {processStatusLabel(item.status)}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {item.source === 'task' ? '任务记录' : '执行节点'} · {index + 1}
+                    </span>
                   </div>
                   {item.occurredAt ? (
-                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
+                    <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
                       <Clock3 className="h-3 w-3" />
                       {formatDateTime(item.occurredAt)}
                     </span>
                   ) : null}
                 </div>
 
-                <div className="mt-3 border-t border-border/70 pt-3">
-                  <p className="whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">
-                    {item.description}
-                  </p>
-                </div>
+                <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-5 text-muted-foreground">
+                  {item.description}
+                </p>
               </article>
             </li>
           );
@@ -259,7 +253,7 @@ const processStatusTone = (status?: string | null) => {
     return {
       dot: 'bg-emerald-100 dark:bg-emerald-950',
       icon: 'text-emerald-600 dark:text-emerald-300',
-      card: 'border-emerald-200/80 dark:border-emerald-900/80',
+      card: 'border-emerald-200/80 bg-emerald-50/20 dark:border-emerald-900/80 dark:bg-emerald-950/10',
       badge: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300',
     };
   }
@@ -267,7 +261,7 @@ const processStatusTone = (status?: string | null) => {
     return {
       dot: 'bg-sky-100 dark:bg-sky-950',
       icon: 'text-sky-600 dark:text-sky-300',
-      card: 'border-sky-300 ring-2 ring-sky-100/80 dark:border-sky-800 dark:ring-sky-950/60',
+      card: 'border-sky-300 bg-sky-50/30 dark:border-sky-800 dark:bg-sky-950/20',
       badge: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300',
     };
   }
