@@ -132,6 +132,10 @@ async fn load_managed_config_snapshot() -> Result<chatos_config_sdk::ConfigSnaps
                 json!("baseline-2026-08"),
             ),
             (
+                TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY.to_string(),
+                json!({"react": "^19.2.7", "vite": "^8.1.4"}),
+            ),
+            (
                 TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY.to_string(),
                 json!("high"),
             ),
@@ -222,6 +226,41 @@ fn require_managed_string_set(
                     format!("managed configuration key {key} must contain only non-empty strings")
                 })?;
             Ok(value.to_string())
+        })
+        .collect()
+}
+
+fn require_managed_string_map(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+    key: &str,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let values = snapshot
+        .values
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
+    if values.is_empty() {
+        return Err(format!("managed configuration key {key} must not be empty"));
+    }
+    values
+        .iter()
+        .map(|(name, value)| {
+            let name = name.trim();
+            let requirement = value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "managed configuration key {key} must map package names to non-empty version requirements"
+                    )
+                })?;
+            if name.is_empty() {
+                return Err(format!(
+                    "managed configuration key {key} contains an empty package name"
+                ));
+            }
+            Ok((name.to_string(), requirement.to_string()))
         })
         .collect()
 }
@@ -352,6 +391,8 @@ const TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
     "task_runner.sandbox.lease_ttl_seconds";
 const TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY: &str =
     "task_runner.supply_chain.baseline_revision";
+const TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_dependency_requirements";
 const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
     "task_runner.supply_chain.node_audit_level";
 const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
@@ -740,7 +781,11 @@ fn validate_required(label: &str, value: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::workspace_mcp::{ensure_workspace_dir_available, resolve_workspace_dir_with_base};
-    use super::KeyedAsyncLockRegistry;
+    use super::{
+        load_managed_config_snapshot, require_managed_string_map, KeyedAsyncLockRegistry,
+        TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+    };
+    use serde_json::json;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -750,6 +795,39 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("{prefix}_{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[tokio::test]
+    async fn dependency_baseline_requires_a_non_empty_managed_string_map() {
+        let mut snapshot = load_managed_config_snapshot().await.expect("snapshot");
+        let requirements = require_managed_string_map(
+            &snapshot,
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+        )
+        .expect("managed requirements");
+        assert_eq!(requirements["react"], "^19.2.7");
+
+        snapshot.values.insert(
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY.to_string(),
+            json!({}),
+        );
+        assert!(require_managed_string_map(
+            &snapshot,
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+        )
+        .expect_err("empty baseline must fail")
+        .contains("must not be empty"));
+
+        snapshot.values.insert(
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY.to_string(),
+            json!({"react": 19}),
+        );
+        assert!(require_managed_string_map(
+            &snapshot,
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+        )
+        .expect_err("non-string requirement must fail")
+        .contains("non-empty version requirements"));
     }
 
     #[test]

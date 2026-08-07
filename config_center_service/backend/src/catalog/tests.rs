@@ -150,6 +150,22 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
     assert_eq!(audit_level.default_value, json!("high"));
     assert_eq!(audit_level.enum_options, vec!["high"]);
 
+    let dependency_requirements = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY
+        })
+        .expect("task runner Node.js dependency requirements definition");
+    assert_eq!(dependency_requirements.value_type, "json");
+    assert_eq!(
+        dependency_requirements.default_value["react"],
+        json!("^19.2.7")
+    );
+    assert_eq!(
+        dependency_requirements.default_value["vite"],
+        json!("^8.1.4")
+    );
+
     let install_script_allowlist = definitions
         .iter()
         .find(|definition| {

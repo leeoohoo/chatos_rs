@@ -111,6 +111,10 @@ impl RunService {
                     &snapshot,
                     TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
                 )?,
+                dependency_requirements: require_managed_string_map(
+                    &snapshot,
+                    TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+                )?,
                 audit_level,
                 install_script_allowlist: require_managed_string_set(
                     &snapshot,

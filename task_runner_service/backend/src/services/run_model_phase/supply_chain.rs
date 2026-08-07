@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NodeSupplyChainPolicy {
     pub(crate) baseline_revision: String,
+    pub(crate) dependency_requirements: BTreeMap<String, String>,
     pub(crate) audit_level: String,
     pub(crate) install_script_allowlist: BTreeSet<String>,
 }
@@ -22,6 +23,13 @@ pub(super) struct SupplyChainEvidenceState {
     unsafe_install_commands: Vec<String>,
     rebuilds: Vec<RebuildEvidence>,
     audit: Option<AuditEvidence>,
+    package_manifest: Option<NodePackageManifestEvidence>,
+    pending_package_manifest_updates: BTreeMap<String, Option<NodePackageManifestEvidence>>,
+}
+
+#[derive(Debug, Clone)]
+struct NodePackageManifestEvidence {
+    requirements: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,15 +84,63 @@ pub(super) struct SupplyChainAuditReport {
     pub(super) audit_command: Option<String>,
     pub(super) audit_exit_code: Option<i64>,
     pub(super) vulnerabilities: Option<NodeVulnerabilityCounts>,
+    pub(super) dependency_baseline_verified: bool,
+    pub(super) dependency_baseline_violations: Vec<String>,
     pub(super) blocking_reasons: Vec<String>,
 }
 
 impl SupplyChainEvidenceState {
+    pub(super) fn observe_tool_calls(&mut self, payload: &Value) {
+        let Some(calls) = payload.as_array() else {
+            return;
+        };
+        for call in calls {
+            let Some(invocation_id) = call.get("invocation_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(name) = chatos_ai_runtime::tool_call::extract_tool_call_name(call) else {
+                continue;
+            };
+            let arguments = chatos_ai_runtime::tool_call::clone_tool_call_arguments(call);
+            let arguments = arguments
+                .as_str()
+                .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                .unwrap_or(arguments);
+            let Some(update) = package_manifest_update_from_tool_call(name, &arguments) else {
+                continue;
+            };
+            self.pending_package_manifest_updates
+                .insert(invocation_id.to_string(), update);
+        }
+    }
+
     pub(super) fn observe_tool_result(&mut self, payload: &Value) {
+        let mut applied_manifest_update = false;
+        if let Some(invocation_id) = payload.get("invocation_id").and_then(Value::as_str) {
+            if payload.get("success").and_then(Value::as_bool) == Some(true)
+                && payload.get("is_error").and_then(Value::as_bool) != Some(true)
+            {
+                if let Some(update) = self.pending_package_manifest_updates.remove(invocation_id) {
+                    applied_manifest_update = true;
+                    self.node_project_observed = true;
+                    self.package_manifest = update;
+                }
+            } else {
+                self.pending_package_manifest_updates.remove(invocation_id);
+            }
+        }
         if payload.get("success").and_then(Value::as_bool) == Some(true)
             && payload.get("is_error").and_then(Value::as_bool) != Some(true)
         {
             observe_project_paths(payload, self);
+            if !applied_manifest_update && result_mutates_package_manifest(payload) {
+                self.node_project_observed = true;
+                self.package_manifest = None;
+            }
+            if let Some(manifest) = package_manifest_from_tool_result(payload) {
+                self.node_project_observed = true;
+                self.package_manifest = Some(manifest);
+            }
         }
         let Some(name) = payload.get("name").and_then(Value::as_str) else {
             return;
@@ -150,11 +206,32 @@ impl SupplyChainEvidenceState {
                 audit_command: None,
                 audit_exit_code: None,
                 vulnerabilities: None,
+                dependency_baseline_verified: false,
+                dependency_baseline_violations: Vec::new(),
                 blocking_reasons: Vec::new(),
             };
         }
 
         let mut blocking_reasons = Vec::new();
+        let dependency_baseline_violations = self
+            .package_manifest
+            .as_ref()
+            .map(|manifest| dependency_baseline_violations(manifest, policy))
+            .unwrap_or_default();
+        let dependency_baseline_verified =
+            self.package_manifest.is_some() && dependency_baseline_violations.is_empty();
+        if self.package_manifest.is_none() {
+            blocking_reasons.push(
+                "Node.js dependency baseline was not verified from the final package.json"
+                    .to_string(),
+            );
+        } else if !dependency_baseline_violations.is_empty() {
+            blocking_reasons.extend(
+                dependency_baseline_violations
+                    .iter()
+                    .map(|violation| format!("Node.js dependency baseline violation: {violation}")),
+            );
+        }
         if !self.lockfile_observed {
             blocking_reasons.push("Node.js dependency lockfile was not verified".to_string());
         }
@@ -256,6 +333,8 @@ impl SupplyChainEvidenceState {
                 .audit
                 .as_ref()
                 .and_then(|item| item.vulnerabilities.clone()),
+            dependency_baseline_verified,
+            dependency_baseline_violations,
             blocking_reasons,
         }
     }
@@ -265,14 +344,15 @@ impl SupplyChainAuditReport {
     pub(super) fn evidence_summary(&self) -> String {
         let Some(vulnerabilities) = self.vulnerabilities.as_ref() else {
             return format!(
-                "Node.js supply-chain audit status: {}; baseline {}; audit evidence incomplete",
-                self.status, self.baseline_revision
+                "Node.js supply-chain audit status: {}; baseline {}; dependency baseline verified={}; audit evidence incomplete",
+                self.status, self.baseline_revision, self.dependency_baseline_verified
             );
         };
         format!(
-            "Node.js supply-chain audit status: {}; baseline {}; command `{}` exited {}; vulnerabilities total={}, high={}, critical={}",
+            "Node.js supply-chain audit status: {}; baseline {}; dependency baseline verified={}; command `{}` exited {}; vulnerabilities total={}, high={}, critical={}",
             self.status,
             self.baseline_revision,
+            self.dependency_baseline_verified,
             self.audit_command.as_deref().unwrap_or("not executed"),
             self.audit_exit_code
                 .map(|code| code.to_string())
@@ -299,15 +379,123 @@ pub(super) fn policy_guidance(policy: &NodeSupplyChainPolicy) -> Value {
             .collect::<Vec<_>>()
             .join(", ")
     };
+    let dependency_requirements = serde_json::to_string(&policy.dependency_requirements)
+        .expect("managed dependency requirements must serialize");
     json!({
         "type": "message",
         "role": "system",
         "content": format!(
-            "[Node.js supply-chain requirements]\nFor any Node.js project, keep the dependency lockfile, install dependencies with lifecycle scripts disabled, run lifecycle scripts only for these approved packages: {allowlist}, and finish with a JSON dependency audit at `{}` severity. The active dependency baseline revision is `{}`. A Node.js implementation is not complete until installation and audit commands have successful, parseable terminal results and high/critical vulnerabilities are zero.",
+            "[Node.js supply-chain requirements]\nFor any Node.js project, keep the dependency lockfile and use these exact centrally reviewed requirements whenever the package is present: {dependency_requirements}. After the final dependency change, read the complete package.json so the runtime can verify the baseline. Install dependencies with lifecycle scripts disabled, run lifecycle scripts only for these approved packages: {allowlist}, and finish with a JSON dependency audit at `{}` severity. The active dependency baseline revision is `{}`. A Node.js implementation is not complete until the final package.json, installation, and audit commands have successful, parseable tool evidence and high/critical vulnerabilities are zero.",
             policy.audit_level,
             policy.baseline_revision,
         ),
     })
+}
+
+fn package_manifest_update_from_tool_call(
+    name: &str,
+    arguments: &Value,
+) -> Option<Option<NodePackageManifestEvidence>> {
+    if name.ends_with("apply_patch") || name.ends_with("patch") {
+        let patch = arguments.get("patch").and_then(Value::as_str)?;
+        return patch.contains("package.json").then_some(None);
+    }
+    if !["write_file", "edit_file", "append_file", "delete_path"]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+    {
+        return None;
+    }
+    let path = arguments
+        .get("path")
+        .or_else(|| arguments.get("relative_path"))
+        .and_then(Value::as_str)?;
+    if !path.replace('\\', "/").ends_with("package.json") {
+        return None;
+    }
+    if name.ends_with("write_file") {
+        return Some(
+            arguments
+                .get("content")
+                .and_then(Value::as_str)
+                .and_then(parse_package_manifest),
+        );
+    }
+    Some(None)
+}
+
+fn result_mutates_package_manifest(payload: &Value) -> bool {
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    [
+        "write_file",
+        "edit_file",
+        "append_file",
+        "delete_path",
+        "apply_patch",
+        "patch",
+    ]
+    .iter()
+    .any(|suffix| name.ends_with(suffix))
+        && value_mentions_package_manifest(payload)
+}
+
+fn value_mentions_package_manifest(value: &Value) -> bool {
+    match value {
+        Value::String(value) => value.replace('\\', "/").contains("package.json"),
+        Value::Array(items) => items.iter().any(value_mentions_package_manifest),
+        Value::Object(map) => map.values().any(value_mentions_package_manifest),
+        _ => false,
+    }
+}
+
+fn package_manifest_from_tool_result(payload: &Value) -> Option<NodePackageManifestEvidence> {
+    let content = payload.get("content")?.as_str()?;
+    let result = serde_json::from_str::<Value>(content).ok()?;
+    let path = result.get("path").and_then(Value::as_str)?;
+    if !path.replace('\\', "/").ends_with("package.json") {
+        return None;
+    }
+    parse_package_manifest(result.get("content")?.as_str()?)
+}
+
+fn parse_package_manifest(content: &str) -> Option<NodePackageManifestEvidence> {
+    let manifest = serde_json::from_str::<Value>(content).ok()?;
+    let mut requirements = BTreeMap::new();
+    for section in [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+    ] {
+        let Some(entries) = manifest.get(section).and_then(Value::as_object) else {
+            continue;
+        };
+        for (name, requirement) in entries {
+            let requirement = requirement.as_str()?.trim();
+            if name.trim().is_empty() || requirement.is_empty() {
+                return None;
+            }
+            requirements.insert(name.to_string(), requirement.to_string());
+        }
+    }
+    Some(NodePackageManifestEvidence { requirements })
+}
+
+fn dependency_baseline_violations(
+    manifest: &NodePackageManifestEvidence,
+    policy: &NodeSupplyChainPolicy,
+) -> Vec<String> {
+    manifest
+        .requirements
+        .iter()
+        .filter_map(|(name, actual)| {
+            let expected = policy.dependency_requirements.get(name)?;
+            (actual != expected)
+                .then(|| format!("{name} requires `{actual}` but baseline requires `{expected}`"))
+        })
+        .collect()
 }
 
 fn observe_project_paths(value: &Value, evidence: &mut SupplyChainEvidenceState) {
@@ -526,8 +714,25 @@ mod tests {
     fn policy() -> NodeSupplyChainPolicy {
         NodeSupplyChainPolicy {
             baseline_revision: "baseline-2026-08".to_string(),
+            dependency_requirements: BTreeMap::from([
+                ("react".to_string(), "^19.2.7".to_string()),
+                ("vite".to_string(), "^8.1.4".to_string()),
+            ]),
             audit_level: "high".to_string(),
             install_script_allowlist: BTreeSet::from(["esbuild".to_string()]),
+        }
+    }
+
+    fn evidence_with_manifest() -> SupplyChainEvidenceState {
+        SupplyChainEvidenceState {
+            node_project_observed: true,
+            package_manifest: Some(NodePackageManifestEvidence {
+                requirements: BTreeMap::from([
+                    ("react".to_string(), "^19.2.7".to_string()),
+                    ("vite".to_string(), "^8.1.4".to_string()),
+                ]),
+            }),
+            ..SupplyChainEvidenceState::default()
         }
     }
 
@@ -562,7 +767,7 @@ mod tests {
 
     #[test]
     fn clean_audit_passes_with_safe_install_and_lockfile() {
-        let mut evidence = SupplyChainEvidenceState::default();
+        let mut evidence = evidence_with_manifest();
         evidence.observe_tool_result(&json!({"result": {"changed_files": [{"path": "package.json"}, {"path": "package-lock.json"}]}}));
         evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
         evidence.observe_tool_result(&terminal_result("npm rebuild esbuild", 0, ""));
@@ -579,7 +784,7 @@ mod tests {
 
     #[test]
     fn critical_vulnerability_blocks_success() {
-        let mut evidence = SupplyChainEvidenceState::default();
+        let mut evidence = evidence_with_manifest();
         evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
         evidence.observe_tool_result(&terminal_result(
             "npm audit --audit-level=high --json",
@@ -594,7 +799,7 @@ mod tests {
 
     #[test]
     fn unavailable_audit_and_unsafe_install_are_not_treated_as_clean() {
-        let mut evidence = SupplyChainEvidenceState::default();
+        let mut evidence = evidence_with_manifest();
         evidence.observe_tool_result(&terminal_result("npm install", 0, ""));
         evidence.observe_tool_result(&terminal_result(
             "npm audit --audit-level=high --json || true",
@@ -616,7 +821,7 @@ mod tests {
 
     #[test]
     fn split_terminal_payload_is_merged_before_evaluation() {
-        let mut evidence = SupplyChainEvidenceState::default();
+        let mut evidence = evidence_with_manifest();
         evidence.observe_tool_result(&split_terminal_result("npm ci --ignore-scripts", 0, ""));
         evidence.observe_tool_result(&split_terminal_result(
             "npm audit --audit-level=high --json",
@@ -633,7 +838,7 @@ mod tests {
             ("npm rebuild esbuild", 1),
             ("npm rebuild esbuild ||true", 0),
         ] {
-            let mut evidence = SupplyChainEvidenceState::default();
+            let mut evidence = evidence_with_manifest();
             evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
             evidence.observe_tool_result(&terminal_result(command, exit_code, ""));
             evidence.observe_tool_result(&terminal_result(
@@ -652,6 +857,101 @@ mod tests {
     }
 
     #[test]
+    fn package_manifest_write_is_verified_only_after_successful_tool_result() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_calls(&json!([{
+            "invocation_id": "inv-1",
+            "name": "harness_code_write_file",
+            "arguments": serde_json::to_string(&json!({
+                "path": "package.json",
+                "content": serde_json::to_string(&json!({
+                    "dependencies": {"react": "^19.2.7"},
+                    "devDependencies": {"vite": "^8.1.4"}
+                })).expect("manifest")
+            })).expect("arguments")
+        }]));
+        assert!(evidence.package_manifest.is_none());
+
+        evidence.observe_tool_result(&json!({
+            "invocation_id": "inv-1",
+            "name": "harness_code_write_file",
+            "success": true,
+            "is_error": false
+        }));
+
+        assert_eq!(
+            evidence
+                .package_manifest
+                .as_ref()
+                .expect("successful manifest")
+                .requirements["react"],
+            "^19.2.7"
+        );
+    }
+
+    #[test]
+    fn later_partial_manifest_edit_invalidates_baseline_until_final_read() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_calls(&json!([{
+            "invocation_id": "inv-edit",
+            "name": "harness_code_edit_file",
+            "arguments": {"path": "package.json", "old_text": "^19.2.7", "new_text": "^18.0.0"}
+        }]));
+        evidence.observe_tool_result(&json!({
+            "invocation_id": "inv-edit",
+            "name": "harness_code_edit_file",
+            "success": true,
+            "is_error": false,
+            "result": {"path": "package.json"}
+        }));
+        assert!(evidence.package_manifest.is_none());
+
+        evidence.observe_tool_result(&json!({
+            "name": "harness_code_read_file_raw",
+            "success": true,
+            "is_error": false,
+            "content": serde_json::to_string(&json!({
+                "path": "package.json",
+                "content": serde_json::to_string(&json!({
+                    "dependencies": {"react": "^18.0.0"},
+                    "devDependencies": {"vite": "^8.1.4"}
+                })).expect("manifest")
+            })).expect("tool content")
+        }));
+
+        let violations = dependency_baseline_violations(
+            evidence.package_manifest.as_ref().expect("final manifest"),
+            &policy(),
+        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("react"));
+    }
+
+    #[test]
+    fn dependency_requirement_mismatch_blocks_supply_chain_success() {
+        let mut evidence = evidence_with_manifest();
+        evidence
+            .package_manifest
+            .as_mut()
+            .expect("manifest")
+            .requirements
+            .insert("react".to_string(), "^18.0.0".to_string());
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "blocked");
+        assert!(!report.dependency_baseline_verified);
+        assert_eq!(report.dependency_baseline_violations.len(), 1);
+        assert!(report.dependency_baseline_violations[0].contains("react"));
+        assert!(report.dependency_baseline_violations[0].contains("^19.2.7"));
+    }
+
+    #[test]
     fn failed_file_read_does_not_make_supply_chain_gate_applicable() {
         let mut evidence = SupplyChainEvidenceState::default();
         evidence.observe_tool_result(&json!({
@@ -666,7 +966,7 @@ mod tests {
 
     #[test]
     fn truncated_audit_output_is_incomplete_evidence() {
-        let mut evidence = SupplyChainEvidenceState::default();
+        let mut evidence = evidence_with_manifest();
         evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
         let mut audit = terminal_result(
             "npm audit --audit-level=high --json",

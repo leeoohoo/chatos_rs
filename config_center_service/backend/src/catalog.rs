@@ -45,6 +45,8 @@ pub const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
     "task_runner.execution.environment_mode";
 pub const TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY: &str =
     "task_runner.supply_chain.baseline_revision";
+pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_dependency_requirements";
 pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
     "task_runner.supply_chain.node_audit_level";
 pub const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
@@ -2279,6 +2281,35 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             218,
+            &now,
+        ),
+        definition(
+            TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+            "Node.js 依赖版本基线",
+            "生成 Node.js 项目使用的集中审核依赖版本要求；仅校验此映射中出现的包",
+            "Task Runner / Supply Chain",
+            "service",
+            Some("task-runner"),
+            "json",
+            json!({
+                "@types/node": "^26.1.1",
+                "@types/react": "^19.2.17",
+                "@types/react-dom": "^19.2.3",
+                "@vitejs/plugin-react": "^6.0.3",
+                "axios": "^1.18.1",
+                "lucide-react": "^1.24.0",
+                "react": "^19.2.7",
+                "react-dom": "^19.2.7",
+                "typescript": "^7.0.2",
+                "vite": "^8.1.4",
+                "vitest": "^4.1.10"
+            }),
+            None,
+            None,
+            &[],
+            "next_run",
+            &[],
+            219,
             &now,
         ),
         definition(

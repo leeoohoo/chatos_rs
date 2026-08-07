@@ -323,6 +323,8 @@ mod supply_chain_gate_tests {
                 critical: if status == "passed" { 0 } else { 1 },
                 ..NodeVulnerabilityCounts::default()
             }),
+            dependency_baseline_verified: status == "passed",
+            dependency_baseline_violations: Vec::new(),
             blocking_reasons,
         }
     }

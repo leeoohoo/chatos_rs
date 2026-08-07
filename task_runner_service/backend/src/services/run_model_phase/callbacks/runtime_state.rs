@@ -376,7 +376,9 @@ impl RunService {
                 let run_id = run_id.clone();
                 let pending = Arc::clone(&pending_stream_event);
                 let path_redactor = path_redactor.clone();
+                let supply_chain_evidence = Arc::clone(&supply_chain_evidence);
                 move |payload| {
+                    supply_chain_evidence.lock().observe_tool_calls(&payload);
                     flush_pending_stream_event(
                         &store,
                         run_id.as_str(),
