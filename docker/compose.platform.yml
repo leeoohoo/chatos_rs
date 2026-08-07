@@ -175,8 +175,11 @@ services:
     ports:
       - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Mount known files individually so macOS AppleDouble files (._*) cannot
+      # be parsed by Grafana as provisioning YAML or dashboard JSON.
+      - ./grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./grafana/provisioning/dashboards/chatos.yml:/etc/grafana/provisioning/dashboards/chatos.yml:ro
+      - ./grafana/dashboards/chatos-platform.json:/var/lib/grafana/dashboards/chatos-platform.json:ro
       - grafana-data:/var/lib/grafana
     depends_on:
       prometheus:
