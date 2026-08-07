@@ -44,14 +44,21 @@ pub(super) fn append_compat_aliases(service: &CodeMaintainerService, tools: &mut
     if service.has_tool("apply_patch") {
         tools.push(json!({
             "name": "patch",
-            "description": "Compatibility alias for apply_patch in the current project workspace.",
+            "description": "Alias for apply_patch in the current project workspace. Include the latest read SHA-256 for every existing patch target.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "patch": { "type": "string", "minLength": 1 }
+                    "patch": { "type": "string", "minLength": 1 },
+                    "expected_sha256_by_path": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                        }
+                    }
                 },
                 "additionalProperties": false,
-                "required": ["patch"]
+                "required": ["patch", "expected_sha256_by_path"]
             }
         }));
     }

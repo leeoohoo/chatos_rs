@@ -260,9 +260,11 @@ impl FsOps {
             .open(&target)
             .map_err(|err| err.to_string())?;
         file.write_all(buffer).map_err(|err| err.to_string())?;
+        file.flush().map_err(|err| err.to_string())?;
+        let file_buffer = fs::read(&target).map_err(|err| err.to_string())?;
         Ok(WriteResult {
-            bytes: buffer.len() as i64,
-            sha256: sha256_bytes(buffer),
+            bytes: file_buffer.len() as i64,
+            sha256: sha256_bytes(&file_buffer),
             path: rel_path.to_string(),
         })
     }

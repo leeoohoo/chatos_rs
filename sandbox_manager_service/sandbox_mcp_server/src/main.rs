@@ -694,7 +694,11 @@ mod tests {
                 "tools/call",
                 json!({
                     "name": "write_file",
-                    "arguments": { "path": "ordinary.txt", "content": "ok" },
+                    "arguments": {
+                        "path": "ordinary.txt",
+                        "content": "ok",
+                        "expected_sha256": null
+                    },
                 }),
             ),
             &[],
@@ -713,7 +717,11 @@ mod tests {
                 "tools/call",
                 json!({
                     "name": "write_file",
-                    "arguments": { "path": ".git/config", "content": "blocked" },
+                    "arguments": {
+                        "path": ".git/config",
+                        "content": "blocked",
+                        "expected_sha256": null
+                    },
                 }),
             ),
             &[],

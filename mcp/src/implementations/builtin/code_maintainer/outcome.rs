@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 pub enum FileModificationOutcome {
     Changed,
     AlreadyApplied,
-    Stale,
+    StaleContext,
+    ExpectedMatch,
     Validation,
     Infrastructure,
 }
@@ -26,7 +27,8 @@ impl FileModificationOutcome {
         match self {
             Self::Changed => "changed",
             Self::AlreadyApplied => "already_applied",
-            Self::Stale => "stale",
+            Self::StaleContext => "stale_context",
+            Self::ExpectedMatch => "expected_match",
             Self::Validation => "validation",
             Self::Infrastructure => "infrastructure",
         }
@@ -41,22 +43,33 @@ pub fn classify_file_modification_error(error: &str) -> FileModificationOutcome 
     let normalized = error.to_ascii_lowercase();
     if [
         "old_text not found in file",
-        "expected_matches mismatch",
         "patch context not found in file",
-        "no match satisfied line/context filters",
         "target not found for replace",
+        "stale_context",
+        "file revision does not match",
     ]
     .iter()
     .any(|marker| normalized.contains(marker))
     {
-        return FileModificationOutcome::Stale;
+        return FileModificationOutcome::StaleContext;
+    }
+
+    if [
+        "expected_matches mismatch",
+        "no match satisfied line/context filters",
+        "candidate matches",
+        "expected_match",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+    {
+        return FileModificationOutcome::ExpectedMatch;
     }
 
     if [
         " is required",
         "cannot be empty",
         "cannot be greater",
-        "candidate matches",
         "writes are disabled",
         "write exceeds",
         "write limit",
@@ -97,15 +110,27 @@ mod tests {
     }
 
     #[test]
-    fn stale_errors_share_one_classification_contract() {
+    fn stale_context_errors_share_one_classification_contract() {
         for error in [
             "old_text not found in file.",
-            "expected_matches mismatch: expected 1, got 0",
             "Patch context not found in file.",
         ] {
             assert_eq!(
                 classify_file_modification_error(error),
-                FileModificationOutcome::Stale
+                FileModificationOutcome::StaleContext
+            );
+        }
+    }
+
+    #[test]
+    fn expected_match_errors_are_distinct_from_stale_context() {
+        for error in [
+            "expected_matches mismatch: expected 1, got 0",
+            "Found 2 candidate matches at line(s): 1, 4",
+        ] {
+            assert_eq!(
+                classify_file_modification_error(error),
+                FileModificationOutcome::ExpectedMatch
             );
         }
     }

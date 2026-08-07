@@ -14,6 +14,7 @@ use super::edit::{apply_edit_text, EditRequest};
 use super::fs_ops::FsOps;
 use super::outcome::{classify_file_modification_error, FileModificationOutcome};
 use super::patch::apply_patch_limited;
+use super::revision::ModificationRevisionGuard;
 use super::service::{CodeMaintainerHooksRef, CodeMaintainerService};
 use super::storage::ChangeLogStore;
 use super::utils::format_bytes;
@@ -25,6 +26,7 @@ pub(super) fn register_write_tools(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     root: PathBuf,
     allow_writes: bool,
     max_file_bytes: i64,
@@ -37,7 +39,7 @@ pub(super) fn register_write_tools(
         service,
         fs_ops.clone(),
         change_log.clone(),
-        max_file_bytes,
+        revision_guard.clone(),
         max_write_bytes,
         writes_note,
         workspace_note,
@@ -47,6 +49,7 @@ pub(super) fn register_write_tools(
         service,
         fs_ops.clone(),
         change_log.clone(),
+        revision_guard.clone(),
         workspace_note,
         hooks.clone(),
     );
@@ -54,7 +57,7 @@ pub(super) fn register_write_tools(
         service,
         fs_ops.clone(),
         change_log.clone(),
-        max_file_bytes,
+        revision_guard.clone(),
         max_write_bytes,
         writes_note,
         workspace_note,
@@ -64,6 +67,7 @@ pub(super) fn register_write_tools(
         service,
         fs_ops.clone(),
         change_log.clone(),
+        revision_guard.clone(),
         max_file_bytes,
         writes_note,
         workspace_note,
@@ -73,6 +77,7 @@ pub(super) fn register_write_tools(
         service,
         fs_ops,
         change_log,
+        revision_guard,
         root,
         allow_writes,
         max_file_bytes,
@@ -87,7 +92,7 @@ fn register_write_file_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
-    max_file_bytes: i64,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     max_write_bytes: i64,
     writes_note: &str,
     workspace_note: &str,
@@ -96,7 +101,7 @@ fn register_write_file_tool(
     service.register_tool(
         "write_file",
         &format!(
-            "Write file content to the current project workspace. Use this for new files or full-file replacement when the target path is known.\nMax write bytes: {}.\n{}.\n{workspace_note}",
+            "Write file content to the current project workspace. Use this for new files or full-file replacement when the target path is known. expected_sha256 is mandatory: use the sha256 returned by the latest read for an existing file, or null only when creating a path confirmed absent.\nMax write bytes: {}.\n{}.\n{workspace_note}",
             format_bytes(max_write_bytes),
             writes_note
         ),
@@ -104,12 +109,17 @@ fn register_write_file_tool(
             "type": "object",
             "properties": {
                 "path": { "type": "string" },
-                "content": { "type": "string" }
+                "content": { "type": "string" },
+                "expected_sha256": {
+                    "type": ["string", "null"],
+                    "pattern": "^[0-9a-f]{64}$"
+                }
             },
             "additionalProperties": false,
-            "required": ["path", "content"]
+            "required": ["path", "content", "expected_sha256"]
         }),
         Arc::new(move |args, ctx| {
+            let invocation = (|| {
             let path = args
                 .get("path")
                 .and_then(|value| value.as_str())
@@ -118,10 +128,39 @@ fn register_write_file_tool(
                 .get("content")
                 .and_then(|value| value.as_str())
                 .ok_or("content is required".to_string())?;
+            let expected_sha256 = expected_sha256(&args, "expected_sha256")?;
             let target = fs_ops.resolve_path(path)?;
             let existed_before = target.exists();
-            let before_snapshot =
-                read_text_for_diff(&target, max_file_bytes).unwrap_or_else(DiffInput::omitted);
+            let (current_sha256, before_snapshot) = if existed_before {
+                let (_, _, sha256, current_content) = fs_ops.read_file_raw(path)?;
+                (Some(sha256), DiffInput::text(current_content))
+            } else {
+                (None, DiffInput { text: None, reason: None })
+            };
+            verify_file_revision(
+                &revision_guard,
+                ctx,
+                path,
+                expected_sha256,
+                current_sha256.as_deref(),
+                None,
+                None,
+            )?;
+            if before_snapshot.text.as_deref() == Some(content) {
+                return Ok(text_result(json!({
+                    "outcome": FileModificationOutcome::AlreadyApplied,
+                    "changed": false,
+                    "changed_target_count": 0,
+                    "result": {
+                        "path": path,
+                        "bytes": content.len() as i64,
+                        "sha256": current_sha256,
+                        "changed": false,
+                        "already_applied": true
+                    },
+                    "message": "The requested full-file content is already present. No file-system change was applied."
+                })));
+            }
             let result = fs_ops.write_file(path, content)?;
             let after_snapshot = DiffInput::text(content.to_string());
             let diff = build_diff(before_snapshot, after_snapshot);
@@ -140,7 +179,17 @@ fn register_write_file_tool(
                     diff,
                 )?;
             note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
-            Ok(text_result(json!({ "result": result, "change": record })))
+            Ok(text_result(json!({
+                "outcome": FileModificationOutcome::Changed,
+                "changed": true,
+                "changed_target_count": 1,
+                "previous_sha256": current_sha256,
+                "result": result,
+                "change": record
+            })))
+            })();
+            record_file_modification_outcome("write_file", ctx, &invocation);
+            invocation
         }),
     );
 }
@@ -149,13 +198,14 @@ fn register_edit_file_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     workspace_note: &str,
     hooks: Option<CodeMaintainerHooksRef>,
 ) {
     service.register_tool(
         "edit_file",
         &format!(
-            "Safely edit a file in the current project workspace by replacing old_text with new_text.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line. Context may be supplied as adjacent whole lines without manually adding the boundary newline.\n{workspace_note}"
+            "Safely edit a file in the current project workspace by replacing old_text with new_text. expected_sha256 must be the sha256 returned by the latest successful read of this file. After a stale_context or expected_match failure, re-read the target before retrying.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line. Context may be supplied as adjacent whole lines without manually adding the boundary newline.\n{workspace_note}"
         ),
         json!({
             "type": "object",
@@ -167,10 +217,14 @@ fn register_edit_file_tool(
                 "end_line": { "type": "integer", "minimum": 1 },
                 "before_context": { "type": "string" },
                 "after_context": { "type": "string" },
-                "expected_matches": { "type": "integer", "minimum": 1 }
+                "expected_matches": { "type": "integer", "minimum": 1 },
+                "expected_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                }
             },
             "additionalProperties": false,
-            "required": ["path", "old_text", "new_text"]
+            "required": ["path", "old_text", "new_text", "expected_sha256"]
         }),
         Arc::new(move |args, ctx| {
             let invocation = (|| {
@@ -200,8 +254,19 @@ fn register_edit_file_tool(
                 .get("expected_matches")
                 .and_then(|value| value.as_u64())
                 .map(|value| value as usize);
+            let expected_sha256 = expected_sha256(&args, "expected_sha256")?
+                .ok_or("expected_sha256 must not be null for edit_file".to_string())?;
 
             let (resolved_path, size, sha, content) = fs_ops.read_file_raw(path)?;
+            verify_file_revision(
+                &revision_guard,
+                ctx,
+                path,
+                Some(expected_sha256),
+                Some(sha.as_str()),
+                start_line,
+                end_line,
+            )?;
             let edit_result = apply_edit_text(
                 &content,
                 EditRequest {
@@ -215,18 +280,23 @@ fn register_edit_file_tool(
                 },
             )
             .map_err(|err| {
-                if err.contains("old_text not found in file.") || err.contains("expected_matches mismatch") {
-                    let hint = json!({
-                        "error": err,
-                        "recovery": {
-                            "recommended_next_tools": [
-                                "read_file_raw",
-                                "read_file_range"
-                            ],
-                            "guidance": "The requested text or context does not match the latest file. Re-read the relevant range, then retry with current old_text and tighter context or line bounds."
-                        }
-                    });
-                    serde_json::to_string(&hint).unwrap_or(err)
+                let outcome = classify_file_modification_error(err.as_str());
+                if matches!(
+                    outcome,
+                    FileModificationOutcome::StaleContext
+                        | FileModificationOutcome::ExpectedMatch
+                ) {
+                    mark_failed_modification(&revision_guard, ctx, path);
+                    edit_modification_error(
+                        outcome,
+                        err.as_str(),
+                        path,
+                        Some(sha.as_str()),
+                        start_line,
+                        end_line,
+                        content.as_str(),
+                        old_text,
+                    )
                 } else {
                     err
                 }
@@ -286,7 +356,7 @@ fn register_append_file_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
-    max_file_bytes: i64,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     max_write_bytes: i64,
     writes_note: &str,
     workspace_note: &str,
@@ -295,7 +365,7 @@ fn register_append_file_tool(
     service.register_tool(
         "append_file",
         &format!(
-            "Append content to a file in the current project workspace.\nMax write bytes: {}.\n{}.\n{workspace_note}",
+            "Append content to a file in the current project workspace. expected_sha256 is mandatory: use the sha256 returned by the latest read for an existing file, or null only when creating a path confirmed absent.\nMax write bytes: {}.\n{}.\n{workspace_note}",
             format_bytes(max_write_bytes),
             writes_note
         ),
@@ -303,12 +373,17 @@ fn register_append_file_tool(
             "type": "object",
             "properties": {
                 "path": { "type": "string" },
-                "content": { "type": "string" }
+                "content": { "type": "string" },
+                "expected_sha256": {
+                    "type": ["string", "null"],
+                    "pattern": "^[0-9a-f]{64}$"
+                }
             },
             "additionalProperties": false,
-            "required": ["path", "content"]
+            "required": ["path", "content", "expected_sha256"]
         }),
         Arc::new(move |args, ctx| {
+            let invocation = (|| {
             let path = args
                 .get("path")
                 .and_then(|value| value.as_str())
@@ -317,10 +392,38 @@ fn register_append_file_tool(
                 .get("content")
                 .and_then(|value| value.as_str())
                 .ok_or("content is required".to_string())?;
+            let expected_sha256 = expected_sha256(&args, "expected_sha256")?;
             let target = fs_ops.resolve_path(path)?;
             let existed_before = target.exists();
-            let before_snapshot =
-                read_text_for_diff(&target, max_file_bytes).unwrap_or_else(DiffInput::omitted);
+            let (current_sha256, before_snapshot) = if existed_before {
+                let (_, _, sha256, current_content) = fs_ops.read_file_raw(path)?;
+                (Some(sha256), DiffInput::text(current_content))
+            } else {
+                (None, DiffInput { text: None, reason: None })
+            };
+            verify_file_revision(
+                &revision_guard,
+                ctx,
+                path,
+                expected_sha256,
+                current_sha256.as_deref(),
+                None,
+                None,
+            )?;
+            if existed_before && content.is_empty() {
+                return Ok(text_result(json!({
+                    "outcome": FileModificationOutcome::AlreadyApplied,
+                    "changed": false,
+                    "changed_target_count": 0,
+                    "result": {
+                        "path": path,
+                        "sha256": current_sha256,
+                        "changed": false,
+                        "already_applied": true
+                    },
+                    "message": "The append content is empty. No file-system change was applied."
+                })));
+            }
             let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
                 DiffInput::omitted(reason)
             } else {
@@ -345,7 +448,17 @@ fn register_append_file_tool(
                     diff,
                 )?;
             note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
-            Ok(text_result(json!({ "result": result, "change": record })))
+            Ok(text_result(json!({
+                "outcome": FileModificationOutcome::Changed,
+                "changed": true,
+                "changed_target_count": 1,
+                "previous_sha256": current_sha256,
+                "result": result,
+                "change": record
+            })))
+            })();
+            record_file_modification_outcome("append_file", ctx, &invocation);
+            invocation
         }),
     );
 }
@@ -354,6 +467,7 @@ fn register_delete_path_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     max_file_bytes: i64,
     writes_note: &str,
     workspace_note: &str,
@@ -362,23 +476,43 @@ fn register_delete_path_tool(
     service.register_tool(
         "delete_path",
         &format!(
-            "Delete a file or directory recursively from the current project workspace.\n{}.\n{workspace_note}",
+            "Delete a file or directory recursively from the current project workspace. expected_sha256 is mandatory for files and must come from the latest read; use null only for a directory or a path confirmed absent.\n{}.\n{workspace_note}",
             writes_note
         ),
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string" }
+                "path": { "type": "string" },
+                "expected_sha256": {
+                    "type": ["string", "null"],
+                    "pattern": "^[0-9a-f]{64}$"
+                }
             },
             "additionalProperties": false,
-            "required": ["path"]
+            "required": ["path", "expected_sha256"]
         }),
         Arc::new(move |args, ctx| {
+            let invocation = (|| {
             let path = args
                 .get("path")
                 .and_then(|value| value.as_str())
                 .ok_or("path is required".to_string())?;
+            let expected_sha256 = expected_sha256(&args, "expected_sha256")?;
             let target = fs_ops.resolve_path(path)?;
+            let current_sha256 = if target.is_file() {
+                Some(fs_ops.read_file_raw(path)?.2)
+            } else {
+                None
+            };
+            verify_file_revision(
+                &revision_guard,
+                ctx,
+                path,
+                expected_sha256,
+                current_sha256.as_deref(),
+                None,
+                None,
+            )?;
             let before_snapshot =
                 read_text_for_diff(&target, max_file_bytes).unwrap_or_else(DiffInput::omitted);
             let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
@@ -397,6 +531,9 @@ fn register_delete_path_tool(
             }
             if !delete_result.deleted {
                 return Ok(text_result(json!({
+                    "outcome": FileModificationOutcome::AlreadyApplied,
+                    "changed": false,
+                    "changed_target_count": 0,
                     "result": {
                         "path": delete_result.path,
                         "deleted": false,
@@ -423,6 +560,9 @@ fn register_delete_path_tool(
                 )?;
             note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
             Ok(text_result(json!({
+                "outcome": FileModificationOutcome::Changed,
+                "changed": true,
+                "changed_target_count": 1,
                 "result": {
                     "path": delete_result.path,
                     "deleted": true,
@@ -431,6 +571,9 @@ fn register_delete_path_tool(
                 },
                 "change": record
             })))
+            })();
+            record_file_modification_outcome("delete_path", ctx, &invocation);
+            invocation
         }),
     );
 }
@@ -439,6 +582,7 @@ fn register_apply_patch_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     root: PathBuf,
     allow_writes: bool,
     max_file_bytes: i64,
@@ -450,16 +594,23 @@ fn register_apply_patch_tool(
     service.register_tool(
         "apply_patch",
         &format!(
-            "Apply a patch to one or more files in the current project workspace.\nSupported format A (recommended): *** Begin Patch / *** Update File / *** Add File / *** Delete File / *** End Patch.\nSupported format B (stable text replace):\nUpdate File --- path/to/file\n<old content>\n+++ path/to/file\n<new content>\nEnd Patch\nFormat B requires old content to match uniquely in the file.\n{}.\n{workspace_note}",
+            "Apply a patch to one or more files in the current project workspace. expected_sha256_by_path is mandatory and must contain the latest read sha256 for every existing update/delete target; omit paths that the patch creates. After stale_context or expected_match, re-read every reported target before retrying.\nSupported format A (recommended): *** Begin Patch / *** Update File / *** Add File / *** Delete File / *** End Patch.\nSupported format B (stable text replace):\nUpdate File --- path/to/file\n<old content>\n+++ path/to/file\n<new content>\nEnd Patch\nFormat B requires old content to match uniquely in the file.\n{}.\n{workspace_note}",
             writes_note
         ),
         json!({
             "type": "object",
             "properties": {
-                "patch": { "type": "string", "minLength": 1 }
+                "patch": { "type": "string", "minLength": 1 },
+                "expected_sha256_by_path": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                    }
+                }
             },
             "additionalProperties": false,
-            "required": ["patch"]
+            "required": ["patch", "expected_sha256_by_path"]
         }),
         Arc::new(move |args, ctx| {
             let invocation = (|| {
@@ -467,28 +618,83 @@ fn register_apply_patch_tool(
                 .get("patch")
                 .and_then(|value| value.as_str())
                 .ok_or("patch is required".to_string())?;
+            let expected_hashes = args
+                .get("expected_sha256_by_path")
+                .and_then(serde_json::Value::as_object)
+                .ok_or("expected_sha256_by_path is required".to_string())?;
             let patch_diffs: HashMap<String, String> = extract_patch_diffs(patch_text);
             let patch_targets = extract_patch_targets(patch_text);
             let mut before_snapshots: HashMap<String, DiffInput> = HashMap::new();
-            for target in patch_targets {
+            let mut current_hashes = HashMap::new();
+            let mut existing_paths = std::collections::BTreeSet::new();
+            for target in &patch_targets {
                 let before_path = fs_ops.resolve_path(&target.before_path)?;
+                if before_path.exists() {
+                    if !before_path.is_file() {
+                        return Err(format!(
+                            "patch target is not a file: {}",
+                            target.before_path
+                        ));
+                    }
+                    if existing_paths.insert(target.before_path.clone()) {
+                        let (_, _, current_sha256, _) =
+                            fs_ops.read_file_raw(target.before_path.as_str())?;
+                        let expected_sha256 = expected_hashes
+                            .get(target.before_path.as_str())
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|value| is_sha256(value))
+                            .ok_or_else(|| {
+                                format!(
+                                    "expected_sha256_by_path requires a valid SHA-256 for existing target {}",
+                                    target.before_path
+                                )
+                            })?;
+                        verify_file_revision(
+                            &revision_guard,
+                            ctx,
+                            target.before_path.as_str(),
+                            Some(expected_sha256),
+                            Some(current_sha256.as_str()),
+                            None,
+                            None,
+                        )?;
+                        current_hashes.insert(target.before_path.clone(), current_sha256);
+                    }
+                }
                 let before_snapshot =
                     read_text_for_diff(&before_path, max_file_bytes).unwrap_or_else(DiffInput::omitted);
-                before_snapshots.insert(target.after_path, before_snapshot);
+                before_snapshots.insert(target.after_path.clone(), before_snapshot);
+            }
+            let unexpected_hash_paths = expected_hashes
+                .keys()
+                .filter(|path| !existing_paths.contains(path.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !unexpected_hash_paths.is_empty() {
+                return Err(format!(
+                    "expected_sha256_by_path contains paths that are not existing patch targets: {}",
+                    unexpected_hash_paths.join(", ")
+                ));
             }
             let result = apply_patch_limited(&root, patch_text, allow_writes, max_write_bytes).map_err(|err| {
-                if err.contains("Patch context not found in file.") {
-                    let hint = json!({
-                        "error": err,
-                        "recovery": {
-                            "recommended_next_tools": [
-                                "read_file_raw",
-                                "read_file_range"
-                            ],
-                            "guidance": "Patch context is stale. Re-read target files and regenerate patch with exact current lines."
-                        }
-                    });
-                    serde_json::to_string(&hint).unwrap_or(err)
+                let outcome = classify_file_modification_error(err.as_str());
+                if matches!(
+                    outcome,
+                    FileModificationOutcome::StaleContext
+                        | FileModificationOutcome::ExpectedMatch
+                ) {
+                    for path in current_hashes.keys() {
+                        mark_failed_modification(&revision_guard, ctx, path.as_str());
+                    }
+                    let first_path = current_hashes.keys().next().map(String::as_str).unwrap_or("");
+                    file_revision_error(
+                        outcome.as_str(),
+                        err.as_str(),
+                        first_path,
+                        current_hashes.get(first_path).map(String::as_str),
+                        None,
+                        None,
+                    )
                 } else {
                     err
                 }
@@ -595,6 +801,177 @@ fn register_apply_patch_tool(
             invocation
         }),
     );
+}
+
+fn expected_sha256<'a>(
+    args: &'a serde_json::Value,
+    field: &str,
+) -> Result<Option<&'a str>, String> {
+    match args.get(field) {
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) if is_sha256(value) => Ok(Some(value.as_str())),
+        Some(serde_json::Value::String(_)) => Err(format!(
+            "{field} must be a lowercase 64-character SHA-256 value"
+        )),
+        Some(_) => Err(format!("{field} must be a SHA-256 string or null")),
+        None => Err(format!("{field} is required")),
+    }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn verify_file_revision(
+    revision_guard: &Arc<Mutex<ModificationRevisionGuard>>,
+    ctx: &super::service::ToolContext<'_>,
+    path: &str,
+    expected: Option<&str>,
+    current: Option<&str>,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+) -> Result<(), String> {
+    let mut guard = revision_guard
+        .lock()
+        .map_err(|_| "file revision guard unavailable".to_string())?;
+    if guard.is_reread_required(ctx.run_id, path) {
+        return Err(file_revision_error(
+            "stale_context",
+            "A successful file read is required after the previous failed modification",
+            path,
+            current,
+            start_line,
+            end_line,
+        ));
+    }
+    if expected == current {
+        return Ok(());
+    }
+    if current.is_some() {
+        guard.require_reread(ctx.run_id, path);
+    }
+    Err(file_revision_error(
+        "stale_context",
+        "The target file revision does not match the modification request",
+        path,
+        current,
+        start_line,
+        end_line,
+    ))
+}
+
+fn mark_failed_modification(
+    revision_guard: &Arc<Mutex<ModificationRevisionGuard>>,
+    ctx: &super::service::ToolContext<'_>,
+    path: &str,
+) {
+    if let Ok(mut guard) = revision_guard.lock() {
+        guard.require_reread(ctx.run_id, path);
+    }
+}
+
+fn file_revision_error(
+    category: &str,
+    message: &str,
+    path: &str,
+    latest_sha256: Option<&str>,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+) -> String {
+    serde_json::to_string(&json!({
+        "category": category,
+        "error": message,
+        "path": path,
+        "latest_sha256": latest_sha256,
+        "conflict_range": {
+            "start_line": start_line,
+            "end_line": end_line,
+        },
+        "recovery": {
+            "required_next_tool": if start_line.is_some() || end_line.is_some() {
+                "read_file_range"
+            } else {
+                "read_file_raw"
+            },
+            "recommended_args": {
+                "path": path,
+                "start_line": start_line,
+                "end_line": end_line,
+            },
+            "guidance": "Re-read the target, use the returned sha256 as expected_sha256, then rebuild the modification from the current content."
+        }
+    }))
+    .unwrap_or_else(|_| format!("{category}: {message}"))
+}
+
+fn edit_modification_error(
+    outcome: FileModificationOutcome,
+    message: &str,
+    path: &str,
+    latest_sha256: Option<&str>,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    content: &str,
+    old_text: &str,
+) -> String {
+    let base = file_revision_error(
+        outcome.as_str(),
+        message,
+        path,
+        latest_sha256,
+        start_line,
+        end_line,
+    );
+    let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(base.as_str()) else {
+        return base;
+    };
+    payload["candidate_summary"] = edit_candidate_summary(content, old_text);
+    serde_json::to_string(&payload).unwrap_or(base)
+}
+
+fn edit_candidate_summary(content: &str, old_text: &str) -> serde_json::Value {
+    if old_text.is_empty() {
+        return json!({ "count": 0, "candidates": [] });
+    }
+    let lines = content.split('\n').collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    let mut offset = 0usize;
+    let mut count = 0usize;
+    while let Some(relative) = content[offset..].find(old_text) {
+        let start = offset + relative;
+        let line = content[..start]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        count += 1;
+        if candidates.len() < 8 {
+            let first_line = line.saturating_sub(1).max(1);
+            let last_line = (line + 1).min(lines.len().max(1));
+            let context = lines
+                .iter()
+                .enumerate()
+                .skip(first_line - 1)
+                .take(last_line - first_line + 1)
+                .map(|(index, text)| format!("{}: {}", index + 1, text))
+                .collect::<Vec<_>>()
+                .join("\n");
+            candidates.push(json!({
+                "ordinal": count,
+                "line": line,
+                "context": context.chars().take(600).collect::<String>(),
+            }));
+        }
+        offset = start + old_text.len();
+    }
+    json!({
+        "count": count,
+        "truncated": count > candidates.len(),
+        "candidates": candidates,
+    })
 }
 
 fn file_hash_and_size(path: &Path) -> Result<(String, i64), String> {

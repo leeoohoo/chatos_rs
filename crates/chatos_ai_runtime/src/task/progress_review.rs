@@ -218,6 +218,8 @@ pub fn tool_result_is_stale_project_write_failure(payload: &Value) -> bool {
     }
     let evidence = payload.to_string().to_ascii_lowercase();
     [
+        "stale_context",
+        "expected_match",
         "patch context not found",
         "expected_matches mismatch",
         "file content likely changed",
