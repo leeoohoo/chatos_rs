@@ -747,6 +747,8 @@ mod tests {
             cloud_project_max_unpacked_bytes: 1024 * 1024,
             cloud_project_max_files: 100,
             cloud_project_git_timeout: Duration::from_millis(5_000),
+            environment_analysis_timeout: Duration::from_secs(60),
+            environment_analysis_stale_after: Duration::from_secs(60),
             task_runner_base_url: Some("http://127.0.0.1:39090".to_string()),
             task_runner_request_timeout: Duration::from_millis(10_000),
             task_runner_internal_secret: Some("sync-secret".to_string()),

@@ -24,6 +24,9 @@ use crate::services::runtime_environment::{
 use crate::state::AppState;
 
 use super::super::runtime_environment::default_runtime_environment_for_project;
+use super::source_snapshot::{
+    preserve_analysis_evidence, set_analysis_progress, validate_source_snapshot_coverage,
+};
 
 #[derive(Clone)]
 pub(crate) struct ProjectEnvironmentToolProvider {
@@ -241,6 +244,7 @@ impl ProjectEnvironmentToolProvider {
             .await?
             .unwrap_or_else(|| default_runtime_environment_for_project(&self.project, None));
         ensure_project_environment_agent_run(&environment, self.run_id.as_str())?;
+        let bound_analysis_evidence = environment.detected_stack.clone();
 
         let environment_variable_scan =
             require_completed_environment_variable_scan(args.environment_variable_scan.clone())?;
@@ -255,10 +259,12 @@ impl ProjectEnvironmentToolProvider {
             .map(str::trim)
             .filter(|value| !value.is_empty());
         let proposes_not_runnable = proposed_not_runnable_reason.is_some();
-        let proposed_stack = args
+        let mut proposed_stack = args
             .detected_stack
-            .as_ref()
-            .unwrap_or(&environment.detected_stack);
+            .clone()
+            .map(ensure_object)
+            .unwrap_or_else(|| environment.detected_stack.clone());
+        preserve_analysis_evidence(&bound_analysis_evidence, &mut proposed_stack);
         let proposed_services = args
             .required_services
             .as_ref()
@@ -272,7 +278,7 @@ impl ProjectEnvironmentToolProvider {
         if proposes_not_runnable
             && (!selected_service_kinds.is_empty()
                 || environment_has_provisionable_evidence(
-                    proposed_stack,
+                    &proposed_stack,
                     proposed_services,
                     args.images.as_slice(),
                 ))
@@ -284,9 +290,7 @@ impl ProjectEnvironmentToolProvider {
         }
 
         environment.not_runnable_reason = args.not_runnable_reason.and_then(normalize_owned);
-        if let Some(value) = args.detected_stack {
-            environment.detected_stack = ensure_object(value);
-        }
+        environment.detected_stack = proposed_stack;
         let detected_stack = environment
             .detected_stack
             .as_object_mut()
@@ -374,6 +378,10 @@ impl ProjectEnvironmentToolProvider {
                 &environment.required_services,
                 image_records.as_slice(),
             )?;
+            validate_source_snapshot_coverage(
+                &environment.detected_stack,
+                image_records.as_slice(),
+            )?;
             super::refresh_project_runtime_compose_config(
                 self.project.id.as_str(),
                 &mut environment,
@@ -397,6 +405,24 @@ impl ProjectEnvironmentToolProvider {
             &environment,
             image_records.as_slice(),
         ));
+        if let Some(started_at) = environment
+            .detected_stack
+            .pointer("/analysis_progress/started_at")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+        {
+            let finished_at = now_rfc3339();
+            set_analysis_progress(
+                &mut environment.detected_stack,
+                self.run_id.as_str(),
+                "completed",
+                started_at.as_str(),
+                finished_at.as_str(),
+                Some(finished_at.as_str()),
+                None,
+            );
+            environment.updated_at = finished_at;
+        }
 
         let environment = self
             .state
@@ -519,6 +545,11 @@ fn agent_visible_runtime_state(
             "environment_key": image.environment_key,
             "environment_type": image.environment_type,
             "display_name": image.display_name,
+            "source_root": image.source_root,
+            "component_kind": image.component_kind,
+            "startup_command": image.startup_command,
+            "test_command": image.test_command,
+            "depends_on": image.depends_on,
             "features": image.features,
             "ports": image.ports,
             "env_vars": image.env_vars,

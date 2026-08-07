@@ -735,6 +735,16 @@ fn catalog_exposes_project_service_runtime_routes_via_env_projection() {
             "PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS",
             "duration_ms",
         ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY,
+            "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY,
+            "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS",
+            "duration_ms",
+        ),
     ] {
         let definition = definitions
             .iter()

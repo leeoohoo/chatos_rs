@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, str::FromStr};
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::http_body::{
     read_response_json_limited, read_response_text_limited_or_message,
@@ -20,6 +21,7 @@ use crate::state::AppState;
 use crate::trace_context::InternalTraceContextExt;
 
 use super::routing::{find_enabled_local_sandbox_pairing, parse_local_connector_project_root};
+use super::source_snapshot::set_analysis_progress;
 
 const MAX_PROGRESS_LOG_BYTES: usize = 40_000;
 
@@ -67,6 +69,40 @@ pub async fn get_project_runtime_environment_progress(
                 project, None,
             )
         });
+    if environment.status == ProjectRuntimeEnvironmentStatus::Analyzing
+        && analysis_is_stale(&environment, state.config.environment_analysis_stale_after)
+    {
+        let error = format!(
+            "project environment analysis emitted no persistent progress within the configured stale threshold of {} ms",
+            state.config.environment_analysis_stale_after.as_millis()
+        );
+        environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+        environment.analysis_summary = Some("项目运行环境分析已超时中断。".to_string());
+        environment.last_error = Some(error.clone());
+        environment.updated_at = now_rfc3339();
+        if let (Some(started_at), Some(run_id)) = (
+            environment
+                .detected_stack
+                .pointer("/analysis_progress/started_at")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            environment.last_agent_run_id.clone(),
+        ) {
+            set_analysis_progress(
+                &mut environment.detected_stack,
+                run_id.as_str(),
+                "analysis_stale",
+                started_at.as_str(),
+                environment.updated_at.as_str(),
+                Some(environment.updated_at.as_str()),
+                Some(error.as_str()),
+            );
+        }
+        environment = state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await?;
+    }
     let provider = provider_for_environment(&environment);
     let active_image_build = environment.status
         == ProjectRuntimeEnvironmentStatus::PendingImageBuild
@@ -148,6 +184,21 @@ pub async fn get_project_runtime_environment_progress(
         provider,
         job.as_ref(),
     ))
+}
+
+fn analysis_is_stale(environment: &ProjectRuntimeEnvironmentRecord, stale_after: Duration) -> bool {
+    let updated_at = environment
+        .detected_stack
+        .pointer("/analysis_progress/updated_at")
+        .and_then(Value::as_str)
+        .unwrap_or(environment.updated_at.as_str());
+    let Ok(updated_at) = DateTime::parse_from_rfc3339(updated_at) else {
+        return true;
+    };
+    let Ok(stale_after) = chrono::Duration::from_std(stale_after) else {
+        return true;
+    };
+    Utc::now().signed_duration_since(updated_at.with_timezone(&Utc)) >= stale_after
 }
 
 fn provider_for_environment(
@@ -371,8 +422,23 @@ fn progress_response(
 ) -> ProjectRuntimeEnvironmentProgressResponse {
     let job_status = job.map(|job| job.status.trim().to_ascii_lowercase());
     let build_progress = job.and_then(|job| estimate_build_progress(job.output.as_str()));
-    let (mut phase, status, progress_percent) =
+    let (mut phase, status, mut progress_percent) =
         progress_state(environment.status, job_status.as_deref(), build_progress);
+    let persisted_progress = environment
+        .detected_stack
+        .get("analysis_progress")
+        .and_then(Value::as_object);
+    if environment.status == ProjectRuntimeEnvironmentStatus::Analyzing && job.is_none() {
+        if let Some(stage) = persisted_progress
+            .and_then(|progress| progress.get("current_stage"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|stage| !stage.is_empty())
+        {
+            phase = stage;
+            progress_percent = analysis_stage_progress(stage);
+        }
+    }
     if job.is_some_and(is_dependency_job) && phase == "building_image" {
         phase = "preparing_dependency_image";
     }
@@ -402,14 +468,36 @@ fn progress_response(
         image_ref: job
             .map(|job| job.image_ref.clone())
             .filter(|value| !value.is_empty()),
-        started_at: job.and_then(|job| job.started_at.clone()),
+        started_at: job.and_then(|job| job.started_at.clone()).or_else(|| {
+            persisted_progress
+                .and_then(|progress| progress.get("started_at"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
         updated_at: job
             .map(|job| job.updated_at.clone())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| environment.updated_at.clone()),
-        finished_at: job.and_then(|job| job.finished_at.clone()),
+        finished_at: job.and_then(|job| job.finished_at.clone()).or_else(|| {
+            persisted_progress
+                .and_then(|progress| progress.get("finished_at"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
         logs,
         error,
+    }
+}
+
+fn analysis_stage_progress(stage: &str) -> Option<u8> {
+    match stage {
+        "queued" => Some(5),
+        "resolving_source_snapshot" => Some(15),
+        "running_agent_analysis" => Some(40),
+        "completed" => Some(100),
+        "analysis_stale" => Some(100),
+        stage if stage.ends_with("_failed") => Some(100),
+        _ => None,
     }
 }
 
@@ -587,6 +675,26 @@ mod tests {
             provider_for_environment(&environment),
             RuntimeEnvironmentProvider::CloudSandboxManager
         );
+    }
+
+    #[test]
+    fn persisted_analysis_progress_uses_the_configured_stale_threshold() {
+        let mut environment = analyzing_environment();
+        let recent = Utc::now().to_rfc3339();
+        environment.updated_at = recent.clone();
+        environment.detected_stack = json!({
+            "analysis_progress": {
+                "updated_at": recent
+            }
+        });
+        assert!(!analysis_is_stale(&environment, Duration::from_secs(60)));
+
+        environment.detected_stack = json!({
+            "analysis_progress": {
+                "updated_at": "2026-01-01T00:00:00Z"
+            }
+        });
+        assert!(analysis_is_stale(&environment, Duration::from_secs(60)));
     }
 
     #[test]

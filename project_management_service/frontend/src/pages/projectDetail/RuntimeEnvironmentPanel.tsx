@@ -48,6 +48,7 @@ import {
   newEnvironmentVariableDraft,
   providerTag,
   renderJsonBlock,
+  runtimeAnalysisEvidence,
   runtimeStatusTag,
   serviceColumns,
   servicesFromJson,
@@ -110,6 +111,7 @@ export function RuntimeEnvironmentPanel({
     (file) => file.path !== '.chatos/runtime-environment/docker-compose.chatos.yml',
   );
   const serviceRows = servicesFromJson(environment?.required_services);
+  const analysisEvidence = runtimeAnalysisEvidence(environment?.detected_stack);
   const envVarRows = useMemo(
     () => environmentVariablesFromResponse(response),
     [environment?.environment_variables, environment?.env_vars],
@@ -253,6 +255,39 @@ export function RuntimeEnvironmentPanel({
           </Descriptions.Item>
           <Descriptions.Item label="更新时间">
             {formatDateTime(environment?.updated_at)}
+          </Descriptions.Item>
+          <Descriptions.Item label="分析阶段">{analysisEvidence.stage || '-'}</Descriptions.Item>
+          <Descriptions.Item label="源码分支">
+            {analysisEvidence.defaultBranch ? (
+              <Typography.Text code style={codeTextStyle}>
+                {analysisEvidence.defaultBranch}
+              </Typography.Text>
+            ) : (
+              '-'
+            )}
+          </Descriptions.Item>
+          <Descriptions.Item label="源码提交">
+            {analysisEvidence.sourceCommit ? (
+              <Typography.Text copyable code style={codeTextStyle}>
+                {analysisEvidence.sourceCommit.slice(0, 12)}
+              </Typography.Text>
+            ) : (
+              '-'
+            )}
+          </Descriptions.Item>
+          <Descriptions.Item label="扫描结果">
+            {analysisEvidence.scannedFileCount === undefined
+              ? '-'
+              : `${analysisEvidence.scannedFileCount} 个文件 / ${analysisEvidence.applicationCount ?? 0} 个应用候选`}
+          </Descriptions.Item>
+          <Descriptions.Item label="源码快照">
+            {analysisEvidence.snapshotId ? (
+              <Typography.Text copyable code ellipsis style={{ ...codeTextStyle, maxWidth: 280 }}>
+                {analysisEvidence.snapshotId}
+              </Typography.Text>
+            ) : (
+              '-'
+            )}
           </Descriptions.Item>
           <Descriptions.Item label="Agent Run">
             {environment?.last_agent_run_id ? (

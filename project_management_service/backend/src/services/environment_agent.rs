@@ -19,6 +19,7 @@ mod mcp_servers;
 mod memory;
 mod progress;
 mod routing;
+mod source_snapshot;
 mod tool_provider;
 
 pub use self::progress::get_project_runtime_environment_progress;

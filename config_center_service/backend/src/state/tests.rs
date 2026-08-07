@@ -2643,6 +2643,10 @@ fn project_service_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys
         .contains(&PROJECT_SERVICE_CLOUD_PROJECT_MAX_UNPACKED_BYTES_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
 }
 
@@ -2736,6 +2740,14 @@ fn project_service_snapshot_exposes_runtime_environment_aliases() {
         (
             PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(120_000),
+        ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY.to_string(),
+            json!(30 * 60 * 1_000),
+        ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY.to_string(),
+            json!(35 * 60 * 1_000),
         ),
     ]);
 
@@ -2832,6 +2844,18 @@ fn project_service_snapshot_exposes_runtime_environment_aliases() {
             .env
             .get("PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS"),
         Some(&"120000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS"),
+        Some(&(30 * 60 * 1_000).to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS"),
+        Some(&(35 * 60 * 1_000).to_string())
     );
 }
 

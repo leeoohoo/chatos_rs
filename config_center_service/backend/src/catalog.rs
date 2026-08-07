@@ -424,6 +424,10 @@ pub const PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES_CONFIG_KEY: &str =
     "project_service.cloud_import.max_files";
 pub const PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS_CONFIG_KEY: &str =
     "project_service.cloud_import.git_timeout_ms";
+pub const PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY: &str =
+    "project_service.environment_analysis.timeout_ms";
+pub const PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY: &str =
+    "project_service.environment_analysis.stale_after_ms";
 pub const MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "memory_engine.security.require_signed_internal_requests";
 pub const CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
@@ -6977,6 +6981,40 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS"],
             373,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY,
+            "Environment Analysis Timeout",
+            "Project Service 单次项目运行环境分析允许执行的最长毫秒数，超时后任务失败关闭",
+            "Project Service / Environment Analysis",
+            "service",
+            Some("project-service"),
+            "duration_ms",
+            json!(30 * 60 * 1_000),
+            Some(60_000),
+            Some(3 * 60 * 60 * 1_000),
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS"],
+            374,
+            &now,
+        ),
+        definition(
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY,
+            "Environment Analysis Stale Threshold",
+            "Project Service 判定持久化环境分析状态已失去执行者并转为失败的最大静默毫秒数",
+            "Project Service / Environment Analysis",
+            "service",
+            Some("project-service"),
+            "duration_ms",
+            json!(35 * 60 * 1_000),
+            Some(60_000),
+            Some(4 * 60 * 60 * 1_000),
+            &[],
+            "restart_required",
+            &["PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS"],
+            375,
             &now,
         ),
         definition(

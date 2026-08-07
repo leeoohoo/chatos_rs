@@ -293,6 +293,8 @@ mod tests {
             cloud_project_max_unpacked_bytes: 1024,
             cloud_project_max_files: 10,
             cloud_project_git_timeout: Duration::from_secs(1),
+            environment_analysis_timeout: Duration::from_secs(60),
+            environment_analysis_stale_after: Duration::from_secs(60),
             task_runner_base_url: None,
             task_runner_request_timeout: Duration::from_secs(1),
             task_runner_internal_secret: None,

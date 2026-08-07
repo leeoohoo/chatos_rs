@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::super::source_snapshot::{
+    bind_source_snapshot, capture_harness_source_snapshot, set_analysis_progress,
+};
 use super::super::*;
 
 pub(in crate::services::environment_agent) async fn analyze_project_runtime_environment_impl(
@@ -90,7 +93,59 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         analysis_requirement,
         selected_dependencies,
     );
+    let analysis_started_at = now_rfc3339();
+    environment.updated_at = analysis_started_at.clone();
+    set_analysis_progress(
+        &mut environment.detected_stack,
+        run_id.as_str(),
+        "resolving_source_snapshot",
+        analysis_started_at.as_str(),
+        environment.updated_at.as_str(),
+        None,
+        None,
+    );
+    environment = state
+        .store
+        .upsert_project_runtime_environment(&environment)
+        .await?;
+
+    if environment_plan.file_provider == RuntimeEnvironmentProvider::Harness {
+        let snapshot = match capture_harness_source_snapshot(state, project, owner_user_id).await {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+                environment.analysis_summary =
+                    Some("读取 Harness 默认分支源码快照失败。".to_string());
+                environment.last_error = Some(err.clone());
+                environment.updated_at = now_rfc3339();
+                set_analysis_progress(
+                    &mut environment.detected_stack,
+                    run_id.as_str(),
+                    "source_snapshot_failed",
+                    analysis_started_at.as_str(),
+                    environment.updated_at.as_str(),
+                    Some(environment.updated_at.as_str()),
+                    Some(err.as_str()),
+                );
+                let environment = state
+                    .store
+                    .upsert_project_runtime_environment(&environment)
+                    .await?;
+                return response_for_project(state, environment).await;
+            }
+        };
+        bind_source_snapshot(&mut environment.detected_stack, &snapshot);
+    }
     environment.updated_at = now_rfc3339();
+    set_analysis_progress(
+        &mut environment.detected_stack,
+        run_id.as_str(),
+        "running_agent_analysis",
+        analysis_started_at.as_str(),
+        environment.updated_at.as_str(),
+        None,
+        None,
+    );
     environment = state
         .store
         .upsert_project_runtime_environment(&environment)
@@ -111,6 +166,15 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             );
             environment.last_error = None;
             environment.updated_at = now_rfc3339();
+            set_analysis_progress(
+                &mut environment.detected_stack,
+                run_id.as_str(),
+                "pending_model_configuration",
+                analysis_started_at.as_str(),
+                environment.updated_at.as_str(),
+                Some(environment.updated_at.as_str()),
+                None,
+            );
             let environment = state
                 .store
                 .upsert_project_runtime_environment(&environment)
@@ -122,6 +186,15 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             environment.analysis_summary = Some("读取环境初始化模型配置失败。".to_string());
             environment.last_error = Some(err);
             environment.updated_at = now_rfc3339();
+            set_analysis_progress(
+                &mut environment.detected_stack,
+                run_id.as_str(),
+                "model_configuration_failed",
+                analysis_started_at.as_str(),
+                environment.updated_at.as_str(),
+                Some(environment.updated_at.as_str()),
+                environment.last_error.as_deref(),
+            );
             let environment = state
                 .store
                 .upsert_project_runtime_environment(&environment)
@@ -145,6 +218,15 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
                 Some("项目管理 Agent Memory Engine 初始化失败。".to_string());
             environment.last_error = Some(err);
             environment.updated_at = now_rfc3339();
+            set_analysis_progress(
+                &mut environment.detected_stack,
+                run_id.as_str(),
+                "memory_initialization_failed",
+                analysis_started_at.as_str(),
+                environment.updated_at.as_str(),
+                Some(environment.updated_at.as_str()),
+                environment.last_error.as_deref(),
+            );
             let environment = state
                 .store
                 .upsert_project_runtime_environment(&environment)
@@ -152,6 +234,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             return response_for_project(state, environment).await;
         }
     };
+    let source_snapshot = environment.detected_stack.get("source_snapshot").cloned();
     let agent_result = run_project_environment_agent(
         state,
         project,
@@ -165,6 +248,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             model_config_id: model_runtime.model_config_id.as_str(),
             analysis_requirement,
             selected_dependencies,
+            source_snapshot: source_snapshot.as_ref(),
         },
     )
     .await;
@@ -189,6 +273,15 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
                     "agent did not call update_current_project_runtime_environment".to_string(),
                 );
                 failed.updated_at = now_rfc3339();
+                set_analysis_progress(
+                    &mut failed.detected_stack,
+                    run_id.as_str(),
+                    "agent_result_missing",
+                    analysis_started_at.as_str(),
+                    failed.updated_at.as_str(),
+                    Some(failed.updated_at.as_str()),
+                    failed.last_error.as_deref(),
+                );
                 let failed = state
                     .store
                     .upsert_project_runtime_environment(&failed)
@@ -229,6 +322,15 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             environment.analysis_summary = Some("项目管理 Agent 初始化运行环境失败。".to_string());
             environment.last_error = Some(err.clone());
             environment.updated_at = now_rfc3339();
+            set_analysis_progress(
+                &mut environment.detected_stack,
+                run_id.as_str(),
+                "agent_analysis_failed",
+                analysis_started_at.as_str(),
+                environment.updated_at.as_str(),
+                Some(environment.updated_at.as_str()),
+                Some(err.as_str()),
+            );
             tracing::warn!(
                 project_id = project.id.as_str(),
                 model_config_id = model_runtime.model_config_id.as_str(),
@@ -277,6 +379,7 @@ struct ProjectEnvironmentAgentRunContext<'a> {
     model_config_id: &'a str,
     analysis_requirement: Option<&'a str>,
     selected_dependencies: &'a [String],
+    source_snapshot: Option<&'a Value>,
 }
 
 async fn response_for_project(
@@ -435,7 +538,7 @@ async fn run_project_environment_agent(
     )
     .await?;
     let provider_skills_prompt = gateway.provider_skills_prompt();
-    let result = async {
+    let result = tokio::time::timeout(state.config.environment_analysis_timeout, async {
         let executor = McpExecutor::builder()
             .with_http_server(gateway.server().clone())
             .build_initialized()
@@ -448,13 +551,20 @@ async fn run_project_environment_agent(
             run_context.run_id,
             run_context.analysis_requirement,
             run_context.selected_dependencies,
+            run_context.source_snapshot,
             agent_prompt,
             executor,
             provider_skills_prompt,
         )
         .await
-    }
-    .await;
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(format!(
+            "project environment analysis exceeded configured timeout of {} ms",
+            state.config.environment_analysis_timeout.as_millis()
+        ))
+    });
     gateway.close(project.id.as_str(), run_context.run_id).await;
     result
 }
@@ -466,6 +576,7 @@ async fn execute_project_environment_agent(
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    source_snapshot: Option<&Value>,
     agent_prompt: chatos_plugin_management_sdk::ResolvedAgentPrompt,
     executor: McpExecutor,
     provider_skills_prompt: Option<String>,
@@ -475,6 +586,7 @@ async fn execute_project_environment_agent(
         run_id,
         analysis_requirement,
         selected_dependencies,
+        source_snapshot,
     )?;
     if let Some(provider_skills_prompt) = provider_skills_prompt {
         prompt.push_str("\n\n");
@@ -558,6 +670,7 @@ fn build_project_environment_agent_prompt(
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    source_snapshot: Option<&Value>,
 ) -> Result<String, String> {
     let context = project_environment_agent_context(
         project.id.as_str(),
@@ -565,6 +678,7 @@ fn build_project_environment_agent_prompt(
         run_id,
         analysis_requirement,
         selected_dependencies,
+        source_snapshot,
     );
     serde_json::to_string_pretty(&context)
         .map_err(|err| format!("serialize project environment run context failed: {err}"))
@@ -576,6 +690,7 @@ fn project_environment_agent_context(
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    source_snapshot: Option<&Value>,
 ) -> Value {
     json!({
         "mode": "cloud_tool_execution",
@@ -590,6 +705,7 @@ fn project_environment_agent_context(
                 .filter(|value| !value.is_empty()),
             "selected_dependencies": selected_dependencies,
         },
+        "source_snapshot": source_snapshot,
     })
 }
 
@@ -621,6 +737,7 @@ mod tests {
             "run-1",
             Some("Use Node.js 22 and expose port 3000"),
             &["PostgreSQL".to_string(), "Redis".to_string()],
+            None,
         );
         assert!(context.get("routing").is_none());
         assert!(context.get("current_environment").is_none());
