@@ -22,6 +22,15 @@ impl RunService {
         );
         let mut report = report;
         harness::fail_report_when_promotion_failed(&mut report, harness_output.as_ref());
+        let reference_workspace_dir = sandbox_output
+            .as_ref()
+            .and_then(|output| output.output_workspace.as_deref())
+            .unwrap_or(effective_workspace_dir);
+        fail_report_when_outcome_references_invalid(
+            &mut report,
+            reference_workspace_dir,
+            task.mcp_config.requires_execution,
+        );
         report.content = report
             .content
             .map(|content| path_redactor.redact_text(content.as_str()));
@@ -42,7 +51,13 @@ impl RunService {
         let outcome_summary = report
             .execution_outcome
             .as_ref()
-            .map(|outcome| path_redactor.redact_text(outcome.summary.trim()))
+            .map(|outcome| {
+                structured_outcome_result_summary(
+                    outcome,
+                    task.mcp_config.locale().is_english(),
+                    &path_redactor,
+                )
+            })
             .filter(|summary| !summary.is_empty());
         let mut result_summary = match terminal_status {
             TaskRunStatus::Succeeded | TaskRunStatus::Blocked => outcome_summary
@@ -152,6 +167,139 @@ impl RunService {
         self.enqueue_terminal_side_effects(run).await;
         self.store.clear_cancel_requested(&run.id);
     }
+}
+
+fn fail_report_when_outcome_references_invalid(
+    report: &mut TaskRunReport,
+    workspace_dir: &str,
+    requires_execution: bool,
+) {
+    if report.status != chatos_ai_runtime::AiTurnStatus::Completed {
+        return;
+    }
+    let Some(outcome) = report.execution_outcome.as_ref() else {
+        return;
+    };
+    if outcome.status != chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded {
+        return;
+    }
+    if let Err(err) =
+        validate_task_execution_outcome_references(outcome, workspace_dir, requires_execution)
+    {
+        report.status = chatos_ai_runtime::AiTurnStatus::Failed;
+        report.error = Some(format!(
+            "structured task execution outcome reference validation failed: {err}"
+        ));
+    }
+}
+
+fn validate_task_execution_outcome_references(
+    outcome: &chatos_ai_runtime::TaskExecutionOutcome,
+    workspace_dir: &str,
+    require_existing_paths: bool,
+) -> Result<(), String> {
+    for path in &outcome.referenced_paths {
+        validate_workspace_reference(workspace_dir, path, require_existing_paths)?;
+    }
+    for endpoint in &outcome.referenced_endpoints {
+        validate_endpoint_reference(endpoint)?;
+    }
+    Ok(())
+}
+
+fn validate_workspace_reference(
+    workspace_dir: &str,
+    reference: &str,
+    require_exists: bool,
+) -> Result<(), String> {
+    let reference = reference.trim();
+    let relative_path = std::path::Path::new(reference);
+    if relative_path.is_absolute()
+        || relative_path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "referenced path must stay inside the workspace: {reference}"
+        ));
+    }
+    if !require_exists {
+        return Ok(());
+    }
+
+    let workspace_root = std::fs::canonicalize(workspace_dir)
+        .map_err(|err| format!("failed to resolve workspace root {workspace_dir}: {err}"))?;
+    let resolved = std::fs::canonicalize(workspace_root.join(relative_path))
+        .map_err(|err| format!("referenced path does not exist: {reference}: {err}"))?;
+    if !resolved.starts_with(&workspace_root) {
+        return Err(format!(
+            "referenced path resolves outside the workspace: {reference}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_endpoint_reference(reference: &str) -> Result<(), String> {
+    let reference = reference.trim();
+    let endpoint = reqwest::Url::parse(reference)
+        .map_err(|err| format!("referenced endpoint is not a valid URL: {reference}: {err}"))?;
+    if !matches!(endpoint.scheme(), "http" | "https") || endpoint.host_str().is_none() {
+        return Err(format!(
+            "referenced endpoint must be an absolute HTTP/HTTPS URL: {reference}"
+        ));
+    }
+    if !endpoint.username().is_empty() || endpoint.password().is_some() {
+        return Err(format!(
+            "referenced endpoint must not contain credentials: {reference}"
+        ));
+    }
+    Ok(())
+}
+
+fn structured_outcome_result_summary(
+    outcome: &chatos_ai_runtime::TaskExecutionOutcome,
+    english: bool,
+    path_redactor: &crate::services::path_redaction::WorkspacePathRedactor,
+) -> String {
+    let mut sections = vec![path_redactor.redact_text(outcome.summary.trim())];
+    if outcome.status == chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded {
+        if !outcome.referenced_paths.is_empty() {
+            sections.push(format!(
+                "{}：{}",
+                if english {
+                    "Verified paths"
+                } else {
+                    "已验证路径"
+                },
+                outcome
+                    .referenced_paths
+                    .join(if english { ", " } else { "、" })
+            ));
+        }
+        if !outcome.referenced_endpoints.is_empty() {
+            sections.push(format!(
+                "{}：{}",
+                if english {
+                    "Verified endpoints"
+                } else {
+                    "已验证端点"
+                },
+                outcome
+                    .referenced_endpoints
+                    .join(if english { ", " } else { "、" })
+            ));
+        }
+    }
+    sections
+        .into_iter()
+        .filter(|section| !section.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn resolve_report_terminal_status(report: &mut TaskRunReport) -> TaskRunStatus {
@@ -661,6 +809,8 @@ mod tests {
                 verification_evidence: vec![
                     "health request returned connection refused".to_string()
                 ],
+                referenced_paths: Vec::new(),
+                referenced_endpoints: Vec::new(),
             }),
             content: Some("work stopped before verification".to_string()),
             reasoning: None,
@@ -1053,6 +1203,91 @@ mod tests {
             .expect("get parent")
             .expect("parent");
         assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    }
+
+    #[test]
+    fn execution_outcome_reference_validation_accepts_real_workspace_evidence() {
+        let workspace = temporary_reference_workspace("valid");
+        std::fs::create_dir_all(workspace.join("apps/api")).expect("create app directory");
+        std::fs::write(workspace.join("apps/api/package.json"), "{}")
+            .expect("write referenced file");
+        let mut outcome = TaskExecutionOutcome::succeeded(
+            "implementation verified",
+            vec!["cargo test passed".to_string()],
+        );
+        outcome.referenced_paths =
+            vec!["apps/api".to_string(), "apps/api/package.json".to_string()];
+        outcome.referenced_endpoints = vec!["http://127.0.0.1:4000/health".to_string()];
+
+        validate_task_execution_outcome_references(
+            &outcome,
+            workspace.to_string_lossy().as_ref(),
+            true,
+        )
+        .expect("valid references");
+
+        std::fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    #[test]
+    fn execution_outcome_reference_validation_rejects_missing_or_escaping_paths() {
+        let workspace = temporary_reference_workspace("invalid-path");
+        let mut outcome = TaskExecutionOutcome::succeeded(
+            "implementation verified",
+            vec!["cargo test passed".to_string()],
+        );
+        outcome.referenced_paths = vec!["missing.txt".to_string()];
+        let missing = validate_task_execution_outcome_references(
+            &outcome,
+            workspace.to_string_lossy().as_ref(),
+            true,
+        )
+        .expect_err("missing path must fail");
+        assert!(missing.contains("does not exist"));
+
+        outcome.referenced_paths = vec!["../outside.txt".to_string()];
+        let escaping = validate_task_execution_outcome_references(
+            &outcome,
+            workspace.to_string_lossy().as_ref(),
+            false,
+        )
+        .expect_err("planning references must not escape the workspace");
+        assert!(escaping.contains("must stay inside the workspace"));
+
+        std::fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    #[test]
+    fn execution_outcome_reference_validation_rejects_endpoint_credentials() {
+        let workspace = temporary_reference_workspace("invalid-endpoint");
+        let mut outcome = TaskExecutionOutcome::succeeded(
+            "implementation verified",
+            vec!["health check passed".to_string()],
+        );
+        outcome.referenced_endpoints = vec!["https://admin:secret@example.com/health".to_string()];
+
+        let error = validate_task_execution_outcome_references(
+            &outcome,
+            workspace.to_string_lossy().as_ref(),
+            false,
+        )
+        .expect_err("endpoint credentials must fail");
+        assert!(error.contains("must not contain credentials"));
+
+        std::fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    fn temporary_reference_workspace(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "chatos-outcome-reference-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("create temporary workspace");
+        path
     }
 
     #[tokio::test]

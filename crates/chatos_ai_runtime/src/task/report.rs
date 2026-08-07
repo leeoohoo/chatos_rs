@@ -25,6 +25,10 @@ pub struct TaskExecutionOutcome {
     pub unmet_acceptance_criteria: Vec<String>,
     #[serde(default)]
     pub verification_evidence: Vec<String>,
+    #[serde(default)]
+    pub referenced_paths: Vec<String>,
+    #[serde(default)]
+    pub referenced_endpoints: Vec<String>,
 }
 
 impl TaskExecutionOutcome {
@@ -35,6 +39,8 @@ impl TaskExecutionOutcome {
             blocking_reason: None,
             unmet_acceptance_criteria: Vec::new(),
             verification_evidence,
+            referenced_paths: Vec::new(),
+            referenced_endpoints: Vec::new(),
         }
     }
 
@@ -52,6 +58,22 @@ impl TaskExecutionOutcome {
         {
             return Err(
                 "task execution outcome must include concrete verification evidence".to_string(),
+            );
+        }
+        if self
+            .referenced_paths
+            .iter()
+            .any(|path| path.trim().is_empty())
+        {
+            return Err("task execution outcome referenced paths must not be empty".to_string());
+        }
+        if self
+            .referenced_endpoints
+            .iter()
+            .any(|endpoint| endpoint.trim().is_empty())
+        {
+            return Err(
+                "task execution outcome referenced endpoints must not be empty".to_string(),
             );
         }
         match self.status {
