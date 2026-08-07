@@ -559,6 +559,11 @@ pub struct RunOutputChangeManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunOutputChangesResponse {
     pub run_id: String,
+    #[serde(default)]
+    pub base_commit: Option<String>,
+    #[serde(default)]
+    pub result_commit: Option<String>,
+    pub comparison_scope: String,
     pub counts: RunOutputFileChangeCounts,
     pub files: Vec<RunOutputFileChange>,
     pub total: usize,

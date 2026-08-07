@@ -293,21 +293,17 @@ impl RunService {
         let Some(run) = self.store.get_run(run_id).await? else {
             return Ok(None);
         };
-        match self
-            .get_harness_run_output_changes(&run, limit, offset)
-            .await
-        {
-            Ok(Some(response)) => return Ok(Some(response)),
-            Ok(None) => {}
-            Err(err) => warn!(
-                run_id = run.id.as_str(),
-                error = err.as_str(),
-                "read Harness run changes failed; falling back to sandbox manifest"
-            ),
+        if super::super::harness_run_diff::harness_output_report_from_run(&run)?.is_some() {
+            return self
+                .get_harness_run_output_changes(&run, limit, offset)
+                .await;
         }
         let Some(manifest) = read_output_change_manifest_for_run(&run)? else {
             return Ok(Some(RunOutputChangesResponse {
                 run_id: run.id,
+                base_commit: None,
+                result_commit: None,
+                comparison_scope: "run_incremental".to_string(),
                 counts: RunOutputFileChangeCounts::default(),
                 files: Vec::new(),
                 total: 0,
@@ -327,6 +323,9 @@ impl RunService {
             .collect::<Vec<_>>();
         Ok(Some(RunOutputChangesResponse {
             run_id: run.id,
+            base_commit: None,
+            result_commit: None,
+            comparison_scope: "run_incremental".to_string(),
             counts: manifest.counts,
             files,
             total,

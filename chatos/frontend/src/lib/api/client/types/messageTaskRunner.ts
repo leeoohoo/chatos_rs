@@ -272,6 +272,9 @@ export interface MessageTaskRunnerFileChange {
 
 export interface MessageTaskRunnerRunOutputChangesResponse {
   run_id: string;
+  base_commit?: string | null;
+  result_commit?: string | null;
+  comparison_scope: 'run_incremental' | string;
   counts: MessageTaskRunnerFileChangeCounts;
   files: MessageTaskRunnerFileChange[];
   total: number;

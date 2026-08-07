@@ -48,18 +48,6 @@ const formatModelConfig = (
   return id ? `模型配置暂不可用 (${shortId(id)})` : '-';
 };
 
-const extractSandboxOutputCounts = (report: unknown): Record<string, unknown> | null => {
-  if (!isRecord(report)) {
-    return null;
-  }
-  const output = isRecord(report.output) ? report.output : null;
-  const sandbox = output && isRecord(output.sandbox) ? output.sandbox : null;
-  const counts = sandbox && isRecord(sandbox.file_change_counts)
-    ? sandbox.file_change_counts
-    : null;
-  return counts;
-};
-
 interface RunExecutionLocation {
   environmentMode: string | null;
   sandboxEnabled: boolean | null;
@@ -147,7 +135,6 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   const eventsHasMore = Boolean(detail.events_has_more);
   const resultSummary = readString(run.result_summary);
   const normalizedReportContent = readString(reportContent);
-  const sandboxOutputCounts = extractSandboxOutputCounts(run.report);
   const executionLocation = extractRunExecutionLocation(run);
   const userVisibleError = run.error_message
     ? sanitizeUserVisibleAppError(run.error_message)
@@ -220,19 +207,6 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       {hasDistinctReport ? (
         <CollapsibleSection title="执行报告">
           <MarkdownCard content={normalizedReportContent} />
-        </CollapsibleSection>
-      ) : null}
-
-      {sandboxOutputCounts ? (
-        <CollapsibleSection title="文件变更" defaultOpen>
-          <FieldGrid
-            items={[
-              ['新增', sandboxOutputCounts.added ?? 0],
-              ['修改', sandboxOutputCounts.modified ?? 0],
-              ['删除', sandboxOutputCounts.deleted ?? 0],
-              ['总计', sandboxOutputCounts.total ?? 0],
-            ]}
-          />
         </CollapsibleSection>
       ) : null}
 
