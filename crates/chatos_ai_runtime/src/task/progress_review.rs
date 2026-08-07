@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use serde_json::Value;
+
+const MAX_CONFIRMED_PROJECT_PATHS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskExecutionReviewPolicy {
@@ -72,6 +76,7 @@ pub struct TaskExecutionProgressState {
     missing_targeted_read_failures_after_action: AtomicUsize,
     placeholder_progress_write_iteration: AtomicUsize,
     stale_project_write_failure_iteration: AtomicUsize,
+    confirmed_project_paths: Mutex<BTreeSet<String>>,
 }
 
 impl Default for TaskExecutionProgressState {
@@ -93,6 +98,7 @@ impl TaskExecutionProgressState {
             missing_targeted_read_failures_after_action: AtomicUsize::new(0),
             placeholder_progress_write_iteration: AtomicUsize::new(0),
             stale_project_write_failure_iteration: AtomicUsize::new(0),
+            confirmed_project_paths: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -105,6 +111,7 @@ impl TaskExecutionProgressState {
     }
 
     pub fn observe_tool_result(&self, payload: &Value) {
+        self.record_confirmed_project_paths(payload);
         let iteration = self.current_iteration.load(Ordering::Relaxed);
         if tool_result_is_project_mutation(payload) {
             self.project_mutation_generation
@@ -128,6 +135,29 @@ impl TaskExecutionProgressState {
         if tool_result_is_missing_targeted_read(payload) {
             self.missing_targeted_read_failures_after_action
                 .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn confirmed_project_paths(&self) -> Vec<String> {
+        self.confirmed_project_paths
+            .lock()
+            .map(|paths| paths.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn record_confirmed_project_paths(&self, payload: &Value) {
+        let paths = confirmed_project_paths_from_tool_result(payload);
+        if paths.is_empty() {
+            return;
+        }
+        let Ok(mut confirmed) = self.confirmed_project_paths.lock() else {
+            return;
+        };
+        for path in paths {
+            if confirmed.len() >= MAX_CONFIRMED_PROJECT_PATHS {
+                break;
+            }
+            confirmed.insert(path);
         }
     }
 
@@ -339,6 +369,119 @@ pub fn tool_result_is_placeholder_progress_write(payload: &Value) -> bool {
 
 fn targeted_read_tool_name(name: &str) -> bool {
     tool_name_ends_with_any(name, &["read_file_raw", "read_file_range", "read_file"])
+}
+
+fn confirmed_project_paths_from_tool_result(payload: &Value) -> Vec<String> {
+    if payload.get("success").and_then(Value::as_bool) != Some(true)
+        || payload.get("is_error").and_then(Value::as_bool) == Some(true)
+    {
+        return Vec::new();
+    }
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    if !tool_name_ends_with_any(
+        name,
+        &[
+            "list_dir",
+            "read_file_raw",
+            "read_file_range",
+            "read_file",
+            "search_text",
+            "search_files",
+            "write_file",
+            "edit_file",
+            "append_file",
+            "delete_path",
+            "apply_patch",
+            "patch",
+        ],
+    ) {
+        return Vec::new();
+    }
+    let parsed_content = payload
+        .get("content")
+        .and_then(Value::as_str)
+        .and_then(|content| serde_json::from_str::<Value>(content).ok());
+    let mut paths = BTreeSet::new();
+    collect_confirmed_project_paths(payload, &mut paths);
+    if let Some(content) = parsed_content.as_ref() {
+        collect_confirmed_project_paths(content, &mut paths);
+    }
+    paths
+        .into_iter()
+        .take(MAX_CONFIRMED_PROJECT_PATHS)
+        .collect()
+}
+
+fn collect_confirmed_project_paths(value: &Value, output: &mut BTreeSet<String>) {
+    if output.len() >= MAX_CONFIRMED_PROJECT_PATHS {
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if matches!(
+                    key.as_str(),
+                    "path" | "file" | "filename" | "relative_path" | "changed_paths"
+                ) {
+                    collect_path_values(value, output);
+                } else if value.is_object() || value.is_array() {
+                    collect_confirmed_project_paths(value, output);
+                }
+                if output.len() >= MAX_CONFIRMED_PROJECT_PATHS {
+                    break;
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_confirmed_project_paths(item, output);
+                if output.len() >= MAX_CONFIRMED_PROJECT_PATHS {
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_path_values(value: &Value, output: &mut BTreeSet<String>) {
+    match value {
+        Value::String(path) => {
+            if let Some(path) = normalize_confirmed_project_path(path) {
+                output.insert(path);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_path_values(item, output);
+            }
+        }
+        Value::Object(_) => collect_confirmed_project_paths(value, output),
+        _ => {}
+    }
+}
+
+fn normalize_confirmed_project_path(path: &str) -> Option<String> {
+    let normalized = path
+        .trim()
+        .trim_matches('`')
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string();
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.chars().count() > 512
+        || normalized.as_bytes().get(1) == Some(&b':')
+        || normalized
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+        || !project_path_is_meaningful_progress(normalized.as_str())
+    {
+        return None;
+    }
+    Some(normalized)
 }
 
 fn tool_name_ends_with_any(name: &str, suffixes: &[&str]) -> bool {
@@ -730,6 +873,76 @@ mod tests {
             })).expect("content"),
             "result": { "exit_code": 0 },
         })));
+    }
+
+    #[test]
+    fn successful_file_tools_build_a_bounded_confirmed_path_index() {
+        let progress = TaskExecutionProgressState::default();
+        progress.observe_tool_result(&json!({
+            "name": "code_maintainer_read_search_text",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "matches": [
+                    { "path": "src/domain/index.ts", "line": 4 },
+                    { "path": "src/domain/index.ts", "line": 9 },
+                    { "path": "../outside.rs", "line": 1 },
+                    { "path": "/absolute.rs", "line": 1 },
+                    { "path": "target/debug/generated.rs", "line": 1 },
+                    { "path": "node_modules/pkg/index.js", "line": 1 }
+                ]
+            }
+        }));
+        progress.observe_tool_result(&json!({
+            "name": "harness_code_apply_patch",
+            "success": true,
+            "is_error": false,
+            "content": serde_json::to_string(&json!({
+                "changed_paths": ["src/domain/index.ts", "src/domain/domain.test.ts"]
+            })).expect("content")
+        }));
+
+        assert_eq!(
+            progress.confirmed_project_paths(),
+            vec![
+                "src/domain/domain.test.ts".to_string(),
+                "src/domain/index.ts".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn confirmed_project_path_index_stops_at_managed_capacity() {
+        let progress = TaskExecutionProgressState::default();
+        let entries = (0..MAX_CONFIRMED_PROJECT_PATHS + 16)
+            .map(|index| json!({ "path": format!("src/module_{index}.rs") }))
+            .collect::<Vec<_>>();
+
+        progress.observe_tool_result(&json!({
+            "name": "code_maintainer_read_list_dir",
+            "success": true,
+            "is_error": false,
+            "result": { "entries": entries }
+        }));
+
+        assert_eq!(
+            progress.confirmed_project_paths().len(),
+            MAX_CONFIRMED_PROJECT_PATHS
+        );
+    }
+
+    #[test]
+    fn failed_file_tools_do_not_confirm_paths() {
+        let progress = TaskExecutionProgressState::default();
+        progress.observe_tool_result(&json!({
+            "name": "code_maintainer_read_read_file_raw",
+            "success": false,
+            "is_error": true,
+            "content": "not found",
+            "result": { "path": "src/missing.rs" }
+        }));
+
+        assert!(progress.confirmed_project_paths().is_empty());
     }
 
     #[test]

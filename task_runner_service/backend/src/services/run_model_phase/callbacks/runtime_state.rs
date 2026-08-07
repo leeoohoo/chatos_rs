@@ -46,7 +46,11 @@ impl TaskRunnerLifecycleHook {
         }
     }
 
-    fn record_review_checkpoint(&self, checkpoint: TaskExecutionReviewCheckpoint) {
+    fn record_review_checkpoint(
+        &self,
+        checkpoint: TaskExecutionReviewCheckpoint,
+        confirmed_project_paths: &[String],
+    ) {
         let payload = json!({
             "iteration": checkpoint.iteration,
             "trigger": checkpoint.trigger.as_str(),
@@ -61,6 +65,7 @@ impl TaskRunnerLifecycleHook {
             "context_action": "persistent_guidance",
             "disabled_tool_names": [],
             "review_contract": "evidence_driven_next_action",
+            "confirmed_project_paths": confirmed_project_paths,
         });
         self.store.append_run_event_sync(TaskRunEventRecord::new(
             self.run_id.clone(),
@@ -90,17 +95,19 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         }
 
         let detected_checkpoint = self.progress.should_trigger_review(iteration);
+        let confirmed_project_paths = self.progress.confirmed_project_paths();
         if let Some(checkpoint) = detected_checkpoint {
-            self.record_review_checkpoint(checkpoint);
+            self.record_review_checkpoint(checkpoint, &confirmed_project_paths);
         }
         if let Some(checkpoint) =
             persistent_review_checkpoint(&self.active_review, detected_checkpoint)
         {
             // Keep the decision contract present after each tool result. Otherwise a bounded
             // locate/edit action can return to an unconstrained exploration loop on the next turn.
-            before
-                .input_items
-                .push(checkpoint_guidance_message(checkpoint));
+            before.input_items.push(checkpoint_guidance_message(
+                checkpoint,
+                &confirmed_project_paths,
+            ));
         }
         Ok(before)
     }
@@ -196,7 +203,10 @@ fn persistent_review_checkpoint(
     *active_review
 }
 
-fn checkpoint_guidance_message(checkpoint: TaskExecutionReviewCheckpoint) -> Value {
+fn checkpoint_guidance_message(
+    checkpoint: TaskExecutionReviewCheckpoint,
+    confirmed_project_paths: &[String],
+) -> Value {
     let decision_focus = match checkpoint.trigger {
         TaskExecutionReviewTrigger::ReadOnlyLoop =>
             "归并现有文件与命令证据：如果它们已覆盖全部硬性验收项就 COMPLETE；否则锁定依赖顺序中第一项未满足要求，并选择 IMPLEMENT 或 VERIFY。",
@@ -207,12 +217,22 @@ fn checkpoint_guidance_message(checkpoint: TaskExecutionReviewCheckpoint) -> Val
         TaskExecutionReviewTrigger::StaleProjectWrite =>
             "已有失败结果表明最近一次代码写入未生效。选择 IMPLEMENT，把最近一次成功读取的目标内容作为权威版本，直接生成基于该文本的精确编辑；写入成功后转入必要验证。",
     };
+    let confirmed_path_guidance = if confirmed_project_paths.is_empty() {
+        "当前还没有来自成功读取、搜索或修改结果的已确认项目路径。只有现有证据确实无法定位实现时，只允许执行一次限定目录、关键词和预期命中的 LOCATE 动作；该动作返回后必须使用新证据进入 IMPLEMENT、VERIFY、COMPLETE 或 BLOCKED，不得继续扩大搜索范围。".to_string()
+    } else {
+        format!(
+            "以下路径已由成功的读取、搜索或修改工具结果确认，可直接作为后续动作的项目路径索引：{}。必须直接复用这些路径，不得从任务描述或自然语言摘要重新猜测路径，也不得仅为确认它们存在而重复全仓搜索。",
+            serde_json::to_string(confirmed_project_paths)
+                .expect("confirmed project paths must serialize")
+        )
+    };
     json!({
         "role": "system",
         "content": format!(
             "[工程决策复盘]\n\
              你现在承担工程复盘决策角色。当前上下文已经提供任务目标、验收标准、已读取文件、已执行命令及其结果。你的职责是依据这些证据替执行过程选定并推进下一步，而不是评价先前行为、提醒发生了重复，或输出复盘说明。\n\
              本次决策重点：{decision_focus}\n\
+             路径证据：{confirmed_path_guidance}\n\
              \n\
              请在内部完成决策，不向用户展示分析草稿：\n\
              1. 重建验收契约：从任务目标和验收标准中提取硬性要求，使用现有文件内容、函数实现、命令、退出码和错误结果逐项判断。每个结论都必须有具体证据；没有证据的要求视为未满足。\n\
@@ -612,9 +632,10 @@ mod tests {
 
     #[test]
     fn checkpoint_guidance_requires_one_actionable_review_decision() {
-        let guidance = checkpoint_guidance_message(review_checkpoint(
-            TaskExecutionReviewTrigger::ReadOnlyLoop,
-        ));
+        let guidance = checkpoint_guidance_message(
+            review_checkpoint(TaskExecutionReviewTrigger::ReadOnlyLoop),
+            &["src/lib.rs".to_string()],
+        );
         let content = guidance["content"].as_str().expect("guidance content");
 
         for expected in [
@@ -629,6 +650,9 @@ mod tests {
             "下一条可见输出只能是执行该指令的一次工具调用",
             "失败就引用新失败的具体原因给出纠正后的",
             "工具始终完整可用",
+            "src/lib.rs",
+            "不得从任务描述或自然语言摘要重新猜测路径",
+            "不得仅为确认它们存在而重复全仓搜索",
         ] {
             assert!(content.contains(expected), "missing {expected}");
         }
@@ -672,20 +696,24 @@ mod tests {
 
     #[test]
     fn missing_path_review_directs_a_bounded_location_step() {
-        let guidance = checkpoint_guidance_message(review_checkpoint(
-            TaskExecutionReviewTrigger::MissingTargetedReads,
-        ));
+        let guidance = checkpoint_guidance_message(
+            review_checkpoint(TaskExecutionReviewTrigger::MissingTargetedReads),
+            &[],
+        );
         let content = guidance["content"].as_str().expect("guidance content");
 
         assert!(content.contains("已有工具结果否定了当前路径假设"));
         assert!(content.contains("只执行一次限定目录、关键词和预期命中的定位动作"));
+        assert!(content.contains("只允许执行一次限定目录、关键词和预期命中的 LOCATE 动作"));
+        assert!(content.contains("不得继续扩大搜索范围"));
     }
 
     #[test]
     fn stale_write_review_directs_an_exact_rebased_edit() {
-        let guidance = checkpoint_guidance_message(review_checkpoint(
-            TaskExecutionReviewTrigger::StaleProjectWrite,
-        ));
+        let guidance = checkpoint_guidance_message(
+            review_checkpoint(TaskExecutionReviewTrigger::StaleProjectWrite),
+            &["src/lib.rs".to_string()],
+        );
         let content = guidance["content"].as_str().expect("guidance content");
 
         assert!(content.contains("最近一次代码写入未生效"));
