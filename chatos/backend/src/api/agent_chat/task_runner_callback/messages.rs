@@ -157,7 +157,15 @@ pub(super) fn apply_task_runner_callback_to_user_message(
         task_runner_meta,
         "overall_status",
         if all_created_tasks_terminal {
-            "completed"
+            if !failed_task_ids.is_empty() {
+                "failed"
+            } else if !blocked_task_ids.is_empty() {
+                "blocked"
+            } else if !cancelled_task_ids.is_empty() {
+                "cancelled"
+            } else {
+                "completed"
+            }
         } else if execution_paused {
             "paused"
         } else {
@@ -172,6 +180,34 @@ pub(super) fn apply_task_runner_callback_to_user_message(
     write_string_set(task_runner_meta, "failed_task_ids", &failed_task_ids);
     write_string_set(task_runner_meta, "blocked_task_ids", &blocked_task_ids);
     write_string_set(task_runner_meta, "cancelled_task_ids", &cancelled_task_ids);
+    task_runner_meta.insert(
+        "task_count".to_string(),
+        Value::from(created_task_ids.len() as u64),
+    );
+    task_runner_meta.insert(
+        "pending_task_count".to_string(),
+        Value::from(
+            created_task_ids
+                .len()
+                .saturating_sub(terminal_task_ids.len()) as u64,
+        ),
+    );
+    task_runner_meta.insert(
+        "succeeded_task_count".to_string(),
+        Value::from(succeeded_task_ids.len() as u64),
+    );
+    task_runner_meta.insert(
+        "failed_task_count".to_string(),
+        Value::from(failed_task_ids.len() as u64),
+    );
+    task_runner_meta.insert(
+        "blocked_task_count".to_string(),
+        Value::from(blocked_task_ids.len() as u64),
+    );
+    task_runner_meta.insert(
+        "cancelled_task_count".to_string(),
+        Value::from(cancelled_task_ids.len() as u64),
+    );
 
     message.metadata != original_metadata
 }

@@ -27,6 +27,24 @@ const mocks = vi.hoisted(() => ({
       execution_service_id: null,
     },
   },
+  blockedTask: {
+    id: 'task-blocked-1',
+    title: '等待外部数据库恢复',
+    objective: '完成数据库集成验证',
+    status: 'blocked',
+    last_run_id: 'run-blocked-1',
+    last_run: {
+      id: 'run-blocked-1',
+      task_id: 'task-blocked-1',
+      model_config_id: 'model-1',
+      status: 'blocked',
+      error_message: 'PostgreSQL connection refused',
+    },
+    mcp_config: {
+      requires_execution: true,
+      execution_service_id: null,
+    },
+  },
   getProjectRequirementExecutionPlan: vi.fn(),
   getProjectRuntimeEnvironment: vi.fn(),
   reloadGraph: vi.fn(),
@@ -74,6 +92,7 @@ vi.mock('../../messageTasks/useMessageTaskGraph', () => ({
     graph: { edges: [], nodes: [{ task: mocks.failedTask }] },
     allTasks: [
       mocks.failedTask,
+      mocks.blockedTask,
       {
         id: 'task-success-1',
         title: '已经成功的任务',
@@ -193,11 +212,16 @@ describe('failed task retry entry in execution workbench', () => {
 
     expect(screen.getByRole('button', { name: '取消本次执行' })).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: '重试失败任务，共 1 个' }));
+    await user.click(screen.getByRole('button', { name: '重试失败或阻塞任务，共 2 个' }));
 
-    const retryDialog = screen.getByRole('dialog', { name: '失败任务重试' });
+    const retryDialog = screen.getByRole('dialog', { name: '失败或阻塞任务重试' });
     expect(within(retryDialog).getByText(mocks.failedTask.title)).toBeTruthy();
+    expect(within(retryDialog).getByText(mocks.blockedTask.title)).toBeTruthy();
     expect(within(retryDialog).queryByText('已经成功的任务')).toBeNull();
+
+    expect(within(retryDialog).getByRole('group', {
+      name: `阻塞任务：${mocks.blockedTask.title}`,
+    })).toBeTruthy();
 
     const taskRow = within(retryDialog).getByRole('group', {
       name: `失败任务：${mocks.failedTask.title}`,

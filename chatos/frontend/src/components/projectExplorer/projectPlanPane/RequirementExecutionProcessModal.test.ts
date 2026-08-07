@@ -365,6 +365,13 @@ describe('requirement execution process phase', () => {
     })).toBe('failed');
 
     expect(resolveRequirementExecutionProcessPhase({
+      confirmationState: confirmationState({ overallStatus: 'blocked' }),
+      failureDetected: false,
+      planStopped: false,
+      taskStatuses: [],
+    })).toBe('failed');
+
+    expect(resolveRequirementExecutionProcessPhase({
       confirmationState: confirmationState({ hasStartedTasks: true, overallStatus: 'failed' }),
       failureDetected: true,
       planStopped: false,

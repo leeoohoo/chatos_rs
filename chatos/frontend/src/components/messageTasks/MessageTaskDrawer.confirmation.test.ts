@@ -79,4 +79,16 @@ describe('project execution confirmation state', () => {
     expect(started.canConfirm).toBe(false);
     expect(started.hasStartedTasks).toBe(true);
   });
+
+  it('treats blocked execution as terminal instead of awaiting confirmation', () => {
+    const blockedGraph = graph('blocked', 'run-1');
+    const state = resolveProjectExecutionConfirmationState({
+      graph: blockedGraph,
+      message: message('blocked'),
+      tasks: blockedGraph.nodes.map((node) => node.task),
+    });
+
+    expect(state.awaitingConfirmation).toBe(false);
+    expect(state.overallStatus).toBe('blocked');
+  });
 });

@@ -56,6 +56,7 @@ export const resolveProjectExecutionConfirmationState = ({
     'completed',
     'failed',
     'error',
+    'blocked',
     'stopped',
     'cancelled',
     'canceled',

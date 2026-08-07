@@ -187,6 +187,67 @@ fn terminal_callback_marks_source_user_message_completed() {
 }
 
 #[test]
+fn blocked_terminal_callback_marks_batch_blocked_and_writes_counts() {
+    let mut message = Message::new(
+        "session-1".to_string(),
+        "user".to_string(),
+        "please handle this".to_string(),
+    );
+    message.id = "user-1".to_string();
+    message.metadata = Some(json!({
+        "task_runner_async": {
+            "overall_status": "processing",
+            "created_task_ids": ["task-1", "task-2"],
+            "running_task_ids": ["task-1", "task-2"],
+            "terminal_task_ids": []
+        }
+    }));
+
+    let mut payload = sample_callback_payload();
+    apply_task_runner_callback_to_user_message(&mut message, &payload);
+    payload.task_id = "task-2".to_string();
+    payload.run_id = Some("run-2".to_string());
+    payload.event = "task.blocked".to_string();
+    payload.status = "blocked".to_string();
+    payload.task_status = Some("blocked".to_string());
+    apply_task_runner_callback_to_user_message(&mut message, &payload);
+
+    let task_runner_async = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .expect("task runner metadata");
+    assert_eq!(
+        task_runner_async
+            .get("overall_status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        task_runner_async.get("task_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        task_runner_async
+            .get("pending_task_count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        task_runner_async
+            .get("succeeded_task_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        task_runner_async
+            .get("blocked_task_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+}
+
+#[test]
 fn retry_start_callback_reopens_failed_task_tracking_with_new_run() {
     let mut message = Message::new(
         "session-1".to_string(),

@@ -167,7 +167,7 @@ export const RequirementExecutionProcessModal: React.FC<{
   const runningTaskCount = allTasks.filter(taskHasRunningRun).length;
   const queuedTaskCount = allTasks.filter(taskHasQueuedRun).length;
   const retryableFailedTasks = useMemo(() => allTasks.filter((task) => (
-    readString(task.status)?.toLowerCase() === 'failed'
+    ['failed', 'blocked'].includes(readString(task.status)?.toLowerCase() || '')
     && Boolean(readString(task.last_run_id))
   )), [allTasks]);
   const graphReady = confirmationState.graphReadyForConfirmation
