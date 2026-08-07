@@ -33,12 +33,12 @@ export function RunToolCallsSection({
         <Collapse
           ghost
           items={toolCalls.map((toolCall, index) => ({
-            key: `${toolCall.callId || toolCall.name}-${index}`,
+            key: toolCall.invocationId || `${toolCall.callId || toolCall.name}-${index}`,
             label: (
               <Space wrap>
                 <Tag color="processing">{toolCall.name}</Tag>
                 <Typography.Text code>
-                  {toolCall.callId || 'no-call-id'}
+                  {toolCall.invocationId || toolCall.callId || 'no-invocation-id'}
                 </Typography.Text>
                 {toolCall.arguments ? (
                   <Typography.Text type="secondary">
@@ -75,7 +75,7 @@ export function RunToolResultsSection({
         <Collapse
           ghost
           items={toolResults.map((result, index) => ({
-            key: `${result.toolCallId || result.name}-${index}`,
+            key: result.invocationId || `${result.toolCallId || result.name}-${index}`,
             label: (
               <Space wrap>
                 <Tag color={result.success ? 'success' : 'error'}>
@@ -83,7 +83,7 @@ export function RunToolResultsSection({
                 </Tag>
                 <Typography.Text strong>{result.name}</Typography.Text>
                 <Typography.Text code>
-                  {result.toolCallId || 'no-call-id'}
+                  {result.invocationId || result.toolCallId || 'no-invocation-id'}
                 </Typography.Text>
               </Space>
             ),

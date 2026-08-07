@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{json, Value};
 use tracing::info;
+use uuid::Uuid;
 
 use chatos_mcp_runtime::{ToolResult, ToolResultCallback};
 
@@ -98,14 +100,24 @@ pub(super) async fn execute_runtime_tools(
     options: &AiRuntimeOptions,
     iteration: usize,
 ) -> Result<RuntimeToolExecution, String> {
+    let (instrumented_tool_calls, invocation_ids) = instrument_tool_calls(tool_calls)?;
     if let Some(cb) = &options.callbacks.on_tools_start {
-        cb(tool_calls.clone());
+        cb(instrumented_tool_calls);
     }
     let tool_result_callback: Option<ToolResultCallback> =
         options.callbacks.on_tools_stream.as_ref().map(|cb| {
             let cb = Arc::clone(cb);
+            let invocation_ids = Arc::clone(&invocation_ids);
             Arc::new(move |result: &chatos_mcp_runtime::ToolResult| {
-                cb(serde_json::to_value(result).unwrap_or_else(|_| json!({})));
+                let Some(invocation_id) = invocation_ids.get(result.tool_call_id.as_str()) else {
+                    tracing::warn!(
+                        tool_call_id = result.tool_call_id.as_str(),
+                        tool_name = result.name.as_str(),
+                        "ignored orphan tool result without a registered invocation"
+                    );
+                    return;
+                };
+                cb(instrument_tool_result(result, invocation_id));
             }) as ToolResultCallback
         });
     let tool_call_values = tool_calls.as_array().map(Vec::as_slice).unwrap_or(&[]);
@@ -120,8 +132,19 @@ pub(super) async fn execute_runtime_tools(
     if options.is_aborted() {
         return Err("aborted".to_string());
     }
+    validate_terminal_tool_results(tool_results.as_slice(), invocation_ids.as_ref())?;
     if let Some(cb) = &options.callbacks.on_tools_end {
-        cb(json!({ "tool_results": tool_results }));
+        cb(json!({
+            "tool_results": tool_results
+                .iter()
+                .map(|result| instrument_tool_result(
+                    result,
+                    invocation_ids
+                        .get(result.tool_call_id.as_str())
+                        .expect("validated invocation id"),
+                ))
+                .collect::<Vec<_>>(),
+        }));
     }
     if let Some(error) = fatal_tool_execution_error(tool_results.as_slice()) {
         return Err(error);
@@ -151,13 +174,79 @@ pub(super) async fn execute_runtime_tools(
     })
 }
 
+fn instrument_tool_calls(
+    tool_calls: &Value,
+) -> Result<(Value, Arc<HashMap<String, String>>), String> {
+    let calls = tool_calls
+        .as_array()
+        .ok_or_else(|| "tool call payload must be an array".to_string())?;
+    let mut instrumented = Vec::with_capacity(calls.len());
+    let mut invocation_ids = HashMap::with_capacity(calls.len());
+    for call in calls {
+        let call_id = crate::tool_call::extract_tool_call_id(call)
+            .ok_or_else(|| "tool call is missing a stable call id".to_string())?;
+        if invocation_ids.contains_key(call_id) {
+            return Err(format!("duplicate tool call id in one batch: {call_id}"));
+        }
+        let invocation_id = Uuid::new_v4().to_string();
+        let mut value = call.clone();
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "tool call must be a JSON object".to_string())?;
+        object.insert(
+            "invocation_id".to_string(),
+            Value::String(invocation_id.clone()),
+        );
+        invocation_ids.insert(call_id.to_string(), invocation_id);
+        instrumented.push(value);
+    }
+    Ok((Value::Array(instrumented), Arc::new(invocation_ids)))
+}
+
+fn instrument_tool_result(result: &ToolResult, invocation_id: &str) -> Value {
+    let mut value = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "invocation_id".to_string(),
+            Value::String(invocation_id.to_string()),
+        );
+    }
+    value
+}
+
+fn validate_terminal_tool_results(
+    results: &[ToolResult],
+    invocation_ids: &HashMap<String, String>,
+) -> Result<(), String> {
+    let mut completed = HashSet::with_capacity(results.len());
+    for result in results {
+        let invocation_id = invocation_ids
+            .get(result.tool_call_id.as_str())
+            .ok_or_else(|| format!("orphan tool result: {}", result.tool_call_id))?;
+        if !completed.insert(invocation_id.as_str()) {
+            return Err(format!(
+                "duplicate terminal tool result for invocation {invocation_id}"
+            ));
+        }
+    }
+    if completed.len() != invocation_ids.len() {
+        return Err(format!(
+            "tool invocation/result mismatch: expected {}, received {}",
+            invocation_ids.len(),
+            completed.len()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use chatos_mcp_runtime::ToolResult;
 
     use super::{
-        fatal_tool_execution_error, next_consecutive_failed_tool_batch_count,
-        repeated_tool_failure_error,
+        fatal_tool_execution_error, instrument_tool_calls,
+        next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
+        validate_terminal_tool_results,
     };
 
     fn tool_result(success: bool, content: &str) -> ToolResult {
@@ -173,6 +262,38 @@ mod tests {
             fatal_error: false,
             transient_model_input: None,
         }
+    }
+
+    #[test]
+    fn tool_invocations_are_unique_and_terminal_results_must_pair_exactly() {
+        let calls = serde_json::json!([
+            {"id": "call-1", "function": {"name": "read_file", "arguments": "{}"}},
+            {"id": "call-2", "function": {"name": "read_file", "arguments": "{}"}}
+        ]);
+        let (instrumented, invocation_ids) = instrument_tool_calls(&calls).expect("instrument");
+        let items = instrumented.as_array().expect("instrumented calls");
+        assert_ne!(items[0]["invocation_id"], items[1]["invocation_id"]);
+
+        let mut first = tool_result(true, "ok");
+        first.tool_call_id = "call-1".to_string();
+        let mut second = tool_result(true, "ok");
+        second.tool_call_id = "call-2".to_string();
+        validate_terminal_tool_results(&[first.clone(), second], invocation_ids.as_ref())
+            .expect("paired results");
+
+        let error = validate_terminal_tool_results(&[first], invocation_ids.as_ref())
+            .expect_err("missing result must fail");
+        assert!(error.contains("expected 2, received 1"));
+    }
+
+    #[test]
+    fn duplicate_tool_call_ids_are_rejected_before_execution() {
+        let calls = serde_json::json!([
+            {"id": "call-1", "function": {"name": "read_file", "arguments": "{}"}},
+            {"id": "call-1", "function": {"name": "read_file", "arguments": "{}"}}
+        ]);
+        let error = instrument_tool_calls(&calls).expect_err("duplicate call id must fail");
+        assert!(error.contains("duplicate tool call id"));
     }
 
     #[test]

@@ -18,12 +18,14 @@ import { CollapsiblePayload } from './payloadView';
 export { formatRemoteEndpoint } from '../shared/remoteOperationUtils';
 
 export type ToolCallView = {
+  invocationId: string;
   callId: string;
   name: string;
   arguments?: unknown;
 };
 
 export type ToolResultView = {
+  invocationId: string;
   toolCallId: string;
   name: string;
   success: boolean;
@@ -69,17 +71,28 @@ export function collectToolCalls(
 }
 
 export function collectToolResults(events: TaskRunEventRecord[]): ToolResultView[] {
-  return events
+  const results = events
     .filter((event) => event.event_type === 'tool_stream')
     .map((event) => payloadAsRecord(event.payload))
     .filter((payload): payload is Record<string, unknown> => Boolean(payload))
     .map((payload) => ({
+      invocationId: payloadAsOptionalString(payload.invocation_id) || '',
       toolCallId: payloadAsOptionalString(payload.tool_call_id) || '',
       name: payloadAsOptionalString(payload.name) || 'unknown_tool',
       success: Boolean(payload.success) && !Boolean(payload.is_error),
       content: payloadAsOptionalString(payload.content) || '',
       result: payload.result,
+      isStream: Boolean(payload.is_stream),
     }));
+  const byInvocation = new Map<string, (typeof results)[number]>();
+  results.forEach((result) => {
+    const key = result.invocationId || `${result.toolCallId}::${result.name}`;
+    const current = byInvocation.get(key);
+    if (!current || current.isStream || !result.isStream) {
+      byInvocation.set(key, result);
+    }
+  });
+  return Array.from(byInvocation.values()).map(({ isStream: _isStream, ...result }) => result);
 }
 
 export function collectRemoteToolOperations(
@@ -263,7 +276,7 @@ export function formatRemoteVolume(operation: RemoteOperationView): string {
 function dedupeToolCalls(items: ToolCallView[]): ToolCallView[] {
   const seen = new Set<string>();
   return items.filter((item) => {
-    const key = `${item.callId}::${item.name}`;
+    const key = item.invocationId || `${item.callId}::${item.name}`;
     if (seen.has(key)) {
       return false;
     }
@@ -280,6 +293,7 @@ function extractToolCallArray(value: unknown): ToolCallView[] {
     .map((item) => payloadAsRecord(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((toolCall) => ({
+      invocationId: payloadAsOptionalString(toolCall.invocation_id) || '',
       callId:
         payloadAsOptionalString(toolCall.id) ||
         payloadAsOptionalString(toolCall.call_id) ||
