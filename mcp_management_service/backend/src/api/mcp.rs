@@ -246,20 +246,33 @@ async fn handle_tool_call(
         expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
         expires_at_unix: snapshot.expires_at_unix,
     };
-    if let Err(error) = state.runtime_invocations.register(invocation).await {
+    if let Err(error) = register_runtime_invocation(state, snapshot, invocation).await {
         let (code, message) = match &error {
+            RuntimeInvocationRegisterError::DuplicateActiveId => (
+                MCP_ERROR_INVALID_PARAMS,
+                "JSON-RPC request id is already active in this runtime session",
+            ),
             RuntimeInvocationRegisterError::CapacityExhausted { .. } => (
                 MCP_ERROR_CAPACITY_EXHAUSTED,
                 "runtime invocation capacity is exhausted",
             ),
-            RuntimeInvocationRegisterError::Store(_) => (
+            RuntimeInvocationRegisterError::StoreUnavailable(_) => (
                 MCP_ERROR_INTERNAL,
-                "runtime invocation registry is unavailable or request id is already active",
+                "runtime invocation registry is unavailable",
+            ),
+            RuntimeInvocationRegisterError::SessionClosed => (
+                MCP_ERROR_AUTH_REQUIRED,
+                "runtime session was closed or has expired",
+            ),
+            RuntimeInvocationRegisterError::InvalidRecord(_) => (
+                MCP_ERROR_INTERNAL,
+                "runtime invocation registration was rejected",
             ),
         };
         tracing::error!(
             invocation_id = invocation_id.as_str(),
             session_id = snapshot.session_id.as_str(),
+            error_category = error.category(),
             error = %error,
             "register Runtime Invocation failed"
         );
@@ -387,6 +400,50 @@ async fn handle_tool_call(
             );
             jsonrpc_error(id, error.code, error.message)
         }
+    }
+}
+
+async fn register_runtime_invocation(
+    state: &AppState,
+    snapshot: &RuntimeSessionSnapshot,
+    invocation: RuntimeInvocationRecord,
+) -> Result<(), RuntimeInvocationRegisterError> {
+    if let Err(error) = ensure_runtime_session_is_active(state, snapshot.session_id.as_str()).await
+    {
+        state.runtime_invocations.observe_register_error(&error);
+        return Err(error);
+    }
+    let invocation_id = invocation.invocation_id.clone();
+    state.runtime_invocations.register(invocation).await?;
+    if let Err(error) = ensure_runtime_session_is_active(state, snapshot.session_id.as_str()).await
+    {
+        if let Err(close_error) = state
+            .runtime_invocations
+            .close_registered_invocation(invocation_id.as_str(), snapshot.session_id.as_str())
+            .await
+        {
+            let error = RuntimeInvocationRegisterError::StoreUnavailable(format!(
+                "close Runtime Invocation after session validation failed: {close_error}"
+            ));
+            state.runtime_invocations.observe_register_error(&error);
+            return Err(error);
+        }
+        state.runtime_invocations.observe_register_error(&error);
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn ensure_runtime_session_is_active(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(), RuntimeInvocationRegisterError> {
+    match state.runtime_sessions.get(session_id).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(RuntimeInvocationRegisterError::SessionClosed),
+        Err(error) => Err(RuntimeInvocationRegisterError::StoreUnavailable(format!(
+            "verify Runtime Session before invocation registration failed: {error}"
+        ))),
     }
 }
 

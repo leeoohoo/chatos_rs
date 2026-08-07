@@ -2,11 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use chatos_mcp::code_maintainer::{classify_file_modification_error, FileModificationOutcome};
 use futures_util::TryStreamExt;
 use mongodb::bson::{self, doc, DateTime};
+use mongodb::error::{ErrorKind as MongoErrorKind, WriteFailure};
 use mongodb::options::{FindOneAndUpdateOptions, FindOptions, IndexOptions, ReturnDocument};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
@@ -95,24 +97,46 @@ pub struct RuntimeInvocationRecord {
 pub struct RuntimeInvocationStore {
     backend: Arc<RuntimeInvocationStoreBackend>,
     quota: RuntimeInvocationQuota,
+    diagnostics: Arc<RuntimeInvocationDiagnostics>,
     result_event_notify: Arc<Notify>,
     cancellation_waiters: Arc<StdMutex<HashMap<String, Weak<Notify>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeInvocationRegisterError {
+    DuplicateActiveId,
     CapacityExhausted { dimension: &'static str, limit: u32 },
-    Store(String),
+    StoreUnavailable(String),
+    SessionClosed,
+    InvalidRecord(String),
 }
 
 impl std::fmt::Display for RuntimeInvocationRegisterError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DuplicateActiveId => {
+                formatter.write_str("JSON-RPC request id is already active in this Runtime Session")
+            }
             Self::CapacityExhausted { dimension, limit } => write!(
                 formatter,
                 "Runtime Invocation {dimension} quota was exhausted at {limit} active calls"
             ),
-            Self::Store(error) => formatter.write_str(error),
+            Self::StoreUnavailable(error) | Self::InvalidRecord(error) => {
+                formatter.write_str(error)
+            }
+            Self::SessionClosed => formatter.write_str("Runtime Session is closed or expired"),
+        }
+    }
+}
+
+impl RuntimeInvocationRegisterError {
+    pub fn category(&self) -> &'static str {
+        match self {
+            Self::DuplicateActiveId => "duplicate_active_id",
+            Self::CapacityExhausted { .. } => "capacity_exhausted",
+            Self::StoreUnavailable(_) => "store_unavailable",
+            Self::SessionClosed => "session_closed",
+            Self::InvalidRecord(_) => "invalid_record",
         }
     }
 }
@@ -134,7 +158,28 @@ pub struct RuntimeInvocationStoreStats {
     pub cancel_requested: usize,
     pub terminal: usize,
     pub pending_result_events: usize,
+    pub registration: RuntimeInvocationRegistrationStats,
+    pub session_closed_reclaimed_total: u64,
+    pub quota_release_failures_total: u64,
+    pub store_recoveries_total: u64,
+    pub duration: RuntimeInvocationDurationStats,
     pub file_modifications: FileModificationOutcomeStats,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct RuntimeInvocationRegistrationStats {
+    pub duplicate_active_id: u64,
+    pub capacity_exhausted: u64,
+    pub store_unavailable: u64,
+    pub session_closed: u64,
+    pub invalid_record: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct RuntimeInvocationDurationStats {
+    pub completed_count: usize,
+    pub total_ms: u64,
+    pub max_ms: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
@@ -145,6 +190,31 @@ pub struct FileModificationOutcomeStats {
     pub stale: usize,
     pub validation: usize,
     pub infrastructure: usize,
+}
+
+#[derive(Default)]
+struct RuntimeInvocationDiagnostics {
+    duplicate_active_id: AtomicU64,
+    capacity_exhausted: AtomicU64,
+    store_unavailable: AtomicU64,
+    session_closed: AtomicU64,
+    invalid_record: AtomicU64,
+    session_closed_reclaimed: AtomicU64,
+    quota_release_failures: AtomicU64,
+    store_recoveries: AtomicU64,
+    store_unavailable_observed: AtomicBool,
+}
+
+impl RuntimeInvocationDiagnostics {
+    fn registration_stats(&self) -> RuntimeInvocationRegistrationStats {
+        RuntimeInvocationRegistrationStats {
+            duplicate_active_id: self.duplicate_active_id.load(Ordering::Relaxed),
+            capacity_exhausted: self.capacity_exhausted.load(Ordering::Relaxed),
+            store_unavailable: self.store_unavailable.load(Ordering::Relaxed),
+            session_closed: self.session_closed.load(Ordering::Relaxed),
+            invalid_record: self.invalid_record.load(Ordering::Relaxed),
+        }
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -168,6 +238,7 @@ impl RuntimeInvocationStore {
                 HashMap::new(),
             ))),
             quota: RuntimeInvocationQuota::memory(limits),
+            diagnostics: Arc::new(RuntimeInvocationDiagnostics::default()),
             result_event_notify: Arc::new(Notify::new()),
             cancellation_waiters: Arc::new(StdMutex::new(HashMap::new())),
         }
@@ -267,6 +338,7 @@ impl RuntimeInvocationStore {
         Ok(Self {
             backend: Arc::new(RuntimeInvocationStoreBackend::Mongo(collection)),
             quota,
+            diagnostics: Arc::new(RuntimeInvocationDiagnostics::default()),
             result_event_notify: Arc::new(Notify::new()),
             cancellation_waiters: Arc::new(StdMutex::new(HashMap::new())),
         })
@@ -276,18 +348,25 @@ impl RuntimeInvocationStore {
         &self,
         record: RuntimeInvocationRecord,
     ) -> Result<(), RuntimeInvocationRegisterError> {
+        let result = self.register_inner(record).await;
+        self.observe_register_result(&result);
+        result
+    }
+
+    async fn register_inner(
+        &self,
+        record: RuntimeInvocationRecord,
+    ) -> Result<(), RuntimeInvocationRegisterError> {
         if !matches!(
             record.status,
             RuntimeInvocationStatus::Queued | RuntimeInvocationStatus::Running
         ) {
-            return Err(RuntimeInvocationRegisterError::Store(
+            return Err(RuntimeInvocationRegisterError::InvalidRecord(
                 "new Runtime Invocation must start in queued or running state".to_string(),
             ));
         }
         if record.expires_at_unix <= chrono::Utc::now().timestamp() {
-            return Err(RuntimeInvocationRegisterError::Store(
-                "cannot register an expired Runtime Invocation".to_string(),
-            ));
+            return Err(RuntimeInvocationRegisterError::SessionClosed);
         }
         self.quota
             .reserve(&record)
@@ -297,7 +376,7 @@ impl RuntimeInvocationStore {
                     RuntimeInvocationRegisterError::CapacityExhausted { dimension, limit }
                 }
                 RuntimeInvocationQuotaReserveError::Infrastructure(error) => {
-                    RuntimeInvocationRegisterError::Store(error)
+                    RuntimeInvocationRegisterError::StoreUnavailable(error)
                 }
             })?;
         let result = match self.backend.as_ref() {
@@ -317,9 +396,10 @@ impl RuntimeInvocationStore {
                         )
                 });
                 if invocations.len() >= MAX_MEMORY_INVOCATIONS {
-                    Err(RuntimeInvocationRegisterError::Store(
-                        "Runtime Invocation store capacity was reached".to_string(),
-                    ))
+                    Err(RuntimeInvocationRegisterError::CapacityExhausted {
+                        dimension: "store",
+                        limit: MAX_MEMORY_INVOCATIONS as u32,
+                    })
                 } else if invocations.values().any(|value| {
                     value.session_id == record.session_id
                         && value.request_id_key == record.request_id_key
@@ -331,9 +411,7 @@ impl RuntimeInvocationStore {
                                 | RuntimeInvocationStatus::CancelRequested
                         )
                 }) {
-                    Err(RuntimeInvocationRegisterError::Store(
-                        "JSON-RPC request id is already active in this Runtime Session".to_string(),
-                    ))
+                    Err(RuntimeInvocationRegisterError::DuplicateActiveId)
                 } else {
                     invocations.insert(record.invocation_id.clone(), record.clone());
                     Ok(())
@@ -356,23 +434,71 @@ impl RuntimeInvocationStore {
                     )
                     .await
                     .map_err(|error| {
-                        RuntimeInvocationRegisterError::Store(format!(
+                        RuntimeInvocationRegisterError::StoreUnavailable(format!(
                             "remove prior terminal Runtime Invocation failed: {error}"
                         ))
                     })?;
-                collection
-                    .insert_one(record.clone(), None)
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| {
-                        RuntimeInvocationRegisterError::Store(format!(
-                            "register Runtime Invocation failed: {error}"
-                        ))
-                    })
+                match collection.insert_one(record.clone(), None).await {
+                    Ok(_) => Ok(()),
+                    Err(error) if is_mongodb_duplicate_key(&error) => {
+                        match collection
+                            .find_one(
+                                doc! {
+                                    "session_id": record.session_id.as_str(),
+                                    "request_id_key": record.request_id_key.as_str(),
+                                },
+                                None,
+                            )
+                            .await
+                        {
+                            Ok(Some(existing))
+                                if existing.invocation_id == record.invocation_id =>
+                            {
+                                Ok(())
+                            }
+                            Ok(Some(_)) => Err(RuntimeInvocationRegisterError::DuplicateActiveId),
+                            Ok(None) => {
+                                match collection
+                                    .find_one(
+                                        doc! { "_id": record.invocation_id.as_str() },
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(Some(_)) => Err(
+                                        RuntimeInvocationRegisterError::InvalidRecord(
+                                            "Runtime Invocation id is already in use".to_string(),
+                                        ),
+                                    ),
+                                    Ok(None) => Err(RuntimeInvocationRegisterError::StoreUnavailable(
+                                        "MongoDB reported a duplicate Runtime Invocation key without a matching record"
+                                            .to_string(),
+                                    )),
+                                    Err(lookup_error) => Err(
+                                        RuntimeInvocationRegisterError::StoreUnavailable(format!(
+                                            "verify duplicate Runtime Invocation id failed: {lookup_error}"
+                                        )),
+                                    ),
+                                }
+                            }
+                            Err(lookup_error) => {
+                                Err(RuntimeInvocationRegisterError::StoreUnavailable(format!(
+                                    "verify duplicate Runtime Invocation failed: {lookup_error}"
+                                )))
+                            }
+                        }
+                    }
+                    Err(error) => Err(RuntimeInvocationRegisterError::StoreUnavailable(format!(
+                        "register Runtime Invocation failed: {error}"
+                    ))),
+                }
             }
         };
         if result.is_err() {
             if let Err(error) = self.quota.release(&record).await {
+                self.diagnostics
+                    .quota_release_failures
+                    .fetch_add(1, Ordering::Relaxed);
                 tracing::error!(
                     invocation_id = record.invocation_id.as_str(),
                     error = error.as_str(),
@@ -381,6 +507,54 @@ impl RuntimeInvocationStore {
             }
         }
         result
+    }
+
+    pub fn observe_register_error(&self, error: &RuntimeInvocationRegisterError) {
+        self.observe_register_result(&Err(error.clone()));
+    }
+
+    fn observe_register_result(&self, result: &Result<(), RuntimeInvocationRegisterError>) {
+        match result {
+            Ok(()) => {
+                if self
+                    .diagnostics
+                    .store_unavailable_observed
+                    .swap(false, Ordering::Relaxed)
+                {
+                    self.diagnostics
+                        .store_recoveries
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            Err(RuntimeInvocationRegisterError::DuplicateActiveId) => {
+                self.diagnostics
+                    .duplicate_active_id
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Err(RuntimeInvocationRegisterError::CapacityExhausted { .. }) => {
+                self.diagnostics
+                    .capacity_exhausted
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Err(RuntimeInvocationRegisterError::StoreUnavailable(_)) => {
+                self.diagnostics
+                    .store_unavailable
+                    .fetch_add(1, Ordering::Relaxed);
+                self.diagnostics
+                    .store_unavailable_observed
+                    .store(true, Ordering::Relaxed);
+            }
+            Err(RuntimeInvocationRegisterError::SessionClosed) => {
+                self.diagnostics
+                    .session_closed
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Err(RuntimeInvocationRegisterError::InvalidRecord(_)) => {
+                self.diagnostics
+                    .invalid_record
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
 
     pub async fn request_cancel_by_request(
@@ -413,6 +587,118 @@ impl RuntimeInvocationStore {
             .await?;
         self.signal_cancelled_record(record.as_ref())?;
         Ok(record)
+    }
+
+    pub async fn close_session(&self, session_id: &str) -> Result<usize, String> {
+        let records = self.active_session_invocations(session_id).await?;
+        let mut reclaimed = 0usize;
+        for record in records {
+            if self.close_registered_invocation_record(&record).await? {
+                reclaimed = reclaimed.saturating_add(1);
+            }
+        }
+        self.diagnostics
+            .session_closed_reclaimed
+            .fetch_add(reclaimed as u64, Ordering::Relaxed);
+        Ok(reclaimed)
+    }
+
+    pub async fn close_registered_invocation(
+        &self,
+        invocation_id: &str,
+        session_id: &str,
+    ) -> Result<bool, String> {
+        let record = match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => invocations
+                .read()
+                .await
+                .get(invocation_id)
+                .filter(|record| record.session_id == session_id)
+                .cloned(),
+            RuntimeInvocationStoreBackend::Mongo(collection) => collection
+                .find_one(
+                    doc! { "_id": invocation_id, "session_id": session_id },
+                    None,
+                )
+                .await
+                .map_err(|error| {
+                    format!("load Runtime Invocation for closed session failed: {error}")
+                })?,
+        };
+        let Some(record) = record else {
+            return Ok(false);
+        };
+        let reclaimed = self.close_registered_invocation_record(&record).await?;
+        if reclaimed {
+            self.diagnostics
+                .session_closed_reclaimed
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(reclaimed)
+    }
+
+    async fn active_session_invocations(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<RuntimeInvocationRecord>, String> {
+        let active_statuses = active_runtime_invocation_statuses();
+        match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => Ok(invocations
+                .read()
+                .await
+                .values()
+                .filter(|record| {
+                    record.session_id == session_id && active_statuses.contains(&record.status)
+                })
+                .cloned()
+                .collect()),
+            RuntimeInvocationStoreBackend::Mongo(collection) => collection
+                .find(
+                    doc! {
+                        "session_id": session_id,
+                        "status": { "$in": active_statuses
+                            .iter()
+                            .map(|status| status.as_str())
+                            .collect::<Vec<_>>() },
+                    },
+                    None,
+                )
+                .await
+                .map_err(|error| {
+                    format!("load active Runtime Invocations for session close failed: {error}")
+                })?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| {
+                    format!("read active Runtime Invocations for session close failed: {error}")
+                }),
+        }
+    }
+
+    async fn close_registered_invocation_record(
+        &self,
+        record: &RuntimeInvocationRecord,
+    ) -> Result<bool, String> {
+        if !active_runtime_invocation_statuses().contains(&record.status) {
+            return Ok(false);
+        }
+        self.signal_cancellation(record.invocation_id.as_str())?;
+        let terminal_status = if record.status != RuntimeInvocationStatus::Queued
+            && record.mutation_may_have_started
+        {
+            RuntimeInvocationStatus::UnknownExecutionState
+        } else {
+            RuntimeInvocationStatus::Cancelled
+        };
+        self.transition_terminal(
+            record.invocation_id.as_str(),
+            active_runtime_invocation_statuses(),
+            terminal_status,
+            None,
+            None,
+            Some("runtime_session_closed".to_string()),
+        )
+        .await
     }
 
     pub async fn get_for_caller(
@@ -759,7 +1045,7 @@ impl RuntimeInvocationStore {
 
     pub async fn stats(&self) -> Result<RuntimeInvocationStoreStats, String> {
         let now = chrono::Utc::now().timestamp();
-        match self.backend.as_ref() {
+        let mut stats = match self.backend.as_ref() {
             RuntimeInvocationStoreBackend::Memory(invocations) => {
                 let mut invocations = invocations.write().await;
                 invocations.retain(|_, record| record.expires_at_unix > now);
@@ -771,6 +1057,10 @@ impl RuntimeInvocationStore {
                             record.status,
                             record.result_event_pending,
                             record.file_modification_outcome,
+                            record
+                                .started_at_unix_ms
+                                .or(Some(record.created_at_unix_ms)),
+                            record.completed_at_unix_ms,
                         )
                     }),
                 ))
@@ -779,7 +1069,18 @@ impl RuntimeInvocationStore {
                 aggregate_runtime_invocation_stats(collection, DateTime::now(), self.quota.limits())
                     .await
             }
-        }
+        }?;
+        stats.registration = self.diagnostics.registration_stats();
+        stats.session_closed_reclaimed_total = self
+            .diagnostics
+            .session_closed_reclaimed
+            .load(Ordering::Relaxed);
+        stats.quota_release_failures_total = self
+            .diagnostics
+            .quota_release_failures
+            .load(Ordering::Relaxed);
+        stats.store_recoveries_total = self.diagnostics.store_recoveries.load(Ordering::Relaxed);
+        Ok(stats)
     }
 
     pub async fn pending_result_events(
@@ -1025,6 +1326,9 @@ impl RuntimeInvocationStore {
         }?;
         if let Some(record) = transitioned_record.as_ref() {
             if let Err(error) = self.quota.release(record).await {
+                self.diagnostics
+                    .quota_release_failures
+                    .fetch_add(1, Ordering::Relaxed);
                 tracing::error!(
                     invocation_id = record.invocation_id.as_str(),
                     error = error.as_str(),
@@ -1034,6 +1338,26 @@ impl RuntimeInvocationStore {
             self.result_event_notify.notify_one();
         }
         Ok(transitioned_record.is_some())
+    }
+}
+
+fn active_runtime_invocation_statuses() -> &'static [RuntimeInvocationStatus] {
+    &[
+        RuntimeInvocationStatus::Queued,
+        RuntimeInvocationStatus::Running,
+        RuntimeInvocationStatus::WaitingForUser,
+        RuntimeInvocationStatus::CancelRequested,
+    ]
+}
+
+fn is_mongodb_duplicate_key(error: &mongodb::error::Error) -> bool {
+    match error.kind.as_ref() {
+        MongoErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 11_000,
+        MongoErrorKind::BulkWrite(failure) => failure
+            .write_errors
+            .as_ref()
+            .is_some_and(|errors| errors.iter().any(|error| error.code == 11_000)),
+        _ => false,
     }
 }
 
@@ -1171,6 +1495,8 @@ fn summarize_runtime_invocations(
             RuntimeInvocationStatus,
             bool,
             Option<FileModificationOutcome>,
+            Option<i64>,
+            Option<i64>,
         ),
     >,
 ) -> RuntimeInvocationStoreStats {
@@ -1184,21 +1510,35 @@ fn summarize_runtime_invocations(
         cancel_requested: 0,
         terminal: 0,
         pending_result_events: 0,
+        registration: RuntimeInvocationRegistrationStats::default(),
+        session_closed_reclaimed_total: 0,
+        quota_release_failures_total: 0,
+        store_recoveries_total: 0,
+        duration: RuntimeInvocationDurationStats::default(),
         file_modifications: FileModificationOutcomeStats::default(),
     };
-    for (status, result_event_pending, file_modification_outcome) in records {
-        stats.total_active = stats.total_active.saturating_add(1);
+    for (status, result_event_pending, file_modification_outcome, started_at, completed_at) in
+        records
+    {
         if result_event_pending {
             stats.pending_result_events = stats.pending_result_events.saturating_add(1);
         }
         match status {
-            RuntimeInvocationStatus::Queued => stats.queued = stats.queued.saturating_add(1),
-            RuntimeInvocationStatus::Running => stats.running = stats.running.saturating_add(1),
+            RuntimeInvocationStatus::Queued => {
+                stats.queued = stats.queued.saturating_add(1);
+                stats.total_active = stats.total_active.saturating_add(1);
+            }
+            RuntimeInvocationStatus::Running => {
+                stats.running = stats.running.saturating_add(1);
+                stats.total_active = stats.total_active.saturating_add(1);
+            }
             RuntimeInvocationStatus::WaitingForUser => {
-                stats.waiting_for_user = stats.waiting_for_user.saturating_add(1)
+                stats.waiting_for_user = stats.waiting_for_user.saturating_add(1);
+                stats.total_active = stats.total_active.saturating_add(1);
             }
             RuntimeInvocationStatus::CancelRequested => {
-                stats.cancel_requested = stats.cancel_requested.saturating_add(1)
+                stats.cancel_requested = stats.cancel_requested.saturating_add(1);
+                stats.total_active = stats.total_active.saturating_add(1);
             }
             RuntimeInvocationStatus::Completed
             | RuntimeInvocationStatus::Failed
@@ -1206,6 +1546,12 @@ fn summarize_runtime_invocations(
             | RuntimeInvocationStatus::UnknownExecutionState => {
                 stats.terminal = stats.terminal.saturating_add(1)
             }
+        }
+        if let (Some(started_at), Some(completed_at)) = (started_at, completed_at) {
+            let duration_ms = completed_at.saturating_sub(started_at).max(0) as u64;
+            stats.duration.completed_count = stats.duration.completed_count.saturating_add(1);
+            stats.duration.total_ms = stats.duration.total_ms.saturating_add(duration_ms);
+            stats.duration.max_ms = stats.duration.max_ms.max(duration_ms);
         }
         if let Some(outcome) = file_modification_outcome {
             stats.file_modifications.record(outcome);
@@ -1239,6 +1585,10 @@ async fn aggregate_runtime_invocation_stats(
         RuntimeInvocationStatus::Cancelled.as_str(),
         RuntimeInvocationStatus::UnknownExecutionState.as_str(),
     ];
+    let active_statuses = active_runtime_invocation_statuses()
+        .iter()
+        .map(|status| status.as_str())
+        .collect::<Vec<_>>();
     let mut cursor = collection
         .aggregate(
             vec![
@@ -1246,7 +1596,13 @@ async fn aggregate_runtime_invocation_stats(
                 doc! {
                     "$group": {
                         "_id": bson::Bson::Null,
-                        "total_active": { "$sum": 1 },
+                        "total_active": {
+                            "$sum": { "$cond": [
+                                { "$in": ["$status", active_statuses] },
+                                1,
+                                0,
+                            ] }
+                        },
                         "queued": {
                             "$sum": { "$cond": [
                                 { "$eq": ["$status", RuntimeInvocationStatus::Queued.as_str()] },
@@ -1286,6 +1642,39 @@ async fn aggregate_runtime_invocation_stats(
                             "$sum": { "$cond": [
                                 { "$eq": ["$result_event_pending", true] },
                                 1,
+                                0,
+                            ] }
+                        },
+                        "duration_completed_count": {
+                            "$sum": { "$cond": [
+                                { "$eq": [{ "$type": "$completed_at_unix_ms" }, "long"] },
+                                1,
+                                0,
+                            ] }
+                        },
+                        "duration_total_ms": {
+                            "$sum": { "$cond": [
+                                { "$eq": [{ "$type": "$completed_at_unix_ms" }, "long"] },
+                                { "$max": [
+                                    { "$subtract": [
+                                        "$completed_at_unix_ms",
+                                        { "$ifNull": ["$started_at_unix_ms", "$created_at_unix_ms"] },
+                                    ] },
+                                    0,
+                                ] },
+                                0,
+                            ] }
+                        },
+                        "duration_max_ms": {
+                            "$max": { "$cond": [
+                                { "$eq": [{ "$type": "$completed_at_unix_ms" }, "long"] },
+                                { "$max": [
+                                    { "$subtract": [
+                                        "$completed_at_unix_ms",
+                                        { "$ifNull": ["$started_at_unix_ms", "$created_at_unix_ms"] },
+                                    ] },
+                                    0,
+                                ] },
                                 0,
                             ] }
                         },
@@ -1349,6 +1738,11 @@ async fn aggregate_runtime_invocation_stats(
             cancel_requested: 0,
             terminal: 0,
             pending_result_events: 0,
+            registration: RuntimeInvocationRegistrationStats::default(),
+            session_closed_reclaimed_total: 0,
+            quota_release_failures_total: 0,
+            store_recoveries_total: 0,
+            duration: RuntimeInvocationDurationStats::default(),
             file_modifications: FileModificationOutcomeStats::default(),
         });
     };
@@ -1362,6 +1756,15 @@ async fn aggregate_runtime_invocation_stats(
         cancel_requested: runtime_stat_count(&document, "cancel_requested"),
         terminal: runtime_stat_count(&document, "terminal"),
         pending_result_events: runtime_stat_count(&document, "pending_result_events"),
+        registration: RuntimeInvocationRegistrationStats::default(),
+        session_closed_reclaimed_total: 0,
+        quota_release_failures_total: 0,
+        store_recoveries_total: 0,
+        duration: RuntimeInvocationDurationStats {
+            completed_count: runtime_stat_count(&document, "duration_completed_count"),
+            total_ms: runtime_stat_u64(&document, "duration_total_ms"),
+            max_ms: runtime_stat_u64(&document, "duration_max_ms"),
+        },
         file_modifications: FileModificationOutcomeStats {
             total: runtime_stat_count(&document, "file_modification_total"),
             changed: runtime_stat_count(&document, "file_modification_changed"),
@@ -1381,6 +1784,10 @@ fn runtime_stat_count(document: &mongodb::bson::Document, key: &str) -> usize {
         _ => 0,
     };
     usize::try_from(value.max(0)).unwrap_or(usize::MAX)
+}
+
+fn runtime_stat_u64(document: &mongodb::bson::Document, key: &str) -> u64 {
+    runtime_stat_count(document, key) as u64
 }
 
 #[cfg(test)]
@@ -1524,6 +1931,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn duplicate_active_request_id_has_a_distinct_registration_error() {
+        let store = RuntimeInvocationStore::memory();
+        store.register(record()).await.unwrap();
+        let mut duplicate = record();
+        duplicate.invocation_id = "invocation-duplicate".to_string();
+
+        assert_eq!(
+            store.register(duplicate).await.unwrap_err(),
+            RuntimeInvocationRegisterError::DuplicateActiveId
+        );
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.registration.duplicate_active_id, 1);
+        assert_eq!(stats.total_active, 1);
+    }
+
+    #[tokio::test]
+    async fn ten_thousand_sequential_calls_reuse_request_id_without_quota_leaks() {
+        let store = RuntimeInvocationStore::memory();
+        for index in 0..10_000 {
+            let mut invocation = record();
+            invocation.invocation_id = format!("invocation-sequential-{index}");
+            store.register(invocation).await.unwrap();
+            assert!(store
+                .complete(
+                    format!("invocation-sequential-{index}").as_str(),
+                    serde_json::json!({"ok": true}),
+                )
+                .await
+                .unwrap());
+        }
+
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.total_active, 0);
+        assert_eq!(stats.registration.duplicate_active_id, 0);
+        assert_eq!(stats.quota_release_failures_total, 0);
+        assert_eq!(stats.duration.completed_count, 1);
+    }
+
+    #[tokio::test]
+    async fn closing_session_terminalizes_active_calls_and_releases_quota() {
+        let store = RuntimeInvocationStore::memory_with_quota(
+            RuntimeInvocationQuotaLimits::new(2, 2, 2, 2).unwrap(),
+        );
+        let running = record();
+        store.register(running.clone()).await.unwrap();
+        let mut queued_mutation = record();
+        queued_mutation.invocation_id = "invocation-queued-mutation".to_string();
+        queued_mutation.request_id_key = "\"request-queued-mutation\"".to_string();
+        queued_mutation.status = RuntimeInvocationStatus::Queued;
+        queued_mutation.started_at_unix_ms = None;
+        queued_mutation.async_execution = true;
+        queued_mutation.mutation_may_have_started = true;
+        store.register(queued_mutation.clone()).await.unwrap();
+
+        assert_eq!(store.close_session("session-1").await.unwrap(), 2);
+        assert_eq!(
+            store
+                .get_for_caller(running.invocation_id.as_str(), "task-runner")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            RuntimeInvocationStatus::Cancelled
+        );
+        assert_eq!(
+            store
+                .get_for_caller(queued_mutation.invocation_id.as_str(), "task-runner")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            RuntimeInvocationStatus::Cancelled
+        );
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.total_active, 0);
+        assert_eq!(stats.session_closed_reclaimed_total, 2);
+
+        let mut next = record();
+        next.invocation_id = "invocation-after-session-close".to_string();
+        next.session_id = "session-2".to_string();
+        next.request_id_key = "\"request-after-session-close\"".to_string();
+        store.register(next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn closing_session_marks_started_mutation_as_unknown_execution_state() {
+        let store = RuntimeInvocationStore::memory();
+        let mut mutation = record();
+        mutation.mutation_may_have_started = true;
+        store.register(mutation.clone()).await.unwrap();
+
+        assert_eq!(store.close_session("session-1").await.unwrap(), 1);
+        let closed = store
+            .get_for_caller(mutation.invocation_id.as_str(), "task-runner")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            closed.status,
+            RuntimeInvocationStatus::UnknownExecutionState
+        );
+        assert_eq!(
+            closed.terminal_error_message.as_deref(),
+            Some("runtime_session_closed")
+        );
+    }
+
+    #[tokio::test]
     async fn atomic_quota_rejects_excess_calls_and_terminal_state_releases_capacity() {
         let store = RuntimeInvocationStore::memory_with_quota(
             RuntimeInvocationQuotaLimits::new(1, 1, 1, 1).unwrap(),
@@ -1612,6 +2127,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(cancelled.invocation_id, invocation_id);
+        let mut duplicate = invocation.clone();
+        duplicate.invocation_id = format!("shared-invocation-duplicate-{}", uuid::Uuid::new_v4());
+        assert_eq!(
+            second.register(duplicate).await.unwrap_err(),
+            RuntimeInvocationRegisterError::DuplicateActiveId
+        );
         assert!(first
             .cancellation_requested(cancelled.invocation_id.as_str())
             .await
@@ -1623,6 +2144,17 @@ mod tests {
             )
             .await
             .unwrap());
+        let mut reused = invocation;
+        let reused_id = format!("shared-invocation-reused-{}", uuid::Uuid::new_v4());
+        reused.invocation_id = reused_id.clone();
+        first.register(reused).await.unwrap();
+        assert!(first
+            .complete(reused_id.as_str(), serde_json::json!({"ok": true}))
+            .await
+            .unwrap());
+        let stats = first.stats().await.unwrap();
+        assert_eq!(stats.total_active, 0);
+        assert_eq!(stats.registration.duplicate_active_id, 0);
     }
 
     #[tokio::test]
@@ -1861,12 +2393,13 @@ mod tests {
 
         let stats = store.stats().await.unwrap();
         assert_eq!(stats.backend, "memory");
-        assert_eq!(stats.total_active, 4);
+        assert_eq!(stats.total_active, 3);
         assert_eq!(stats.queued, 1);
         assert_eq!(stats.running, 1);
         assert_eq!(stats.waiting_for_user, 1);
         assert_eq!(stats.cancel_requested, 0);
         assert_eq!(stats.terminal, 1);
         assert_eq!(stats.pending_result_events, 0);
+        assert_eq!(stats.duration.completed_count, 1);
     }
 }

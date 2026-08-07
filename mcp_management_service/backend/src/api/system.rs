@@ -107,6 +107,10 @@ pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl In
         Ok(stats) => append_runtime_session_metrics(&mut body, &stats),
         Err(_) => append_runtime_session_metrics_unavailable(&mut body),
     }
+    match state.runtime_invocations.stats().await {
+        Ok(stats) => append_runtime_invocation_metrics(&mut body, &stats),
+        Err(_) => append_runtime_invocation_metrics_unavailable(&mut body),
+    }
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
 }
 
@@ -195,6 +199,83 @@ fn append_runtime_session_metrics_unavailable(body: &mut String) {
         "# HELP chatos_mcp_runtime_session_metrics_available Whether MCP Runtime Session metrics were available for this scrape.\n\
 # TYPE chatos_mcp_runtime_session_metrics_available gauge\n\
 chatos_mcp_runtime_session_metrics_available{service=\"mcp-management-service\"} 0\n",
+    );
+}
+
+fn append_runtime_invocation_metrics(body: &mut String, stats: &RuntimeInvocationStoreStats) {
+    body.push_str(
+        "# HELP chatos_mcp_runtime_invocation_metrics_available Whether MCP Runtime Invocation metrics were available for this scrape.\n\
+# TYPE chatos_mcp_runtime_invocation_metrics_available gauge\n\
+chatos_mcp_runtime_invocation_metrics_available{service=\"mcp-management-service\"} 1\n",
+    );
+    append_gauge(
+        body,
+        "chatos_mcp_runtime_invocations_active",
+        "Active MCP Runtime Invocations currently holding quota.",
+        stats.total_active,
+    );
+    body.push_str(
+        "# HELP chatos_mcp_runtime_invocation_registration_failures_total MCP Runtime Invocation registration failures by category.\n\
+# TYPE chatos_mcp_runtime_invocation_registration_failures_total counter\n",
+    );
+    for (category, value) in [
+        (
+            "duplicate_active_id",
+            stats.registration.duplicate_active_id,
+        ),
+        ("capacity_exhausted", stats.registration.capacity_exhausted),
+        ("store_unavailable", stats.registration.store_unavailable),
+        ("session_closed", stats.registration.session_closed),
+        ("invalid_record", stats.registration.invalid_record),
+    ] {
+        let _ = writeln!(
+            body,
+            "chatos_mcp_runtime_invocation_registration_failures_total{{service=\"mcp-management-service\",category=\"{category}\"}} {value}"
+        );
+    }
+    append_counter(
+        body,
+        "chatos_mcp_runtime_invocation_session_closed_reclaimed_total",
+        "Active MCP Runtime Invocations reclaimed when their Runtime Session closed.",
+        stats.session_closed_reclaimed_total,
+    );
+    append_counter(
+        body,
+        "chatos_mcp_runtime_invocation_quota_release_failures_total",
+        "MCP Runtime Invocation quota release failures.",
+        stats.quota_release_failures_total,
+    );
+    append_counter(
+        body,
+        "chatos_mcp_runtime_invocation_store_recoveries_total",
+        "Observed successful registrations after an MCP Runtime Invocation store failure.",
+        stats.store_recoveries_total,
+    );
+    append_gauge(
+        body,
+        "chatos_mcp_runtime_invocation_duration_completed",
+        "Retained terminal MCP Runtime Invocations contributing duration evidence.",
+        stats.duration.completed_count,
+    );
+    append_gauge(
+        body,
+        "chatos_mcp_runtime_invocation_duration_ms_total",
+        "Total duration in milliseconds across retained terminal MCP Runtime Invocations.",
+        stats.duration.total_ms,
+    );
+    append_gauge(
+        body,
+        "chatos_mcp_runtime_invocation_duration_ms_max",
+        "Maximum duration in milliseconds across retained terminal MCP Runtime Invocations.",
+        stats.duration.max_ms,
+    );
+}
+
+fn append_runtime_invocation_metrics_unavailable(body: &mut String) {
+    body.push_str(
+        "# HELP chatos_mcp_runtime_invocation_metrics_available Whether MCP Runtime Invocation metrics were available for this scrape.\n\
+# TYPE chatos_mcp_runtime_invocation_metrics_available gauge\n\
+chatos_mcp_runtime_invocation_metrics_available{service=\"mcp-management-service\"} 0\n",
     );
 }
 

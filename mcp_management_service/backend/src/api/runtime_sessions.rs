@@ -531,7 +531,24 @@ pub(super) async fn close_runtime_session(
             "runtime session was already closed or expired",
         ));
     };
+    let reclaimed_invocations = state
+        .runtime_invocations
+        .close_session(snapshot.session_id.as_str())
+        .await;
     state.providers.close_session(&snapshot).await;
+    let reclaimed_invocations = reclaimed_invocations.map_err(|error| {
+        tracing::error!(
+            session_id = snapshot.session_id.as_str(),
+            error = error.as_str(),
+            "close active Runtime Invocations for Runtime Session failed"
+        );
+        ApiError::internal(error)
+    })?;
+    tracing::info!(
+        session_id = snapshot.session_id.as_str(),
+        reclaimed_invocations,
+        "closed Runtime Session active invocations"
+    );
     record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "close", "succeeded");
     Ok(Json(CloseRuntimeSessionResponse {
         session_id: snapshot.session_id.clone(),
