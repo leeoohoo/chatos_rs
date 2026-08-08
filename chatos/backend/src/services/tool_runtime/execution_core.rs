@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-#[path = "mcp_execution_core/execution.rs"]
+#[path = "execution_core/execution.rs"]
 mod execution;
-#[path = "mcp_execution_core/executor.rs"]
+#[path = "execution_core/executor.rs"]
 mod executor;
-#[path = "mcp_execution_core/lifecycle.rs"]
+#[path = "execution_core/lifecycle.rs"]
 mod lifecycle;
-#[path = "mcp_execution_core/registration.rs"]
+#[path = "execution_core/registration.rs"]
 mod registration;
-#[path = "mcp_execution_core/state.rs"]
+#[path = "execution_core/state.rs"]
 mod state;
 
 pub(crate) use self::execution::{execute_tools_stream_with_registry, response_tool_name};

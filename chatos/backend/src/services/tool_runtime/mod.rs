@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-pub mod ai_server;
-pub mod message_manager;
-
-pub use super::tool_runtime::agent_executor as mcp_tool_execute;
+pub mod agent_executor;
+pub(crate) mod execution_core;
+pub mod loader;
+pub(crate) mod shared_executor;
