@@ -47,9 +47,7 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::mcp::{
-    PluginMcpInvocationCancelOutcome, PluginMcpInvoker, PreparedPluginMcpTransport,
-};
+use super::mcp::{PluginMcpInvocationCancelOutcome, PluginMcpInvoker, PreparedPluginMcpTransport};
 use super::*;
 use crate::approval::{approve_pending_approval, list_pending_approvals};
 use crate::plugins::tests::fixtures::{ArchiveMutation, TestSigner, PLUGIN_ID};
@@ -121,8 +119,8 @@ fn portable_skill_uses_the_canonical_bundle_hash_and_rejects_cloud_execution() {
         .active_installation(PLUGIN_ID)
         .expect("read active installation")
         .expect("active installation");
-    let manifest = super::mcp::load_verified_manifest(&installation)
-        .expect("verified installed Manifest");
+    let manifest =
+        super::mcp::load_verified_manifest(&installation).expect("verified installed Manifest");
     let component_key = installation.version.inventory.components[0]
         .component_key
         .clone();

@@ -555,7 +555,7 @@ async fn process_kill_terminates_nested_background_processes() {
         "execute_command",
         json!({
             "path": ".",
-            "common": r#"sh -c 'sleep 30 & child=$!; printf "%s" "$child" > child.pid; wait'"#,
+            "common": r#"sh -c 'sleep 30 & child=$!; echo "$child"; wait'"#,
             "background": true,
         }),
         &recorder,
@@ -570,12 +570,32 @@ async fn process_kill_terminates_nested_background_processes() {
         .expect("background terminal id")
         .to_string();
 
-    let child_pid_path = project.join("child.pid");
     let mut child_pid = None;
     for _ in 0..100 {
-        child_pid = fs::read_to_string(child_pid_path.as_path())
-            .ok()
-            .and_then(|value| value.trim().parse::<i32>().ok());
+        let polled = call_builtin_compatible_local_tool(
+            &request,
+            &state,
+            "process_poll",
+            json!({ "terminal_id": terminal_id, "limit": 20 }),
+            &recorder,
+        )
+        .await
+        .expect("poll background process tree")
+        .expect("background process poll result");
+        let structured = code_maintainer_structured_result(polled);
+        child_pid = structured
+            .get("logs")
+            .and_then(Value::as_array)
+            .and_then(|logs| {
+                logs.iter().find_map(|entry| {
+                    entry
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .and_then(|value| value.parse::<i32>().ok())
+                })
+            });
         if child_pid.is_some() {
             break;
         }

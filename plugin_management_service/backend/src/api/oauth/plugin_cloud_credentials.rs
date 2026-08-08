@@ -12,6 +12,7 @@ use zeroize::Zeroizing;
 
 use super::*;
 
+#[path = "plugin_cloud_credentials/validation.rs"]
 mod validation;
 pub(super) use validation::*;
 
@@ -712,4 +713,5 @@ pub(super) fn runtime_secret_names(
 }
 
 #[cfg(test)]
+#[path = "plugin_cloud_credentials/tests.rs"]
 mod tests;

@@ -361,6 +361,7 @@ pub(super) async fn optimize_mcp_provider_skill_stream(
     Ok(response)
 }
 
+#[path = "mcps/support.rs"]
 mod support;
 
 use self::support::{

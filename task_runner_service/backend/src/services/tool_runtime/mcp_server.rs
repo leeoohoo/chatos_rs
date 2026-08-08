@@ -4,19 +4,32 @@
 use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::services::{ModelConfigService, RunService, TaskService};
 
+#[path = "mcp_server/access.rs"]
 mod access;
+#[path = "mcp_server/chatos_async_planner.rs"]
 mod chatos_async_planner;
+#[path = "mcp_server/context.rs"]
 mod context;
+#[path = "mcp_server/dispatch.rs"]
 mod dispatch;
+#[path = "mcp_server/entrypoints.rs"]
 mod entrypoints;
+#[path = "mcp_server/model_tools.rs"]
 mod model_tools;
+#[path = "mcp_server/prerequisite_creation.rs"]
 mod prerequisite_creation;
+#[path = "mcp_server/prompt_tools.rs"]
 mod prompt_tools;
+#[path = "mcp_server/run_tools.rs"]
 mod run_tools;
+#[path = "mcp_server/support.rs"]
 mod support;
+#[path = "mcp_server/task_tools.rs"]
 mod task_tools;
 #[cfg(test)]
+#[path = "mcp_server/tests.rs"]
 mod tests;
+#[path = "mcp_server/types.rs"]
 mod types;
 
 pub use self::context::McpRequestContext;

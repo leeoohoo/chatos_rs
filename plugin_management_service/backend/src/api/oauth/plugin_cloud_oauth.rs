@@ -26,6 +26,7 @@ use super::plugin_cloud_credentials::{
 };
 use super::*;
 
+#[path = "plugin_cloud_oauth/support.rs"]
 mod support;
 use support::*;
 
@@ -733,4 +734,5 @@ async fn persist_authorized_connection(
 }
 
 #[cfg(test)]
+#[path = "plugin_cloud_oauth/tests.rs"]
 mod tests;

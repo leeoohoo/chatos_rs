@@ -3,9 +3,13 @@
 
 use super::*;
 
+#[path = "tool_definitions/models.rs"]
 mod models;
+#[path = "tool_definitions/prompts.rs"]
 mod prompts;
+#[path = "tool_definitions/runs.rs"]
 mod runs;
+#[path = "tool_definitions/tasks.rs"]
 mod tasks;
 
 impl TaskRunnerMcpService {

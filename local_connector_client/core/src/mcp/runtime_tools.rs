@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[path = "runtime_tools/browser.rs"]
 mod browser;
+#[path = "runtime_tools/code.rs"]
 mod code;
+#[path = "runtime_tools/project.rs"]
 mod project;
+#[path = "runtime_tools/terminal_controller.rs"]
 mod terminal_controller;
 
 pub(crate) use browser::{local_browser_conversation_id, local_browser_tools_service_for_root};

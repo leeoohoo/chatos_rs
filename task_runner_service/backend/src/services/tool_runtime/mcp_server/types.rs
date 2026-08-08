@@ -14,11 +14,17 @@ use crate::models::{
     UpdateTaskRequest,
 };
 
+#[path = "types/common.rs"]
 mod common;
+#[path = "types/jsonrpc.rs"]
 mod jsonrpc;
+#[path = "types/model.rs"]
 mod model;
+#[path = "types/prompt.rs"]
 mod prompt;
+#[path = "types/run.rs"]
 mod run;
+#[path = "types/task.rs"]
 mod task;
 
 pub(super) use self::common::{decode_args, decode_remote_server_config_header, text_result};

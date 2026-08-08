@@ -640,4 +640,5 @@ fn normalized_component_keys(values: &[String]) -> Vec<String> {
 }
 
 #[cfg(test)]
+#[path = "plugins/tests.rs"]
 mod tests;

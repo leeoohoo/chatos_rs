@@ -28,9 +28,13 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[path = "tests/plan_profile.rs"]
 mod plan_profile;
+#[path = "tests/plan_profile_async.rs"]
 mod plan_profile_async;
+#[path = "tests/plan_profile_scope.rs"]
 mod plan_profile_scope;
+#[path = "tests/schema.rs"]
 mod schema;
 fn valid_planner_create_request() -> CreateTaskRequest {
     CreateTaskRequest {

@@ -3,7 +3,9 @@
 
 use super::*;
 
+#[path = "runtime_capabilities/plugins.rs"]
 mod plugins;
+#[path = "runtime_capabilities/revision.rs"]
 mod revision;
 
 use plugins::{
@@ -527,4 +529,5 @@ pub(super) fn automatic_user_binding(
 }
 
 #[cfg(test)]
+#[path = "runtime_capabilities/tests.rs"]
 mod tests;

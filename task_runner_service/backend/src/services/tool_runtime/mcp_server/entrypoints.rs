@@ -24,5 +24,7 @@ use super::{
     TASK_RUNNER_MCP_STDIO_ARGS, TASK_RUNNER_MCP_STDIO_COMMAND,
 };
 
+#[path = "entrypoints/dispatch.rs"]
 mod dispatch;
+#[path = "entrypoints/tool_definitions.rs"]
 mod tool_definitions;

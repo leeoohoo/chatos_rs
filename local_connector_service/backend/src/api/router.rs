@@ -321,7 +321,7 @@ pub fn build_plugin_artifact_relay_test_router(
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
         .route_layer(middleware::from_fn_with_state(
             auth_state,
-            require_public_auth,
+            require_internal_auth,
         ))
         .with_state(relay_state))
 }
@@ -342,7 +342,7 @@ pub fn build_plugin_artifact_relay_store_test_router(
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
         .route_layer(middleware::from_fn_with_state(
             auth_state,
-            require_public_auth,
+            require_internal_auth,
         ))
         .with_state(relay_state))
 }

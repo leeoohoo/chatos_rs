@@ -11,8 +11,11 @@ use crate::models::{
 use super::support::{remove_tool_schema_property, set_schema_required_fields};
 use super::McpRequestContext;
 
+#[path = "chatos_async_planner/access.rs"]
 mod access;
+#[path = "chatos_async_planner/request_guards.rs"]
 mod request_guards;
+#[path = "chatos_async_planner/schema.rs"]
 mod schema;
 
 pub(in crate::mcp_server) use self::access::planner_agent_tool_allowed;
