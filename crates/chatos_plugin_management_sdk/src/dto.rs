@@ -488,6 +488,10 @@ pub struct AgentBindingRecord {
     pub conditions: BindingConditions,
     #[serde(default)]
     pub component_allowlist: Vec<String>,
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
+    #[serde(default)]
+    pub tool_blocklist: Vec<String>,
     pub created_by: String,
     pub updated_by: String,
     pub created_at: String,

@@ -58,55 +58,7 @@ async fn project_requirement_execution_planner_profile_requires_concrete_project
 }
 
 #[tokio::test]
-async fn ordinary_chatos_async_context_hides_prerequisite_graph_creation() {
-    let (mcp_service, _, project_service) = test_mcp_service().await;
-    let current_user = agent_user("owner-a");
-    let project = project_service
-        .create_project(
-            CreateTaskProjectRequest {
-                name: "Project A".to_string(),
-                root_path: None,
-                git_url: None,
-                description: None,
-            },
-            &current_user,
-        )
-        .await
-        .expect("create project");
-
-    let response = mcp_service
-        .handle_jsonrpc(
-            super::super::JsonRpcRequest {
-                jsonrpc: Some("2.0".to_string()),
-                id: Some(json!("req-ordinary")),
-                method: "tools/list".to_string(),
-                params: json!({}),
-            },
-            current_user,
-            McpRequestContext {
-                project_id: Some(project.id),
-                tool_profile: Some("chatos_async_planner".to_string()),
-                source_session_id: Some("session-1".to_string()),
-                source_user_message_id: Some("message-1".to_string()),
-                ..McpRequestContext::default()
-            },
-        )
-        .await;
-
-    let tool_names = response
-        .result
-        .as_ref()
-        .and_then(|value| value.get("tools"))
-        .and_then(|value| value.as_array())
-        .expect("tools list")
-        .iter()
-        .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
-        .collect::<Vec<_>>();
-    assert!(!tool_names.contains(&"create_tasks_with_prerequisites"));
-}
-
-#[tokio::test]
-async fn chatos_plan_context_still_exposes_prerequisite_graph_creation() {
+async fn chatos_async_profile_keeps_prerequisite_graph_creation_in_server_catalog() {
     let (mcp_service, _, project_service) = test_mcp_service().await;
     let current_user = agent_user("owner-a");
     let project = project_service
@@ -134,7 +86,6 @@ async fn chatos_plan_context_still_exposes_prerequisite_graph_creation() {
             McpRequestContext {
                 project_id: Some(project.id),
                 tool_profile: Some("chatos_async_planner".to_string()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 ..McpRequestContext::default()

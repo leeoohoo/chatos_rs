@@ -31,6 +31,8 @@ fn binding(scope: &str) -> AgentBindingRecord {
         priority: 100,
         conditions: BindingConditions::default(),
         component_allowlist: Vec::new(),
+        tool_allowlist: Vec::new(),
+        tool_blocklist: Vec::new(),
         created_by: "user-1".to_string(),
         updated_by: "user-1".to_string(),
         created_at: "now".to_string(),

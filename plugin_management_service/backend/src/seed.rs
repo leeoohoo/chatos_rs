@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 #[cfg(test)]
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
@@ -28,6 +29,23 @@ pub use chatos_plugin_management_sdk::{
     PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
     SANDBOX_IMAGES_MCP_RESOURCE_ID, TASK_PROCESS_LOG_MCP_RESOURCE_ID,
 };
+const CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST: &[&str] = &[
+    "list_tasks",
+    "get_task",
+    "get_task_stats",
+    "create_task",
+    "wait_for_task_completion",
+];
+const CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST: &[&str] = &[
+    "list_tasks",
+    "get_task",
+    "get_task_stats",
+    "create_task",
+    "create_tasks_with_prerequisites",
+    "wait_for_task_completion",
+];
+const PROJECT_MANAGEMENT_AGENT_SANDBOX_TOOL_ALLOWLIST: &[&str] =
+    &["get_image_catalog", "search_images"];
 const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "chatos_plan_agent",
     "chatos_planning_agent",
@@ -300,27 +318,34 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
             .await?;
     }
     for agent_key in CHATOS_TASK_RUNNER_AGENT_KEYS {
-        seed_agent_mcp_binding(
+        seed_agent_mcp_binding_with_tool_policy(
             store,
             admin_user_id,
             agent_key,
             CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
             true,
             10,
+            BindingConditions::default(),
+            CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST,
+            &[],
         )
         .await?;
     }
-    for agent_key in ["chatos_conversation_agent"] {
-        // ChatOS never writes project planning artifacts directly. Plan mode
-        // submits a program-managed chatos_plan task through Task Runner; the
-        // Task Runner planning Agent owns Project Management writes.
-        remove_seed_binding_for_all_system_scopes(
-            store,
-            agent_key,
-            builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
-        )
-        .await?;
-    }
+    seed_agent_mcp_binding_with_tool_policy(
+        store,
+        admin_user_id,
+        "chatos_conversation_agent",
+        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+        true,
+        11,
+        BindingConditions {
+            task_profile: Some("chatos_plan".to_string()),
+            ..BindingConditions::default()
+        },
+        CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST,
+        &[],
+    )
+    .await?;
     seed_agent_mcp_binding_with_conditions(
         store,
         admin_user_id,
@@ -460,13 +485,23 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         (builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead), 10),
         (builtin_resource_id(BuiltinMcpKind::ProjectManagement), 15),
     ] {
-        seed_agent_mcp_binding(
+        let tool_allowlist = if resource_id
+            == builtin_resource_id(BuiltinMcpKind::ProjectManagement)
+        {
+            chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
+        } else {
+            &[]
+        };
+        seed_agent_mcp_binding_with_tool_policy(
             store,
             admin_user_id,
             "project_management_agent",
             resource_id.as_str(),
             true,
             priority,
+            BindingConditions::default(),
+            tool_allowlist,
+            &[],
         )
         .await?;
     }
@@ -474,13 +509,21 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
     // resolves the actual Project Service, Local Connector, or cloud Sandbox provider
     // from the authoritative Project Execution Context for each Runtime Session.
     for (resource_id, priority) in PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS {
-        seed_agent_mcp_binding(
+        let tool_allowlist = if *resource_id == SANDBOX_IMAGES_MCP_RESOURCE_ID {
+            PROJECT_MANAGEMENT_AGENT_SANDBOX_TOOL_ALLOWLIST
+        } else {
+            &[]
+        };
+        seed_agent_mcp_binding_with_tool_policy(
             store,
             admin_user_id,
             "project_management_agent",
             resource_id,
             true,
             *priority,
+            BindingConditions::default(),
+            tool_allowlist,
+            &[],
         )
         .await?;
     }
@@ -528,15 +571,16 @@ async fn seed_agent_mcp_binding(
     required: bool,
     priority: i64,
 ) -> Result<(), String> {
-    seed_agent_resource_binding_with_conditions(
+    seed_agent_mcp_binding_with_tool_policy(
         store,
         admin_user_id,
         agent_key,
-        RESOURCE_KIND_MCP,
         resource_id,
         required,
         priority,
         BindingConditions::default(),
+        &[],
+        &[],
     )
     .await
 }
@@ -550,7 +594,32 @@ async fn seed_agent_mcp_binding_with_conditions(
     priority: i64,
     conditions: BindingConditions,
 ) -> Result<(), String> {
-    seed_agent_resource_binding_with_conditions(
+    seed_agent_mcp_binding_with_tool_policy(
+        store,
+        admin_user_id,
+        agent_key,
+        resource_id,
+        required,
+        priority,
+        conditions,
+        &[],
+        &[],
+    )
+    .await
+}
+
+async fn seed_agent_mcp_binding_with_tool_policy(
+    store: &AppStore,
+    admin_user_id: &str,
+    agent_key: &str,
+    resource_id: &str,
+    required: bool,
+    priority: i64,
+    conditions: BindingConditions,
+    tool_allowlist: &[&str],
+    tool_blocklist: &[&str],
+) -> Result<(), String> {
+    seed_agent_resource_binding_with_policy(
         store,
         admin_user_id,
         agent_key,
@@ -559,6 +628,15 @@ async fn seed_agent_mcp_binding_with_conditions(
         required,
         priority,
         conditions,
+        Vec::new(),
+        tool_allowlist
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        tool_blocklist
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
     )
     .await
 }
@@ -572,7 +650,7 @@ async fn seed_agent_resource_binding(
     required: bool,
     priority: i64,
 ) -> Result<(), String> {
-    seed_agent_resource_binding_with_conditions(
+    seed_agent_resource_binding_with_policy(
         store,
         admin_user_id,
         agent_key,
@@ -581,11 +659,14 @@ async fn seed_agent_resource_binding(
         required,
         priority,
         BindingConditions::default(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     )
     .await
 }
 
-async fn seed_agent_resource_binding_with_conditions(
+async fn seed_agent_resource_binding_with_policy(
     store: &AppStore,
     admin_user_id: &str,
     agent_key: &str,
@@ -594,6 +675,9 @@ async fn seed_agent_resource_binding_with_conditions(
     required: bool,
     priority: i64,
     conditions: BindingConditions,
+    component_allowlist: Vec<String>,
+    tool_allowlist: Vec<String>,
+    tool_blocklist: Vec<String>,
 ) -> Result<(), String> {
     let existing = store
         .list_bindings(agent_key, &ListBindingsQuery::default())
@@ -603,7 +687,13 @@ async fn seed_agent_resource_binding_with_conditions(
     } else {
         BINDING_SCOPE_GLOBAL_DEFAULT
     };
-    let desired_id = format!("{agent_key}__{binding_scope}__{resource_id}");
+    let desired_id = seed_binding_id(
+        agent_key,
+        binding_scope,
+        resource_kind,
+        resource_id,
+        &conditions,
+    );
     let matching = existing
         .into_iter()
         .filter(|binding| {
@@ -637,7 +727,9 @@ async fn seed_agent_resource_binding_with_conditions(
         required,
         priority,
         conditions,
-        component_allowlist: Vec::new(),
+        component_allowlist,
+        tool_allowlist,
+        tool_blocklist,
         created_by: admin_user_id.to_string(),
         updated_by: admin_user_id.to_string(),
         created_at,
@@ -653,6 +745,9 @@ async fn seed_agent_resource_binding_with_conditions(
             && binding.required == desired.required
             && binding.priority == desired.priority
             && binding.conditions == desired.conditions
+            && binding.component_allowlist == desired.component_allowlist
+            && binding.tool_allowlist == desired.tool_allowlist
+            && binding.tool_blocklist == desired.tool_blocklist
     });
     for binding in matching {
         if binding.id != desired_id {
@@ -663,6 +758,38 @@ async fn seed_agent_resource_binding_with_conditions(
         return Ok(());
     }
     store.replace_binding(&desired).await
+}
+
+fn seed_binding_id(
+    agent_key: &str,
+    binding_scope: &str,
+    resource_kind: &str,
+    resource_id: &str,
+    conditions: &BindingConditions,
+) -> String {
+    let condition_key = [
+        ("task_profile", conditions.task_profile.as_deref()),
+        (
+            "project_source_type",
+            conditions.project_source_type.as_deref(),
+        ),
+        ("runtime_provider", conditions.runtime_provider.as_deref()),
+        ("schedule_mode", conditions.schedule_mode.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(label, value)| value.map(|value| format!("{label}={value}")))
+    .collect::<Vec<_>>()
+    .join("|");
+    if condition_key.is_empty() {
+        return format!("{agent_key}__{binding_scope}__{resource_id}");
+    }
+    let mut hasher = DefaultHasher::new();
+    resource_kind.hash(&mut hasher);
+    condition_key.hash(&mut hasher);
+    format!(
+        "{agent_key}__{binding_scope}__{resource_id}__{:016x}",
+        hasher.finish()
+    )
 }
 
 fn task_runner_cloud_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {

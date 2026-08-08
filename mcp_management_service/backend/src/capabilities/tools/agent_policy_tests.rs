@@ -10,7 +10,7 @@ use chatos_plugin_management_sdk::{
 
 use super::materialize_runtime_tools;
 
-fn resolved_system_mcp(key: SystemMcpKey, agent_key: &str) -> ResolvedMcp {
+fn resolved_system_mcp(key: SystemMcpKey, agent_key: &str, tool_allowlist: &[&str]) -> ResolvedMcp {
     let descriptor = chatos_mcp::system_mcp_descriptor(key);
     ResolvedMcp {
         resource: McpRecord {
@@ -49,6 +49,11 @@ fn resolved_system_mcp(key: SystemMcpKey, agent_key: &str) -> ResolvedMcp {
             priority: 100,
             conditions: BindingConditions::default(),
             component_allowlist: Vec::new(),
+            tool_allowlist: tool_allowlist
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            tool_blocklist: Vec::new(),
             created_by: "system".to_string(),
             updated_by: "system".to_string(),
             created_at: "now".to_string(),
@@ -71,8 +76,25 @@ fn capabilities(agent_key: &str, keys: &[SystemMcpKey]) -> ResolvedAgentCapabili
         mcps: keys
             .iter()
             .copied()
-            .map(|key| resolved_system_mcp(key, agent_key))
+            .map(|key| resolved_system_mcp(key, agent_key, &[]))
             .collect(),
+        skills: Vec::new(),
+        plugins: Vec::new(),
+        local_connector_requirements: Vec::new(),
+    }
+}
+
+fn capabilities_with_resolved(
+    agent_key: &str,
+    mcps: Vec<ResolvedMcp>,
+) -> ResolvedAgentCapabilities {
+    ResolvedAgentCapabilities {
+        agent_key: agent_key.to_string(),
+        owner_user_id: "user-1".to_string(),
+        policy_revision: "policy-1".to_string(),
+        generated_at: "now".to_string(),
+        agent_enabled: true,
+        mcps,
         skills: Vec::new(),
         plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
@@ -98,7 +120,14 @@ fn system_route(key: SystemMcpKey, provider_kind: McpProviderKind) -> ResolvedMc
 fn project_environment_agent_cannot_create_sandbox_images_directly() {
     let agent_key = SystemAgentKey::ProjectManagementAgent.as_str();
     let materialized = materialize_runtime_tools(
-        &capabilities(agent_key, &[SystemMcpKey::SandboxImages]),
+        &capabilities_with_resolved(
+            agent_key,
+            vec![resolved_system_mcp(
+                SystemMcpKey::SandboxImages,
+                agent_key,
+                &["get_image_catalog", "search_images"],
+            )],
+        ),
         &[system_route(
             SystemMcpKey::SandboxImages,
             McpProviderKind::CloudSandbox,
@@ -136,13 +165,21 @@ fn sandbox_image_create_remains_available_to_other_agents() {
 fn project_environment_agent_keeps_required_update_search_and_file_read_tools() {
     let agent_key = SystemAgentKey::ProjectManagementAgent.as_str();
     let materialized = materialize_runtime_tools(
-        &capabilities(
+        &capabilities_with_resolved(
             agent_key,
-            &[
-                SystemMcpKey::CodeMaintainerRead,
-                SystemMcpKey::ProjectManagement,
-                SystemMcpKey::ProjectEnvironment,
-                SystemMcpKey::SandboxImages,
+            vec![
+                resolved_system_mcp(SystemMcpKey::CodeMaintainerRead, agent_key, &[]),
+                resolved_system_mcp(
+                    SystemMcpKey::ProjectManagement,
+                    agent_key,
+                    chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES,
+                ),
+                resolved_system_mcp(SystemMcpKey::ProjectEnvironment, agent_key, &[]),
+                resolved_system_mcp(
+                    SystemMcpKey::SandboxImages,
+                    agent_key,
+                    &["get_image_catalog", "search_images"],
+                ),
             ],
         ),
         &[

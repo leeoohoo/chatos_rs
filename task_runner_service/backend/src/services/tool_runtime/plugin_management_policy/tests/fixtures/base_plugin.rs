@@ -138,6 +138,8 @@ pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
         priority: 0,
         conditions: BindingConditions::default(),
         component_allowlist: vec!["browser".to_string()],
+        tool_allowlist: Vec::new(),
+        tool_blocklist: Vec::new(),
         created_by: "system".to_string(),
         updated_by: "system".to_string(),
         created_at: "now".to_string(),

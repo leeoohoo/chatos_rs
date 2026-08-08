@@ -120,16 +120,5 @@ mod tests {
                 ..McpRequestContext::default()
             },
         ));
-        assert!(tool_call_allowed_for_identity(
-            "create_tasks_with_prerequisites",
-            false,
-            &McpRequestContext {
-                tool_profile: Some("chatos_async_planner".to_string()),
-                source_session_id: Some("session-1".to_string()),
-                source_user_message_id: Some("message-1".to_string()),
-                task_profile: Some(crate::models::TASK_PROFILE_CHATOS_PLAN.to_string()),
-                ..McpRequestContext::default()
-            },
-        ));
     }
 }

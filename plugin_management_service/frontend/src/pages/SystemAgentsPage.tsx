@@ -27,6 +27,7 @@ import { agentPromptVendorLabel } from './agentPrompts/support';
 import type {
   AgentPromptCompleteness,
   AgentMcpBindingView,
+  BindingConditions,
   CurrentUser,
   McpBindingMode,
   SystemAgentRecord,
@@ -37,13 +38,22 @@ interface SystemAgentsPageProps {
   onOpenPromptSettings: (agentKey: string) => void;
 }
 
+interface McpBindingDraft {
+  binding_id?: string | null;
+  mcp_id: string;
+  mode: McpBindingMode;
+  conditions: BindingConditions;
+  tool_allowlist: string[];
+  tool_blocklist: string[];
+}
+
 export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPageProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [selectedAgentKey, setSelectedAgentKey] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [modes, setModes] = useState<Record<string, McpBindingMode>>({});
+  const [bindingDrafts, setBindingDrafts] = useState<Record<string, McpBindingDraft>>({});
   const isAdmin = user.role === 'super_admin';
 
   const agentsQuery = useQuery({
@@ -72,8 +82,20 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
     if (!bindingsQuery.data) {
       return;
     }
-    setModes(
-      Object.fromEntries(bindingsQuery.data.items.map((item) => [item.mcp.id, item.mode])),
+    setBindingDrafts(
+      Object.fromEntries(
+        bindingsQuery.data.items.map((item) => [
+          bindingRowKey(item),
+          {
+            binding_id: item.binding_id,
+            mcp_id: item.mcp.id,
+            mode: item.mode,
+            conditions: item.conditions,
+            tool_allowlist: item.tool_allowlist,
+            tool_blocklist: item.tool_blocklist,
+          },
+        ]),
+      ),
     );
   }, [bindingsQuery.data]);
 
@@ -81,9 +103,15 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
     mutationFn: () => {
       return api.updateAgentMcpBindings(
         selectedAgentKey || '',
-        Object.entries(modes)
-          .filter(([, mode]) => mode !== 'disabled')
-          .map(([mcp_id, mode]) => ({ mcp_id, mode })),
+        Object.values(bindingDrafts)
+          .filter((binding) => binding.mode !== 'disabled')
+          .map((binding) => ({
+            mcp_id: binding.mcp_id,
+            mode: binding.mode,
+            conditions: binding.conditions,
+            tool_allowlist: binding.tool_allowlist,
+            tool_blocklist: binding.tool_blocklist,
+          })),
       );
     },
     onSuccess: (data) => {
@@ -168,7 +196,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
               onClick={() => {
                 setSelectedAgentKey(record.agent_key);
                 setSearch('');
-                setModes({});
+                setBindingDrafts({});
                 setModalOpen(true);
               }}
             >
@@ -209,6 +237,12 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         item.mcp.runtime.server_name,
         item.mcp.plugin_id,
         item.mcp.component_key,
+        item.conditions.task_profile,
+        item.conditions.project_source_type,
+        item.conditions.runtime_provider,
+        item.conditions.schedule_mode,
+        item.tool_allowlist.join(' '),
+        item.tool_blocklist.join(' '),
       ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(keyword)),
@@ -220,9 +254,9 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
     return {
       total: items.length,
       shown: mcpItems.length,
-      bound: Object.values(modes).filter((mode) => mode !== 'disabled').length,
+      bound: Object.values(bindingDrafts).filter((binding) => binding.mode !== 'disabled').length,
     };
-  }, [bindingsQuery.data, mcpItems.length, modes]);
+  }, [bindingDrafts, bindingsQuery.data, mcpItems.length]);
 
   const mcpColumns = useMemo<ColumnsType<AgentMcpBindingView>>(
     () => [
@@ -258,14 +292,64 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         ),
       },
       {
+        title: t('agent.mcpConditions'),
+        key: 'conditions',
+        width: 220,
+        render: (_, item) => (
+          <Space direction="vertical" size={2}>
+            {bindingConditionEntries(item.conditions).length > 0 ? (
+              bindingConditionEntries(item.conditions).map(([label, value]) => (
+                <Tag key={`${label}:${value}`}>{`${label}=${value}`}</Tag>
+              ))
+            ) : (
+              <Typography.Text type="secondary">{t('agent.mcpDefaultRule')}</Typography.Text>
+            )}
+          </Space>
+        ),
+      },
+      {
+        title: t('agent.mcpToolPolicy'),
+        key: 'tool_policy',
+        width: 250,
+        render: (_, item) => (
+          <Space direction="vertical" size={2}>
+            <Space size={4} wrap>
+              {item.tool_allowlist.length > 0 ? (
+                <Tag color="blue">
+                  {t('agent.mcpAllowlistCount', { count: item.tool_allowlist.length })}
+                </Tag>
+              ) : (
+                <Tag>{t('agent.mcpAllTools')}</Tag>
+              )}
+              {item.tool_blocklist.length > 0 ? (
+                <Tag color="orange">
+                  {t('agent.mcpBlocklistCount', { count: item.tool_blocklist.length })}
+                </Tag>
+              ) : null}
+            </Space>
+            <Typography.Text type="secondary">
+              {toolPolicyPreview(item.tool_allowlist, item.tool_blocklist)}
+            </Typography.Text>
+          </Space>
+        ),
+      },
+      {
         title: t('table.status'),
         dataIndex: ['mcp', 'enabled'],
         width: 145,
         render: (enabled, item) => (
           <Space direction="vertical" size={2}>
             <EnabledTag enabled={enabled} />
-            <Tag color={item.mode === 'disabled' ? 'default' : 'green'}>
-              {item.mode === 'disabled' ? t('agent.mcpNotBound') : t('agent.mcpBoundToRuntime')}
+            <Tag
+              color={
+                (bindingDrafts[bindingRowKey(item)]?.mode || item.mode) === 'disabled'
+                  ? 'default'
+                  : 'green'
+              }
+            >
+              {(bindingDrafts[bindingRowKey(item)]?.mode || item.mode) === 'disabled'
+                ? t('agent.mcpNotBound')
+                : t('agent.mcpBoundToRuntime')}
             </Tag>
           </Space>
         ),
@@ -279,16 +363,25 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
             <Segmented
               className="mcp-mode-control"
               block
-              value={modes[item.mcp.id] || 'disabled'}
+              value={bindingDrafts[bindingRowKey(item)]?.mode || 'disabled'}
               options={[
                 { value: 'disabled', label: t('mcpMode.disabled') },
                 { value: 'optional', label: t('mcpMode.optional') },
                 { value: 'required', label: t('mcpMode.required') },
               ]}
               onChange={(value) =>
-                setModes((current) => ({
+                setBindingDrafts((current) => ({
                   ...current,
-                  [item.mcp.id]: value as McpBindingMode,
+                  [bindingRowKey(item)]: {
+                    ...(current[bindingRowKey(item)] || {
+                      binding_id: item.binding_id,
+                      mcp_id: item.mcp.id,
+                      conditions: item.conditions,
+                      tool_allowlist: item.tool_allowlist,
+                      tool_blocklist: item.tool_blocklist,
+                    }),
+                    mode: value as McpBindingMode,
+                  },
                 }))
               }
             />
@@ -296,7 +389,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         ),
       },
     ],
-    [modes, t],
+    [bindingDrafts, t],
   );
 
   const selectedAgent = agentsQuery.data?.find((agent) => agent.agent_key === selectedAgentKey);
@@ -351,7 +444,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
           onChange={(event) => setSearch(event.target.value)}
         />
         <Table
-          rowKey={(item) => item.mcp.id}
+          rowKey={(item) => bindingRowKey(item)}
           className="mcp-binding-table"
           columns={mcpColumns}
           dataSource={mcpItems}
@@ -363,6 +456,27 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       </Modal>
     </div>
   );
+}
+
+function bindingRowKey(item: AgentMcpBindingView): string {
+  return item.binding_id || `${item.mcp.id}::__default__`;
+}
+
+function bindingConditionEntries(conditions: BindingConditions): Array<[string, string]> {
+  return [
+    ['task_profile', conditions.task_profile || ''],
+    ['project_source_type', conditions.project_source_type || ''],
+    ['runtime_provider', conditions.runtime_provider || ''],
+    ['schedule_mode', conditions.schedule_mode || ''],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+}
+
+function toolPolicyPreview(allowlist: string[], blocklist: string[]): string {
+  const parts = [
+    allowlist.length > 0 ? `allow: ${allowlist.slice(0, 3).join(', ')}` : 'allow: *',
+    blocklist.length > 0 ? `block: ${blocklist.slice(0, 3).join(', ')}` : null,
+  ].filter((value): value is string => Boolean(value));
+  return parts.join(' · ');
 }
 
 function sourceKindLabel(value: string, t: (key: string) => string): string {

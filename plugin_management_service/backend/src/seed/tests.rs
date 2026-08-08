@@ -261,6 +261,31 @@ fn chatos_conversation_requires_task_runner_service_on_both_execution_planes() {
 }
 
 #[test]
+fn chatos_task_runner_tool_policies_are_split_by_task_profile() {
+    assert!(!CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST.contains(&"create_tasks_with_prerequisites"));
+    assert!(CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST.contains(&"create_tasks_with_prerequisites"));
+    for tool_name in CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST {
+        assert!(CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST.contains(tool_name));
+    }
+}
+
+#[test]
+fn project_management_agent_read_only_tool_policies_are_seeded() {
+    assert_eq!(
+        PROJECT_MANAGEMENT_AGENT_SANDBOX_TOOL_ALLOWLIST,
+        &["get_image_catalog", "search_images"]
+    );
+    assert!(
+        chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
+            .contains(&"list_requirements")
+    );
+    assert!(
+        !chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
+            .contains(&"create_requirement")
+    );
+}
+
+#[test]
 fn task_process_log_is_a_seeded_task_runner_system_mcp() {
     let descriptor = chatos_mcp::system_mcp_descriptor(
         chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,

@@ -17,25 +17,45 @@ pub(super) fn capability_policy_revision(
         agent.updated_at
     )];
     revision_parts.extend(mcps.iter().map(|item| {
+        let conditions = format!(
+            "{:?}:{:?}:{:?}:{:?}",
+            item.binding.conditions.task_profile,
+            item.binding.conditions.project_source_type,
+            item.binding.conditions.runtime_provider,
+            item.binding.conditions.schedule_mode
+        );
         format!(
-            "mcp:{}:{}:{}:{}:{}:{}",
+            "mcp:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             item.resource.id,
             item.resource.enabled,
             item.resource.updated_at,
             item.binding.required,
             item.binding.enabled,
-            item.binding.updated_at
+            item.binding.updated_at,
+            conditions,
+            item.binding.tool_allowlist.join(","),
+            item.binding.tool_blocklist.join(","),
         )
     }));
     revision_parts.extend(skills.iter().map(|item| {
+        let conditions = format!(
+            "{:?}:{:?}:{:?}:{:?}",
+            item.binding.conditions.task_profile,
+            item.binding.conditions.project_source_type,
+            item.binding.conditions.runtime_provider,
+            item.binding.conditions.schedule_mode
+        );
         format!(
-            "skill:{}:{}:{}:{}:{}:{}",
+            "skill:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             item.resource.id,
             item.resource.enabled,
             item.resource.updated_at,
             item.binding.required,
             item.binding.enabled,
-            item.binding.updated_at
+            item.binding.updated_at,
+            conditions,
+            item.binding.tool_allowlist.join(","),
+            item.binding.tool_blocklist.join(","),
         )
     }));
     revision_parts.extend(plugins.iter().map(plugin_revision_part));
@@ -112,7 +132,7 @@ fn plugin_revision_part(item: &ResolvedPlugin) -> String {
         item.binding.conditions.schedule_mode
     );
     format!(
-        "plugin:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{installation}:{components}",
+        "plugin:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{installation}:{components}",
         item.catalog.id,
         item.catalog.enabled,
         item.catalog.updated_at,
@@ -120,6 +140,8 @@ fn plugin_revision_part(item: &ResolvedPlugin) -> String {
         item.binding.enabled,
         item.binding.updated_at,
         item.binding.component_allowlist.join(","),
+        item.binding.tool_allowlist.join(","),
+        item.binding.tool_blocklist.join(","),
         conditions,
         release,
         preference,

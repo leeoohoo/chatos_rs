@@ -333,6 +333,8 @@ fn plugin_records() -> PluginRecords {
         priority: 500,
         conditions: BindingConditions::default(),
         component_allowlist: vec!["main".to_string()],
+        tool_allowlist: Vec::new(),
+        tool_blocklist: Vec::new(),
         created_by: "admin".to_string(),
         updated_by: "admin".to_string(),
         created_at: "2026-07-22T00:00:00Z".to_string(),

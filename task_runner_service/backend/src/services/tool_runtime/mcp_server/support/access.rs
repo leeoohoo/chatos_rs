@@ -58,11 +58,6 @@ pub(crate) fn agent_tool_allowed_for_request_context(
     name: &str,
     request_context: &McpRequestContext,
 ) -> bool {
-    if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner
-        && name == "create_tasks_with_prerequisites"
-    {
-        return request_context.is_chatos_plan_task_profile();
-    }
     agent_tool_allowed_for_profile(name, request_context.tool_profile())
 }
 

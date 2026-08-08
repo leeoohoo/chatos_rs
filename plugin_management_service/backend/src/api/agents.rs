@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use super::*;
 
 pub(super) async fn list_system_agents(
@@ -125,15 +127,23 @@ pub(super) async fn update_agent_mcp_bindings(
     ensure_managed_tool_plane(&agent)?;
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
-    for selection in payload.bindings {
+    for mut selection in payload.bindings {
         let mcp_id = required_text(Some(selection.mcp_id.as_str()), "mcp_id")?;
-        if !seen.insert(mcp_id.clone()) {
-            return Err(ApiError::bad_request("duplicate mcp_id in bindings"));
+        let conditions = normalized_binding_conditions(selection.conditions);
+        let duplicate_key = (mcp_id.clone(), binding_conditions_key(&conditions));
+        if !seen.insert(duplicate_key) {
+            return Err(ApiError::bad_request(
+                "duplicate MCP binding conditions in bindings",
+            ));
         }
         validate_mcp_binding_mode(selection.mode.as_str())?;
         if selection.mode == MCP_BINDING_MODE_DISABLED {
             continue;
         }
+        selection.tool_allowlist =
+            normalize_string_list(std::mem::take(&mut selection.tool_allowlist));
+        selection.tool_blocklist =
+            normalize_string_list(std::mem::take(&mut selection.tool_blocklist));
         let mcp = state
             .store
             .get_mcp(mcp_id.as_str())
@@ -143,7 +153,13 @@ pub(super) async fn update_agent_mcp_bindings(
         if !mcp.enabled {
             return Err(ApiError::bad_request(format!("MCP is disabled: {mcp_id}")));
         }
-        selected.push((mcp_id, selection.mode));
+        selected.push((
+            mcp_id,
+            selection.mode,
+            conditions,
+            selection.tool_allowlist,
+            selection.tool_blocklist,
+        ));
     }
 
     state
@@ -152,11 +168,19 @@ pub(super) async fn update_agent_mcp_bindings(
         .await
         .map_err(ApiError::internal)?;
 
-    for (index, (mcp_id, mode)) in selected.into_iter().enumerate() {
+    for (index, (mcp_id, mode, conditions, tool_allowlist, tool_blocklist)) in
+        selected.into_iter().enumerate()
+    {
         let (enabled, required, binding_scope) = mcp_binding_state(mode.as_str())?;
         let now = now_rfc3339();
         let record = AgentBindingRecord {
-            id: format!("{agent_key}__mcp__{mcp_id}"),
+            id: agent_resource_binding_id(
+                agent_key.as_str(),
+                binding_scope,
+                RESOURCE_KIND_MCP,
+                mcp_id.as_str(),
+                &conditions,
+            ),
             agent_key: agent_key.clone(),
             binding_scope: binding_scope.to_string(),
             owner_user_id: None,
@@ -165,8 +189,10 @@ pub(super) async fn update_agent_mcp_bindings(
             enabled,
             required,
             priority: 100 + index as i64,
-            conditions: BindingConditions::default(),
+            conditions,
             component_allowlist: Vec::new(),
+            tool_allowlist,
+            tool_blocklist,
             created_by: user.user_id.clone(),
             updated_by: user.user_id.clone(),
             created_at: now.clone(),
@@ -269,6 +295,8 @@ pub(super) async fn update_agent_plugin_bindings(
             priority: 500 + index as i64,
             conditions: selection.conditions,
             component_allowlist: selection.component_allowlist,
+            tool_allowlist: Vec::new(),
+            tool_blocklist: Vec::new(),
             created_by: user.user_id.clone(),
             updated_by: user.user_id.clone(),
             created_at: now.clone(),
@@ -383,36 +411,56 @@ pub(super) async fn build_agent_mcp_bindings_response(
         .list_bindings(agent_key, &ListBindingsQuery::default())
         .await
         .map_err(ApiError::internal)?;
-    let mut modes = HashMap::new();
-    for binding in bindings
+    let mut bindings_by_resource = bindings
         .into_iter()
-        .filter(|binding| binding.enabled && binding.resource_kind == RESOURCE_KIND_MCP)
-    {
-        let mode = if binding.required {
-            MCP_BINDING_MODE_REQUIRED
-        } else {
-            MCP_BINDING_MODE_OPTIONAL
-        };
-        modes
-            .entry(binding.resource_id)
-            .and_modify(|current: &mut &str| {
-                if mode == MCP_BINDING_MODE_REQUIRED {
-                    *current = mode;
-                }
-            })
-            .or_insert(mode);
-    }
+        .filter(|binding| binding.resource_kind == RESOURCE_KIND_MCP)
+        .fold(
+            HashMap::<String, Vec<AgentBindingRecord>>::new(),
+            |mut acc, binding| {
+                acc.entry(binding.resource_id.clone())
+                    .or_default()
+                    .push(binding);
+                acc
+            },
+        );
     let mut items = mcps
         .into_iter()
-        .map(|mcp| AgentMcpBindingView {
-            mode: modes
-                .get(mcp.id.as_str())
-                .copied()
-                .unwrap_or(MCP_BINDING_MODE_DISABLED)
-                .to_string(),
-            bindable: true,
-            unavailable_reason: None,
-            mcp,
+        .flat_map(|mcp| {
+            let mut binding_items = bindings_by_resource
+                .remove(mcp.id.as_str())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|binding| AgentMcpBindingView {
+                    mcp: mcp.clone(),
+                    binding_id: Some(binding.id.clone()),
+                    mode: if binding.required {
+                        MCP_BINDING_MODE_REQUIRED
+                    } else if binding.enabled {
+                        MCP_BINDING_MODE_OPTIONAL
+                    } else {
+                        MCP_BINDING_MODE_DISABLED
+                    }
+                    .to_string(),
+                    bindable: true,
+                    unavailable_reason: None,
+                    conditions: binding.conditions,
+                    tool_allowlist: binding.tool_allowlist,
+                    tool_blocklist: binding.tool_blocklist,
+                })
+                .collect::<Vec<_>>();
+            if binding_items.is_empty() {
+                binding_items.push(AgentMcpBindingView {
+                    mcp,
+                    binding_id: None,
+                    mode: MCP_BINDING_MODE_DISABLED.to_string(),
+                    bindable: true,
+                    unavailable_reason: None,
+                    conditions: BindingConditions::default(),
+                    tool_allowlist: Vec::new(),
+                    tool_blocklist: Vec::new(),
+                });
+            }
+            binding_items
         })
         .collect::<Vec<_>>();
     items.sort_by(|left, right| {
@@ -427,6 +475,51 @@ pub(super) async fn build_agent_mcp_bindings_response(
             .then_with(|| left.mcp.id.cmp(&right.mcp.id))
     });
     Ok(AgentMcpBindingsResponse { agent, items })
+}
+
+fn normalized_binding_conditions(conditions: BindingConditions) -> BindingConditions {
+    BindingConditions {
+        task_profile: normalized(conditions.task_profile.as_deref()),
+        project_source_type: normalized(conditions.project_source_type.as_deref()),
+        runtime_provider: normalized(conditions.runtime_provider.as_deref()),
+        schedule_mode: normalized(conditions.schedule_mode.as_deref()),
+    }
+}
+
+fn binding_conditions_key(conditions: &BindingConditions) -> String {
+    [
+        ("task_profile", conditions.task_profile.as_deref()),
+        (
+            "project_source_type",
+            conditions.project_source_type.as_deref(),
+        ),
+        ("runtime_provider", conditions.runtime_provider.as_deref()),
+        ("schedule_mode", conditions.schedule_mode.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(label, value)| value.map(|value| format!("{label}={value}")))
+    .collect::<Vec<_>>()
+    .join("|")
+}
+
+pub(super) fn agent_resource_binding_id(
+    agent_key: &str,
+    binding_scope: &str,
+    resource_kind: &str,
+    resource_id: &str,
+    conditions: &BindingConditions,
+) -> String {
+    let condition_key = binding_conditions_key(conditions);
+    if condition_key.is_empty() {
+        return format!("{agent_key}__{binding_scope}__{resource_id}");
+    }
+    let mut hasher = DefaultHasher::new();
+    resource_kind.hash(&mut hasher);
+    condition_key.hash(&mut hasher);
+    format!(
+        "{agent_key}__{binding_scope}__{resource_id}__{:016x}",
+        hasher.finish()
+    )
 }
 
 fn mcp_binding_sort_rank(item: &AgentMcpBindingView) -> (u8, u8) {

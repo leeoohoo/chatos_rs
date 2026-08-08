@@ -235,6 +235,8 @@ pub(super) async fn plugin_component_gate(
         priority: 0,
         conditions: BindingConditions::default(),
         component_allowlist: vec![component_key.to_string()],
+        tool_allowlist: Vec::new(),
+        tool_blocklist: Vec::new(),
         created_by: "system".to_string(),
         updated_by: "system".to_string(),
         created_at: String::new(),
