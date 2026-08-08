@@ -17,17 +17,32 @@ use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
 use mongodb::options::{IndexOptions, ReplaceOptions};
 use mongodb::{Client, Collection, IndexModel};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+#[cfg(test)]
+use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
-use crate::providers::{
-    build_pinned_external_http_client, external_http_header_is_managed_or_unsafe,
-};
 use crate::runtime::{
     PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
     PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+};
+
+#[path = "session_store/cache.rs"]
+mod cache;
+#[path = "session_store/external_http.rs"]
+mod external_http;
+
+#[cfg(test)]
+use self::cache::cache_snapshot_with_limits;
+pub use self::cache::RuntimeSessionCacheLimits;
+use self::cache::{
+    cache_snapshot, cache_snapshot_arc, estimate_snapshot_cache_bytes, saturating_u64_to_usize,
+    summarize_snapshot_sizes, RuntimeSessionCache,
+};
+use self::external_http::{
+    persist_external_http_binding, restore_external_http_binding,
+    PersistedExternalHttpProviderBinding,
 };
 
 const SNAPSHOT_SCHEMA_VERSION: i32 = 5;
@@ -205,47 +220,6 @@ struct MongoRuntimeSessionStore {
     cache: RwLock<RuntimeSessionCache>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RuntimeSessionCacheLimits {
-    pub max_entries: usize,
-    pub max_bytes: usize,
-}
-
-impl RuntimeSessionCacheLimits {
-    pub fn new(max_entries: usize, max_bytes: usize) -> Result<Self, String> {
-        if max_entries == 0 {
-            return Err("Runtime Session cache max entries must be at least 1".to_string());
-        }
-        if max_bytes == 0 {
-            return Err("Runtime Session cache max bytes must be at least 1".to_string());
-        }
-        Ok(Self {
-            max_entries,
-            max_bytes,
-        })
-    }
-}
-
-#[derive(Clone)]
-struct CachedRuntimeSessionSnapshot {
-    envelope_digest: [u8; 32],
-    snapshot: Arc<RuntimeSessionSnapshot>,
-    approx_size_bytes: usize,
-    last_access_tick: u64,
-}
-
-#[derive(Default)]
-struct RuntimeSessionCache {
-    entries: HashMap<String, CachedRuntimeSessionSnapshot>,
-    total_bytes: usize,
-    next_access_tick: u64,
-    hits_total: u64,
-    misses_total: u64,
-    capacity_evictions_total: u64,
-    expired_evictions_total: u64,
-    oversized_rejections_total: u64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredRuntimeSessionDocument {
     #[serde(rename = "_id")]
@@ -292,23 +266,6 @@ struct PersistedRuntimeSessionSnapshot {
     cloud_stdio_bindings: HashMap<String, CloudStdioProviderBinding>,
     expires_at: String,
     expires_at_unix: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedExternalHttpProviderBinding {
-    provider_ref: String,
-    endpoint: String,
-    headers: Vec<PersistedHeader>,
-    resolved_addresses: Vec<String>,
-    allow_writes: bool,
-    allowed_tool_names: HashSet<String>,
-    blocked_tool_names: HashSet<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedHeader {
-    name: String,
-    value: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -566,165 +523,6 @@ impl StoredRuntimeSessionDocument {
     }
 }
 
-fn cache_snapshot(
-    cache: &mut RuntimeSessionCache,
-    envelope_digest: [u8; 32],
-    snapshot: RuntimeSessionSnapshot,
-    limits: RuntimeSessionCacheLimits,
-) {
-    cache_snapshot_arc(cache, envelope_digest, Arc::new(snapshot), limits);
-}
-
-fn cache_snapshot_arc(
-    cache: &mut RuntimeSessionCache,
-    envelope_digest: [u8; 32],
-    snapshot: Arc<RuntimeSessionSnapshot>,
-    limits: RuntimeSessionCacheLimits,
-) {
-    cache_snapshot_with_limits(
-        cache,
-        envelope_digest,
-        snapshot,
-        limits.max_entries,
-        limits.max_bytes,
-    );
-}
-
-fn cache_snapshot_with_limits(
-    cache: &mut RuntimeSessionCache,
-    envelope_digest: [u8; 32],
-    snapshot: Arc<RuntimeSessionSnapshot>,
-    max_entries: usize,
-    max_bytes: usize,
-) {
-    let now = chrono::Utc::now().timestamp();
-    cache.retain_unexpired(now);
-    let approx_size_bytes = estimate_snapshot_cache_bytes(snapshot.as_ref());
-    let session_id = snapshot.session_id.clone();
-    cache.remove(session_id.as_str());
-    if approx_size_bytes > max_bytes {
-        cache.oversized_rejections_total = cache.oversized_rejections_total.saturating_add(1);
-        return;
-    }
-    let last_access_tick = cache.allocate_access_tick();
-    cache.entries.insert(
-        session_id,
-        CachedRuntimeSessionSnapshot {
-            envelope_digest,
-            snapshot,
-            approx_size_bytes,
-            last_access_tick,
-        },
-    );
-    cache.total_bytes = cache.total_bytes.saturating_add(approx_size_bytes);
-    cache.evict_to_limits(max_entries, max_bytes);
-}
-
-fn estimate_snapshot_cache_bytes(snapshot: &RuntimeSessionSnapshot) -> usize {
-    PersistedRuntimeSessionSnapshot::try_from(snapshot)
-        .ok()
-        .and_then(|persisted| serde_json::to_vec(&persisted).ok().map(|value| value.len()))
-        .unwrap_or(MAX_PERSISTED_SNAPSHOT_BYTES)
-}
-
-#[derive(Default)]
-struct SnapshotSizeStats {
-    total_bytes: usize,
-    avg_bytes: usize,
-    p95_bytes: usize,
-}
-
-fn summarize_snapshot_sizes(snapshot_sizes: &[usize]) -> SnapshotSizeStats {
-    if snapshot_sizes.is_empty() {
-        return SnapshotSizeStats::default();
-    }
-    let total_bytes = snapshot_sizes
-        .iter()
-        .copied()
-        .fold(0_usize, usize::saturating_add);
-    let avg_bytes = total_bytes / snapshot_sizes.len();
-    let mut sorted = snapshot_sizes.to_vec();
-    sorted.sort_unstable();
-    let p95_index = ((sorted.len() * 95).saturating_sub(1)) / 100;
-    SnapshotSizeStats {
-        total_bytes,
-        avg_bytes,
-        p95_bytes: sorted[p95_index],
-    }
-}
-
-fn saturating_u64_to_usize(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
-}
-
-impl RuntimeSessionCache {
-    fn allocate_access_tick(&mut self) -> u64 {
-        self.next_access_tick = self.next_access_tick.saturating_add(1);
-        self.next_access_tick
-    }
-
-    fn get_if_fresh(
-        &mut self,
-        session_id: &str,
-        envelope_digest: [u8; 32],
-        now: i64,
-    ) -> Option<Arc<RuntimeSessionSnapshot>> {
-        self.retain_unexpired(now);
-        let Some(cached) = self.entries.get(session_id) else {
-            self.misses_total = self.misses_total.saturating_add(1);
-            return None;
-        };
-        if cached.envelope_digest != envelope_digest {
-            self.remove(session_id);
-            self.misses_total = self.misses_total.saturating_add(1);
-            return None;
-        }
-        let access_tick = self.allocate_access_tick();
-        let cached = self.entries.get_mut(session_id)?;
-        cached.last_access_tick = access_tick;
-        self.hits_total = self.hits_total.saturating_add(1);
-        Some(Arc::clone(&cached.snapshot))
-    }
-
-    fn remove(&mut self, session_id: &str) -> Option<CachedRuntimeSessionSnapshot> {
-        let removed = self.entries.remove(session_id)?;
-        self.total_bytes = self.total_bytes.saturating_sub(removed.approx_size_bytes);
-        Some(removed)
-    }
-
-    fn retain_unexpired(&mut self, now: i64) {
-        let expired = self
-            .entries
-            .iter()
-            .filter(|(_, cached)| cached.snapshot.expires_at_unix <= now)
-            .map(|(session_id, _)| session_id.clone())
-            .collect::<Vec<_>>();
-        for session_id in expired {
-            if self.remove(session_id.as_str()).is_some() {
-                self.expired_evictions_total = self.expired_evictions_total.saturating_add(1);
-            }
-        }
-    }
-
-    fn evict_to_limits(&mut self, max_entries: usize, max_bytes: usize) {
-        while self.entries.len() > max_entries || self.total_bytes > max_bytes {
-            let Some(session_id) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, cached)| {
-                    (cached.last_access_tick, cached.snapshot.expires_at_unix)
-                })
-                .map(|(session_id, _)| session_id.clone())
-            else {
-                break;
-            };
-            if self.remove(session_id.as_str()).is_some() {
-                self.capacity_evictions_total = self.capacity_evictions_total.saturating_add(1);
-            }
-        }
-    }
-}
-
 impl SnapshotCipher {
     fn new(secret: &str) -> Result<Self, String> {
         let secret = secret.trim();
@@ -926,111 +724,6 @@ impl PersistedRuntimeSessionSnapshot {
             expires_at_unix: self.expires_at_unix,
         })
     }
-}
-
-fn persist_external_http_binding(
-    binding: &ExternalHttpProviderBinding,
-) -> Result<PersistedExternalHttpProviderBinding, String> {
-    let headers = binding
-        .headers
-        .iter()
-        .map(|(name, value)| PersistedHeader {
-            name: name.as_str().to_string(),
-            value: value.as_bytes().to_vec(),
-        })
-        .collect::<Vec<_>>();
-    validate_persisted_headers(headers.as_slice())?;
-    validate_persisted_tool_names(&binding.allowed_tool_names, "allowed_tool_names")?;
-    validate_persisted_tool_names(&binding.blocked_tool_names, "blocked_tool_names")?;
-    Ok(PersistedExternalHttpProviderBinding {
-        provider_ref: binding.provider_ref.clone(),
-        endpoint: binding.endpoint.as_str().to_string(),
-        headers,
-        resolved_addresses: binding
-            .resolved_addresses
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
-        allow_writes: binding.allow_writes,
-        allowed_tool_names: binding.allowed_tool_names.clone(),
-        blocked_tool_names: binding.blocked_tool_names.clone(),
-    })
-}
-
-fn restore_external_http_binding(
-    persisted: PersistedExternalHttpProviderBinding,
-    request_timeout: Duration,
-) -> Result<ExternalHttpProviderBinding, String> {
-    if persisted.provider_ref.trim().is_empty() {
-        return Err("persisted External HTTP Provider reference is empty".to_string());
-    }
-    validate_persisted_headers(persisted.headers.as_slice())?;
-    validate_persisted_tool_names(&persisted.allowed_tool_names, "allowed_tool_names")?;
-    validate_persisted_tool_names(&persisted.blocked_tool_names, "blocked_tool_names")?;
-    let endpoint = reqwest::Url::parse(persisted.endpoint.trim())
-        .map_err(|_| "persisted External HTTP endpoint is invalid".to_string())?;
-    let resolved_addresses = persisted
-        .resolved_addresses
-        .iter()
-        .map(|value| {
-            value
-                .parse::<SocketAddr>()
-                .map_err(|_| "persisted External HTTP address is invalid".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let http = build_pinned_external_http_client(
-        &endpoint,
-        resolved_addresses.as_slice(),
-        request_timeout,
-    )?;
-    let mut headers = HeaderMap::new();
-    for persisted_header in persisted.headers {
-        let name = HeaderName::from_bytes(persisted_header.name.as_bytes())
-            .map_err(|_| "persisted External HTTP header name is invalid".to_string())?;
-        if external_http_header_is_managed_or_unsafe(&name) {
-            return Err("persisted External HTTP header is managed or unsafe".to_string());
-        }
-        let mut value = HeaderValue::from_bytes(persisted_header.value.as_slice())
-            .map_err(|_| "persisted External HTTP header value is invalid".to_string())?;
-        value.set_sensitive(true);
-        headers.append(name, value);
-    }
-    Ok(ExternalHttpProviderBinding {
-        provider_ref: persisted.provider_ref,
-        endpoint,
-        headers,
-        http,
-        resolved_addresses,
-        allow_writes: persisted.allow_writes,
-        allowed_tool_names: persisted.allowed_tool_names,
-        blocked_tool_names: persisted.blocked_tool_names,
-    })
-}
-
-fn validate_persisted_headers(headers: &[PersistedHeader]) -> Result<(), String> {
-    if headers.len() > MAX_PERSISTED_HEADERS {
-        return Err("persisted External HTTP headers exceed the supported limit".to_string());
-    }
-    let bytes = headers.iter().fold(0_usize, |total, header| {
-        total
-            .saturating_add(header.name.len())
-            .saturating_add(header.value.len())
-    });
-    if bytes > MAX_PERSISTED_HEADER_BYTES {
-        return Err("persisted External HTTP headers exceed the supported size".to_string());
-    }
-    Ok(())
-}
-
-fn validate_persisted_tool_names(values: &HashSet<String>, field: &str) -> Result<(), String> {
-    if values.len() > MAX_PERSISTED_TOOL_POLICY_ITEMS
-        || values
-            .iter()
-            .any(|value| value.trim().is_empty() || value.len() > MAX_PERSISTED_TOOL_NAME_BYTES)
-    {
-        return Err(format!("persisted External HTTP {field} is invalid"));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

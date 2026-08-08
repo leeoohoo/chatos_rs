@@ -2,8 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-#[cfg(not(test))]
-use std::sync::OnceLock;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -11,7 +9,6 @@ use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::PluginManagementClient;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::info;
 use uuid::Uuid;
@@ -35,266 +32,6 @@ use crate::models::{
 use crate::platform_queue::TaskQueueTopology;
 use crate::store::AppStore;
 
-#[cfg(not(test))]
-fn managed_config_client() -> Result<&'static chatos_config_sdk::ConfigClient, String> {
-    static CLIENT: OnceLock<Result<chatos_config_sdk::ConfigClient, String>> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| chatos_config_sdk::ConfigClient::from_env("task-runner"))
-        .as_ref()
-        .map_err(|error| {
-            format!("failed to initialize task runner configuration center client: {error}")
-        })
-}
-
-#[cfg(not(test))]
-async fn load_managed_config_snapshot() -> Result<chatos_config_sdk::ConfigSnapshot, String> {
-    let client = managed_config_client()?;
-    client
-        .load_strict()
-        .await
-        .map_err(|err| format!("failed to load fresh task runner managed configuration: {err}"))
-}
-
-#[cfg(test)]
-async fn load_managed_config_snapshot() -> Result<chatos_config_sdk::ConfigSnapshot, String> {
-    use std::collections::BTreeMap;
-
-    use serde_json::json;
-
-    Ok(chatos_config_sdk::ConfigSnapshot {
-        environment: "test".to_string(),
-        service_name: "task-runner".to_string(),
-        revision: 1,
-        checksum: "task-runner-test-config".to_string(),
-        values: BTreeMap::from([
-            (
-                chatos_agent::TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-                json!(600),
-            ),
-            (
-                chatos_agent::TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY.to_string(),
-                json!(8),
-            ),
-            (
-                chatos_agent::TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY.to_string(),
-                json!(2),
-            ),
-            (
-                chatos_agent::TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY.to_string(),
-                json!(8),
-            ),
-            (
-                chatos_agent::TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string(),
-                json!(true),
-            ),
-            (
-                chatos_agent::TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string(),
-                json!(true),
-            ),
-            (
-                TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY.to_string(),
-                json!(7_200_000),
-            ),
-            (
-                TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY.to_string(),
-                json!("local"),
-            ),
-            (
-                TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string(),
-                json!(8_000),
-            ),
-            (
-                TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY.to_string(),
-                json!(48_000),
-            ),
-            (
-                TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY.to_string(),
-                json!(256),
-            ),
-            (
-                TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY.to_string(),
-                json!(64 * 1024 * 1024),
-            ),
-            (
-                TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY.to_string(),
-                json!(false),
-            ),
-            (
-                TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
-                json!("http://127.0.0.1:8095"),
-            ),
-            (
-                TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY.to_string(),
-                json!(7_200),
-            ),
-            (
-                TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY.to_string(),
-                json!("baseline-2026-08"),
-            ),
-            (
-                TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY.to_string(),
-                json!({"react": "^19.2.7", "vite": "^8.1.4"}),
-            ),
-            (
-                TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY.to_string(),
-                json!("high"),
-            ),
-            (
-                TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY.to_string(),
-                json!(["esbuild"]),
-            ),
-        ]),
-        env: BTreeMap::new(),
-        generated_at: "test".to_string(),
-        stale: false,
-        source: Some("test_fixture".to_string()),
-    })
-}
-
-fn require_managed_usize(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-    key: &str,
-    minimum: usize,
-) -> Result<usize, String> {
-    let value = snapshot
-        .usize(key)
-        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
-    if value < minimum {
-        return Err(format!(
-            "managed configuration key {key} must be at least {minimum}, got {value}"
-        ));
-    }
-    Ok(value)
-}
-
-fn require_managed_u64(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-    key: &str,
-    minimum: u64,
-) -> Result<u64, String> {
-    let value = snapshot
-        .u64(key)
-        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
-    if value < minimum {
-        return Err(format!(
-            "managed configuration key {key} must be at least {minimum}, got {value}"
-        ));
-    }
-    Ok(value)
-}
-
-fn require_managed_bool(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-    key: &str,
-) -> Result<bool, String> {
-    snapshot
-        .bool(key)
-        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))
-}
-
-fn require_managed_string(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-    key: &str,
-) -> Result<String, String> {
-    let value = snapshot
-        .string(key)
-        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(format!("managed configuration key {key} must not be empty"));
-    }
-    Ok(value.to_string())
-}
-
-fn require_managed_string_set(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-    key: &str,
-) -> Result<std::collections::BTreeSet<String>, String> {
-    let values = snapshot
-        .values
-        .get(key)
-        .and_then(Value::as_array)
-        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
-    values
-        .iter()
-        .map(|value| {
-            let value = value
-                .as_str()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    format!("managed configuration key {key} must contain only non-empty strings")
-                })?;
-            Ok(value.to_string())
-        })
-        .collect()
-}
-
-fn require_managed_string_map(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-    key: &str,
-) -> Result<std::collections::BTreeMap<String, String>, String> {
-    let values = snapshot
-        .values
-        .get(key)
-        .and_then(Value::as_object)
-        .ok_or_else(|| format!("missing or invalid managed configuration key {key}"))?;
-    if values.is_empty() {
-        return Err(format!("managed configuration key {key} must not be empty"));
-    }
-    values
-        .iter()
-        .map(|(name, value)| {
-            let name = name.trim();
-            let requirement = value
-                .as_str()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    format!(
-                        "managed configuration key {key} must map package names to non-empty version requirements"
-                    )
-                })?;
-            if name.is_empty() {
-                return Err(format!(
-                    "managed configuration key {key} contains an empty package name"
-                ));
-            }
-            Ok((name.to_string(), requirement.to_string()))
-        })
-        .collect()
-}
-
-fn require_managed_execution_environment_mode(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-) -> Result<String, String> {
-    let value =
-        require_managed_string(snapshot, TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY)?
-            .to_ascii_lowercase();
-    match value.as_str() {
-        "local" | "cloud" => Ok(value),
-        _ => Err(format!(
-            "managed configuration key {} must be local or cloud, got {value}",
-            TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY
-        )),
-    }
-}
-
-fn require_managed_http_base_url(
-    snapshot: &chatos_config_sdk::ConfigSnapshot,
-    key: &str,
-) -> Result<String, String> {
-    let value = require_managed_string(snapshot, key)?;
-    let url = reqwest::Url::parse(value.as_str())
-        .map_err(|error| format!("managed configuration key {key} is not a valid URL: {error}"))?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err(format!(
-            "managed configuration key {key} must be an absolute HTTP(S) URL"
-        ));
-    }
-    Ok(value.trim_end_matches('/').to_string())
-}
-
 mod batch_ops;
 mod builtin_providers;
 mod chatos_async_dispatch;
@@ -303,6 +40,7 @@ mod chatos_message_tasks;
 mod filter_sanitize;
 mod harness_run_diff;
 mod harness_run_git;
+mod managed_config;
 mod mcp_catalog_service;
 mod mcp_resolution;
 mod memory_options;
@@ -360,6 +98,22 @@ pub use self::chatos_message_tasks::{
 };
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
+use self::managed_config::{
+    load_managed_config_snapshot, require_managed_bool, require_managed_execution_environment_mode,
+    require_managed_http_base_url, require_managed_string, require_managed_string_map,
+    require_managed_string_set, require_managed_u64, require_managed_usize,
+    TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
+    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
+    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
+    TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY, TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY,
+    TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
+    TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
+    TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
+    TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
+    TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+    TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
+    TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
+};
 pub(crate) use self::plugin_management_policy::TaskRunnerCapabilityPolicy;
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
@@ -374,29 +128,6 @@ use self::workspace_mcp::{
 pub use crate::models::RunExecutionStats;
 
 const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
-const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
-const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
-    "task_runner.execution.environment_mode";
-const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str = "task_runner.ai.tool_result_max_chars";
-const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
-    "task_runner.ai.tool_results_total_max_chars";
-const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
-    "task_runner.cache.plugin_cloud_bundle_max_entries";
-const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY: &str =
-    "task_runner.cache.plugin_cloud_bundle_max_bytes";
-const TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY: &str = "task_runner.sandbox.enabled";
-const TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY: &str =
-    "task_runner.sandbox.manager_base_url";
-const TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
-    "task_runner.sandbox.lease_ttl_seconds";
-const TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY: &str =
-    "task_runner.supply_chain.baseline_revision";
-const TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY: &str =
-    "task_runner.supply_chain.node_dependency_requirements";
-const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
-    "task_runner.supply_chain.node_audit_level";
-const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
-    "task_runner.supply_chain.install_script_allowlist";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunTriggerSource {

@@ -1,52 +1,25 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { RefreshCw } from 'lucide-react';
 
 import type { MessageTaskRunnerTask } from '../../../lib/api/client/types';
 import { useApiClient } from '../../../lib/api/ApiClientContext';
 import { useChatStore } from '../../../lib/store';
 import { cn } from '../../../lib/utils';
-import type { Message } from '../../../types';
 import { resolveProjectExecutionConfirmationState } from '../../messageTasks/projectExecutionConfirmation';
 import { useMessageTaskGraph } from '../../messageTasks/useMessageTaskGraph';
 import { readString } from '../../messageTasks/utils';
-import {
-  RequirementExecutionModalFrame,
-} from './RequirementExecutionModalShell';
+import { RequirementExecutionModalFrame } from './RequirementExecutionModalShell';
 import { RequirementExecutionActionDialogs } from './RequirementExecutionActionDialogs';
 import { RequirementExecutionTaskModals } from './RequirementExecutionTaskModals';
-import {
-  RequirementExecutionGraphSurface,
-  RequirementExecutionProcessActions,
-  RequirementExecutionProcessSidebar,
-} from './RequirementExecutionProcessView';
+import { RequirementExecutionGraphSurface, RequirementExecutionProcessActions, RequirementExecutionProcessSidebar } from './RequirementExecutionProcessView';
 import { readText } from './model';
-import {
-  buildRequirementExecutionProcessEntries,
-  createFallbackMessage,
-  isRequirementExecutionCancellationSettling,
-  isStoppedExecutionStatus,
-  resolveRequirementExecutionPhaseCopy,
-  resolveRequirementExecutionProcessPhase,
-  resolveRequirementExecutionRecoveryActions,
-  withProcessStatus,
-} from './requirementExecutionPhase';
-import {
-  buildRequirementExecutionProcess,
-  isPendingRequirementExecutionPlanError,
-  isRequirementExecutionRerunCancellationSettlingError,
-  REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
-  shouldReplaceRequirementExecutionBatch,
-  shouldStopRequirementExecutionBeforeReplacement,
-  type RequirementExecutionProcess,
-} from './requirementExecutionProcessModel';
-import {
-  taskHasActiveRun,
-  taskHasQueuedRun,
-  taskHasRunningRun,
-} from './requirementExecutionTaskRuntime';
+import { buildRequirementExecutionProcessEntries, createFallbackMessage, isRequirementExecutionCancellationSettling, resolveRequirementExecutionPhaseCopy, resolveRequirementExecutionProcessPhase, resolveRequirementExecutionRecoveryActions, withProcessStatus } from './requirementExecutionPhase';
+import { buildRequirementExecutionProcess, isPendingRequirementExecutionPlanError, isRequirementExecutionRerunCancellationSettlingError, REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS, shouldReplaceRequirementExecutionBatch, shouldStopRequirementExecutionBeforeReplacement, type RequirementExecutionProcess } from './requirementExecutionProcessModel';
+import { taskHasActiveRun, taskHasQueuedRun, taskHasRunningRun } from './requirementExecutionTaskRuntime';
+import { useRequirementExecutionProcessModalState } from './useRequirementExecutionProcessModalState';
 
 export * from './requirementExecutionProcessPublic';
 
@@ -60,60 +33,58 @@ export const RequirementExecutionProcessModal: React.FC<{
   const syncSessionMessagesInBackground = useChatStore(
     (state) => state.syncSessionMessagesInBackground,
   );
-  const [liveProcess, setLiveProcess] = useState(process);
-  const [message, setMessage] = useState<Message>(
-    withProcessStatus(process.initialMessage || createFallbackMessage(process), process),
-  );
-  const [feedback, setFeedback] = useState('');
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [pausing, setPausing] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const [revising, setRevising] = useState(false);
-  const [rerunning, setRerunning] = useState(false);
-  const [rerunCancellationSettling, setRerunCancellationSettling] = useState(false);
-  const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
-  const [failedTaskRetryOpen, setFailedTaskRetryOpen] = useState(false);
-  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
-  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
-  const [planStopped, setPlanStopped] = useState(
-    isStoppedExecutionStatus(process.serverStatus),
-  );
-  const [planDiscarded, setPlanDiscarded] = useState(Boolean(process.tasksDiscarded));
-  const [executionConfirmed, setExecutionConfirmed] = useState(false);
-  const [runtimeEnvironmentStatus, setRuntimeEnvironmentStatus] = useState('pending');
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(900);
-  const graphContainerRef = useRef<HTMLDivElement>(null);
-  const pollingRef = useRef(false);
-  const rerunningRef = useRef(false);
-  const activeExecutionGroupIdRef = useRef(process.executionGroupId);
-
-  useEffect(() => {
-    const stopped = isStoppedExecutionStatus(process.serverStatus);
-    activeExecutionGroupIdRef.current = process.executionGroupId;
-    setLiveProcess(process);
-    setMessage(withProcessStatus(
-      process.initialMessage || createFallbackMessage(process),
-      process,
-    ));
-    setFeedback('');
-    setPlanStopped(stopped);
-    setPlanDiscarded(Boolean(process.tasksDiscarded));
-    setExecutionConfirmed(Boolean(process.hasStartedRuns));
-    setRuntimeEnvironmentStatus('pending');
-    setActionError(null);
-    setActionMessage(null);
-    setSyncError(null);
-    setRerunCancellationSettling(false);
-    setRerunConfirmOpen(false);
-    setFailedTaskRetryOpen(false);
-    setDiscardConfirmOpen(false);
-    setCancelConfirmOpen(false);
-  }, [process.executionGroupId]);
+  const {
+    actionError,
+    actionMessage,
+    activeExecutionGroupIdRef,
+    cancelConfirmOpen,
+    confirming,
+    discardConfirmOpen,
+    executionConfirmed,
+    failedTaskRetryOpen,
+    feedback,
+    fullscreen,
+    graphContainerRef,
+    liveProcess,
+    message,
+    panelWidth,
+    pausing,
+    planDiscarded,
+    planStopped,
+    pollingRef,
+    rerunCancellationSettling,
+    rerunConfirmOpen,
+    rerunning,
+    rerunningRef,
+    revising,
+    runtimeEnvironmentStatus,
+    setActionError,
+    setActionMessage,
+    setCancelConfirmOpen,
+    setConfirming,
+    setDiscardConfirmOpen,
+    setExecutionConfirmed,
+    setFailedTaskRetryOpen,
+    setFeedback,
+    setFullscreen,
+    setLiveProcess,
+    setMessage,
+    setPanelWidth,
+    setPausing,
+    setPlanDiscarded,
+    setPlanStopped,
+    setRerunCancellationSettling,
+    setRerunConfirmOpen,
+    setRerunning,
+    setRevising,
+    setRuntimeEnvironmentStatus,
+    setStopping,
+    setSyncError,
+    setSyncing,
+    stopping,
+    syncError,
+    syncing,
+  } = useRequirementExecutionProcessModalState(process);
 
   const taskLookup = useMemo(() => ({
     sessionId: liveProcess.conversationId,

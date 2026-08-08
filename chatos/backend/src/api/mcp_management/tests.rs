@@ -3,7 +3,10 @@
 
 use serde_json::json;
 
+use super::browser::cloud_browser_binding;
 use super::*;
+use crate::models::message::Message;
+use crate::models::session::Session;
 
 #[test]
 fn audit_action_uses_the_actual_mcp_operation_and_tool_name() {
