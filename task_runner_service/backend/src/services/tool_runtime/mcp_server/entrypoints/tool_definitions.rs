@@ -127,8 +127,9 @@ impl TaskRunnerMcpService {
     pub(super) async fn list_tools_for_user(
         &self,
         current_user: &CurrentUser,
-        tool_profile: McpToolProfile,
+        request_context: &McpRequestContext,
     ) -> Result<Vec<Value>, String> {
+        let tool_profile = request_context.tool_profile();
         let mut tools = self.list_tools();
         match self.model_config_service.list_model_configs().await {
             Ok(model_configs) => {
@@ -154,7 +155,12 @@ impl TaskRunnerMcpService {
             .filter(|tool| {
                 tool.get("name")
                     .and_then(Value::as_str)
-                    .is_some_and(|name| agent_tool_allowed_for_profile(name, tool_profile))
+                    .is_some_and(|name| {
+                        super::super::support::agent_tool_allowed_for_request_context(
+                            name,
+                            request_context,
+                        )
+                    })
             })
             .collect())
     }

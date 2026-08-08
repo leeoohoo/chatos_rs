@@ -47,7 +47,7 @@ impl TaskRunnerMcpService {
             "tools/list" => {
                 tracing::info!("task runner mcp tools/list started");
                 let tools = match self
-                    .list_tools_for_user(&current_user, request_context.tool_profile())
+                    .list_tools_for_user(&current_user, &request_context)
                     .await
                 {
                     Ok(tools) => tools,
