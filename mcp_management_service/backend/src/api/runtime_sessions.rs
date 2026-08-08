@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use chatos_agent::{is_chatos_callback_agent, is_task_runner_phase_agent};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute,
@@ -703,12 +704,7 @@ fn validate_task_runner_provider_context(
             && route.provider_ref.as_deref() == Some("chatos")
     });
     if has_route(SystemMcpKey::TaskRunnerService) {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::ChatosConversationAgent
-                | SystemAgentKey::ChatosPlanningAgent
-                | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        ) {
+        if !is_chatos_callback_agent(agent_key) {
             return Err(ApiError::conflict(
                 "Task Runner Service MCP is only valid for ChatOS task planning Agents",
             ));
@@ -735,10 +731,7 @@ fn validate_task_runner_provider_context(
         }
     }
     if has_route(SystemMcpKey::TaskProcessLog) {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-        ) {
+        if !is_task_runner_phase_agent(agent_key) {
             return Err(ApiError::conflict(
                 "Task Process Log MCP is only valid for Task Runner phase Agents",
             ));
@@ -755,10 +748,7 @@ fn validate_task_runner_provider_context(
         }
     }
     if has_task_runner_ask_user_route {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-        ) {
+        if !is_task_runner_phase_agent(agent_key) {
             return Err(ApiError::conflict(
                 "Task Runner Ask User MCP is only valid for Task Runner phase Agents",
             ));
@@ -775,12 +765,7 @@ fn validate_task_runner_provider_context(
         }
     }
     if has_chatos_ask_user_route {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::ChatosConversationAgent
-                | SystemAgentKey::ChatosPlanningAgent
-                | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        ) {
+        if !is_chatos_callback_agent(agent_key) {
             return Err(ApiError::conflict(
                 "ChatOS Ask User MCP is only valid for ChatOS conversation Agents",
             ));

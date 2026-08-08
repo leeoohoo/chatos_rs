@@ -5,7 +5,9 @@ use super::core::{bearer_token_from_headers, current_user_from_user_service_toke
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chatos_agent::{is_chatos_callback_agent, is_task_runner_phase_agent};
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
+use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -412,14 +414,7 @@ async fn dispatch_bound_task_runner_tool(
     request: JsonRpcRequest,
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
-    if !matches!(
-        binding.agent_key,
-        SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-    ) {
+    if !is_chatos_callback_agent(binding.agent_key) {
         return task_runner_mcp_error(
             request.id.unwrap_or(Value::Null),
             -32001,
@@ -474,13 +469,8 @@ async fn dispatch_bound_task_process_log(
     request: JsonRpcRequest,
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
     let id = request.id.unwrap_or(Value::Null);
-    if !matches!(
-        binding.agent_key,
-        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-    ) {
+    if !is_task_runner_phase_agent(binding.agent_key) {
         return task_runner_mcp_error(
             id,
             -32001,
@@ -586,13 +576,8 @@ async fn dispatch_bound_ask_user(
     request: JsonRpcRequest,
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
     let id = request.id.unwrap_or(Value::Null);
-    if !matches!(
-        binding.agent_key,
-        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-    ) {
+    if !is_task_runner_phase_agent(binding.agent_key) {
         return task_runner_mcp_error(
             id,
             -32001,

@@ -8,7 +8,11 @@ mod core;
 #[cfg(feature = "runtime")]
 mod implementations;
 
-pub use catalog::{agent_descriptor, system_agent_catalog, AgentDescriptor};
+pub use catalog::{
+    agent_descriptor, is_chatos_callback_agent, is_task_runner_execution_agent,
+    is_task_runner_phase_agent, is_task_runner_planning_agent, system_agent_catalog,
+    uses_chatos_browser_callback, uses_chatos_notepad_callback, AgentDescriptor,
+};
 #[cfg(feature = "managed-config")]
 pub use config::{
     load_agent_max_iterations, require_task_runner_runtime_settings, resolve_agent_max_iterations,

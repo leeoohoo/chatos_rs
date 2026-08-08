@@ -3,6 +3,10 @@
 
 use std::collections::HashSet;
 
+use chatos_agent::{
+    is_task_runner_execution_agent as is_task_runner_execution_key,
+    is_task_runner_planning_agent as is_task_runner_planning_key,
+};
 use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpBackend, SystemMcpDescriptor};
 use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
@@ -541,11 +545,17 @@ fn validate_task_process_log_mcp_runtime(item: &ResolvedMcp) -> Result<(), Strin
 }
 
 fn is_task_runner_planning_agent(agent_key: &str) -> bool {
-    agent_key == SystemAgentKey::TaskRunnerPlanPhase.as_str()
+    agent_key
+        .trim()
+        .eq_ignore_ascii_case(SystemAgentKey::TaskRunnerPlanPhase.as_str())
+        && is_task_runner_planning_key(SystemAgentKey::TaskRunnerPlanPhase)
 }
 
 fn is_task_runner_execution_agent(agent_key: &str) -> bool {
-    agent_key == SystemAgentKey::TaskRunnerRunPhase.as_str()
+    agent_key
+        .trim()
+        .eq_ignore_ascii_case(SystemAgentKey::TaskRunnerRunPhase.as_str())
+        && is_task_runner_execution_key(SystemAgentKey::TaskRunnerRunPhase)
 }
 
 fn normalized_plugin_identifier(value: &str, field: &str) -> Result<String, String> {

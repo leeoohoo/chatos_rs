@@ -5,6 +5,9 @@ use axum::extract::Path;
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::{
+    is_chatos_callback_agent, uses_chatos_browser_callback, uses_chatos_notepad_callback,
+};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
@@ -239,34 +242,15 @@ fn message_matches_turn(message: &crate::models::message::Message, turn_id: &str
 }
 
 fn is_chatos_agent(agent_key: SystemAgentKey) -> bool {
-    matches!(
-        agent_key,
-        SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-    )
+    is_chatos_callback_agent(agent_key)
 }
 
 fn is_browser_agent(agent_key: SystemAgentKey) -> bool {
-    matches!(
-        agent_key,
-        SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-            | SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerRunPhase
-    )
+    uses_chatos_browser_callback(agent_key)
 }
 
 fn is_notepad_agent(agent_key: SystemAgentKey) -> bool {
-    matches!(
-        agent_key,
-        SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-            | SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerRunPhase
-    )
+    uses_chatos_notepad_callback(agent_key)
 }
 
 #[cfg(test)]

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::{
+    is_task_runner_execution_agent as is_task_runner_execution_key,
+    is_task_runner_planning_agent as is_task_runner_planning_key,
+};
+
 use super::*;
 
 pub(super) fn mcp_management_binding_from_headers(
@@ -69,16 +74,14 @@ pub(super) fn task_matches_bound_agent(
     task: &crate::models::TaskRecord,
     agent_key: chatos_plugin_management_sdk::SystemAgentKey,
 ) -> bool {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
     let planning = crate::models::uses_task_runner_planning_agent(
         task.task_profile.as_str(),
         task.mcp_config.requires_execution,
     );
     if planning {
-        agent_key == SystemAgentKey::TaskRunnerPlanPhase
+        is_task_runner_planning_key(agent_key)
     } else {
-        agent_key == SystemAgentKey::TaskRunnerRunPhase
+        is_task_runner_execution_key(agent_key)
     }
 }
 

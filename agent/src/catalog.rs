@@ -179,6 +179,38 @@ pub fn system_agent_catalog() -> &'static [&'static AgentDescriptor] {
     &SYSTEM_AGENT_CATALOG
 }
 
+pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
+    matches!(
+        key,
+        SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosPlanningAgent
+            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+    )
+}
+
+pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
+    matches!(
+        key,
+        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
+    )
+}
+
+pub const fn is_task_runner_planning_agent(key: SystemAgentKey) -> bool {
+    matches!(key, SystemAgentKey::TaskRunnerPlanPhase)
+}
+
+pub const fn is_task_runner_execution_agent(key: SystemAgentKey) -> bool {
+    matches!(key, SystemAgentKey::TaskRunnerRunPhase)
+}
+
+pub const fn uses_chatos_notepad_callback(key: SystemAgentKey) -> bool {
+    is_chatos_callback_agent(key) || is_task_runner_phase_agent(key)
+}
+
+pub const fn uses_chatos_browser_callback(key: SystemAgentKey) -> bool {
+    uses_chatos_notepad_callback(key)
+}
+
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
@@ -275,5 +307,37 @@ mod tests {
         assert_eq!(descriptor.tool_plane, AgentToolPlane::LocalOnly);
         assert!(descriptor.tool_plane.supports_tools());
         assert!(!descriptor.tool_plane.uses_managed_gateway());
+    }
+
+    #[test]
+    fn callback_groups_live_with_agent_catalog() {
+        for key in [
+            SystemAgentKey::ChatosConversationAgent,
+            SystemAgentKey::ChatosPlanningAgent,
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
+        ] {
+            assert!(is_chatos_callback_agent(key));
+        }
+        assert!(is_task_runner_phase_agent(
+            SystemAgentKey::TaskRunnerPlanPhase
+        ));
+        assert!(is_task_runner_planning_agent(
+            SystemAgentKey::TaskRunnerPlanPhase
+        ));
+        assert!(is_task_runner_execution_agent(
+            SystemAgentKey::TaskRunnerRunPhase
+        ));
+        assert!(uses_chatos_notepad_callback(
+            SystemAgentKey::TaskRunnerRunPhase
+        ));
+        assert!(uses_chatos_browser_callback(
+            SystemAgentKey::ChatosConversationAgent
+        ));
+        assert!(!uses_chatos_notepad_callback(
+            SystemAgentKey::ProjectManagementAgent
+        ));
+        assert!(!uses_chatos_browser_callback(
+            SystemAgentKey::MemoryEngineSummaryAgent
+        ));
     }
 }

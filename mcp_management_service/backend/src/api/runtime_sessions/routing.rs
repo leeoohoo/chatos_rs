@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::{is_chatos_callback_agent, is_task_runner_phase_agent};
+
 use super::*;
 
 pub(super) fn bind_agent_callback_routes(
@@ -12,26 +14,18 @@ pub(super) fn bind_agent_callback_routes(
         .iter_mut()
         .filter(|route| route.resource_id == ask_user_resource_id)
     {
-        match agent_key {
-            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase => {
-                route.provider_kind = McpProviderKind::InternalService;
-                route.provider_ref = Some("task-runner".to_string());
-                route.reason =
-                    "Ask User is pinned to the Task Runner Agent callback host".to_string();
-            }
-            SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
-                route.provider_kind = McpProviderKind::InternalService;
-                route.provider_ref = Some("chatos".to_string());
-                route.reason = "Ask User is pinned to the ChatOS Agent callback host".to_string();
-            }
-            _ => {
-                route.provider_kind = McpProviderKind::Unavailable;
-                route.provider_ref = None;
-                route.reason =
-                    "configured Agent has no registered Ask User callback host".to_string();
-            }
+        if is_task_runner_phase_agent(agent_key) {
+            route.provider_kind = McpProviderKind::InternalService;
+            route.provider_ref = Some("task-runner".to_string());
+            route.reason = "Ask User is pinned to the Task Runner Agent callback host".to_string();
+        } else if is_chatos_callback_agent(agent_key) {
+            route.provider_kind = McpProviderKind::InternalService;
+            route.provider_ref = Some("chatos".to_string());
+            route.reason = "Ask User is pinned to the ChatOS Agent callback host".to_string();
+        } else {
+            route.provider_kind = McpProviderKind::Unavailable;
+            route.provider_ref = None;
+            route.reason = "configured Agent has no registered Ask User callback host".to_string();
         }
     }
 }
@@ -42,12 +36,7 @@ pub(super) fn bind_chatos_memory_routes(
     contact_agent_id: Option<&str>,
     source_session_id: Option<&str>,
 ) {
-    let is_chatos_agent = matches!(
-        agent_key,
-        SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-    );
+    let is_chatos_agent = is_chatos_callback_agent(agent_key);
     let contact_agent_id = contact_agent_id
         .map(str::trim)
         .filter(|value| !value.is_empty());
