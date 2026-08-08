@@ -8,6 +8,7 @@ pub mod auth;
 pub mod config;
 mod http_body;
 pub mod internal_tls;
+#[path = "services/tool_runtime/mcp_server.rs"]
 pub mod mcp_server;
 pub mod models;
 pub mod notepad_store;

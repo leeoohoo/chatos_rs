@@ -19,7 +19,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use super::mcp_adapter::load_verified_manifest;
+use super::mcp::load_verified_manifest;
 use super::stdio_sandbox::PluginStdioSandboxLauncher;
 use crate::plugins::{ActivePluginInstallation, PluginInstaller};
 

@@ -12,7 +12,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::skill_document::{extract_references, parse_skill_document, resolve_reference_path};
-use super::{mcp_adapter::load_verified_manifest, portable_bundle::validate_local_portable_bundle};
+use super::{mcp::load_verified_manifest, portable_bundle::validate_local_portable_bundle};
 use crate::plugins::{ActivePluginInstallation, PluginInstaller};
 use crate::skills::{
     internal_skill_bundle_hash, internal_skill_catalog, internal_skill_instructions,
