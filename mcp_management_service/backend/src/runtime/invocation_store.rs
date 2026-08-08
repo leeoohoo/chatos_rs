@@ -187,7 +187,8 @@ pub struct FileModificationOutcomeStats {
     pub total: usize,
     pub changed: usize,
     pub already_applied: usize,
-    pub stale: usize,
+    pub stale_context: usize,
+    pub expected_match: usize,
     pub validation: usize,
     pub infrastructure: usize,
 }
@@ -1447,7 +1448,8 @@ fn file_modification_outcome_from_result(result: &Value) -> Option<FileModificat
         return match outcome {
             "changed" => Some(FileModificationOutcome::Changed),
             "already_applied" => Some(FileModificationOutcome::AlreadyApplied),
-            "stale" => Some(FileModificationOutcome::Stale),
+            "stale" | "stale_context" => Some(FileModificationOutcome::StaleContext),
+            "expected_match" => Some(FileModificationOutcome::ExpectedMatch),
             "validation" => Some(FileModificationOutcome::Validation),
             "infrastructure" => Some(FileModificationOutcome::Infrastructure),
             _ => None,
@@ -1566,7 +1568,8 @@ impl FileModificationOutcomeStats {
         let counter = match outcome {
             FileModificationOutcome::Changed => &mut self.changed,
             FileModificationOutcome::AlreadyApplied => &mut self.already_applied,
-            FileModificationOutcome::Stale => &mut self.stale,
+            FileModificationOutcome::StaleContext => &mut self.stale_context,
+            FileModificationOutcome::ExpectedMatch => &mut self.expected_match,
             FileModificationOutcome::Validation => &mut self.validation,
             FileModificationOutcome::Infrastructure => &mut self.infrastructure,
         };
@@ -1684,6 +1687,8 @@ async fn aggregate_runtime_invocation_stats(
                                     "changed",
                                     "already_applied",
                                     "stale",
+                                    "stale_context",
+                                    "expected_match",
                                     "validation",
                                     "infrastructure",
                                 ]] },
@@ -1701,9 +1706,14 @@ async fn aggregate_runtime_invocation_stats(
                                 { "$eq": ["$file_modification_outcome", "already_applied"] }, 1, 0
                             ] }
                         },
-                        "file_modification_stale": {
+                        "file_modification_stale_context": {
                             "$sum": { "$cond": [
-                                { "$eq": ["$file_modification_outcome", "stale"] }, 1, 0
+                                { "$in": ["$file_modification_outcome", ["stale", "stale_context"]] }, 1, 0
+                            ] }
+                        },
+                        "file_modification_expected_match": {
+                            "$sum": { "$cond": [
+                                { "$eq": ["$file_modification_outcome", "expected_match"] }, 1, 0
                             ] }
                         },
                         "file_modification_validation": {
@@ -1769,7 +1779,8 @@ async fn aggregate_runtime_invocation_stats(
             total: runtime_stat_count(&document, "file_modification_total"),
             changed: runtime_stat_count(&document, "file_modification_changed"),
             already_applied: runtime_stat_count(&document, "file_modification_already_applied"),
-            stale: runtime_stat_count(&document, "file_modification_stale"),
+            stale_context: runtime_stat_count(&document, "file_modification_stale_context"),
+            expected_match: runtime_stat_count(&document, "file_modification_expected_match"),
             validation: runtime_stat_count(&document, "file_modification_validation"),
             infrastructure: runtime_stat_count(&document, "file_modification_infrastructure"),
         },
@@ -2309,13 +2320,14 @@ mod tests {
             .unwrap();
         assert_eq!(
             failed.file_modification_outcome,
-            Some(FileModificationOutcome::Stale)
+            Some(FileModificationOutcome::StaleContext)
         );
 
         let stats = store.stats().await.unwrap();
         assert_eq!(stats.file_modifications.total, 2);
         assert_eq!(stats.file_modifications.already_applied, 1);
-        assert_eq!(stats.file_modifications.stale, 1);
+        assert_eq!(stats.file_modifications.stale_context, 1);
+        assert_eq!(stats.file_modifications.expected_match, 0);
         assert_eq!(stats.file_modifications.changed, 0);
         assert_eq!(stats.file_modifications.validation, 0);
         assert_eq!(stats.file_modifications.infrastructure, 0);
