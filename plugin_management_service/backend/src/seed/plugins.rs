@@ -129,7 +129,7 @@ fn bundled_ponytail_release() -> Result<
     String,
 > {
     let manifest = parse_plugin_manifest(
-        include_str!("../../../../plugins/ponytail/.chatos-plugin/plugin.json"),
+        include_str!("bundled_plugins/ponytail/.chatos-plugin/plugin.json"),
         PluginManifestSource::Chatos,
     )
     .map_err(|error| error.to_string())?;
@@ -242,7 +242,7 @@ fn embedded_ponytail_files() -> BTreeMap<String, Vec<u8>> {
         ($path:literal) => {
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../plugins/ponytail/",
+                "/src/seed/bundled_plugins/ponytail/",
                 $path
             ))
             .to_vec()
