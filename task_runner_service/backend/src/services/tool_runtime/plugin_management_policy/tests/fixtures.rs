@@ -7,8 +7,11 @@ use crate::models::{
 
 use super::super::*;
 
+#[path = "fixtures/base_plugin.rs"]
 mod base_plugin;
+#[path = "fixtures/component_plugins.rs"]
 mod component_plugins;
+#[path = "fixtures/core.rs"]
 mod core;
 
 pub(super) use base_plugin::resolved_plugin;

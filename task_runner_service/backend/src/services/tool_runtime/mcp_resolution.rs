@@ -428,4 +428,5 @@ fn has_non_empty_text(value: Option<&str>) -> bool {
 }
 
 #[cfg(test)]
+#[path = "mcp_resolution/tests.rs"]
 mod tests;

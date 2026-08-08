@@ -19,5 +19,7 @@ use super::workspace_mcp::{
 };
 use super::{normalized_optional, McpCatalogService, TaskService};
 
+#[path = "mcp_catalog_service/catalog.rs"]
 mod catalog;
+#[path = "mcp_catalog_service/prompt_preview.rs"]
 mod prompt_preview;

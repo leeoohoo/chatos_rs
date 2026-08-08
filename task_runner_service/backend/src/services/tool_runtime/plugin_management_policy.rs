@@ -17,8 +17,11 @@ use super::{RunService, TaskService};
 use crate::auth::{get_current_access_token, CurrentUser};
 use crate::models::{TaskMcpConfig, TaskRecord};
 
+#[path = "plugin_management_policy/plugin_selection.rs"]
 mod plugin_selection;
+#[path = "plugin_management_policy/selectable_views.rs"]
 pub(crate) mod selectable_views;
+#[path = "plugin_management_policy/task_config_application.rs"]
 mod task_config_application;
 
 use plugin_selection::{
@@ -647,4 +650,5 @@ fn dedupe_builtin_kinds(kinds: &mut Vec<BuiltinMcpKind>) {
 }
 
 #[cfg(test)]
+#[path = "plugin_management_policy/tests.rs"]
 mod tests;

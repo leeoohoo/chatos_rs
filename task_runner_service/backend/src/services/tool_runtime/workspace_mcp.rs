@@ -11,9 +11,11 @@ use super::mcp_resolution::{
 use super::normalize_strings;
 use super::normalized_optional;
 
+#[path = "workspace_mcp/workspace_dirs.rs"]
 mod workspace_dirs;
 
 #[cfg(test)]
+#[path = "workspace_mcp/tests.rs"]
 mod tests;
 
 #[cfg(test)]

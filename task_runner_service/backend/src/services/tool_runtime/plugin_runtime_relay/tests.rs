@@ -80,6 +80,9 @@ fn plugin_prompts_sort_by_kind_then_stable_text_identity() {
     );
 }
 
+#[path = "tests/constraints.rs"]
 mod constraints;
+#[path = "tests/native.rs"]
 mod native;
+#[path = "tests/validation.rs"]
 mod validation;

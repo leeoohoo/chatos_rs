@@ -22,12 +22,18 @@ use serde_json::{json, Map, Value};
 use super::RunService;
 use crate::models::{TaskRecord, TaskRunEventRecord, TaskRunRecord};
 
+#[path = "plugin_runtime_relay/component_response_validation.rs"]
 mod component_response_validation;
+#[path = "plugin_runtime_relay/hook_lifecycle.rs"]
 mod hook_lifecycle;
+#[path = "plugin_runtime_relay/prepare_execution.rs"]
 mod prepare_execution;
+#[path = "plugin_runtime_relay/prepare_validation.rs"]
 mod prepare_validation;
+#[path = "plugin_runtime_relay/relay_client.rs"]
 mod relay_client;
 
+#[path = "plugin_runtime_relay/naming.rs"]
 mod naming;
 use naming::*;
 
@@ -772,4 +778,5 @@ fn required_response_text(response: &Value, field: &str) -> Result<String, Strin
 }
 
 #[cfg(test)]
+#[path = "plugin_runtime_relay/tests.rs"]
 mod tests;

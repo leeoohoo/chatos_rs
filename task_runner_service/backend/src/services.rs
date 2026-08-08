@@ -41,7 +41,9 @@ mod filter_sanitize;
 mod harness_run_diff;
 mod harness_run_git;
 mod managed_config;
+#[path = "services/tool_runtime/mcp_catalog_service.rs"]
 mod mcp_catalog_service;
+#[path = "services/tool_runtime/mcp_resolution.rs"]
 mod mcp_resolution;
 mod memory_options;
 mod model_catalog;
@@ -49,8 +51,10 @@ mod model_config_service;
 mod model_runtime_resolver;
 pub(crate) mod path_redaction;
 mod plugin_cloud_runtime;
+#[path = "services/tool_runtime/plugin_management_policy.rs"]
 mod plugin_management_policy;
 mod plugin_management_prompts;
+#[path = "services/tool_runtime/plugin_runtime_relay.rs"]
 mod plugin_runtime_relay;
 pub(crate) use plugin_runtime_relay::plugin_relay_base_url;
 mod prerequisite_context;
@@ -80,6 +84,7 @@ mod task_tenant_scope;
 mod task_threads;
 mod terminal_lifecycle;
 mod tooling_state;
+#[path = "services/tool_runtime/workspace_mcp.rs"]
 mod workspace_mcp;
 mod workspace_snapshot;
 
