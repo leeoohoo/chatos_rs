@@ -3,10 +3,9 @@
 
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
-
 use super::ProviderCallError;
 
+mod init;
 mod prepare;
 mod runtime_calls;
 mod validation;
@@ -23,21 +22,6 @@ const MAX_TOOL_NAME_BYTES: usize = 256;
 pub(super) struct ExternalHttpProvider {
     request_timeout: Duration,
     response_limit_bytes: usize,
-}
-
-impl ExternalHttpProvider {
-    pub(super) fn new(request_timeout: Duration, response_limit_bytes: usize) -> Self {
-        Self {
-            request_timeout,
-            response_limit_bytes,
-        }
-    }
-
-    pub(super) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        let expected_provider_ref = format!("mcp-resource:{}", route.resource_id);
-        route.provider_kind == McpProviderKind::ExternalHttp
-            && route.provider_ref.as_deref() == Some(expected_provider_ref.as_str())
-    }
 }
 
 #[cfg(test)]

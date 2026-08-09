@@ -8,8 +8,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
-    WorkspaceProviderKind,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
 use chatos_mcp_service::METHOD_NOTIFICATIONS_CANCELLED;
 use reqwest::header::HeaderMap;

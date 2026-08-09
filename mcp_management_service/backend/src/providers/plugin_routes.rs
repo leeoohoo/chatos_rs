@@ -5,23 +5,11 @@ use super::plugin_cloud::PluginCloudProvider;
 use super::plugin_components::PluginComponentProvider;
 use super::plugin_local::PluginLocalProvider;
 
+mod init;
+
 #[derive(Clone)]
 pub(super) struct PluginRouteDispatcher {
     pub(super) local: PluginLocalProvider,
     pub(super) cloud: PluginCloudProvider,
     pub(super) components: PluginComponentProvider,
-}
-
-impl PluginRouteDispatcher {
-    pub(super) fn new(
-        local: PluginLocalProvider,
-        cloud: PluginCloudProvider,
-        components: PluginComponentProvider,
-    ) -> Self {
-        Self {
-            local,
-            cloud,
-            components,
-        }
-    }
 }

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_management_sdk::McpProviderKind;
+use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use chatos_mcp_service::{
     MCP_ERROR_AUTH_REQUIRED, METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL,
 };
@@ -12,7 +13,7 @@ use serde_json::{json, Value};
 use crate::runtime::{ExternalHttpProviderBinding, RuntimeSessionSnapshot};
 
 use super::super::project_service::decode_jsonrpc_response;
-use super::{ExternalHttpProvider, ProviderCallError, ResolvedMcpRoute, JSON_CONTENT_TYPE};
+use super::{ExternalHttpProvider, ProviderCallError, JSON_CONTENT_TYPE};
 use crate::providers::decode_cancel_notification_response;
 use crate::providers::{ProviderCallOutcome, ProviderCancelOutcome};
 
