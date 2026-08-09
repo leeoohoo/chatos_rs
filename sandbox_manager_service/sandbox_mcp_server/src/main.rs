@@ -24,19 +24,21 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_mcp::{
-    CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
-    TerminalControllerOptions, TerminalControllerService, TerminalControllerStoreRef,
+    BrowserToolsOptions, BrowserToolsService, CodeMaintainerHooks, CodeMaintainerHooksRef,
+    CodeMaintainerOptions, CodeMaintainerService, TerminalControllerOptions,
+    TerminalControllerService, TerminalControllerStoreRef,
 };
 use chatos_mcp_service::{
-    jsonrpc_error, JsonRpcRequest, JsonRpcResponse, McpJsonRpcService, McpServerInfo,
-    MCP_ERROR_AUTH_REQUIRED,
+    jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, McpJsonRpcService, McpServerInfo,
+    MCP_ERROR_AUTH_REQUIRED, MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS,
+    MCP_ERROR_METHOD_NOT_FOUND, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
 use crate::quota::WorkspaceQuota;
@@ -53,6 +55,8 @@ struct AppState {
     started_at: String,
     tools: Vec<Value>,
     mcp_service: McpJsonRpcService,
+    browser_service: BrowserToolsService,
+    browser_call_lock: Arc<Mutex<()>>,
     cloud_stdio: cloud_stdio::CloudStdioService,
 }
 
@@ -179,6 +183,7 @@ async fn build_app(config: ServerConfig) -> Result<Router, String> {
     Ok(Router::new()
         .route("/health", get(health))
         .route("/mcp", post(mcp_entrypoint))
+        .route("/internal/browser-mcp", post(browser_mcp_entrypoint))
         .route("/internal/cloud-stdio-mcp/call", post(cloud_stdio_call))
         .route("/internal/cloud-stdio-mcp/cancel", post(cloud_stdio_cancel))
         .route("/internal/cloud-stdio-mcp/close", post(cloud_stdio_close))
@@ -207,6 +212,16 @@ async fn build_state(config: ServerConfig) -> Result<AppState, String> {
         McpServerInfo::new("chatos-sandbox-mcp-server", VERSION),
         Arc::new(provider),
     );
+    let browser_service = BrowserToolsService::new(BrowserToolsOptions {
+        server_name: "chatos-sandbox-browser-mcp-server".to_string(),
+        workspace_dir: config.state_dir.join("browser"),
+        command_timeout_seconds: 120,
+        max_snapshot_chars: 12_000,
+        vision_adapter: None,
+        route_interception_enabled: false,
+        full_cdp_access_enabled: false,
+        schema_catalog_only: false,
+    })?;
     let cloud_stdio = cloud_stdio::CloudStdioService::new(config.clone());
 
     Ok(AppState {
@@ -215,6 +230,8 @@ async fn build_state(config: ServerConfig) -> Result<AppState, String> {
         started_at: chrono::Utc::now().to_rfc3339(),
         tools,
         mcp_service,
+        browser_service,
+        browser_call_lock: Arc::new(Mutex::new(())),
         cloud_stdio,
     })
 }
@@ -386,6 +403,77 @@ async fn mcp_entrypoint(
     Json(state.mcp_service.handle(request).await)
 }
 
+async fn browser_mcp_entrypoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<JsonRpcRequest>,
+) -> Json<JsonRpcResponse> {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if let Err(message) = authorize(state.config.auth_token.as_deref(), &headers) {
+        return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
+    }
+    let Some(runtime_session_id) = headers
+        .get("x-mcp-management-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Json(jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "x-mcp-management-session-id is required for Browser MCP",
+        ));
+    };
+    let _guard = state.browser_call_lock.lock().await;
+    let response = match request.method.as_str() {
+        METHOD_TOOLS_LIST => jsonrpc_ok(id, json!({"tools": state.browser_service.list_tools()})),
+        METHOD_TOOLS_CALL => {
+            let Some(name) = request
+                .params
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| value.starts_with("browser_"))
+            else {
+                return Json(jsonrpc_error(
+                    id,
+                    MCP_ERROR_INVALID_PARAMS,
+                    "Browser MCP tools/call requires a browser_* tool",
+                ));
+            };
+            let arguments = request
+                .params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            match state
+                .browser_service
+                .call_tool(name, arguments, Some(runtime_session_id))
+            {
+                Ok(result) => jsonrpc_ok(id, result),
+                Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+            }
+        }
+        "browser/session/close" => match state
+            .browser_service
+            .close_attached_managed_session(runtime_session_id)
+            .await
+        {
+            Ok(result) => jsonrpc_ok(id, json!({"closed": true, "result": result})),
+            Err(error) if error.contains("not attached") => {
+                jsonrpc_ok(id, json!({"closed": false}))
+            }
+            Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+        },
+        _ => jsonrpc_error(
+            id,
+            MCP_ERROR_METHOD_NOT_FOUND,
+            "Browser MCP only accepts tools/list, tools/call, or browser/session/close",
+        ),
+    };
+    Json(response)
+}
+
 async fn cloud_stdio_call(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -519,9 +607,18 @@ mod tests {
         body: serde_json::Value,
         headers: &[(&str, &str)],
     ) -> (StatusCode, serde_json::Value) {
+        post_jsonrpc(app, "/mcp", body, headers).await
+    }
+
+    async fn post_jsonrpc(
+        app: Router,
+        path: &str,
+        body: serde_json::Value,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, serde_json::Value) {
         let mut builder = Request::builder()
             .method("POST")
-            .uri("/mcp")
+            .uri(path)
             .header(header::CONTENT_TYPE, "application/json");
         for (name, value) in headers {
             builder = builder.header(*name, *value);
@@ -632,6 +729,7 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
             .collect();
         assert!(tool_names.contains(&"read_file"));
+        assert!(tool_names.iter().all(|name| !name.starts_with("browser_")));
 
         let (_status, call) = post_mcp(
             app,
@@ -658,6 +756,38 @@ mod tests {
                 .unwrap_or(false),
             "tools/call result should include fixture content"
         );
+    }
+
+    #[tokio::test]
+    async fn browser_mcp_is_dedicated_and_requires_a_runtime_session() {
+        let (app, _config) = test_app("browser-session-binding", Some("secret")).await;
+        let auth = [(header::AUTHORIZATION.as_str(), "Bearer secret")];
+        let (_status, missing_session) = post_jsonrpc(
+            app.clone(),
+            "/internal/browser-mcp",
+            rpc_request("browser-list-1", METHOD_TOOLS_LIST, json!({})),
+            &auth,
+        )
+        .await;
+        assert_eq!(
+            missing_session
+                .pointer("/error/code")
+                .and_then(serde_json::Value::as_i64),
+            Some(i64::from(MCP_ERROR_INVALID_PARAMS))
+        );
+
+        let headers = [
+            (header::AUTHORIZATION.as_str(), "Bearer secret"),
+            ("x-mcp-management-session-id", "runtime-session-1"),
+        ];
+        let (_status, tools) = post_jsonrpc(
+            app,
+            "/internal/browser-mcp",
+            rpc_request("browser-list-2", METHOD_TOOLS_LIST, json!({})),
+            &headers,
+        )
+        .await;
+        assert!(tools.pointer("/result/tools").is_some());
     }
 
     #[tokio::test]

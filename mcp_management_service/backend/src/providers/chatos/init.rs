@@ -4,7 +4,9 @@
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 
-use super::{ChatosProvider, CHATOS_MEMORY_PROVIDER_REF_PREFIX, CHATOS_PROVIDER_REF};
+use super::{
+    ChatosProvider, CloudSandboxProvider, CHATOS_MEMORY_PROVIDER_REF_PREFIX, CHATOS_PROVIDER_REF,
+};
 
 impl ChatosProvider {
     pub(in crate::providers) fn new(
@@ -32,7 +34,16 @@ impl ChatosProvider {
             ask_user_request_timeout,
             browser_request_timeout,
             response_limit_bytes,
+            cloud_sandbox: None,
         })
+    }
+
+    pub(in crate::providers) fn with_cloud_sandbox(
+        mut self,
+        cloud_sandbox: CloudSandboxProvider,
+    ) -> Self {
+        self.cloud_sandbox = Some(cloud_sandbox);
+        self
     }
 
     pub(in crate::providers) fn supports(&self, route: &ResolvedMcpRoute) -> bool {

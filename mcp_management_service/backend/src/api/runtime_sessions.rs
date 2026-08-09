@@ -174,7 +174,9 @@ pub(super) async fn resolve_runtime_session(
             request.owner_user_id.trim(),
             agent_key,
             request.project_id.trim(),
+            request.run_id.as_deref(),
             request.source_session_id.as_deref(),
+            sandbox_target.as_ref(),
             expires_at_unix,
         )
         .await;

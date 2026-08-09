@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use chatos_mcp_management_sdk::{
+    McpProviderKind, ResolvedMcpRoute, SandboxExecutionTarget, SandboxProviderKind,
+};
 use chatos_mcp_service::METHOD_TOOLS_LIST;
 use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
@@ -22,7 +24,9 @@ impl ChatosProvider {
         owner_user_id: &str,
         agent_key: SystemAgentKey,
         project_id: &str,
+        run_id: Option<&str>,
         source_session_id: Option<&str>,
+        sandbox_target: Option<&SandboxExecutionTarget>,
         expires_at_unix: i64,
     ) -> HashMap<String, Vec<Value>> {
         let mut tool_snapshots = HashMap::new();
@@ -46,7 +50,7 @@ impl ChatosProvider {
                 session_id: runtime_session_id,
                 expires_at_unix,
                 project_id,
-                run_id: None,
+                run_id,
                 turn_id: None,
                 task_id: None,
                 source_session_id: Some(source_session_id),
@@ -54,6 +58,7 @@ impl ChatosProvider {
                 default_model_config_id: None,
                 contact_agent_id: None,
                 expected_project_task_ids: &[],
+                sandbox_target,
             };
             match self.list_browser_tools(&binding).await {
                 Ok(tools) if !tools.is_empty() => {
@@ -73,6 +78,42 @@ impl ChatosProvider {
         &self,
         binding: &ChatosRequestBinding<'_>,
     ) -> Result<Vec<Value>, ProviderCallError> {
+        if let Some(target) = binding
+            .sandbox_target
+            .filter(|target| target.provider == SandboxProviderKind::Cloud)
+        {
+            self.authorize_sandbox_browser(binding, METHOD_TOOLS_LIST, None)
+                .await?;
+            let cloud_sandbox = self.cloud_sandbox.as_ref().ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "ChatOS Browser Runtime sandbox transport is not configured",
+                )
+            })?;
+            let invocation_id = format!("list-browser-{}", binding.session_id);
+            let outcome = cloud_sandbox
+                .call_browser_jsonrpc(
+                    target,
+                    binding.owner_user_id,
+                    binding.project_id,
+                    binding.run_id,
+                    binding.session_id,
+                    &json!({
+                        "jsonrpc": "2.0",
+                        "id": invocation_id,
+                        "method": METHOD_TOOLS_LIST,
+                        "params": {}
+                    }),
+                    self.browser_request_timeout,
+                )
+                .await?;
+            let result = decode_jsonrpc_response(
+                outcome.body.as_slice(),
+                invocation_id.as_str(),
+                "Sandbox Browser Runtime tools/list",
+            )?;
+            return extract_browser_tool_snapshot(result)
+                .map_err(ProviderCallError::invalid_response);
+        }
         let secret = self.internal_secret.as_deref().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "ChatOS Provider internal secret is not configured",

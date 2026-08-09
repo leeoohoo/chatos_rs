@@ -35,6 +35,7 @@ pub struct SandboxMcpRuntimeBinding {
     pub owner_user_id: String,
     pub project_id: String,
     pub run_id: String,
+    pub runtime_session_id: Option<String>,
 }
 
 impl SandboxManager {
@@ -56,6 +57,28 @@ impl SandboxManager {
                 .await?;
         strip_ungrantable_command_permission_schemas(&mut response);
         Ok(response)
+    }
+
+    pub async fn browser_mcp_proxy(
+        &self,
+        auth: &SandboxAuthContext,
+        sandbox_id: &str,
+        binding: Option<&SandboxMcpRuntimeBinding>,
+        payload: Value,
+    ) -> Result<Value, ApiError> {
+        let record = self.require_sandbox(sandbox_id).await?;
+        let runtime_session_id =
+            validate_browser_mcp_runtime_binding(auth, &record, binding, &payload)?;
+        let agent_endpoint = self.agent_endpoint_for(&record).await?;
+        let agent_token = self.agent_token_for_record(&record);
+        jsonrpc_agent_proxy_at(
+            agent_endpoint.as_str(),
+            "/internal/browser-mcp",
+            Some(agent_token.as_str()),
+            Some(runtime_session_id),
+            payload,
+        )
+        .await
     }
 
     pub async fn cloud_stdio_mcp_call(
@@ -163,6 +186,62 @@ pub(in crate::service::manager) fn validate_cloud_stdio_runtime_binding(
     }
     auth.ensure_lease_access(record, SCOPE_MCP_CALL)?;
     validate_mcp_runtime_binding(auth, record, binding)
+}
+
+pub(in crate::service::manager) fn validate_browser_mcp_runtime_binding<'a>(
+    auth: &SandboxAuthContext,
+    record: &SandboxLeaseRecord,
+    binding: Option<&'a SandboxMcpRuntimeBinding>,
+    payload: &Value,
+) -> Result<&'a str, ApiError> {
+    if auth.system_client_id() != Some("mcp-management-service") {
+        return Err(ApiError::forbidden(
+            "Browser MCP proxy is restricted to MCP Management",
+        ));
+    }
+    validate_mcp_runtime_binding(auth, record, binding)?;
+    let binding = binding.expect("validated MCP Management binding");
+    let runtime_session_id = binding
+        .runtime_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request("Browser MCP runtime session id is required"))?;
+    authorize_browser_mcp_payload(auth, record, payload)?;
+    Ok(runtime_session_id)
+}
+
+fn authorize_browser_mcp_payload(
+    auth: &SandboxAuthContext,
+    record: &SandboxLeaseRecord,
+    payload: &Value,
+) -> Result<(), ApiError> {
+    let method = payload
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request("Browser MCP JSON-RPC method is required"))?;
+    match method {
+        "tools/list" => auth.ensure_lease_access(record, SCOPE_MCP_TOOLS),
+        "tools/call" => {
+            auth.ensure_lease_access(record, SCOPE_MCP_CALL)?;
+            let name = payload
+                .get("params")
+                .and_then(|params| params.get("name"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| value.starts_with("browser_"))
+                .ok_or_else(|| {
+                    ApiError::bad_request("Browser MCP tools/call requires a browser_* tool")
+                })?;
+            auth.ensure_tool_allowed(name)
+        }
+        "browser/session/close" => auth.ensure_lease_access(record, SCOPE_MCP_CALL),
+        _ => Err(ApiError::bad_request(
+            "Browser MCP proxy only accepts tools/list, tools/call, or browser/session/close",
+        )),
+    }
 }
 
 pub(in crate::service::manager) fn validate_mcp_runtime_binding(
@@ -357,7 +436,17 @@ pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
     agent_token: Option<&str>,
     payload: Value,
 ) -> Result<Value, ApiError> {
-    let url = format!("{}/mcp", agent_endpoint.trim_end_matches('/'));
+    jsonrpc_agent_proxy_at(agent_endpoint, "/mcp", agent_token, None, payload).await
+}
+
+pub(in crate::service::manager) async fn jsonrpc_agent_proxy_at(
+    agent_endpoint: &str,
+    path: &str,
+    agent_token: Option<&str>,
+    runtime_session_id: Option<&str>,
+    payload: Value,
+) -> Result<Value, ApiError> {
+    let url = format!("{}{}", agent_endpoint.trim_end_matches('/'), path);
     let request_timeout = sandbox_agent_mcp_timeout(&payload);
     let client = http_client_builder(HttpClientTimeouts::new(request_timeout))
         .redirect(reqwest::redirect::Policy::none())
@@ -366,6 +455,12 @@ pub(in crate::service::manager) async fn jsonrpc_agent_proxy(
     let mut request = client.post(url.as_str());
     if let Some(agent_token) = agent_token.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.bearer_auth(agent_token);
+    }
+    if let Some(runtime_session_id) = runtime_session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        request = request.header("x-mcp-management-session-id", runtime_session_id);
     }
     let response = request.json(&payload).send().await.map_err(|err| {
         let status = if classify_http_request_error(&err) == HttpRequestErrorKind::Timeout {
@@ -610,6 +705,7 @@ mod tests {
             owner_user_id: "tenant-1".to_string(),
             project_id: "project-1".to_string(),
             run_id: "run-1".to_string(),
+            runtime_session_id: None,
         };
         validate_mcp_runtime_binding(&auth, &lease_record(), Some(&binding)).unwrap();
 
@@ -627,6 +723,7 @@ mod tests {
             owner_user_id: "tenant-1".to_string(),
             project_id: "project-1".to_string(),
             run_id: "run-1".to_string(),
+            runtime_session_id: None,
         };
         let task_runner = system_auth(&[SCOPE_MCP_CALL], &["*"]);
         let error =
@@ -645,6 +742,75 @@ mod tests {
         });
         validate_cloud_stdio_runtime_binding(&mcp_management, &lease_record(), Some(&binding))
             .unwrap();
+    }
+
+    #[test]
+    fn browser_proxy_requires_mcp_management_runtime_binding_and_browser_methods() {
+        let mcp_management = SandboxAuthContext::System(SandboxSystemClient {
+            client_id: "mcp-management-service".to_string(),
+            scopes: vec![SCOPE_MCP_CALL.to_string(), SCOPE_MCP_TOOLS.to_string()],
+            allowed_tenant_ids: vec!["*".to_string()],
+            allowed_project_ids: vec!["*".to_string()],
+            allowed_tools: vec!["*".to_string()],
+            max_lease_ttl_seconds: 3_600,
+            internal_identity: None,
+        });
+        let binding = SandboxMcpRuntimeBinding {
+            lease_id: "lease-1".to_string(),
+            owner_user_id: "tenant-1".to_string(),
+            project_id: "project-1".to_string(),
+            run_id: "run-1".to_string(),
+            runtime_session_id: Some("runtime-session-1".to_string()),
+        };
+        let allowed = json!({
+            "jsonrpc": "2.0",
+            "id": "browser-1",
+            "method": "tools/call",
+            "params": {"name": "browser_navigate", "arguments": {"url": "http://localhost:5173"}}
+        });
+        assert_eq!(
+            validate_browser_mcp_runtime_binding(
+                &mcp_management,
+                &lease_record(),
+                Some(&binding),
+                &allowed,
+            )
+            .unwrap(),
+            "runtime-session-1"
+        );
+
+        let terminal = json!({
+            "jsonrpc": "2.0",
+            "id": "terminal-1",
+            "method": "tools/call",
+            "params": {"name": "execute_command", "arguments": {"command": "id"}}
+        });
+        assert!(validate_browser_mcp_runtime_binding(
+            &mcp_management,
+            &lease_record(),
+            Some(&binding),
+            &terminal,
+        )
+        .is_err());
+
+        let task_runner = system_auth(&[SCOPE_MCP_CALL], &["*"]);
+        assert!(validate_browser_mcp_runtime_binding(
+            &task_runner,
+            &lease_record(),
+            Some(&binding),
+            &allowed,
+        )
+        .is_err());
+
+        let mut missing_session = binding;
+        missing_session.runtime_session_id = None;
+        assert!(validate_browser_mcp_runtime_binding(
+            &mcp_management,
+            &lease_record(),
+            Some(&missing_session),
+            &allowed,
+        )
+        .is_err());
     }
 
     #[test]

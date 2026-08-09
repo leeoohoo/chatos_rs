@@ -76,6 +76,10 @@ fn protected_routes() -> Router<AppState> {
             post(handlers::sandbox_environment_mcp_proxy),
         )
         .route(
+            "/sandbox-environments/{environment_id}/browser-mcp",
+            post(handlers::sandbox_environment_browser_mcp_proxy),
+        )
+        .route(
             "/sandbox-environments/{environment_id}/cloud-stdio-mcp/call",
             post(handlers::sandbox_environment_cloud_stdio_mcp_call),
         )
@@ -103,6 +107,10 @@ fn protected_routes() -> Router<AppState> {
         .route(
             "/sandboxes/{sandbox_id}/mcp",
             post(handlers::sandbox_mcp_proxy),
+        )
+        .route(
+            "/sandboxes/{sandbox_id}/browser-mcp",
+            post(handlers::sandbox_browser_mcp_proxy),
         )
         .route(
             "/sandboxes/{sandbox_id}/cloud-stdio-mcp/call",

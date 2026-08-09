@@ -37,6 +37,13 @@ impl ProviderDispatcher {
             sandbox_manager_internal_secret.clone(),
             runtime.response_limit_bytes,
         )?;
+        let cloud_sandbox = CloudSandboxProvider::new(
+            sandbox_manager_http.clone(),
+            sandbox_manager_service_base_url.clone(),
+            sandbox_manager_request_timeout,
+            sandbox_manager_internal_secret.clone(),
+            runtime.response_limit_bytes,
+        )?;
         let external_http = ExternalHttpProvider::new(
             runtime.external_http_request_timeout,
             runtime.response_limit_bytes,
@@ -94,14 +101,9 @@ impl ProviderDispatcher {
                 chatos.browser_request_timeout,
                 chatos.internal_secret,
                 runtime.response_limit_bytes,
-            )?,
-            cloud_sandbox: CloudSandboxProvider::new(
-                sandbox_manager_http.clone(),
-                sandbox_manager_service_base_url.clone(),
-                sandbox_manager_request_timeout,
-                sandbox_manager_internal_secret.clone(),
-                runtime.response_limit_bytes,
-            )?,
+            )?
+            .with_cloud_sandbox(cloud_sandbox.clone()),
+            cloud_sandbox,
             cloud_stdio,
             sandbox_images: SandboxImagesProvider::new(
                 sandbox_manager_http,

@@ -61,6 +61,7 @@ FROM mcr.microsoft.com/devcontainers/base:dev-ubuntu-24.04
 ARG SANDBOX_FEATURES=java@21,node@24,rust@stable,go@1.26
 ARG SANDBOX_CUSTOM_SCRIPT_B64=
 ARG SANDBOX_PLAYWRIGHT_VERSION=1.55.0
+ARG AGENT_BROWSER_VERSION=0.31.2
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CHATOS_AGENT_HOST=0.0.0.0
@@ -134,6 +135,10 @@ RUN set -eux; \
       npm install -g pnpm yarn; \
       mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"; \
       npx --yes "playwright@${SANDBOX_PLAYWRIGHT_VERSION}" install chromium; \
+      npm install -g "agent-browser@${AGENT_BROWSER_VERSION}"; \
+      chromium_path="$(find "$PLAYWRIGHT_BROWSERS_PATH" -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) | head -n 1)"; \
+      test -n "$chromium_path"; \
+      ln -sfn "$chromium_path" /usr/local/bin/chatos-sandbox-chromium; \
       chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"; \
       npm cache clean --force; \
       apt-get clean; \
@@ -276,6 +281,9 @@ ENV HOME=/home/sandbox
 ENV CARGO_HOME=/home/sandbox/.cargo
 ENV UV_CACHE_DIR=/home/sandbox/.cache/uv
 ENV XDG_CACHE_HOME=/home/sandbox/.cache
+ENV AGENT_BROWSER_BIN=/usr/local/bin/agent-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chatos-sandbox-chromium
+ENV AGENT_BROWSER_SOCKET_DIR=/home/sandbox/.cache/agent-browser
 
 WORKDIR /workspace
 EXPOSE 49888

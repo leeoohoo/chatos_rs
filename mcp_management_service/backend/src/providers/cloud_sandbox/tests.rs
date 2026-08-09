@@ -206,3 +206,82 @@ async fn cloud_sandbox_call_uses_signed_manager_proxy_and_bound_headers() {
     assert_eq!(outcome.result["called"], "read_file_raw");
     server.abort();
 }
+
+#[tokio::test]
+async fn browser_proxy_uses_the_dedicated_endpoint_and_runtime_session_header() {
+    async fn lease() -> Json<Value> {
+        Json(json!({
+            "id": "lease-1",
+            "sandbox_id": "sandbox-1",
+            "tenant_id": "user-1",
+            "project_id": "project-1",
+            "run_id": "run-1",
+            "status": "ready",
+            "lease_kind": "sandbox",
+            "environment_services": []
+        }))
+    }
+
+    async fn browser(headers: HeaderMap, Json(request): Json<Value>) -> Json<Value> {
+        assert_eq!(
+            headers
+                .get("x-mcp-management-session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("runtime-session-1")
+        );
+        assert_eq!(
+            headers
+                .get("x-chatos-sandbox-lease-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("lease-1")
+        );
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": {"tools": []}
+        }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/api/internal/sandboxes/sandbox-1", get(lease))
+                .route(
+                    "/api/internal/sandboxes/sandbox-1/browser-mcp",
+                    post(browser),
+                ),
+        )
+        .await
+        .unwrap();
+    });
+    let provider = CloudSandboxProvider::new(
+        reqwest::Client::new(),
+        format!("http://{address}"),
+        Duration::from_secs(5),
+        Some("a-long-sandbox-secret".to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let outcome = provider
+        .call_browser_jsonrpc(
+            &target(),
+            "user-1",
+            "project-1",
+            Some("run-1"),
+            "runtime-session-1",
+            &json!({
+                "jsonrpc": "2.0",
+                "id": "browser-list-1",
+                "method": "tools/list",
+                "params": {}
+            }),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("browser proxy");
+    let response: Value = serde_json::from_slice(outcome.body.as_slice()).unwrap();
+    assert_eq!(response["id"], "browser-list-1");
+}

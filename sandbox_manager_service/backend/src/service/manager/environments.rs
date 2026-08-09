@@ -576,6 +576,49 @@ impl SandboxManager {
         super::mcp_proxy::jsonrpc_agent_proxy(endpoint, Some(agent_token.as_str()), payload).await
     }
 
+    pub async fn environment_browser_mcp_proxy(
+        &self,
+        auth: &SandboxAuthContext,
+        environment_id: &str,
+        service_id: Option<&str>,
+        binding: Option<&super::mcp_proxy::SandboxMcpRuntimeBinding>,
+        payload: Value,
+    ) -> Result<Value, ApiError> {
+        let record = self.require_environment(environment_id).await?;
+        let runtime_session_id = super::mcp_proxy::validate_browser_mcp_runtime_binding(
+            auth, &record, binding, &payload,
+        )?;
+        let service_id = service_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ApiError::bad_request(
+                    "Browser MCP environment requests require the immutable service_id",
+                )
+            })?;
+        let service = record
+            .environment_services
+            .iter()
+            .find(|service| service.service_id == service_id)
+            .ok_or_else(|| {
+                ApiError::not_found(format!("environment service not found: {service_id}"))
+            })?;
+        ensure_mcp_target(service)?;
+        let endpoint = service
+            .agent_endpoint
+            .as_deref()
+            .ok_or_else(|| environment_backend_error("application MCP endpoint is unavailable"))?;
+        let agent_token = self.agent_token_for_record(&record);
+        super::mcp_proxy::jsonrpc_agent_proxy_at(
+            endpoint,
+            "/internal/browser-mcp",
+            Some(agent_token.as_str()),
+            Some(runtime_session_id),
+            payload,
+        )
+        .await
+    }
+
     pub async fn environment_cloud_stdio_mcp_call(
         &self,
         auth: &SandboxAuthContext,

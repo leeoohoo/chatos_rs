@@ -10,6 +10,7 @@ use chatos_agent::{
     uses_chatos_notepad_callback,
 };
 use chatos_mcp::SystemMcpKey;
+use chatos_mcp_management_sdk::{SandboxExecutionTarget, SandboxProviderKind};
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
     MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS, MCP_ERROR_METHOD_NOT_FOUND, METHOD_TOOLS_CALL,
@@ -31,6 +32,7 @@ const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 const CHATOS_TOKEN_AUDIENCE: &str = "chatos";
 const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
 const CLOUD_BROWSER_SESSION_CLOSE_METHOD: &str = "browser/session/close";
+const CLOUD_BROWSER_EXECUTION_AUTHORIZE_METHOD: &str = "browser/execution/authorize";
 const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
 mod browser;
@@ -61,6 +63,7 @@ struct McpManagementBinding {
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
     contact_agent_id: Option<String>,
+    sandbox_target: Option<SandboxExecutionTarget>,
 }
 
 async fn mcp_management_entrypoint(
@@ -99,7 +102,7 @@ async fn dispatch_mcp_management_request(
     request: JsonRpcRequest,
 ) -> JsonRpcResponse {
     let id = request.id.clone().unwrap_or(Value::Null);
-    let binding = match mcp_management_binding_from_headers(&headers) {
+    let binding = match mcp_management_binding_from_headers(headers) {
         Ok(binding) => binding,
         Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
     };
@@ -109,6 +112,11 @@ async fn dispatch_mcp_management_request(
     };
     if system_key == SystemMcpKey::BrowserTools && request.method == METHOD_TOOLS_LIST {
         return browser::dispatch_bound_browser_tools_list(request, &binding).await;
+    }
+    if system_key == SystemMcpKey::BrowserTools
+        && request.method == CLOUD_BROWSER_EXECUTION_AUTHORIZE_METHOD
+    {
+        return browser::dispatch_bound_browser_execution_authorization(request, &binding).await;
     }
     if request.method != METHOD_TOOLS_CALL {
         return jsonrpc_error(
@@ -209,7 +217,50 @@ fn mcp_management_binding_from_headers(
         source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
         source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
         contact_agent_id: header_text(headers, "x-mcp-management-contact-agent-id"),
+        sandbox_target: sandbox_target_from_headers(headers)?,
     })
+}
+
+fn sandbox_target_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<SandboxExecutionTarget>, String> {
+    let provider = header_text(headers, "x-mcp-management-sandbox-provider");
+    let sandbox_id = header_text(headers, "x-mcp-management-sandbox-id");
+    let lease_id = header_text(headers, "x-mcp-management-sandbox-lease-id");
+    let is_environment = header_text(headers, "x-mcp-management-sandbox-is-environment");
+    if provider.is_none() && sandbox_id.is_none() && lease_id.is_none() && is_environment.is_none()
+    {
+        return Ok(None);
+    }
+    let provider = match provider.as_deref() {
+        Some("cloud") => SandboxProviderKind::Cloud,
+        Some("local_connector") => SandboxProviderKind::LocalConnector,
+        Some("none") => SandboxProviderKind::None,
+        Some(_) => {
+            return Err(
+                "x-mcp-management-sandbox-provider must be cloud, local_connector, or none"
+                    .to_string(),
+            )
+        }
+        None => return Err("x-mcp-management-sandbox-provider is required".to_string()),
+    };
+    let is_environment = is_environment
+        .ok_or_else(|| "x-mcp-management-sandbox-is-environment is required".to_string())?
+        .parse::<bool>()
+        .map_err(|_| "x-mcp-management-sandbox-is-environment must be a boolean".to_string())?;
+    let target = SandboxExecutionTarget {
+        provider,
+        pairing_id: header_text(headers, "x-mcp-management-sandbox-pairing-id"),
+        sandbox_id: sandbox_id
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "x-mcp-management-sandbox-id is required".to_string())?,
+        lease_id: lease_id
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "x-mcp-management-sandbox-lease-id is required".to_string())?,
+        is_environment,
+        service_id: header_text(headers, "x-mcp-management-sandbox-service-id"),
+    };
+    Ok(Some(target))
 }
 
 fn session_matches_binding(

@@ -6,6 +6,7 @@ use std::time::Duration;
 use super::project_service::decode_jsonrpc_response;
 use super::ProviderCallError;
 
+mod browser;
 mod init;
 mod manager_client;
 mod runtime_calls;

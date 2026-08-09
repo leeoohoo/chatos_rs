@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
-use chatos_mcp_management_sdk::ResolvedMcpRoute;
+use chatos_mcp_management_sdk::{ResolvedMcpRoute, SandboxProviderKind};
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
@@ -17,7 +17,7 @@ use crate::runtime::RuntimeSessionSnapshot;
 
 use super::{
     is_memory_reader, memory_provider_ref, ChatosProvider, ChatosRequestBinding, ProviderCallError,
-    CLOUD_BROWSER_SESSION_CLOSE_METHOD,
+    CLOUD_BROWSER_EXECUTION_AUTHORIZE_METHOD, CLOUD_BROWSER_SESSION_CLOSE_METHOD,
 };
 
 impl ChatosProvider {
@@ -65,6 +65,54 @@ impl ChatosProvider {
                 ));
             }
         }
+        let binding = ChatosRequestBinding::from(snapshot);
+        if descriptor.key == SystemMcpKey::BrowserTools {
+            if let Some(target) = snapshot
+                .sandbox_target
+                .as_ref()
+                .filter(|target| target.provider == SandboxProviderKind::Cloud)
+            {
+                self.authorize_sandbox_browser(
+                    &binding,
+                    METHOD_TOOLS_CALL,
+                    Some(original_tool_name),
+                )
+                .await?;
+                let cloud_sandbox = self.cloud_sandbox.as_ref().ok_or_else(|| {
+                    ProviderCallError::provider_unavailable(
+                        "ChatOS Browser Runtime sandbox transport is not configured",
+                    )
+                })?;
+                let outcome = cloud_sandbox
+                    .call_browser_jsonrpc(
+                        target,
+                        snapshot.owner_user_id.as_str(),
+                        snapshot.project_id.as_str(),
+                        snapshot.run_id.as_deref(),
+                        snapshot.session_id.as_str(),
+                        &json!({
+                            "jsonrpc": "2.0",
+                            "id": invocation_id,
+                            "method": METHOD_TOOLS_CALL,
+                            "params": {
+                                "name": original_tool_name,
+                                "arguments": arguments,
+                            }
+                        }),
+                        self.browser_request_timeout,
+                    )
+                    .await?;
+                let result = decode_jsonrpc_response(
+                    outcome.body.as_slice(),
+                    invocation_id,
+                    "Sandbox Browser Runtime",
+                )?;
+                return Ok(ProviderCallOutcome {
+                    result,
+                    response_bytes: outcome.body.len(),
+                });
+            }
+        }
         let endpoint = format!(
             "{}/internal/mcp-management/mcp/{}",
             self.base_url,
@@ -75,7 +123,6 @@ impl ChatosProvider {
             SystemMcpKey::BrowserTools => self.browser_request_timeout,
             _ => self.request_timeout,
         };
-        let binding = ChatosRequestBinding::from(snapshot);
         let response = self
             .bound_request(&binding, endpoint, timeout, secret)?
             .json(&json!({
@@ -133,6 +180,14 @@ impl ChatosProvider {
                     "ChatOS route is not a supported System MCP",
                 )
             })?;
+        if descriptor.key == SystemMcpKey::BrowserTools
+            && snapshot
+                .sandbox_target
+                .as_ref()
+                .is_some_and(|target| target.provider == SandboxProviderKind::Cloud)
+        {
+            return Ok(ProviderCancelOutcome::NotSupported);
+        }
         let endpoint = format!(
             "{}/internal/mcp-management/mcp/{}",
             self.base_url,
@@ -185,12 +240,47 @@ impl ChatosProvider {
             )
         })?;
         let invocation_id = format!("close-{}", snapshot.session_id);
+        let binding = ChatosRequestBinding::from(snapshot);
+        if let Some(target) = snapshot
+            .sandbox_target
+            .as_ref()
+            .filter(|target| target.provider == SandboxProviderKind::Cloud)
+        {
+            self.authorize_sandbox_browser(&binding, CLOUD_BROWSER_SESSION_CLOSE_METHOD, None)
+                .await?;
+            let cloud_sandbox = self.cloud_sandbox.as_ref().ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "ChatOS Browser Runtime sandbox transport is not configured",
+                )
+            })?;
+            let outcome = cloud_sandbox
+                .call_browser_jsonrpc(
+                    target,
+                    snapshot.owner_user_id.as_str(),
+                    snapshot.project_id.as_str(),
+                    snapshot.run_id.as_deref(),
+                    snapshot.session_id.as_str(),
+                    &json!({
+                        "jsonrpc": "2.0",
+                        "id": invocation_id,
+                        "method": CLOUD_BROWSER_SESSION_CLOSE_METHOD,
+                        "params": {}
+                    }),
+                    self.browser_request_timeout,
+                )
+                .await?;
+            decode_jsonrpc_response(
+                outcome.body.as_slice(),
+                invocation_id.as_str(),
+                "Sandbox Browser Runtime close",
+            )?;
+            return Ok(());
+        }
         let endpoint = format!(
             "{}/internal/mcp-management/mcp/browser_tools/sessions/{}/close",
             self.base_url,
             urlencoding::encode(snapshot.session_id.as_str())
         );
-        let binding = ChatosRequestBinding::from(snapshot);
         let response = self
             .bound_request(&binding, endpoint, self.browser_request_timeout, secret)?
             .json(&json!({
@@ -225,6 +315,81 @@ impl ChatosProvider {
             invocation_id.as_str(),
             "ChatOS Browser Runtime close",
         )?;
+        Ok(())
+    }
+
+    pub(super) async fn authorize_sandbox_browser(
+        &self,
+        binding: &ChatosRequestBinding<'_>,
+        operation: &str,
+        tool_name: Option<&str>,
+    ) -> Result<(), ProviderCallError> {
+        let secret = self.internal_secret.as_deref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "ChatOS Provider internal secret is not configured",
+            )
+        })?;
+        let target = binding.sandbox_target.ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "ChatOS Browser Runtime requires an immutable sandbox target",
+            )
+        })?;
+        let invocation_id = format!("authorize-browser-{}", binding.session_id);
+        let endpoint = format!(
+            "{}/internal/mcp-management/mcp/{}",
+            self.base_url,
+            SystemMcpKey::BrowserTools.as_str()
+        );
+        let response = self
+            .bound_request(
+                binding,
+                endpoint,
+                self.browser_request_timeout.min(Duration::from_secs(15)),
+                secret,
+            )?
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": invocation_id,
+                "method": CLOUD_BROWSER_EXECUTION_AUTHORIZE_METHOD,
+                "params": {
+                    "operation": operation,
+                    "name": tool_name,
+                }
+            }))
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "ChatOS Browser Runtime authorization failed: {error}"
+                ))
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "ChatOS Browser Runtime authorization response could not be read: {error}"
+                ))
+            })?;
+        if !status.is_success() {
+            return Err(ProviderCallError::provider_unavailable(format!(
+                "ChatOS Browser Runtime authorization returned HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let result = decode_jsonrpc_response(
+            bytes.as_slice(),
+            invocation_id.as_str(),
+            "ChatOS Browser Runtime authorization",
+        )?;
+        if result.get("authorized").and_then(Value::as_bool) != Some(true)
+            || result.get("target_ref").and_then(Value::as_str)
+                != Some(target.provider_ref().as_str())
+        {
+            return Err(ProviderCallError::invalid_response(
+                "ChatOS Browser Runtime authorization did not confirm the immutable sandbox target",
+            ));
+        }
         Ok(())
     }
 }
