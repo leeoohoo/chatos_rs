@@ -6,6 +6,10 @@ use chatos_mcp_management_sdk::{
     ExecutionPlane, ProjectExecutionContext, SandboxProviderKind, WorkspaceExecutionTarget,
     WorkspaceProviderKind,
 };
+use chatos_plugin_management_sdk::{
+    AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
+    ResolvedMcp, ResourceMetadata, ResourceSecurity,
+};
 
 fn request() -> CreateRuntimeSessionRequest {
     CreateRuntimeSessionRequest {
@@ -22,6 +26,7 @@ fn request() -> CreateRuntimeSessionRequest {
         contact_agent_id: None,
         default_model_config_id: None,
         expected_project_task_ids: Vec::new(),
+        requested_mcp_ids: None,
         locale: None,
         requested_device_id: Some("device-1".to_string()),
         requested_sandbox_provider: None,
@@ -45,6 +50,115 @@ fn context() -> ProjectExecutionContext {
         source_type: Some("local_connector".to_string()),
         revision: "revision-1".to_string(),
     }
+}
+
+fn resolved_mcp(resource_id: &str, required: bool) -> ResolvedMcp {
+    ResolvedMcp {
+        resource: McpRecord {
+            id: resource_id.to_string(),
+            owner_user_id: "system".to_string(),
+            owner_kind: "system".to_string(),
+            visibility: "system_private".to_string(),
+            source_kind: "system_seed".to_string(),
+            name: resource_id.to_string(),
+            display_name: resource_id.to_string(),
+            description: None,
+            enabled: true,
+            runtime: McpRuntime::default(),
+            security: ResourceSecurity::default(),
+            metadata: ResourceMetadata::default(),
+            plugin_component: Default::default(),
+            created_by: "system".to_string(),
+            updated_by: "system".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        },
+        binding: AgentBindingRecord {
+            id: format!("binding-{resource_id}"),
+            agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+            binding_scope: "global_default".to_string(),
+            owner_user_id: None,
+            resource_kind: "mcp".to_string(),
+            resource_id: resource_id.to_string(),
+            enabled: true,
+            required,
+            priority: 100,
+            conditions: BindingConditions::default(),
+            component_allowlist: Vec::new(),
+            tool_allowlist: Vec::new(),
+            tool_blocklist: Vec::new(),
+            created_by: "system".to_string(),
+            updated_by: "system".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        },
+        available: true,
+        status: "ready".to_string(),
+        reason: None,
+        tool_snapshot: Vec::new(),
+    }
+}
+
+fn capabilities_for_scope_test() -> ResolvedAgentCapabilities {
+    ResolvedAgentCapabilities {
+        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+        owner_user_id: "user-1".to_string(),
+        policy_revision: "policy-1".to_string(),
+        generated_at: "now".to_string(),
+        agent_enabled: true,
+        mcps: vec![
+            resolved_mcp("required-core", true),
+            resolved_mcp("builtin_browser_tools", false),
+            resolved_mcp("builtin_web_tools", false),
+        ],
+        skills: Vec::new(),
+        plugins: Vec::new(),
+        local_connector_requirements: Vec::new(),
+    }
+}
+
+#[test]
+fn requested_mcp_scope_keeps_required_resources_and_only_selected_optionals() {
+    let mut capabilities = capabilities_for_scope_test();
+
+    apply_requested_mcp_scope(
+        &mut capabilities,
+        Some(&["builtin_browser_tools".to_string()]),
+    )
+    .expect("selected browser scope");
+
+    assert_eq!(
+        capabilities
+            .mcps
+            .iter()
+            .map(|resolved| resolved.resource.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["required-core", "builtin_browser_tools"]
+    );
+    assert!(capabilities
+        .mcps
+        .iter()
+        .all(|resolved| resolved.binding.required));
+}
+
+#[test]
+fn empty_requested_mcp_scope_removes_all_optional_resources() {
+    let mut capabilities = capabilities_for_scope_test();
+
+    apply_requested_mcp_scope(&mut capabilities, Some(&[])).expect("empty optional scope");
+
+    assert_eq!(capabilities.mcps.len(), 1);
+    assert_eq!(capabilities.mcps[0].resource.id, "required-core");
+}
+
+#[test]
+fn requested_mcp_scope_rejects_resources_outside_agent_policy() {
+    let mut capabilities = capabilities_for_scope_test();
+
+    let error = apply_requested_mcp_scope(&mut capabilities, Some(&["not-configured".to_string()]))
+        .expect_err("unknown resource must fail closed");
+
+    assert!(format!("{error:?}").contains("not-configured"));
 }
 
 #[test]

@@ -11,7 +11,7 @@ use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::SystemMcpKey;
 use tracing::info;
 
-use crate::models::{TaskRecord, TaskRunRecord};
+use crate::models::{TaskMcpConfig, TaskRecord, TaskRunRecord};
 
 use crate::services::sandbox_runtime::SandboxRuntimeContext;
 
@@ -48,6 +48,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         contact_agent_id: None,
         default_model_config_id: task.default_model_config_id.clone(),
         expected_project_task_ids: Vec::new(),
+        requested_mcp_ids: Some(requested_mcp_resource_ids(&task.mcp_config)),
         locale: Some(if task.mcp_config.locale().is_english() {
             "en-US".to_string()
         } else {
@@ -140,4 +141,55 @@ fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
+    let mut resource_ids = config
+        .enabled_builtin_kinds
+        .iter()
+        .filter_map(|kind| chatos_mcp::system_mcp_descriptor_by_any(kind))
+        .map(|descriptor| descriptor.resource_id.to_string())
+        .chain(
+            config
+                .external_mcp_config_ids
+                .iter()
+                .filter_map(|resource_id| {
+                    let resource_id = resource_id.trim();
+                    (!resource_id.is_empty()).then(|| resource_id.to_string())
+                }),
+        )
+        .collect::<Vec<_>>();
+    resource_ids.sort();
+    resource_ids.dedup();
+    resource_ids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authoritative_task_mcp_config_maps_to_runtime_resource_scope() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec![
+                "BrowserTools".to_string(),
+                "CodeMaintainerRead".to_string(),
+                "BrowserTools".to_string(),
+            ],
+            external_mcp_config_ids: vec![
+                " external-mcp-1 ".to_string(),
+                "external-mcp-1".to_string(),
+            ],
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(
+            requested_mcp_resource_ids(&config),
+            vec![
+                "builtin_browser_tools".to_string(),
+                "builtin_code_maintainer_read".to_string(),
+                "external-mcp-1".to_string(),
+            ]
+        );
+    }
 }

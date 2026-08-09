@@ -91,6 +91,7 @@ fn runtime_session_request(
         contact_agent_id: None,
         default_model_config_id: Some(model_config_id.trim().to_string()),
         expected_project_task_ids: Vec::new(),
+        requested_mcp_ids: None,
         locale: Some("zh-CN".to_string()),
         requested_device_id: None,
         requested_sandbox_provider: None,

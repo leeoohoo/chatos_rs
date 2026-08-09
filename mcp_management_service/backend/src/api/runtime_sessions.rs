@@ -51,6 +51,11 @@ pub(super) async fn resolve_runtime_session(
         "expected_project_task_ids",
         200,
     )?;
+    let requested_mcp_ids = request
+        .requested_mcp_ids
+        .clone()
+        .map(|items| normalized_unique_items(items, "requested_mcp_ids", 200))
+        .transpose()?;
     let mut project_context = state
         .project_context_client
         .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
@@ -99,6 +104,7 @@ pub(super) async fn resolve_runtime_session(
     if !capabilities.agent_enabled {
         return Err(ApiError::conflict("configured Agent is disabled"));
     }
+    apply_requested_mcp_scope(&mut capabilities, requested_mcp_ids.as_deref())?;
     let session_id = format!("mcp_session_{}", Uuid::new_v4().simple());
     let expires_at_unix = state
         .runtime_grants
@@ -602,6 +608,41 @@ fn apply_live_tool_snapshots(
             resolved.reason = None;
         }
     }
+}
+
+fn apply_requested_mcp_scope(
+    capabilities: &mut chatos_plugin_management_sdk::ResolvedAgentCapabilities,
+    requested_mcp_ids: Option<&[String]>,
+) -> Result<(), ApiError> {
+    let Some(requested_mcp_ids) = requested_mcp_ids else {
+        return Ok(());
+    };
+    let requested = requested_mcp_ids.iter().cloned().collect::<HashSet<_>>();
+    let available = capabilities
+        .mcps
+        .iter()
+        .map(|resolved| resolved.resource.id.clone())
+        .collect::<HashSet<_>>();
+    let mut unknown = requested
+        .difference(&available)
+        .cloned()
+        .collect::<Vec<_>>();
+    unknown.sort();
+    if !unknown.is_empty() {
+        return Err(ApiError::conflict(format!(
+            "requested MCP resources are not present in the configured Agent policy: {}",
+            unknown.join(", ")
+        )));
+    }
+    capabilities.mcps.retain(|resolved| {
+        resolved.binding.required || requested.contains(resolved.resource.id.as_str())
+    });
+    for resolved in &mut capabilities.mcps {
+        if requested.contains(resolved.resource.id.as_str()) {
+            resolved.binding.required = true;
+        }
+    }
+    Ok(())
 }
 
 fn capability_runtime_provider(

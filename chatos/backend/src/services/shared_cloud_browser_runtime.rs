@@ -269,15 +269,23 @@ mod tests {
     fn probe_uses_the_cloud_browser_security_profile_without_starting_a_session() {
         let binding = binding();
         let workspace_dir = cloud_browser_workspace_dir(&binding).expect("browser workspace");
-        let tools = probe_cloud_browser_tools(&binding).expect("probe browser tools");
+        let service = build_cloud_browser_service(&binding).expect("cloud browser service");
+        let tools = service.list_tools();
         let names = tools
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        if !names.is_empty() {
+        let backend_available = service
+            .unavailable_tools()
+            .iter()
+            .all(|(name, _)| name != "browser_navigate");
+        if backend_available {
+            assert!(!names.is_empty());
             assert!(names.contains(&"browser_navigate"));
             assert!(!names.contains(&"browser_route_add"));
             assert!(!names.contains(&"browser_cdp_command"));
+        } else {
+            assert!(names.is_empty());
         }
         let _ = fs::remove_dir_all(workspace_dir);
     }
