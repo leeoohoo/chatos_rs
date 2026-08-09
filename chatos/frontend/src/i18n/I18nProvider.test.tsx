@@ -66,6 +66,7 @@ const buildProviderClient = (
   getBaseUrl: vi.fn(() => 'http://127.0.0.1:3997/api'),
   setAccessToken: vi.fn(),
   onAccessTokenRefresh: vi.fn(() => () => undefined),
+  onAuthenticationFailure: vi.fn(() => () => undefined),
   getUserSettings: vi.fn().mockResolvedValue({
     effective: {
       UI_LOCALE: 'zh-CN',

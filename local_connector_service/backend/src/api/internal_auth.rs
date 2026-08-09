@@ -10,6 +10,7 @@ use crate::models::CurrentUser;
 pub(super) const TOKEN_AUDIENCE: &str = "local-connector-service";
 pub(super) const MCP_RELAY_SCOPE: &str = "relay.mcp";
 pub(super) const TERMINAL_RELAY_SCOPE: &str = "relay.terminal";
+pub(super) const REMOTE_CONNECTION_RELAY_SCOPE: &str = "remote-connection.execute";
 pub(super) const SKILL_RELAY_SCOPE: &str = "relay.skill";
 pub(super) const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 pub(super) const PLUGIN_UI_READ_SCOPE: &str = "plugin.ui.read";
@@ -192,6 +193,13 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
             allowed_callers: &[CHATOS_CALLER],
         }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "remote-connections", "test" | "command" | "sftp"],
+        ) => Some(InternalAccess {
+            scope: REMOTE_CONNECTION_RELAY_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER],
+        }),
         (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
             scope: SANDBOX_ROUTING_READ_SCOPE,
             allowed_callers: &[
@@ -340,6 +348,36 @@ mod tests {
             "/api/local-connectors/devices",
         )
         .is_err());
+    }
+
+    #[test]
+    fn task_runner_remote_connection_token_is_scope_and_path_bound() {
+        let mut config = test_config();
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-local-connector-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            "a-long-task-runner-local-connector-secret",
+            TASK_RUNNER_CALLER,
+            TOKEN_AUDIENCE,
+            REMOTE_CONNECTION_RELAY_SCOPE,
+            60,
+            "user-1",
+        )
+        .expect("issue token");
+        let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
+
+        for path in [
+            "/api/local-connectors/relay/device-1/remote-connections/test",
+            "/api/local-connectors/relay/device-1/remote-connections/command",
+            "/api/local-connectors/relay/device-1/remote-connections/sftp",
+        ] {
+            let user = internal_service_user_from_request(&config, &headers, &Method::POST, path)
+                .expect("matching request")
+                .expect("service user");
+            assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
+        }
     }
 
     #[test]

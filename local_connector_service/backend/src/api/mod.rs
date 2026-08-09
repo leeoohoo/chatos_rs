@@ -81,8 +81,8 @@ use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
 };
 use self::remote_connection_relay::{
-    remote_connection_command_relay, remote_connection_test_relay, remote_terminal_close_relay,
-    remote_terminal_ws_relay,
+    remote_connection_command_relay, remote_connection_test_relay, remote_sftp_relay,
+    remote_terminal_close_relay, remote_terminal_ws_relay,
 };
 pub use self::router::{build_internal_router, build_public_router};
 #[cfg(feature = "test-support")]

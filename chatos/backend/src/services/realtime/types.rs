@@ -190,22 +190,6 @@ pub struct ChatStreamRealtimePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RemoteSftpTransferRealtimePayload {
-    pub id: String,
-    pub connection_id: String,
-    pub direction: String,
-    pub state: String,
-    pub total_bytes: Option<u64>,
-    pub transferred_bytes: u64,
-    pub percent: Option<f64>,
-    pub current_path: Option<String>,
-    pub message: Option<String>,
-    pub error: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RealtimeEventPayload {
     ReviewRepair(ReviewRepairRealtimePayload),
@@ -225,7 +209,6 @@ pub enum RealtimeEventPayload {
     TaskBoard(TaskBoardRealtimePayload),
     AskUserPrompt(AskUserPromptRealtimePayload),
     ChatStream(ChatStreamRealtimePayload),
-    RemoteSftpTransfer(RemoteSftpTransferRealtimePayload),
 }
 
 #[derive(Debug, Clone, Serialize)]

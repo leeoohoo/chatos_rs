@@ -372,7 +372,7 @@ impl AppState {
         let task_project_service =
             TaskProjectService::new_with_config(store.clone(), config.clone());
         task_project_service.ensure_public_project().await?;
-        let remote_server_service = RemoteServerService::new(store.clone());
+        let remote_server_service = RemoteServerService::new(config.clone(), store.clone());
         let ask_user_prompt_service = AskUserPromptService::new_with_config(
             store.clone(),
             config.clone(),

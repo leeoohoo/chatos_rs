@@ -165,6 +165,51 @@ pub(super) async fn remote_terminal_close_relay(
     Ok(Json(json!({ "success": true, "disconnected": true })))
 }
 
+pub(super) async fn remote_sftp_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Json(mut body): Json<Value>,
+) -> Result<Response, ApiError> {
+    let workspace_id = body
+        .get("workspace_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| ApiError::bad_request("workspace_id is required"))?;
+    if let Value::Object(ref mut map) = body {
+        map.remove("workspace_id");
+    }
+    validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+    let request = RelayRequest {
+        message_type: "remote_sftp_request".to_string(),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        device_id,
+        workspace_id,
+        method: "POST".to_string(),
+        path: "/remote-connections/sftp".to_string(),
+        headers: BTreeMap::new(),
+        body,
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
+    };
+    let response = dispatch_relay(
+        &state,
+        request,
+        state
+            .config
+            .relay_request_timeout
+            .max(Duration::from_secs(610)),
+    )
+    .await?;
+    Ok(relay_response_to_http(response))
+}
+
 pub(super) async fn remote_terminal_ws_relay(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,

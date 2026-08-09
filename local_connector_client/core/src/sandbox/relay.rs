@@ -224,6 +224,7 @@ fn relay_local_runtime(
         plugin_credentials,
         plugin_oauth,
         plugin_runtime,
+        remote_sftp_manager: crate::remote_connection::RemoteSftpManager::default(),
     }
 }
 

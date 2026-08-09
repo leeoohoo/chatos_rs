@@ -17,6 +17,8 @@ export interface RemoteServerRecord {
   certificate_path?: string | null;
   default_remote_path?: string | null;
   host_key_policy: RemoteServerHostKeyPolicy | string;
+  local_connector_device_id?: string | null;
+  local_connector_workspace_id?: string | null;
   enabled: boolean;
   last_tested_at?: string | null;
   last_test_status?: RemoteServerTestStatus | string | null;
@@ -44,6 +46,8 @@ export interface CreateRemoteServerPayload {
   certificate_path?: string;
   default_remote_path?: string;
   host_key_policy?: RemoteServerHostKeyPolicy | string;
+  local_connector_device_id?: string;
+  local_connector_workspace_id?: string;
   enabled?: boolean;
 }
 
@@ -58,6 +62,8 @@ export interface UpdateRemoteServerPayload {
   certificate_path?: string;
   default_remote_path?: string;
   host_key_policy?: RemoteServerHostKeyPolicy | string;
+  local_connector_device_id?: string;
+  local_connector_workspace_id?: string;
   enabled?: boolean;
 }
 
@@ -72,6 +78,8 @@ export interface TestRemoteServerPayload {
   certificate_path?: string;
   default_remote_path?: string;
   host_key_policy?: RemoteServerHostKeyPolicy | string;
+  local_connector_device_id?: string;
+  local_connector_workspace_id?: string;
 }
 
 export interface RemoteServerTestResponse {

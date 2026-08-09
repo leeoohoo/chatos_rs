@@ -122,11 +122,15 @@ pub(super) async fn delete_remote_server(
 
 pub(super) async fn test_remote_server_draft(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Json(input): Json<TestRemoteServerRequest>,
 ) -> Result<Json<RemoteServerTestResponse>, ApiError> {
+    let owner_user_id = current_user
+        .effective_owner_user_id()
+        .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?;
     let result = state
         .remote_server_service
-        .test_remote_server_draft(input)
+        .test_remote_server_draft(input, owner_user_id)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(result))
@@ -152,7 +156,12 @@ pub(super) async fn test_remote_server_saved(
     )?;
     let result = state
         .remote_server_service
-        .test_remote_server_saved(&id)
+        .test_remote_server_saved(
+            &id,
+            current_user
+                .effective_owner_user_id()
+                .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?,
+        )
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("远程服务器不存在: {id}")))?;

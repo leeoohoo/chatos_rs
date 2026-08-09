@@ -22,6 +22,8 @@ export type RemoteServerFormValues = {
   certificate_path?: string;
   default_remote_path?: string;
   host_key_policy: 'accept_new' | 'strict';
+  local_connector_device_id: string;
+  local_connector_workspace_id: string;
   enabled: boolean;
 };
 
@@ -68,6 +70,8 @@ export function buildRemoteServerPayload(
     auth_type: values.auth_type,
     default_remote_path: values.default_remote_path || '',
     host_key_policy: values.host_key_policy,
+    local_connector_device_id: values.local_connector_device_id,
+    local_connector_workspace_id: values.local_connector_workspace_id,
     enabled: values.enabled,
   };
 

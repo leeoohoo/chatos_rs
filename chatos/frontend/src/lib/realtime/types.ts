@@ -431,22 +431,6 @@ export interface RealtimeChatStreamPayloadWrapper {
   };
 }
 
-export interface RealtimeRemoteSftpTransferPayloadWrapper {
-  kind: 'remote_sftp_transfer';
-  id: string;
-  connection_id: string;
-  direction: 'upload' | 'download';
-  state: 'pending' | 'running' | 'cancelling' | 'success' | 'error' | 'cancelled';
-  total_bytes?: number | null;
-  transferred_bytes: number;
-  percent?: number | null;
-  current_path?: string | null;
-  message?: string | null;
-  error?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export type RealtimeProjectScopedPayload =
   | RealtimeReviewRepairPayloadWrapper
   | RealtimeConversationSummariesUpdatedPayloadWrapper
@@ -473,7 +457,6 @@ export interface RealtimeEventEnvelope {
     | RealtimeProjectScopedPayload
     | RealtimeTaskBoardPayloadWrapper
     | RealtimeAskUserPromptPayloadWrapper
-    | RealtimeChatStreamPayloadWrapper
-    | RealtimeRemoteSftpTransferPayloadWrapper;
+    | RealtimeChatStreamPayloadWrapper;
   ts: string;
 }

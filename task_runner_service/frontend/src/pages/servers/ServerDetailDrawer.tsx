@@ -79,6 +79,12 @@ export function ServerDetailDrawer({
             <Descriptions.Item label={t('servers.detail.taskId')}>
               {server.task_id || '-'}
             </Descriptions.Item>
+            <Descriptions.Item label={t('servers.form.connectorDevice')}>
+              {server.local_connector_device_id || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('servers.form.connectorWorkspace')}>
+              {server.local_connector_workspace_id || '-'}
+            </Descriptions.Item>
             <Descriptions.Item label="Host">
               {server.host}:{server.port}
             </Descriptions.Item>

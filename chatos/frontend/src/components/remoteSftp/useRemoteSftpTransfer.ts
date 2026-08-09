@@ -5,8 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import { resolveRemoteSftpErrorMessage } from '../../lib/api/remoteConnectionErrors';
-import { useRealtimeConnectionState } from '../../lib/realtime/RealtimeProvider';
-import { useRemoteSftpTransferRealtime } from '../../lib/realtime/useRemoteSftpTransferRealtime';
 
 import { normalizeTransferStatus, type RemoteSftpClient } from './helpers';
 import type { SftpTransferRequest, SftpTransferStatus } from './types';
@@ -65,20 +63,25 @@ export const useRemoteSftpTransfer = ({
   t,
   onSecondFactorRequired,
 }: UseRemoteSftpTransferOptions) => {
-  const connectionState = useRealtimeConnectionState();
   const [transfering, setTransfering] = useState(false);
   const [transferStatus, setTransferStatus] = useState<SftpTransferStatus | null>(null);
   const [queuedTransfers, setQueuedTransfers] = useState<SftpTransferRequest[]>([]);
 
   const transferRefreshTimerRef = useRef<number | null>(null);
   const transferStatusRefreshBusyRef = useRef(false);
+  const transferStatusRefreshRef = useRef<() => Promise<void>>(async () => {});
   const transferQueueSeqRef = useRef(0);
   const activeTransferContextRef = useRef<ActiveTransferContext | null>(null);
   const transferStatusRef = useRef<SftpTransferStatus | null>(null);
+  const transferingRef = useRef(false);
 
   useEffect(() => {
     transferStatusRef.current = transferStatus;
   }, [transferStatus]);
+
+  useEffect(() => {
+    transferingRef.current = transfering;
+  }, [transfering]);
 
   const clearTransferRefreshTimer = useCallback(() => {
     if (transferRefreshTimerRef.current !== null) {
@@ -91,6 +94,7 @@ export const useRemoteSftpTransfer = ({
     clearTransferRefreshTimer();
     setTransferStatus(null);
     setTransfering(false);
+    transferingRef.current = false;
     setQueuedTransfers([]);
     activeTransferContextRef.current = null;
     transferStatusRef.current = null;
@@ -102,6 +106,7 @@ export const useRemoteSftpTransfer = ({
   ) => {
     clearTransferRefreshTimer();
     setTransfering(false);
+    transferingRef.current = false;
     activeTransferContextRef.current = null;
     transferStatusRef.current = latest;
     setMessage(latest.message || fallbackSuccess);
@@ -116,6 +121,7 @@ export const useRemoteSftpTransfer = ({
   const finalizeTransferCancelled = useCallback((latest: SftpTransferStatus) => {
     clearTransferRefreshTimer();
     setTransfering(false);
+    transferingRef.current = false;
     activeTransferContextRef.current = null;
     transferStatusRef.current = latest;
     setMessage(latest.message || t('remote.sftp.success.transferCancelled'));
@@ -127,6 +133,7 @@ export const useRemoteSftpTransfer = ({
   ) => {
     clearTransferRefreshTimer();
     setTransfering(false);
+    transferingRef.current = false;
     activeTransferContextRef.current = null;
     transferStatusRef.current = latest;
     const secondFactorPrompt = extractSecondFactorPrompt(latest.error);
@@ -153,6 +160,24 @@ export const useRemoteSftpTransfer = ({
     }
     setError(latest.error || t('remote.sftp.error.transferFailed'));
   }, [clearTransferRefreshTimer, onSecondFactorRequired, setError, t]);
+
+  const scheduleTransferStatusRefresh = useCallback((delayMs = REMOTE_SFTP_REFRESH_DELAY_MS) => {
+    if (
+      !transferingRef.current
+      || !currentRemoteConnectionId
+      || !transferStatusRef.current?.id
+      || !isDocumentVisible()
+    ) {
+      return;
+    }
+    if (transferRefreshTimerRef.current !== null) {
+      return;
+    }
+    transferRefreshTimerRef.current = window.setTimeout(() => {
+      transferRefreshTimerRef.current = null;
+      void transferStatusRefreshRef.current();
+    }, delayMs);
+  }, [currentRemoteConnectionId]);
 
   const refreshTransferStatusOnce = useCallback(async () => {
     const transferId = transferStatusRef.current?.id || '';
@@ -188,6 +213,7 @@ export const useRemoteSftpTransfer = ({
       console.error('Failed to refresh remote sftp transfer status:', error);
     } finally {
       transferStatusRefreshBusyRef.current = false;
+      scheduleTransferStatusRefresh();
     }
   }, [
     client,
@@ -195,21 +221,11 @@ export const useRemoteSftpTransfer = ({
     finalizeTransferCancelled,
     finalizeTransferError,
     finalizeTransferSuccess,
+    scheduleTransferStatusRefresh,
     t,
   ]);
 
-  const scheduleTransferStatusRefresh = useCallback((delayMs = REMOTE_SFTP_REFRESH_DELAY_MS) => {
-    if (connectionState === 'connected' || !transfering || !currentRemoteConnectionId || !transferStatusRef.current?.id) {
-      return;
-    }
-    if (transferRefreshTimerRef.current !== null) {
-      return;
-    }
-    transferRefreshTimerRef.current = window.setTimeout(() => {
-      transferRefreshTimerRef.current = null;
-      void refreshTransferStatusOnce();
-    }, delayMs);
-  }, [connectionState, currentRemoteConnectionId, refreshTransferStatusOnce, transfering]);
+  transferStatusRefreshRef.current = refreshTransferStatusOnce;
 
   const startTransfer = useCallback(async (
     direction: 'upload' | 'download',
@@ -222,6 +238,7 @@ export const useRemoteSftpTransfer = ({
 
     clearTransferRefreshTimer();
     setTransfering(true);
+    transferingRef.current = true;
     setTransferStatus(null);
     transferStatusRef.current = null;
     activeTransferContextRef.current = {
@@ -245,12 +262,10 @@ export const useRemoteSftpTransfer = ({
       setTransferStatus(started);
       transferStatusRef.current = started;
 
-      if (connectionState === 'connected') {
-        return;
-      }
       scheduleTransferStatusRefresh();
     } catch (error) {
       setTransfering(false);
+      transferingRef.current = false;
       setTransferStatus(null);
       transferStatusRef.current = null;
       if ((verificationCodeOverride || '').trim()) {
@@ -276,7 +291,6 @@ export const useRemoteSftpTransfer = ({
     setMessage,
     t,
     clearTransferRefreshTimer,
-    connectionState,
     scheduleTransferStatusRefresh,
   ]);
 
@@ -311,39 +325,8 @@ export const useRemoteSftpTransfer = ({
 
   useEffect(() => () => clearTransferRefreshTimer(), [clearTransferRefreshTimer]);
 
-  useRemoteSftpTransferRealtime({
-    connectionId: currentRemoteConnectionId,
-    transferId: transferStatus?.id || null,
-    enabled: Boolean(currentRemoteConnectionId && transferStatus?.id && transfering),
-    onTransferUpdated: async (payload) => {
-      const latest = normalizeTransferStatus(payload);
-      setTransferStatus(latest);
-      if (latest.state === 'success') {
-        await finalizeTransferSuccess(
-          latest,
-          activeTransferContextRef.current?.fallbackSuccess || t('remote.sftp.success.transferDone'),
-        );
-        return;
-      }
-      if (latest.state === 'cancelled') {
-        finalizeTransferCancelled(latest);
-        return;
-      }
-      if (latest.state === 'error') {
-        finalizeTransferError(latest, activeTransferContextRef.current);
-      }
-    },
-  });
-
   useEffect(() => {
-    if (connectionState !== 'connected' || !transfering) {
-      return;
-    }
-    clearTransferRefreshTimer();
-  }, [clearTransferRefreshTimer, connectionState, transfering]);
-
-  useEffect(() => {
-    if (!transfering || connectionState === 'connected') {
+    if (!transfering) {
       return undefined;
     }
     if (typeof document === 'undefined') {
@@ -373,14 +356,14 @@ export const useRemoteSftpTransfer = ({
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('online', handleWindowOnline);
     };
-  }, [clearTransferRefreshTimer, connectionState, scheduleTransferStatusRefresh, transfering]);
+  }, [clearTransferRefreshTimer, scheduleTransferStatusRefresh, transfering]);
 
   useEffect(() => {
-    if (!transfering || connectionState === 'connected') {
+    if (!transfering) {
       return;
     }
     scheduleTransferStatusRefresh();
-  }, [connectionState, scheduleTransferStatusRefresh, transferStatus?.id, transfering]);
+  }, [scheduleTransferStatusRefresh, transfering]);
 
   const handleRemoveQueuedTransfer = useCallback((transferId: string) => {
     setQueuedTransfers((previous) => previous.filter((item) => item.id !== transferId));
@@ -403,15 +386,12 @@ export const useRemoteSftpTransfer = ({
       transferStatusRef.current = status;
       setMessage(null);
       setError(null);
-      if (connectionState !== 'connected') {
-        scheduleTransferStatusRefresh();
-      }
+      scheduleTransferStatusRefresh();
     } catch (error) {
       setError(resolveRemoteSftpErrorMessage(error, t('remote.sftp.error.cancelTransfer')));
     }
   }, [
     client,
-    connectionState,
     currentRemoteConnectionId,
     scheduleTransferStatusRefresh,
     setError,

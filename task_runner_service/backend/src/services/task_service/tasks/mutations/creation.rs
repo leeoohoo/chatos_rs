@@ -368,6 +368,8 @@ mod tests {
             certificate_path: None,
             default_remote_path: None,
             host_key_policy: Some("accept_new".to_string()),
+            local_connector_device_id: Some("device-1".to_string()),
+            local_connector_workspace_id: Some("workspace-1".to_string()),
             enabled: Some(true),
         }
     }

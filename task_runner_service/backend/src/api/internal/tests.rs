@@ -338,7 +338,7 @@ async fn test_state() -> AppState {
     let auth_service = AuthService::new(config.clone(), store.clone());
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
-    let remote_server_service = RemoteServerService::new(store.clone());
+    let remote_server_service = RemoteServerService::new(config.clone(), store.clone());
     let task_project_service = TaskProjectService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(

@@ -172,14 +172,6 @@ impl RemoteConnection {
             last_active_at: self.last_active_at.clone(),
         }
     }
-
-    pub fn requires_local_credential_execution(&self) -> bool {
-        self.auth_type != "password"
-            || has_text(self.private_key_path.as_deref())
-            || has_text(self.certificate_path.as_deref())
-            || has_text(self.jump_private_key_path.as_deref())
-            || has_text(self.jump_certificate_path.as_deref())
-    }
 }
 
 fn has_text(value: Option<&str>) -> bool {

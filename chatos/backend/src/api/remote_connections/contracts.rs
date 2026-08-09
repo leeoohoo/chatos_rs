@@ -85,20 +85,3 @@ pub(super) enum WsOutput {
     #[serde(rename = "pong")]
     Pong { timestamp: String },
 }
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct SftpTransferStatus {
-    pub(super) id: String,
-    pub(super) connection_id: String,
-    pub(super) user_id: String,
-    pub(super) direction: String,
-    pub(super) state: String,
-    pub(super) total_bytes: Option<u64>,
-    pub(super) transferred_bytes: u64,
-    pub(super) percent: Option<f64>,
-    pub(super) current_path: Option<String>,
-    pub(super) message: Option<String>,
-    pub(super) error: Option<String>,
-    pub(super) created_at: String,
-    pub(super) updated_at: String,
-}

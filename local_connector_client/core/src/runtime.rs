@@ -20,6 +20,7 @@ use crate::plugins::{
 use crate::registration::{
     ensure_device_registered, ensure_workspace_registered, is_cloud_authentication_expired,
 };
+use crate::remote_connection::RemoteSftpManager;
 use crate::sandbox::managed_requirements::{
     load_system_client_config, resolve_startup_managed_requirements,
 };
@@ -39,6 +40,7 @@ pub(crate) struct LocalRuntime {
     pub(crate) plugin_credentials: PluginCredentialVault,
     pub(crate) plugin_oauth: PluginOAuthBroker,
     pub(crate) plugin_runtime: PluginRuntimeHost,
+    pub(crate) remote_sftp_manager: RemoteSftpManager,
 }
 
 impl LocalRuntime {
@@ -71,6 +73,7 @@ impl LocalRuntime {
             plugin_credentials,
             plugin_oauth,
             plugin_runtime,
+            remote_sftp_manager: RemoteSftpManager::default(),
         }
     }
 
@@ -251,6 +254,7 @@ impl LocalRuntime {
                     runtime.sandbox_runtime.clone(),
                     runtime.plugin_runtime.clone(),
                     runtime.plugin_oauth.clone(),
+                    runtime.remote_sftp_manager.clone(),
                     device_id,
                 )
                 .await

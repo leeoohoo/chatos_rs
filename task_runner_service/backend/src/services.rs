@@ -163,6 +163,7 @@ pub struct ModelConfigService {
 
 #[derive(Clone)]
 pub struct RemoteServerService {
+    config: AppConfig,
     store: AppStore,
 }
 

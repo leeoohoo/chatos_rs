@@ -140,6 +140,51 @@ pub(crate) async fn close_remote_terminal_via_connector(
     .await
 }
 
+pub(crate) async fn remote_sftp_via_connector(
+    connection: &RemoteConnection,
+    operation: &str,
+    payload: Value,
+    verification_code: Option<&str>,
+    timeout: Duration,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/sftp",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    let mut body = match payload {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    body.insert(
+        "workspace_id".to_string(),
+        Value::String(connection.local_connector_workspace_id.clone()),
+    );
+    body.insert(
+        "connection_id".to_string(),
+        Value::String(connection.id.clone()),
+    );
+    body.insert(
+        "operation".to_string(),
+        Value::String(operation.to_string()),
+    );
+    body.insert(
+        "connection".to_string(),
+        remote_connection_execution_payload(connection),
+    );
+    if let Some(code) = verification_code {
+        body.insert(
+            "verification_code".to_string(),
+            Value::String(code.to_string()),
+        );
+    }
+    connector_post_json_with_timeout(
+        path.as_str(),
+        &Value::Object(body),
+        timeout.max(Duration::from_secs(20)),
+    )
+    .await
+}
+
 pub(crate) fn remote_connection_execution_payload(connection: &RemoteConnection) -> Value {
     json!({
         "host": connection.host,
@@ -160,7 +205,7 @@ pub(crate) fn remote_connection_execution_payload(connection: &RemoteConnection)
     })
 }
 
-fn connector_remote_execution_error(error: (StatusCode, Json<Value>)) -> String {
+pub(crate) fn connector_remote_execution_error(error: (StatusCode, Json<Value>)) -> String {
     let (_, Json(value)) = error;
     if value.get("code").and_then(Value::as_str) == Some("second_factor_required") {
         let prompt = value

@@ -97,7 +97,10 @@ fn build_remote_connection_controller_provider(
         max_output_chars: 20_000,
         max_read_file_bytes: 256 * 1024,
         store: RemoteConnectionControllerStoreRef::new(Arc::new(
-            TaskRunnerRemoteConnectionStore::new(task_service.store.clone()),
+            TaskRunnerRemoteConnectionStore::new(
+                task_service.config.clone(),
+                task_service.store.clone(),
+            ),
         )),
     })?;
     Ok(TaskRunnerBuiltinProvider::new(

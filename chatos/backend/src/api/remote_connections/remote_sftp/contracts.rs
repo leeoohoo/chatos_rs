@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SftpListQuery {
@@ -43,13 +43,4 @@ pub(crate) struct SftpRenameRequest {
 pub(crate) struct SftpDeleteRequest {
     pub(super) path: Option<String>,
     pub(super) recursive: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct RemoteEntry {
-    pub(super) name: String,
-    pub(super) path: String,
-    pub(super) is_dir: bool,
-    pub(super) size: Option<u64>,
-    pub(super) modified_at: Option<String>,
 }
