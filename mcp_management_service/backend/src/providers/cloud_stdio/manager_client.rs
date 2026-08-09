@@ -3,9 +3,10 @@
 
 use serde::Serialize;
 
+use super::prepare::CloudStdioRequestContext;
 use super::{
-    CloudStdioProvider, CloudStdioRequestContext, ProviderCallError, SandboxExecutionTarget,
-    CALLER_SERVICE, INTERNAL_SCOPE, TOKEN_AUDIENCE,
+    CloudStdioProvider, ProviderCallError, SandboxExecutionTarget, CALLER_SERVICE, INTERNAL_SCOPE,
+    TOKEN_AUDIENCE,
 };
 use crate::trace_context::InternalTraceContextExt;
 
