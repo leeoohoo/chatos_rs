@@ -23,8 +23,8 @@ ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/
 ENV CARGO_NET_RETRY=10
 ENV CARGO_HTTP_TIMEOUT=600
-ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
-ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
+ENV RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
 
 RUN mkdir -p /root/.cargo \
     && printf '%s\n' \
@@ -76,8 +76,8 @@ ENV RUSTUP_HOME=/opt/chatos/rustup
 ENV UV_INSTALL_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/chatos/python
 ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/opt/chatos/cargo/bin:/usr/local/bin:$PATH
-ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
-ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
+ENV RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
 
 RUN set -eux; \
     java_version=""; \
@@ -178,7 +178,9 @@ RUN set -eux; \
           RUSTUP_HOME="$RUSTUP_HOME" \
           RUSTUP_DIST_SERVER=https://static.rust-lang.org \
           RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup \
-          sh -s -- -y --profile minimal --default-toolchain "$rust_channel"; \
+          sh -s -- -y --profile minimal --default-toolchain "$rust_channel" \
+            --component rustfmt \
+            --component clippy; \
     fi; \
     if [ -n "$dotnet_channel" ]; then \
       case "$dotnet_channel" in 8.0|9.0|10.0) true ;; *) echo "unsupported .NET version: $dotnet_channel" >&2; exit 2 ;; esac; \
