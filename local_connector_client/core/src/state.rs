@@ -154,11 +154,30 @@ impl LocalState {
             .with_context(|| format!("read state file {}", path.display()))?;
         let mut value = serde_json::from_str::<Value>(content.as_str())
             .with_context(|| format!("parse state file {}", path.display()))?;
-        if remove_legacy_runtime_settings(&mut value) {
-            write_state_value(path, &value)?;
+        let mut migrated = remove_legacy_runtime_settings(&mut value);
+        match serde_json::from_value(value.clone()) {
+            Ok(state) => {
+                if migrated {
+                    write_state_value(path, &value)?;
+                }
+                Ok(state)
+            }
+            Err(original_error) => {
+                if value
+                    .as_object_mut()
+                    .is_some_and(|state| state.remove("managed_runtime_config").is_some())
+                {
+                    migrated = true;
+                    let state = serde_json::from_value(value.clone())
+                        .with_context(|| format!("parse state file {}", path.display()))?;
+                    if migrated {
+                        write_state_value(path, &value)?;
+                    }
+                    return Ok(state);
+                }
+                Err(original_error).with_context(|| format!("parse state file {}", path.display()))
+            }
         }
-        serde_json::from_value(value)
-            .with_context(|| format!("parse state file {}", path.display()))
     }
 
     pub(crate) fn save(&self, path: &Path) -> Result<()> {
@@ -278,5 +297,40 @@ mod tests {
         .expect("legacy state remains readable");
         let value = serde_json::to_value(state).expect("serialize current state");
         assert!(value.get("mcp_configs").is_none());
+    }
+
+    #[test]
+    fn incompatible_managed_runtime_cache_is_dropped_during_load() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("state.json");
+        fs::write(
+            &path,
+            serde_json::json!({
+                "device_id": "device-1",
+                "managed_runtime_config": {
+                    "source_instance_id": "config-1",
+                    "bundle": {
+                        "task_runner_runtime_settings": {
+                            "max_iterations": 600
+                        }
+                    },
+                    "last_synced_at": "now"
+                }
+            })
+            .to_string(),
+        )
+        .expect("write legacy state");
+
+        let state = LocalState::load(&path).expect("load state after dropping stale cache");
+        assert_eq!(state.device_id.as_deref(), Some("device-1"));
+        assert!(state.managed_runtime_config.is_none());
+
+        let persisted: Value = serde_json::from_str(
+            fs::read_to_string(&path)
+                .expect("read migrated state")
+                .as_str(),
+        )
+        .expect("parse migrated state");
+        assert!(persisted.get("managed_runtime_config").is_none());
     }
 }
