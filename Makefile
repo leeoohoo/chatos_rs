@@ -8,7 +8,7 @@ COMPOSE_VALIDATION_ENV := SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID=compose-valid
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
 .PHONY: local-connector-client local-connector-client-status local-connector-client-stop
 .PHONY: build build-rust build-frontends test smoke smoke-repo smoke-cloud-mcp smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
-.PHONY: test-chat-app-server test-chat-app test-user-service
+.PHONY: test-chat-app-server test-chat-app test-user-service test-task-runner-service test-local-connector-service test-local-connector-client test-mcp-management-service test-memory-engine
 .PHONY: type-check-user-service-frontend
 
 help:
@@ -32,7 +32,7 @@ help:
 	@echo "  make docker-ps              # show Docker service status"
 	@echo "  make local-connector-client # separately run the host-side Local Connector client"
 	@echo "  make build                  # build Rust services and frontends"
-	@echo "  make test                   # run repo checks and focused tests"
+	@echo "  make test                   # run repo checks and core backend/frontend tests"
 	@echo "  make smoke                  # run lightweight repo checks"
 	@echo "  make smoke-cloud-mcp        # run live cloud MCP Management integration smoke"
 	@echo "  make smoke-local-project-entry # verify Config Center -> ChatOS local-project UI switch"
@@ -124,7 +124,7 @@ build-frontends:
 	@cd sandbox_manager_service/frontend && npm run build
 	@cd official_website_service/frontend && npm run build
 
-test: smoke test-chat-app-server test-chat-app test-user-service
+test: smoke test-chat-app-server test-chat-app test-user-service test-task-runner-service test-local-connector-service test-local-connector-client test-mcp-management-service test-memory-engine
 
 smoke: smoke-repo
 
@@ -173,6 +173,21 @@ test-user-service:
 	@cd user_service/backend && cargo test -q
 	@cd user_service/frontend && npm run type-check
 	@cd user_service/frontend && npm run build
+
+test-task-runner-service:
+	@cargo test -p task_runner_service_backend -q
+
+test-local-connector-service:
+	@cargo test -p local_connector_service_backend -q
+
+test-local-connector-client:
+	@cargo test -p local_connector_client_core -q
+
+test-mcp-management-service:
+	@cargo test -p mcp_management_service_backend -q
+
+test-memory-engine:
+	@cd memory_engine/backend && cargo test -q
 
 code-size-report:
 	@bash scripts/code-size-report.sh

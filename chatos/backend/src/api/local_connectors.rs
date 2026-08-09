@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tracing::warn;
 
-use crate::api::projects::memory_sync::sync_active_project;
+use crate::api::projects::memory_sync::{sync_active_project, sync_archived_project};
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
@@ -299,8 +299,13 @@ async fn create_project(
         {
             Ok(binding) => bindings.push(binding),
             Err(err) => {
-                rollback_local_connector_project(saved.id.as_str(), &bindings).await;
-                return err;
+                return project_create_error_with_rollback(
+                    saved.clone(),
+                    bindings.as_slice(),
+                    err,
+                    false,
+                )
+                .await;
             }
         }
     }
@@ -311,14 +316,20 @@ async fn create_project(
             error = err.as_str(),
             "sync memory project failed after local connector project create"
         );
-        rollback_local_connector_project(saved.id.as_str(), &bindings).await;
-        return error(
+        let failure = error(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({
                 "error": "sync memory project failed",
                 "detail": err,
             }),
         );
+        return project_create_error_with_rollback(
+            saved.clone(),
+            bindings.as_slice(),
+            failure,
+            true,
+        )
+        .await;
     }
 
     publish_projects_updated(
@@ -568,18 +579,78 @@ async fn load_owned_online_workspace(
     Ok((device, workspace))
 }
 
-async fn rollback_local_connector_project(
-    project_id: &str,
+async fn project_create_error_with_rollback(
+    project: Project,
     bindings: &[LocalConnectorProjectBinding],
-) {
+    err: (StatusCode, Json<Value>),
+    compensate_memory: bool,
+) -> (StatusCode, Json<Value>) {
+    let rollback_result =
+        rollback_local_connector_project(&project, bindings, compensate_memory).await;
+    match rollback_result {
+        Ok(()) => err,
+        Err(rollback_error) => rollback_incomplete_response(err, rollback_error),
+    }
+}
+
+async fn rollback_local_connector_project(
+    project: &Project,
+    bindings: &[LocalConnectorProjectBinding],
+    compensate_memory: bool,
+) -> Result<(), String> {
+    let mut failures = Vec::new();
     for binding in bindings {
         let path = format!(
             "/api/local-connectors/project-bindings/{}",
             urlencoding::encode(binding.id.as_str())
         );
-        let _ = connector_delete_json(path.as_str()).await;
+        if let Err((status, detail)) = connector_delete_json(path.as_str()).await {
+            failures.push(format!(
+                "delete binding {} failed with {}: {}",
+                binding.id,
+                status,
+                response_summary(&detail.0)
+            ));
+        }
     }
-    let _ = ProjectService::delete(project_id).await;
+    if let Err(err) = ProjectService::delete(project.id.as_str()).await {
+        failures.push(format!("delete project {} failed: {err}", project.id));
+    }
+    if compensate_memory {
+        if let Err(err) = sync_archived_project(project).await {
+            failures.push(format!("archive memory project failed: {err}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+fn rollback_incomplete_response(
+    err: (StatusCode, Json<Value>),
+    rollback_error: String,
+) -> (StatusCode, Json<Value>) {
+    let (status, Json(detail)) = err;
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "error": "Local Connector 项目创建失败，且回滚不完整",
+            "original_status": status.as_u16(),
+            "detail": detail,
+            "rollback_error": rollback_error,
+        })),
+    )
+}
+
+fn response_summary(value: &Value) -> String {
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("detail").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 fn required_text(value: Option<String>, field: &str) -> Result<String, (StatusCode, Json<Value>)> {
