@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use super::artifact_store::{PluginArtifactProducer, PluginArtifactStore, PluginUiArtifactGrant};
 use super::hook_loader::PluginHookWorkspaceWriteDecision;
-use super::mcp::{PluginMcpAdapter, PluginMcpInvocationCancelOutcome, PreparedPluginMcp};
+use super::mcp_runtime::{PluginMcpAdapter, PluginMcpInvocationCancelOutcome, PreparedPluginMcp};
 use super::protocol::*;
 use super::telemetry::{
     sanitize_error, PluginRuntimeTelemetryIdentity, PluginRuntimeTelemetryPhase,

@@ -18,18 +18,18 @@ use crate::sandbox::process::plugin_stdio_sandbox_agent_executable;
 const PLUGIN_STDIO_WRAPPER_MODE: &str = "--internal-plugin-stdio-wrapper";
 
 #[derive(Debug, Clone)]
-pub(super) struct PluginStdioSandboxLauncher {
+pub(in crate::plugins::runtime) struct PluginStdioSandboxLauncher {
     agent: PathBuf,
 }
 
 impl PluginStdioSandboxLauncher {
-    pub(super) fn discover() -> Result<Self> {
+    pub(in crate::plugins::runtime) fn discover() -> Result<Self> {
         Ok(Self {
             agent: plugin_stdio_sandbox_agent_executable().map_err(anyhow::Error::msg)?,
         })
     }
 
-    pub(super) fn prepare(
+    pub(in crate::plugins::runtime) fn prepare(
         &self,
         plugin_storage_root: &Path,
         plugin_root: &Path,
@@ -47,7 +47,7 @@ impl PluginStdioSandboxLauncher {
         )
     }
 
-    pub(super) fn prepare_with_workspace_write(
+    pub(in crate::plugins::runtime) fn prepare_with_workspace_write(
         &self,
         plugin_storage_root: &Path,
         plugin_root: &Path,
@@ -118,7 +118,7 @@ impl PluginStdioSandboxLauncher {
     }
 }
 
-pub(super) struct PluginStdioSandboxRuntime {
+pub(in crate::plugins::runtime) struct PluginStdioSandboxRuntime {
     sandbox_id: String,
     root: PathBuf,
     state_root: PathBuf,

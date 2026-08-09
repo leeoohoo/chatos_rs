@@ -24,18 +24,18 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroize;
 
-use super::mcp_config::load_configured_mcp_server;
-use super::mcp_credentials::{
+use super::super::oauth_broker::{PluginOAuthBroker, PluginOAuthTokenBinding};
+use super::config::load_configured_mcp_server;
+use super::credentials::{
     PluginCredentialBindings, PluginHttpHeaderTemplates, PluginStdioEnvironmentTemplates,
 };
-use super::oauth_broker::{PluginOAuthBroker, PluginOAuthTokenBinding};
-use super::stdio_sandbox::{PluginStdioSandboxLauncher, PluginStdioSandboxRuntime};
+use super::sandbox::{PluginStdioSandboxLauncher, PluginStdioSandboxRuntime};
 use crate::plugins::{ActivePluginInstallation, PluginCredentialVault, PluginInstaller};
 
 mod preparation;
 mod validation;
 
-pub(super) use validation::load_verified_manifest;
+pub(in crate::plugins::runtime) use validation::load_verified_manifest;
 use validation::{validate_invocation_id, wait_for_invocation_cancellation};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -116,7 +116,7 @@ impl PluginMcpHealthState {
 }
 
 #[derive(Clone)]
-pub(super) struct PreparedPluginMcp {
+pub(in crate::plugins::runtime) struct PreparedPluginMcp {
     snapshot: PluginMcpSnapshot,
     transport: PreparedPluginMcpTransport,
     published_tools: BTreeSet<String>,
@@ -134,7 +134,7 @@ struct ActivePluginMcpInvocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PluginMcpInvocationCancelOutcome {
+pub(in crate::plugins::runtime) enum PluginMcpInvocationCancelOutcome {
     Cancelled,
     CancelRequested,
     InvocationNotFound,
@@ -153,28 +153,28 @@ impl std::fmt::Debug for PreparedPluginMcp {
 }
 
 impl PreparedPluginMcp {
-    pub(super) fn snapshot(&self) -> &PluginMcpSnapshot {
+    pub(in crate::plugins::runtime) fn snapshot(&self) -> &PluginMcpSnapshot {
         &self.snapshot
     }
 
-    pub(super) fn operation(&self) -> &'static str {
+    pub(in crate::plugins::runtime) fn operation(&self) -> &'static str {
         MCP_TOOL_CALL_OPERATION
     }
 
-    pub(super) fn health_operation(&self) -> &'static str {
+    pub(in crate::plugins::runtime) fn health_operation(&self) -> &'static str {
         MCP_HEALTH_CHECK_OPERATION
     }
 
-    pub(super) fn publishes_tool(&self, tool_name: &str) -> bool {
+    pub(in crate::plugins::runtime) fn publishes_tool(&self, tool_name: &str) -> bool {
         self.published_tools.contains(tool_name)
     }
 
-    pub(super) fn validate_active(&self) -> Result<()> {
+    pub(in crate::plugins::runtime) fn validate_active(&self) -> Result<()> {
         preparation::validate_active_mcp_snapshot(&self.installer, &self.snapshot)?;
         self.transport.verify_bindings()
     }
 
-    pub(super) fn health_snapshot(&self) -> Result<PluginMcpHealthSnapshot> {
+    pub(in crate::plugins::runtime) fn health_snapshot(&self) -> Result<PluginMcpHealthSnapshot> {
         self.health
             .lock()
             .map(|health| health.snapshot.clone())
@@ -182,18 +182,20 @@ impl PreparedPluginMcp {
     }
 
     #[cfg(test)]
-    pub(super) fn expire_health_probe_for_tests(&self) {
+    pub(in crate::plugins::runtime) fn expire_health_probe_for_tests(&self) {
         if let Ok(mut health) = self.health.lock() {
             health.checked_at = Instant::now() - MCP_HEALTH_PROBE_INTERVAL;
         }
     }
 
-    pub(super) async fn check_health(&self) -> Result<PluginMcpHealthSnapshot> {
+    pub(in crate::plugins::runtime) async fn check_health(
+        &self,
+    ) -> Result<PluginMcpHealthSnapshot> {
         let _probe_guard = self.health_probe_lock.lock().await;
         self.probe_health().await
     }
 
-    pub(super) async fn call_tool(
+    pub(in crate::plugins::runtime) async fn call_tool(
         &self,
         invocation_id: &str,
         tool_name: &str,
@@ -238,7 +240,7 @@ impl PreparedPluginMcp {
         result
     }
 
-    pub(super) fn cancel(&self) {
+    pub(in crate::plugins::runtime) fn cancel(&self) {
         if let Ok(mut invocations) = self.active_invocations.lock() {
             for invocation in invocations.drain().map(|(_, invocation)| invocation) {
                 invocation.cancellation.cancel();
@@ -247,7 +249,7 @@ impl PreparedPluginMcp {
         self.invoker.cancel(&self.transport);
     }
 
-    pub(super) fn cancel_invocation(
+    pub(in crate::plugins::runtime) fn cancel_invocation(
         &self,
         invocation_id: &str,
     ) -> Result<PluginMcpInvocationCancelOutcome> {
@@ -314,7 +316,7 @@ impl PreparedPluginMcp {
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum PreparedPluginMcpTransport {
+pub(in crate::plugins::runtime) enum PreparedPluginMcpTransport {
     Stdio {
         server: McpStdioServer,
         environment: PluginStdioEnvironmentTemplates,
@@ -397,7 +399,9 @@ impl PreparedPluginMcpTransport {
 }
 
 #[async_trait]
-pub(super) trait PluginMcpInvoker: Send + Sync {
+pub(in crate::plugins::runtime) trait PluginMcpInvoker:
+    Send + Sync
+{
     async fn call(
         &self,
         transport: &PreparedPluginMcpTransport,
@@ -616,7 +620,7 @@ impl PluginMcpAdapter {
     }
 
     #[cfg(test)]
-    pub(super) fn with_invoker(
+    pub(in crate::plugins::runtime) fn with_invoker(
         installer: PluginInstaller,
         invoker: Arc<dyn PluginMcpInvoker>,
     ) -> Self {
@@ -633,7 +637,9 @@ impl PluginMcpAdapter {
     }
 
     #[cfg(test)]
-    pub(super) fn with_stdio_execution_for_tests(installer: PluginInstaller) -> Self {
+    pub(in crate::plugins::runtime) fn with_stdio_execution_for_tests(
+        installer: PluginInstaller,
+    ) -> Self {
         let credential_vault = installer.credential_vault();
         Self {
             installer,
@@ -647,7 +653,7 @@ impl PluginMcpAdapter {
     }
 
     #[cfg(test)]
-    pub(super) fn with_stdio_sandbox_for_tests(
+    pub(in crate::plugins::runtime) fn with_stdio_sandbox_for_tests(
         installer: PluginInstaller,
         launcher: PluginStdioSandboxLauncher,
     ) -> Self {
@@ -668,7 +674,7 @@ impl PluginMcpAdapter {
         self
     }
 
-    pub(super) async fn prepare(
+    pub(in crate::plugins::runtime) async fn prepare(
         &self,
         plugin_id: &str,
         component_key: &str,

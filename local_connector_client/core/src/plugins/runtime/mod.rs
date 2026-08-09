@@ -6,15 +6,12 @@ mod artifact_store;
 mod command_loader;
 mod hook_loader;
 mod host;
-mod mcp;
-mod mcp_config;
-mod mcp_credentials;
+mod mcp_runtime;
 mod oauth_broker;
 mod portable_bundle;
 mod protocol;
 mod skill_document;
 mod skill_loader;
-mod stdio_sandbox;
 mod telemetry;
 mod ui_loader;
 
@@ -24,7 +21,7 @@ pub use hook_loader::{
     PluginHookDispatchResult, PluginHookExecutionRecord, PluginHookLoader, PluginHookSetSnapshot,
 };
 pub use host::{PluginDisabledHookReport, PluginRuntimeHost};
-pub use mcp::{PluginMcpAdapter, PluginMcpHealthSnapshot, PluginMcpSnapshot};
+pub use mcp_runtime::{PluginMcpAdapter, PluginMcpHealthSnapshot, PluginMcpSnapshot};
 pub use oauth_broker::{
     LocalPluginOAuthConnection, PluginOAuthAppManifest, PluginOAuthAuthorizationStart,
     PluginOAuthBroker,

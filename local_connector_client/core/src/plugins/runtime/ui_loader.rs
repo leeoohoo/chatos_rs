@@ -15,7 +15,7 @@ use chatos_plugin_management_sdk::{
 };
 use sha2::{Digest, Sha256};
 
-use super::mcp::load_verified_manifest;
+use super::mcp_runtime::load_verified_manifest;
 use crate::plugins::PluginInstaller;
 
 #[derive(Debug, Clone)]
