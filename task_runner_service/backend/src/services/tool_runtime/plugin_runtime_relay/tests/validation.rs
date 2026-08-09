@@ -2,6 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_agent::SystemAgentKey;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 #[test]
 fn plugin_runtime_event_errors_are_bounded_and_redacted() {
@@ -120,7 +123,7 @@ fn command_response_must_match_the_immutable_run_component() {
             "description": "Review the current change",
             "argument_hint": "[path]",
             "requires_confirmation": false,
-            "target_agent": "task_runner_run_phase",
+            "target_agent": RUN_AGENT_KEY,
             "allowed_tools": ["browser_tools_browser_snapshot"]
         }),
     );
@@ -134,7 +137,7 @@ fn command_response_must_match_the_immutable_run_component() {
         Some("Review the current change"),
         Some("[path]"),
         false,
-        Some("task_runner_run_phase"),
+        Some(RUN_AGENT_KEY),
         &["browser_tools_browser_snapshot".to_string()],
         component.content_sha256.as_str(),
         "Review the current change.",
@@ -152,7 +155,7 @@ fn command_response_must_match_the_immutable_run_component() {
         "description": "Review the current change",
         "argument_hint": "[path]",
         "requires_confirmation": false,
-        "target_agent": "task_runner_run_phase",
+        "target_agent": RUN_AGENT_KEY,
         "allowed_tools": ["browser_tools_browser_snapshot"],
         "confirmation_approved": false,
         "content_sha256": component.content_sha256,
@@ -194,7 +197,7 @@ fn agent_response_must_match_the_immutable_run_component() {
         "metadata".to_string(),
         json!({
             "description": "Review the current change",
-            "base_agent": "task_runner_run_phase",
+            "base_agent": RUN_AGENT_KEY,
             "allowed_tools": ["browser_tools_browser_snapshot"],
             "max_iterations": 12
         }),
@@ -206,7 +209,7 @@ fn agent_response_must_match_the_immutable_run_component() {
         component.execution_host,
         "./agents/reviewer.md",
         Some("Review the current change"),
-        "task_runner_run_phase",
+        RUN_AGENT_KEY,
         &["browser_tools_browser_snapshot".to_string()],
         12,
         component.content_sha256.as_str(),
@@ -222,7 +225,7 @@ fn agent_response_must_match_the_immutable_run_component() {
         "agent_name": component.component_key,
         "relative_source_path": "./agents/reviewer.md",
         "description": "Review the current change",
-        "base_agent": "task_runner_run_phase",
+        "base_agent": RUN_AGENT_KEY,
         "allowed_tools": ["browser_tools_browser_snapshot"],
         "max_iterations": 12,
         "content_sha256": component.content_sha256,
@@ -232,7 +235,7 @@ fn agent_response_must_match_the_immutable_run_component() {
     validate_agent_response(&plugin, &component, &agent).expect("valid Agent response");
     let prompt =
         plugin_agent_prompt_text(&plugin, &component, &agent).expect("Plugin Agent prompt");
-    assert!(prompt.contains("Base Agent: task_runner_run_phase"));
+    assert!(prompt.contains(format!("Base Agent: {RUN_AGENT_KEY}").as_str()));
     assert!(prompt.contains("Maximum iterations for this Run: 12"));
     assert!(prompt.ends_with("Review carefully."));
 

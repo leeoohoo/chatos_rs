@@ -5,6 +5,7 @@ use super::*;
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
     WorkspaceProviderKind,
@@ -14,6 +15,8 @@ use chatos_plugin_management_sdk::{
     PluginComponentKind, PluginExecutionHost, PluginMcpServer, PluginPathRef,
     ResolvedAgentCapabilities, ResourceMetadata, ResourceSecurity,
 };
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 fn resolved() -> ResolvedMcp {
     ResolvedMcp {
@@ -46,7 +49,7 @@ fn resolved() -> ResolvedMcp {
         },
         binding: AgentBindingRecord {
             id: "binding-1".to_string(),
-            agent_key: "task_runner_run_phase".to_string(),
+            agent_key: RUN_AGENT_KEY.to_string(),
             binding_scope: "user_override".to_string(),
             owner_user_id: Some("user-1".to_string()),
             resource_kind: "mcp".to_string(),
@@ -376,7 +379,7 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
     )
     .unwrap();
     let capabilities = ResolvedAgentCapabilities {
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         owner_user_id: "user-1".to_string(),
         policy_revision: "policy-1".to_string(),
         generated_at: "now".to_string(),
@@ -417,7 +420,7 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,

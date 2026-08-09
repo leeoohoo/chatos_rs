@@ -18,6 +18,7 @@ pub use catalog::{
     CHATOS_ASYNC_PLANNER_TOOL_PROFILE, CHATOS_PLAN_TASK_PROFILE,
     PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
 };
+pub use chatos_plugin_management_sdk::SystemAgentKey;
 #[cfg(feature = "managed-config")]
 pub use config::{
     load_agent_max_iterations, require_task_runner_runtime_settings, resolve_agent_max_iterations,

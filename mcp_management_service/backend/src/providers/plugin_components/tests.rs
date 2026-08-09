@@ -8,6 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, SandboxProviderKind, WorkspaceExecutionTarget,
 };
@@ -17,6 +18,8 @@ use chatos_plugin_management_sdk::{
 };
 
 use super::*;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBinding {
     PluginToolComponentRuntimeBinding {
@@ -43,7 +46,7 @@ fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBindi
                 ),
                 ("argument_hint".to_string(), json!("[path]")),
                 ("requires_confirmation".to_string(), json!(true)),
-                ("target_agent".to_string(), json!("task_runner_run_phase")),
+                ("target_agent".to_string(), json!(RUN_AGENT_KEY)),
                 (
                     "allowed_tools".to_string(),
                     json!(["browser_tools_browser_snapshot"]),
@@ -83,7 +86,7 @@ fn agent_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBinding
                     "description".to_string(),
                     json!("Review the current change"),
                 ),
-                ("base_agent".to_string(), json!("task_runner_run_phase")),
+                ("base_agent".to_string(), json!(RUN_AGENT_KEY)),
                 (
                     "allowed_tools".to_string(),
                     json!(["browser_tools_browser_snapshot"]),
@@ -117,7 +120,7 @@ fn command_snapshot(
         Some("Review the current change"),
         Some("[path]"),
         true,
-        Some("task_runner_run_phase"),
+        Some(RUN_AGENT_KEY),
         &["browser_tools_browser_snapshot".to_string()],
         binding.component_content_sha256.as_str(),
         prompt,
@@ -135,7 +138,7 @@ fn command_snapshot(
         "description": "Review the current change",
         "argument_hint": "[path]",
         "requires_confirmation": true,
-        "target_agent": "task_runner_run_phase",
+        "target_agent": RUN_AGENT_KEY,
         "allowed_tools": ["browser_tools_browser_snapshot"],
         "confirmation_approved": confirmation_approved,
         "content_sha256": binding.component_content_sha256,
@@ -195,7 +198,7 @@ fn snapshot(
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
@@ -240,7 +243,7 @@ fn cloud_snapshot(
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
@@ -543,7 +546,7 @@ fn cloud_agent_bundle_publishes_apply_but_confirmation_commands_fail_closed() {
         .and_then(Value::as_str)
         .unwrap();
     assert!(text.starts_with(THIRD_PARTY_PLUGIN_ENVELOPE));
-    assert!(text.contains("Base Agent: task_runner_run_phase"));
+    assert!(text.contains(format!("Base Agent: {RUN_AGENT_KEY}").as_str()));
 
     let confirmation_command = command_binding(PluginExecutionHost::Cloud);
     assert!(validate_cloud_component_policy(&confirmation_command).is_err());

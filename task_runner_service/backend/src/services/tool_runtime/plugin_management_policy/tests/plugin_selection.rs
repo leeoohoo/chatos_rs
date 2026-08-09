@@ -10,6 +10,9 @@ use serde_json::json;
 use super::super::{TaskRunnerCapabilityPolicy, BUILTIN_RUNTIME_KIND};
 use super::fixtures::*;
 
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+const PLAN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerPlanPhase.as_str();
+
 fn local_runtime_capabilities() -> ResolvedAgentCapabilities {
     policy().capabilities
 }
@@ -220,7 +223,7 @@ fn selected_command_enters_the_immutable_run_snapshot() {
             .runtime
             .get("metadata")
             .and_then(|metadata| metadata.get("target_agent")),
-        Some(&json!("task_runner_run_phase"))
+        Some(&json!(RUN_AGENT_KEY))
     );
     assert_eq!(
         component
@@ -239,7 +242,7 @@ fn selected_command_enters_the_immutable_run_snapshot() {
 #[test]
 fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
     let mut capabilities = local_runtime_capabilities();
-    capabilities.plugins = vec![resolved_agent_plugin("task_runner_run_phase")];
+    capabilities.plugins = vec![resolved_agent_plugin(RUN_AGENT_KEY)];
     let policy = local_runtime_policy(capabilities).expect("Agent Plugin policy");
     let views = policy.selectable_plugin_views();
     assert_eq!(views[0].agents.len(), 1);
@@ -274,7 +277,7 @@ fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
             .runtime
             .get("metadata")
             .and_then(|metadata| metadata.get("base_agent")),
-        Some(&json!("task_runner_run_phase"))
+        Some(&json!(RUN_AGENT_KEY))
     );
     assert_eq!(
         component
@@ -320,14 +323,14 @@ fn hook_set_is_automatically_bound_to_the_immutable_run_snapshot() {
 #[test]
 fn plugin_agent_must_match_the_existing_plan_or_run_agent() {
     let mut run_capabilities = local_runtime_capabilities();
-    run_capabilities.plugins = vec![resolved_agent_plugin("task_runner_plan_phase")];
+    run_capabilities.plugins = vec![resolved_agent_plugin(PLAN_AGENT_KEY)];
     let run_policy = local_runtime_policy(run_capabilities)
         .expect("incompatible optional Agent components are filtered");
     assert!(run_policy.selectable_plugin_views().is_empty());
 
     let mut plan_capabilities = local_runtime_capabilities();
     plan_capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
-    plan_capabilities.plugins = vec![resolved_agent_plugin("task_runner_plan_phase")];
+    plan_capabilities.plugins = vec![resolved_agent_plugin(PLAN_AGENT_KEY)];
     let policy = local_runtime_policy(plan_capabilities).expect("plan Agent Plugin policy");
     assert_eq!(
         policy.selectable_plugin_views()[0].agents[0].agent_id,
@@ -338,7 +341,7 @@ fn plugin_agent_must_match_the_existing_plan_or_run_agent() {
 #[test]
 fn a_task_may_select_only_one_plugin_agent() {
     let mut capabilities = local_runtime_capabilities();
-    capabilities.plugins = vec![resolved_agent_plugin("task_runner_run_phase")];
+    capabilities.plugins = vec![resolved_agent_plugin(RUN_AGENT_KEY)];
     let policy = local_runtime_policy(capabilities).expect("Agent Plugin policy");
     let config = TaskPluginConfig {
         device_id: Some("device-1".to_string()),
@@ -430,7 +433,7 @@ fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
     component
         .component
         .metadata
-        .insert("target_agent".to_string(), json!("task_runner_plan_phase"));
+        .insert("target_agent".to_string(), json!(PLAN_AGENT_KEY));
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![command_plugin];
     let policy = local_runtime_policy(capabilities).expect("Command Plugin policy");

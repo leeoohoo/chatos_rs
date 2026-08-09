@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
+use chatos_agent::{SystemAgentKey, CHATOS_PLAN_TASK_PROFILE};
 
 use super::*;
 
@@ -14,7 +14,9 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
     );
     headers.insert(
         "x-mcp-management-agent-key",
-        " task_runner_run_phase ".parse().expect("valid header"),
+        format!(" {} ", SystemAgentKey::TaskRunnerRunPhase.as_str())
+            .parse()
+            .expect("valid header"),
     );
     headers.insert(
         "x-mcp-management-session-id",
@@ -59,7 +61,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
 
     let binding = mcp_management_binding_from_headers(&headers).expect("valid binding");
     assert_eq!(binding.owner_user_id, "user-1");
-    assert_eq!(binding.agent_key.as_str(), "task_runner_run_phase");
+    assert_eq!(binding.agent_key, SystemAgentKey::TaskRunnerRunPhase);
     assert_eq!(binding.session_id, "session-1");
     assert_eq!(binding.session_expires_at_unix, 4_102_444_800);
     assert_eq!(binding.project_id, "project-1");

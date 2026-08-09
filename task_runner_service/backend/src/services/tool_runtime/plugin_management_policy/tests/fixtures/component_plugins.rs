@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, plugin_component_descriptors, PluginAvailabilityStatus,
     PluginComponentSnapshot, PluginComponentStatus, PluginManifestSource, ResolvedPlugin,
@@ -8,6 +9,8 @@ use chatos_plugin_management_sdk::{
 };
 
 use super::base_plugin::resolved_plugin;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 pub(in super::super) fn resolved_ui_plugin() -> ResolvedPlugin {
     let mut plugin = resolved_plugin(false);
@@ -107,7 +110,7 @@ pub(in super::super) fn resolved_command_plugin(requires_confirmation: bool) -> 
                     "description": "Review the current change",
                     "argumentHint": "[path]",
                     "requiresConfirmation": {requires_confirmation},
-                    "targetAgent": "task_runner_run_phase",
+                    "targetAgent": "{RUN_AGENT_KEY}",
                     "allowedTools": ["browser_tools_browser_snapshot"]
                 }}],
                 "interface": {{

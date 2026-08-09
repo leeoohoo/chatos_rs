@@ -2,6 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_agent::SystemAgentKey;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+const PLAN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerPlanPhase.as_str();
 
 #[test]
 fn selected_agent_constraints_narrow_tools_and_iterations() {
@@ -11,7 +15,7 @@ fn selected_agent_constraints_narrow_tools_and_iterations() {
     agent.runtime.insert(
         "metadata".to_string(),
         json!({
-            "base_agent": "task_runner_run_phase",
+            "base_agent": RUN_AGENT_KEY,
             "allowed_tools": ["browser_snapshot"],
             "max_iterations": 12
         }),
@@ -28,10 +32,7 @@ fn selected_agent_constraints_narrow_tools_and_iterations() {
         "2026-07-26T00:00:00Z".to_string(),
     );
     let constraints = plugin_command_execution_constraints(&run).expect("Agent constraints");
-    assert_eq!(
-        constraints.target_agent.as_deref(),
-        Some("task_runner_run_phase")
-    );
+    assert_eq!(constraints.target_agent.as_deref(), Some(RUN_AGENT_KEY));
     assert_eq!(
         constraints.agent_identity.as_deref(),
         Some("plugin-browser:reviewer")
@@ -48,7 +49,7 @@ fn selected_command_constraints_preserve_agent_and_individual_tool_allowlists() 
     first.runtime.insert(
         "metadata".to_string(),
         json!({
-            "target_agent": "task_runner_run_phase",
+            "target_agent": RUN_AGENT_KEY,
             "allowed_tools": ["browser_snapshot", "browser_click"]
         }),
     );
@@ -57,7 +58,7 @@ fn selected_command_constraints_preserve_agent_and_individual_tool_allowlists() 
     second.runtime.insert(
         "metadata".to_string(),
         json!({
-            "target_agent": "task_runner_run_phase",
+            "target_agent": RUN_AGENT_KEY,
             "allowed_tools": ["browser_snapshot"]
         }),
     );
@@ -74,10 +75,7 @@ fn selected_command_constraints_preserve_agent_and_individual_tool_allowlists() 
     );
 
     let constraints = plugin_command_execution_constraints(&run).expect("Command constraints");
-    assert_eq!(
-        constraints.target_agent.as_deref(),
-        Some("task_runner_run_phase")
-    );
+    assert_eq!(constraints.target_agent.as_deref(), Some(RUN_AGENT_KEY));
     assert_eq!(constraints.tool_allowlists.len(), 2);
     assert_eq!(
         constraints.tool_allowlists[0],
@@ -93,13 +91,13 @@ fn selected_commands_with_different_target_agents_fail_closed() {
     first.component_key = "review".to_string();
     first.runtime.insert(
         "metadata".to_string(),
-        json!({"target_agent": "task_runner_run_phase"}),
+        json!({"target_agent": RUN_AGENT_KEY}),
     );
     let mut second = first.clone();
     second.component_key = "plan".to_string();
     second.runtime.insert(
         "metadata".to_string(),
-        json!({"target_agent": "task_runner_plan_phase"}),
+        json!({"target_agent": PLAN_AGENT_KEY}),
     );
     let mut plugin = plugin_snapshot();
     plugin.component_snapshots = vec![first, second];
@@ -177,7 +175,7 @@ fn plugin_server_names_are_normalized_and_bounded() {
 fn tool_lifecycle_events_map_to_bounded_plugin_hook_contexts() {
     let hook = PluginToolLifecycleHook {
         sessions: Vec::new(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         component_by_server: BTreeMap::from([(
             "plugin_plugin_browser_browser_tools".to_string(),
             "browser-tools".to_string(),
@@ -195,10 +193,7 @@ fn tool_lifecycle_events_map_to_bounded_plugin_hook_contexts() {
 
     let (pre_event, pre_context) = hook.map_event(&event, PluginToolLifecycleStage::Pre);
     assert_eq!(pre_event, PluginHookEvent::PreToolUse);
-    assert_eq!(
-        pre_context.agent_key.as_deref(),
-        Some("task_runner_run_phase")
-    );
+    assert_eq!(pre_context.agent_key.as_deref(), Some(RUN_AGENT_KEY));
     assert_eq!(
         pre_context.tool_name.as_deref(),
         Some("plugin_plugin_browser_browser_tools_snapshot")
