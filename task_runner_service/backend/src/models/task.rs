@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::is_chatos_plan_task_profile;
+pub use chatos_agent::CHATOS_PLAN_TASK_PROFILE as TASK_PROFILE_CHATOS_PLAN;
 use chatos_ai_runtime::{TaskBuiltinMcpPromptMode, TaskMcpInitMode};
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::TaskPluginConfig;
@@ -18,7 +20,6 @@ pub use self::record::*;
 pub use self::requests::*;
 
 pub const TASK_PROFILE_DEFAULT: &str = "default";
-pub const TASK_PROFILE_CHATOS_PLAN: &str = "chatos_plan";
 
 pub fn default_task_profile() -> String {
     TASK_PROFILE_DEFAULT.to_string()
@@ -31,17 +32,14 @@ pub fn normalize_task_profile(value: Option<&str>) -> Result<String, String> {
     if value.eq_ignore_ascii_case(TASK_PROFILE_DEFAULT) {
         return Ok(TASK_PROFILE_DEFAULT.to_string());
     }
-    if value.eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN) {
+    if is_chatos_plan_task_profile(value) {
         return Ok(TASK_PROFILE_CHATOS_PLAN.to_string());
     }
     Err(format!("unknown task_profile: {value}"))
 }
 
 pub fn uses_task_runner_planning_agent(task_profile: &str, requires_execution: bool) -> bool {
-    task_profile
-        .trim()
-        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
-        && !requires_execution
+    is_chatos_plan_task_profile(task_profile) && !requires_execution
 }
 
 pub fn task_runner_agent_key_for(

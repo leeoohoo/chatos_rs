@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::is_chatos_plan_task_profile;
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 use chatos_mcp_service::BuiltinHostBackend;
 
 use crate::models::{
     TaskMcpConfig, TaskMcpHostedBuiltinRoute, TaskMcpRequiredBuiltinCapability,
-    TaskMcpResolutionResponse, TaskRecord, TaskScheduleMode, TASK_PROFILE_CHATOS_PLAN,
+    TaskMcpResolutionResponse, TaskRecord, TaskScheduleMode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -410,11 +411,7 @@ fn remove_hosted_builtin_kinds(
 }
 
 fn is_chatos_plan_profile(input: TaskMcpResolutionInput<'_>) -> bool {
-    input
-        .task_profile
-        .trim()
-        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
-        && !input.mcp_config.requires_execution
+    is_chatos_plan_task_profile(input.task_profile) && !input.mcp_config.requires_execution
 }
 
 fn is_chatos_async_context(input: TaskMcpResolutionInput<'_>) -> bool {

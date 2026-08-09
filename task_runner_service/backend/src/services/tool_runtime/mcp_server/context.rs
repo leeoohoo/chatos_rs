@@ -7,13 +7,14 @@ use crate::models::{
     normalize_project_id, CreateTaskRequest, TaskSourceContext, PUBLIC_PROJECT_ID,
     TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
+use chatos_agent::{
+    is_chatos_plan_task_profile as is_chatos_plan_task_profile_key,
+    parse_chatos_task_runner_tool_profile, ChatosTaskRunnerToolProfile,
+};
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::TaskPluginConfig;
 
-use super::{
-    decode_remote_server_config_header, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
-    PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
-};
+use super::decode_remote_server_config_header;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum McpToolProfile {
@@ -81,22 +82,17 @@ impl McpRequestContext {
     }
 
     pub(super) fn tool_profile(&self) -> McpToolProfile {
-        if self.tool_profile.as_deref().is_some_and(|value| {
-            value
-                .trim()
-                .eq_ignore_ascii_case(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
-        }) {
-            return McpToolProfile::ProjectRequirementExecutionPlanner;
-        }
-        if self.tool_profile.as_deref().is_some_and(|value| {
-            value
-                .trim()
-                .eq_ignore_ascii_case(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
-        }) || self.has_chatos_async_message_context()
+        match self
+            .tool_profile
+            .as_deref()
+            .and_then(parse_chatos_task_runner_tool_profile)
         {
-            McpToolProfile::ChatosAsyncPlanner
-        } else {
-            McpToolProfile::Default
+            Some(ChatosTaskRunnerToolProfile::ProjectRequirementExecutionPlanner) => {
+                McpToolProfile::ProjectRequirementExecutionPlanner
+            }
+            Some(ChatosTaskRunnerToolProfile::AsyncPlanner) => McpToolProfile::ChatosAsyncPlanner,
+            None if self.has_chatos_async_message_context() => McpToolProfile::ChatosAsyncPlanner,
+            None => McpToolProfile::Default,
         }
     }
 
@@ -109,7 +105,7 @@ impl McpRequestContext {
         self.task_profile
             .as_deref()
             .map(str::trim)
-            .is_some_and(|value| value.eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN))
+            .is_some_and(is_chatos_plan_task_profile_key)
             || self.chatos_plan_mode
     }
 

@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::models::TaskMcpConfig;
+use crate::models::{TaskMcpConfig, TASK_PROFILE_CHATOS_PLAN};
 
 #[test]
 fn required_write_adds_required_read_with_same_source() {

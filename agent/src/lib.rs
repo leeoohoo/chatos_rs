@@ -10,11 +10,13 @@ mod implementations;
 
 pub use catalog::{
     agent_descriptor, chatos_task_runner_tool_profile, is_chatos_callback_agent,
-    is_project_requirement_execution_planner_agent, is_task_runner_execution_agent,
-    is_task_runner_phase_agent, is_task_runner_planning_agent, parse_system_agent_key,
+    is_chatos_plan_task_profile, is_project_requirement_execution_planner_agent,
+    is_task_runner_execution_agent, is_task_runner_phase_agent, is_task_runner_planning_agent,
+    parse_chatos_task_runner_tool_profile, parse_system_agent_key,
     requires_expected_project_task_ids, system_agent_catalog, uses_chatos_browser_callback,
-    uses_chatos_notepad_callback, AgentDescriptor, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
-    CHATOS_PLAN_TASK_PROFILE, PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
+    uses_chatos_notepad_callback, AgentDescriptor, ChatosTaskRunnerToolProfile,
+    CHATOS_ASYNC_PLANNER_TOOL_PROFILE, CHATOS_PLAN_TASK_PROFILE,
+    PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
 };
 #[cfg(feature = "managed-config")]
 pub use config::{

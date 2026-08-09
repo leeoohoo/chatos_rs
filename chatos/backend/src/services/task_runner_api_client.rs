@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use bytes::BytesMut;
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -87,7 +88,11 @@ pub async fn list_task_runner_available_plugins(
     let mut query = vec![
         (
             "task_profile",
-            if plan_mode { "chatos_plan" } else { "default" },
+            if plan_mode {
+                CHATOS_PLAN_TASK_PROFILE
+            } else {
+                "default"
+            },
         ),
         (
             "requires_execution",

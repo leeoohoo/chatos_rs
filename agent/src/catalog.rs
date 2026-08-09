@@ -9,6 +9,23 @@ pub const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
 pub const CHATOS_PLAN_TASK_PROFILE: &str = "chatos_plan";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatosTaskRunnerToolProfile {
+    AsyncPlanner,
+    ProjectRequirementExecutionPlanner,
+}
+
+impl ChatosTaskRunnerToolProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AsyncPlanner => CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
+            Self::ProjectRequirementExecutionPlanner => {
+                PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentDescriptor {
     pub key: SystemAgentKey,
     pub display_name: &'static str,
@@ -189,6 +206,21 @@ pub fn parse_system_agent_key(value: &str) -> Option<SystemAgentKey> {
     SystemAgentKey::ALL
         .into_iter()
         .find(|key| key.as_str() == normalized)
+}
+
+pub fn parse_chatos_task_runner_tool_profile(value: &str) -> Option<ChatosTaskRunnerToolProfile> {
+    let normalized = value.trim();
+    if normalized.eq_ignore_ascii_case(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE) {
+        Some(ChatosTaskRunnerToolProfile::ProjectRequirementExecutionPlanner)
+    } else if normalized.eq_ignore_ascii_case(CHATOS_ASYNC_PLANNER_TOOL_PROFILE) {
+        Some(ChatosTaskRunnerToolProfile::AsyncPlanner)
+    } else {
+        None
+    }
+}
+
+pub fn is_chatos_plan_task_profile(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case(CHATOS_PLAN_TASK_PROFILE)
 }
 
 pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
@@ -378,6 +410,16 @@ mod tests {
             Some(SystemAgentKey::TaskRunnerPlanPhase)
         );
         assert_eq!(parse_system_agent_key("unknown"), None);
+        assert_eq!(
+            parse_chatos_task_runner_tool_profile(" chatos_async_planner "),
+            Some(ChatosTaskRunnerToolProfile::AsyncPlanner)
+        );
+        assert_eq!(
+            parse_chatos_task_runner_tool_profile("project_requirement_execution_planner"),
+            Some(ChatosTaskRunnerToolProfile::ProjectRequirementExecutionPlanner)
+        );
+        assert!(is_chatos_plan_task_profile(" chatos_plan "));
+        assert!(!is_chatos_plan_task_profile("default"));
         assert_eq!(
             chatos_task_runner_tool_profile(SystemAgentKey::ChatosConversationAgent),
             Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
