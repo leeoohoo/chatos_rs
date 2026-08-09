@@ -7,8 +7,8 @@ use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxExecutionTarget,
-    SandboxProviderKind, WorkspaceProviderKind,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxExecutionTarget, SandboxProviderKind, WorkspaceProviderKind,
 };
 use serde_json::{json, Value};
 
