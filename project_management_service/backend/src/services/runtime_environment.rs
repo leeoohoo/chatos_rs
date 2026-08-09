@@ -304,12 +304,10 @@ pub fn workspace_runtime_features(
     ];
     let mut selected = BTreeMap::<&'static str, String>::new();
     let mut evidence = detected_stack_runtime_evidence(detected_stack);
-    for image in images.iter().filter(|image| {
-        matches!(
-            image.service_role,
-            RuntimeServiceRole::Application | RuntimeServiceRole::Workspace
-        )
-    }) {
+    for image in images
+        .iter()
+        .filter(|image| image.service_role == RuntimeServiceRole::Application)
+    {
         evidence.push(' ');
         evidence.push_str(image.dockerfile.as_deref().unwrap_or_default());
         evidence.push(' ');
