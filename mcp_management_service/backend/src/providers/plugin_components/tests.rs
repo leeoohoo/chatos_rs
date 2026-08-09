@@ -18,6 +18,7 @@ use chatos_plugin_management_sdk::{
     PluginComponentKind, PluginExecutionHost, PluginManagementClientConfig, PluginPathRef,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use super::*;
 

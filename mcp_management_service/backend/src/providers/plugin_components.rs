@@ -11,7 +11,6 @@ use chatos_plugin_management_sdk::{
 use chatos_plugin_package::plugin_cloud_bundle_sha256;
 use serde::Deserialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::runtime::{
     PluginCloudToolComponentBinding, PluginLocalToolComponentBinding,
