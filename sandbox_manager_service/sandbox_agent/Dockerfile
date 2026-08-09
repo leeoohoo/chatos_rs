@@ -174,7 +174,11 @@ RUN set -eux; \
     if [ -n "$rust_channel" ]; then \
       case "$rust_channel" in stable|beta|nightly|1.85.1|1.88.0|1.92.0|1.96.1) true ;; *) echo "unsupported Rust channel: $rust_channel" >&2; exit 2 ;; esac; \
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | CARGO_HOME=/opt/chatos/cargo RUSTUP_HOME="$RUSTUP_HOME" sh -s -- -y --profile minimal --default-toolchain "$rust_channel"; \
+        | CARGO_HOME=/opt/chatos/cargo \
+          RUSTUP_HOME="$RUSTUP_HOME" \
+          RUSTUP_DIST_SERVER=https://static.rust-lang.org \
+          RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup \
+          sh -s -- -y --profile minimal --default-toolchain "$rust_channel"; \
     fi; \
     if [ -n "$dotnet_channel" ]; then \
       case "$dotnet_channel" in 8.0|9.0|10.0) true ;; *) echo "unsupported .NET version: $dotnet_channel" >&2; exit 2 ;; esac; \
