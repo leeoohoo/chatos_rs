@@ -3,7 +3,7 @@
 
 use chatos_agent::{
     is_task_runner_execution_agent as is_task_runner_execution_key,
-    is_task_runner_planning_agent as is_task_runner_planning_key,
+    is_task_runner_planning_agent as is_task_runner_planning_key, parse_system_agent_key,
 };
 
 use super::*;
@@ -15,9 +15,7 @@ pub(super) fn mcp_management_binding_from_headers(
         |key: &'static str| header_text(headers, key).ok_or_else(|| format!("{key} is required"));
     let owner_user_id = required("x-mcp-management-owner-user-id")?;
     let agent_key_text = required("x-mcp-management-agent-key")?;
-    let agent_key = chatos_plugin_management_sdk::SystemAgentKey::ALL
-        .into_iter()
-        .find(|key| key.as_str() == agent_key_text)
+    let agent_key = parse_system_agent_key(&agent_key_text)
         .ok_or_else(|| "x-mcp-management-agent-key is not a registered System Agent".to_string())?;
     Ok(McpManagementBinding {
         owner_user_id,

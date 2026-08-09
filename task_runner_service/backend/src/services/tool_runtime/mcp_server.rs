@@ -3,6 +3,9 @@
 
 use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::services::{ModelConfigService, RunService, TaskService};
+pub(crate) use chatos_agent::{
+    CHATOS_ASYNC_PLANNER_TOOL_PROFILE, PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
+};
 
 #[path = "mcp_server/access.rs"]
 mod access;
@@ -46,10 +49,6 @@ const TASK_RUNNER_MCP_STDIO_ARGS: &[&str] = &[
     "--bin",
     "task_runner_mcp_stdio",
 ];
-const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
-const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
-    "project_requirement_execution_planner";
-
 #[derive(Clone)]
 pub struct TaskRunnerMcpService {
     task_service: TaskService,

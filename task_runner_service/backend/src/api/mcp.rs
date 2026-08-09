@@ -5,9 +5,10 @@ use super::core::{bearer_token_from_headers, current_user_from_user_service_toke
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use chatos_agent::{is_chatos_callback_agent, is_task_runner_phase_agent};
+use chatos_agent::{
+    chatos_task_runner_tool_profile, is_chatos_callback_agent, is_task_runner_phase_agent,
+};
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
-use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -430,12 +431,17 @@ async fn dispatch_bound_task_runner_tool(
         owner_username: None,
         owner_display_name: None,
     };
-    let is_requirement_planner =
-        binding.agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent;
     let is_chatos_plan = binding
         .task_profile
         .as_deref()
         .is_some_and(|value| value.eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN));
+    let Some(tool_profile) = chatos_task_runner_tool_profile(binding.agent_key) else {
+        return task_runner_mcp_error(
+            request.id.unwrap_or(Value::Null),
+            -32001,
+            "configured Agent has no ChatOS Task Runner tool profile",
+        );
+    };
     let request_context = McpRequestContext {
         project_id: Some(binding.project_id.clone()),
         source_session_id: binding.source_session_id.clone(),
@@ -444,14 +450,7 @@ async fn dispatch_bound_task_runner_tool(
         default_model_config_id: binding.default_model_config_id.clone(),
         workspace_dir: None,
         remote_server_config: None,
-        tool_profile: Some(
-            if is_requirement_planner {
-                "project_requirement_execution_planner"
-            } else {
-                "chatos_async_planner"
-            }
-            .to_string(),
-        ),
+        tool_profile: Some(tool_profile.to_string()),
         task_profile: binding.task_profile.clone(),
         builtin_prompt_locale: None,
         chatos_plan_mode: is_chatos_plan,

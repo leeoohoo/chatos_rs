@@ -3,6 +3,11 @@
 
 use chatos_plugin_management_sdk::{AgentToolPlane, SystemAgentKey};
 
+pub const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
+pub const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
+    "project_requirement_execution_planner";
+pub const CHATOS_PLAN_TASK_PROFILE: &str = "chatos_plan";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentDescriptor {
     pub key: SystemAgentKey,
@@ -179,6 +184,13 @@ pub fn system_agent_catalog() -> &'static [&'static AgentDescriptor] {
     &SYSTEM_AGENT_CATALOG
 }
 
+pub fn parse_system_agent_key(value: &str) -> Option<SystemAgentKey> {
+    let normalized = value.trim();
+    SystemAgentKey::ALL
+        .into_iter()
+        .find(|key| key.as_str() == normalized)
+}
+
 pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
     matches!(
         key,
@@ -186,6 +198,10 @@ pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
             | SystemAgentKey::ChatosPlanningAgent
             | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
     )
+}
+
+pub const fn is_project_requirement_execution_planner_agent(key: SystemAgentKey) -> bool {
+    matches!(key, SystemAgentKey::ProjectRequirementExecutionPlannerAgent)
 }
 
 pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
@@ -209,6 +225,20 @@ pub const fn uses_chatos_notepad_callback(key: SystemAgentKey) -> bool {
 
 pub const fn uses_chatos_browser_callback(key: SystemAgentKey) -> bool {
     uses_chatos_notepad_callback(key)
+}
+
+pub const fn chatos_task_runner_tool_profile(key: SystemAgentKey) -> Option<&'static str> {
+    if is_project_requirement_execution_planner_agent(key) {
+        Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
+    } else if is_chatos_callback_agent(key) {
+        Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
+    } else {
+        None
+    }
+}
+
+pub const fn requires_expected_project_task_ids(key: SystemAgentKey) -> bool {
+    is_project_requirement_execution_planner_agent(key)
 }
 
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
@@ -338,6 +368,35 @@ mod tests {
         ));
         assert!(!uses_chatos_browser_callback(
             SystemAgentKey::MemoryEngineSummaryAgent
+        ));
+    }
+
+    #[test]
+    fn parser_and_chatos_semantics_are_centralized() {
+        assert_eq!(
+            parse_system_agent_key(" task_runner_plan_phase "),
+            Some(SystemAgentKey::TaskRunnerPlanPhase)
+        );
+        assert_eq!(parse_system_agent_key("unknown"), None);
+        assert_eq!(
+            chatos_task_runner_tool_profile(SystemAgentKey::ChatosConversationAgent),
+            Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
+        );
+        assert_eq!(
+            chatos_task_runner_tool_profile(SystemAgentKey::ChatosPlanningAgent),
+            Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
+        );
+        assert_eq!(
+            chatos_task_runner_tool_profile(
+                SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            ),
+            Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
+        );
+        assert!(requires_expected_project_task_ids(
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+        ));
+        assert!(!requires_expected_project_task_ids(
+            SystemAgentKey::ChatosConversationAgent
         ));
     }
 }

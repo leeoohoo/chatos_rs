@@ -6,7 +6,8 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::{
-    is_chatos_callback_agent, uses_chatos_browser_callback, uses_chatos_notepad_callback,
+    is_chatos_callback_agent, parse_system_agent_key, uses_chatos_browser_callback,
+    uses_chatos_notepad_callback,
 };
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_service::{
@@ -192,9 +193,7 @@ fn mcp_management_binding_from_headers(
         |key: &'static str| header_text(headers, key).ok_or_else(|| format!("{key} is required"));
     let owner_user_id = required("x-mcp-management-owner-user-id")?;
     let agent_key_text = required("x-mcp-management-agent-key")?;
-    let agent_key = SystemAgentKey::ALL
-        .into_iter()
-        .find(|key| key.as_str() == agent_key_text)
+    let agent_key = parse_system_agent_key(&agent_key_text)
         .ok_or_else(|| "x-mcp-management-agent-key is not a registered System Agent".to_string())?;
     Ok(McpManagementBinding {
         owner_user_id,

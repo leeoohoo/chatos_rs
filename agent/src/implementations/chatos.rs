@@ -4,12 +4,10 @@
 use async_trait::async_trait;
 use chatos_plugin_management_sdk::SystemAgentKey;
 
-use crate::{agent_descriptor, AgentDescriptor, AgentIdentity};
-
-pub const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
-pub const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
-    "project_requirement_execution_planner";
-pub const CHATOS_PLAN_TASK_PROFILE: &str = "chatos_plan";
+use crate::{
+    agent_descriptor, AgentDescriptor, AgentIdentity, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
+    CHATOS_PLAN_TASK_PROFILE, PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChatosAgentProfile {
