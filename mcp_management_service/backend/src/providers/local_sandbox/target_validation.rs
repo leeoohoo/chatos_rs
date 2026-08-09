@@ -5,9 +5,8 @@ use chatos_mcp_management_sdk::{SandboxExecutionTarget, SandboxProviderKind};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 
 use super::manager_client::required_pairing_id;
-use super::{
-    LocalSandboxLeaseBinding, LocalSandboxProvider, ProviderCallError, SANDBOX_SERVICE_SCOPE,
-};
+use super::records::LocalSandboxLeaseBinding;
+use super::{LocalSandboxProvider, ProviderCallError, SANDBOX_SERVICE_SCOPE};
 
 impl LocalSandboxProvider {
     pub(in crate::providers) async fn validate_target(

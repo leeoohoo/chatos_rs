@@ -6,7 +6,8 @@ use chatos_mcp_management_sdk::{
 };
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 
-use super::{LocalSandboxProvider, ProviderCallError, SandboxPairingRecord, SANDBOX_ROUTING_SCOPE};
+use super::records::SandboxPairingRecord;
+use super::{LocalSandboxProvider, ProviderCallError, SANDBOX_ROUTING_SCOPE};
 
 impl LocalSandboxProvider {
     pub(in crate::providers) async fn resolve_active_pairing(
