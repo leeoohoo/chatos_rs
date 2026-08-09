@@ -3,18 +3,15 @@
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
-use chatos_mcp_service::{
-    builtin_kind_header_value, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER, MCP_ERROR_AUTH_REQUIRED,
-    MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS, METHOD_NOTIFICATIONS_CANCELLED,
-    METHOD_TOOLS_CALL,
-};
-use chatos_service_runtime::http_body::read_response_bytes_limited;
-use serde_json::{json, Value};
+use chatos_mcp_service::{MCP_ERROR_AUTH_REQUIRED, MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS};
+use serde_json::Value;
 
 use crate::runtime::RuntimeSessionSnapshot;
-use crate::trace_context::InternalTraceContextExt;
 
-use super::{decode_cancel_notification_response, ProviderCancelOutcome};
+use super::ProviderCancelOutcome;
+
+mod request_builder;
+mod runtime_calls;
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "project-service";
@@ -110,175 +107,7 @@ impl ProjectServiceProvider {
         }
     }
 
-    pub(super) async fn call_tool(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        original_tool_name: &str,
-        arguments: Value,
-        invocation_id: &str,
-    ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "project service Provider internal secret is not configured",
-            )
-        })?;
-        let (url, scope) = self.endpoint(snapshot, route)?;
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            scope,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        let mut request = self
-            .http
-            .post(url)
-            .header("x-project-service-caller", CALLER_SERVICE)
-            .header("x-project-service-internal-token", token)
-            .header(
-                "x-mcp-management-owner-user-id",
-                snapshot.owner_user_id.as_str(),
-            )
-            .header("x-mcp-management-agent-key", snapshot.agent_key.as_str())
-            .header("x-mcp-management-session-id", snapshot.session_id.as_str())
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header("x-chatos-project-id", snapshot.project_id.as_str())
-            .header("x-task-runner-project-id", snapshot.project_id.as_str());
-        if route.provider_kind == McpProviderKind::Harness {
-            let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-                .ok_or_else(|| {
-                    ProviderCallError::provider_unavailable(
-                        "Harness route is not a registered System MCP",
-                    )
-                })?;
-            request = request.header(
-                HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
-                builtin_kind_header_value([descriptor.key.as_str()]),
-            );
-        }
-        for (header, value) in [
-            ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
-            ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
-            ("x-mcp-management-task-id", snapshot.task_id.as_deref()),
-        ] {
-            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-                request = request.header(header, value);
-            }
-        }
-        let response = request
-            .with_internal_trace_context()
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": invocation_id,
-                "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
-            }))
-            .send()
-            .await
-            .map_err(|err| {
-                ProviderCallError::provider_unavailable(format!(
-                    "project service Provider request failed: {err}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|err| {
-                ProviderCallError::invalid_response(format!(
-                    "project service Provider response could not be read: {err}"
-                ))
-            })?;
-        if !status.is_success() {
-            return Err(ProviderCallError::provider_unavailable(format!(
-                "project service Provider rejected the request with HTTP {}",
-                status.as_u16()
-            )));
-        }
-        let result =
-            decode_jsonrpc_response(bytes.as_slice(), invocation_id, "project service Provider")?;
-        Ok(ProviderCallOutcome {
-            result,
-            response_bytes: bytes.len(),
-        })
-    }
-
-    pub(super) async fn cancel_invocation(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        invocation_id: &str,
-    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "project service Provider internal secret is not configured",
-            )
-        })?;
-        let (url, scope) = self.endpoint(snapshot, route)?;
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            scope,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        let mut request = self
-            .http
-            .post(url)
-            .header("x-project-service-caller", CALLER_SERVICE)
-            .header("x-project-service-internal-token", token)
-            .header(
-                "x-mcp-management-owner-user-id",
-                snapshot.owner_user_id.as_str(),
-            )
-            .header("x-mcp-management-agent-key", snapshot.agent_key.as_str())
-            .header("x-mcp-management-session-id", snapshot.session_id.as_str())
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header("x-chatos-project-id", snapshot.project_id.as_str())
-            .header("x-task-runner-project-id", snapshot.project_id.as_str());
-        for (header, value) in [
-            ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
-            ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
-            ("x-mcp-management-task-id", snapshot.task_id.as_deref()),
-        ] {
-            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-                request = request.header(header, value);
-            }
-        }
-        let response = request
-            .with_internal_trace_context()
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "method": METHOD_NOTIFICATIONS_CANCELLED,
-                "params": {
-                    "requestId": invocation_id,
-                    "reason": "MCP Management runtime cancelled the invocation"
-                }
-            }))
-            .send()
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "project service Provider cancellation request failed: {error}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|error| {
-                ProviderCallError::invalid_response(format!(
-                    "project service Provider cancellation response could not be read: {error}"
-                ))
-            })?;
-        decode_cancel_notification_response(status, bytes.as_slice(), "project service Provider")
-    }
-
-    fn endpoint(
+    pub(in crate::providers) fn endpoint(
         &self,
         snapshot: &RuntimeSessionSnapshot,
         route: &ResolvedMcpRoute,
@@ -387,6 +216,9 @@ mod tests {
         ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
         WorkspaceProviderKind,
     };
+    use serde_json::json;
+
+    use crate::runtime::RuntimeSessionSnapshot;
 
     use super::*;
 
