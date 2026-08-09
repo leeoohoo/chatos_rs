@@ -6,6 +6,7 @@ mod chatos;
 mod cloud_sandbox;
 mod cloud_stdio;
 mod dispatcher_prepare;
+mod dispatcher_prepare_plugins;
 mod dispatcher_runtime;
 mod dispatcher_runtime_lifecycle;
 mod dispatcher_runtime_support;
