@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::ChatosAgentProfile;
+use chatos_agent::{ChatosAgentProfile, CHATOS_PLAN_TASK_PROFILE};
 
 use super::policy::merge_optional_system_prompts;
 
@@ -17,7 +17,7 @@ fn plan_mode_is_a_program_routed_task_profile_not_a_second_chatos_agent() {
     );
     assert_eq!(
         ChatosAgentProfile::from_flags(true, false).task_runner_task_profile(),
-        Some("chatos_plan")
+        Some(CHATOS_PLAN_TASK_PROFILE)
     );
     assert_eq!(
         ChatosAgentProfile::from_flags(false, true).key(),

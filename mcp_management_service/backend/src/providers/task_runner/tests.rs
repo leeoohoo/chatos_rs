@@ -7,6 +7,7 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
 use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
     WorkspaceProviderKind,
@@ -207,7 +208,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
             Some("source-session-1"),
             Some("message-1"),
             Some("model-1"),
-            Some("chatos_plan"),
+            Some(CHATOS_PLAN_TASK_PROFILE),
             expected_project_task_ids.as_slice(),
             i64::MAX,
         )
@@ -230,7 +231,10 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
     );
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
     assert_eq!(headers["x-mcp-management-turn-id"], "turn-1");
-    assert_eq!(headers["x-mcp-management-task-profile"], "chatos_plan");
+    assert_eq!(
+        headers["x-mcp-management-task-profile"],
+        CHATOS_PLAN_TASK_PROFILE
+    );
     assert_eq!(
         headers["x-mcp-management-source-session-id"],
         "source-session-1"

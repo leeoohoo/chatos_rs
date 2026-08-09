@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::{
+    CHATOS_ASYNC_PLANNER_TOOL_PROFILE, CHATOS_PLAN_TASK_PROFILE,
+    PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
+};
+
 use super::*;
 
 #[tokio::test]
@@ -18,7 +23,7 @@ async fn chatos_plan_profile_requires_concrete_project_scope() {
             },
             current_user,
             McpRequestContext {
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -45,7 +50,7 @@ async fn project_requirement_execution_planner_profile_requires_concrete_project
             },
             current_user,
             McpRequestContext {
-                tool_profile: Some("project_requirement_execution_planner".to_string()),
+                tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -85,7 +90,7 @@ async fn chatos_async_profile_keeps_prerequisite_graph_creation_in_server_catalo
             current_user,
             McpRequestContext {
                 project_id: Some(project.id),
-                tool_profile: Some("chatos_async_planner".to_string()),
+                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 ..McpRequestContext::default()
@@ -204,7 +209,7 @@ async fn list_tasks_in_chatos_plan_profile_only_returns_plan_tasks() {
         .create_task(
             CreateTaskRequest {
                 project_id: Some(project.id.clone()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..test_create_task_request("plan task")
             },
             Some(&current_user),
@@ -220,7 +225,7 @@ async fn list_tasks_in_chatos_plan_profile_only_returns_plan_tasks() {
             &current_user,
             &McpRequestContext {
                 project_id: Some(project.id.clone()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -285,7 +290,7 @@ async fn list_tasks_in_chatos_context_can_search_historical_default_tasks() {
         .create_task(
             CreateTaskRequest {
                 project_id: Some(project.id.clone()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..test_create_task_request("legacy checkout retry planning")
             },
             Some(&current_user),
@@ -403,7 +408,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("execution-group-1".to_string()),
                 default_model_config_id: Some("model-1".to_string()),
-                tool_profile: Some("project_requirement_execution_planner".to_string()),
+                tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string()),
                 expected_project_task_ids: std::collections::BTreeSet::from([
                     "project-task-1".to_string()
                 ]),
@@ -632,7 +637,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("execution-group-1".to_string()),
                 default_model_config_id: Some("model-1".to_string()),
-                tool_profile: Some("project_requirement_execution_planner".to_string()),
+                tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string()),
                 expected_project_task_ids: std::collections::BTreeSet::from([
                     "project-task-1".to_string()
                 ]),

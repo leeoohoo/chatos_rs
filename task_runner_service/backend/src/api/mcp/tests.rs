@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
+
 use super::*;
 
 #[test]
@@ -44,7 +46,9 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
     );
     headers.insert(
         "x-mcp-management-task-profile",
-        " chatos_plan ".parse().expect("valid header"),
+        format!(" {CHATOS_PLAN_TASK_PROFILE} ")
+            .parse()
+            .expect("valid header"),
     );
     headers.insert(
         "x-mcp-management-expected-project-task-ids",
@@ -66,7 +70,10 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         Some("source-session-1")
     );
     assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
-    assert_eq!(binding.task_profile.as_deref(), Some("chatos_plan"));
+    assert_eq!(
+        binding.task_profile.as_deref(),
+        Some(CHATOS_PLAN_TASK_PROFILE)
+    );
     assert_eq!(
         binding.expected_project_task_ids,
         std::collections::BTreeSet::from([

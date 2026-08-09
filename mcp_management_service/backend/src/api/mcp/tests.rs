@@ -4,6 +4,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
+
 use super::*;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -762,7 +764,7 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     assert!(!grant_matches_snapshot(&wrong_agent, &snapshot));
 
     let mut wrong_task_profile = claims.clone();
-    wrong_task_profile.task_profile = Some("chatos_plan".to_string());
+    wrong_task_profile.task_profile = Some(CHATOS_PLAN_TASK_PROFILE.to_string());
     assert!(!grant_matches_snapshot(&wrong_task_profile, &snapshot));
 
     let mut wrong_project = claims.clone();

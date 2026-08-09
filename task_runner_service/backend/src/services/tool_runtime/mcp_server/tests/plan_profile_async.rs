@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::{CHATOS_ASYNC_PLANNER_TOOL_PROFILE, CHATOS_PLAN_TASK_PROFILE};
+
 use super::*;
 
 #[tokio::test]
@@ -73,8 +75,8 @@ async fn chatos_async_reuse_is_scoped_by_task_profile() {
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
-                tool_profile: Some("chatos_async_planner".to_string()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -102,8 +104,8 @@ async fn chatos_async_reuse_is_scoped_by_task_profile() {
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
-                tool_profile: Some("chatos_async_planner".to_string()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -175,8 +177,8 @@ async fn chatos_async_create_task_inherits_selected_conversation_model() {
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 default_model_config_id: Some("model-selected".to_string()),
-                tool_profile: Some("chatos_async_planner".to_string()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -345,7 +347,7 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
         .create_task(
             CreateTaskRequest {
                 project_id: Some(project.id.clone()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 default_model_config_id: Some("model-1".to_string()),
                 status: Some(TaskStatus::Succeeded),
                 ..test_create_task_request("previous plan task")
@@ -374,8 +376,8 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
-                tool_profile: Some("chatos_async_planner".to_string()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -438,7 +440,7 @@ async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
         .create_task(
             CreateTaskRequest {
                 project_id: Some(project.id.clone()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 default_model_config_id: Some("model-1".to_string()),
                 status: Some(TaskStatus::Succeeded),
                 ..test_create_task_request("previous plan task")
@@ -472,8 +474,8 @@ async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
-                tool_profile: Some("chatos_async_planner".to_string()),
-                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
+                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
                 ..McpRequestContext::default()
             },
         )
