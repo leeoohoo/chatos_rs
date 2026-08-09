@@ -428,7 +428,9 @@ mod tests {
             trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
             tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
-            agent_key: "task_runner_run_phase".to_string(),
+            agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+                .as_str()
+                .to_string(),
             task_profile: Some("default".to_string()),
             project_id: "project-1".to_string(),
             device_id: None,

@@ -401,7 +401,7 @@ mod tests {
 
     fn capabilities(mcps: Vec<ResolvedMcp>) -> ResolvedAgentCapabilities {
         ResolvedAgentCapabilities {
-            agent_key: "task_runner_run_phase".to_string(),
+            agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
             owner_user_id: "user-1".to_string(),
             policy_revision: "policy-1".to_string(),
             generated_at: "now".to_string(),
@@ -626,7 +626,7 @@ mod tests {
             },
             binding: AgentBindingRecord {
                 id: format!("binding-{id}"),
-                agent_key: "task_runner_run_phase".to_string(),
+                agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
                 binding_scope: "user_override".to_string(),
                 owner_user_id: Some("user-1".to_string()),
                 resource_kind: "mcp".to_string(),

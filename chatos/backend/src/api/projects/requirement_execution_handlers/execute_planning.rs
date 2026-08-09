@@ -362,7 +362,7 @@ pub(super) async fn execute_requirement_inner(
         "message_id": execution_group_id.clone(),
         "message": message,
         "execution_group_id": execution_group_id,
-        "planner_agent_key": "project_requirement_execution_planner_agent",
+        "planner_agent_key": chatos_plugin_management_sdk::SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
         "plan_mode_enabled": false,
     }))
 }
