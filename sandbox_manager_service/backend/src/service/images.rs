@@ -103,6 +103,9 @@ pub(crate) async fn catalog(
             .iter()
             .filter_map(|image_ref| local_image_record(config, backend, image_ref))
             .collect::<Vec<_>>();
+        for image in &mut local_images {
+            apply_status(config, backend, image).await;
+        }
         local_images.sort_by(|left, right| left.name.cmp(&right.name));
         images.extend(local_images);
     }
@@ -692,6 +695,17 @@ mod tests {
         let changed = image_definition_hash_bytes(b"FROM ubuntu:24.04\nRUN apt-get update\n");
         assert_eq!(original.len(), 64);
         assert_ne!(original, changed);
+    }
+
+    #[test]
+    fn local_generated_image_requires_definition_status_inspection() {
+        let config = AppConfig::for_tests();
+        let image_ref = format!("{}:dev-node24", normalized_tag_prefix(&config));
+        let record = local_image_record(&config, SandboxBackendKind::Docker, &image_ref)
+            .expect("generated image reference");
+
+        assert!(!record.initialized);
+        assert_eq!(record.status, "unknown");
     }
 
     #[tokio::test]
