@@ -75,14 +75,6 @@ pub(super) enum WsInput {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub(super) enum WsOutput {
-    #[serde(rename = "output")]
-    Output { data: String },
-    #[serde(rename = "snapshot")]
-    Snapshot { data: String },
-    #[serde(rename = "exit")]
-    Exit { code: i32 },
-    #[serde(rename = "state")]
-    State { busy: bool },
     #[serde(rename = "error")]
     Error {
         error: String,

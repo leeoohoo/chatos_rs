@@ -3,7 +3,12 @@
 
 mod relay;
 mod runtime;
+mod terminal;
 
 pub(crate) use relay::{
     handle_remote_connection_command_request, handle_remote_connection_test_request,
+};
+pub(crate) use terminal::{
+    handle_remote_terminal_close, handle_remote_terminal_input, handle_remote_terminal_resize,
+    handle_remote_terminal_session_create, RemoteTerminalManager,
 };

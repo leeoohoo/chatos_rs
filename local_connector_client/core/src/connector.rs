@@ -29,6 +29,8 @@ use crate::registration::cloud_authentication_expired;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
 use crate::remote_connection::{
     handle_remote_connection_command_request, handle_remote_connection_test_request,
+    handle_remote_terminal_close, handle_remote_terminal_input, handle_remote_terminal_resize,
+    handle_remote_terminal_session_create, RemoteTerminalManager,
 };
 use crate::remote_control_auth::RemoteControlVerifier;
 use crate::sandbox::pairing::reconcile_sandbox_pairings;
@@ -90,6 +92,7 @@ pub(crate) async fn connect_loop(
     };
     let (mut write, mut read) = ws_stream.split();
     let terminal_manager = LocalTerminalManager::default();
+    let remote_terminal_manager = RemoteTerminalManager::default();
     let history_recorder = CommandHistoryRecorder {
         state_path: config.state_path.clone(),
         state: state.clone(),
@@ -100,9 +103,11 @@ pub(crate) async fn connect_loop(
     let mut managed_runtime_config_sync = tokio::time::interval(Duration::from_secs(
         MANAGED_RUNTIME_CONFIG_SYNC_INTERVAL_SECONDS,
     ));
+    let mut remote_terminal_cleanup = tokio::time::interval(Duration::from_secs(60));
     let mut plugin_execute_tasks = tokio::task::JoinSet::new();
     mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     managed_runtime_config_sync.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    remote_terminal_cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing_stdout("connected to local_connector_service");
     match reconcile_sandbox_pairings(&http_client, &config, &state, device_id.as_str()).await {
         Ok(count) if count > 0 => tracing_stdout(
@@ -114,6 +119,9 @@ pub(crate) async fn connect_loop(
 
     loop {
         tokio::select! {
+            _ = remote_terminal_cleanup.tick() => {
+                remote_terminal_manager.close_idle(Duration::from_secs(20 * 60)).await;
+            }
             _ = managed_runtime_config_sync.tick() => {
                 match sync_managed_runtime_config(&http_client, &config, &state).await {
                     Ok(updated) => {
@@ -231,6 +239,7 @@ pub(crate) async fn connect_loop(
                                 &http_client,
                                 &sandbox_runtime,
                                 &terminal_manager,
+                                &remote_terminal_manager,
                                 &history_recorder,
                                 &plugin_runtime,
                                 outbound_tx.clone(),
@@ -329,6 +338,7 @@ async fn handle_text_message(
     http_client: &reqwest::Client,
     sandbox_runtime: &LocalSandboxRuntime,
     terminal_manager: &LocalTerminalManager,
+    remote_terminal_manager: &RemoteTerminalManager,
     history_recorder: &CommandHistoryRecorder,
     plugin_runtime: &PluginRuntimeHost,
     outbound_tx: mpsc::UnboundedSender<Value>,
@@ -373,6 +383,22 @@ async fn handle_text_message(
         }
         "remote_connection_command_request" => {
             Some(handle_remote_connection_command_request(value).await)
+        }
+        "remote_terminal_session_create_request" => Some(
+            handle_remote_terminal_session_create(value, remote_terminal_manager, outbound_tx)
+                .await,
+        ),
+        "remote_terminal_input" => {
+            handle_remote_terminal_input(value, remote_terminal_manager).await;
+            None
+        }
+        "remote_terminal_resize" => {
+            handle_remote_terminal_resize(value, remote_terminal_manager).await;
+            None
+        }
+        "remote_terminal_close" => {
+            handle_remote_terminal_close(value, remote_terminal_manager).await;
+            None
         }
         "model_runtime_request" => Some(handle_model_runtime_request(value, state).await),
         "skill_prepare_request" => Some(handle_skill_prepare(value, state)),
@@ -439,6 +465,10 @@ fn is_remote_control_message(message_type: &str) -> bool {
             | "terminal_exec_request"
             | "remote_connection_test_request"
             | "remote_connection_command_request"
+            | "remote_terminal_session_create_request"
+            | "remote_terminal_input"
+            | "remote_terminal_resize"
+            | "remote_terminal_close"
             | "model_runtime_request"
             | "skill_prepare_request"
             | "skill_execute_request"
@@ -495,7 +525,7 @@ fn validate_remote_control_context(
 
     let workspace_id = request.workspace_id.trim();
     if workspace_id.is_empty() {
-        if relay_allows_empty_workspace(message_type, &request) {
+        if relay_allows_empty_workspace(message_type, request) {
             return Ok(());
         }
         return Err("relay workspace_id is required for this operation".to_string());
@@ -572,6 +602,7 @@ fn remote_control_error_response(
         "terminal_exec_request" => "terminal_response",
         "remote_connection_test_request" => "remote_connection_test_response",
         "remote_connection_command_request" => "remote_connection_command_response",
+        "remote_terminal_session_create_request" => "remote_terminal_session_create_response",
         "terminal_session_create_request" => "terminal_session_create_response",
         "workspace_directory_create_request" => "workspace_directory_create_response",
         "model_runtime_request" => "model_runtime_response",

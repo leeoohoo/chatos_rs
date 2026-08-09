@@ -9,7 +9,8 @@ use axum::{
 use serde_json::Value;
 
 use crate::api::local_connectors::{
-    test_remote_connection_via_connector, validate_local_connector_execution_target,
+    close_remote_terminal_via_connector, test_remote_connection_via_connector,
+    validate_local_connector_execution_target,
 };
 use crate::core::auth::AuthUser;
 use crate::core::remote_connection_access::{
@@ -21,10 +22,9 @@ use crate::models::remote_connection::RemoteConnectionService;
 use crate::services::realtime::publish_remote_connections_updated;
 
 use super::{
-    error_payload, get_remote_terminal_manager, internal_error_response, normalize_create_request,
-    normalize_update_request, remote_connectivity_error_response, resolve_jump_connection_snapshot,
-    CreateRemoteConnectionRequest, DisconnectReason, RemoteConnectionQuery,
-    UpdateRemoteConnectionRequest,
+    error_payload, internal_error_response, normalize_create_request, normalize_update_request,
+    remote_connectivity_error_response, resolve_jump_connection_snapshot,
+    CreateRemoteConnectionRequest, RemoteConnectionQuery, UpdateRemoteConnectionRequest,
 };
 
 const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";
@@ -239,12 +239,19 @@ pub(super) async fn delete_remote_connection(
     auth: AuthUser,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_remote_connection(&id, &auth).await {
-        return map_remote_connection_access_error(err);
-    }
+    let connection = match ensure_owned_remote_connection(&id, &auth).await {
+        Ok(connection) => connection,
+        Err(err) => return map_remote_connection_access_error(err),
+    };
 
-    let manager = get_remote_terminal_manager();
-    manager.close_with_reason(&id, DisconnectReason::ConnectionDeleted);
+    if let Err((status, detail)) = close_remote_terminal_via_connector(&connection).await {
+        tracing::warn!(
+            connection_id = id.as_str(),
+            status = status.as_u16(),
+            detail = %detail.0,
+            "close remote terminal before deleting connection failed"
+        );
+    }
 
     match RemoteConnectionService::delete(&id).await {
         Ok(_) => {
@@ -270,20 +277,21 @@ pub(super) async fn disconnect_remote_terminal(
     auth: AuthUser,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_remote_connection(&id, &auth).await {
-        return map_remote_connection_access_error(err);
+    let connection = match ensure_owned_remote_connection(&id, &auth).await {
+        Ok(connection) => connection,
+        Err(err) => return map_remote_connection_access_error(err),
+    };
+    match close_remote_terminal_via_connector(&connection).await {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "disconnected": true,
+                "message": "远端终端已断开"
+            })),
+        ),
+        Err(err) => err,
     }
-
-    let manager = get_remote_terminal_manager();
-    let closed = manager.close_with_reason(&id, DisconnectReason::Manual);
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "success": true,
-            "disconnected": closed,
-            "message": if closed { "远端终端已断开" } else { "远端终端当前未连接" }
-        })),
-    )
 }
 
 pub(super) async fn test_remote_connection_saved(

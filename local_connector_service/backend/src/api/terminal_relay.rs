@@ -476,7 +476,7 @@ async fn handle_terminal_relay_socket(
     .await;
 }
 
-async fn drop_terminal_subscription(
+pub(super) async fn drop_terminal_subscription(
     state: &AppState,
     terminal_session_id: &str,
     subscription_id: &str,
@@ -619,7 +619,7 @@ async fn send_terminal_control(
     send_relay(state, request).await.is_ok()
 }
 
-fn terminal_event_to_ws_payload(message_type: &str, body: &Value) -> Option<Value> {
+pub(super) fn terminal_event_to_ws_payload(message_type: &str, body: &Value) -> Option<Value> {
     match message_type {
         "terminal_output" => Some(json!({
             "type": "output",

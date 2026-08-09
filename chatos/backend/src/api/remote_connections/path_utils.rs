@@ -18,15 +18,3 @@ pub(super) fn shell_quote(value: &str) -> String {
 pub(super) use chatos_remote_runtime::{
     join_remote_path, normalize_remote_path, remote_parent_path,
 };
-
-pub(super) fn input_triggers_busy(data: &str) -> bool {
-    if data.is_empty() {
-        return false;
-    }
-    if data.contains('\r') || data.contains('\n') {
-        return true;
-    }
-    data.as_bytes()
-        .iter()
-        .any(|b| matches!(*b, 0x03 | 0x04 | 0x1A))
-}

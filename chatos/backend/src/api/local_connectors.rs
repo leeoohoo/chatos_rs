@@ -35,6 +35,7 @@ use connector_client::{
     connector_post_json_with_headers, connector_post_json_with_timeout,
     local_connector_mcp_relay_path,
 };
+pub(crate) use connector_client::{local_connector_tls_connector, local_connector_websocket_url};
 use directory_payload::local_connector_directory_list_payload;
 pub(crate) use project_reconciliation::reconcile_local_connector_project;
 pub(crate) use root_path::{
@@ -122,7 +123,24 @@ pub(crate) async fn run_remote_command_via_connector(
         .ok_or_else(|| "Local Connector 远程命令响应缺少 output".to_string())
 }
 
-fn remote_connection_execution_payload(connection: &RemoteConnection) -> Value {
+pub(crate) async fn close_remote_terminal_via_connector(
+    connection: &RemoteConnection,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/terminal/close",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    connector_post_json(
+        path.as_str(),
+        &json!({
+            "workspace_id": connection.local_connector_workspace_id,
+            "terminal_session_id": connection.id,
+        }),
+    )
+    .await
+}
+
+pub(crate) fn remote_connection_execution_payload(connection: &RemoteConnection) -> Value {
     json!({
         "host": connection.host,
         "port": connection.port,

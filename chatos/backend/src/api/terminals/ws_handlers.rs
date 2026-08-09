@@ -5,17 +5,16 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
-use rustls::{ClientConfig, RootCertStore};
-use std::io::BufReader;
-use std::sync::Arc;
+use tokio_tungstenite::connect_async_tls_with_config;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as ConnectorMessage;
-use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use tokio_util::sync::CancellationToken;
 
-use crate::api::local_connectors::{parse_local_connector_root_path, LocalConnectorRootRef};
+use crate::api::local_connectors::{
+    local_connector_tls_connector, local_connector_websocket_url, parse_local_connector_root_path,
+    LocalConnectorRootRef,
+};
 use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
-use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::models::terminal::{Terminal, TerminalService};
@@ -232,39 +231,6 @@ async fn handle_local_connector_terminal_socket(
         _ = to_browser => {}
         _ = to_connector => {}
     }
-}
-
-fn local_connector_tls_connector() -> Result<Connector, String> {
-    let cfg = Config::get();
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let ca_pem = std::fs::read(cfg.local_connector_mtls_ca_cert_path.as_path())
-        .map_err(|err| format!("读取 Local Connector mTLS CA 失败: {err}"))?;
-    let mut roots = RootCertStore::empty();
-    for certificate in rustls_pemfile::certs(&mut BufReader::new(ca_pem.as_slice())) {
-        roots
-            .add(certificate.map_err(|err| format!("解析 Local Connector mTLS CA 失败: {err}"))?)
-            .map_err(|err| format!("加载 Local Connector mTLS CA 失败: {err}"))?;
-    }
-    if roots.is_empty() {
-        return Err("Local Connector mTLS CA 不包含证书".to_string());
-    }
-
-    let identity_pem = std::fs::read(cfg.local_connector_mtls_client_identity_path.as_path())
-        .map_err(|err| format!("读取 Local Connector mTLS 客户端身份失败: {err}"))?;
-    let certificates = rustls_pemfile::certs(&mut BufReader::new(identity_pem.as_slice()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("解析 Local Connector mTLS 客户端证书失败: {err}"))?;
-    if certificates.is_empty() {
-        return Err("Local Connector mTLS 客户端身份不包含证书".to_string());
-    }
-    let private_key = rustls_pemfile::private_key(&mut BufReader::new(identity_pem.as_slice()))
-        .map_err(|err| format!("解析 Local Connector mTLS 客户端私钥失败: {err}"))?
-        .ok_or_else(|| "Local Connector mTLS 客户端身份不包含私钥".to_string())?;
-    let tls = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_client_auth_cert(certificates, private_key)
-        .map_err(|err| format!("构建 Local Connector mTLS WebSocket 客户端失败: {err}"))?;
-    Ok(Connector::Rustls(Arc::new(tls)))
 }
 
 async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
@@ -512,29 +478,17 @@ async fn persist_terminal_command(id: &str, command: &str) {
 }
 
 fn local_connector_terminal_ws_url(root_ref: &LocalConnectorRootRef, terminal_id: &str) -> String {
-    let cfg = Config::get();
-    let base = cfg
-        .local_connector_service_base_url
-        .trim()
-        .trim_end_matches('/');
-    let base = if let Some(rest) = base.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else if let Some(rest) = base.strip_prefix("http://") {
-        format!("ws://{rest}")
-    } else {
-        base.to_string()
-    };
-    let mut url = format!(
-        "{base}/api/local-connectors/relay/{}/terminal/ws?workspace_id={}&terminal_id={}",
+    let mut path = format!(
+        "/api/local-connectors/relay/{}/terminal/ws?workspace_id={}&terminal_id={}",
         urlencoding::encode(root_ref.device_id.as_str()),
         urlencoding::encode(root_ref.workspace_id.as_str()),
         urlencoding::encode(terminal_id),
     );
     if let Some(relative_path) = root_ref.relative_path.as_deref() {
-        url.push_str("&cwd=");
-        url.push_str(urlencoding::encode(relative_path).as_ref());
+        path.push_str("&cwd=");
+        path.push_str(urlencoding::encode(relative_path).as_ref());
     }
-    url
+    local_connector_websocket_url(path.as_str())
 }
 
 async fn persist_local_connector_terminal_input(id: &str, text: &str) {

@@ -145,7 +145,7 @@ pub(crate) async fn handle_remote_connection_command_request(value: Value) -> Va
     }
 }
 
-fn error_response(message_type: &str, request_id: String, error: String) -> Value {
+pub(super) fn error_response(message_type: &str, request_id: String, error: String) -> Value {
     let (status, body) = if let Some(prompt) = extract_second_factor_prompt(&error) {
         (
             400,

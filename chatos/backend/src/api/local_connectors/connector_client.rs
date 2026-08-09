@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::io::BufReader;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
 use axum::Json;
+use rustls::{ClientConfig, RootCertStore};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
+use tokio_tungstenite::Connector;
 
 use crate::config::Config;
 use crate::services::access_token_scope;
@@ -148,6 +152,54 @@ fn connector_url(cfg: &Config, path: &str) -> String {
             .trim_end_matches('/'),
         path
     )
+}
+
+pub(crate) fn local_connector_websocket_url(path: &str) -> String {
+    let base = Config::get()
+        .local_connector_service_base_url
+        .trim()
+        .trim_end_matches('/');
+    let base = if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        base.to_string()
+    };
+    format!("{base}{path}")
+}
+
+pub(crate) fn local_connector_tls_connector() -> Result<Connector, String> {
+    let cfg = Config::get();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let ca_pem = std::fs::read(cfg.local_connector_mtls_ca_cert_path.as_path())
+        .map_err(|err| format!("读取 Local Connector mTLS CA 失败: {err}"))?;
+    let mut roots = RootCertStore::empty();
+    for certificate in rustls_pemfile::certs(&mut BufReader::new(ca_pem.as_slice())) {
+        roots
+            .add(certificate.map_err(|err| format!("解析 Local Connector mTLS CA 失败: {err}"))?)
+            .map_err(|err| format!("加载 Local Connector mTLS CA 失败: {err}"))?;
+    }
+    if roots.is_empty() {
+        return Err("Local Connector mTLS CA 不包含证书".to_string());
+    }
+
+    let identity_pem = std::fs::read(cfg.local_connector_mtls_client_identity_path.as_path())
+        .map_err(|err| format!("读取 Local Connector mTLS 客户端身份失败: {err}"))?;
+    let certificates = rustls_pemfile::certs(&mut BufReader::new(identity_pem.as_slice()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("解析 Local Connector mTLS 客户端证书失败: {err}"))?;
+    if certificates.is_empty() {
+        return Err("Local Connector mTLS 客户端身份不包含证书".to_string());
+    }
+    let private_key = rustls_pemfile::private_key(&mut BufReader::new(identity_pem.as_slice()))
+        .map_err(|err| format!("解析 Local Connector mTLS 客户端私钥失败: {err}"))?
+        .ok_or_else(|| "Local Connector mTLS 客户端身份不包含私钥".to_string())?;
+    let tls = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_client_auth_cert(certificates, private_key)
+        .map_err(|err| format!("构建 Local Connector mTLS WebSocket 客户端失败: {err}"))?;
+    Ok(Connector::Rustls(Arc::new(tls)))
 }
 
 pub(super) fn local_connector_mcp_relay_path(

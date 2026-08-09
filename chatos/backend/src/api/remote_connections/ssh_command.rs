@@ -5,31 +5,6 @@ use crate::models::remote_connection::RemoteConnection;
 
 use super::shell_quote;
 
-pub(super) fn build_ssh_args(
-    connection: &RemoteConnection,
-    interactive: bool,
-    default_remote_path: Option<&str>,
-) -> Vec<String> {
-    let mut args = Vec::new();
-
-    if interactive {
-        args.push("-tt".to_string());
-    }
-
-    append_connection_options(&mut args, connection, 10);
-
-    args.push("-p".to_string());
-    args.push(connection.port.to_string());
-
-    args.push(format!("{}@{}", connection.username, connection.host));
-
-    if let Some(path) = default_remote_path {
-        args.push(build_remote_login_command(path));
-    }
-
-    args
-}
-
 fn append_connection_options(
     args: &mut Vec<String>,
     connection: &RemoteConnection,
@@ -109,11 +84,6 @@ fn append_connection_options(
             }
         }
     }
-}
-
-fn build_remote_login_command(path: &str) -> String {
-    let quoted = shell_quote(path);
-    format!("cd {quoted} 2>/dev/null || true; exec \"${{SHELL:-/bin/bash}}\" -l")
 }
 
 #[allow(dead_code)]

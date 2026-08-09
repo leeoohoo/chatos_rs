@@ -266,11 +266,11 @@ fn authenticate_jump(
     })
 }
 
-fn is_would_block(error: &std::io::Error) -> bool {
+pub(super) fn is_would_block(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::WouldBlock
 }
 
-fn is_ssh_would_block(error: &ssh2::Error) -> bool {
+pub(super) fn is_ssh_would_block(error: &ssh2::Error) -> bool {
     matches!(error.code(), ssh2::ErrorCode::Session(-37))
 }
 
@@ -428,7 +428,7 @@ fn create_jump_tunnel(
     Ok(local_stream)
 }
 
-fn connect_session(
+pub(super) fn connect_session(
     connection: &RemoteConnectionSpec,
     timeout: Duration,
     verification_code: Option<&str>,

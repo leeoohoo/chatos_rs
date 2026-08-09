@@ -16,7 +16,6 @@ mod jump_tunnel;
 mod net_utils;
 mod path_utils;
 mod remote_sftp;
-mod remote_terminal;
 mod request_normalize;
 mod resolved_connection;
 mod ssh_auth;
@@ -28,10 +27,7 @@ mod tests;
 mod transfer_helpers;
 mod transfer_manager;
 
-use self::connectivity::{
-    connect_ssh2_session_with_interactive_verification, connect_ssh2_session_with_verification,
-    should_use_native_ssh, spawn_remote_shell,
-};
+use self::connectivity::{connect_ssh2_session_with_verification, should_use_native_ssh};
 pub(crate) use self::connectivity::{
     run_remote_connectivity_test, run_ssh_command, run_ssh_command_with_verification,
 };
@@ -50,15 +46,12 @@ use self::handlers::{
 use self::host_keys::apply_host_key_policy;
 use self::jump_tunnel::create_jump_tunnel_stream_with_verification_channel;
 use self::net_utils::{configure_stream_timeout, connect_tcp_stream};
-use self::path_utils::{
-    input_triggers_busy, join_remote_path, normalize_remote_path, remote_parent_path, shell_quote,
-};
+use self::path_utils::{join_remote_path, normalize_remote_path, remote_parent_path, shell_quote};
 use self::remote_sftp::{
     cancel_sftp_transfer, create_remote_directory, delete_remote_entry, download_file_from_remote,
     get_sftp_transfer_status, list_remote_sftp_entries, rename_remote_entry, start_sftp_transfer,
     upload_file_to_remote,
 };
-use self::remote_terminal::{get_remote_terminal_manager, DisconnectReason, RemoteTerminalEvent};
 use self::request_normalize::{normalize_create_request, normalize_update_request};
 pub(crate) use self::resolved_connection::resolve_jump_connection_snapshot;
 use self::ssh_auth::{
@@ -66,8 +59,7 @@ use self::ssh_auth::{
     extract_second_factor_required_prompt,
 };
 use self::ssh_command::{
-    build_scp_args, build_scp_process_command, build_ssh_args, is_password_auth,
-    map_command_spawn_error,
+    build_scp_args, build_scp_process_command, is_password_auth, map_command_spawn_error,
 };
 use self::terminal_ws_api::remote_terminal_ws;
 use self::transfer_manager::SftpTransferManager;
