@@ -5,13 +5,9 @@ use std::sync::Arc;
 
 use chatos_mcp_runtime::{BuiltinToolProvider, McpBuiltinServer};
 use chatos_plugin_management_sdk::{
-    PluginComponentKind, PluginHookEvent, PluginHookEventContext, PluginUiSnapshot,
-    RunPluginComponentSnapshot, RunPluginSnapshot,
+    PluginUiSnapshot, RunPluginComponentSnapshot, RunPluginSnapshot,
 };
 use serde_json::Value;
-
-use super::RunService;
-use crate::models::{TaskRecord, TaskRunRecord};
 
 #[path = "plugin_runtime_relay/component_response_validation.rs"]
 mod component_response_validation;
@@ -25,6 +21,8 @@ mod prepare_execution;
 mod prepare_validation;
 #[path = "plugin_runtime_relay/relay_client.rs"]
 mod relay_client;
+#[path = "plugin_runtime_relay/runtime_prepare.rs"]
+mod runtime_prepare;
 
 #[path = "plugin_runtime_relay/naming.rs"]
 mod naming;
@@ -78,112 +76,6 @@ impl PreparedPluginRuntime {
         for session in &self.sessions {
             let _ = session.cancel().await;
         }
-    }
-}
-
-impl RunService {
-    pub(in crate::services) async fn prepare_plugin_runtime(
-        &self,
-        task: &TaskRecord,
-        run: &TaskRunRecord,
-        effective_workspace_dir: &str,
-    ) -> Result<PreparedPluginRuntime, String> {
-        if run.plugin_snapshots.is_empty() {
-            return Ok(PreparedPluginRuntime::default());
-        }
-        let mut prepared = self.prepare_cloud_plugin_runtime(run).await?;
-        let has_local_components = super::plugin_cloud_runtime::run_requires_local_relay(run);
-        if !has_local_components {
-            prepared.sort_prompt_items();
-            return Ok(prepared);
-        }
-        let relay = PluginRelayClient::from_task(self, task, run)?;
-        for plugin in &run.plugin_snapshots {
-            if plugin.component_snapshots.iter().any(|component| {
-                super::plugin_cloud_runtime::component_uses_local(plugin, component)
-            }) && (plugin.device_id.as_deref() != Some(relay.device_id.as_str())
-                || plugin.workspace_id.as_deref() != relay.workspace_id.as_deref())
-            {
-                prepared.cancel_all().await;
-                return Err(format!(
-                    "Run Plugin snapshot does not match selected device/workspace: {}",
-                    plugin.plugin_id
-                ));
-            }
-        }
-        for plugin in &run.plugin_snapshots {
-            for component in plugin.component_snapshots.iter().filter(|component| {
-                component.kind == PluginComponentKind::HookSet
-                    && super::plugin_cloud_runtime::component_uses_local(plugin, component)
-            }) {
-                match prepare_component(relay.clone(), plugin, component, effective_workspace_dir)
-                    .await
-                {
-                    Ok(component) => prepared.extend(component),
-                    Err(error) => {
-                        prepared.cancel_all().await;
-                        return Err(error);
-                    }
-                }
-            }
-        }
-        let agent_key = crate::models::task_runner_agent_key_for(
-            task.task_profile.as_str(),
-            task.mcp_config.requires_execution,
-        );
-        let before_prepare = prepared
-            .dispatch_hook_event(
-                PluginHookEvent::BeforePluginPrepare,
-                &PluginHookEventContext {
-                    agent_key: Some(agent_key.as_str().to_string()),
-                    ..PluginHookEventContext::default()
-                },
-            )
-            .await;
-        if before_prepare.blocking_failure {
-            prepared.cancel_all().await;
-            return Err(hook_lifecycle_error(
-                PluginHookEvent::BeforePluginPrepare,
-                &before_prepare,
-            ));
-        }
-        for plugin in &run.plugin_snapshots {
-            for component in plugin.component_snapshots.iter().filter(|component| {
-                component.kind != PluginComponentKind::HookSet
-                    && super::plugin_cloud_runtime::component_uses_local(plugin, component)
-            }) {
-                match prepare_component(relay.clone(), plugin, component, effective_workspace_dir)
-                    .await
-                {
-                    Ok(component) => prepared.extend(component),
-                    Err(error) => {
-                        prepared.cancel_all().await;
-                        return Err(error);
-                    }
-                }
-            }
-        }
-        let session_start = prepared
-            .dispatch_hook_event(
-                PluginHookEvent::SessionStart,
-                &PluginHookEventContext {
-                    agent_key: Some(agent_key.as_str().to_string()),
-                    ..PluginHookEventContext::default()
-                },
-            )
-            .await;
-        if session_start.blocking_failure {
-            prepared.cancel_all().await;
-            return Err(hook_lifecycle_error(
-                PluginHookEvent::SessionStart,
-                &session_start,
-            ));
-        }
-        for session in &prepared.sessions {
-            session.record_ui_ready();
-        }
-        prepared.sort_prompt_items();
-        Ok(prepared)
     }
 }
 
