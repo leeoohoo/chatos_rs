@@ -3,10 +3,8 @@
 
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::{
-    McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute, SandboxExecutionTarget,
-    SandboxProviderKind,
-};
+use chatos_mcp_management_sdk::McpProviderKind;
+use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use serde_json::Value;
 
 use crate::runtime::RuntimeSessionSnapshot;
@@ -14,88 +12,6 @@ use crate::runtime::RuntimeSessionSnapshot;
 use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome, ProviderDispatcher};
 
 impl ProviderDispatcher {
-    pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        match route.provider_kind {
-            McpProviderKind::InternalService | McpProviderKind::Harness => {
-                self.project_service.supports(route)
-                    || self.task_runner.supports(route)
-                    || self.chatos.supports(route)
-            }
-            McpProviderKind::LocalConnector => {
-                self.local_connector.supports(route)
-                    || self.local_sandbox.supports(route)
-                    || self.sandbox_images.supports(route)
-            }
-            McpProviderKind::CloudSandbox => {
-                self.cloud_sandbox.supports(route) || self.sandbox_images.supports(route)
-            }
-            McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
-            McpProviderKind::Embedded => self.embedded.supports(route),
-            McpProviderKind::ExternalHttp => self.external_http.supports(route),
-            McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
-                self.plugins.supports(route)
-            }
-            _ => false,
-        }
-    }
-
-    pub fn requires_sandbox_target(&self, route: &ResolvedMcpRoute) -> bool {
-        self.cloud_sandbox.supports(route)
-            || self.local_sandbox.supports(route)
-            || self.cloud_stdio.supports(route)
-    }
-
-    pub fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
-        match route.provider_kind {
-            McpProviderKind::InternalService | McpProviderKind::Harness => {
-                self.project_service.supports(route)
-                    || self.task_runner.supports(route)
-                    || self.chatos.supports(route)
-            }
-            McpProviderKind::LocalConnector => {
-                self.local_connector.supports(route) || self.local_sandbox.supports(route)
-            }
-            McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
-            McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
-            McpProviderKind::ExternalHttp => self.external_http.supports(route),
-            McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
-                self.plugins.supports_cancellation(route)
-            }
-            _ => false,
-        }
-    }
-
-    pub async fn validate_sandbox_target(
-        &self,
-        target: &SandboxExecutionTarget,
-        owner_user_id: &str,
-        project_id: &str,
-        run_id: Option<&str>,
-    ) -> Result<(), ProviderCallError> {
-        match target.provider {
-            SandboxProviderKind::Cloud => {
-                self.cloud_sandbox
-                    .validate_target(target, owner_user_id, project_id, run_id)
-                    .await
-            }
-            SandboxProviderKind::LocalConnector => {
-                self.local_sandbox
-                    .validate_target(target, owner_user_id, project_id, run_id)
-                    .await
-            }
-            SandboxProviderKind::None => Err(ProviderCallError::provider_unavailable(
-                "sandbox target provider is not resolved",
-            )),
-        }
-    }
-
-    pub async fn resolve_local_sandbox_pairing(
-        &self,
-        context: &ProjectExecutionContext,
-    ) -> Result<Option<String>, ProviderCallError> {
-        self.local_sandbox.resolve_active_pairing(context).await
-    }
-
     pub async fn call_tool(
         &self,
         snapshot: &RuntimeSessionSnapshot,
@@ -310,17 +226,5 @@ impl ProviderDispatcher {
             .map_err(|_| {
                 ProviderCallError::provider_unavailable("Provider cancellation request timed out")
             })?
-    }
-
-    pub async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
-        if let Err(error) = self.chatos.close_session(snapshot).await {
-            tracing::warn!(
-                session_id = snapshot.session_id.as_str(),
-                error_code = error.code,
-                "failed to close ChatOS MCP Provider session state"
-            );
-        }
-        self.cloud_stdio.close_session(snapshot).await;
-        self.plugins.close_session(snapshot).await;
     }
 }
