@@ -22,12 +22,13 @@ impl PluginComponentProvider {
                 "Plugin Component Provider internal secret is not configured",
             )
         })?;
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             secret,
             CALLER_SERVICE,
             TOKEN_AUDIENCE,
             PLUGIN_RELAY_SCOPE,
             60,
+            owner_user_id,
         )
         .map_err(ProviderCallError::provider_unavailable)?;
         let mut url = reqwest::Url::parse(

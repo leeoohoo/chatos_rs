@@ -34,8 +34,10 @@ pub use http_error::{
 pub use identity::{normalize_owned_identity_text, normalized_identity_text};
 pub use internal_audit::{record_internal_resource_access, InternalResourceAccessAudit};
 pub use internal_token::{
-    issue_internal_service_token, issue_internal_service_token_with_trace_id,
-    verify_internal_service_token, InternalServiceTokenClaims,
+    issue_internal_service_token, issue_internal_service_token_for_owner,
+    issue_internal_service_token_with_trace_id,
+    issue_internal_service_token_with_trace_id_for_owner, verify_internal_service_token,
+    InternalServiceTokenClaims,
 };
 #[cfg(feature = "axum-support")]
 pub use request_id::{

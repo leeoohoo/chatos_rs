@@ -557,12 +557,13 @@ impl SandboxManagerClient {
                 let owner_user_id = auth.owner_user_id.as_deref().ok_or_else(|| {
                     "Local Connector sandbox auth is missing owner user id".to_string()
                 })?;
-                let token = chatos_service_runtime::issue_internal_service_token(
+                let token = chatos_service_runtime::issue_internal_service_token_for_owner(
                     auth.client_key.as_str(),
                     "task-runner",
                     "local-connector-service",
                     "sandbox.service",
                     60,
+                    owner_user_id,
                 )?;
                 return Ok(request
                     .header("x-local-connector-caller", "task-runner")

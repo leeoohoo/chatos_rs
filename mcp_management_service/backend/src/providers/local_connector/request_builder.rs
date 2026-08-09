@@ -30,12 +30,13 @@ impl LocalConnectorProvider {
             ));
         }
         let binding = resolve_binding(snapshot, route)?;
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             secret,
             CALLER_SERVICE,
             TOKEN_AUDIENCE,
             MCP_RELAY_SCOPE,
             60,
+            snapshot.owner_user_id.as_str(),
         )
         .map_err(ProviderCallError::provider_unavailable)?;
         let mut url = reqwest::Url::parse(

@@ -115,12 +115,13 @@ impl PluginRelayClient {
     }
 
     async fn send_request(&self, action: &str, body: &Value) -> Result<Value, String> {
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             self.internal_secret.as_str(),
             "task-runner",
             LOCAL_CONNECTOR_TOKEN_AUDIENCE,
             PLUGIN_RELAY_SCOPE,
             60,
+            self.owner_user_id.as_str(),
         )
         .map_err(|error| format!("issue Plugin relay token failed: {error}"))?;
         let mut headers = HeaderMap::new();

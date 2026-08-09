@@ -192,12 +192,13 @@ async fn request_local_connector_asset(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| service_unavailable("Plugin UI Local Connector relay 未配置"))?;
-    let token = chatos_service_runtime::issue_internal_service_token(
+    let token = chatos_service_runtime::issue_internal_service_token_for_owner(
         secret,
         "chatos-backend",
         LOCAL_CONNECTOR_TOKEN_AUDIENCE,
         PLUGIN_UI_READ_SCOPE,
         60,
+        auth.user_id.as_str(),
     )
     .map_err(|_| service_unavailable("Plugin UI relay token 生成失败"))?;
     let url = format!(
@@ -422,12 +423,13 @@ fn prepare_plugin_artifact_relay_request(
             "Plugin Artifact Local Connector relay 未配置",
         ));
     }
-    let token = chatos_service_runtime::issue_internal_service_token(
+    let token = chatos_service_runtime::issue_internal_service_token_for_owner(
         secret,
         "chatos-backend",
         LOCAL_CONNECTOR_TOKEN_AUDIENCE,
         scope,
         60,
+        owner_user_id,
     )
     .map_err(|_| service_unavailable("Plugin Artifact relay token 生成失败"))?;
     Ok(PreparedPluginArtifactRelayRequest {

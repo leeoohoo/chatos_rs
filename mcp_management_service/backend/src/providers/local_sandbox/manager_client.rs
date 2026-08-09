@@ -25,12 +25,13 @@ impl LocalSandboxProvider {
                 "Local Sandbox Provider owner identity is empty",
             ));
         }
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             secret,
             CALLER_SERVICE,
             TOKEN_AUDIENCE,
             scope,
             60,
+            owner_user_id,
         )
         .map_err(ProviderCallError::provider_unavailable)?;
         Ok(request

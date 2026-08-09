@@ -83,12 +83,13 @@ impl SandboxImagesProvider {
                 "Local Connector image internal secret is not configured",
             )
         })?;
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             secret,
             CALLER_SERVICE,
             LOCAL_CONNECTOR_AUDIENCE,
             SANDBOX_SERVICE_SCOPE,
             60,
+            snapshot.owner_user_id.as_str(),
         )
         .map_err(ProviderCallError::provider_unavailable)?;
         let pairing_id = urlencoding::encode(pairing_id);
