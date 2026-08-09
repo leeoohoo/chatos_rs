@@ -7,12 +7,16 @@ mod cloud_sandbox;
 mod cloud_stdio;
 mod dispatcher_init;
 mod dispatcher_prepare;
+#[path = "dispatcher_prepare/plugins.rs"]
 mod dispatcher_prepare_plugins;
+#[path = "dispatcher_prepare/sandbox.rs"]
 mod dispatcher_prepare_sandbox;
+#[path = "dispatcher_prepare/system.rs"]
 mod dispatcher_prepare_system;
 mod dispatcher_runtime;
 mod dispatcher_runtime_lifecycle;
-mod dispatcher_runtime_support;
+mod dispatcher_sandbox;
+mod dispatcher_support;
 mod embedded;
 mod external_http;
 mod local_connector;
@@ -21,7 +25,9 @@ mod plugin_cloud;
 mod plugin_components;
 mod plugin_local;
 mod plugin_routes;
+#[path = "plugin_routes/prepare.rs"]
 mod plugin_routes_prepare;
+#[path = "plugin_routes/runtime.rs"]
 mod plugin_routes_runtime;
 mod project_service;
 mod sandbox_images;
