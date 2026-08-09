@@ -6,19 +6,18 @@ use std::time::Duration;
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
-use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST};
+use chatos_mcp_service::METHOD_TOOLS_LIST;
 use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
-use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
-use super::{
-    decode_cancel_notification_response, ProviderCallError, ProviderCallOutcome,
-    ProviderCancelOutcome,
-};
+use super::ProviderCallError;
+
+mod request_builder;
+mod runtime_calls;
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "task-runner";
@@ -27,7 +26,7 @@ const TASK_RUNNER_MCP_SCOPE: &str = "mcp.tools.call";
 const TASK_RUNNER_OWNER_SERVICE: &str = "task_runner_service";
 const TASK_RUNNER_ASK_USER_PROVIDER_REF: &str = "task-runner";
 
-struct TaskRunnerRequestBinding<'a> {
+pub(super) struct TaskRunnerRequestBinding<'a> {
     owner_user_id: &'a str,
     agent_key: &'a str,
     session_id: &'a str,
@@ -226,302 +225,6 @@ impl TaskRunnerProvider {
             "Task Runner Service tools/list",
         )?;
         extract_task_runner_tool_snapshot(result).map_err(ProviderCallError::invalid_response)
-    }
-
-    pub(super) async fn call_tool(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        original_tool_name: &str,
-        arguments: Value,
-        invocation_id: &str,
-    ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Task Runner Provider internal secret is not configured",
-            )
-        })?;
-        let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-            .filter(|descriptor| {
-                matches!(
-                    descriptor.key,
-                    SystemMcpKey::TaskRunnerService
-                        | SystemMcpKey::TaskProcessLog
-                        | SystemMcpKey::AskUser
-                ) && self.supports(route)
-            })
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "Task Runner route is not a supported System MCP",
-                )
-            })?;
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            TASK_RUNNER_MCP_SCOPE,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        let endpoint = format!(
-            "{}/internal/mcp-management/mcp/{}",
-            self.base_url,
-            urlencoding::encode(descriptor.key.as_str())
-        );
-        let mut request = self
-            .http
-            .post(endpoint)
-            .header("x-task-runner-caller", CALLER_SERVICE)
-            .header("x-task-runner-internal-token", token)
-            .header(
-                "x-mcp-management-owner-user-id",
-                snapshot.owner_user_id.as_str(),
-            )
-            .header("x-mcp-management-agent-key", snapshot.agent_key.as_str())
-            .header("x-mcp-management-session-id", snapshot.session_id.as_str())
-            .header(
-                "x-mcp-management-session-expires-at-unix",
-                snapshot.expires_at_unix.to_string(),
-            )
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header("x-chatos-project-id", snapshot.project_id.as_str())
-            .timeout(if descriptor.key == SystemMcpKey::AskUser {
-                self.ask_user_request_timeout
-            } else {
-                self.request_timeout
-            });
-        for (header, value) in [
-            ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
-            ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
-            ("x-mcp-management-task-id", snapshot.task_id.as_deref()),
-            (
-                "x-mcp-management-source-session-id",
-                snapshot.source_session_id.as_deref(),
-            ),
-            (
-                "x-mcp-management-source-user-message-id",
-                snapshot.source_user_message_id.as_deref(),
-            ),
-            (
-                "x-mcp-management-default-model-config-id",
-                snapshot.default_model_config_id.as_deref(),
-            ),
-            (
-                "x-mcp-management-task-profile",
-                snapshot.task_profile.as_deref(),
-            ),
-        ] {
-            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-                request = request.header(header, value);
-            }
-        }
-        if !snapshot.expected_project_task_ids.is_empty() {
-            request = request.header(
-                "x-mcp-management-expected-project-task-ids",
-                snapshot.expected_project_task_ids.join(","),
-            );
-        }
-        let response = request
-            .with_internal_trace_context()
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": invocation_id,
-                "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
-            }))
-            .send()
-            .await
-            .map_err(|err| {
-                ProviderCallError::provider_unavailable(format!(
-                    "Task Runner Provider request failed: {err}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|err| {
-                ProviderCallError::invalid_response(format!(
-                    "Task Runner Provider response could not be read: {err}"
-                ))
-            })?;
-        if !status.is_success() {
-            return Err(ProviderCallError::provider_unavailable(format!(
-                "Task Runner Provider rejected the request with HTTP {}",
-                status.as_u16()
-            )));
-        }
-        let result =
-            decode_jsonrpc_response(bytes.as_slice(), invocation_id, "Task Runner Provider")?;
-        Ok(ProviderCallOutcome {
-            result,
-            response_bytes: bytes.len(),
-        })
-    }
-
-    fn bound_request(
-        &self,
-        binding: &TaskRunnerRequestBinding<'_>,
-        endpoint: String,
-        timeout: Duration,
-        secret: &str,
-        scope: &str,
-    ) -> Result<reqwest::RequestBuilder, ProviderCallError> {
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            scope,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        let mut request = self
-            .http
-            .post(endpoint)
-            .header("x-task-runner-caller", CALLER_SERVICE)
-            .header("x-task-runner-internal-token", token)
-            .header("x-mcp-management-owner-user-id", binding.owner_user_id)
-            .header("x-mcp-management-agent-key", binding.agent_key)
-            .header("x-mcp-management-session-id", binding.session_id)
-            .header(
-                "x-mcp-management-session-expires-at-unix",
-                binding.expires_at_unix.to_string(),
-            )
-            .header("x-mcp-management-project-id", binding.project_id)
-            .header("x-chatos-project-id", binding.project_id)
-            .timeout(timeout);
-        for (header, value) in [
-            ("x-mcp-management-run-id", binding.run_id),
-            ("x-mcp-management-turn-id", binding.turn_id),
-            ("x-mcp-management-task-id", binding.task_id),
-            (
-                "x-mcp-management-source-session-id",
-                binding.source_session_id,
-            ),
-            (
-                "x-mcp-management-source-user-message-id",
-                binding.source_user_message_id,
-            ),
-            (
-                "x-mcp-management-default-model-config-id",
-                binding.default_model_config_id,
-            ),
-            ("x-mcp-management-task-profile", binding.task_profile),
-        ] {
-            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-                request = request.header(header, value);
-            }
-        }
-        if !binding.expected_project_task_ids.is_empty() {
-            request = request.header(
-                "x-mcp-management-expected-project-task-ids",
-                binding.expected_project_task_ids.join(","),
-            );
-        }
-        Ok(request.with_internal_trace_context())
-    }
-
-    pub(super) async fn cancel_invocation(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        invocation_id: &str,
-    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Task Runner Provider internal secret is not configured",
-            )
-        })?;
-        let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-            .filter(|descriptor| {
-                matches!(
-                    descriptor.key,
-                    SystemMcpKey::TaskRunnerService
-                        | SystemMcpKey::TaskProcessLog
-                        | SystemMcpKey::AskUser
-                ) && self.supports(route)
-            })
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "Task Runner route is not a supported System MCP",
-                )
-            })?;
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            TASK_RUNNER_MCP_SCOPE,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        let endpoint = format!(
-            "{}/internal/mcp-management/mcp/{}",
-            self.base_url,
-            urlencoding::encode(descriptor.key.as_str())
-        );
-        let mut request = self
-            .http
-            .post(endpoint)
-            .header("x-task-runner-caller", CALLER_SERVICE)
-            .header("x-task-runner-internal-token", token)
-            .header(
-                "x-mcp-management-owner-user-id",
-                snapshot.owner_user_id.as_str(),
-            )
-            .header("x-mcp-management-agent-key", snapshot.agent_key.as_str())
-            .header("x-mcp-management-session-id", snapshot.session_id.as_str())
-            .header(
-                "x-mcp-management-session-expires-at-unix",
-                snapshot.expires_at_unix.to_string(),
-            )
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header("x-chatos-project-id", snapshot.project_id.as_str())
-            .timeout(Duration::from_secs(5));
-        for (header, value) in [
-            ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
-            ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
-            ("x-mcp-management-task-id", snapshot.task_id.as_deref()),
-            (
-                "x-mcp-management-source-session-id",
-                snapshot.source_session_id.as_deref(),
-            ),
-            (
-                "x-mcp-management-source-user-message-id",
-                snapshot.source_user_message_id.as_deref(),
-            ),
-        ] {
-            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-                request = request.header(header, value);
-            }
-        }
-        let response = request
-            .with_internal_trace_context()
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "method": METHOD_NOTIFICATIONS_CANCELLED,
-                "params": {
-                    "requestId": invocation_id,
-                    "reason": "MCP Management runtime cancelled the invocation"
-                }
-            }))
-            .send()
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "Task Runner Provider cancellation request failed: {error}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|error| {
-                ProviderCallError::invalid_response(format!(
-                    "Task Runner Provider cancellation response could not be read: {error}"
-                ))
-            })?;
-        decode_cancel_notification_response(status, bytes.as_slice(), "Task Runner Provider")
     }
 }
 
