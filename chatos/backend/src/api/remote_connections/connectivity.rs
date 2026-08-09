@@ -8,23 +8,17 @@ use std::sync::mpsc;
 use std::time::Duration as StdDuration;
 use tokio::time::Duration;
 
-use chatos_remote_runtime::{establish_ssh_session, read_stream_limited};
+use chatos_remote_runtime::establish_ssh_session;
 
+use crate::api::local_connectors::run_remote_command_via_connector;
 use crate::models::remote_connection::RemoteConnection;
-use crate::utils::process_output::{run_command_limited, BoundedCommandError};
 
 use super::authenticate_target_session;
 use super::build_ssh_args;
-use super::build_ssh_process_command;
 use super::configure_stream_timeout;
 use super::connect_tcp_stream;
 use super::create_jump_tunnel_stream_with_verification_channel;
-use super::encode_second_factor_required_error;
-use super::is_password_auth;
-use super::map_command_spawn_error;
 
-const REMOTE_SSH_STDOUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
-const REMOTE_SSH_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
 const LOCAL_CONNECTOR_REQUIRED_FOR_KEY_AUTH: &str =
     "该远端连接依赖本地私钥/证书执行能力，云端后端不会再代替本机使用这些凭据";
 
@@ -144,105 +138,13 @@ pub(crate) async fn run_ssh_command_with_verification(
     timeout_duration: Duration,
     verification_code: Option<&str>,
 ) -> Result<String, String> {
-    if should_use_native_ssh(connection) {
-        let connection = connection.clone();
-        let command = remote_command.to_string();
-        let timeout_duration_copy = timeout_duration;
-        let verification_code_owned = verification_code
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(ToOwned::to_owned);
-        return tokio::task::spawn_blocking(move || {
-            let connected = connect_ssh2_session_with_verification(
-                &connection,
-                timeout_duration_copy,
-                verification_code_owned.as_deref(),
-            )?;
-            let mut channel = connected
-                .session
-                .channel_session()
-                .map_err(|e| format!("创建命令通道失败: {e}"))?;
-            channel
-                .exec(command.as_str())
-                .map_err(|e| format!("执行远端命令失败: {e}"))?;
-
-            let stdout = read_stream_limited(&mut channel, "stdout", REMOTE_SSH_STDOUT_LIMIT_BYTES)
-                .map_err(|e| format!("读取标准输出失败: {e}"))?;
-            let mut stderr_stream = channel.stderr();
-            let stderr =
-                read_stream_limited(&mut stderr_stream, "stderr", REMOTE_SSH_STDERR_LIMIT_BYTES)
-                    .map_err(|e| format!("读取标准错误失败: {e}"))?;
-            let _ = channel.wait_close();
-            let code = channel.exit_status().unwrap_or(0);
-
-            if code == 0 {
-                Ok(String::from_utf8_lossy(&stdout).to_string())
-            } else {
-                let stderr_text = String::from_utf8_lossy(&stderr).trim().to_string();
-                let stdout_text = String::from_utf8_lossy(&stdout).trim().to_string();
-                if !stderr_text.is_empty() {
-                    Err(stderr_text)
-                } else if !stdout_text.is_empty() {
-                    Err(stdout_text)
-                } else {
-                    Err(format!("SSH 命令失败，exit={code}"))
-                }
-            }
-        })
-        .await
-        .map_err(|e| format!("命令线程执行失败: {e}"))?;
-    }
-
-    let mut cmd = build_ssh_process_command(connection)?;
-    let password_auth = is_password_auth(connection);
-    cmd.args(build_ssh_args(connection, false, None));
-    cmd.arg(remote_command);
-
-    let output = run_command_limited(
-        cmd,
+    run_remote_command_via_connector(
+        connection,
+        remote_command,
         timeout_duration,
-        REMOTE_SSH_STDOUT_LIMIT_BYTES,
-        REMOTE_SSH_STDERR_LIMIT_BYTES,
-        "SSH command",
+        verification_code,
     )
     .await
-    .map_err(|err| map_ssh_process_error("SSH 命令执行失败", err, password_auth))?;
-
-    if password_auth && verification_code.map(str::trim).unwrap_or("").is_empty() {
-        let stderr_preview = String::from_utf8_lossy(output.stderr.as_slice()).to_lowercase();
-        if stderr_preview.contains("verification code")
-            || stderr_preview.contains("one-time")
-            || stderr_preview.contains("otp")
-            || stderr_preview.contains("验证码")
-            || stderr_preview.contains("mfa")
-            || stderr_preview.contains("2fa")
-        {
-            return Err(encode_second_factor_required_error(
-                "Verification code / OTP",
-            ));
-        }
-    }
-
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(output.stdout.as_slice()).to_string());
-    }
-
-    let stderr = String::from_utf8_lossy(output.stderr.as_slice())
-        .trim()
-        .to_string();
-    if stderr.is_empty() {
-        Err(format!("SSH 命令失败，exit={}", output.status))
-    } else {
-        Err(stderr)
-    }
-}
-
-fn map_ssh_process_error(prefix: &str, err: BoundedCommandError, password_auth: bool) -> String {
-    match err {
-        BoundedCommandError::Spawn(err) => map_command_spawn_error(prefix, err, password_auth),
-        BoundedCommandError::Timeout => "SSH 命令执行超时".to_string(),
-        other => format!("{prefix}: {other}"),
-    }
 }
 
 pub(crate) async fn run_remote_connectivity_test(

@@ -133,12 +133,6 @@ pub(super) fn is_password_auth(connection: &RemoteConnection) -> bool {
     connection.auth_type == "password"
 }
 
-pub(super) fn build_ssh_process_command(
-    connection: &RemoteConnection,
-) -> Result<tokio::process::Command, String> {
-    build_authenticated_process_command(connection, "ssh")
-}
-
 #[allow(dead_code)]
 pub(super) fn build_scp_process_command(
     connection: &RemoteConnection,

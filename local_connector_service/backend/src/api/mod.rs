@@ -42,6 +42,7 @@ mod plugin_management_plugins;
 mod plugin_management_prompts;
 mod plugin_management_skills;
 mod project_bindings;
+mod remote_connection_relay;
 mod router;
 mod sandbox_pairings;
 mod terminal_relay;
@@ -78,6 +79,9 @@ use self::plugin_management_skills::{
 };
 use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
+};
+use self::remote_connection_relay::{
+    remote_connection_command_relay, remote_connection_test_relay,
 };
 pub use self::router::{build_internal_router, build_public_router};
 #[cfg(feature = "test-support")]

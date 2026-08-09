@@ -24,15 +24,16 @@ use super::{
     list_workspaces, mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
     plugin_artifact_read_relay, plugin_artifact_update_relay, plugin_cancel_relay,
     plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
-    proxy_plugin_release_artifact, require_internal_auth, require_public_auth,
-    resolve_local_runtime_capabilities, revoke_device, sandbox_facade_path, sandbox_facade_root,
-    skill_cancel_relay, skill_execute_relay, skill_prepare_relay, sync_user_skill_inventory,
-    system_stats_handler, terminal_exec_relay, terminal_input_relay, terminal_session_create_relay,
-    terminal_ws_relay, update_local_mcp, update_local_mcp_status,
-    update_managed_requirements_assignment, update_managed_requirements_policy,
-    update_plugin_preference, update_project_binding, update_sandbox_pairing,
-    update_user_skill_preference, update_workspace, user_service_protected_proxy,
-    user_service_public_proxy, workspace_directory_create_relay, AuthState,
+    proxy_plugin_release_artifact, remote_connection_command_relay, remote_connection_test_relay,
+    require_internal_auth, require_public_auth, resolve_local_runtime_capabilities, revoke_device,
+    sandbox_facade_path, sandbox_facade_root, skill_cancel_relay, skill_execute_relay,
+    skill_prepare_relay, sync_user_skill_inventory, system_stats_handler, terminal_exec_relay,
+    terminal_input_relay, terminal_session_create_relay, terminal_ws_relay, update_local_mcp,
+    update_local_mcp_status, update_managed_requirements_assignment,
+    update_managed_requirements_policy, update_plugin_preference, update_project_binding,
+    update_sandbox_pairing, update_user_skill_preference, update_workspace,
+    user_service_protected_proxy, user_service_public_proxy, workspace_directory_create_relay,
+    AuthState,
 };
 
 fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
@@ -203,6 +204,14 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
         .route(
             "/api/local-connectors/relay/{device_id}/terminal/exec",
             post(terminal_exec_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/remote-connections/test",
+            post(remote_connection_test_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/remote-connections/command",
+            post(remote_connection_command_relay),
         )
         .route(
             "/api/local-connectors/relay/{device_id}/terminal/sessions",

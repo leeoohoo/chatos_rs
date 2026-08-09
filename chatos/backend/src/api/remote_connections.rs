@@ -66,8 +66,8 @@ use self::ssh_auth::{
     extract_second_factor_required_prompt,
 };
 use self::ssh_command::{
-    build_scp_args, build_scp_process_command, build_ssh_args, build_ssh_process_command,
-    is_password_auth, map_command_spawn_error,
+    build_scp_args, build_scp_process_command, build_ssh_args, is_password_auth,
+    map_command_spawn_error,
 };
 use self::terminal_ws_api::remote_terminal_ws;
 use self::transfer_manager::SftpTransferManager;

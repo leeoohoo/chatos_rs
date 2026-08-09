@@ -8,7 +8,9 @@ use axum::{
 };
 use serde_json::Value;
 
-use crate::api::local_connectors::validate_local_connector_execution_target;
+use crate::api::local_connectors::{
+    test_remote_connection_via_connector, validate_local_connector_execution_target,
+};
 use crate::core::auth::AuthUser;
 use crate::core::remote_connection_access::{
     ensure_owned_remote_connection, map_remote_connection_access_error,
@@ -21,8 +23,8 @@ use crate::services::realtime::publish_remote_connections_updated;
 use super::{
     error_payload, get_remote_terminal_manager, internal_error_response, normalize_create_request,
     normalize_update_request, remote_connectivity_error_response, resolve_jump_connection_snapshot,
-    run_remote_connectivity_test, CreateRemoteConnectionRequest, DisconnectReason,
-    RemoteConnectionQuery, UpdateRemoteConnectionRequest,
+    CreateRemoteConnectionRequest, DisconnectReason, RemoteConnectionQuery,
+    UpdateRemoteConnectionRequest,
 };
 
 const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";
@@ -151,9 +153,11 @@ pub(super) async fn test_remote_connection_draft(
         Err(err) => return remote_connectivity_error_response(err),
     };
 
-    match run_remote_connectivity_test(&resolved_connection, verification_code.as_deref()).await {
+    match test_remote_connection_via_connector(&resolved_connection, verification_code.as_deref())
+        .await
+    {
         Ok(result) => (StatusCode::OK, Json(result)),
-        Err(err) => remote_connectivity_error_response(err),
+        Err(err) => err,
     }
 }
 
@@ -299,11 +303,13 @@ pub(super) async fn test_remote_connection_saved(
         Err(err) => return remote_connectivity_error_response(err),
     };
 
-    match run_remote_connectivity_test(&resolved_connection, verification_code.as_deref()).await {
+    match test_remote_connection_via_connector(&resolved_connection, verification_code.as_deref())
+        .await
+    {
         Ok(result) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (StatusCode::OK, Json(result))
         }
-        Err(err) => remote_connectivity_error_response(err),
+        Err(err) => err,
     }
 }

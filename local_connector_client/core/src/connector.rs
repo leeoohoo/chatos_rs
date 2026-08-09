@@ -27,6 +27,9 @@ use crate::model_configs::handle_model_runtime_request;
 use crate::plugins::{oauth_status_message, PluginOAuthBroker, PluginRuntimeHost};
 use crate::registration::cloud_authentication_expired;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
+use crate::remote_connection::{
+    handle_remote_connection_command_request, handle_remote_connection_test_request,
+};
 use crate::remote_control_auth::RemoteControlVerifier;
 use crate::sandbox::pairing::reconcile_sandbox_pairings;
 use crate::sandbox::relay::handle_sandbox_request;
@@ -365,6 +368,12 @@ async fn handle_text_message(
         "terminal_exec_request" => {
             Some(handle_terminal_exec_request(value, state, history_recorder).await)
         }
+        "remote_connection_test_request" => {
+            Some(handle_remote_connection_test_request(value).await)
+        }
+        "remote_connection_command_request" => {
+            Some(handle_remote_connection_command_request(value).await)
+        }
         "model_runtime_request" => Some(handle_model_runtime_request(value, state).await),
         "skill_prepare_request" => Some(handle_skill_prepare(value, state)),
         "skill_execute_request" => Some(handle_skill_execute(value, state)),
@@ -428,6 +437,8 @@ fn is_remote_control_message(message_type: &str) -> bool {
         MCP_RELAY_MESSAGE_TYPE
             | "sandbox_request"
             | "terminal_exec_request"
+            | "remote_connection_test_request"
+            | "remote_connection_command_request"
             | "model_runtime_request"
             | "skill_prepare_request"
             | "skill_execute_request"
@@ -559,6 +570,8 @@ fn remote_control_error_response(
         MCP_RELAY_MESSAGE_TYPE => MCP_RELAY_MESSAGE_TYPE,
         "sandbox_request" => "sandbox_response",
         "terminal_exec_request" => "terminal_response",
+        "remote_connection_test_request" => "remote_connection_test_response",
+        "remote_connection_command_request" => "remote_connection_command_response",
         "terminal_session_create_request" => "terminal_session_create_response",
         "workspace_directory_create_request" => "workspace_directory_create_response",
         "model_runtime_request" => "model_runtime_response",

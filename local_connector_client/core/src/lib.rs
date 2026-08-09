@@ -28,6 +28,7 @@ mod process_lifetime;
 mod registration;
 mod relay;
 mod relay_signature;
+mod remote_connection;
 mod remote_control_auth;
 mod runtime;
 mod sandbox;

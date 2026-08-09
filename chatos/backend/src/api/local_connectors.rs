@@ -20,6 +20,7 @@ use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
 use crate::models::project::{Project, ProjectService};
+use crate::models::remote_connection::RemoteConnection;
 use crate::services::realtime::publish_projects_updated;
 
 mod connector_client;
@@ -31,7 +32,8 @@ mod types;
 
 use connector_client::{
     connector_delete_json, connector_get_json, connector_post_json,
-    connector_post_json_with_headers, local_connector_mcp_relay_path,
+    connector_post_json_with_headers, connector_post_json_with_timeout,
+    local_connector_mcp_relay_path,
 };
 use directory_payload::local_connector_directory_list_payload;
 pub(crate) use project_reconciliation::reconcile_local_connector_project;
@@ -68,6 +70,93 @@ pub fn router() -> Router {
             "/api/local-connectors/terminal/exec",
             post(terminal_relay::exec_terminal_command),
         )
+}
+
+pub(crate) async fn test_remote_connection_via_connector(
+    connection: &RemoteConnection,
+    verification_code: Option<&str>,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/test",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    connector_post_json(
+        path.as_str(),
+        &json!({
+            "workspace_id": connection.local_connector_workspace_id,
+            "connection": remote_connection_execution_payload(connection),
+            "verification_code": verification_code,
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn run_remote_command_via_connector(
+    connection: &RemoteConnection,
+    command: &str,
+    timeout: Duration,
+    verification_code: Option<&str>,
+) -> Result<String, String> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/command",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    let timeout_ms = timeout.as_millis().clamp(1_000, 600_000) as u64;
+    let response = connector_post_json_with_timeout::<Value, _>(
+        path.as_str(),
+        &json!({
+            "workspace_id": connection.local_connector_workspace_id,
+            "connection": remote_connection_execution_payload(connection),
+            "command": command,
+            "timeout_ms": timeout_ms,
+            "verification_code": verification_code,
+        }),
+        timeout.saturating_add(Duration::from_secs(10)),
+    )
+    .await
+    .map_err(connector_remote_execution_error)?;
+    response
+        .get("output")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "Local Connector 远程命令响应缺少 output".to_string())
+}
+
+fn remote_connection_execution_payload(connection: &RemoteConnection) -> Value {
+    json!({
+        "host": connection.host,
+        "port": connection.port,
+        "username": connection.username,
+        "auth_type": connection.auth_type,
+        "password": connection.password,
+        "private_key_path": connection.private_key_path,
+        "certificate_path": connection.certificate_path,
+        "host_key_policy": connection.host_key_policy,
+        "jump_enabled": connection.jump_enabled,
+        "jump_host": connection.jump_host,
+        "jump_port": connection.jump_port,
+        "jump_username": connection.jump_username,
+        "jump_private_key_path": connection.jump_private_key_path,
+        "jump_certificate_path": connection.jump_certificate_path,
+        "jump_password": connection.jump_password,
+    })
+}
+
+fn connector_remote_execution_error(error: (StatusCode, Json<Value>)) -> String {
+    let (_, Json(value)) = error;
+    if value.get("code").and_then(Value::as_str) == Some("second_factor_required") {
+        let prompt = value
+            .get("challenge_prompt")
+            .and_then(Value::as_str)
+            .unwrap_or("请输入验证码 / OTP");
+        return format!("__CHATOS_SECOND_FACTOR_REQUIRED__:{prompt}");
+    }
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("detail").and_then(Value::as_str))
+        .unwrap_or("Local Connector 远程执行失败")
+        .to_string()
 }
 
 async fn list_devices(

@@ -13,7 +13,7 @@ use tokio::time::sleep;
 #[derive(Debug)]
 pub(crate) struct BoundedCommandOutput {
     pub(crate) status: ExitStatus,
-    pub(crate) stdout: Vec<u8>,
+    _stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
 }
 
@@ -125,7 +125,7 @@ pub(crate) async fn run_command_limited(
         status: status.ok_or(BoundedCommandError::Wait(
             "missing process exit status".to_string(),
         ))?,
-        stdout: stdout_result.unwrap_or_default(),
+        _stdout: stdout_result.unwrap_or_default(),
         stderr: stderr_result.unwrap_or_default(),
     })
 }

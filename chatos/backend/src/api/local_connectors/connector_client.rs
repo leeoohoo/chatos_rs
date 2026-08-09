@@ -35,6 +35,22 @@ pub(super) async fn connector_post_json<T: DeserializeOwned, B: Serialize + ?Siz
     connector_post_json_with_headers(path, body, &[]).await
 }
 
+pub(super) async fn connector_post_json_with_timeout<T: DeserializeOwned, B: Serialize + ?Sized>(
+    path: &str,
+    body: &B,
+    timeout: Duration,
+) -> Result<T, (StatusCode, Json<Value>)> {
+    let token = current_access_token()?;
+    let cfg = Config::get();
+    let request = cfg
+        .local_connector_http_client
+        .post(connector_url(cfg, path))
+        .bearer_auth(token)
+        .json(body)
+        .timeout(timeout.max(connector_timeout(cfg)));
+    send_connector_json(request).await
+}
+
 pub(super) async fn connector_put_json<T: DeserializeOwned, B: Serialize + ?Sized>(
     path: &str,
     body: &B,
