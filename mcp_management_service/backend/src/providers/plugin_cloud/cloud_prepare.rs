@@ -9,10 +9,9 @@ use chatos_plugin_management_sdk::{
     ResolvePluginMcpCloudCredentialsRequest,
 };
 
-use super::{
-    validate_runtime_bundle, validate_tool_snapshot, PluginCloudProvider, PreparedPluginCloudRoute,
-    ProviderCallError,
-};
+use super::validation::{validate_runtime_bundle, validate_tool_snapshot};
+use super::{PluginCloudProvider, PreparedPluginCloudRoute};
+use crate::providers::ProviderCallError;
 use crate::runtime::PluginMcpRuntimeBinding;
 
 impl PluginCloudProvider {
