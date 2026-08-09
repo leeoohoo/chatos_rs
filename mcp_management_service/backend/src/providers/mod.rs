@@ -12,6 +12,7 @@ mod local_sandbox;
 mod plugin_cloud;
 mod plugin_components;
 mod plugin_local;
+mod plugin_routes;
 mod project_service;
 mod sandbox_images;
 mod task_runner;
@@ -40,6 +41,7 @@ use local_sandbox::LocalSandboxProvider;
 use plugin_cloud::PluginCloudProvider;
 use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
+use plugin_routes::PluginRouteDispatcher;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome};
 use sandbox_images::SandboxImagesProvider;
@@ -84,9 +86,7 @@ pub enum ProviderCancelOutcome {
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     local_sandbox: LocalSandboxProvider,
-    plugin_cloud: PluginCloudProvider,
-    plugin_components: PluginComponentProvider,
-    plugin_local: PluginLocalProvider,
+    plugins: PluginRouteDispatcher,
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
@@ -127,6 +127,21 @@ impl ProviderDispatcher {
             runtime.external_http_request_timeout,
             runtime.response_limit_bytes,
         );
+        let plugin_local = PluginLocalProvider::new(
+            local_connector_http.clone(),
+            local_connector_service_base_url.clone(),
+            runtime.downstream_request_timeout,
+            local_connector_internal_secret.clone(),
+            runtime.response_limit_bytes,
+        )?;
+        let plugin_components = PluginComponentProvider::new(
+            local_connector_http.clone(),
+            local_connector_service_base_url.clone(),
+            runtime.downstream_request_timeout,
+            local_connector_internal_secret.clone(),
+            runtime.response_limit_bytes,
+        )?;
+        let plugin_cloud = PluginCloudProvider::new(cloud_stdio.clone(), external_http.clone());
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
                 local_connector_http.clone(),
@@ -142,21 +157,7 @@ impl ProviderDispatcher {
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
-            plugin_local: PluginLocalProvider::new(
-                local_connector_http.clone(),
-                local_connector_service_base_url.clone(),
-                runtime.downstream_request_timeout,
-                local_connector_internal_secret.clone(),
-                runtime.response_limit_bytes,
-            )?,
-            plugin_components: PluginComponentProvider::new(
-                local_connector_http.clone(),
-                local_connector_service_base_url.clone(),
-                runtime.downstream_request_timeout,
-                local_connector_internal_secret.clone(),
-                runtime.response_limit_bytes,
-            )?,
-            plugin_cloud: PluginCloudProvider::new(cloud_stdio.clone(), external_http.clone()),
+            plugins: PluginRouteDispatcher::new(plugin_local, plugin_cloud, plugin_components),
             project_service: ProjectServiceProvider::new(
                 project_service_http,
                 project_service_base_url,
@@ -222,8 +223,8 @@ impl ProviderDispatcher {
         std::collections::HashMap<String, crate::runtime::PluginCloudToolComponentBinding>,
         std::collections::HashMap<String, Vec<Value>>,
     ) {
-        self.plugin_components
-            .prepare_routes(
+        self.plugins
+            .prepare_tool_component_routes(
                 plugin_management,
                 immutable_bindings,
                 routes,
@@ -244,8 +245,8 @@ impl ProviderDispatcher {
             crate::runtime::PluginLocalToolComponentBinding,
         >,
     ) {
-        self.plugin_components
-            .close_local_bindings(owner_user_id, runtime_session_id, bindings)
+        self.plugins
+            .close_prepared_tool_component_bindings(owner_user_id, runtime_session_id, bindings)
             .await;
     }
 
@@ -275,8 +276,8 @@ impl ProviderDispatcher {
         std::collections::HashMap<String, crate::runtime::PluginLocalProviderBinding>,
         std::collections::HashMap<String, Vec<Value>>,
     ) {
-        self.plugin_local
-            .prepare_routes(
+        self.plugins
+            .prepare_local_routes(
                 immutable_bindings,
                 routes,
                 context,
@@ -293,8 +294,8 @@ impl ProviderDispatcher {
         runtime_session_id: &str,
         bindings: &std::collections::HashMap<String, crate::runtime::PluginLocalProviderBinding>,
     ) {
-        self.plugin_local
-            .close_bindings(owner_user_id, runtime_session_id, bindings)
+        self.plugins
+            .close_prepared_local_bindings(owner_user_id, runtime_session_id, bindings)
             .await;
     }
 
@@ -319,8 +320,8 @@ impl ProviderDispatcher {
         std::collections::HashMap<String, crate::runtime::ExternalHttpProviderBinding>,
         std::collections::HashMap<String, Vec<Value>>,
     ) {
-        self.plugin_cloud
-            .prepare_routes(
+        self.plugins
+            .prepare_cloud_routes(
                 plugin_management,
                 immutable_bindings,
                 routes,
@@ -468,11 +469,8 @@ impl ProviderDispatcher {
             McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
-            McpProviderKind::PluginLocal => {
-                self.plugin_local.supports(route) || self.plugin_components.supports(route)
-            }
-            McpProviderKind::PluginCloud => {
-                self.plugin_cloud.supports(route) || self.plugin_components.supports(route)
+            McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
+                self.plugins.supports(route)
             }
             _ => false,
         }
@@ -497,8 +495,9 @@ impl ProviderDispatcher {
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
             McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
-            McpProviderKind::PluginLocal => self.plugin_local.supports(route),
-            McpProviderKind::PluginCloud => self.plugin_cloud.supports(route),
+            McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
+                self.plugins.supports_cancellation(route)
+            }
             _ => false,
         }
     }
@@ -542,6 +541,19 @@ impl ProviderDispatcher {
         arguments: Value,
         invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
+        if let Some(result) = self
+            .plugins
+            .call_tool(
+                snapshot,
+                route,
+                original_tool_name,
+                arguments.clone(),
+                invocation_id,
+            )
+            .await
+        {
+            return result;
+        }
         match route.provider_kind {
             McpProviderKind::InternalService | McpProviderKind::Harness
                 if self.project_service.supports(route) =>
@@ -657,38 +669,6 @@ impl ProviderDispatcher {
                     )
                     .await
             }
-            McpProviderKind::PluginLocal if self.plugin_local.supports(route) => {
-                self.plugin_local
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
-            McpProviderKind::PluginLocal if self.plugin_components.supports(route) => {
-                self.plugin_components
-                    .call_tool(snapshot, route, original_tool_name, arguments)
-                    .await
-            }
-            McpProviderKind::PluginCloud if self.plugin_cloud.supports(route) => {
-                self.plugin_cloud
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
-            McpProviderKind::PluginCloud if self.plugin_components.supports(route) => {
-                self.plugin_components
-                    .call_tool(snapshot, route, original_tool_name, arguments)
-                    .await
-            }
             McpProviderKind::Unavailable => Err(ProviderCallError::provider_unavailable(
                 route.reason.clone(),
             )),
@@ -709,6 +689,13 @@ impl ProviderDispatcher {
             return Ok(ProviderCancelOutcome::NotSupported);
         }
         let cancellation = async {
+            if let Some(result) = self
+                .plugins
+                .cancel_invocation(snapshot, route, invocation_id)
+                .await
+            {
+                return result;
+            }
             match route.provider_kind {
                 McpProviderKind::InternalService | McpProviderKind::Harness
                     if self.project_service.supports(route) =>
@@ -752,16 +739,6 @@ impl ProviderDispatcher {
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
                 }
-                McpProviderKind::PluginLocal if self.plugin_local.supports(route) => {
-                    self.plugin_local
-                        .cancel_invocation(snapshot, route, invocation_id)
-                        .await
-                }
-                McpProviderKind::PluginCloud if self.plugin_cloud.supports(route) => {
-                    self.plugin_cloud
-                        .cancel_invocation(snapshot, route, invocation_id)
-                        .await
-                }
                 _ => Ok(ProviderCancelOutcome::NotSupported),
             }
         };
@@ -781,7 +758,6 @@ impl ProviderDispatcher {
             );
         }
         self.cloud_stdio.close_session(snapshot).await;
-        self.plugin_local.close_session(snapshot).await;
-        self.plugin_components.close_session(snapshot).await;
+        self.plugins.close_session(snapshot).await;
     }
 }
