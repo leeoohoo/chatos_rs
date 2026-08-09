@@ -210,16 +210,19 @@ pub(super) async fn execute_requirement_inner(
         &contact_runtime,
     )
     .await?;
-    ensure_project_runtime_environment_initialization(
-        cfg.project_service_base_url.as_str(),
-        access_token.as_str(),
-        project.id.as_str(),
-    )
-    .await?;
     let requirement_documents = load_requirement_documents_for_scope(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
         &requirement_scope,
+    )
+    .await?;
+    ensure_project_runtime_environment_initialization(
+        cfg.project_service_base_url.as_str(),
+        access_token.as_str(),
+        project.id.as_str(),
+        &root_requirement,
+        &selected_work_items,
+        &requirement_documents,
     )
     .await?;
     let planner_prompt = build_requirement_execution_planner_prompt(
@@ -430,8 +433,11 @@ enum RuntimeEnvironmentInitializationAction {
     GenerateImage(String),
 }
 
+const RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS: usize = 4_000;
+
 fn runtime_environment_initialization_action(
     current: &Value,
+    analysis_requirement: Option<&str>,
 ) -> RuntimeEnvironmentInitializationAction {
     let status = current
         .get("environment")
@@ -440,7 +446,11 @@ fn runtime_environment_initialization_action(
         .map(str::trim)
         .map(str::to_ascii_lowercase);
     match status.as_deref() {
-        Some("ready" | "analyzing") => RuntimeEnvironmentInitializationAction::None,
+        Some("ready") if runtime_environment_matches_requirement(current, analysis_requirement) => {
+            RuntimeEnvironmentInitializationAction::None
+        }
+        Some("ready") => RuntimeEnvironmentInitializationAction::Analyze,
+        Some("analyzing") => RuntimeEnvironmentInitializationAction::None,
         Some("pending_image_build") => current
             .get("images")
             .and_then(Value::as_array)
@@ -472,7 +482,15 @@ async fn ensure_project_runtime_environment_initialization(
     project_service_base_url: &str,
     access_token: &str,
     project_id: &str,
+    root_requirement: &chatos_project_execution::RequirementPlanItem,
+    selected_work_items: &[chatos_project_execution::WorkItemPlanItem],
+    requirement_documents: &BTreeMap<String, Value>,
 ) -> Result<(), HandlerError> {
+    let (analysis_requirement, selected_dependencies) = execution_runtime_analysis_request(
+        root_requirement,
+        selected_work_items,
+        requirement_documents,
+    );
     let current = project_management_api_client::get_project_service_runtime_environment(
         project_service_base_url,
         access_token,
@@ -480,7 +498,7 @@ async fn ensure_project_runtime_environment_initialization(
     )
     .await
     .map_err(|err| HandlerError::bad_gateway("读取项目运行环境失败", err))?;
-    match runtime_environment_initialization_action(&current) {
+    match runtime_environment_initialization_action(&current, Some(analysis_requirement.as_str())) {
         RuntimeEnvironmentInitializationAction::None => Ok(()),
         RuntimeEnvironmentInitializationAction::GenerateImage(image_record_id) => {
             project_management_api_client::generate_project_service_runtime_environment_image(
@@ -498,7 +516,10 @@ async fn ensure_project_runtime_environment_initialization(
                 project_service_base_url,
                 access_token,
                 project_id,
-                &project_management_api_client::AnalyzeProjectRuntimeEnvironmentRequest::default(),
+                &project_management_api_client::AnalyzeProjectRuntimeEnvironmentRequest {
+                    analysis_requirement: Some(analysis_requirement),
+                    selected_dependencies,
+                },
             )
             .await
             .map(|_| ())
@@ -507,37 +528,208 @@ async fn ensure_project_runtime_environment_initialization(
     }
 }
 
+fn runtime_environment_matches_requirement(current: &Value, expected: Option<&str>) -> bool {
+    let expected = expected.map(str::trim).filter(|value| !value.is_empty());
+    let Some(expected) = expected else {
+        return true;
+    };
+    current
+        .get("environment")
+        .and_then(|environment| environment.get("detected_stack"))
+        .and_then(|stack| stack.get("analysis_requirement"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        == Some(expected)
+}
+
+fn execution_runtime_analysis_request(
+    root_requirement: &chatos_project_execution::RequirementPlanItem,
+    selected_work_items: &[chatos_project_execution::WorkItemPlanItem],
+    requirement_documents: &BTreeMap<String, Value>,
+) -> (String, Vec<String>) {
+    let mut sections = vec![format!("执行需求：{}", root_requirement.title.trim())];
+    let mut dependencies = BTreeMap::<String, String>::new();
+
+    for item in selected_work_items {
+        let mut task = format!("实施任务：{}", item.title.trim());
+        if let Some(description) = item
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            task.push('\n');
+            task.push_str(description);
+        }
+        sections.push(task);
+        for tag in &item.tags {
+            let tag = tag.trim();
+            if !tag.is_empty() && tag.chars().count() <= 80 {
+                dependencies
+                    .entry(tag.to_ascii_lowercase())
+                    .or_insert_with(|| tag.to_string());
+            }
+        }
+    }
+
+    for documents in requirement_documents.values() {
+        let Some(documents) = documents.as_array() else {
+            continue;
+        };
+        for document in documents {
+            let title = document
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let content = document
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if title.is_none() && content.is_none() {
+                continue;
+            }
+            let mut section = format!("技术文档：{}", title.unwrap_or("未命名"));
+            if let Some(content) = content {
+                section.push('\n');
+                section.push_str(content);
+            }
+            sections.push(section);
+        }
+    }
+
+    let requirement = truncate_chars(
+        sections.join("\n\n").as_str(),
+        RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS,
+    );
+    (requirement, dependencies.into_values().take(64).collect())
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    let mut truncated = value.chars().take(keep).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
 #[cfg(test)]
 mod runtime_environment_tests {
+    use std::collections::BTreeMap;
+
+    use chatos_project_execution::{RequirementPlanItem, WorkItemPlanItem};
     use serde_json::json;
 
     use super::{
-        runtime_environment_initialization_action, RuntimeEnvironmentInitializationAction,
+        execution_runtime_analysis_request, runtime_environment_initialization_action,
+        RuntimeEnvironmentInitializationAction, RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS,
     };
+
+    #[test]
+    fn execution_context_drives_runtime_analysis_request() {
+        let requirement = RequirementPlanItem {
+            id: "requirement-1".to_string(),
+            title: "Build inventory system".to_string(),
+            status: "approved".to_string(),
+            parent_requirement_id: None,
+        };
+        let work_items = vec![WorkItemPlanItem {
+            id: "work-item-1".to_string(),
+            requirement_id: requirement.id.clone(),
+            title: "Implement Rust API".to_string(),
+            description: Some("Use Axum and PostgreSQL with a React frontend.".to_string()),
+            status: "todo".to_string(),
+            priority: 5,
+            tags: vec![
+                "Rust".to_string(),
+                "PostgreSQL".to_string(),
+                "rust".to_string(),
+            ],
+            is_planning_task: false,
+        }];
+        let documents = BTreeMap::from([(
+            requirement.id.clone(),
+            json!([{
+                "title": "Runtime design",
+                "content": "The workspace requires Cargo, Node.js and a PostgreSQL service.",
+            }]),
+        )]);
+
+        let (analysis_requirement, dependencies) =
+            execution_runtime_analysis_request(&requirement, &work_items, &documents);
+
+        assert!(analysis_requirement.contains("Build inventory system"));
+        assert!(analysis_requirement.contains("Use Axum and PostgreSQL"));
+        assert!(analysis_requirement.contains("requires Cargo, Node.js"));
+        assert!(analysis_requirement.chars().count() <= RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS);
+        assert_eq!(dependencies, vec!["PostgreSQL", "Rust"]);
+    }
 
     #[test]
     fn ready_or_active_runtime_environment_waits_for_completion() {
         assert_eq!(
-            runtime_environment_initialization_action(&json!({
-                "environment": { "status": "ready" },
-            })),
+            runtime_environment_initialization_action(
+                &json!({
+                    "environment": { "status": "ready" },
+                }),
+                None
+            ),
             RuntimeEnvironmentInitializationAction::None
         );
         assert_eq!(
-            runtime_environment_initialization_action(&json!({
-                "environment": { "status": "ANALYZING" },
-            })),
+            runtime_environment_initialization_action(
+                &json!({
+                    "environment": { "status": "ANALYZING" },
+                }),
+                Some("React and Rust")
+            ),
             RuntimeEnvironmentInitializationAction::None
         );
         assert_eq!(
-            runtime_environment_initialization_action(&json!({
-                "environment": { "status": "pending_image_build" },
-                "images": [{
-                    "id": "workspace-image",
-                    "service_role": "workspace",
-                    "status": "building",
-                }],
-            })),
+            runtime_environment_initialization_action(
+                &json!({
+                    "environment": { "status": "pending_image_build" },
+                    "images": [{
+                        "id": "workspace-image",
+                        "service_role": "workspace",
+                        "status": "building",
+                    }],
+                }),
+                Some("React and Rust")
+            ),
+            RuntimeEnvironmentInitializationAction::None
+        );
+    }
+
+    #[test]
+    fn ready_runtime_environment_is_reanalyzed_for_new_execution_requirement() {
+        assert_eq!(
+            runtime_environment_initialization_action(
+                &json!({
+                    "environment": {
+                        "status": "ready",
+                        "detected_stack": { "analysis_requirement": "Node only" },
+                    },
+                }),
+                Some("React, Rust and PostgreSQL")
+            ),
+            RuntimeEnvironmentInitializationAction::Analyze
+        );
+        assert_eq!(
+            runtime_environment_initialization_action(
+                &json!({
+                    "environment": {
+                        "status": "ready",
+                        "detected_stack": {
+                            "analysis_requirement": "React, Rust and PostgreSQL",
+                        },
+                    },
+                }),
+                Some("React, Rust and PostgreSQL")
+            ),
             RuntimeEnvironmentInitializationAction::None
         );
     }
@@ -545,14 +737,17 @@ mod runtime_environment_tests {
     #[test]
     fn planned_workspace_image_starts_generation() {
         assert_eq!(
-            runtime_environment_initialization_action(&json!({
-                "environment": { "status": "pending_image_build" },
-                "images": [{
-                    "id": "workspace-image",
-                    "service_role": "workspace",
-                    "status": "planned",
-                }],
-            })),
+            runtime_environment_initialization_action(
+                &json!({
+                    "environment": { "status": "pending_image_build" },
+                    "images": [{
+                        "id": "workspace-image",
+                        "service_role": "workspace",
+                        "status": "planned",
+                    }],
+                }),
+                Some("React and Rust")
+            ),
             RuntimeEnvironmentInitializationAction::GenerateImage("workspace-image".to_string())
         );
     }
@@ -566,7 +761,7 @@ mod runtime_environment_tests {
             json!({ "environment": { "status": "not_runnable" } }),
         ] {
             assert_eq!(
-                runtime_environment_initialization_action(&current),
+                runtime_environment_initialization_action(&current, Some("React and Rust")),
                 RuntimeEnvironmentInitializationAction::Analyze
             );
         }
