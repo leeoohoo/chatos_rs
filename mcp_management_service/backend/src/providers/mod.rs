@@ -15,6 +15,8 @@ mod plugin_cloud;
 mod plugin_components;
 mod plugin_local;
 mod plugin_routes;
+mod plugin_routes_prepare;
+mod plugin_routes_runtime;
 mod project_service;
 mod sandbox_images;
 mod task_runner;
