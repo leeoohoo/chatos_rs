@@ -2,18 +2,36 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
+resolve_local_dev_host_address() {
+  local bridge_address
+  if [[ -n "${CHATOS_LOCAL_DEV_HOST_ADDRESS:-}" ]]; then
+    printf '%s\n' "$CHATOS_LOCAL_DEV_HOST_ADDRESS"
+    return 0
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v ifconfig >/dev/null 2>&1; then
+    bridge_address="$(ifconfig bridge100 2>/dev/null | awk '/inet / { print $2; exit }')"
+    if [[ -n "$bridge_address" ]]; then
+      printf '%s\n' "$bridge_address"
+      return 0
+    fi
+  fi
+  printf '%s\n' "host.docker.internal"
+}
+
 export_local_env() {
-  local mongo_user mongo_password mongo_port
+  local mongo_user mongo_password mongo_port host_address
   mongo_user="$(env_value MONGODB_USER admin)"
   mongo_password="$(env_value MONGODB_PASSWORD admin)"
   mongo_port="$(env_value MONGODB_HOST_PORT 27018)"
+  host_address="$(resolve_local_dev_host_address)"
+  export CHATOS_LOCAL_DEV_HOST_ADDRESS="$host_address"
 
   export CHATOS_ENV="${CHATOS_LOCAL_DEV_ENV:-local}"
   export CHATOS_SERVICE_RUNTIME_ENABLED="${CHATOS_LOCAL_DEV_SERVICE_RUNTIME_ENABLED:-true}"
   export CHATOS_SERVICE_DISCOVERY_MODE="${CHATOS_LOCAL_DEV_DISCOVERY_MODE:-consul,static}"
   export CHATOS_CONSUL_HTTP_ADDR="${CHATOS_LOCAL_DEV_CONSUL_HTTP_ADDR:-http://127.0.0.1:8500}"
   export CHATOS_SERVICE_ADDRESS="${CHATOS_LOCAL_DEV_SERVICE_ADDRESS:-127.0.0.1}"
-  export CHATOS_SERVICE_CHECK_ADDRESS="${CHATOS_LOCAL_DEV_SERVICE_CHECK_ADDRESS:-host.docker.internal}"
+  export CHATOS_SERVICE_CHECK_ADDRESS="${CHATOS_LOCAL_DEV_SERVICE_CHECK_ADDRESS:-$host_address}"
   export CONFIG_CENTER_HOST="${CONFIG_CENTER_HOST:-0.0.0.0}"
   export CONFIG_CENTER_PORT="${CONFIG_CENTER_PORT:-39270}"
   export CONFIG_CENTER_INTERNAL_MTLS_PORT="${CONFIG_CENTER_INTERNAL_MTLS_PORT:-39272}"
@@ -174,7 +192,7 @@ export_local_env() {
   export PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES="${PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES:-262144}"
   export LOCAL_CONNECTOR_SERVICE_HOST="${LOCAL_CONNECTOR_SERVICE_HOST:-0.0.0.0}"
   export LOCAL_CONNECTOR_SERVICE_PORT="${LOCAL_CONNECTOR_SERVICE_PORT:-39230}"
-  export LOCAL_CONNECTOR_INTERNAL_MTLS_PORT="${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT:-39232}"
+  export LOCAL_CONNECTOR_INTERNAL_MTLS_PORT="${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT:-39231}"
   export MCP_MANAGEMENT_HOST="${MCP_MANAGEMENT_HOST:-0.0.0.0}"
   export MCP_MANAGEMENT_PORT="${MCP_MANAGEMENT_PORT:-39280}"
   export MCP_MANAGEMENT_INTERNAL_MTLS_PORT="${MCP_MANAGEMENT_INTERNAL_MTLS_PORT:-39282}"
@@ -405,22 +423,23 @@ ensure_dirs() {
 prepare_local_dev_apisix_config() {
   local source_config="$ROOT_DIR/docker/apisix/apisix.yaml"
   local target_config="$CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH"
+  local host_address="${CHATOS_LOCAL_DEV_HOST_ADDRESS:?CHATOS_LOCAL_DEV_HOST_ADDRESS is required}"
   if [[ ! -f "$source_config" ]]; then
     echo "[ERROR] APISIX route config is missing: $source_config" >&2
     return 1
   fi
   mkdir -p "$(dirname "$target_config")"
   sed \
-    -e 's/"chatos-backend:3997"/"host.docker.internal:3997"/g' \
-    -e 's/"user-service-backend:39190"/"host.docker.internal:39190"/g' \
-    -e 's/"project-management-backend:39210"/"host.docker.internal:39210"/g' \
-    -e 's/"plugin-management-backend:39260"/"host.docker.internal:39260"/g' \
-    -e 's/"mcp-management-service-backend:39280"/"host.docker.internal:39280"/g' \
-    -e 's/"local-connector-service-backend:39230"/"host.docker.internal:39230"/g' \
-    -e 's/"task-runner-backend:39090"/"host.docker.internal:39090"/g' \
-    -e 's/"memory-engine-backend:7081"/"host.docker.internal:7081"/g' \
-    -e 's/"chatos-frontend:80"/"host.docker.internal:8088"/g' \
-    -e 's/"official-website-frontend:80"/"host.docker.internal:8088"/g' \
+    -e "s/\"chatos-backend:3997\"/\"${host_address}:3997\"/g" \
+    -e "s/\"user-service-backend:39190\"/\"${host_address}:39190\"/g" \
+    -e "s/\"project-management-backend:39210\"/\"${host_address}:39210\"/g" \
+    -e "s/\"plugin-management-backend:39260\"/\"${host_address}:39260\"/g" \
+    -e "s/\"mcp-management-service-backend:39280\"/\"${host_address}:39280\"/g" \
+    -e "s/\"local-connector-service-backend:39230\"/\"${host_address}:39230\"/g" \
+    -e "s/\"task-runner-backend:39090\"/\"${host_address}:39090\"/g" \
+    -e "s/\"memory-engine-backend:7081\"/\"${host_address}:7081\"/g" \
+    -e "s/\"chatos-frontend:80\"/\"${host_address}:8088\"/g" \
+    -e "s/\"official-website-frontend:80\"/\"${host_address}:8088\"/g" \
     "$source_config" >"$target_config"
 }
 

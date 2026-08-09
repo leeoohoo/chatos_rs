@@ -57,6 +57,7 @@ load_optional_env "$CLIENT_DIR/.env"
 load_optional_env "$CORE_DIR/.env"
 
 SERVICE_PORT="${LOCAL_CONNECTOR_SERVICE_PORT:-39230}"
+SERVICE_INTERNAL_PORT="${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT:-39231}"
 CORE_PORT="${LOCAL_CONNECTOR_CORE_API_PORT:-39232}"
 DESKTOP_AUTH_TOKEN="${LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN:-$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')}"
 FRONTEND_PORT="${LOCAL_CONNECTOR_CLIENT_FRONTEND_PORT:-39233}"
@@ -73,12 +74,57 @@ pid_for_port() {
   fi
 }
 
+process_cwd() {
+  local pid="$1"
+  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true
+}
+
+process_command() {
+  local pid="$1"
+  ps -p "$pid" -o command= 2>/dev/null || true
+}
+
+validate_port_topology() {
+  local entries=(
+    "Local Connector Service public" "$SERVICE_PORT"
+    "Local Connector Service internal mTLS" "$SERVICE_INTERNAL_PORT"
+    "Local Connector Client core" "$CORE_PORT"
+    "Local Connector Client frontend" "$FRONTEND_PORT"
+  )
+  local i j name port other_name other_port
+
+  for ((i = 0; i < ${#entries[@]}; i += 2)); do
+    name="${entries[$i]}"
+    port="${entries[$((i + 1))]}"
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
+      echo "[ERROR] $name port is invalid: $port" >&2
+      return 1
+    fi
+    for ((j = i + 2; j < ${#entries[@]}; j += 2)); do
+      other_name="${entries[$j]}"
+      other_port="${entries[$((j + 1))]}"
+      if [[ "$port" == "$other_port" ]]; then
+        echo "[ERROR] port collision: $name and $other_name both use $port" >&2
+        return 1
+      fi
+    done
+  done
+}
+
 stop_port() {
   local port="$1"
   local name="$2"
-  local pid
+  local expected_cwd="$3"
+  local command_marker="$4"
+  local pid cwd command
   pid="$(pid_for_port "$port")"
   if [[ -n "$pid" ]]; then
+    cwd="$(process_cwd "$pid")"
+    command="$(process_command "$pid")"
+    if [[ "$cwd" != "$expected_cwd" || "$command" != *"$command_marker"* ]]; then
+      echo "[ERROR] refusing to stop $name: port $port belongs to pid=$pid cwd=${cwd:-unknown}" >&2
+      return 1
+    fi
     echo "[INFO] stopping $name on port $port (pid=$pid)"
     kill "$pid" 2>/dev/null || true
     sleep 1
@@ -86,6 +132,37 @@ stop_port() {
       kill -9 "$pid" 2>/dev/null || true
     fi
   fi
+}
+
+wait_for_client_port() {
+  local port="$1"
+  local name="$2"
+  local expected_cwd="$3"
+  local command_marker="$4"
+  local pid cwd command
+
+  for _ in $(seq 1 180); do
+    pid="$(pid_for_port "$port")"
+    if [[ -n "$pid" ]]; then
+      cwd="$(process_cwd "$pid")"
+      command="$(process_command "$pid")"
+      if [[ "$cwd" == "$expected_cwd" && "$command" == *"$command_marker"* ]]; then
+        echo "[OK] $name is listening on port $port (pid=$pid)"
+        return 0
+      fi
+      echo "[ERROR] $name port $port was claimed by an unexpected process (pid=$pid)" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  echo "[ERROR] $name did not start listening on port $port" >&2
+  return 1
+}
+
+verify_started_services() {
+  wait_for_client_port "$CORE_PORT" "local connector client core" "$ROOT_DIR" "local_connector_client_core"
+  wait_for_client_port "$FRONTEND_PORT" "local connector client frontend" "$FRONTEND_DIR" "vite"
 }
 
 stop_session() {
@@ -174,31 +251,39 @@ case "$ACTION" in
   stop)
     stop_session "$FRONTEND_SESSION" "local connector client frontend"
     stop_session "$CORE_SESSION" "local connector client core"
-    stop_port "$FRONTEND_PORT" "local connector client frontend"
-    stop_port "$CORE_PORT" "local connector client core"
+    stop_port "$FRONTEND_PORT" "local connector client frontend" "$FRONTEND_DIR" "vite"
+    stop_port "$CORE_PORT" "local connector client core" "$ROOT_DIR" "local_connector_client_core"
     ;;
   start)
+    validate_port_topology
     start_core
     start_frontend
+    verify_started_services
     ;;
   restart)
+    validate_port_topology
     stop_session "$FRONTEND_SESSION" "local connector client frontend"
     stop_session "$CORE_SESSION" "local connector client core"
-    stop_port "$FRONTEND_PORT" "local connector client frontend"
-    stop_port "$CORE_PORT" "local connector client core"
+    stop_port "$FRONTEND_PORT" "local connector client frontend" "$FRONTEND_DIR" "vite"
+    stop_port "$CORE_PORT" "local connector client core" "$ROOT_DIR" "local_connector_client_core"
     start_core
     start_frontend
+    verify_started_services
+    ;;
+  check)
+    validate_port_topology
+    echo "[OK] Local Connector local port topology is valid"
     ;;
   status)
     status
     ;;
   *)
-    echo "Usage: $0 [start|stop|restart|status]" >&2
+    echo "Usage: $0 [start|stop|restart|status|check]" >&2
     exit 2
     ;;
 esac
 
-if [[ "$ACTION" != "status" ]]; then
+if [[ "$ACTION" != "status" && "$ACTION" != "check" ]]; then
   echo "[INFO] core log: $CORE_LOG_FILE"
   echo "[INFO] frontend log: $FRONTEND_LOG_FILE"
 fi

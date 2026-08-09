@@ -153,7 +153,9 @@ smoke-repo:
 	@bash scripts/check-hotspot-line-budgets.sh
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
-	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
+	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh local_connector_client/restart_services.sh
+	@bash local_connector_client/restart_services.sh check
+	@if LOCAL_CONNECTOR_INTERNAL_MTLS_PORT=39232 LOCAL_CONNECTOR_CORE_API_PORT=39232 bash local_connector_client/restart_services.sh check >/dev/null 2>&1; then echo "Local Connector port collision check unexpectedly passed" >&2; exit 1; fi
 	@$(COMPOSE_VALIDATION_ENV) docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
 	@bash -n scripts/smoke-mcp-management-cloud.sh scripts/smoke-mcp-management-cloud-discovery.sh
 	@bash -n scripts/smoke-local-project-entry-config.sh
