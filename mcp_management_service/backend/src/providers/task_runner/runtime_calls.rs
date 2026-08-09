@@ -9,14 +9,15 @@ use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
+use crate::providers::project_service::decode_jsonrpc_response;
 use crate::providers::{
     decode_cancel_notification_response, ProviderCallOutcome, ProviderCancelOutcome,
 };
 use crate::runtime::RuntimeSessionSnapshot;
 
 use super::{
-    decode_jsonrpc_response, ProviderCallError, TaskRunnerProvider, TaskRunnerRequestBinding,
-    CALLER_SERVICE, TASK_RUNNER_MCP_SCOPE, TOKEN_AUDIENCE,
+    ProviderCallError, TaskRunnerProvider, TaskRunnerRequestBinding, CALLER_SERVICE,
+    TASK_RUNNER_MCP_SCOPE, TOKEN_AUDIENCE,
 };
 
 impl TaskRunnerProvider {

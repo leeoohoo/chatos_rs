@@ -12,7 +12,9 @@ use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
     WorkspaceProviderKind,
 };
-use serde_json::json;
+use chatos_mcp_service::METHOD_TOOLS_LIST;
+use chatos_plugin_management_sdk::SystemAgentKey;
+use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
 
