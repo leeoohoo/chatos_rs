@@ -188,6 +188,32 @@ export const useSessionListController = ({
     updateRemoteConnection,
   });
 
+  useEffect(() => {
+    if (!remoteForm.remoteModalOpen) {
+      return;
+    }
+    void refreshLocalConnectorWorkspaces();
+  }, [remoteForm.remoteModalOpen, refreshLocalConnectorWorkspaces]);
+
+  useEffect(() => {
+    if (
+      !remoteForm.remoteModalOpen
+      || remoteForm.remoteLocalConnectorWorkspaceId
+      || localConnectorWorkspaces.length === 0
+    ) {
+      return;
+    }
+    const workspace = localConnectorWorkspaces[0];
+    remoteForm.setRemoteLocalConnectorWorkspaceId(workspace.id);
+    remoteForm.setRemoteLocalConnectorDeviceId(workspace.deviceId);
+  }, [
+    localConnectorWorkspaces,
+    remoteForm.remoteLocalConnectorWorkspaceId,
+    remoteForm.remoteModalOpen,
+    remoteForm.setRemoteLocalConnectorDeviceId,
+    remoteForm.setRemoteLocalConnectorWorkspaceId,
+  ]);
+
   const localFsPickers = useLocalFsPickers({
     apiClient,
     t,

@@ -97,6 +97,7 @@ interface SessionListDialogsProps {
   remoteCertificatePath: string;
   remoteDefaultPath: string;
   remoteHostKeyPolicy: HostKeyPolicy;
+  remoteLocalConnectorWorkspaceId: string;
   remoteJumpEnabled: boolean;
   remoteJumpMode: JumpHostMode;
   remoteJumpConnectionId: string;
@@ -125,6 +126,8 @@ interface SessionListDialogsProps {
   setRemoteCertificatePath: (value: string) => void;
   setRemoteDefaultPath: (value: string) => void;
   setRemoteHostKeyPolicy: (value: HostKeyPolicy) => void;
+  setRemoteLocalConnectorDeviceId: (value: string) => void;
+  setRemoteLocalConnectorWorkspaceId: (value: string) => void;
   setRemoteJumpEnabled: (value: boolean) => void;
   setRemoteJumpMode: (value: JumpHostMode) => void;
   setRemoteJumpConnectionId: (value: string) => void;
@@ -239,6 +242,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   remoteCertificatePath,
   remoteDefaultPath,
   remoteHostKeyPolicy,
+  remoteLocalConnectorWorkspaceId,
   remoteJumpEnabled,
   remoteJumpMode,
   remoteJumpConnectionId,
@@ -267,6 +271,8 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setRemoteCertificatePath,
   setRemoteDefaultPath,
   setRemoteHostKeyPolicy,
+  setRemoteLocalConnectorDeviceId,
+  setRemoteLocalConnectorWorkspaceId,
   setRemoteJumpEnabled,
   setRemoteJumpMode,
   setRemoteJumpConnectionId,
@@ -444,6 +450,10 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       remoteCertificatePath={remoteCertificatePath}
       remoteDefaultPath={remoteDefaultPath}
       remoteHostKeyPolicy={remoteHostKeyPolicy}
+      localConnectorWorkspaces={localConnectorWorkspaces}
+      localConnectorLoading={localConnectorLoading}
+      localConnectorError={localConnectorError}
+      remoteLocalConnectorWorkspaceId={remoteLocalConnectorWorkspaceId}
       remoteJumpEnabled={remoteJumpEnabled}
       remoteJumpMode={remoteJumpMode}
       remoteJumpConnectionId={remoteJumpConnectionId}
@@ -472,6 +482,14 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onRemoteCertificatePathChange={setRemoteCertificatePath}
       onRemoteDefaultPathChange={setRemoteDefaultPath}
       onRemoteHostKeyPolicyChange={setRemoteHostKeyPolicy}
+      onRemoteLocalConnectorWorkspaceChange={(workspaceId) => {
+        const workspace = localConnectorWorkspaces.find((item) => item.id === workspaceId);
+        setRemoteLocalConnectorWorkspaceId(workspaceId);
+        setRemoteLocalConnectorDeviceId(workspace?.deviceId || '');
+      }}
+      onRefreshLocalConnectorWorkspaces={() => {
+        void refreshLocalConnectorWorkspaces();
+      }}
       onRemoteJumpEnabledChange={setRemoteJumpEnabled}
       onRemoteJumpModeChange={setRemoteJumpMode}
       onRemoteJumpConnectionIdChange={setRemoteJumpConnectionId}

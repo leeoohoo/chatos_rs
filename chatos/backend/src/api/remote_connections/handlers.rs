@@ -8,6 +8,7 @@ use axum::{
 };
 use serde_json::Value;
 
+use crate::api::local_connectors::validate_local_connector_execution_target;
 use crate::core::auth::AuthUser;
 use crate::core::remote_connection_access::{
     ensure_owned_remote_connection, map_remote_connection_access_error,
@@ -47,10 +48,14 @@ pub(super) async fn list_remote_connections(
     match RemoteConnectionService::list(Some(user_id)).await {
         Ok(list) => (
             StatusCode::OK,
-            Json(serde_json::to_value(
-                list.into_iter().map(|item| item.to_view()).collect::<Vec<_>>(),
-            )
-            .unwrap_or(Value::Null)),
+            Json(
+                serde_json::to_value(
+                    list.into_iter()
+                        .map(|item| item.to_view())
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap_or(Value::Null),
+            ),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -77,6 +82,14 @@ pub(super) async fn create_remote_connection(
             );
         }
     };
+    if let Err(err) = validate_local_connector_execution_target(
+        normalized.local_connector_device_id.as_str(),
+        normalized.local_connector_workspace_id.as_str(),
+    )
+    .await
+    {
+        return err;
+    }
 
     if let Err(err) = RemoteConnectionService::create(normalized.clone()).await {
         return internal_error_response(
@@ -122,6 +135,14 @@ pub(super) async fn test_remote_connection_draft(
             );
         }
     };
+    if let Err(err) = validate_local_connector_execution_target(
+        connection.local_connector_device_id.as_str(),
+        connection.local_connector_workspace_id.as_str(),
+    )
+    .await
+    {
+        return err;
+    }
 
     let verification_code = verification_code_from_headers(&headers);
 
@@ -168,6 +189,14 @@ pub(super) async fn update_remote_connection(
             );
         }
     };
+    if let Err(err) = validate_local_connector_execution_target(
+        normalized.local_connector_device_id.as_str(),
+        normalized.local_connector_workspace_id.as_str(),
+    )
+    .await
+    {
+        return err;
+    }
 
     if let Err(err) = RemoteConnectionService::update(&id, &normalized).await {
         return internal_error_response(

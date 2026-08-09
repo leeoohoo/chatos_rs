@@ -6,9 +6,6 @@ use crate::models::remote_connection::{NewRemoteConnection, RemoteConnection};
 
 use super::{CreateRemoteConnectionRequest, UpdateRemoteConnectionRequest};
 
-const LOCAL_CONNECTOR_REQUIRED_FOR_KEY_AUTH: &str =
-    "远端连接的私钥/证书路径认证必须走本地执行面，云端后端不再接受 host 文件路径";
-
 pub(super) fn normalize_create_request(
     req: CreateRemoteConnectionRequest,
     user_id: Option<String>,
@@ -19,6 +16,10 @@ pub(super) fn normalize_create_request(
     let port = normalize_port(req.port.unwrap_or(22))?;
     let auth_type = normalize_auth_type(req.auth_type)?;
     let host_key_policy = normalize_host_key_policy(req.host_key_policy)?;
+    let local_connector_device_id = normalize_non_empty(req.local_connector_device_id)
+        .ok_or_else(|| "local_connector_device_id 不能为空".to_string())?;
+    let local_connector_workspace_id = normalize_non_empty(req.local_connector_workspace_id)
+        .ok_or_else(|| "local_connector_workspace_id 不能为空".to_string())?;
     let jump_enabled = req.jump_enabled.unwrap_or(false);
     let jump_connection_id = normalize_non_empty(req.jump_connection_id);
 
@@ -41,13 +42,6 @@ pub(super) fn normalize_create_request(
         private_key_path.as_deref(),
         certificate_path.as_deref(),
     )?;
-    reject_cloud_host_path_auth(
-        private_key_path.as_deref(),
-        certificate_path.as_deref(),
-        jump_private_key_path.as_deref(),
-        jump_certificate_path.as_deref(),
-    )?;
-
     let jump_host = normalize_non_empty(req.jump_host);
     let jump_username = normalize_non_empty(req.jump_username);
     let jump_port = req.jump_port.map(normalize_port).transpose()?.or(Some(22));
@@ -69,6 +63,8 @@ pub(super) fn normalize_create_request(
         certificate_path,
         default_remote_path: normalize_non_empty(req.default_remote_path),
         host_key_policy,
+        local_connector_device_id,
+        local_connector_workspace_id,
         jump_enabled,
         jump_connection_id: if jump_enabled {
             jump_connection_id
@@ -114,6 +110,20 @@ pub(super) fn normalize_update_request(
         req.host_key_policy
             .or(Some(existing.host_key_policy.clone())),
     )?;
+    let local_connector_device_id = req
+        .local_connector_device_id
+        .and_then(|value| normalize_non_empty(Some(value)))
+        .unwrap_or(existing.local_connector_device_id.clone());
+    let local_connector_workspace_id = req
+        .local_connector_workspace_id
+        .and_then(|value| normalize_non_empty(Some(value)))
+        .unwrap_or(existing.local_connector_workspace_id.clone());
+    if local_connector_device_id.is_empty() {
+        return Err("local_connector_device_id 不能为空".to_string());
+    }
+    if local_connector_workspace_id.is_empty() {
+        return Err("local_connector_workspace_id 不能为空".to_string());
+    }
     let password_candidate = merge_optional_text(req.password, existing.password.clone());
     let private_key_candidate =
         merge_optional_text(req.private_key_path, existing.private_key_path.clone());
@@ -186,13 +196,6 @@ pub(super) fn normalize_update_request(
         private_key_path.as_deref(),
         certificate_path.as_deref(),
     )?;
-    reject_cloud_host_path_auth(
-        private_key_path.as_deref(),
-        certificate_path.as_deref(),
-        jump_private_key_path.as_deref(),
-        jump_certificate_path.as_deref(),
-    )?;
-
     if jump_enabled && (jump_host.is_none() || jump_username.is_none()) {
         return Err("启用跳板机时 jump_host 和 jump_username 为必填".to_string());
     }
@@ -217,6 +220,8 @@ pub(super) fn normalize_update_request(
             existing.default_remote_path,
         ),
         host_key_policy,
+        local_connector_device_id,
+        local_connector_workspace_id,
         jump_enabled,
         jump_connection_id,
         jump_host,
@@ -298,27 +303,6 @@ fn validate_auth_fields(
             }
         }
         _ => return Err("不支持的 auth_type".to_string()),
-    }
-    Ok(())
-}
-
-fn reject_cloud_host_path_auth(
-    private_key_path: Option<&str>,
-    certificate_path: Option<&str>,
-    jump_private_key_path: Option<&str>,
-    jump_certificate_path: Option<&str>,
-) -> Result<(), String> {
-    for path in [
-        private_key_path,
-        certificate_path,
-        jump_private_key_path,
-        jump_certificate_path,
-    ] {
-        if let Some(path) = path {
-            if !path.trim().is_empty() {
-                return Err(LOCAL_CONNECTOR_REQUIRED_FOR_KEY_AUTH.to_string());
-            }
-        }
     }
     Ok(())
 }

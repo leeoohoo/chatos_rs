@@ -166,6 +166,8 @@ export interface RemoteConnection {
   hasCertificatePath: boolean;
   defaultRemotePath?: string | null;
   hostKeyPolicy: 'strict' | 'accept_new';
+  localConnectorDeviceId: string;
+  localConnectorWorkspaceId: string;
   jumpEnabled: boolean;
   jumpConnectionId?: string | null;
   jumpHost?: string | null;

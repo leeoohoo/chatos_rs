@@ -7,6 +7,7 @@ import RemoteVerificationModal from '../remote/RemoteVerificationModal';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
 import { AuthSection } from './remoteConnectionModal/AuthSection';
 import { ConnectionBasicsSection } from './remoteConnectionModal/ConnectionBasicsSection';
+import { ExecutionTargetSection } from './remoteConnectionModal/ExecutionTargetSection';
 import { JumpHostSection } from './remoteConnectionModal/JumpHostSection';
 import { RemoteConnectionModalFooter } from './remoteConnectionModal/RemoteConnectionModalFooter';
 import { RemoteConnectionModalMessages } from './remoteConnectionModal/RemoteConnectionModalMessages';
@@ -27,6 +28,10 @@ export const RemoteConnectionModal: FC<RemoteConnectionModalProps> = ({
   remoteCertificatePath,
   remoteDefaultPath,
   remoteHostKeyPolicy,
+  localConnectorWorkspaces,
+  localConnectorLoading,
+  localConnectorError,
+  remoteLocalConnectorWorkspaceId,
   remoteJumpEnabled,
   remoteJumpMode,
   remoteJumpConnectionId,
@@ -55,6 +60,8 @@ export const RemoteConnectionModal: FC<RemoteConnectionModalProps> = ({
   onRemoteCertificatePathChange,
   onRemoteDefaultPathChange,
   onRemoteHostKeyPolicyChange,
+  onRemoteLocalConnectorWorkspaceChange,
+  onRefreshLocalConnectorWorkspaces,
   onRemoteJumpEnabledChange,
   onRemoteJumpModeChange,
   onRemoteJumpConnectionIdChange,
@@ -93,6 +100,15 @@ export const RemoteConnectionModal: FC<RemoteConnectionModalProps> = ({
             onRemotePortChange={onRemotePortChange}
             onRemoteUsernameChange={onRemoteUsernameChange}
             onRemoteHostKeyPolicyChange={onRemoteHostKeyPolicyChange}
+          />
+
+          <ExecutionTargetSection
+            workspaces={localConnectorWorkspaces}
+            loading={localConnectorLoading}
+            error={localConnectorError}
+            workspaceId={remoteLocalConnectorWorkspaceId}
+            onWorkspaceChange={onRemoteLocalConnectorWorkspaceChange}
+            onRefresh={onRefreshLocalConnectorWorkspaces}
           />
 
           <AuthSection

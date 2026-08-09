@@ -21,6 +21,8 @@ const buildFormValues = (
   certificatePath: '',
   defaultPath: '/srv/app',
   hostKeyPolicy: 'strict',
+  localConnectorDeviceId: 'device-1',
+  localConnectorWorkspaceId: 'workspace-1',
   jumpEnabled: false,
   jumpMode: 'manual',
   jumpConnectionId: '',
@@ -60,6 +62,8 @@ describe('sessionList helpers', () => {
       certificate_path: undefined,
       default_remote_path: '/srv/app',
       host_key_policy: 'strict',
+      local_connector_device_id: 'device-1',
+      local_connector_workspace_id: 'workspace-1',
       jump_enabled: false,
       jump_connection_id: undefined,
       jump_host: undefined,
@@ -83,6 +87,15 @@ describe('sessionList helpers', () => {
     expect(result).toEqual({ error: '启用跳板机后需填写跳板机主机和用户名' });
   });
 
+  it('requires a Local Connector execution location', () => {
+    const result = buildRemoteConnectionPayload(buildFormValues({
+      localConnectorDeviceId: '',
+      localConnectorWorkspaceId: '',
+    }));
+
+    expect(result).toEqual({ error: '请选择 Local Connector 执行位置' });
+  });
+
   it('copies an existing remote connection snapshot for jump host mode', () => {
     const result = buildRemoteConnectionPayload(
       buildFormValues({
@@ -102,6 +115,8 @@ describe('sessionList helpers', () => {
         hasCertificatePath: true,
         defaultRemotePath: null,
         hostKeyPolicy: 'strict',
+        localConnectorDeviceId: 'device-1',
+        localConnectorWorkspaceId: 'workspace-1',
         jumpEnabled: false,
         hasJumpPrivateKeyPath: false,
         hasJumpCertificatePath: false,
@@ -168,6 +183,8 @@ describe('sessionList helpers', () => {
         hasCertificatePath: false,
         defaultRemotePath: null,
         hostKeyPolicy: 'strict',
+        localConnectorDeviceId: 'device-1',
+        localConnectorWorkspaceId: 'workspace-1',
         jumpEnabled: false,
         hasJumpPrivateKeyPath: false,
         hasJumpCertificatePath: false,

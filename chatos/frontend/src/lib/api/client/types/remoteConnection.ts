@@ -19,6 +19,10 @@ export interface RemoteConnectionResponse {
   defaultRemotePath?: string | null;
   host_key_policy?: 'strict' | 'accept_new';
   hostKeyPolicy?: 'strict' | 'accept_new';
+  local_connector_device_id?: string;
+  localConnectorDeviceId?: string;
+  local_connector_workspace_id?: string;
+  localConnectorWorkspaceId?: string;
   jump_enabled?: boolean;
   jumpEnabled?: boolean;
   jump_connection_id?: string | null;
@@ -65,6 +69,8 @@ export interface RemoteConnectionDraftPayload {
   certificate_path?: string;
   default_remote_path?: string;
   host_key_policy?: 'strict' | 'accept_new';
+  local_connector_device_id: string;
+  local_connector_workspace_id: string;
   jump_enabled?: boolean;
   jump_connection_id?: string;
   jump_host?: string;
@@ -87,6 +93,8 @@ export interface RemoteConnectionUpdatePayload {
   certificate_path?: string;
   default_remote_path?: string;
   host_key_policy?: 'strict' | 'accept_new';
+  local_connector_device_id?: string;
+  local_connector_workspace_id?: string;
   jump_enabled?: boolean;
   jump_connection_id?: string;
   jump_host?: string;

@@ -579,6 +579,21 @@ async fn load_owned_online_workspace(
     Ok((device, workspace))
 }
 
+pub(crate) async fn validate_local_connector_execution_target(
+    device_id: &str,
+    workspace_id: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let _device = load_owned_device(device_id).await?;
+    let workspace = load_owned_workspace(device_id, workspace_id).await?;
+    if workspace.status != LOCAL_CONNECTOR_WORKSPACE_ACTIVE {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "Local Connector workspace 已停用",
+        ));
+    }
+    Ok(())
+}
+
 async fn project_create_error_with_rollback(
     project: Project,
     bindings: &[LocalConnectorProjectBinding],

@@ -26,6 +26,11 @@ pub(crate) async fn resolve_jump_connection_snapshot(
     if jump_connection.user_id != connection.user_id {
         return Err("无权使用该跳板机连接".to_string());
     }
+    if jump_connection.local_connector_device_id != connection.local_connector_device_id
+        || jump_connection.local_connector_workspace_id != connection.local_connector_workspace_id
+    {
+        return Err("跳板机连接必须与目标连接使用同一个 Local Connector 执行位置".to_string());
+    }
 
     let mut resolved = connection.clone();
     resolved.jump_host = Some(jump_connection.host.clone());

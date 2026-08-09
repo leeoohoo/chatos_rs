@@ -35,6 +35,8 @@ export const normalizeRemoteConnection = (raw: RemoteConnectionResponse | unknow
     ),
     defaultRemotePath: (readValue(record, 'default_remote_path') ?? readValue(record, 'defaultRemotePath') ?? null) as RemoteConnection['defaultRemotePath'],
     hostKeyPolicy: (readValue(record, 'host_key_policy') ?? readValue(record, 'hostKeyPolicy') ?? 'strict') as RemoteConnection['hostKeyPolicy'],
+    localConnectorDeviceId: (readValue(record, 'local_connector_device_id') ?? readValue(record, 'localConnectorDeviceId') ?? '') as RemoteConnection['localConnectorDeviceId'],
+    localConnectorWorkspaceId: (readValue(record, 'local_connector_workspace_id') ?? readValue(record, 'localConnectorWorkspaceId') ?? '') as RemoteConnection['localConnectorWorkspaceId'],
     jumpEnabled: Boolean(readValue(record, 'jump_enabled') ?? readValue(record, 'jumpEnabled') ?? false),
     jumpConnectionId: (readValue(record, 'jump_connection_id') ?? readValue(record, 'jumpConnectionId') ?? null) as RemoteConnection['jumpConnectionId'],
     jumpHost: (readValue(record, 'jump_host') ?? readValue(record, 'jumpHost') ?? null) as RemoteConnection['jumpHost'],

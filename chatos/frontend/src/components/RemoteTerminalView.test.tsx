@@ -24,6 +24,8 @@ const mockConnection: RemoteConnection = {
       hasCertificatePath: false,
   defaultRemotePath: null,
   hostKeyPolicy: 'strict',
+  localConnectorDeviceId: 'device-1',
+  localConnectorWorkspaceId: 'workspace-1',
   jumpEnabled: false,
   jumpConnectionId: null,
   jumpHost: null,
