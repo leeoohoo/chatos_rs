@@ -7,9 +7,10 @@ use chatos_mcp_management_sdk::{ResolvedMcpRoute, SandboxProviderKind};
 use crate::runtime::RuntimeSessionSnapshot;
 use crate::trace_context::InternalTraceContextExt;
 
+use super::support::{cloud_provider_ref, local_provider_ref};
 use super::{
-    local_provider_ref, ProviderCallError, SandboxImagesProvider, CALLER_SERVICE,
-    CLOUD_PROVIDER_REF, LOCAL_CONNECTOR_AUDIENCE, SANDBOX_MANAGER_AUDIENCE, SANDBOX_SERVICE_SCOPE,
+    ProviderCallError, SandboxImagesProvider, CALLER_SERVICE, LOCAL_CONNECTOR_AUDIENCE,
+    SANDBOX_MANAGER_AUDIENCE, SANDBOX_SERVICE_SCOPE,
 };
 
 impl SandboxImagesProvider {
@@ -19,7 +20,7 @@ impl SandboxImagesProvider {
         route: &ResolvedMcpRoute,
     ) -> Result<reqwest::RequestBuilder, ProviderCallError> {
         if snapshot.project_context.sandbox_provider != SandboxProviderKind::Cloud
-            || route.provider_ref.as_deref() != Some(CLOUD_PROVIDER_REF)
+            || route.provider_ref.as_deref() != Some(cloud_provider_ref())
         {
             return Err(ProviderCallError::provider_unavailable(
                 "cloud Sandbox Images route does not match the immutable project context",

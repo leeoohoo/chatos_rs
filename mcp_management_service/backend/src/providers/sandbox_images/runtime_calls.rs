@@ -8,9 +8,9 @@ use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
 
+use super::support::call_timeout;
 use super::{
-    call_timeout, decode_jsonrpc_response, ProviderCallError, ProviderCallOutcome,
-    SandboxImagesProvider,
+    decode_jsonrpc_response, ProviderCallError, ProviderCallOutcome, SandboxImagesProvider,
 };
 
 impl SandboxImagesProvider {
