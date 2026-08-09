@@ -3,18 +3,15 @@
 
 use std::time::Duration;
 
-use chatos_mcp::sandbox_images::{SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER};
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxProviderKind};
-use chatos_mcp_service::METHOD_TOOLS_CALL;
-use chatos_service_runtime::http_body::read_response_bytes_limited;
-use serde_json::{json, Value};
-
-use crate::runtime::RuntimeSessionSnapshot;
-use crate::trace_context::InternalTraceContextExt;
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use serde_json::Value;
 
 use super::project_service::decode_jsonrpc_response;
 use super::{ProviderCallError, ProviderCallOutcome};
+
+mod request_builder;
+mod runtime_calls;
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const SANDBOX_MANAGER_AUDIENCE: &str = "sandbox-manager";
@@ -78,168 +75,6 @@ impl SandboxImagesProvider {
             _ => false,
         }
     }
-
-    pub(super) async fn call_tool(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        original_tool_name: &str,
-        arguments: Value,
-        invocation_id: &str,
-    ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        if !self.supports(route) {
-            return Err(ProviderCallError::provider_unavailable(
-                "Sandbox Images Provider does not support this route",
-            ));
-        }
-        let timeout = call_timeout(
-            original_tool_name,
-            &arguments,
-            self.request_timeout,
-            self.image_request_timeout,
-        );
-        let request = match route.provider_kind {
-            McpProviderKind::CloudSandbox => self.cloud_request(snapshot, route)?,
-            McpProviderKind::LocalConnector => self.local_request(snapshot, route)?,
-            _ => {
-                return Err(ProviderCallError::provider_unavailable(
-                    "Sandbox Images route has an invalid provider kind",
-                ))
-            }
-        };
-        let response = request
-            .timeout(timeout)
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": invocation_id,
-                "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
-            }))
-            .send()
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "Sandbox Images Provider request failed: {error}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|error| {
-                ProviderCallError::invalid_response(format!(
-                    "Sandbox Images Provider response could not be read: {error}"
-                ))
-            })?;
-        if !status.is_success() {
-            return Err(ProviderCallError::provider_unavailable(format!(
-                "Sandbox Images Provider rejected the request with HTTP {}",
-                status.as_u16()
-            )));
-        }
-        let result =
-            decode_jsonrpc_response(bytes.as_slice(), invocation_id, "Sandbox Images Provider")?;
-        Ok(ProviderCallOutcome {
-            result,
-            response_bytes: bytes.len(),
-        })
-    }
-
-    fn cloud_request(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-    ) -> Result<reqwest::RequestBuilder, ProviderCallError> {
-        if snapshot.project_context.sandbox_provider != SandboxProviderKind::Cloud
-            || route.provider_ref.as_deref() != Some(CLOUD_PROVIDER_REF)
-        {
-            return Err(ProviderCallError::provider_unavailable(
-                "cloud Sandbox Images route does not match the immutable project context",
-            ));
-        }
-        let secret = self.cloud_internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Sandbox Manager image internal secret is not configured",
-            )
-        })?;
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            SANDBOX_MANAGER_AUDIENCE,
-            SANDBOX_SERVICE_SCOPE,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        Ok(with_runtime_headers(
-            self.cloud_http
-                .post(format!(
-                    "{}/api/internal/sandbox-images/mcp",
-                    self.cloud_base_url
-                ))
-                .header("x-sandbox-caller", CALLER_SERVICE)
-                .header("x-sandbox-internal-token", token),
-            snapshot,
-        ))
-    }
-
-    fn local_request(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-    ) -> Result<reqwest::RequestBuilder, ProviderCallError> {
-        if snapshot.project_context.sandbox_provider != SandboxProviderKind::LocalConnector {
-            return Err(ProviderCallError::provider_unavailable(
-                "local Sandbox Images route does not match the immutable project context",
-            ));
-        }
-        let pairing_id = snapshot
-            .project_context
-            .sandbox_pairing_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "local Sandbox Images route has no sandbox pairing",
-                )
-            })?;
-        let expected_provider_ref = local_provider_ref(pairing_id);
-        if route.provider_ref.as_deref() != Some(expected_provider_ref.as_str()) {
-            return Err(ProviderCallError::provider_unavailable(
-                "local Sandbox Images route does not match the immutable sandbox pairing",
-            ));
-        }
-        let secret = self.local_internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Local Connector image internal secret is not configured",
-            )
-        })?;
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            LOCAL_CONNECTOR_AUDIENCE,
-            SANDBOX_SERVICE_SCOPE,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        let pairing_id = urlencoding::encode(pairing_id);
-        Ok(with_runtime_headers(
-            self.local_http
-                .post(format!(
-                    "{}/api/local-connectors/sandbox-facade/{pairing_id}/api/local/sandbox/images/mcp",
-                    self.local_base_url
-                ))
-                .header("x-local-connector-caller", CALLER_SERVICE)
-                .header("x-local-connector-internal-token", token)
-                .header(
-                    "x-local-connector-owner-user-id",
-                    snapshot.owner_user_id.as_str(),
-                ),
-            snapshot,
-        ))
-    }
 }
 
 pub(crate) const fn cloud_provider_ref() -> &'static str {
@@ -270,25 +105,6 @@ fn normalized_secret(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn with_runtime_headers(
-    mut request: reqwest::RequestBuilder,
-    snapshot: &RuntimeSessionSnapshot,
-) -> reqwest::RequestBuilder {
-    request = request.header(
-        SANDBOX_IMAGE_PROJECT_ID_HEADER,
-        snapshot.project_id.as_str(),
-    );
-    if let Some(run_id) = snapshot
-        .run_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        request = request.header(SANDBOX_IMAGE_RUN_ID_HEADER, run_id);
-    }
-    request.with_internal_trace_context()
-}
-
 fn call_timeout(
     tool_name: &str,
     arguments: &Value,
@@ -312,9 +128,16 @@ mod tests {
     use axum::http::HeaderMap;
     use axum::routing::post;
     use axum::{Json, Router};
-    use chatos_mcp_management_sdk::{
-        ExecutionPlane, McpRetryClass, ProjectExecutionContext, WorkspaceProviderKind,
+    use chatos_mcp::sandbox_images::{
+        SANDBOX_IMAGE_PROJECT_ID_HEADER, SANDBOX_IMAGE_RUN_ID_HEADER,
     };
+    use chatos_mcp_management_sdk::{
+        ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
+        WorkspaceProviderKind,
+    };
+    use serde_json::json;
+
+    use crate::runtime::RuntimeSessionSnapshot;
 
     use super::*;
 
