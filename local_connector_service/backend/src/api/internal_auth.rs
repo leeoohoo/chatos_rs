@@ -15,6 +15,7 @@ pub(super) const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 pub(super) const PLUGIN_UI_READ_SCOPE: &str = "plugin.ui.read";
 pub(super) const PLUGIN_ARTIFACT_READ_SCOPE: &str = "plugin.artifact.read";
 pub(super) const PLUGIN_ARTIFACT_WRITE_SCOPE: &str = "plugin.artifact.write";
+pub(super) const WORKSPACE_DIRECTORY_WRITE_SCOPE: &str = "workspace.directory.write";
 pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
 pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
 pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
@@ -168,6 +169,13 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             ["api", "local-connectors", "relay", _, "plugins", "artifacts", "create" | "update"],
         ) => Some(InternalAccess {
             scope: PLUGIN_ARTIFACT_WRITE_SCOPE,
+            allowed_callers: &[CHATOS_CALLER],
+        }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "workspaces", _, "directories"],
+        ) => Some(InternalAccess {
+            scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
             allowed_callers: &[CHATOS_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {

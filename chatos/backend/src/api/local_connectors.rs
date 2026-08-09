@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::extract::Query;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_mcp_service::{
@@ -16,7 +16,6 @@ use tracing::warn;
 
 use crate::api::projects::memory_sync::sync_active_project;
 use crate::core::auth::AuthUser;
-use crate::core::project_execution::require_local_connector_desktop;
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
@@ -47,8 +46,9 @@ use root_path::{
 pub(crate) use terminal_relay::{create_local_terminal_session, send_local_terminal_input};
 use types::{
     CreateLocalConnectorProjectRequest, CreateLocalDirectoryRequest, CreateProjectBindingRequest,
-    DeviceQuery, LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorWorkspace,
-    LocalFsQuery, McpToolCallParams, McpToolCallRequest, WorkspaceQuery,
+    DeviceQuery, LocalConnectorDevice, LocalConnectorDirectoryCreateResponse,
+    LocalConnectorProjectBinding, LocalConnectorWorkspace, LocalFsQuery, McpToolCallParams,
+    McpToolCallRequest, RelayWorkspaceDirectoryCreateRequest, WorkspaceQuery,
 };
 const LOCAL_CONNECTOR_BINDING_MODE_MCP: &str = "local_mcp";
 const LOCAL_CONNECTOR_BINDING_MODE_TERMINAL: &str = "local_terminal";
@@ -72,12 +72,8 @@ pub fn router() -> Router {
 
 async fn list_devices(
     auth: AuthUser,
-    headers: HeaderMap,
     Query(query): Query<DeviceQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     if let Err(err) = resolve_user_id(query.user_id, &auth) {
         return err;
     }
@@ -91,12 +87,8 @@ async fn list_devices(
 
 async fn list_workspaces(
     auth: AuthUser,
-    headers: HeaderMap,
     Query(query): Query<WorkspaceQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     let _ = auth;
     let devices =
         match connector_get_json::<Vec<LocalConnectorDevice>>("/api/local-connectors/devices", &[])
@@ -148,12 +140,8 @@ async fn list_workspaces(
 
 async fn list_directory(
     auth: AuthUser,
-    headers: HeaderMap,
     Query(query): Query<LocalFsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     if let Err(err) = resolve_user_id(query.user_id, &auth) {
         return err;
     }
@@ -193,12 +181,8 @@ async fn list_directory(
 
 async fn create_directory(
     auth: AuthUser,
-    headers: HeaderMap,
     Json(req): Json<CreateLocalDirectoryRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     if let Err(err) = resolve_user_id(req.user_id, &auth) {
         return err;
     }
@@ -217,33 +201,15 @@ async fn create_directory(
         Ok(value) => value,
         Err(err) => return err,
     };
-    match call_local_mcp_tool(
-        device_id.as_str(),
-        workspace_id.as_str(),
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_TERMINAL],
-        "execute_command",
-        json!({
-            "path": ".",
-            "common": format!("mkdir -p -- {}", shell_quote(path.as_str())),
-            "background": false,
-        }),
-    )
-    .await
+    match create_local_connector_directory(device_id.as_str(), workspace_id.as_str(), path.as_str())
+        .await
     {
-        Ok(value) if value.get("exit_code").and_then(Value::as_i64).unwrap_or(0) == 0 => (
+        Ok(value) => (
             StatusCode::OK,
             Json(json!({
-                "path": path,
-                "created": true,
+                "path": value.path,
+                "created": value.created,
             })),
-        ),
-        Ok(value) => error(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "error": "Local Connector 创建目录失败",
-                "detail": value,
-            }),
         ),
         Err(err) => err,
     }
@@ -251,12 +217,8 @@ async fn create_directory(
 
 async fn create_project(
     auth: AuthUser,
-    headers: HeaderMap,
     Json(req): Json<CreateLocalConnectorProjectRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     let user_id = match resolve_user_id(req.user_id, &auth) {
         Ok(user_id) => user_id,
         Err(err) => return err,
@@ -512,11 +474,21 @@ fn extract_mcp_tool_result(response: Value) -> Result<Value, (StatusCode, Json<V
     })
 }
 
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
+pub(crate) async fn create_local_connector_directory(
+    device_id: &str,
+    workspace_id: &str,
+    path: &str,
+) -> Result<LocalConnectorDirectoryCreateResponse, (StatusCode, Json<Value>)> {
+    let relay_path = format!(
+        "/api/local-connectors/relay/{}/workspaces/{}/directories",
+        urlencoding::encode(device_id),
+        urlencoding::encode(workspace_id)
+    );
+    connector_post_json::<LocalConnectorDirectoryCreateResponse, _>(
+        relay_path.as_str(),
+        &RelayWorkspaceDirectoryCreateRequest { path },
+    )
+    .await
 }
 
 async fn create_project_binding(

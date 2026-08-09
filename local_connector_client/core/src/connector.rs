@@ -40,6 +40,7 @@ use crate::terminal::relay::{
     handle_terminal_session_create_request, handle_terminal_snapshot_request,
 };
 use crate::terminal::session::LocalTerminalManager;
+use crate::workspace::relay::handle_workspace_directory_create_request;
 use crate::{config::ClientConfig, tracing_stdout, LocalState};
 
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 15;
@@ -380,6 +381,9 @@ async fn handle_text_message(
         "plugin_artifact_update_request" => {
             Some(plugin_runtime.handle_artifact_update(value).await)
         }
+        "workspace_directory_create_request" => {
+            Some(handle_workspace_directory_create_request(value, state).await)
+        }
         "terminal_session_create_request" => Some(
             handle_terminal_session_create_request(value, state, terminal_manager, outbound_tx)
                 .await,
@@ -508,6 +512,7 @@ fn relay_allows_empty_workspace(message_type: &str, request: &RelayRequest) -> b
             | "plugin_artifact_read_request"
             | "plugin_artifact_create_request"
             | "plugin_artifact_update_request"
+            | "workspace_directory_create_request"
     ) {
         return true;
     }
@@ -555,6 +560,7 @@ fn remote_control_error_response(
         "sandbox_request" => "sandbox_response",
         "terminal_exec_request" => "terminal_response",
         "terminal_session_create_request" => "terminal_session_create_response",
+        "workspace_directory_create_request" => "workspace_directory_create_response",
         "model_runtime_request" => "model_runtime_response",
         "skill_prepare_request" => "skill_prepare_response",
         "skill_execute_request" => "skill_execute_response",

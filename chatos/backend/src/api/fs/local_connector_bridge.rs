@@ -6,9 +6,9 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::api::local_connectors::{
-    call_local_mcp_tool, call_local_mcp_tool_readonly, local_connector_root_path,
-    parse_local_connector_root_path, LocalConnectorRootRef, LOCAL_CONNECTOR_BUILTIN_CODE_READ,
-    LOCAL_CONNECTOR_BUILTIN_CODE_WRITE, LOCAL_CONNECTOR_BUILTIN_TERMINAL,
+    call_local_mcp_tool, call_local_mcp_tool_readonly, create_local_connector_directory,
+    local_connector_root_path, parse_local_connector_root_path, LocalConnectorRootRef,
+    LOCAL_CONNECTOR_BUILTIN_CODE_READ, LOCAL_CONNECTOR_BUILTIN_CODE_WRITE,
 };
 
 pub(super) async fn list_entries(
@@ -98,24 +98,14 @@ pub(super) async fn create_dir(parent_path: &str, name: &str) -> Option<(StatusC
     let target = local_child_relative_path(parent_path, name)?;
     let root_ref = parse_local_connector_root_path(parent_path)?;
     Some(
-        match call_local_mcp_tool(
+        match create_local_connector_directory(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_TERMINAL],
-            "execute_command",
-            json!({
-                "path": ".",
-                "common": format!("mkdir -- {}", shell_quote(target.as_str())),
-                "background": false,
-            }),
+            target.as_str(),
         )
         .await
         {
-            Ok(value) if value.get("exit_code").and_then(Value::as_i64).unwrap_or(0) == 0 => {
-                local_created_dir_response(&root_ref, target.as_str(), name)
-            }
-            Ok(value) => local_command_error_response(value),
+            Ok(_) => local_created_dir_response(&root_ref, target.as_str(), name),
             Err(err) => err,
         },
     )
@@ -504,16 +494,6 @@ fn local_created_dir_response(
     )
 }
 
-fn local_command_error_response(value: Value) -> (StatusCode, Json<Value>) {
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(json!({
-            "error": "Local Connector 命令执行失败",
-            "detail": value,
-        })),
-    )
-}
-
 async fn find_local_entries(
     root_ref: &LocalConnectorRootRef,
     query: &str,
@@ -635,11 +615,4 @@ fn project_relative_path(root_ref: &LocalConnectorRootRef, relative_path: &str) 
         .and_then(|value| value.strip_prefix('/').or(Some(value)))
         .unwrap_or(relative_path)
         .to_string()
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
 }

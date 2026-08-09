@@ -45,6 +45,7 @@ mod project_bindings;
 mod router;
 mod sandbox_pairings;
 mod terminal_relay;
+mod workspace_directory_relay;
 mod workspaces;
 
 pub use self::auth_middleware::ApiError;
@@ -90,6 +91,7 @@ use self::sandbox_pairings::{
 use self::terminal_relay::{
     terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
 };
+use self::workspace_directory_relay::workspace_directory_create_relay;
 use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };
