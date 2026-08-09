@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
 #[cfg(test)]
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
 use chatos_mcp::{
@@ -11,6 +12,7 @@ use chatos_mcp::{
     SystemMcpToolCatalog,
 };
 use chatos_mcp_runtime::BuiltinMcpKind;
+use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
 use crate::models::*;
@@ -46,6 +48,14 @@ const CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST: &[&str] = &[
 ];
 const PROJECT_MANAGEMENT_AGENT_SANDBOX_TOOL_ALLOWLIST: &[&str] =
     &["get_image_catalog", "search_images"];
+const CHATOS_CONVERSATION_AGENT_KEY: &str = SystemAgentKey::ChatosConversationAgent.as_str();
+const PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY: &str =
+    SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str();
+const TASK_RUNNER_PLAN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerPlanPhase.as_str();
+const TASK_RUNNER_RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+const PROJECT_MANAGEMENT_AGENT_KEY: &str = SystemAgentKey::ProjectManagementAgent.as_str();
+const LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY: &str =
+    SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str();
 const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "chatos_plan_agent",
     "chatos_planning_agent",
@@ -53,15 +63,17 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "chatos_chat_runtime",
     "project_environment_agent",
     "local_connector_client_agent",
-    "task_runner_local_plan_phase",
-    "task_runner_local_run_phase",
+    SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
+    SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
     "memory_engine_context_agent",
 ];
 const CHATOS_NOTEPAD_AGENT_KEYS: &[&str] = &[
-    "chatos_conversation_agent",
-    "project_requirement_execution_planner_agent",
+    CHATOS_CONVERSATION_AGENT_KEY,
+    PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
 ];
-const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &["chatos_conversation_agent"];
+const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[CHATOS_CONVERSATION_AGENT_KEY];
+const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] =
+    &[TASK_RUNNER_PLAN_AGENT_KEY, TASK_RUNNER_RUN_AGENT_KEY];
 const PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS: &[(&str, i64)] = &[
     (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
     (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
@@ -334,12 +346,12 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
     seed_agent_mcp_binding_with_tool_policy(
         store,
         admin_user_id,
-        "chatos_conversation_agent",
+        CHATOS_CONVERSATION_AGENT_KEY,
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
         true,
         11,
         BindingConditions {
-            task_profile: Some("chatos_plan".to_string()),
+            task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
             ..BindingConditions::default()
         },
         CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST,
@@ -349,7 +361,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
     seed_agent_mcp_binding_with_conditions(
         store,
         admin_user_id,
-        "project_requirement_execution_planner_agent",
+        PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
         true,
         10,
@@ -359,7 +371,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
     seed_agent_mcp_binding(
         store,
         admin_user_id,
-        "project_requirement_execution_planner_agent",
+        PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
         builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
         true,
         20,
@@ -377,7 +389,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         .await?;
     }
     for (agent_key, kinds) in [(
-        "task_runner_plan_phase",
+        TASK_RUNNER_PLAN_AGENT_KEY,
         task_runner_cloud_plan_phase_builtin_kinds(),
     )] {
         for (index, kind) in kinds.into_iter().enumerate() {
@@ -395,7 +407,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         }
     }
     for (agent_key, kind, required, priority) in
-        [("task_runner_run_phase", BuiltinMcpKind::AskUser, true, 20)]
+        [(TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20)]
     {
         let resource_id = builtin_resource_id(kind);
         seed_agent_mcp_binding(
@@ -408,7 +420,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         )
         .await?;
     }
-    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
+    for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
         seed_agent_mcp_binding(
             store,
             admin_user_id,
@@ -421,7 +433,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
     }
     remove_seed_binding_for_all_system_scopes(
         store,
-        "task_runner_run_phase",
+        TASK_RUNNER_RUN_AGENT_KEY,
         builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
     )
     .await?;
@@ -430,7 +442,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         seed_agent_mcp_binding(
             store,
             admin_user_id,
-            "task_runner_run_phase",
+            TASK_RUNNER_RUN_AGENT_KEY,
             resource_id.as_str(),
             false,
             priority,
@@ -449,7 +461,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         )
         .await?;
     }
-    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
+    for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
         seed_agent_mcp_binding_with_conditions(
             store,
             admin_user_id,
@@ -466,7 +478,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         .await?;
     }
     let catalog = internal_skill_catalog()?;
-    for agent_key in ["task_runner_plan_phase", "task_runner_run_phase"] {
+    for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
         for (index, item) in catalog.skills.iter().enumerate() {
             seed_agent_resource_binding(
                 store,
@@ -495,7 +507,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         seed_agent_mcp_binding_with_tool_policy(
             store,
             admin_user_id,
-            "project_management_agent",
+            PROJECT_MANAGEMENT_AGENT_KEY,
             resource_id.as_str(),
             true,
             priority,
@@ -517,7 +529,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         seed_agent_mcp_binding_with_tool_policy(
             store,
             admin_user_id,
-            "project_management_agent",
+            PROJECT_MANAGEMENT_AGENT_KEY,
             resource_id,
             true,
             *priority,
@@ -534,7 +546,7 @@ async fn seed_agent_bindings(store: &AppStore, admin_user_id: &str) -> Result<()
         seed_agent_mcp_binding(
             store,
             admin_user_id,
-            "local_connector_command_approval_agent",
+            LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY,
             resource_id.as_str(),
             true,
             priority,
