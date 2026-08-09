@@ -5,7 +5,15 @@ use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
 use chatos_plugin_management_sdk::PluginComponentKind;
 use serde_json::json;
 
-use super::*;
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use serde_json::Value;
+
+use super::{MAX_COMMAND_ARGUMENT_BYTES, THIRD_PARTY_PLUGIN_ENVELOPE};
+use crate::providers::plugin_components::validation::{
+    component_metadata_text, required_value_text,
+};
+use crate::providers::ProviderCallError;
+use crate::runtime::PluginToolComponentRuntimeBinding;
 
 pub(super) fn plugin_command_result(
     immutable: &PluginToolComponentRuntimeBinding,

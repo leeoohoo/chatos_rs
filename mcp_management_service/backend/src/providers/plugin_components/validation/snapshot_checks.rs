@@ -1,14 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::json;
+use std::collections::HashSet;
+
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::super::*;
+use chatos_plugin_management_sdk::{plugin_agent_snapshot_sha256, plugin_command_snapshot_sha256};
+
 use super::value_helpers::{
     component_metadata_string_array, component_metadata_text, is_lower_sha256,
     normalized_value_text, required_value_text, sha256_text, value_string_array,
 };
+use crate::providers::plugin_components::{
+    AGENT_TOOL_NAME, COMMAND_TOOL_NAME, MAX_COMMAND_ARGUMENT_BYTES, MAX_PLUGIN_TOOLS,
+    MAX_PLUGIN_TOOL_SNAPSHOT_BYTES,
+};
+use crate::providers::ProviderCallError;
+use crate::runtime::PluginToolComponentRuntimeBinding;
 
 pub(in crate::providers::plugin_components) fn validate_native_skill_snapshot(
     immutable: &PluginToolComponentRuntimeBinding,

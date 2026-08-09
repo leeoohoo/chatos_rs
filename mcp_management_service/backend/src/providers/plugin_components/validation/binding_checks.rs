@@ -3,9 +3,18 @@
 
 use chatos_mcp_management_sdk::WorkspaceProviderKind;
 use chatos_plugin_management_sdk::PluginComponentKind;
+use serde_json::Value;
 
-use super::super::*;
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use chatos_plugin_package::plugin_cloud_bundle_sha256;
+
 use super::value_helpers::is_lower_sha256;
+use crate::providers::plugin_components::PluginPrepareResponse;
+use crate::providers::ProviderCallError;
+use crate::runtime::{
+    PluginCloudToolComponentBinding, PluginLocalToolComponentBinding,
+    PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
+};
 
 pub(in crate::providers::plugin_components) fn validate_cloud_component_bundle(
     immutable: &PluginToolComponentRuntimeBinding,

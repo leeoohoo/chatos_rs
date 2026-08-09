@@ -3,7 +3,10 @@
 
 use sha2::{Digest, Sha256};
 
-use super::super::*;
+use serde_json::Value;
+
+use crate::providers::ProviderCallError;
+use crate::runtime::PluginToolComponentRuntimeBinding;
 
 pub(in crate::providers::plugin_components) fn component_metadata_text<'a>(
     binding: &'a PluginToolComponentRuntimeBinding,

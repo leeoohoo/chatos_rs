@@ -1,23 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::{McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute};
-use chatos_plugin_management_sdk::{
-    plugin_agent_snapshot_sha256, plugin_command_snapshot_sha256, PluginManagementClient,
-};
-use chatos_plugin_package::plugin_cloud_bundle_sha256;
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::runtime::{
-    PluginCloudToolComponentBinding, PluginLocalToolComponentBinding,
-    PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
-};
-
-use super::{ProviderCallError, ProviderCallOutcome};
+use crate::runtime::{PluginCloudToolComponentBinding, PluginLocalToolComponentBinding};
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
@@ -98,107 +88,19 @@ impl PluginComponentProvider {
             && (route.provider_kind != McpProviderKind::PluginLocal
                 || self.internal_secret.is_some())
     }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn prepare_routes(
-        &self,
-        plugin_management: &PluginManagementClient,
-        immutable_bindings: &HashMap<String, PluginToolComponentRuntimeBinding>,
-        routes: &mut [ResolvedMcpRoute],
-        context: &ProjectExecutionContext,
-        runtime_session_id: &str,
-        owner_user_id: &str,
-        expires_at_unix: i64,
-    ) -> (
-        HashMap<String, PluginLocalToolComponentBinding>,
-        HashMap<String, PluginCloudToolComponentBinding>,
-        HashMap<String, Vec<Value>>,
-    ) {
-        let mut local_bindings = HashMap::new();
-        let mut cloud_bindings = HashMap::new();
-        let mut tool_snapshots = HashMap::new();
-        for route in routes.iter_mut().filter(|route| self.supports(route)) {
-            route.cancel_supported = false;
-            let Some(immutable) = immutable_bindings.get(route.resource_id.as_str()) else {
-                make_route_unavailable(route, "immutable Plugin tool component binding is missing");
-                continue;
-            };
-            let result = match route.provider_kind {
-                McpProviderKind::PluginLocal => self
-                    .prepare_local(
-                        immutable,
-                        route,
-                        context,
-                        runtime_session_id,
-                        owner_user_id,
-                        expires_at_unix,
-                    )
-                    .await
-                    .map(PreparedComponentBinding::Local),
-                McpProviderKind::PluginCloud => self
-                    .prepare_cloud(plugin_management, immutable, route)
-                    .await
-                    .map(PreparedComponentBinding::Cloud),
-                _ => unreachable!("filtered Plugin component route kind"),
-            };
-            match result {
-                Ok(PreparedComponentBinding::Local(binding)) => {
-                    tool_snapshots.insert(route.resource_id.clone(), binding.tools.clone());
-                    local_bindings.insert(route.resource_id.clone(), binding);
-                }
-                Ok(PreparedComponentBinding::Cloud(binding)) => {
-                    tool_snapshots.insert(route.resource_id.clone(), binding.tools.clone());
-                    cloud_bindings.insert(route.resource_id.clone(), binding);
-                }
-                Err(error) => make_route_unavailable(route, error.message.as_str()),
-            }
-        }
-        (local_bindings, cloud_bindings, tool_snapshots)
-    }
-
-    pub(super) async fn call_tool(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        original_tool_name: &str,
-        arguments: Value,
-    ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        match route.provider_kind {
-            McpProviderKind::PluginLocal => {
-                self.call_local(snapshot, route, original_tool_name, arguments)
-                    .await
-            }
-            McpProviderKind::PluginCloud => {
-                self.call_cloud(snapshot, route, original_tool_name, arguments)
-            }
-            _ => Err(ProviderCallError::provider_unavailable(
-                "Plugin component route uses an unsupported provider",
-            )),
-        }
-    }
-
-    pub(super) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
-        self.close_local_bindings(
-            snapshot.owner_user_id.as_str(),
-            snapshot.session_id.as_str(),
-            &snapshot.plugin_local_tool_component_bindings,
-        )
-        .await;
-    }
 }
 
-enum PreparedComponentBinding {
+pub(super) enum PreparedComponentBinding {
     Local(PluginLocalToolComponentBinding),
     Cloud(PluginCloudToolComponentBinding),
 }
 
 mod cloud_runtime;
 mod local_runtime;
+mod prepare;
 mod result;
+mod runtime_dispatch;
 mod validation;
-
-use result::*;
-use validation::*;
 
 #[cfg(test)]
 mod tests;

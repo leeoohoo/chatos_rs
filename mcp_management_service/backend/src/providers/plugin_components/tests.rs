@@ -10,17 +10,25 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, SandboxProviderKind, WorkspaceExecutionTarget,
-    WorkspaceProviderKind,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     plugin_command_snapshot_sha256, PluginCloudComponentBundle, PluginComponentDescriptor,
-    PluginComponentKind, PluginExecutionHost, PluginManagementClientConfig, PluginPathRef,
+    PluginComponentKind, PluginExecutionHost, PluginManagementClient, PluginManagementClientConfig,
+    PluginPathRef,
 };
+use chatos_plugin_package::plugin_cloud_bundle_sha256;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use super::validation::{
+    agent_tool_definition, sha256_text, validate_cloud_component_bundle,
+    validate_cloud_component_policy, validate_command_snapshot, validate_native_skill_snapshot,
+    validate_native_tool_snapshot_hash, validate_tool_snapshot,
+};
 use super::*;
+use crate::runtime::{PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot};
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 

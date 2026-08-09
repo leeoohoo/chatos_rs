@@ -7,10 +7,8 @@ use serde_json::Value;
 
 use super::result::*;
 use super::validation::*;
-use super::{
-    PluginComponentProvider, ProviderCallError, ProviderCallOutcome, AGENT_TOOL_NAME,
-    COMMAND_TOOL_NAME,
-};
+use super::{PluginComponentProvider, AGENT_TOOL_NAME, COMMAND_TOOL_NAME};
+use crate::providers::{ProviderCallError, ProviderCallOutcome};
 use crate::runtime::{
     PluginCloudToolComponentBinding, PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
 };

@@ -14,10 +14,11 @@ use serde_json::{json, Value};
 use super::result::*;
 use super::validation::*;
 use super::{
-    PluginComponentProvider, PluginPrepareResponse, ProviderCallError, ProviderCallOutcome,
-    AGENT_APPLY_OPERATION, AGENT_TOOL_NAME, CALLER_SERVICE, COMMAND_INVOKE_OPERATION,
-    COMMAND_TOOL_NAME, NATIVE_SKILL_TOOL_CALL_OPERATION, PLUGIN_RELAY_SCOPE, TOKEN_AUDIENCE,
+    PluginComponentProvider, PluginPrepareResponse, AGENT_APPLY_OPERATION, AGENT_TOOL_NAME,
+    CALLER_SERVICE, COMMAND_INVOKE_OPERATION, COMMAND_TOOL_NAME, NATIVE_SKILL_TOOL_CALL_OPERATION,
+    PLUGIN_RELAY_SCOPE, TOKEN_AUDIENCE,
 };
+use crate::providers::{ProviderCallError, ProviderCallOutcome};
 use crate::runtime::{
     PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
 };
