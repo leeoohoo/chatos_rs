@@ -3,11 +3,11 @@
 
 use std::time::Duration;
 
-use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, SandboxExecutionTarget};
+use chatos_mcp_management_sdk::SandboxExecutionTarget;
 
 use super::ProviderCallError;
 
+mod init;
 mod manager_client;
 mod pairing_client;
 mod records;
@@ -26,52 +26,6 @@ pub(super) struct LocalSandboxProvider {
     internal_secret: Option<String>,
     request_timeout: Duration,
     response_limit_bytes: usize,
-}
-
-impl LocalSandboxProvider {
-    pub(super) fn new(
-        http: reqwest::Client,
-        base_url: impl Into<String>,
-        request_timeout: Duration,
-        internal_secret: Option<String>,
-        response_limit_bytes: usize,
-    ) -> Result<Self, String> {
-        let base_url = base_url.into();
-        let parsed = reqwest::Url::parse(base_url.as_str())
-            .map_err(|error| format!("Local Sandbox Provider base URL is invalid: {error}"))?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err("Local Sandbox Provider base URL must use http or https".to_string());
-        }
-        Ok(Self {
-            http,
-            base_url: base_url.trim().trim_end_matches('/').to_string(),
-            internal_secret: internal_secret
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-            request_timeout,
-            response_limit_bytes,
-        })
-    }
-
-    pub(super) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        if self.internal_secret.is_none()
-            || route.provider_kind != McpProviderKind::LocalConnector
-            || !route
-                .provider_ref
-                .as_deref()
-                .is_some_and(|value| value.starts_with("sandbox-pairing:"))
-        {
-            return false;
-        }
-        system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_some_and(|descriptor| {
-            matches!(
-                descriptor.key,
-                SystemMcpKey::CodeMaintainerRead
-                    | SystemMcpKey::CodeMaintainerWrite
-                    | SystemMcpKey::TerminalController
-            )
-        })
-    }
 }
 
 #[cfg(test)]
