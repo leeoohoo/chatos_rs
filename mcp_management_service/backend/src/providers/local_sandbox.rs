@@ -8,19 +8,14 @@ use chatos_mcp_management_sdk::{
     McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute, SandboxExecutionTarget,
     SandboxProviderKind, WorkspaceProviderKind,
 };
-use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde::Deserialize;
-use serde_json::{json, Value};
 
-use crate::runtime::RuntimeSessionSnapshot;
-use crate::trace_context::InternalTraceContextExt;
+use super::ProviderCallError;
 
-use super::project_service::decode_jsonrpc_response;
-use super::{
-    decode_cancel_notification_response, ProviderCallError, ProviderCallOutcome,
-    ProviderCancelOutcome,
-};
+mod manager_client;
+mod runtime_calls;
+use manager_client::required_pairing_id;
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
@@ -268,222 +263,6 @@ impl LocalSandboxProvider {
         }
         Ok(())
     }
-
-    pub(super) async fn call_tool(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        original_tool_name: &str,
-        arguments: Value,
-        invocation_id: &str,
-    ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let target = self.validated_snapshot_target(snapshot, route).await?;
-        let pairing_id = required_pairing_id(target)?;
-        let response = self
-            .authenticated(
-                self.http.post(self.sandbox_url(
-                    pairing_id,
-                    target.sandbox_id.as_str(),
-                    Some("mcp"),
-                )),
-                SANDBOX_SERVICE_SCOPE,
-                snapshot.owner_user_id.as_str(),
-            )?
-            .header("x-chatos-sandbox-lease-id", target.lease_id.as_str())
-            .header(
-                "x-mcp-management-owner-user-id",
-                snapshot.owner_user_id.as_str(),
-            )
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header(
-                "x-mcp-management-run-id",
-                snapshot.run_id.as_deref().unwrap_or_default(),
-            )
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": invocation_id,
-                "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
-            }))
-            .timeout(self.request_timeout)
-            .send()
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "Local Sandbox MCP request failed: {error}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|error| {
-                ProviderCallError::invalid_response(format!(
-                    "Local Sandbox MCP response could not be read: {error}"
-                ))
-            })?;
-        if !status.is_success() {
-            return Err(ProviderCallError::provider_unavailable(format!(
-                "Local Sandbox MCP rejected the request with HTTP {}",
-                status.as_u16()
-            )));
-        }
-        let result = decode_jsonrpc_response(bytes.as_slice(), invocation_id, "Local Sandbox")?;
-        Ok(ProviderCallOutcome {
-            result,
-            response_bytes: bytes.len(),
-        })
-    }
-
-    pub(super) async fn cancel_invocation(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        invocation_id: &str,
-    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let target = self.validated_snapshot_target(snapshot, route).await?;
-        let pairing_id = required_pairing_id(target)?;
-        let response = self
-            .authenticated(
-                self.http.post(self.sandbox_url(
-                    pairing_id,
-                    target.sandbox_id.as_str(),
-                    Some("mcp"),
-                )),
-                SANDBOX_SERVICE_SCOPE,
-                snapshot.owner_user_id.as_str(),
-            )?
-            .header("x-chatos-sandbox-lease-id", target.lease_id.as_str())
-            .header(
-                "x-mcp-management-owner-user-id",
-                snapshot.owner_user_id.as_str(),
-            )
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header(
-                "x-mcp-management-run-id",
-                snapshot.run_id.as_deref().unwrap_or_default(),
-            )
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "method": METHOD_NOTIFICATIONS_CANCELLED,
-                "params": {
-                    "requestId": invocation_id,
-                    "reason": "MCP Management runtime cancelled the invocation"
-                }
-            }))
-            .timeout(self.request_timeout)
-            .send()
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "Local Sandbox cancellation request failed: {error}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|error| {
-                ProviderCallError::invalid_response(format!(
-                    "Local Sandbox cancellation response could not be read: {error}"
-                ))
-            })?;
-        decode_cancel_notification_response(status, bytes.as_slice(), "Local Sandbox")
-    }
-
-    async fn validated_snapshot_target<'a>(
-        &self,
-        snapshot: &'a RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-    ) -> Result<&'a SandboxExecutionTarget, ProviderCallError> {
-        if !self.supports(route) {
-            return Err(ProviderCallError::provider_unavailable(
-                "Local Sandbox Provider does not support this route",
-            ));
-        }
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "runtime session does not contain a Local Sandbox target",
-            )
-        })?;
-        if target.provider != SandboxProviderKind::LocalConnector
-            || route.provider_ref.as_deref() != Some(target.provider_ref().as_str())
-            || snapshot.project_context.sandbox_pairing_id.as_deref()
-                != target.pairing_id.as_deref()
-        {
-            return Err(ProviderCallError::provider_unavailable(
-                "Local Sandbox route does not match the immutable runtime target",
-            ));
-        }
-        self.validate_target(
-            target,
-            snapshot.owner_user_id.as_str(),
-            snapshot.project_id.as_str(),
-            snapshot.run_id.as_deref(),
-        )
-        .await?;
-        Ok(target)
-    }
-
-    fn authenticated(
-        &self,
-        request: reqwest::RequestBuilder,
-        scope: &str,
-        owner_user_id: &str,
-    ) -> Result<reqwest::RequestBuilder, ProviderCallError> {
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Local Sandbox Provider internal secret is not configured",
-            )
-        })?;
-        let owner_user_id = owner_user_id.trim();
-        if owner_user_id.is_empty() {
-            return Err(ProviderCallError::provider_unavailable(
-                "Local Sandbox Provider owner identity is empty",
-            ));
-        }
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            scope,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        Ok(request
-            .header("x-local-connector-caller", CALLER_SERVICE)
-            .header("x-local-connector-internal-token", token)
-            .header("x-local-connector-owner-user-id", owner_user_id)
-            .with_internal_trace_context())
-    }
-
-    fn sandbox_url(&self, pairing_id: &str, sandbox_id: &str, suffix: Option<&str>) -> String {
-        let mut url = format!(
-            "{}/api/local-connectors/sandbox-facade/{}/api/sandboxes/{}",
-            self.base_url,
-            urlencoding::encode(pairing_id.trim()),
-            urlencoding::encode(sandbox_id.trim())
-        );
-        if let Some(suffix) = suffix {
-            url.push('/');
-            url.push_str(suffix);
-        }
-        url
-    }
-}
-
-fn required_pairing_id(target: &SandboxExecutionTarget) -> Result<&str, ProviderCallError> {
-    target
-        .pairing_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Local Sandbox target is missing its pairing id",
-            )
-        })
 }
 
 #[cfg(test)]
@@ -493,6 +272,9 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use chatos_mcp_management_sdk::{ExecutionPlane, McpRetryClass, WorkspaceExecutionTarget};
+    use serde_json::{json, Value};
+
+    use crate::runtime::RuntimeSessionSnapshot;
 
     fn target() -> SandboxExecutionTarget {
         SandboxExecutionTarget {
