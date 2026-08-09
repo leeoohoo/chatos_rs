@@ -5,11 +5,35 @@ use std::time::Duration;
 
 use chatos_mcp_management_sdk::SandboxExecutionTarget;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
+use serde::Deserialize;
 use serde_json::Value;
 
-use super::{CloudSandboxProvider, ProviderCallError, SandboxLeaseBinding};
+use super::{CloudSandboxProvider, ProviderCallError};
 
 const TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SandboxLeaseBinding {
+    pub(super) id: String,
+    pub(super) sandbox_id: String,
+    pub(super) tenant_id: String,
+    pub(super) project_id: String,
+    pub(super) run_id: String,
+    pub(super) status: String,
+    #[serde(default = "default_lease_kind")]
+    pub(super) lease_kind: String,
+    #[serde(default)]
+    pub(super) environment_services: Vec<SandboxEnvironmentServiceBinding>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SandboxEnvironmentServiceBinding {
+    pub(super) service_id: String,
+}
+
+fn default_lease_kind() -> String {
+    "sandbox".to_string()
+}
 
 impl CloudSandboxProvider {
     pub(in crate::providers) async fn validate_target(
