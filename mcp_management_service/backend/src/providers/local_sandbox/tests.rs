@@ -107,7 +107,23 @@ async fn local_sandbox_call_is_pinned_to_pairing_lease_and_runtime_identity() {
                 .and_then(|value| value.to_str().ok()),
             Some("mcp-management-service")
         );
-        assert!(headers.get("x-local-connector-internal-token").is_some());
+        let owner_user_id = headers
+            .get("x-local-connector-owner-user-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("owner header");
+        let token = headers
+            .get("x-local-connector-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("signed local connector token");
+        let claims = chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-local-connector-secret",
+            "mcp-management-service",
+            "local-connector-service",
+            "sandbox.service",
+        )
+        .expect("valid local connector token");
+        assert_eq!(claims.owner_user_id.as_deref(), Some(owner_user_id));
         Json(json!({
             "id": "lease-1",
             "sandbox_id": "sandbox-1",
@@ -119,6 +135,23 @@ async fn local_sandbox_call_is_pinned_to_pairing_lease_and_runtime_identity() {
     }
 
     async fn mcp(headers: HeaderMap, Json(request): Json<Value>) -> Json<Value> {
+        let owner_user_id = headers
+            .get("x-local-connector-owner-user-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("owner header");
+        let token = headers
+            .get("x-local-connector-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("signed local connector token");
+        let claims = chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-local-connector-secret",
+            "mcp-management-service",
+            "local-connector-service",
+            "sandbox.service",
+        )
+        .expect("valid local connector token");
+        assert_eq!(claims.owner_user_id.as_deref(), Some(owner_user_id));
         assert_eq!(
             headers
                 .get("x-chatos-sandbox-lease-id")

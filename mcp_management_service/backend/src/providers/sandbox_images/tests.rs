@@ -131,7 +131,7 @@ async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
             .get(token_header)
             .and_then(|value| value.to_str().ok())
             .expect("signed internal token");
-        chatos_service_runtime::verify_internal_service_token(
+        let claims = chatos_service_runtime::verify_internal_service_token(
             token,
             secret,
             CALLER_SERVICE,
@@ -139,6 +139,11 @@ async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
             SANDBOX_SERVICE_SCOPE,
         )
         .expect("valid internal token");
+        if audience == LOCAL_CONNECTOR_AUDIENCE {
+            assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
+        } else {
+            assert_eq!(claims.owner_user_id, None);
+        }
         assert_eq!(
             headers
                 .get(SANDBOX_IMAGE_PROJECT_ID_HEADER)

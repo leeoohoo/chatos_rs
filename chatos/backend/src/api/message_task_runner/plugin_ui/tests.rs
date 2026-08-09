@@ -461,7 +461,7 @@ fn artifact_relay_request_is_signed_routed_and_timeout_bound() {
     assert_eq!(read.workspace_id, "workspace-1");
     assert_eq!(read.owner_user_id, "user-1");
     assert_eq!(read.timeout, std::time::Duration::from_millis(300));
-    chatos_service_runtime::verify_internal_service_token(
+    let read_claims = chatos_service_runtime::verify_internal_service_token(
         read.token.as_str(),
         secret,
         "chatos-backend",
@@ -469,6 +469,7 @@ fn artifact_relay_request_is_signed_routed_and_timeout_bound() {
         "plugin.artifact.read",
     )
     .expect("verify read-scoped service token");
+    assert_eq!(read_claims.owner_user_id.as_deref(), Some("user-1"));
 
     let write = prepare_plugin_artifact_relay_request(
         auth.user_id.as_str(),
@@ -480,7 +481,7 @@ fn artifact_relay_request_is_signed_routed_and_timeout_bound() {
     )
     .expect("prepare write relay request");
     assert_eq!(write.timeout, std::time::Duration::from_millis(315_000));
-    chatos_service_runtime::verify_internal_service_token(
+    let write_claims = chatos_service_runtime::verify_internal_service_token(
         write.token.as_str(),
         secret,
         "chatos-backend",
@@ -488,6 +489,7 @@ fn artifact_relay_request_is_signed_routed_and_timeout_bound() {
         "plugin.artifact.write",
     )
     .expect("verify write-scoped service token");
+    assert_eq!(write_claims.owner_user_id.as_deref(), Some("user-1"));
     assert!(chatos_service_runtime::verify_internal_service_token(
         write.token.as_str(),
         secret,

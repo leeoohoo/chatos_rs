@@ -122,7 +122,7 @@ async fn start_local_connector(
             .get("x-local-connector-internal-token")
             .and_then(|value| value.to_str().ok())
             .unwrap();
-        chatos_service_runtime::verify_internal_service_token(
+        let claims = chatos_service_runtime::verify_internal_service_token(
             token,
             state.secret,
             CALLER_SERVICE,
@@ -130,6 +130,7 @@ async fn start_local_connector(
             PLUGIN_RELAY_SCOPE,
         )
         .unwrap();
+        assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
         state.actions.lock().unwrap().push(action.clone());
         match action.as_str() {
             "prepare" => {

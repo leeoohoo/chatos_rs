@@ -132,7 +132,7 @@ async fn start_local_connector(
             .get("x-local-connector-internal-token")
             .and_then(|value| value.to_str().ok())
             .expect("signed Local Connector token");
-        chatos_service_runtime::verify_internal_service_token(
+        let claims = chatos_service_runtime::verify_internal_service_token(
             token,
             secret,
             CALLER_SERVICE,
@@ -140,6 +140,7 @@ async fn start_local_connector(
             MCP_RELAY_SCOPE,
         )
         .expect("valid Local Connector token");
+        assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
         assert_eq!(
             query.get("workspace_id").map(String::as_str),
             Some("workspace-1")

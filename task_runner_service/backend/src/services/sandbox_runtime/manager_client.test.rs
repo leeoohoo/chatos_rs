@@ -124,6 +124,56 @@ mod tests {
     }
 
     #[test]
+    fn local_connector_manager_request_signs_owner_bound_token() {
+        let client = SandboxManagerClient::new(
+            "http://127.0.0.1:8095".to_string(),
+            Some(SandboxManagerAuth {
+                client_key: "a-long-task-runner-local-connector-secret".to_string(),
+                mode: SandboxManagerAuthMode::LocalConnector,
+                owner_user_id: Some("user-1".to_string()),
+                cloud_http: Some(reqwest::Client::new()),
+            }),
+        )
+        .expect("client");
+        let request = client
+            .apply_auth(client.client.get(
+                "http://127.0.0.1:8095/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes",
+            ))
+            .expect("apply auth")
+            .build()
+            .expect("request");
+        assert_eq!(
+            request
+                .headers()
+                .get("x-local-connector-caller")
+                .and_then(|value| value.to_str().ok()),
+            Some("task-runner")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-local-connector-owner-user-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("user-1")
+        );
+        let token = request
+            .headers()
+            .get("x-local-connector-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("token");
+        let claims = chatos_service_runtime::verify_internal_service_token(
+            token,
+            "a-long-task-runner-local-connector-secret",
+            "task-runner",
+            "local-connector-service",
+            "sandbox.service",
+        )
+        .expect("valid local connector token");
+        assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
+        assert!(!request.headers().contains_key("x-sandbox-client-key"));
+    }
+
+    #[test]
     fn sandbox_lease_request_includes_audit_context_without_signing_secret() {
         let client = SandboxManagerClient::new(
             "http://127.0.0.1:8095".to_string(),
