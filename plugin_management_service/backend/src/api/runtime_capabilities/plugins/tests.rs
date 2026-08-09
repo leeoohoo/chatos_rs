@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, plugin_component_descriptors, PluginManifestSource,
     PLUGIN_SIGNATURE_ALGORITHM_ED25519,
 };
 
 use super::*;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 struct PluginRecords {
     catalog: PluginCatalogRecord,
@@ -142,11 +145,8 @@ fn portable_host_uses_runtime_project_provider_before_legacy_agent_name() {
         Some("local_connector"),
         "chatos_conversation_agent"
     ));
-    assert!(!portable_uses_local(
-        Some("cloud_sandbox"),
-        "task_runner_run_phase"
-    ));
-    assert!(!portable_uses_local(None, "task_runner_run_phase"));
+    assert!(!portable_uses_local(Some("cloud_sandbox"), RUN_AGENT_KEY));
+    assert!(!portable_uses_local(None, RUN_AGENT_KEY));
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn plugin_records() -> PluginRecords {
     };
     let binding = AgentBindingRecord {
         id: "binding-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         binding_scope: BINDING_SCOPE_GLOBAL_DEFAULT.to_string(),
         owner_user_id: None,
         resource_kind: RESOURCE_KIND_PLUGIN_COMPONENT.to_string(),

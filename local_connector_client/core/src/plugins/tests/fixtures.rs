@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::*;
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -21,6 +22,7 @@ const MARKETPLACE_ID: &str = "trusted-marketplace";
 const BUNDLED_MARKETPLACE_ID: &str = "chatos-bundled";
 const PUBLISHER_ID: &str = "publisher-demo";
 pub(in crate::plugins) const PLUGIN_ID: &str = "plugin-demo";
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 #[derive(Debug, Clone, Copy)]
 pub(in crate::plugins) enum ArchiveMutation {
@@ -144,7 +146,7 @@ impl TestSigner {
                     "description": "Review the current change",
                     "argumentHint": "[path]",
                     "requiresConfirmation": requires_confirmation,
-                    "targetAgent": "task_runner_run_phase",
+                    "targetAgent": RUN_AGENT_KEY,
                     "allowedTools": ["browser_tools_browser_snapshot"]
                 }],
                 "interface": {
@@ -183,7 +185,7 @@ impl TestSigner {
                     "componentKey": "reviewer",
                     "source": "./agents/reviewer.md",
                     "description": "Review the current change",
-                    "baseAgent": "task_runner_run_phase",
+                    "baseAgent": RUN_AGENT_KEY,
                     "allowedTools": ["browser_tools_browser_snapshot"],
                     "maxIterations": 12
                 }],
@@ -216,7 +218,7 @@ impl TestSigner {
                 {
                     "id": "audit-run",
                     "events": ["BeforePluginPrepare", "SessionStart", "RunCompleted", "RunFailed"],
-                    "matcher": {"agentKeys": ["task_runner_run_phase"]},
+                    "matcher": {"agentKeys": [RUN_AGENT_KEY]},
                     "entrypoint": {
                         "type": "command",
                         "command": "./scripts/audit-hook.sh",

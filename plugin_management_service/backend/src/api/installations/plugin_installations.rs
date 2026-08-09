@@ -246,7 +246,11 @@ fn validate_component_statuses(
 
 #[cfg(test)]
 mod tests {
+    use chatos_agent::SystemAgentKey;
+
     use super::*;
+
+    const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
     #[test]
     fn active_installations_require_installed_state() {
@@ -271,7 +275,7 @@ mod tests {
                 "commands": [{
                     "componentKey": "review",
                     "source": "./commands/review.md",
-                    "targetAgent": "task_runner_run_phase"
+                    "targetAgent": RUN_AGENT_KEY
                 }],
                 "interface": {
                     "displayName": "Cloud Demo",

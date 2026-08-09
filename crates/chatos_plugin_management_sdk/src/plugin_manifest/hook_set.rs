@@ -385,6 +385,9 @@ const fn default_hook_output_bytes() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SystemAgentKey;
+
+    const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
     #[test]
     fn hook_set_normalizes_structured_matchers_and_hashes_stably() {
@@ -392,13 +395,14 @@ mod tests {
           "hooks": [{
             "id": " audit-run ",
             "events": ["RunFailed", "RunCompleted"],
-            "matcher": {"agentKeys": ["task_runner_run_phase"]},
+            "matcher": {"agentKeys": ["TASK_RUNNER_RUN_PHASE"]},
             "entrypoint": {"type": "command", "command": "scripts/audit", "args": ["--json"]},
             "failurePolicy": "continue",
             "workspaceWrite": true
           }]
-        }"#;
-        let hook_set = parse_plugin_hook_set(raw).expect("Hook set");
+        }"#
+        .replace("TASK_RUNNER_RUN_PHASE", RUN_AGENT_KEY);
+        let hook_set = parse_plugin_hook_set(raw.as_str()).expect("Hook set");
         assert_eq!(hook_set.hooks[0].id, "audit-run");
         assert_eq!(
             hook_set.hooks[0].entrypoint.command().path,

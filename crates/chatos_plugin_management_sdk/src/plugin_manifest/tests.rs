@@ -8,8 +8,10 @@ use serde_json::json;
 use super::*;
 use crate::{
     normalized_plugin_manifest_sha256, plugin_component_descriptors, PluginAvailabilityStatus,
-    PluginComponentKind, PluginInstallStatus, PluginRequirementStatus,
+    PluginComponentKind, PluginInstallStatus, PluginRequirementStatus, SystemAgentKey,
 };
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 const CODEX_FIGMA_MANIFEST: &str = r##"
 {
@@ -55,7 +57,7 @@ fn schema_v2_prompt_manifest() -> serde_json::Value {
         "commands": [{
             "componentKey": "review",
             "source": "./commands/review.md",
-            "targetAgent": "task_runner_run_phase"
+            "targetAgent": RUN_AGENT_KEY
         }],
         "interface": {
             "displayName": "Portable Demo",
@@ -353,7 +355,10 @@ fn component_inventory_is_derived_from_the_normalized_manifest() {
 fn detailed_command_metadata_enters_the_immutable_component_descriptor() {
     let raw = CODEX_FIGMA_MANIFEST.replace(
         "\"interface\": {",
-        "\"commands\": [{\"componentKey\":\"review\",\"source\":\"./commands/review.md\",\"description\":\"Review the current change\",\"argumentHint\":\"[path]\",\"requiresConfirmation\":true,\"targetAgent\":\"task_runner_run_phase\",\"allowedTools\":[\"browser_tools_browser_snapshot\",\"plugin_browser_browser_snapshot\"]}], \"interface\": {",
+        format!(
+            "\"commands\": [{{\"componentKey\":\"review\",\"source\":\"./commands/review.md\",\"description\":\"Review the current change\",\"argumentHint\":\"[path]\",\"requiresConfirmation\":true,\"targetAgent\":\"{RUN_AGENT_KEY}\",\"allowedTools\":[\"browser_tools_browser_snapshot\",\"plugin_browser_browser_snapshot\"]}}], \"interface\": {{"
+        )
+        .as_str(),
     );
     let manifest = parse_plugin_manifest(raw.as_str(), PluginManifestSource::Codex)
         .expect("detailed command should parse");
@@ -361,10 +366,7 @@ fn detailed_command_metadata_enters_the_immutable_component_descriptor() {
     assert_eq!(command.component_key, "review");
     assert_eq!(command.argument_hint.as_deref(), Some("[path]"));
     assert!(command.requires_confirmation);
-    assert_eq!(
-        command.target_agent.as_deref(),
-        Some("task_runner_run_phase")
-    );
+    assert_eq!(command.target_agent.as_deref(), Some(RUN_AGENT_KEY));
     assert_eq!(
         command.allowed_tools,
         vec![
@@ -392,7 +394,7 @@ fn detailed_command_metadata_enters_the_immutable_component_descriptor() {
     );
     assert_eq!(
         descriptor.metadata.get("target_agent"),
-        Some(&json!("task_runner_run_phase"))
+        Some(&json!(RUN_AGENT_KEY))
     );
     assert_eq!(
         descriptor.metadata.get("allowed_tools"),
@@ -407,13 +409,16 @@ fn detailed_command_metadata_enters_the_immutable_component_descriptor() {
 fn detailed_agent_metadata_enters_the_immutable_component_descriptor() {
     let raw = CODEX_FIGMA_MANIFEST.replace(
         "\"interface\": {",
-        "\"agents\": [{\"componentKey\":\"reviewer\",\"source\":\"./agents/reviewer.md\",\"description\":\"Review changes with a narrow tool set\",\"baseAgent\":\"task_runner_run_phase\",\"allowedTools\":[\"browser_tools_browser_snapshot\"],\"maxIterations\":12}], \"interface\": {",
+        format!(
+            "\"agents\": [{{\"componentKey\":\"reviewer\",\"source\":\"./agents/reviewer.md\",\"description\":\"Review changes with a narrow tool set\",\"baseAgent\":\"{RUN_AGENT_KEY}\",\"allowedTools\":[\"browser_tools_browser_snapshot\"],\"maxIterations\":12}}], \"interface\": {{"
+        )
+        .as_str(),
     );
     let manifest = parse_plugin_manifest(raw.as_str(), PluginManifestSource::Codex)
         .expect("detailed Agent should parse");
     let agent = manifest.agents.first().expect("Agent");
     assert_eq!(agent.component_key, "reviewer");
-    assert_eq!(agent.base_agent, "task_runner_run_phase");
+    assert_eq!(agent.base_agent, RUN_AGENT_KEY);
     assert_eq!(agent.max_iterations, 12);
     assert_eq!(agent.allowed_tools, vec!["browser_tools_browser_snapshot"]);
 
@@ -428,7 +433,7 @@ fn detailed_agent_metadata_enters_the_immutable_component_descriptor() {
     );
     assert_eq!(
         descriptor.metadata.get("base_agent"),
-        Some(&json!("task_runner_run_phase"))
+        Some(&json!(RUN_AGENT_KEY))
     );
     assert_eq!(
         descriptor.metadata.get("allowed_tools"),
@@ -549,7 +554,7 @@ fn agent_path_shorthand_uses_bounded_run_phase_defaults() {
         .expect("Agent shorthand should parse");
     let agent = manifest.agents.first().expect("Agent");
     assert_eq!(agent.component_key, "reviewer");
-    assert_eq!(agent.base_agent, "task_runner_run_phase");
+    assert_eq!(agent.base_agent, RUN_AGENT_KEY);
     assert_eq!(agent.max_iterations, PLUGIN_AGENT_DEFAULT_MAX_ITERATIONS);
 }
 
