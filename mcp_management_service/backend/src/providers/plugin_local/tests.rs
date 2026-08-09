@@ -12,6 +12,7 @@ use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, SandboxProviderKind, WorkspaceExecutionTarget,
 };
 use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
+use serde_json::json;
 
 use super::*;
 
