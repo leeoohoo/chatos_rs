@@ -614,7 +614,7 @@ fn find_runtime(value: &str) -> Option<RuntimeSpec> {
 
 fn find_runtime_version(runtime: RuntimeSpec, value: &str) -> Option<RuntimeVersionSpec> {
     let value = value.trim().trim_start_matches('v');
-    runtime
+    let exact = runtime
         .versions
         .iter()
         .find(|version| {
@@ -622,7 +622,22 @@ fn find_runtime_version(runtime: RuntimeSpec, value: &str) -> Option<RuntimeVers
                 || format!("{}{}", runtime.id, version.id) == value
                 || format!("{}{}", runtime.label.to_ascii_lowercase(), version.id) == value
         })
-        .copied()
+        .copied();
+    if exact.is_some() {
+        return exact;
+    }
+
+    let patch_prefix = format!("{value}.");
+    let mut compatible = runtime
+        .versions
+        .iter()
+        .filter(|version| version.id.starts_with(patch_prefix.as_str()));
+    let candidate = compatible.next().copied();
+    if compatible.next().is_none() {
+        candidate
+    } else {
+        None
+    }
 }
 
 fn default_version(runtime: RuntimeSpec) -> RuntimeVersionSpec {
@@ -685,6 +700,19 @@ mod tests {
                 .map(selection_feature_token)
                 .collect::<Vec<_>>(),
             vec!["node@22", "python@3.12"]
+        );
+    }
+
+    #[test]
+    fn unique_major_minor_version_resolves_to_pinned_patch() {
+        let selections = canonical_features(&["rust@1.85".to_string()])
+            .expect("unique compatible Rust patch version");
+        assert_eq!(
+            selections
+                .iter()
+                .map(selection_feature_token)
+                .collect::<Vec<_>>(),
+            vec!["rust@1.85.1"]
         );
     }
 
