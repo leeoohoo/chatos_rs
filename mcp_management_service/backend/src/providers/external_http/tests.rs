@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashSet;
+
 use axum::http::HeaderMap as AxumHeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -9,6 +11,13 @@ use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
     WorkspaceProviderKind,
 };
+use chatos_mcp_service::METHOD_NOTIFICATIONS_CANCELLED;
+use reqwest::header::HeaderMap;
+use reqwest::redirect::Policy;
+use serde_json::{json, Value};
+
+use crate::providers::ProviderCancelOutcome;
+use crate::runtime::RuntimeSessionSnapshot;
 
 use super::*;
 
