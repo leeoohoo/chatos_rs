@@ -343,14 +343,16 @@ pub fn workspace_runtime_features(
             &["python", "pip", "pyproject.toml", "requirements.txt"][..],
         ),
         ("rust", &["rust", "cargo.toml", "cargo build"][..]),
-        ("go", &["golang", "go.mod", "go build"][..]),
+        ("go", &["golang", "go.mod"][..]),
         ("dotnet", &["dotnet", ".csproj", "msbuild"][..]),
         ("php", &["php", "composer.json"][..]),
         ("ruby", &["ruby", "gemfile", "bundle install"][..]),
         ("gcc", &["gcc", "g++", "cmakelists.txt"][..]),
         ("clang", &["clang", "llvm"][..]),
     ] {
-        if markers.iter().any(|marker| evidence.contains(marker)) {
+        let has_runtime_evidence = markers.iter().any(|marker| evidence.contains(marker))
+            || (feature == "go" && contains_standalone_marker(&evidence, "go build"));
+        if has_runtime_evidence {
             selected
                 .entry(feature)
                 .or_insert_with(|| feature.to_string());
@@ -367,6 +369,21 @@ pub fn workspace_runtime_features(
             .collect();
     }
     selected
+}
+
+fn contains_standalone_marker(value: &str, marker: &str) -> bool {
+    value.match_indices(marker).any(|(start, matched)| {
+        let before_is_boundary = value[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !character.is_ascii_alphanumeric() && character != '_');
+        let end = start + matched.len();
+        let after_is_boundary = value[end..]
+            .chars()
+            .next()
+            .is_none_or(|character| !character.is_ascii_alphanumeric() && character != '_');
+        before_is_boundary && after_is_boundary
+    })
 }
 
 fn detected_stack_runtime_evidence(detected_stack: &Value) -> String {

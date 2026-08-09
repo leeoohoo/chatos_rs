@@ -166,15 +166,29 @@ mod tests {
             None,
         );
         apply_program_managed_image_policy(&mut backend);
-        backend.features = serde_json::json!(["rust@1.85"]);
+        backend.features = serde_json::json!(["rust@1.85", "cargo"]);
 
         let mut workspace = runtime_image("workspace", "workspace", None, None);
         apply_program_managed_image_policy(&mut workspace);
         workspace.features = serde_json::json!(["rust@1.85", "go@1.26"]);
 
         assert_eq!(
-            workspace_runtime_features(&[backend, workspace], &empty_object()),
+            workspace_runtime_features(
+                &[backend, workspace],
+                &serde_json::json!({"analysis_requirement": "run cargo build"}),
+            ),
             vec!["rust@1.85".to_string()]
+        );
+    }
+
+    #[test]
+    fn standalone_go_build_requirement_selects_go_runtime() {
+        assert_eq!(
+            workspace_runtime_features(
+                &[],
+                &serde_json::json!({"analysis_requirement": "run go build ./..."}),
+            ),
+            vec!["go".to_string()]
         );
     }
 
