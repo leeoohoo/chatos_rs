@@ -1,7 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::*;
+use std::fs;
+use std::path::Path;
+
+use anyhow::{bail, Context, Result};
+use chatos_plugin_management_sdk::{
+    normalized_plugin_manifest_sha256, parse_plugin_manifest, plugin_manifest_source_from_path,
+};
+use tokio_util::sync::CancellationToken;
+
+use super::{MAX_INVOCATION_ID_BYTES, MAX_MANIFEST_BYTES};
+use crate::plugins::ActivePluginInstallation;
 
 pub(super) async fn wait_for_invocation_cancellation(cancellation: Option<CancellationToken>) {
     match cancellation {

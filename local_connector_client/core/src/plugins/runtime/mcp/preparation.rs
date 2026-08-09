@@ -1,7 +1,31 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::*;
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, Context, Result};
+use chatos_mcp_runtime::{extract_tools, parse_tool_definition, McpStdioServer};
+use chatos_plugin_management_sdk::{
+    normalize_plugin_relative_path, PluginComponentKind, PluginMcpServer,
+};
+use chrono::{SecondsFormat, Utc};
+use serde::Serialize;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
+
+use super::super::super::oauth_broker::PluginOAuthBroker;
+use super::super::credentials::{
+    PluginCredentialBindings, PluginHttpHeaderTemplates, PluginStdioEnvironmentTemplates,
+};
+use super::super::sandbox::PluginStdioSandboxLauncher;
+use super::{
+    PluginMcpSnapshot, PreparedPluginMcpTransport, MAX_MCP_TOOLS, MAX_MCP_TOOL_SNAPSHOT_BYTES,
+};
+use crate::plugins::{ActivePluginInstallation, PluginCredentialVault, PluginInstaller};
 
 pub(super) fn validate_required_permissions(
     installation: &ActivePluginInstallation,
