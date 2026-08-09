@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path as FsPath;
 
-use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
+use crate::api::fs::policy::FsPathPolicy;
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::user_visible_path::display_path;
@@ -16,14 +16,12 @@ use crate::models::terminal::TerminalService;
 use crate::repositories::project_run_catalogs;
 use crate::services::project_local_cache::is_local_connector_project_root;
 use crate::services::project_run::{
-    analyze_project, apply_default_target, clear_cached_environment_snapshot, dispatch_command,
+    analyze_project, apply_default_target, clear_cached_environment_snapshot,
     env_overrides_for_target, load_environment_selection, load_environment_snapshot,
     read_cached_catalog, refresh_environment_snapshot, resolve_command_with_toolchains,
-    resolve_execution, save_environment_selection, validate_project_run_target,
-    write_cached_catalog, RunExecutionInput,
+    resolve_execution, save_environment_selection, write_cached_catalog, RunExecutionInput,
 };
 use crate::services::realtime::publish_project_run_catalog_updated;
-use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::{
     ProjectRunDefaultRequest, ProjectRunEnvironmentUpdateRequest, ProjectRunExecuteRequest,
@@ -35,7 +33,7 @@ mod visibility;
 use self::local_connector::dispatch_local_connector_project_run;
 use self::visibility::{
     serialize_project_run_terminal, visible_env_overrides, visible_project_run_catalog,
-    visible_project_run_environment, visible_validation_issues,
+    visible_project_run_environment,
 };
 
 fn normalize_custom_toolchains(
@@ -66,29 +64,6 @@ fn normalize_custom_toolchains(
             ))
         })
         .collect()
-}
-
-fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
-    (
-        err.status_code(),
-        Json(serde_json::json!({ "error": err.message() })),
-    )
-}
-
-async fn authorize_project_run_cwd(
-    auth: &AuthUser,
-    raw: &str,
-) -> Result<String, (StatusCode, Json<Value>)> {
-    let policy = FsPathPolicy::for_user(auth)
-        .await
-        .map_err(fs_policy_error_tuple)?;
-    let authorized = policy
-        .authorize_existing_dir(raw, "运行目录不存在或不是目录", "运行目录不存在或不是目录")
-        .map_err(fs_policy_error_tuple)?;
-    policy
-        .require_write(&authorized)
-        .map_err(fs_policy_error_tuple)?;
-    Ok(authorized.path.to_string_lossy().to_string())
 }
 
 async fn load_or_analyze_catalog(
@@ -309,62 +284,11 @@ pub(super) async fn execute_project_run(
         );
     }
 
-    let cwd = match authorize_project_run_cwd(&auth, cwd.as_str()).await {
-        Ok(path) => path,
-        Err(err) => return err,
-    };
-    if let Some(target) = target.as_ref() {
-        let issues = validate_project_run_target(
-            std::path::Path::new(project.root_path.as_str()),
-            target,
-            saved_selection.as_ref(),
-            &environment_snapshot.options_by_kind,
-        );
-        if !issues.is_empty() {
-            let visible_issues = visible_validation_issues(issues);
-            let visible_issue = visible_issues.first().cloned().unwrap_or_default();
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": visible_issue.message,
-                    "validation_issue": visible_issue,
-                    "validation_issues": visible_issues,
-                })),
-            );
-        }
-    }
-    let run = match dispatch_command(
-        auth.user_id.as_str(),
-        Some(project.id.as_str()),
-        project.root_path.as_str(),
-        cwd.as_str(),
-        resolved_command.as_str(),
-        input.create_if_missing,
-        env_overrides.clone(),
-        req.terminal_id.as_deref(),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": err})),
-            );
-        }
-    };
     (
-        StatusCode::OK,
+        StatusCode::CONFLICT,
         Json(json!({
-            "terminal_id": run.terminal_id,
-            "terminal_name": run.terminal_name,
-            "terminal_reused": run.terminal_reused,
-            "status": run.terminal_status,
-            "cwd": display_path(run.cwd.as_str()),
-            "display_cwd": display_path(run.cwd.as_str()),
-            "executed_command": run.executed_command,
-            "project_id": project.id,
-            "env_overrides": visible_env_overrides(env_overrides),
+            "code": "project_run_requires_external_execution_host",
+            "error": "Chatos 不执行宿主机命令；本地项目请使用 Local Connector，云端项目请使用 Task Runner/Sandbox",
         })),
     )
 }
@@ -391,7 +315,6 @@ pub(super) async fn get_project_run_state(
             );
         }
     };
-    let manager = get_terminal_manager();
     let terminals = match TerminalService::list_project_runs_by_project_id(
         Some(auth.user_id.clone()),
         project.id.as_str(),
@@ -409,7 +332,7 @@ pub(super) async fn get_project_run_state(
     let terminal_entries = terminals
         .iter()
         .map(|value| {
-            let busy = manager.get_busy(value.id.as_str()).unwrap_or(false);
+            let busy = false;
             json!({
                 "terminal_id": value.id,
                 "terminal_name": value.name,
@@ -422,9 +345,7 @@ pub(super) async fn get_project_run_state(
             })
         })
         .collect::<Vec<_>>();
-    let busy = terminals
-        .iter()
-        .any(|value| manager.get_busy(value.id.as_str()).unwrap_or(false));
+    let busy = false;
     let running = terminals.iter().any(|value| value.status == "running");
     let aggregate_status = if running {
         "running".to_string()
@@ -434,9 +355,9 @@ pub(super) async fn get_project_run_state(
             .map(|value| value.status.clone())
             .unwrap_or_else(|| "idle".to_string())
     };
-    let terminal_value = terminal.as_ref().map(|value| {
-        serialize_project_run_terminal(value, manager.get_busy(value.id.as_str()).unwrap_or(false))
-    });
+    let terminal_value = terminal
+        .as_ref()
+        .map(|value| serialize_project_run_terminal(value, false));
     (
         StatusCode::OK,
         Json(json!({

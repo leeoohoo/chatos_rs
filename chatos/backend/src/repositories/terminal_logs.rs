@@ -37,34 +37,6 @@ pub async fn create_terminal_log(log: &TerminalLog) -> Result<String, String> {
     .await
 }
 
-pub async fn list_terminal_logs(
-    terminal_id: &str,
-    limit: Option<i64>,
-    offset: i64,
-) -> Result<Vec<TerminalLog>, String> {
-    with_db(|db| {
-        let terminal_id = terminal_id.to_string();
-        Box::pin(async move {
-            let mut options = mongodb::options::FindOptions::builder()
-                .sort(doc! { "created_at": 1 })
-                .build();
-            if let Some(l) = limit {
-                options.limit = Some(l);
-            }
-            if offset > 0 {
-                options.skip = Some(offset as u64);
-            }
-            let cursor = db
-                .collection::<Document>("terminal_logs")
-                .find(doc! { "terminal_id": terminal_id }, options)
-                .await
-                .map_err(|e| e.to_string())?;
-            collect_and_map(cursor, normalize_doc).await
-        })
-    })
-    .await
-}
-
 pub async fn list_terminal_logs_recent(
     terminal_id: &str,
     limit: i64,

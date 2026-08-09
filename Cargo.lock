@@ -859,7 +859,6 @@ dependencies = [
  "opentelemetry_sdk",
  "parking_lot",
  "pathdiff",
- "portable-pty",
  "quick-xml",
  "rand 0.10.2",
  "regex",

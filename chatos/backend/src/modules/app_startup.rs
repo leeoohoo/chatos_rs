@@ -3,7 +3,6 @@
 
 use tracing::{info, warn};
 
-use crate::services::terminal_manager::get_terminal_manager;
 use crate::{config::Config, core, db, services};
 
 pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
@@ -134,30 +133,6 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
                 false,
                 format!("backfill failed: {err}"),
             );
-        }
-    }
-
-    {
-        let manager = get_terminal_manager();
-        match manager.cleanup_stale_project_run_terminals().await {
-            Ok(count) => {
-                if count > 0 {
-                    info!("Cleaned stale project-run terminals on startup: {}", count);
-                }
-                core::runtime_health::mark_runtime_check_ok(
-                    "terminal_cleanup",
-                    false,
-                    format!("cleaned_count={count}"),
-                );
-            }
-            Err(err) => {
-                warn!("Failed to cleanup stale project-run terminals on startup: {err}");
-                core::runtime_health::mark_runtime_check_warn(
-                    "terminal_cleanup",
-                    false,
-                    format!("cleanup failed: {err}"),
-                );
-            }
         }
     }
 

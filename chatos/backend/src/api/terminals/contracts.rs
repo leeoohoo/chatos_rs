@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct TerminalQuery {
@@ -35,36 +35,4 @@ pub(super) struct DispatchTerminalCommandRequest {
 #[derive(Debug, Deserialize)]
 pub(super) struct InterruptTerminalRequest {
     pub(super) reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-pub(super) enum WsInput {
-    #[serde(rename = "input")]
-    Input { data: String },
-    #[serde(rename = "command")]
-    Command { command: String },
-    #[serde(rename = "resize")]
-    Resize { cols: u16, rows: u16 },
-    #[serde(rename = "snapshot")]
-    Snapshot { lines: Option<usize> },
-    #[serde(rename = "ping")]
-    Ping,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type")]
-pub(super) enum WsOutput {
-    #[serde(rename = "output")]
-    Output { data: String },
-    #[serde(rename = "snapshot")]
-    Snapshot { data: String },
-    #[serde(rename = "exit")]
-    Exit { code: i32 },
-    #[serde(rename = "state")]
-    State { busy: bool, snapshot_paging: bool },
-    #[serde(rename = "error")]
-    Error { error: String },
-    #[serde(rename = "pong")]
-    Pong { timestamp: String },
 }

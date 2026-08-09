@@ -46,7 +46,9 @@ use root_path::{
     local_relative_basename, sanitize_optional_local_relative_path,
     sanitize_required_local_relative_path,
 };
-pub(crate) use terminal_relay::{create_local_terminal_session, send_local_terminal_input};
+pub(crate) use terminal_relay::{
+    close_local_terminal_session, create_local_terminal_session, send_local_terminal_input,
+};
 use types::{
     CreateLocalConnectorProjectRequest, CreateLocalDirectoryRequest, CreateProjectBindingRequest,
     DeviceQuery, LocalConnectorDevice, LocalConnectorDirectoryCreateResponse,

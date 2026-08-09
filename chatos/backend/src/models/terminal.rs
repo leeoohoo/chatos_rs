@@ -71,13 +71,6 @@ impl TerminalService {
         repo::list_terminals_by_kind(user_id, TERMINAL_KIND_SHARED).await
     }
 
-    pub async fn list_by_kind(
-        user_id: Option<String>,
-        kind: &str,
-    ) -> Result<Vec<Terminal>, String> {
-        repo::list_terminals_by_kind(user_id, kind).await
-    }
-
     pub async fn get_project_run_by_project_id(
         user_id: Option<String>,
         project_id: &str,

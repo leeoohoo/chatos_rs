@@ -144,6 +144,12 @@ pub(super) struct RelayTerminalInputRequest<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub(super) struct RelayTerminalCloseRequest<'a> {
+    pub(super) workspace_id: &'a str,
+    pub(super) terminal_session_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
 pub(super) struct RelayWorkspaceDirectoryCreateRequest<'a> {
     pub(super) path: &'a str,
 }

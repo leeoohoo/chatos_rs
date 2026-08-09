@@ -47,7 +47,6 @@ pub mod system_context_ai;
 pub mod task_board_prompt;
 pub mod task_manager;
 pub(crate) mod task_runner_api_client;
-pub mod terminal_manager;
 pub(crate) mod text_normalization;
 pub(crate) mod tool_runtime;
 pub mod user_service_api_client;

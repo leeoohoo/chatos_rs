@@ -11,8 +11,8 @@ use crate::core::validation::normalize_non_empty;
 
 use super::connector_client::connector_post_json;
 use super::types::{
-    LocalTerminalExecRequest, RelayTerminalExecRequest, RelayTerminalInputRequest,
-    RelayTerminalSessionCreateRequest,
+    LocalTerminalExecRequest, RelayTerminalCloseRequest, RelayTerminalExecRequest,
+    RelayTerminalInputRequest, RelayTerminalSessionCreateRequest,
 };
 use super::{load_owned_online_workspace, required_text};
 
@@ -101,6 +101,25 @@ pub(crate) async fn send_local_terminal_input(
             workspace_id,
             terminal_session_id,
             data,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn close_local_terminal_session(
+    device_id: &str,
+    workspace_id: &str,
+    terminal_session_id: &str,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/terminal/close",
+        urlencoding::encode(device_id)
+    );
+    connector_post_json::<Value, _>(
+        path.as_str(),
+        &RelayTerminalCloseRequest {
+            workspace_id,
+            terminal_session_id,
         },
     )
     .await

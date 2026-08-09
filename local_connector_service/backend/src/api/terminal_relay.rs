@@ -53,6 +53,12 @@ pub(super) struct TerminalInputRelayRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct TerminalCloseRelayRequest {
+    workspace_id: Option<String>,
+    terminal_session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct TerminalWsRelayQuery {
     workspace_id: Option<String>,
     terminal_id: Option<String>,
@@ -182,6 +188,37 @@ pub(super) async fn terminal_input_relay(
 
     send_relay(&state, request).await?;
     Ok(Json(json!({ "success": true })))
+}
+
+pub(super) async fn terminal_close_relay(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Json(req): Json<TerminalCloseRelayRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let workspace_id = required_text(req.workspace_id, "workspace_id")?;
+    let terminal_session_id = required_text(req.terminal_session_id, "terminal_session_id")?;
+    validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
+
+    let request = RelayRequest {
+        message_type: "terminal_close".to_string(),
+        request_id: Uuid::new_v4().to_string(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        device_id,
+        workspace_id,
+        method: "POST".to_string(),
+        path: "/terminal/close".to_string(),
+        headers: BTreeMap::new(),
+        body: json!({ "terminal_session_id": terminal_session_id }),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
+    };
+
+    send_relay(&state, request).await?;
+    Ok(Json(json!({ "success": true, "closed": true })))
 }
 
 pub(super) async fn terminal_ws_relay(

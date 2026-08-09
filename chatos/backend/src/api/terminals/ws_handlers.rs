@@ -3,12 +3,12 @@
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, WebSocketUpgrade};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async_tls_with_config;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as ConnectorMessage;
-use tokio_util::sync::CancellationToken;
 
 use crate::api::local_connectors::{
     local_connector_tls_connector, local_connector_websocket_url, parse_local_connector_root_path,
@@ -17,17 +17,10 @@ use crate::api::local_connectors::{
 use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
 use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
-use crate::models::terminal::{Terminal, TerminalService};
+use crate::models::terminal::Terminal;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
 use crate::services::access_token_scope;
-use crate::services::terminal_manager::{get_terminal_manager, TerminalEvent};
-use crate::utils::ws_outbound;
-
-use super::{WsInput, WsOutput, WS_DEFAULT_SNAPSHOT_LINES, WS_MAX_SNAPSHOT_LINES};
-
-const TERMINAL_WS_OUTBOUND_QUEUE_CAPACITY: usize = 512;
-const TERMINAL_WS_CHANNEL: &str = "terminal";
 
 pub(super) async fn terminal_ws(
     auth: AuthUser,
@@ -38,20 +31,25 @@ pub(super) async fn terminal_ws(
         Ok(terminal) => terminal,
         Err(err) => return map_terminal_access_error(err).into_response(),
     };
-    if let Some(root_ref) = parse_local_connector_root_path(terminal.cwd.as_str()) {
-        let Some(access_token) = access_token_scope::get_current_access_token() else {
-            return axum::Json(serde_json::json!({
-                "error": "当前请求缺少可转发的 access token"
-            }))
+    let Some(root_ref) = parse_local_connector_root_path(terminal.cwd.as_str()) else {
+        return (
+            StatusCode::GONE,
+            axum::Json(serde_json::json!({
+                "error": "该终端来自已移除的 Chatos 本机终端运行时"
+            })),
+        )
             .into_response();
-        };
-        return ws
-            .on_upgrade(move |socket| {
-                handle_local_connector_terminal_socket(terminal, root_ref, access_token, socket)
-            })
-            .into_response();
-    }
-    ws.on_upgrade(move |socket| handle_terminal_socket(id, socket))
+    };
+    let Some(access_token) = access_token_scope::get_current_access_token() else {
+        return axum::Json(serde_json::json!({
+            "error": "当前请求缺少可转发的 access token"
+        }))
+        .into_response();
+    };
+    ws.on_upgrade(move |socket| {
+        handle_local_connector_terminal_socket(terminal, root_ref, access_token, socket)
+    })
+    .into_response()
 }
 
 async fn handle_local_connector_terminal_socket(
@@ -67,10 +65,11 @@ async fn handle_local_connector_terminal_socket(
         Err(err) => {
             let _ = socket
                 .send(Message::text(
-                    serde_json::to_string(&WsOutput::Error {
-                        error: format!("Local Connector websocket URL invalid: {err}"),
+                    serde_json::json!({
+                        "type": "error",
+                        "error": format!("Local Connector websocket URL invalid: {err}"),
                     })
-                    .unwrap_or_default(),
+                    .to_string(),
                 ))
                 .await;
             return;
@@ -84,10 +83,11 @@ async fn handle_local_connector_terminal_socket(
         Err(err) => {
             let _ = socket
                 .send(Message::text(
-                    serde_json::to_string(&WsOutput::Error {
-                        error: format!("Local Connector authorization header invalid: {err}"),
+                    serde_json::json!({
+                        "type": "error",
+                        "error": format!("Local Connector authorization header invalid: {err}"),
                     })
-                    .unwrap_or_default(),
+                    .to_string(),
                 ))
                 .await;
             return;
@@ -99,7 +99,7 @@ async fn handle_local_connector_terminal_socket(
         Err(err) => {
             let _ = socket
                 .send(Message::text(
-                    serde_json::to_string(&WsOutput::Error { error: err }).unwrap_or_default(),
+                    serde_json::json!({ "type": "error", "error": err }).to_string(),
                 ))
                 .await;
             return;
@@ -111,10 +111,11 @@ async fn handle_local_connector_terminal_socket(
             Err(err) => {
                 let _ = socket
                     .send(Message::text(
-                        serde_json::to_string(&WsOutput::Error {
-                            error: format!("Local Connector 终端连接失败: {err}"),
+                        serde_json::json!({
+                            "type": "error",
+                            "error": format!("Local Connector 终端连接失败: {err}"),
                         })
-                        .unwrap_or_default(),
+                        .to_string(),
                     ))
                     .await;
                 return;
@@ -233,233 +234,6 @@ async fn handle_local_connector_terminal_socket(
     }
 }
 
-async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
-    let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::Terminal);
-    let manager = get_terminal_manager();
-    let session = match manager.get(&id) {
-        Some(session) => Some(session),
-        None => match TerminalService::get_by_id(&id).await {
-            Ok(Some(terminal)) => match manager.ensure_running(&terminal).await {
-                Ok(session) => Some(session),
-                Err(err) => {
-                    let _ = socket
-                        .send(Message::text(
-                            serde_json::to_string(&WsOutput::Error { error: err })
-                                .unwrap_or_default(),
-                        ))
-                        .await;
-                    return;
-                }
-            },
-            Ok(None) => {
-                let _ = socket
-                    .send(Message::text(
-                        serde_json::to_string(&WsOutput::Error {
-                            error: "终端不存在".to_string(),
-                        })
-                        .unwrap_or_default(),
-                    ))
-                    .await;
-                return;
-            }
-            Err(err) => {
-                let _ = socket
-                    .send(Message::text(
-                        serde_json::to_string(&WsOutput::Error { error: err }).unwrap_or_default(),
-                    ))
-                    .await;
-                return;
-            }
-        },
-    };
-
-    let session = match session {
-        Some(s) => s,
-        None => return,
-    };
-
-    let snapshot = session.output_snapshot_tail_lines(WS_DEFAULT_SNAPSHOT_LINES);
-    if !snapshot.is_empty()
-        && socket
-            .send(Message::text(
-                serde_json::to_string(&WsOutput::Snapshot { data: snapshot }).unwrap_or_default(),
-            ))
-            .await
-            .is_err()
-    {
-        return;
-    }
-
-    if socket
-        .send(Message::text(
-            serde_json::to_string(&WsOutput::State {
-                busy: session.is_busy(),
-                snapshot_paging: true,
-            })
-            .unwrap_or_default(),
-        ))
-        .await
-        .is_err()
-    {
-        return;
-    }
-
-    let mut rx = session.subscribe();
-    let (ws_sender, mut ws_receiver) = socket.split();
-    let (out_tx, mut out_rx) = ws_outbound::channel(TERMINAL_WS_OUTBOUND_QUEUE_CAPACITY);
-    let shutdown = CancellationToken::new();
-
-    let send_task = tokio::spawn({
-        let shutdown = shutdown.clone();
-        async move {
-            let mut sender = ws_sender;
-            loop {
-                tokio::select! {
-                    _ = shutdown.cancelled() => break,
-                    maybe_msg = out_rx.recv() => {
-                        let Some(msg) = maybe_msg else {
-                            break;
-                        };
-                        tokio::select! {
-                            _ = shutdown.cancelled() => break,
-                            result = sender.send(msg) => {
-                                if result.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    let output_task = tokio::spawn({
-        let out_tx = out_tx.clone();
-        let shutdown = shutdown.clone();
-        async move {
-            loop {
-                let evt = tokio::select! {
-                    _ = shutdown.cancelled() => break,
-                    evt = rx.recv() => evt,
-                };
-                let Ok(evt) = evt else {
-                    break;
-                };
-                let payload = match evt {
-                    TerminalEvent::Output(data) => WsOutput::Output { data },
-                    TerminalEvent::Exit(code) => WsOutput::Exit { code },
-                    TerminalEvent::State(busy) => WsOutput::State {
-                        busy,
-                        snapshot_paging: true,
-                    },
-                };
-                let text = serde_json::to_string(&payload).unwrap_or_default();
-                if !ws_outbound::try_send_or_close(
-                    &out_tx,
-                    Message::text(text),
-                    TERMINAL_WS_CHANNEL,
-                    &shutdown,
-                ) {
-                    break;
-                }
-            }
-        }
-    });
-
-    loop {
-        let msg = tokio::select! {
-            _ = shutdown.cancelled() => break,
-            msg = ws_receiver.next() => msg,
-        };
-        match msg {
-            None => break,
-            Some(Ok(Message::Text(text))) => {
-                let parsed = serde_json::from_str::<WsInput>(&text);
-                match parsed {
-                    Ok(WsInput::Input { data }) => {
-                        persist_terminal_input(&id, &data).await;
-                        let _ = session.write_input(&data);
-                    }
-                    Ok(WsInput::Command { command }) => {
-                        persist_terminal_command(&id, &command).await;
-                    }
-                    Ok(WsInput::Resize { cols, rows }) => {
-                        if cols > 0 && rows > 0 {
-                            let _ = session.resize(cols, rows);
-                        }
-                    }
-                    Ok(WsInput::Snapshot { lines }) => {
-                        let requested = lines.unwrap_or(WS_DEFAULT_SNAPSHOT_LINES);
-                        let normalized = requested.clamp(1, WS_MAX_SNAPSHOT_LINES);
-                        let snapshot = session.output_snapshot_tail_lines(normalized);
-                        if !ws_outbound::try_send_or_close(
-                            &out_tx,
-                            Message::text(
-                                serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
-                                    .unwrap_or_default(),
-                            ),
-                            TERMINAL_WS_CHANNEL,
-                            &shutdown,
-                        ) {
-                            break;
-                        }
-                    }
-                    Ok(WsInput::Ping) => {
-                        if !ws_outbound::try_send_or_close(
-                            &out_tx,
-                            Message::text(
-                                serde_json::to_string(&WsOutput::Pong {
-                                    timestamp: crate::core::time::now_rfc3339(),
-                                })
-                                .unwrap_or_default(),
-                            ),
-                            TERMINAL_WS_CHANNEL,
-                            &shutdown,
-                        ) {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        let trimmed = text.trim();
-                        if trimmed.starts_with('{') && trimmed.ends_with('}') {
-                            continue;
-                        }
-                        if !trimmed.is_empty() {
-                            persist_terminal_input(&id, &text).await;
-                            let _ = session.write_input(&text);
-                        }
-                    }
-                }
-            }
-            Some(Ok(Message::Binary(bytes))) => {
-                if !bytes.is_empty() {
-                    let data = String::from_utf8_lossy(&bytes).to_string();
-                    persist_terminal_input(&id, &data).await;
-                    let _ = session.write_input(&data);
-                }
-            }
-            Some(Ok(Message::Close(_))) => break,
-            Some(Ok(Message::Ping(_))) => {
-                if !ws_outbound::try_send_or_close(
-                    &out_tx,
-                    Message::Pong(Vec::new().into()),
-                    TERMINAL_WS_CHANNEL,
-                    &shutdown,
-                ) {
-                    break;
-                }
-            }
-            Some(Ok(_)) => {}
-            Some(Err(_)) => break,
-        }
-    }
-
-    shutdown.cancel();
-    output_task.abort();
-    send_task.abort();
-}
-
 async fn persist_terminal_input(id: &str, data: &str) {
     let log = TerminalLog::new(id.to_string(), "input".to_string(), data.to_string());
     let _ = TerminalLogService::create(log).await;
@@ -492,15 +266,28 @@ fn local_connector_terminal_ws_url(root_ref: &LocalConnectorRootRef, terminal_id
 }
 
 async fn persist_local_connector_terminal_input(id: &str, text: &str) {
-    match serde_json::from_str::<WsInput>(text) {
-        Ok(WsInput::Input { data }) => persist_terminal_input(id, data.as_str()).await,
-        Ok(WsInput::Command { command }) => persist_terminal_command(id, command.as_str()).await,
-        Ok(_) => {}
-        Err(_) => {
-            if !text.trim().is_empty() {
-                persist_terminal_input(id, text).await;
-            }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        if !text.trim().is_empty() {
+            persist_terminal_input(id, text).await;
         }
+        return;
+    };
+    match value.get("type").and_then(serde_json::Value::as_str) {
+        Some("input") => {
+            let data = value
+                .get("data")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            persist_terminal_input(id, data).await;
+        }
+        Some("command") => {
+            let command = value
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            persist_terminal_command(id, command).await;
+        }
+        _ => {}
     }
 }
 
