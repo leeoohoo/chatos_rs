@@ -1514,6 +1514,21 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
 }
 
 #[test]
+fn local_connector_valkey_url_is_an_authenticated_secret() {
+    let definitions = builtin_definitions();
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.key == LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY)
+        .expect("Local Connector Valkey URL definition");
+
+    assert_eq!(definition.sensitivity, "secret");
+    assert_eq!(
+        definition.default_value,
+        json!("redis://:change_me_valkey_password@127.0.0.1:6379/0")
+    );
+}
+
+#[test]
 fn catalog_exposes_internal_request_security_toggles() {
     let definitions = builtin_definitions();
     for (key, service_name, env_alias) in [

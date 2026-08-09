@@ -435,6 +435,7 @@ mod tests {
             aud: CONFIG_CENTER_AUDIENCE.to_string(),
             scope: CONFIG_SNAPSHOT_READ_SCOPE.to_string(),
             trace_id: Uuid::new_v4().to_string(),
+            owner_user_id: None,
             iat: 1,
             exp: 2,
         };

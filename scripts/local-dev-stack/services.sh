@@ -251,6 +251,9 @@ rabbitmq_user = os.environ.get("RABBITMQ_DEFAULT_USER", "chatos")
 rabbitmq_password = os.environ.get("RABBITMQ_DEFAULT_PASS", "change_me_rabbitmq_password")
 rabbitmq_port = os.environ.get("RABBITMQ_PORT", "5672")
 rabbitmq_url = f"amqp://{rabbitmq_user}:{rabbitmq_password}@127.0.0.1:{rabbitmq_port}/%2f"
+valkey_password = os.environ.get("VALKEY_PASSWORD", "change_me_valkey_password")
+valkey_port = os.environ.get("VALKEY_PORT", "6379")
+valkey_url = f"redis://:{valkey_password}@127.0.0.1:{valkey_port}/0"
 desired.update({
     "task_runner.queue.run_dispatch_mode": "rabbitmq",
     "task_runner.queue.callback_delivery_mode": "rabbitmq",
@@ -262,6 +265,7 @@ desired.update({
     "mcp_management.async_tool.dispatch_mode": "rabbitmq",
     "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
     "mcp_management.security.allowed_internal_callers": "chatos,task-runner,project-service,configuration-center",
+    "local_connector.coordination.valkey_url": valkey_url,
     "chatos.observability.otlp_endpoint": "http://127.0.0.1:4317",
 })
 

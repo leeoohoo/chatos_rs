@@ -1768,7 +1768,7 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
         ),
         (
             LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY.to_string(),
-            json!("redis://127.0.0.1:6379/0"),
+            json!("redis://:change_me_valkey_password@127.0.0.1:6379/0"),
         ),
         (
             LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY.to_string(),
@@ -1878,7 +1878,7 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
     );
     assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_VALKEY_URL"),
-        Some(&"redis://127.0.0.1:6379/0".to_string())
+        Some(&"redis://:change_me_valkey_password@127.0.0.1:6379/0".to_string())
     );
     assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_VALKEY_KEY_PREFIX"),
