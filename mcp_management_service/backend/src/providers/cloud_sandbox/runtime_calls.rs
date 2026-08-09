@@ -11,9 +11,8 @@ use crate::providers::{
 };
 use crate::runtime::RuntimeSessionSnapshot;
 
-use super::{
-    cloud_sandbox_call_timeout, decode_jsonrpc_response, CloudSandboxProvider, ProviderCallError,
-};
+use super::validation::cloud_sandbox_call_timeout;
+use super::{decode_jsonrpc_response, CloudSandboxProvider, ProviderCallError};
 
 impl CloudSandboxProvider {
     pub(in crate::providers) async fn call_tool(
