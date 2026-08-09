@@ -3,9 +3,8 @@
 
 use serde_json::Value;
 
-use super::{
-    PluginLocalProvider, ProviderCallError, CALLER_SERVICE, PLUGIN_RELAY_SCOPE, TOKEN_AUDIENCE,
-};
+use super::{PluginLocalProvider, CALLER_SERVICE, PLUGIN_RELAY_SCOPE, TOKEN_AUDIENCE};
+use crate::providers::ProviderCallError;
 use crate::trace_context::InternalTraceContextExt;
 
 impl PluginLocalProvider {

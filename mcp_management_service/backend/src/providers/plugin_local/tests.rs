@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
@@ -9,10 +10,15 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, SandboxProviderKind, WorkspaceExecutionTarget,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
 use serde_json::json;
+use sha2::{Digest, Sha256};
+
+use crate::providers::ProviderCancelOutcome;
+use crate::runtime::{PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
 
 use super::*;
 
