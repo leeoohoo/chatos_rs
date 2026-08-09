@@ -15,6 +15,7 @@ use chatos_plugin_management_sdk::{
     PluginComponentKind, PluginExecutionHost, PluginMcpServer, PluginPathRef,
     ResolvedAgentCapabilities, ResourceMetadata, ResourceSecurity,
 };
+use serde_json::json;
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
