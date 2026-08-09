@@ -6,19 +6,18 @@ use std::time::Duration;
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
-use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST};
+use chatos_mcp_service::METHOD_TOOLS_LIST;
 use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
 use crate::runtime::RuntimeSessionSnapshot;
-use crate::trace_context::InternalTraceContextExt;
 
 use super::project_service::decode_jsonrpc_response;
-use super::{
-    decode_cancel_notification_response, ProviderCallError, ProviderCallOutcome,
-    ProviderCancelOutcome,
-};
+use super::ProviderCallError;
+
+mod request_builder;
+mod runtime_calls;
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "chatos";
@@ -27,7 +26,7 @@ const CHATOS_PROVIDER_REF: &str = "chatos";
 const CHATOS_MEMORY_PROVIDER_REF_PREFIX: &str = "chatos:memory:";
 const CLOUD_BROWSER_SESSION_CLOSE_METHOD: &str = "browser/session/close";
 
-struct ChatosRequestBinding<'a> {
+pub(super) struct ChatosRequestBinding<'a> {
     owner_user_id: &'a str,
     agent_key: &'a str,
     session_id: &'a str,
@@ -233,277 +232,6 @@ impl ChatosProvider {
             "ChatOS Browser Runtime tools/list",
         )?;
         extract_browser_tool_snapshot(result).map_err(ProviderCallError::invalid_response)
-    }
-
-    pub(super) async fn call_tool(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        original_tool_name: &str,
-        arguments: Value,
-        invocation_id: &str,
-    ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "ChatOS Provider internal secret is not configured",
-            )
-        })?;
-        let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-            .filter(|_| self.supports(route))
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "ChatOS route is not a supported System MCP",
-                )
-            })?;
-        if is_memory_reader(descriptor.key) {
-            let contact_agent_id = snapshot
-                .contact_agent_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    ProviderCallError::provider_unavailable(
-                        "ChatOS Memory Reader has no bound contact agent",
-                    )
-                })?;
-            let expected_provider_ref = memory_provider_ref(contact_agent_id);
-            if snapshot
-                .source_session_id
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(|value| value.is_empty())
-                || route.provider_ref.as_deref() != Some(expected_provider_ref.as_str())
-            {
-                return Err(ProviderCallError::provider_unavailable(
-                    "ChatOS Memory Reader route does not match the immutable runtime binding",
-                ));
-            }
-        }
-        let endpoint = format!(
-            "{}/internal/mcp-management/mcp/{}",
-            self.base_url,
-            urlencoding::encode(descriptor.key.as_str())
-        );
-        let timeout = match descriptor.key {
-            SystemMcpKey::AskUser => self.ask_user_request_timeout,
-            SystemMcpKey::BrowserTools => self.browser_request_timeout,
-            _ => self.request_timeout,
-        };
-        let binding = ChatosRequestBinding::from(snapshot);
-        let request = self.bound_request(&binding, endpoint, timeout, secret)?;
-        let response = request
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": invocation_id,
-                "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
-            }))
-            .send()
-            .await
-            .map_err(|err| {
-                ProviderCallError::provider_unavailable(format!(
-                    "ChatOS Provider request failed: {err}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|err| {
-                ProviderCallError::invalid_response(format!(
-                    "ChatOS Provider response could not be read: {err}"
-                ))
-            })?;
-        if !status.is_success() {
-            return Err(ProviderCallError::provider_unavailable(format!(
-                "ChatOS Provider rejected the request with HTTP {}",
-                status.as_u16()
-            )));
-        }
-        let result = decode_jsonrpc_response(bytes.as_slice(), invocation_id, "ChatOS Provider")?;
-        Ok(ProviderCallOutcome {
-            result,
-            response_bytes: bytes.len(),
-        })
-    }
-
-    pub(super) async fn cancel_invocation(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        invocation_id: &str,
-    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "ChatOS Provider internal secret is not configured",
-            )
-        })?;
-        let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-            .filter(|_| self.supports(route))
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "ChatOS route is not a supported System MCP",
-                )
-            })?;
-        let endpoint = format!(
-            "{}/internal/mcp-management/mcp/{}",
-            self.base_url,
-            urlencoding::encode(descriptor.key.as_str())
-        );
-        let binding = ChatosRequestBinding::from(snapshot);
-        let response = self
-            .bound_request(&binding, endpoint, Duration::from_secs(5), secret)?
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "method": METHOD_NOTIFICATIONS_CANCELLED,
-                "params": {
-                    "requestId": invocation_id,
-                    "reason": "MCP Management runtime cancelled the invocation"
-                }
-            }))
-            .send()
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "ChatOS Provider cancellation request failed: {error}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|error| {
-                ProviderCallError::invalid_response(format!(
-                    "ChatOS Provider cancellation response could not be read: {error}"
-                ))
-            })?;
-        decode_cancel_notification_response(status, bytes.as_slice(), "ChatOS Provider")
-    }
-
-    pub(super) async fn close_session(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-    ) -> Result<(), ProviderCallError> {
-        let has_cloud_browser = snapshot.routes.iter().any(|route| {
-            self.supports(route)
-                && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-                    .is_some_and(|descriptor| descriptor.key == SystemMcpKey::BrowserTools)
-        });
-        if !has_cloud_browser {
-            return Ok(());
-        }
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "ChatOS Provider internal secret is not configured",
-            )
-        })?;
-        let invocation_id = format!("close-{}", snapshot.session_id);
-        let endpoint = format!(
-            "{}/internal/mcp-management/mcp/browser_tools/sessions/{}/close",
-            self.base_url,
-            urlencoding::encode(snapshot.session_id.as_str())
-        );
-        let binding = ChatosRequestBinding::from(snapshot);
-        let request =
-            self.bound_request(&binding, endpoint, self.browser_request_timeout, secret)?;
-        let response = request
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": invocation_id,
-                "method": CLOUD_BROWSER_SESSION_CLOSE_METHOD,
-                "params": {}
-            }))
-            .send()
-            .await
-            .map_err(|err| {
-                ProviderCallError::provider_unavailable(format!(
-                    "ChatOS Browser Runtime close request failed: {err}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|err| {
-                ProviderCallError::invalid_response(format!(
-                    "ChatOS Browser Runtime close response could not be read: {err}"
-                ))
-            })?;
-        if !status.is_success() {
-            return Err(ProviderCallError::provider_unavailable(format!(
-                "ChatOS Browser Runtime close was rejected with HTTP {}",
-                status.as_u16()
-            )));
-        }
-        decode_jsonrpc_response(
-            bytes.as_slice(),
-            invocation_id.as_str(),
-            "ChatOS Browser Runtime close",
-        )?;
-        Ok(())
-    }
-
-    fn bound_request(
-        &self,
-        binding: &ChatosRequestBinding<'_>,
-        endpoint: String,
-        timeout: Duration,
-        secret: &str,
-    ) -> Result<reqwest::RequestBuilder, ProviderCallError> {
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            CHATOS_MCP_SCOPE,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
-        let mut request = self
-            .http
-            .post(endpoint)
-            .header("x-chatos-caller", CALLER_SERVICE)
-            .header("x-chatos-internal-token", token)
-            .header("x-mcp-management-owner-user-id", binding.owner_user_id)
-            .header("x-mcp-management-agent-key", binding.agent_key)
-            .header("x-mcp-management-session-id", binding.session_id)
-            .header(
-                "x-mcp-management-session-expires-at-unix",
-                binding.expires_at_unix.to_string(),
-            )
-            .header("x-mcp-management-project-id", binding.project_id)
-            .timeout(timeout);
-        for (header, value) in [
-            ("x-mcp-management-run-id", binding.run_id),
-            ("x-mcp-management-turn-id", binding.turn_id),
-            ("x-mcp-management-task-id", binding.task_id),
-            (
-                "x-mcp-management-source-session-id",
-                binding.source_session_id,
-            ),
-            (
-                "x-mcp-management-source-user-message-id",
-                binding.source_user_message_id,
-            ),
-            (
-                "x-mcp-management-default-model-config-id",
-                binding.default_model_config_id,
-            ),
-            (
-                "x-mcp-management-contact-agent-id",
-                binding.contact_agent_id,
-            ),
-        ] {
-            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-                request = request.header(header, value);
-            }
-        }
-        if !binding.expected_project_task_ids.is_empty() {
-            request = request.header(
-                "x-mcp-management-expected-project-task-ids",
-                binding.expected_project_task_ids.join(","),
-            );
-        }
-        Ok(request.with_internal_trace_context())
     }
 }
 
