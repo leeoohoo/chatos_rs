@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::http::HeaderMap as AxumHeaderMap;
 use axum::routing::post;
@@ -17,7 +17,7 @@ use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 
 use crate::providers::ProviderCancelOutcome;
-use crate::runtime::RuntimeSessionSnapshot;
+use crate::runtime::{ExternalHttpProviderBinding, RuntimeSessionSnapshot};
 
 use super::*;
 
