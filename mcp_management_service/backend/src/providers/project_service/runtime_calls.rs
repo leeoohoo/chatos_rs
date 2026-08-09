@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
@@ -10,7 +11,6 @@ use crate::runtime::RuntimeSessionSnapshot;
 
 use super::{
     decode_jsonrpc_response, ProjectServiceProvider, ProviderCallError, ProviderCancelOutcome,
-    ResolvedMcpRoute,
 };
 
 impl ProjectServiceProvider {

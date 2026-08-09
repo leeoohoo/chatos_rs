@@ -5,9 +5,10 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
-    WorkspaceProviderKind,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
 use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
 use serde_json::json;

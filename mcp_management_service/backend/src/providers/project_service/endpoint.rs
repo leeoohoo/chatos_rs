@@ -2,13 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
-use chatos_mcp_management_sdk::McpProviderKind;
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 
 use crate::runtime::RuntimeSessionSnapshot;
 
 use super::{
-    ProjectServiceProvider, ProviderCallError, ResolvedMcpRoute, PROJECT_ENVIRONMENT_SCOPE,
-    PROJECT_HARNESS_SCOPE, PROJECT_MCP_SCOPE, PROJECT_READ_SCOPE,
+    ProjectServiceProvider, ProviderCallError, PROJECT_ENVIRONMENT_SCOPE, PROJECT_HARNESS_SCOPE,
+    PROJECT_MCP_SCOPE, PROJECT_READ_SCOPE,
 };
 
 impl ProjectServiceProvider {

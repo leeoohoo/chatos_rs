@@ -2,15 +2,15 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
-use chatos_mcp_management_sdk::McpProviderKind;
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 use chatos_mcp_service::{builtin_kind_header_value, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER};
 
 use crate::runtime::RuntimeSessionSnapshot;
 use crate::trace_context::InternalTraceContextExt;
 
 use super::{
-    ProjectServiceProvider, ProviderCallError, ResolvedMcpRoute, CALLER_SERVICE,
-    PROJECT_HARNESS_SCOPE, TOKEN_AUDIENCE,
+    ProjectServiceProvider, ProviderCallError, CALLER_SERVICE, PROJECT_HARNESS_SCOPE,
+    TOKEN_AUDIENCE,
 };
 
 impl ProjectServiceProvider {
