@@ -489,7 +489,7 @@ mod tests {
         task.mcp_config.requires_execution = false;
         let plan_constraints =
             crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
-                target_agent: Some("task_runner_plan_phase".to_string()),
+                target_agent: Some(SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string()),
                 tool_allowlists: Vec::new(),
                 ..Default::default()
             };
@@ -497,7 +497,7 @@ mod tests {
 
         let run_constraints =
             crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
-                target_agent: Some("task_runner_run_phase".to_string()),
+                target_agent: Some(SystemAgentKey::TaskRunnerRunPhase.as_str().to_string()),
                 tool_allowlists: Vec::new(),
                 ..Default::default()
             };

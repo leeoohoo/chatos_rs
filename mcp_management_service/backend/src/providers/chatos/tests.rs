@@ -82,7 +82,7 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(
         headers["x-mcp-management-agent-key"],
-        "chatos_conversation_agent"
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent.as_str()
     );
     assert_eq!(headers["x-mcp-management-session-id"], "session-1");
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
@@ -464,7 +464,9 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "chatos_conversation_agent".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent
+            .as_str()
+            .to_string(),
         task_profile: None,
         project_id: "project-1".to_string(),
         device_id: None,

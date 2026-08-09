@@ -4,6 +4,7 @@
 use chatos_agent::{is_chatos_plan_task_profile, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 use chatos_mcp_service::BuiltinHostBackend;
+use chatos_plugin_management_sdk::SystemAgentKey;
 
 use crate::models::{
     TaskMcpConfig, TaskMcpHostedBuiltinRoute, TaskMcpRequiredBuiltinCapability,
@@ -246,10 +247,10 @@ fn requirement_source_key(source: McpCapabilityRequirementSource) -> &'static st
             AgentMcpCaller::LocalConnectorClientAgent,
         ) => "local_connector_client_agent",
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::TaskRunnerRunPhase) => {
-            "task_runner_run_phase"
+            SystemAgentKey::TaskRunnerRunPhase.as_str()
         }
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::TaskRunnerPlanPhase) => {
-            "task_runner_plan_phase"
+            SystemAgentKey::TaskRunnerPlanPhase.as_str()
         }
         McpCapabilityRequirementSource::TaskProfileChatosPlan => "task_profile_chatos_plan",
         McpCapabilityRequirementSource::RuntimeInternal => "runtime_internal",

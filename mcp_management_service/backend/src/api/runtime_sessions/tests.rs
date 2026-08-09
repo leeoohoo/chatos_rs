@@ -11,7 +11,7 @@ fn request() -> CreateRuntimeSessionRequest {
     CreateRuntimeSessionRequest {
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         project_id: "project-1".to_string(),
         run_id: Some("run-1".to_string()),
         turn_id: None,
@@ -141,7 +141,7 @@ fn sandbox_target_provider_shape_fails_closed() {
 #[test]
 fn only_registered_system_agent_keys_are_accepted() {
     assert_eq!(
-        parse_agent_key("task_runner_run_phase").unwrap(),
+        parse_agent_key(SystemAgentKey::TaskRunnerRunPhase.as_str()).unwrap(),
         SystemAgentKey::TaskRunnerRunPhase
     );
     assert!(parse_agent_key("arbitrary-agent").is_err());
@@ -329,7 +329,7 @@ fn task_runner_service_session_requires_chatos_source_scope() {
 #[test]
 fn capability_response_must_match_the_requested_identity() {
     let capabilities = chatos_plugin_management_sdk::ResolvedAgentCapabilities {
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         owner_user_id: "user-1".to_string(),
         policy_revision: "policy-1".to_string(),
         generated_at: "now".to_string(),
@@ -339,14 +339,24 @@ fn capability_response_must_match_the_requested_identity() {
         plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
     };
-    validate_capability_identity(&capabilities, "task_runner_run_phase", "user-1").unwrap();
-    assert!(
-        validate_capability_identity(&capabilities, "task_runner_plan_phase", "user-1").is_err()
-    );
-    assert!(
-        validate_capability_identity(&capabilities, "task_runner_run_phase", "another-user")
-            .is_err()
-    );
+    validate_capability_identity(
+        &capabilities,
+        SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        "user-1",
+    )
+    .unwrap();
+    assert!(validate_capability_identity(
+        &capabilities,
+        SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+        "user-1",
+    )
+    .is_err());
+    assert!(validate_capability_identity(
+        &capabilities,
+        SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        "another-user",
+    )
+    .is_err());
 }
 
 #[test]

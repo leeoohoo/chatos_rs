@@ -82,7 +82,7 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(
         headers["x-mcp-management-agent-key"],
-        "task_runner_run_phase"
+        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase.as_str()
     );
     assert_eq!(headers["x-mcp-management-session-id"], "session-1");
     assert_eq!(
@@ -227,7 +227,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(
         headers["x-mcp-management-agent-key"],
-        "chatos_conversation_agent"
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent.as_str()
     );
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
     assert_eq!(headers["x-mcp-management-turn-id"], "turn-1");
@@ -295,7 +295,9 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+            .as_str()
+            .to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
