@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use serde_json::json;
+
+use chatos_mcp_management_sdk::WorkspaceProviderKind;
+use chatos_plugin_management_sdk::PluginComponentKind;
+
 use super::*;
 
 pub(super) fn validate_cloud_component_bundle(

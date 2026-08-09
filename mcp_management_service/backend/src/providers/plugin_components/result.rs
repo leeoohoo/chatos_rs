@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
+use chatos_plugin_management_sdk::PluginComponentKind;
+use serde_json::json;
+
 use super::*;
 
 pub(super) fn plugin_command_result(

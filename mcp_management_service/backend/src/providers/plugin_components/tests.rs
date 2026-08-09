@@ -11,11 +11,13 @@ use axum::{Json, Router};
 use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, SandboxProviderKind, WorkspaceExecutionTarget,
+    WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     plugin_command_snapshot_sha256, PluginCloudComponentBundle, PluginComponentDescriptor,
-    PluginExecutionHost, PluginManagementClientConfig, PluginPathRef,
+    PluginComponentKind, PluginExecutionHost, PluginManagementClientConfig, PluginPathRef,
 };
+use serde_json::json;
 
 use super::*;
 
