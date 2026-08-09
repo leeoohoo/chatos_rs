@@ -64,6 +64,7 @@ struct TerminalCommandResult {
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub(super) struct NodeVulnerabilityCounts {
     pub(super) total: u64,
+    pub(super) info: u64,
     pub(super) low: u64,
     pub(super) moderate: u64,
     pub(super) high: u64,
@@ -283,11 +284,28 @@ impl SupplyChainEvidenceState {
 
         match self.audit.as_ref() {
             Some(audit)
-                if audit_command_matches_level(&audit.command, policy.audit_level.as_str())
-                    && !command_masks_failure(audit.command.as_str())
-                    && !audit.output_truncated
-                    && audit.vulnerabilities.is_some() =>
+                if !audit_command_matches_level(&audit.command, policy.audit_level.as_str()) =>
             {
+                blocking_reasons.push(format!(
+                    "Node.js dependency audit was not executed with JSON output at the required `{}` level",
+                    policy.audit_level
+                ));
+            }
+            Some(audit) if command_masks_failure(audit.command.as_str()) => {
+                blocking_reasons
+                    .push("Node.js dependency audit command masked its failure status".to_string());
+            }
+            Some(audit) if audit.output_truncated => {
+                blocking_reasons
+                    .push("Node.js dependency audit JSON output was truncated".to_string());
+            }
+            Some(audit) if audit.vulnerabilities.is_none() => {
+                blocking_reasons.push(
+                    "Node.js dependency audit output did not contain a complete JSON `metadata.vulnerabilities` object"
+                        .to_string(),
+                );
+            }
+            Some(audit) => {
                 let vulnerabilities = audit.vulnerabilities.as_ref().expect("checked above");
                 if vulnerabilities.high > 0 || vulnerabilities.critical > 0 {
                     blocking_reasons.push(format!(
@@ -304,10 +322,6 @@ impl SupplyChainEvidenceState {
                     ));
                 }
             }
-            Some(_) => blocking_reasons.push(
-                "Node.js dependency audit did not produce complete JSON vulnerability evidence"
-                    .to_string(),
-            ),
             None => blocking_reasons.push(
                 "Node.js dependency audit was not executed with recorded evidence".to_string(),
             ),
@@ -349,7 +363,7 @@ impl SupplyChainAuditReport {
             );
         };
         format!(
-            "Node.js supply-chain audit status: {}; baseline {}; dependency baseline verified={}; command `{}` exited {}; vulnerabilities total={}, high={}, critical={}",
+            "Node.js supply-chain audit status: {}; baseline {}; dependency baseline verified={}; command `{}` exited {}; vulnerabilities total={}, info={}, low={}, moderate={}, high={}, critical={}",
             self.status,
             self.baseline_revision,
             self.dependency_baseline_verified,
@@ -358,6 +372,9 @@ impl SupplyChainAuditReport {
                 .map(|code| code.to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
             vulnerabilities.total,
+            vulnerabilities.info,
+            vulnerabilities.low,
+            vulnerabilities.moderate,
             vulnerabilities.high,
             vulnerabilities.critical,
         )
@@ -589,13 +606,13 @@ fn terminal_result(payload: &Value) -> Option<TerminalCommandResult> {
 }
 
 fn node_package_manager(command: &str) -> Option<&'static str> {
-    if command.contains("pnpm ") {
+    if command_invokes_executable(command, "pnpm") {
         Some("pnpm")
-    } else if command.contains("yarn ") {
+    } else if command_invokes_executable(command, "yarn") {
         Some("yarn")
-    } else if command.contains("bun ") {
+    } else if command_invokes_executable(command, "bun") {
         Some("bun")
-    } else if command.contains("npm ") {
+    } else if command_invokes_executable(command, "npm") {
         Some("npm")
     } else {
         None
@@ -604,23 +621,34 @@ fn node_package_manager(command: &str) -> Option<&'static str> {
 
 fn is_node_install_command(command: &str) -> bool {
     [
-        "npm ci",
-        "npm install",
-        "pnpm install",
-        "yarn install",
-        "bun install",
+        &["npm", "ci"][..],
+        &["npm", "install"][..],
+        &["pnpm", "install"][..],
+        &["yarn", "install"][..],
+        &["bun", "install"][..],
     ]
     .iter()
-    .any(|needle| command.contains(needle))
+    .any(|invocation| command_invocation_segment(command, invocation).is_some())
         && !command.contains("--package-lock-only")
 }
 
 fn install_scripts_are_disabled(command: &str, package_manager: Option<&str>) -> bool {
+    let install_segment = [
+        &["npm", "ci"][..],
+        &["npm", "install"][..],
+        &["pnpm", "install"][..],
+        &["yarn", "install"][..],
+        &["bun", "install"][..],
+    ]
+    .iter()
+    .find_map(|invocation| command_invocation_segment(command, invocation))
+    .unwrap_or(command);
     match package_manager {
         Some("yarn") => {
-            command.contains("--mode=skip-builds") || command.contains("--mode skip-builds")
+            install_segment.contains("--mode=skip-builds")
+                || install_segment.contains("--mode skip-builds")
         }
-        Some("npm" | "pnpm" | "bun") | None => command.contains("--ignore-scripts"),
+        Some("npm" | "pnpm" | "bun") | None => install_segment.contains("--ignore-scripts"),
         Some(_) => false,
     }
 }
@@ -634,23 +662,20 @@ fn command_masks_failure(command: &str) -> bool {
 }
 
 fn is_lockfile_command(command: &str) -> bool {
-    command.contains("--package-lock-only")
-        || command.contains("pnpm install --lockfile-only")
-        || command.contains("yarn install --mode=update-lockfile")
+    command_invocation_segment(command, &["npm", "install"])
+        .is_some_and(|segment| segment.contains("--package-lock-only"))
+        || command_invocation_segment(command, &["pnpm", "install"])
+            .is_some_and(|segment| segment.contains("--lockfile-only"))
+        || command_invocation_segment(command, &["yarn", "install"])
+            .is_some_and(|segment| segment.contains("--mode=update-lockfile"))
 }
 
 fn approved_rebuild_packages(command: &str) -> Option<Vec<String>> {
-    let marker = if command.contains("npm rebuild ") {
-        "npm rebuild "
-    } else if command.contains("pnpm rebuild ") {
-        "pnpm rebuild "
-    } else {
-        return None;
-    };
-    let packages = command
-        .split_once(marker)?
-        .1
+    let segment = command_invocation_segment(command, &["npm", "rebuild"])
+        .or_else(|| command_invocation_segment(command, &["pnpm", "rebuild"]))?;
+    let packages = segment
         .split_whitespace()
+        .skip(2)
         .take_while(|value| !value.starts_with('-') && !matches!(*value, "&&" | ";" | "||"))
         .map(|value| value.trim_matches(|character| matches!(character, '\'' | '"')))
         .filter(|value| !value.is_empty())
@@ -660,51 +685,116 @@ fn approved_rebuild_packages(command: &str) -> Option<Vec<String>> {
 }
 
 fn is_node_audit_command(command: &str) -> bool {
-    command.contains("npm audit")
-        || command.contains("pnpm audit")
-        || command.contains("yarn npm audit")
+    command_invocation_segment(command, &["npm", "audit"]).is_some()
+        || command_invocation_segment(command, &["pnpm", "audit"]).is_some()
+        || command_invocation_segment(command, &["yarn", "npm", "audit"]).is_some()
 }
 
 fn audit_command_matches_level(command: &str, audit_level: &str) -> bool {
     let command = command.to_ascii_lowercase();
-    command.contains("--json")
-        && (command.contains(format!("--audit-level={audit_level}").as_str())
-            || command.contains(format!("--audit-level {audit_level}").as_str())
-            || command.contains(format!("--severity={audit_level}").as_str())
-            || command.contains(format!("--severity {audit_level}").as_str()))
+    let Some(segment) = command_invocation_segment(&command, &["npm", "audit"])
+        .or_else(|| command_invocation_segment(&command, &["pnpm", "audit"]))
+        .or_else(|| command_invocation_segment(&command, &["yarn", "npm", "audit"]))
+    else {
+        return false;
+    };
+    segment.contains("--json")
+        && (segment.contains(format!("--audit-level={audit_level}").as_str())
+            || segment.contains(format!("--audit-level {audit_level}").as_str())
+            || segment.contains(format!("--severity={audit_level}").as_str())
+            || segment.contains(format!("--severity {audit_level}").as_str()))
 }
 
 fn parse_vulnerability_counts(output: &str) -> Option<NodeVulnerabilityCounts> {
-    let value = serde_json::from_str::<Value>(output.trim())
-        .ok()
-        .or_else(|| {
-            let start = output.find('{')?;
-            let end = output.rfind('}')?;
-            serde_json::from_str::<Value>(&output[start..=end]).ok()
-        })?;
+    if let Ok(value) = serde_json::from_str::<Value>(output.trim()) {
+        if let Some(counts) = vulnerability_counts_from_value(&value) {
+            return Some(counts);
+        }
+    }
+    for (start, character) in output.char_indices() {
+        if character != '{' {
+            continue;
+        }
+        let mut values = serde_json::Deserializer::from_str(&output[start..]).into_iter::<Value>();
+        let Some(Ok(value)) = values.next() else {
+            continue;
+        };
+        if let Some(counts) = vulnerability_counts_from_value(&value) {
+            return Some(counts);
+        }
+    }
+    None
+}
+
+fn vulnerability_counts_from_value(value: &Value) -> Option<NodeVulnerabilityCounts> {
     let vulnerabilities = value.pointer("/metadata/vulnerabilities")?;
     Some(NodeVulnerabilityCounts {
-        total: vulnerabilities
-            .get("total")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        low: vulnerabilities
-            .get("low")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        moderate: vulnerabilities
-            .get("moderate")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        high: vulnerabilities
-            .get("high")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        critical: vulnerabilities
-            .get("critical")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        total: vulnerabilities.get("total")?.as_u64()?,
+        info: vulnerabilities.get("info")?.as_u64()?,
+        low: vulnerabilities.get("low")?.as_u64()?,
+        moderate: vulnerabilities.get("moderate")?.as_u64()?,
+        high: vulnerabilities.get("high")?.as_u64()?,
+        critical: vulnerabilities.get("critical")?.as_u64()?,
     })
+}
+
+fn command_invokes_executable(command: &str, executable: &str) -> bool {
+    shell_command_segments(command).any(|segment| {
+        command_tokens(segment)
+            .first()
+            .is_some_and(|token| executable_name(token) == executable)
+    })
+}
+
+fn command_invocation_segment<'a>(command: &'a str, invocation: &[&str]) -> Option<&'a str> {
+    shell_command_segments(command).find(|segment| {
+        let tokens = command_tokens(segment);
+        tokens.len() >= invocation.len()
+            && tokens
+                .iter()
+                .zip(invocation)
+                .enumerate()
+                .all(|(index, (token, expected))| {
+                    if index == 0 {
+                        executable_name(token) == *expected
+                    } else {
+                        token.trim_matches(|character| matches!(character, '\'' | '"')) == *expected
+                    }
+                })
+    })
+}
+
+fn shell_command_segments(command: &str) -> impl Iterator<Item = &str> {
+    command
+        .split(['\n', ';'])
+        .flat_map(|segment| segment.split("&&"))
+        .flat_map(|segment| segment.split("||"))
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+}
+
+fn command_tokens(segment: &str) -> Vec<&str> {
+    let tokens = segment.split_whitespace().collect::<Vec<_>>();
+    let mut start = 0;
+    while let Some(token) = tokens.get(start) {
+        let cleaned = token.trim_matches(|character| matches!(character, '(' | '{'));
+        if matches!(cleaned, "then" | "do" | "!" | "env" | "command")
+            || (cleaned.contains('=') && !cleaned.starts_with('-'))
+        {
+            start += 1;
+            continue;
+        }
+        break;
+    }
+    tokens[start..].to_vec()
+}
+
+fn executable_name(token: &str) -> &str {
+    token
+        .trim_matches(|character| matches!(character, '(' | '{' | '\'' | '"'))
+        .rsplit('/')
+        .next()
+        .unwrap_or(token)
 }
 
 #[cfg(test)]
@@ -774,7 +864,7 @@ mod tests {
         evidence.observe_tool_result(&terminal_result(
             "npm audit --audit-level=high --json",
             0,
-            r#"{"metadata":{"vulnerabilities":{"total":1,"low":1,"moderate":0,"high":0,"critical":0}}}"#,
+            r#"{"metadata":{"vulnerabilities":{"total":1,"info":0,"low":1,"moderate":0,"high":0,"critical":0}}}"#,
         ));
 
         let report = evidence.evaluate(&policy());
@@ -789,7 +879,7 @@ mod tests {
         evidence.observe_tool_result(&terminal_result(
             "npm audit --audit-level=high --json",
             1,
-            r#"{"metadata":{"vulnerabilities":{"total":1,"low":0,"moderate":0,"high":0,"critical":1}}}"#,
+            r#"{"metadata":{"vulnerabilities":{"total":1,"info":0,"low":0,"moderate":0,"high":0,"critical":1}}}"#,
         ));
 
         let report = evidence.evaluate(&policy());
@@ -816,7 +906,7 @@ mod tests {
         assert!(report
             .blocking_reasons
             .iter()
-            .any(|reason| reason.contains("complete JSON")));
+            .any(|reason| reason.contains("masked")));
     }
 
     #[test]
@@ -826,10 +916,70 @@ mod tests {
         evidence.observe_tool_result(&split_terminal_result(
             "npm audit --audit-level=high --json",
             0,
-            r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
         ));
 
         assert_eq!(evidence.evaluate(&policy()).status, "passed");
+    }
+
+    #[test]
+    fn audit_json_is_found_after_a_json_preflight_output() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "node -e \"console.log(JSON.stringify({ scripts: true }))\" && npm audit --json --audit-level=high",
+            0,
+            "{\"scripts\":true}\n{\"metadata\":{\"vulnerabilities\":{\"total\":0,\"info\":0,\"low\":0,\"moderate\":0,\"high\":0,\"critical\":0}}}",
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "passed");
+        assert_eq!(report.vulnerabilities.expect("audit counts").total, 0);
+    }
+
+    #[test]
+    fn documentation_checks_do_not_replace_real_node_command_evidence() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --json --audit-level=high",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+        evidence.observe_tool_result(&terminal_result(
+            "grep -q 'npm ci --ignore-scripts' README.md && grep -q 'npm audit --json --audit-level=high' README.md",
+            0,
+            "",
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "passed");
+        assert_eq!(
+            report.install_command.as_deref(),
+            Some("npm ci --ignore-scripts")
+        );
+        assert_eq!(
+            report.audit_command.as_deref(),
+            Some("npm audit --json --audit-level=high")
+        );
+    }
+
+    #[test]
+    fn incomplete_vulnerability_metadata_is_rejected() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --json --audit-level=high",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "blocked");
+        assert!(report
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("complete JSON `metadata.vulnerabilities`")));
     }
 
     #[test]
@@ -844,7 +994,7 @@ mod tests {
             evidence.observe_tool_result(&terminal_result(
                 "npm audit --audit-level=high --json",
                 0,
-                r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+                r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
             ));
 
             let report = evidence.evaluate(&policy());
@@ -940,7 +1090,7 @@ mod tests {
         evidence.observe_tool_result(&terminal_result(
             "npm audit --audit-level=high --json",
             0,
-            r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
         ));
 
         let report = evidence.evaluate(&policy());
@@ -971,7 +1121,7 @@ mod tests {
         let mut audit = terminal_result(
             "npm audit --audit-level=high --json",
             0,
-            r#"{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
         );
         audit["result"]["truncated"] = json!(true);
         evidence.observe_tool_result(&audit);
@@ -981,6 +1131,6 @@ mod tests {
         assert!(report
             .blocking_reasons
             .iter()
-            .any(|reason| reason.contains("complete JSON")));
+            .any(|reason| reason.contains("truncated")));
     }
 }
