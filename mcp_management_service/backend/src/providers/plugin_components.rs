@@ -96,6 +96,8 @@ pub(super) enum PreparedComponentBinding {
 }
 
 mod cloud_runtime;
+mod local_prepare;
+mod local_relay_client;
 mod local_runtime;
 mod prepare;
 mod result;
