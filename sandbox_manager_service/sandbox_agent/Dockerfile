@@ -110,7 +110,7 @@ RUN set -eux; \
         *) echo "unsupported sandbox runtime: $runtime" >&2; exit 2 ;; \
       esac; \
     done; \
-    base_packages="bash ca-certificates cmake curl g++ gcc git gnupg jq make openssh-client pkg-config python3 python3-pip python3-venv ripgrep software-properties-common unzip wget xz-utils zip libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libxcb1 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libcairo2 libpango-1.0-0 libasound2t64"; \
+    base_packages="bash ca-certificates cmake curl g++ gcc git gnupg jq make openssh-client pkg-config postgresql-client python3 python3-pip python3-venv ripgrep software-properties-common unzip wget xz-utils zip libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libxcb1 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libcairo2 libpango-1.0-0 libasound2t64"; \
     apt-get update; \
     apt-get install -y --no-install-recommends $base_packages; \
     apt-get clean; \
