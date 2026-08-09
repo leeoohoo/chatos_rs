@@ -6,17 +6,15 @@ use std::collections::HashSet;
 
 use chatos_mcp_management_sdk::{
     McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute, SandboxExecutionTarget,
-    WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
-    plugin_mcp_cloud_runtime_bundle_sha256, PluginExecutionHost, PluginManagementClient,
-    PluginMcpCloudRuntimeBundle, PluginMcpServer, ResolvePluginMcpCloudCredentialsRequest,
+    plugin_mcp_cloud_runtime_bundle_sha256, PluginManagementClient, PluginMcpCloudRuntimeBundle,
+    PluginMcpServer,
 };
 use serde_json::Value;
 
 use crate::runtime::{
     CloudStdioProviderBinding, ExternalHttpProviderBinding, PluginMcpRuntimeBinding,
-    RuntimeSessionSnapshot,
 };
 
 use super::cloud_stdio::CloudStdioProvider;
@@ -25,6 +23,11 @@ use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
 const MAX_PLUGIN_TOOLS: usize = 200;
 const MAX_PLUGIN_TOOL_SNAPSHOT_BYTES: usize = 512 * 1024;
+
+#[path = "plugin_cloud/cloud_prepare.rs"]
+mod cloud_prepare;
+#[path = "plugin_cloud/cloud_runtime.rs"]
+mod cloud_runtime;
 
 #[derive(Clone)]
 pub(super) struct PluginCloudProvider {
@@ -112,302 +115,6 @@ impl PluginCloudProvider {
             }
         }
         (stdio_bindings, http_bindings, tool_snapshots)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn prepare_route(
-        &self,
-        plugin_management: &PluginManagementClient,
-        immutable: &PluginMcpRuntimeBinding,
-        route: &ResolvedMcpRoute,
-        context: &ProjectExecutionContext,
-        target: Option<&SandboxExecutionTarget>,
-        runtime_session_id: &str,
-        owner_user_id: &str,
-        project_id: &str,
-        run_id: Option<&str>,
-        expires_at_unix: i64,
-    ) -> Result<PreparedPluginCloudRoute, ProviderCallError> {
-        if !self.supports(route)
-            || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
-            || route.resource_id != immutable.resource_id
-            || route.allow_writes != immutable.allow_writes
-            || immutable.declared_execution_host == PluginExecutionHost::Local
-            || (immutable.declared_execution_host == PluginExecutionHost::Portable
-                && context.workspace_provider == WorkspaceProviderKind::LocalConnector)
-        {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Cloud route does not match its immutable host binding",
-            ));
-        }
-        let bundle = plugin_management
-            .get_plugin_mcp_cloud_runtime_bundle_for_service(
-                immutable.plugin_id.as_str(),
-                immutable.release_id.as_str(),
-                immutable.component_key.as_str(),
-            )
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "resolve Plugin MCP cloud runtime Bundle failed: {error}"
-                ))
-            })?;
-        validate_runtime_bundle(immutable, &bundle)?;
-        let credentials = plugin_management
-            .resolve_plugin_mcp_cloud_credentials_for_service(
-                immutable.plugin_id.as_str(),
-                immutable.release_id.as_str(),
-                immutable.component_key.as_str(),
-                &ResolvePluginMcpCloudCredentialsRequest {
-                    owner_user_id: owner_user_id.to_string(),
-                    expected_component_content_sha256: immutable.component_content_sha256.clone(),
-                    permission_snapshot: immutable.permission_snapshot.clone(),
-                    auth_connection_ids: immutable.auth_connection_ids.clone(),
-                    minimum_valid_until_unix: Some(expires_at_unix),
-                },
-            )
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "resolve Plugin cloud credentials failed: {error}"
-                ))
-            })?;
-        if credentials.credential_snapshot_sha256.len() != 64
-            || !credentials
-                .credential_snapshot_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-            || credentials.oauth_connection_id.as_ref().is_some_and(|id| {
-                !immutable
-                    .auth_connection_ids
-                    .iter()
-                    .any(|authorized| authorized == id)
-            })
-        {
-            return Err(ProviderCallError::invalid_response(
-                "Plugin cloud credential response is not bound to the immutable Session",
-            ));
-        }
-        match bundle.effective_runtime() {
-            PluginMcpServer::Stdio { .. } => {
-                if !credentials.headers.is_empty() || credentials.oauth_connection_id.is_some() {
-                    return Err(ProviderCallError::invalid_response(
-                        "Plugin stdio credential response contains HTTP-only values",
-                    ));
-                }
-                let target = target.ok_or_else(|| {
-                    ProviderCallError::provider_unavailable(
-                        "Plugin Cloud stdio requires a bound sandbox target",
-                    )
-                })?;
-                let binding = self
-                    .cloud_stdio
-                    .prepare_plugin_binding(immutable, route, &credentials.environment, &bundle)
-                    .map_err(ProviderCallError::provider_unavailable)?;
-                let tools = self
-                    .cloud_stdio
-                    .list_plugin_tools(
-                        target,
-                        runtime_session_id,
-                        owner_user_id,
-                        project_id,
-                        run_id,
-                        expires_at_unix,
-                        route.resource_id.as_str(),
-                        &binding,
-                    )
-                    .await?;
-                validate_tool_snapshot(tools.as_slice())?;
-                Ok(PreparedPluginCloudRoute::Stdio {
-                    binding: Box::new(binding),
-                    tools,
-                })
-            }
-            PluginMcpServer::Http { .. } => {
-                if !credentials.environment.is_empty() {
-                    return Err(ProviderCallError::invalid_response(
-                        "Plugin HTTP credential response contains stdio-only values",
-                    ));
-                }
-                let binding = self
-                    .external_http
-                    .prepare_plugin_binding(
-                        immutable,
-                        route,
-                        bundle.effective_runtime(),
-                        &credentials.headers,
-                    )
-                    .await
-                    .map_err(ProviderCallError::provider_unavailable)?;
-                let request_id = format!("{runtime_session_id}.{}.tools-list", route.resource_id);
-                let tools = self
-                    .external_http
-                    .list_tools_for_binding(&binding, request_id.as_str(), "Plugin Cloud HTTP MCP")
-                    .await?;
-                validate_tool_snapshot(tools.as_slice())?;
-                Ok(PreparedPluginCloudRoute::Http {
-                    binding: Box::new(binding),
-                    tools,
-                })
-            }
-            PluginMcpServer::ConfigFile { .. } => Err(ProviderCallError::invalid_response(
-                "resolved Plugin Cloud config-file runtime is still a config file",
-            )),
-        }
-    }
-
-    pub(super) async fn call_tool(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        original_tool_name: &str,
-        arguments: Value,
-        invocation_id: &str,
-    ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let immutable = snapshot
-            .plugin_mcp_bindings
-            .get(route.resource_id.as_str())
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "immutable Plugin MCP runtime binding is missing",
-                )
-            })?;
-        if !self.supports(route)
-            || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
-            || route.allow_writes != immutable.allow_writes
-        {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Cloud route does not match its immutable runtime binding",
-            ));
-        }
-        let transport = match &immutable.runtime {
-            PluginMcpServer::Stdio { .. } => "stdio",
-            PluginMcpServer::Http { .. } => "http",
-            PluginMcpServer::ConfigFile { .. } => {
-                let has_stdio = snapshot
-                    .cloud_stdio_bindings
-                    .contains_key(route.resource_id.as_str());
-                let has_http = snapshot
-                    .external_http_bindings
-                    .contains_key(route.resource_id.as_str());
-                match (has_stdio, has_http) {
-                    (true, false) => "stdio",
-                    (false, true) => "http",
-                    _ => {
-                        return Err(ProviderCallError::provider_unavailable(
-                            "Plugin Cloud config-file runtime binding is missing or ambiguous",
-                        ))
-                    }
-                }
-            }
-        };
-        match transport {
-            "stdio" => {
-                let binding = snapshot
-                    .cloud_stdio_bindings
-                    .get(route.resource_id.as_str())
-                    .ok_or_else(|| {
-                        ProviderCallError::provider_unavailable(
-                            "Plugin Cloud stdio binding is missing",
-                        )
-                    })?;
-                if binding.provider_ref != immutable.provider_ref
-                    || binding.allow_writes != immutable.allow_writes
-                {
-                    return Err(ProviderCallError::provider_unavailable(
-                        "Plugin Cloud stdio binding drifted from its immutable snapshot",
-                    ));
-                }
-                self.cloud_stdio
-                    .call_bound_tool(
-                        snapshot,
-                        route.resource_id.as_str(),
-                        binding,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
-            "http" => {
-                let binding = snapshot
-                    .external_http_bindings
-                    .get(route.resource_id.as_str())
-                    .ok_or_else(|| {
-                        ProviderCallError::provider_unavailable(
-                            "Plugin Cloud HTTP binding is missing",
-                        )
-                    })?;
-                if binding.provider_ref != immutable.provider_ref
-                    || binding.allow_writes != immutable.allow_writes
-                {
-                    return Err(ProviderCallError::provider_unavailable(
-                        "Plugin Cloud HTTP binding drifted from its immutable snapshot",
-                    ));
-                }
-                self.external_http
-                    .call_bound_tool(
-                        binding,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                        "Plugin Cloud HTTP MCP",
-                    )
-                    .await
-            }
-            _ => unreachable!("validated Plugin Cloud transport"),
-        }
-    }
-
-    pub(super) async fn cancel_invocation(
-        &self,
-        snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
-        invocation_id: &str,
-    ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let immutable = snapshot
-            .plugin_mcp_bindings
-            .get(route.resource_id.as_str())
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "immutable Plugin MCP runtime binding is missing",
-                )
-            })?;
-        if !self.supports(route)
-            || route.provider_ref.as_deref() != Some(immutable.provider_ref.as_str())
-            || route.allow_writes != immutable.allow_writes
-        {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Cloud route does not match its immutable runtime binding",
-            ));
-        }
-        let stdio = snapshot
-            .cloud_stdio_bindings
-            .get(route.resource_id.as_str());
-        let http = snapshot
-            .external_http_bindings
-            .get(route.resource_id.as_str());
-        match (stdio, http) {
-            (Some(binding), None)
-                if binding.provider_ref == immutable.provider_ref
-                    && binding.allow_writes == immutable.allow_writes =>
-            {
-                self.cloud_stdio
-                    .cancel_bound_invocation(snapshot, route.resource_id.as_str(), invocation_id)
-                    .await
-            }
-            (None, Some(binding))
-                if binding.provider_ref == immutable.provider_ref
-                    && binding.allow_writes == immutable.allow_writes =>
-            {
-                self.external_http
-                    .cancel_bound_invocation(binding, invocation_id, "Plugin Cloud HTTP MCP")
-                    .await
-            }
-            _ => Err(ProviderCallError::provider_unavailable(
-                "Plugin Cloud runtime binding is missing, ambiguous, or drifted",
-            )),
-        }
     }
 }
 
@@ -504,7 +211,7 @@ mod tests {
 
     use chatos_plugin_management_sdk::{
         plugin_mcp_cloud_runtime_bundle_sha256, PluginComponentDescriptor, PluginComponentKind,
-        PluginMcpServer, PluginPathRef,
+        PluginExecutionHost, PluginMcpServer, PluginPathRef,
     };
 
     use super::*;
