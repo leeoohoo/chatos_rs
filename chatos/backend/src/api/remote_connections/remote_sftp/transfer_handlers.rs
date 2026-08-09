@@ -18,14 +18,13 @@ use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService
 
 use super::super::request_normalize::normalize_transfer_direction;
 use super::super::resolve_jump_connection_snapshot;
-use super::super::transfer_helpers::{
-    estimate_local_total_bytes_typed, run_sftp_transfer_job_typed,
-};
+use super::super::transfer_helpers::run_sftp_transfer_job_typed;
 use super::super::transfer_manager::get_sftp_transfer_manager;
 use super::contracts::SftpTransferStartRequest;
 use super::errors::RemoteSftpApiError;
 use super::support::{
-    ensure_local_target_parent_dir_exists, require_non_empty_field, verification_code_from_headers,
+    ensure_local_target_parent_dir_exists, reject_backend_local_path_operation,
+    require_non_empty_field, verification_code_from_headers,
 };
 
 pub(crate) async fn start_sftp_transfer(
@@ -63,73 +62,24 @@ pub(crate) async fn start_sftp_transfer(
         Ok(v) => v,
         Err(err) => return err.into_response(),
     };
-    let verification_code = verification_code_from_headers(&headers);
-
     if direction == "upload" {
         let source = FsPath::new(local_path.as_str());
-        if !source.exists() {
-            return RemoteSftpApiError::bad_request_with_code(
-                remote_sftp_codes::INVALID_PATH,
-                "本地路径不存在",
-            )
-            .into_response();
-        }
-        if !source.is_file() && !source.is_dir() {
-            return RemoteSftpApiError::bad_request_with_code(
-                remote_sftp_codes::INVALID_PATH,
-                "本地路径必须是文件或目录",
-            )
-            .into_response();
+        if !source.exists() || (!source.is_file() && !source.is_dir()) {
+            return reject_backend_local_path_operation().into_response();
         }
     } else if let Err(err) = ensure_local_target_parent_dir_exists(local_path.as_str()) {
         return err.into_response();
     }
-
-    let total_estimated = if direction == "upload" {
-        estimate_local_total_bytes_typed(FsPath::new(local_path.as_str())).ok()
-    } else {
-        None
-    };
-    let current_path = if direction == "upload" {
-        Some(local_path.clone())
-    } else {
-        Some(remote_path.clone())
-    };
-    let transfer_user_id = connection
-        .user_id
-        .clone()
-        .unwrap_or_else(|| auth.user_id.clone());
-    let transfer_manager = get_sftp_transfer_manager();
-    let status = transfer_manager.create(
-        resolved_connection.id.as_str(),
-        transfer_user_id.as_str(),
-        direction.as_str(),
-        total_estimated,
-        current_path,
+    let _ = (
+        connection,
+        resolved_connection,
+        direction,
+        local_path,
+        remote_path,
+        auth,
+        verification_code_from_headers(&headers),
     );
-
-    let connection_for_task = resolved_connection.clone();
-    let transfer_id_for_task = status.id.clone();
-    let direction_for_task = direction.clone();
-    let local_for_task = local_path.clone();
-    let remote_for_task = remote_path.clone();
-    let verification_code_for_task = verification_code.clone();
-    tokio::spawn(async move {
-        run_sftp_transfer_task(
-            connection_for_task,
-            transfer_id_for_task,
-            direction_for_task,
-            local_for_task,
-            remote_for_task,
-            verification_code_for_task,
-        )
-        .await;
-    });
-
-    (
-        StatusCode::ACCEPTED,
-        Json(serde_json::to_value(status).unwrap_or(Value::Null)),
-    )
+    return reject_backend_local_path_operation().into_response();
 }
 
 pub(crate) async fn get_sftp_transfer_status(
@@ -188,6 +138,7 @@ pub(crate) async fn cancel_sftp_transfer(
     }
 }
 
+#[allow(dead_code)]
 async fn run_sftp_transfer_task(
     connection: RemoteConnection,
     transfer_id: String,

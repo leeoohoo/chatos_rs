@@ -15,9 +15,12 @@ use super::super::{
 use super::errors::TransferJobError;
 use ssh2::{OpenFlags, OpenType};
 
+#[allow(dead_code)]
 const SCP_STDOUT_LIMIT_BYTES: usize = 1024 * 1024;
+#[allow(dead_code)]
 const SCP_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
 
+#[allow(dead_code)]
 pub(crate) async fn run_scp_upload_typed(
     connection: &RemoteConnection,
     local_path: &str,
@@ -107,6 +110,7 @@ pub(crate) async fn run_scp_upload_typed(
     Err(TransferJobError::remote(stderr))
 }
 
+#[allow(dead_code)]
 fn map_scp_process_error(
     failure_prefix: &str,
     timeout_message: &str,
@@ -122,6 +126,7 @@ fn map_scp_process_error(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) async fn run_scp_download_typed(
     connection: &RemoteConnection,
     remote_path: &str,

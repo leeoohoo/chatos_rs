@@ -7,7 +7,6 @@ use axum::{
     Json,
 };
 use serde_json::Value;
-use std::path::Path as FsPath;
 use tokio::time::Duration;
 
 use crate::core::auth::AuthUser;
@@ -16,8 +15,6 @@ use crate::core::remote_connection_access::{
 };
 use crate::core::validation::normalize_non_empty;
 use crate::models::remote_connection::RemoteConnectionService;
-
-use super::super::transfer_helpers::{run_scp_download_typed, run_scp_upload_typed};
 use super::super::{
     join_remote_path, normalize_remote_path, remote_parent_path, resolve_jump_connection_snapshot,
     shell_quote,
@@ -28,7 +25,8 @@ use super::contracts::{
 };
 use super::errors::{map_remote_listing_error, RemoteSftpApiError};
 use super::support::{
-    ensure_local_target_parent_dir_exists, fetch_remote_entries, require_non_empty_field,
+    ensure_local_target_parent_dir_exists, fetch_remote_entries, reject_backend_local_path_operation,
+    require_non_empty_field,
     validate_mkdir_name, verification_code_from_headers,
 };
 
@@ -94,36 +92,12 @@ pub(crate) async fn upload_file_to_remote(
         Ok(v) => v,
         Err(err) => return err.into_response(),
     };
-    let verification_code = verification_code_from_headers(&headers);
-
     let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
         Ok(connection) => connection,
         Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
     };
-
-    let local = FsPath::new(&local_path);
-    if !local.exists() || !local.is_file() {
-        return RemoteSftpApiError::bad_request_with_code(
-            crate::core::remote_connection_error_codes::remote_sftp_codes::INVALID_PATH,
-            "本地文件不存在或不是文件",
-        )
-        .into_response();
-    }
-
-    match run_scp_upload_typed(
-        &resolved_connection,
-        local_path.as_str(),
-        remote_path.as_str(),
-        verification_code.as_deref(),
-    )
-    .await
-    {
-        Ok(_) => {
-            let _ = RemoteConnectionService::touch(&connection.id).await;
-            (StatusCode::OK, Json(serde_json::json!({ "success": true })))
-        }
-        Err(err) => RemoteSftpApiError::from(err).into_response(),
-    }
+    let _ = (local_path, remote_path, verification_code_from_headers(&headers), resolved_connection);
+    return reject_backend_local_path_operation().into_response();
 }
 
 pub(crate) async fn download_file_from_remote(
@@ -145,8 +119,6 @@ pub(crate) async fn download_file_from_remote(
         Ok(v) => v,
         Err(err) => return err.into_response(),
     };
-    let verification_code = verification_code_from_headers(&headers);
-
     let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
         Ok(connection) => connection,
         Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
@@ -156,20 +128,13 @@ pub(crate) async fn download_file_from_remote(
         return err.into_response();
     }
 
-    match run_scp_download_typed(
-        &resolved_connection,
-        remote_path.as_str(),
-        local_path.as_str(),
-        verification_code.as_deref(),
-    )
-    .await
-    {
-        Ok(_) => {
-            let _ = RemoteConnectionService::touch(&connection.id).await;
-            (StatusCode::OK, Json(serde_json::json!({ "success": true })))
-        }
-        Err(err) => RemoteSftpApiError::from(err).into_response(),
-    }
+    let _ = (
+        resolved_connection,
+        remote_path,
+        local_path,
+        verification_code_from_headers(&headers),
+    );
+    reject_backend_local_path_operation().into_response()
 }
 
 pub(crate) async fn create_remote_directory(

@@ -47,7 +47,10 @@ pub(super) async fn list_remote_connections(
     match RemoteConnectionService::list(Some(user_id)).await {
         Ok(list) => (
             StatusCode::OK,
-            Json(serde_json::to_value(list).unwrap_or(Value::Null)),
+            Json(serde_json::to_value(
+                list.into_iter().map(|item| item.to_view()).collect::<Vec<_>>(),
+            )
+            .unwrap_or(Value::Null)),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -96,7 +99,7 @@ pub(super) async fn create_remote_connection(
 
     (
         StatusCode::CREATED,
-        Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
+        Json(serde_json::to_value(saved.to_view()).unwrap_or(Value::Null)),
     )
 }
 
@@ -140,7 +143,7 @@ pub(super) async fn get_remote_connection(
     match ensure_owned_remote_connection(&id, &auth).await {
         Ok(connection) => (
             StatusCode::OK,
-            Json(serde_json::to_value(connection).unwrap_or(Value::Null)),
+            Json(serde_json::to_value(connection.to_view()).unwrap_or(Value::Null)),
         ),
         Err(err) => map_remote_connection_access_error(err),
     }
@@ -183,7 +186,7 @@ pub(super) async fn update_remote_connection(
             );
             (
                 StatusCode::OK,
-                Json(serde_json::to_value(connection).unwrap_or(Value::Null)),
+                Json(serde_json::to_value(connection.to_view()).unwrap_or(Value::Null)),
             )
         }
         Ok(None) => (

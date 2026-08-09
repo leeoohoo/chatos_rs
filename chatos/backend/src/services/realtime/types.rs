@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::models::project::Project;
-use crate::models::remote_connection::RemoteConnection;
+use crate::models::remote_connection::RemoteConnectionView;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::models::terminal::Terminal;
@@ -79,7 +79,7 @@ pub struct ProjectsUpdatedRealtimePayload {
 pub struct RemoteConnectionsUpdatedRealtimePayload {
     pub reason: String,
     pub connection_id: Option<String>,
-    pub connection: Option<RemoteConnection>,
+    pub connection: Option<RemoteConnectionView>,
 }
 
 #[derive(Debug, Clone, Serialize)]

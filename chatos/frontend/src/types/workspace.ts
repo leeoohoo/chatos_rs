@@ -161,9 +161,9 @@ export interface RemoteConnection {
   port: number;
   username: string;
   authType: 'private_key' | 'private_key_cert' | 'password';
-  password?: string | null;
-  privateKeyPath?: string | null;
-  certificatePath?: string | null;
+  hasPassword: boolean;
+  hasPrivateKeyPath: boolean;
+  hasCertificatePath: boolean;
   defaultRemotePath?: string | null;
   hostKeyPolicy: 'strict' | 'accept_new';
   jumpEnabled: boolean;
@@ -171,9 +171,9 @@ export interface RemoteConnection {
   jumpHost?: string | null;
   jumpPort?: number | null;
   jumpUsername?: string | null;
-  jumpPrivateKeyPath?: string | null;
-  jumpCertificatePath?: string | null;
-  jumpPassword?: string | null;
+  hasJumpPrivateKeyPath: boolean;
+  hasJumpCertificatePath: boolean;
+  hasJumpPassword: boolean;
   userId?: string | null;
   createdAt: Date;
   updatedAt: Date;

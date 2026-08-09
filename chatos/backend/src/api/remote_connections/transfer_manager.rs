@@ -34,6 +34,7 @@ impl SftpTransferManager {
         }
     }
 
+    #[allow(dead_code)]
     pub(super) fn create(
         &self,
         connection_id: &str,

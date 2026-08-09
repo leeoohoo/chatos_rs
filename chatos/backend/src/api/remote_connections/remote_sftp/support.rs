@@ -14,6 +14,8 @@ use super::contracts::RemoteEntry;
 use super::errors::RemoteSftpApiError;
 
 const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";
+const LOCAL_CONNECTOR_REQUIRED_FOR_LOCAL_PATH: &str =
+    "远端 SFTP 的本地路径操作必须走本地执行面，云端后端不再直接读写 host 文件系统";
 
 pub(super) fn verification_code_from_headers(headers: &HeaderMap) -> Option<String> {
     headers
@@ -48,6 +50,13 @@ pub(super) fn ensure_local_target_parent_dir_exists(
         }
     }
     Ok(())
+}
+
+pub(super) fn reject_backend_local_path_operation() -> RemoteSftpApiError {
+    RemoteSftpApiError::bad_request_with_code(
+        remote_sftp_codes::INVALID_PATH,
+        LOCAL_CONNECTOR_REQUIRED_FOR_LOCAL_PATH,
+    )
 }
 
 pub(super) fn validate_mkdir_name(name: &str) -> Result<(), RemoteSftpApiError> {

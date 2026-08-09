@@ -25,6 +25,8 @@ use super::map_command_spawn_error;
 
 const REMOTE_SSH_STDOUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const REMOTE_SSH_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
+const LOCAL_CONNECTOR_REQUIRED_FOR_KEY_AUTH: &str =
+    "该远端连接依赖本地私钥/证书执行能力，云端后端不会再代替本机使用这些凭据";
 
 pub(super) struct ConnectedSshSession {
     pub(super) session: Session,
@@ -39,6 +41,7 @@ pub(super) fn connect_ssh2_session_with_verification(
     timeout_duration: Duration,
     verification_code: Option<&str>,
 ) -> Result<ConnectedSshSession, String> {
+    ensure_cloud_safe_remote_connection(connection)?;
     connect_ssh2_session_with_interactive_verification(
         connection,
         timeout_duration,
@@ -55,6 +58,7 @@ pub(super) fn connect_ssh2_session_with_interactive_verification(
     verification_code_rx: Option<mpsc::Receiver<String>>,
     challenge_tx: Option<mpsc::Sender<String>>,
 ) -> Result<ConnectedSshSession, String> {
+    ensure_cloud_safe_remote_connection(connection)?;
     let timeout = StdDuration::from_millis(timeout_duration.as_millis().max(1) as u64);
     let timeout_ms = timeout_duration.as_millis().clamp(1000, u32::MAX as u128) as u32;
     let mut verification_code_rx = verification_code_rx;
@@ -100,6 +104,13 @@ pub(super) fn connect_ssh2_session_with_interactive_verification(
     .map_err(|error| error.to_string())?;
 
     Ok(ConnectedSshSession { session })
+}
+
+fn ensure_cloud_safe_remote_connection(connection: &RemoteConnection) -> Result<(), String> {
+    if connection.requires_local_credential_execution() {
+        return Err(LOCAL_CONNECTOR_REQUIRED_FOR_KEY_AUTH.to_string());
+    }
+    Ok(())
 }
 
 pub(super) fn spawn_remote_shell(

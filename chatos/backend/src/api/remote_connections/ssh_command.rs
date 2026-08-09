@@ -116,6 +116,7 @@ fn build_remote_login_command(path: &str) -> String {
     format!("cd {quoted} 2>/dev/null || true; exec \"${{SHELL:-/bin/bash}}\" -l")
 }
 
+#[allow(dead_code)]
 pub(super) fn build_scp_args(connection: &RemoteConnection) -> Vec<String> {
     let mut args = Vec::new();
 
@@ -138,6 +139,7 @@ pub(super) fn build_ssh_process_command(
     build_authenticated_process_command(connection, "ssh")
 }
 
+#[allow(dead_code)]
 pub(super) fn build_scp_process_command(
     connection: &RemoteConnection,
 ) -> Result<tokio::process::Command, String> {

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::Path as FsPath;
-
 use crate::core::validation::normalize_non_empty;
 use crate::models::remote_connection::{NewRemoteConnection, RemoteConnection};
 
 use super::{CreateRemoteConnectionRequest, UpdateRemoteConnectionRequest};
+
+const LOCAL_CONNECTOR_REQUIRED_FOR_KEY_AUTH: &str =
+    "远端连接的私钥/证书路径认证必须走本地执行面，云端后端不再接受 host 文件路径";
 
 pub(super) fn normalize_create_request(
     req: CreateRemoteConnectionRequest,
@@ -40,15 +41,11 @@ pub(super) fn normalize_create_request(
         private_key_path.as_deref(),
         certificate_path.as_deref(),
     )?;
-    validate_file_path_if_present(private_key_path.as_deref(), "private_key_path 文件不存在")?;
-    validate_file_path_if_present(certificate_path.as_deref(), "certificate_path 文件不存在")?;
-    validate_file_path_if_present(
+    reject_cloud_host_path_auth(
+        private_key_path.as_deref(),
+        certificate_path.as_deref(),
         jump_private_key_path.as_deref(),
-        "jump_private_key_path 文件不存在",
-    )?;
-    validate_file_path_if_present(
         jump_certificate_path.as_deref(),
-        "jump_certificate_path 文件不存在",
     )?;
 
     let jump_host = normalize_non_empty(req.jump_host);
@@ -129,50 +126,58 @@ pub(super) fn normalize_update_request(
         _ => return Err("不支持的 auth_type".to_string()),
     };
 
-    let replacing_jump_config = req.jump_enabled.is_some();
     let jump_enabled = req.jump_enabled.unwrap_or(existing.jump_enabled);
-    let jump_connection_id = if replacing_jump_config {
-        normalize_non_empty(req.jump_connection_id)
+    let requested_jump_connection_id = normalize_non_empty(req.jump_connection_id.clone());
+    let jump_uses_existing_connection = jump_enabled && requested_jump_connection_id.is_some();
+    let jump_connection_id = if jump_enabled {
+        if jump_uses_existing_connection {
+            requested_jump_connection_id
+        } else {
+            None
+        }
     } else {
-        merge_optional_text(req.jump_connection_id, existing.jump_connection_id.clone())
+        None
     };
 
-    let jump_host = if replacing_jump_config {
-        normalize_non_empty(req.jump_host)
-    } else {
+    let jump_host = if jump_enabled {
         merge_optional_text(req.jump_host, existing.jump_host.clone())
-    };
-    let jump_username = if replacing_jump_config {
-        normalize_non_empty(req.jump_username)
     } else {
+        None
+    };
+    let jump_username = if jump_enabled {
         merge_optional_text(req.jump_username, existing.jump_username.clone())
-    };
-    let jump_private_key_path = if replacing_jump_config {
-        normalize_non_empty(req.jump_private_key_path)
     } else {
+        None
+    };
+    let jump_private_key_path = if jump_enabled && !jump_uses_existing_connection {
         merge_optional_text(
             req.jump_private_key_path,
             existing.jump_private_key_path.clone(),
         )
-    };
-    let jump_certificate_path = if replacing_jump_config {
-        normalize_non_empty(req.jump_certificate_path)
     } else {
+        None
+    };
+    let jump_certificate_path = if jump_enabled && !jump_uses_existing_connection {
         merge_optional_text(
             req.jump_certificate_path,
             existing.jump_certificate_path.clone(),
         )
-    };
-    let jump_password = if replacing_jump_config {
-        normalize_non_empty(req.jump_password)
     } else {
+        None
+    };
+    let jump_password = if jump_enabled && !jump_uses_existing_connection {
         merge_optional_text(req.jump_password, existing.jump_password.clone())
+    } else {
+        None
     };
 
-    let jump_port = match req.jump_port {
-        Some(v) => Some(normalize_port(v)?),
-        None if replacing_jump_config => Some(22),
-        None => existing.jump_port.or(Some(22)),
+    let jump_port = if jump_enabled {
+        match req.jump_port {
+            Some(v) => Some(normalize_port(v)?),
+            None => existing.jump_port.or(Some(22)),
+        }
+    } else {
+        None
     };
 
     validate_auth_fields(
@@ -181,15 +186,11 @@ pub(super) fn normalize_update_request(
         private_key_path.as_deref(),
         certificate_path.as_deref(),
     )?;
-    validate_file_path_if_present(private_key_path.as_deref(), "private_key_path 文件不存在")?;
-    validate_file_path_if_present(certificate_path.as_deref(), "certificate_path 文件不存在")?;
-    validate_file_path_if_present(
+    reject_cloud_host_path_auth(
+        private_key_path.as_deref(),
+        certificate_path.as_deref(),
         jump_private_key_path.as_deref(),
-        "jump_private_key_path 文件不存在",
-    )?;
-    validate_file_path_if_present(
         jump_certificate_path.as_deref(),
-        "jump_certificate_path 文件不存在",
     )?;
 
     if jump_enabled && (jump_host.is_none() || jump_username.is_none()) {
@@ -217,25 +218,13 @@ pub(super) fn normalize_update_request(
         ),
         host_key_policy,
         jump_enabled,
-        jump_connection_id: if jump_enabled {
-            jump_connection_id
-        } else {
-            None
-        },
-        jump_host: if jump_enabled { jump_host } else { None },
-        jump_port: if jump_enabled { jump_port } else { None },
-        jump_username: if jump_enabled { jump_username } else { None },
-        jump_private_key_path: if jump_enabled {
-            jump_private_key_path
-        } else {
-            None
-        },
-        jump_certificate_path: if jump_enabled {
-            jump_certificate_path
-        } else {
-            None
-        },
-        jump_password: if jump_enabled { jump_password } else { None },
+        jump_connection_id,
+        jump_host,
+        jump_port,
+        jump_username,
+        jump_private_key_path,
+        jump_certificate_path,
+        jump_password,
         user_id: existing.user_id,
         created_at: existing.created_at,
         updated_at: existing.updated_at,
@@ -313,10 +302,22 @@ fn validate_auth_fields(
     Ok(())
 }
 
-fn validate_file_path_if_present(path: Option<&str>, error_message: &str) -> Result<(), String> {
-    if let Some(path) = path {
-        if !FsPath::new(path).is_file() {
-            return Err(error_message.to_string());
+fn reject_cloud_host_path_auth(
+    private_key_path: Option<&str>,
+    certificate_path: Option<&str>,
+    jump_private_key_path: Option<&str>,
+    jump_certificate_path: Option<&str>,
+) -> Result<(), String> {
+    for path in [
+        private_key_path,
+        certificate_path,
+        jump_private_key_path,
+        jump_certificate_path,
+    ] {
+        if let Some(path) = path {
+            if !path.trim().is_empty() {
+                return Err(LOCAL_CONNECTOR_REQUIRED_FOR_KEY_AUTH.to_string());
+            }
         }
     }
     Ok(())

@@ -26,9 +26,13 @@ export const normalizeRemoteConnection = (raw: RemoteConnectionResponse | unknow
     port: Number(readValue(record, 'port') ?? 22),
     username: (readValue(record, 'username') ?? '') as RemoteConnection['username'],
     authType: (readValue(record, 'auth_type') ?? readValue(record, 'authType') ?? 'private_key') as RemoteConnection['authType'],
-    password: (readValue(record, 'password') ?? null) as RemoteConnection['password'],
-    privateKeyPath: (readValue(record, 'private_key_path') ?? readValue(record, 'privateKeyPath') ?? null) as RemoteConnection['privateKeyPath'],
-    certificatePath: (readValue(record, 'certificate_path') ?? readValue(record, 'certificatePath') ?? null) as RemoteConnection['certificatePath'],
+    hasPassword: Boolean(readValue(record, 'has_password') ?? readValue(record, 'hasPassword') ?? false),
+    hasPrivateKeyPath: Boolean(
+      readValue(record, 'has_private_key_path') ?? readValue(record, 'hasPrivateKeyPath') ?? false,
+    ),
+    hasCertificatePath: Boolean(
+      readValue(record, 'has_certificate_path') ?? readValue(record, 'hasCertificatePath') ?? false,
+    ),
     defaultRemotePath: (readValue(record, 'default_remote_path') ?? readValue(record, 'defaultRemotePath') ?? null) as RemoteConnection['defaultRemotePath'],
     hostKeyPolicy: (readValue(record, 'host_key_policy') ?? readValue(record, 'hostKeyPolicy') ?? 'strict') as RemoteConnection['hostKeyPolicy'],
     jumpEnabled: Boolean(readValue(record, 'jump_enabled') ?? readValue(record, 'jumpEnabled') ?? false),
@@ -36,9 +40,15 @@ export const normalizeRemoteConnection = (raw: RemoteConnectionResponse | unknow
     jumpHost: (readValue(record, 'jump_host') ?? readValue(record, 'jumpHost') ?? null) as RemoteConnection['jumpHost'],
     jumpPort: (readValue(record, 'jump_port') ?? readValue(record, 'jumpPort') ?? null) as RemoteConnection['jumpPort'],
     jumpUsername: (readValue(record, 'jump_username') ?? readValue(record, 'jumpUsername') ?? null) as RemoteConnection['jumpUsername'],
-    jumpPrivateKeyPath: (readValue(record, 'jump_private_key_path') ?? readValue(record, 'jumpPrivateKeyPath') ?? null) as RemoteConnection['jumpPrivateKeyPath'],
-    jumpCertificatePath: (readValue(record, 'jump_certificate_path') ?? readValue(record, 'jumpCertificatePath') ?? null) as RemoteConnection['jumpCertificatePath'],
-    jumpPassword: (readValue(record, 'jump_password') ?? readValue(record, 'jumpPassword') ?? null) as RemoteConnection['jumpPassword'],
+    hasJumpPrivateKeyPath: Boolean(
+      readValue(record, 'has_jump_private_key_path') ?? readValue(record, 'hasJumpPrivateKeyPath') ?? false,
+    ),
+    hasJumpCertificatePath: Boolean(
+      readValue(record, 'has_jump_certificate_path') ?? readValue(record, 'hasJumpCertificatePath') ?? false,
+    ),
+    hasJumpPassword: Boolean(
+      readValue(record, 'has_jump_password') ?? readValue(record, 'hasJumpPassword') ?? false,
+    ),
     userId: (readValue(record, 'user_id') ?? readValue(record, 'userId') ?? null) as RemoteConnection['userId'],
     createdAt: normalizeDate(createdAtSource),
     updatedAt: normalizeDate(updatedAtSource),

@@ -305,7 +305,7 @@ pub fn publish_remote_connections_updated(
             RemoteConnectionsUpdatedRealtimePayload {
                 reason: reason.to_string(),
                 connection_id: connection_id.map(|value| value.to_string()),
-                connection,
+                connection: connection.map(|item| item.to_view()),
             },
         ),
         ts: now_rfc3339(),

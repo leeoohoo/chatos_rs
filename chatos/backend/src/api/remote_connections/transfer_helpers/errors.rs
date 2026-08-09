@@ -33,6 +33,7 @@ impl RemoteTransferErrorCode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TransferJobError {
     Cancelled,
+    #[allow(dead_code)]
     Timeout(String),
     Io(String),
     Remote {
@@ -47,6 +48,7 @@ impl TransferJobError {
         Self::Message(message.into())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn timeout(message: impl Into<String>) -> Self {
         Self::Timeout(message.into())
     }

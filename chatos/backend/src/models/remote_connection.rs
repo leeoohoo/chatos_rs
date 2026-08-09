@@ -33,6 +33,33 @@ pub struct RemoteConnection {
     pub last_active_at: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteConnectionView {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub port: i64,
+    pub username: String,
+    pub auth_type: String,
+    pub has_password: bool,
+    pub has_private_key_path: bool,
+    pub has_certificate_path: bool,
+    pub default_remote_path: Option<String>,
+    pub host_key_policy: String,
+    pub jump_enabled: bool,
+    pub jump_connection_id: Option<String>,
+    pub jump_host: Option<String>,
+    pub jump_port: Option<i64>,
+    pub jump_username: Option<String>,
+    pub has_jump_private_key_path: bool,
+    pub has_jump_certificate_path: bool,
+    pub has_jump_password: bool,
+    pub user_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_active_at: String,
+}
+
 pub(crate) struct NewRemoteConnection {
     pub name: String,
     pub host: String,
@@ -105,6 +132,46 @@ impl RemoteConnection {
             last_active_at: now,
         }
     }
+
+    pub fn to_view(&self) -> RemoteConnectionView {
+        RemoteConnectionView {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            auth_type: self.auth_type.clone(),
+            has_password: has_text(self.password.as_deref()),
+            has_private_key_path: has_text(self.private_key_path.as_deref()),
+            has_certificate_path: has_text(self.certificate_path.as_deref()),
+            default_remote_path: self.default_remote_path.clone(),
+            host_key_policy: self.host_key_policy.clone(),
+            jump_enabled: self.jump_enabled,
+            jump_connection_id: self.jump_connection_id.clone(),
+            jump_host: self.jump_host.clone(),
+            jump_port: self.jump_port,
+            jump_username: self.jump_username.clone(),
+            has_jump_private_key_path: has_text(self.jump_private_key_path.as_deref()),
+            has_jump_certificate_path: has_text(self.jump_certificate_path.as_deref()),
+            has_jump_password: has_text(self.jump_password.as_deref()),
+            user_id: self.user_id.clone(),
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
+            last_active_at: self.last_active_at.clone(),
+        }
+    }
+
+    pub fn requires_local_credential_execution(&self) -> bool {
+        self.auth_type != "password"
+            || has_text(self.private_key_path.as_deref())
+            || has_text(self.certificate_path.as_deref())
+            || has_text(self.jump_private_key_path.as_deref())
+            || has_text(self.jump_certificate_path.as_deref())
+    }
+}
+
+fn has_text(value: Option<&str>) -> bool {
+    value.is_some_and(|item| !item.trim().is_empty())
 }
 
 pub struct RemoteConnectionService;

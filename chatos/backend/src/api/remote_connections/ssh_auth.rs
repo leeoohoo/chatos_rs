@@ -404,11 +404,6 @@ pub(super) fn authenticate_jump_session(
         }
     }
 
-    match session.userauth_agent(jump_username) {
-        Ok(_) => return Ok(()),
-        Err(err) => failures.push(format!("SSH Agent 认证失败: {err}")),
-    }
-
     if let Some(password) = connection.password.as_ref() {
         match authenticate_with_password_fallbacks(
             session,
@@ -434,7 +429,7 @@ pub(super) fn authenticate_jump_session(
     }
 
     Err(format!(
-        "跳板机认证失败：{}。请配置 jump_private_key_path、jump_password 或 SSH Agent",
+        "跳板机认证失败：{}。请配置 jump_password 或复用目标密码",
         failures.join("；")
     ))
 }
