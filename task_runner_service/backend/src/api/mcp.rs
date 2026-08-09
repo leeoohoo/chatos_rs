@@ -6,7 +6,8 @@ use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chatos_agent::{
-    chatos_task_runner_tool_profile, is_chatos_callback_agent, is_task_runner_phase_agent,
+    chatos_task_runner_tool_profile, is_chatos_callback_agent, is_chatos_plan_task_profile,
+    is_task_runner_phase_agent,
 };
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
@@ -434,7 +435,7 @@ async fn dispatch_bound_task_runner_tool(
     let is_chatos_plan = binding
         .task_profile
         .as_deref()
-        .is_some_and(|value| value.eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN));
+        .is_some_and(is_chatos_plan_task_profile);
     let Some(tool_profile) = chatos_task_runner_tool_profile(binding.agent_key) else {
         return task_runner_mcp_error(
             request.id.unwrap_or(Value::Null),

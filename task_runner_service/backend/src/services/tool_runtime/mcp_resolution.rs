@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::is_chatos_plan_task_profile;
+use chatos_agent::{is_chatos_plan_task_profile, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 use chatos_mcp_service::BuiltinHostBackend;
 
@@ -237,7 +237,7 @@ fn kind_names(kinds: Vec<BuiltinMcpKind>) -> Vec<String> {
 fn requirement_source_key(source: McpCapabilityRequirementSource) -> &'static str {
     match source {
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::ChatosAsyncPlanner) => {
-            "chatos_async_planner"
+            CHATOS_ASYNC_PLANNER_TOOL_PROFILE
         }
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::ProjectManagementAgent) => {
             "project_management_agent"
