@@ -243,7 +243,7 @@ pub fn tool_result_is_stale_project_write_failure(payload: &Value) -> bool {
     let Some(name) = payload.get("name").and_then(Value::as_str) else {
         return false;
     };
-    if !tool_name_ends_with_any(name, &["write_file", "edit_file", "apply_patch", "patch"]) {
+    if !tool_name_ends_with_any(name, &["stage_edit_batch", "commit_edit_session"]) {
         return false;
     }
     let evidence = payload.to_string().to_ascii_lowercase();
@@ -275,12 +275,7 @@ fn tool_result_is_project_mutation(payload: &Value) -> bool {
     if tool_name_ends_with_any(
         name,
         &[
-            "write_file",
-            "edit_file",
-            "append_file",
-            "delete_path",
-            "apply_patch",
-            "patch",
+            "commit_edit_session",
         ],
     ) {
         return write_result_has_meaningful_project_path(payload);
@@ -346,12 +341,7 @@ pub fn tool_result_is_placeholder_progress_write(payload: &Value) -> bool {
     if !tool_name_ends_with_any(
         name,
         &[
-            "write_file",
-            "edit_file",
-            "append_file",
-            "delete_path",
-            "apply_patch",
-            "patch",
+            "commit_edit_session",
         ],
     ) {
         return false;
@@ -389,12 +379,8 @@ fn confirmed_project_paths_from_tool_result(payload: &Value) -> Vec<String> {
             "read_file",
             "search_text",
             "search_files",
-            "write_file",
-            "edit_file",
-            "append_file",
-            "delete_path",
-            "apply_patch",
-            "patch",
+            "stage_edit_batch",
+            "commit_edit_session",
         ],
     ) {
         return Vec::new();
@@ -742,11 +728,11 @@ mod tests {
 
         progress.begin_iteration(4);
         progress.observe_tool_result(&json!({
-            "name": "code_maintainer_write_apply_patch",
+            "name": "code_maintainer_write_commit_edit_session",
             "success": true,
             "is_error": false,
             "result": {
-                "changed_files": [{ "path": "src/lib.rs" }],
+                "committed_paths": [{ "path": "src/lib.rs" }],
             },
         }));
 
@@ -756,11 +742,11 @@ mod tests {
     #[test]
     fn placeholder_progress_write_triggers_review_and_is_not_meaningful_progress() {
         let payload = json!({
-            "name": "code_maintainer_write_write_file",
+            "name": "code_maintainer_write_commit_edit_session",
             "success": true,
             "is_error": false,
             "result": {
-                "path": "TASK_RUNNER_PROGRESS_NOTE.md",
+                "committed_paths": [{ "path": "TASK_RUNNER_PROGRESS_NOTE.md" }],
             },
         });
         assert!(!tool_result_is_meaningful_engineering_action(&payload));
@@ -824,25 +810,21 @@ mod tests {
             "docs/task_runner_execution_notes.md",
         ] {
             let payload = json!({
-                "name": "code_maintainer_write_write_file",
+                "name": "code_maintainer_write_commit_edit_session",
                 "success": true,
                 "is_error": false,
-                "result": { "path": path },
+                "result": { "committed_paths": [{ "path": path }] },
             });
             assert!(!tool_result_is_meaningful_engineering_action(&payload));
             assert!(tool_result_is_placeholder_progress_write(&payload));
         }
 
         assert!(tool_result_is_meaningful_engineering_action(&json!({
-            "name": "code_maintainer_write_apply_patch",
+            "name": "code_maintainer_write_commit_edit_session",
             "success": true,
             "is_error": false,
             "content": serde_json::to_string(&json!({
-                "harness": {
-                    "commit": {
-                        "changed_files": [{ "path": "src/lib.rs" }],
-                    },
-                },
+                "committed_paths": [{ "path": "src/lib.rs" }],
             })).expect("content"),
         })));
     }
@@ -894,7 +876,7 @@ mod tests {
             }
         }));
         progress.observe_tool_result(&json!({
-            "name": "harness_code_apply_patch",
+            "name": "harness_code_commit_edit_session",
             "success": true,
             "is_error": false,
             "content": serde_json::to_string(&json!({
@@ -985,11 +967,11 @@ mod tests {
             "result": { "exit_code": 0 },
         });
         let mutation = json!({
-            "name": "code_maintainer_write_apply_patch",
+            "name": "code_maintainer_write_commit_edit_session",
             "success": true,
             "is_error": false,
             "result": {
-                "changed_files": [{ "path": "src/lib.rs" }],
+                "committed_paths": [{ "path": "src/lib.rs" }],
             },
         });
 
@@ -1064,10 +1046,10 @@ mod tests {
     }
 
     #[test]
-    fn stale_patch_failure_triggers_actionable_review() {
+    fn stale_session_write_failure_triggers_actionable_review() {
         let progress = TaskExecutionProgressState::default();
         let stale_patch = json!({
-            "name": "code_maintainer_write_apply_patch",
+            "name": "code_maintainer_write_stage_edit_batch",
             "success": false,
             "is_error": true,
             "content": "Patch context not found in file. Patch context is stale.",

@@ -199,7 +199,10 @@ pub fn classify_builtin_tool(name: &str) -> Option<BuiltinToolAccess> {
     match name.trim() {
         "read_file_raw" | "read_file_range" | "read_file" | "list_dir" | "search_text"
         | "search_files" => Some(BuiltinToolAccess::CodeRead),
-        "write_file" | "edit_file" | "append_file" | "delete_path" | "apply_patch" | "patch" => {
+        "open_edit_session"
+        | "stage_edit_batch"
+        | "commit_edit_session"
+        | "abort_edit_session" => {
             Some(BuiltinToolAccess::CodeWrite)
         }
         "execute_command" | "get_recent_logs" | "process_list" | "process_poll" | "process_log"
@@ -261,7 +264,7 @@ mod tests {
         assert!(policy.code_read);
         assert!(policy.code_write);
         assert!(policy.allows_tool("read_file_raw"));
-        assert!(policy.allows_tool("apply_patch"));
+        assert!(policy.allows_tool("commit_edit_session"));
     }
 
     #[test]
@@ -294,7 +297,7 @@ mod tests {
             Some(BuiltinToolAccess::CodeRead)
         );
         assert_eq!(
-            classify_builtin_tool("delete_path"),
+            classify_builtin_tool("stage_edit_batch"),
             Some(BuiltinToolAccess::CodeWrite)
         );
         assert_eq!(

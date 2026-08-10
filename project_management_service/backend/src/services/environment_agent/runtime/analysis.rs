@@ -526,6 +526,7 @@ async fn run_project_environment_agent(
 ) -> Result<(), String> {
     let agent_prompt = resolve_project_environment_agent_prompt(
         state,
+        project,
         prompt_vendor,
         model_config.provider.as_str(),
     )
@@ -617,8 +618,12 @@ async fn execute_project_environment_agent(
     .with_memory(Some(agent_memory))
     .with_max_iterations(chatos_agent::load_agent_max_iterations("project-service").await)
     .with_metadata(metadata);
+    let agent = chatos_agent::ProjectEnvironmentAgent::for_project_locality(matches!(
+        project.source_type,
+        crate::models::ProjectSourceType::Local | crate::models::ProjectSourceType::LocalConnector
+    ));
     let result = AgentExecutor::new()
-        .run(&PROJECT_ENVIRONMENT_AGENT, request)
+        .run(&agent, request)
         .await
         .map_err(|error| error.message().to_string())?;
     tracing::info!(

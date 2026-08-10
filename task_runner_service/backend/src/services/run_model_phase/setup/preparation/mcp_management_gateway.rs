@@ -8,7 +8,7 @@ use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle, SandboxExecutionTarget,
 };
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, McpHttpServer};
-use chatos_plugin_management_sdk::SystemMcpKey;
+use chatos_plugin_management_sdk::{SystemAgentKey, SystemMcpKey};
 use tracing::info;
 
 use crate::models::{TaskMcpConfig, TaskRecord, TaskRunRecord};
@@ -23,14 +23,11 @@ const TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS: u64 = chatos_mcp::PROCESS_WAIT_MAX_TIM
 pub(super) async fn resolve_mcp_management_gateway(
     task: &TaskRecord,
     run: &TaskRunRecord,
+    agent_key: SystemAgentKey,
     sandbox_context: Option<&SandboxRuntimeContext>,
 ) -> Result<ResolvedMcpManagementGateway, String> {
     let owner_user_id = normalized_task_owner_user_id(task)
         .ok_or_else(|| "task owner user id is required for MCP Management".to_string())?;
-    let agent_key = crate::models::task_runner_agent_key_for(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    );
     let sandbox_provider = sandbox_context
         .map(SandboxRuntimeContext::provider_kind)
         .transpose()?;

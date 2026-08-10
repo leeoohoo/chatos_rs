@@ -105,7 +105,9 @@ export interface TaskPluginConnectorsResponse {
 export interface TaskCapabilityCatalogResponse {
   agent_key:
     | 'task_runner_plan_phase'
-    | 'task_runner_run_phase';
+    | 'task_runner_local_plan_phase'
+    | 'task_runner_run_phase'
+    | 'task_runner_local_run_phase';
   policy_revision: string;
   selectable_plugins: SelectableTaskPlugin[];
 }

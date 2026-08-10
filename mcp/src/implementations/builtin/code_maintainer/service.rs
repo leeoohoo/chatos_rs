@@ -12,6 +12,7 @@ use super::fs_ops::FsOps;
 use super::registration_read::register_read_tools;
 use super::registration_write::register_write_tools;
 use super::revision::guard_for_workspace;
+use super::session::store_for_workspace;
 use super::storage::ChangeLogStore;
 use super::utils::{ensure_dir, generate_id, normalize_name};
 
@@ -78,6 +79,7 @@ impl CodeMaintainerService {
             ChangeLogStore::new(&server_name, opts.project_id.clone(), opts.db_path.clone())?;
         let change_log = Arc::new(Mutex::new(change_log));
         let revision_guard = guard_for_workspace(root.as_path())?;
+        let session_store = store_for_workspace(root.as_path())?;
 
         let fs_ops = FsOps::new(
             root.clone(),
@@ -131,6 +133,7 @@ impl CodeMaintainerService {
                 fs_ops,
                 change_log,
                 revision_guard,
+                session_store,
                 root,
                 opts.allow_writes,
                 opts.max_file_bytes,

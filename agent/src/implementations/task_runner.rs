@@ -12,8 +12,12 @@ use crate::{agent_descriptor, AgentDescriptor, AgentIdentity};
 
 pub const TASK_RUNNER_PLAN_AGENT: TaskRunnerAgent =
     TaskRunnerAgent::new(SystemAgentKey::TaskRunnerPlanPhase);
+pub const TASK_RUNNER_LOCAL_PLAN_AGENT: TaskRunnerAgent =
+    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerLocalPlanPhase);
 pub const TASK_RUNNER_AGENT: TaskRunnerAgent =
     TaskRunnerAgent::new(SystemAgentKey::TaskRunnerRunPhase);
+pub const TASK_RUNNER_LOCAL_AGENT: TaskRunnerAgent =
+    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerLocalRunPhase);
 
 #[derive(Debug, Clone, Copy)]
 pub struct TaskRunnerAgent {
@@ -23,6 +27,19 @@ pub struct TaskRunnerAgent {
 impl TaskRunnerAgent {
     pub const fn new(key: SystemAgentKey) -> Self {
         Self { key }
+    }
+
+    pub const fn for_project_locality(planning: bool, local_project: bool) -> Self {
+        match (planning, local_project) {
+            (true, true) => TASK_RUNNER_LOCAL_PLAN_AGENT,
+            (true, false) => TASK_RUNNER_PLAN_AGENT,
+            (false, true) => TASK_RUNNER_LOCAL_AGENT,
+            (false, false) => TASK_RUNNER_AGENT,
+        }
+    }
+
+    pub const fn key(self) -> SystemAgentKey {
+        self.key
     }
 }
 
@@ -197,6 +214,18 @@ mod tests {
         assert_eq!(
             TASK_RUNNER_AGENT.descriptor().key,
             SystemAgentKey::TaskRunnerRunPhase
+        );
+    }
+
+    #[test]
+    fn local_projects_receive_distinct_task_runner_identities() {
+        assert_eq!(
+            TaskRunnerAgent::for_project_locality(true, true).descriptor().key,
+            SystemAgentKey::TaskRunnerLocalPlanPhase
+        );
+        assert_eq!(
+            TaskRunnerAgent::for_project_locality(false, true).descriptor().key,
+            SystemAgentKey::TaskRunnerLocalRunPhase
         );
     }
 }

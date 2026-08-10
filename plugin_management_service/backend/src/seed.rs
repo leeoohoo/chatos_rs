@@ -62,11 +62,19 @@ const CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST: &[&str] = &[
 const PROJECT_MANAGEMENT_AGENT_SANDBOX_TOOL_ALLOWLIST: &[&str] =
     &["get_image_catalog", "search_images"];
 const CHATOS_CONVERSATION_AGENT_KEY: &str = SystemAgentKey::ChatosConversationAgent.as_str();
+const CHATOS_LOCAL_CONVERSATION_AGENT_KEY: &str =
+    SystemAgentKey::ChatosLocalConversationAgent.as_str();
 const PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY: &str =
     SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str();
+const PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY: &str =
+    SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str();
 const TASK_RUNNER_PLAN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerPlanPhase.as_str();
+const TASK_RUNNER_LOCAL_PLAN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerLocalPlanPhase.as_str();
 const TASK_RUNNER_RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+const TASK_RUNNER_LOCAL_RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerLocalRunPhase.as_str();
 const PROJECT_MANAGEMENT_AGENT_KEY: &str = SystemAgentKey::ProjectManagementAgent.as_str();
+const PROJECT_MANAGEMENT_LOCAL_AGENT_KEY: &str =
+    SystemAgentKey::ProjectManagementLocalAgent.as_str();
 const LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY: &str =
     SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str();
 const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
@@ -76,17 +84,25 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "chatos_chat_runtime",
     "project_environment_agent",
     "local_connector_client_agent",
-    SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
-    SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
     "memory_engine_context_agent",
 ];
 const CHATOS_NOTEPAD_AGENT_KEYS: &[&str] = &[
     CHATOS_CONVERSATION_AGENT_KEY,
+    CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
     PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
+    PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
 ];
-const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[CHATOS_CONVERSATION_AGENT_KEY];
+const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[
+    CHATOS_CONVERSATION_AGENT_KEY,
+    CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
+];
 const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] =
-    &[TASK_RUNNER_PLAN_AGENT_KEY, TASK_RUNNER_RUN_AGENT_KEY];
+    &[
+        TASK_RUNNER_PLAN_AGENT_KEY,
+        TASK_RUNNER_LOCAL_PLAN_AGENT_KEY,
+        TASK_RUNNER_RUN_AGENT_KEY,
+        TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
+    ];
 const PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS: &[(&str, i64)] = &[
     (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
     (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),

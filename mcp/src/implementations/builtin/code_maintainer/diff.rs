@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::utils::is_binary_buffer;
+#[allow(dead_code)]
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -148,6 +149,7 @@ fn append_diff_line(out: &mut String, prefix: char, line: &str) -> bool {
     true
 }
 
+#[allow(dead_code)]
 pub fn extract_patch_diffs(patch: &str) -> HashMap<String, String> {
     let text = patch.replace("\r\n", "\n");
     let lines: Vec<&str> = text.split('\n').collect();
@@ -258,6 +260,7 @@ pub fn extract_patch_targets(patch: &str) -> Vec<PatchTarget> {
     targets
 }
 
+#[allow(dead_code)]
 fn collect_patch_section(lines: &[&str], start: usize, path: &str) -> (String, String, usize) {
     let mut section: Vec<String> = Vec::new();
     let mut move_to: Option<String> = None;
@@ -284,6 +287,7 @@ fn collect_patch_section(lines: &[&str], start: usize, path: &str) -> (String, S
     (key, section.join("\n"), idx)
 }
 
+#[allow(dead_code)]
 fn collect_loose_patch_section(lines: &[&str], start: usize) -> (String, usize) {
     let mut section: Vec<String> = Vec::new();
     let mut idx = start;
@@ -322,6 +326,7 @@ fn is_patch_end_marker(line: &str) -> bool {
     matches!(line.trim(), "*** End Patch" | "End Patch")
 }
 
+#[allow(dead_code)]
 fn is_standard_patch_operation_header(line: &str) -> bool {
     line.starts_with("*** Update File: ")
         || line.starts_with("*** Add File: ")

@@ -470,8 +470,8 @@ async fn file_modification_outcomes_are_persisted_and_aggregated() {
     already_applied.invocation_id = "invocation-edit-already-applied".to_string();
     already_applied.session_id = "session-edit-already-applied".to_string();
     already_applied.request_id_key = "\"request-edit-already-applied\"".to_string();
-    already_applied.exposed_tool_name = "harness_code_edit_file".to_string();
-    already_applied.original_tool_name = "edit_file".to_string();
+    already_applied.exposed_tool_name = "harness_code_stage_edit_batch".to_string();
+    already_applied.original_tool_name = "stage_edit_batch".to_string();
     store.register(already_applied).await.unwrap();
     assert!(store
         .complete(
@@ -490,8 +490,8 @@ async fn file_modification_outcomes_are_persisted_and_aggregated() {
     stale.invocation_id = "invocation-patch-stale".to_string();
     stale.session_id = "session-patch-stale".to_string();
     stale.request_id_key = "\"request-patch-stale\"".to_string();
-    stale.exposed_tool_name = "harness_code_apply_patch".to_string();
-    stale.original_tool_name = "apply_patch".to_string();
+    stale.exposed_tool_name = "harness_code_commit_edit_session".to_string();
+    stale.original_tool_name = "commit_edit_session".to_string();
     store.register(stale).await.unwrap();
     assert!(store
         .fail(

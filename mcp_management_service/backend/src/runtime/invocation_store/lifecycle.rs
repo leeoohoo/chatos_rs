@@ -304,7 +304,7 @@ impl RuntimeInvocationStore {
                     "file_modification_outcome",
                     doc! {
                         "$cond": [
-                            { "$in": ["$original_tool_name", ["edit_file", "apply_patch", "patch"]] },
+                            { "$in": ["$original_tool_name", ["stage_edit_batch", "commit_edit_session"]] },
                             outcome_value,
                             bson::Bson::Null,
                         ]
@@ -461,7 +461,10 @@ fn file_modification_outcome_from_result(result: &Value) -> Option<FileModificat
 }
 
 fn is_file_modification_tool(original_tool_name: &str) -> bool {
-    matches!(original_tool_name, "edit_file" | "apply_patch" | "patch")
+    matches!(
+        original_tool_name,
+        "stage_edit_batch" | "commit_edit_session"
+    )
 }
 
 fn sanitize_terminal_result(result: Option<Value>) -> Result<Option<Value>, String> {

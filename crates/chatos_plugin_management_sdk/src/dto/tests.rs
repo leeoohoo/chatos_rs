@@ -24,11 +24,15 @@ fn agent_tool_plane_defaults_to_managed_and_serializes_stably() {
 
 #[test]
 fn system_agent_keys_match_registry_keys() {
-    assert_eq!(SystemAgentKey::ALL.len(), 12);
-    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 48);
+    assert_eq!(SystemAgentKey::ALL.len(), 17);
+    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 68);
     assert_eq!(
         SystemAgentKey::ChatosConversationAgent.as_str(),
         "chatos_conversation_agent"
+    );
+    assert_eq!(
+        SystemAgentKey::ChatosLocalConversationAgent.as_str(),
+        "chatos_local_conversation_agent"
     );
     assert_eq!(
         SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
@@ -38,8 +42,9 @@ fn system_agent_keys_match_registry_keys() {
         SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
         "memory_engine_thread_repair_agent"
     );
-    assert!(!SystemAgentKey::ALL.contains(&SystemAgentKey::TaskRunnerLocalPlanPhase));
-    assert!(!SystemAgentKey::ALL.contains(&SystemAgentKey::TaskRunnerLocalRunPhase));
+    assert!(SystemAgentKey::ALL.contains(&SystemAgentKey::TaskRunnerLocalPlanPhase));
+    assert!(SystemAgentKey::ALL.contains(&SystemAgentKey::TaskRunnerLocalRunPhase));
+    assert!(SystemAgentKey::ALL.contains(&SystemAgentKey::ProjectManagementLocalAgent));
 }
 
 #[test]

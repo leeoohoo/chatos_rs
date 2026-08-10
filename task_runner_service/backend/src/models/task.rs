@@ -46,10 +46,26 @@ pub fn task_runner_agent_key_for(
     task_profile: &str,
     requires_execution: bool,
 ) -> chatos_plugin_management_sdk::SystemAgentKey {
+    task_runner_agent_key_for_project(task_profile, requires_execution, false)
+}
+
+pub fn task_runner_agent_key_for_project(
+    task_profile: &str,
+    requires_execution: bool,
+    local_project: bool,
+) -> chatos_plugin_management_sdk::SystemAgentKey {
     if uses_task_runner_planning_agent(task_profile, requires_execution) {
-        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
+        if local_project {
+            chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalPlanPhase
+        } else {
+            chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
+        }
     } else {
-        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+        if local_project {
+            chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerLocalRunPhase
+        } else {
+            chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+        }
     }
 }
 
@@ -71,6 +87,18 @@ mod task_runner_agent_routing_tests {
         assert_eq!(
             task_runner_agent_key_for(TASK_PROFILE_DEFAULT, false),
             SystemAgentKey::TaskRunnerRunPhase
+        );
+    }
+
+    #[test]
+    fn local_projects_receive_distinct_task_runner_phase_keys() {
+        assert_eq!(
+            task_runner_agent_key_for_project(TASK_PROFILE_CHATOS_PLAN, false, true),
+            SystemAgentKey::TaskRunnerLocalPlanPhase
+        );
+        assert_eq!(
+            task_runner_agent_key_for_project(TASK_PROFILE_DEFAULT, true, true),
+            SystemAgentKey::TaskRunnerLocalRunPhase
         );
     }
 }

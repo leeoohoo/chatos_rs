@@ -53,6 +53,19 @@ impl TaskService {
 }
 
 impl RunService {
+    pub(crate) async fn resolve_task_runner_agent_key_for_task(
+        &self,
+        task: &TaskRecord,
+    ) -> Result<SystemAgentKey, String> {
+        let runtime_context =
+            project_runtime_context(&self.store, &self.config, task.project_id.as_str()).await?;
+        Ok(crate::models::task_runner_agent_key_for_project(
+            task.task_profile.as_str(),
+            task.mcp_config.requires_execution,
+            runtime_context.uses_local_connector(),
+        ))
+    }
+
     pub(crate) async fn resolve_task_runner_policy_for_task(
         &self,
         task: &TaskRecord,
@@ -66,14 +79,16 @@ impl RunService {
             project_runtime_context(&self.store, &self.config, task.project_id.as_str()).await?;
         runtime_context.task_profile = Some(task.task_profile.clone());
         runtime_context.schedule_mode = Some(task.schedule.mode.mode_key().to_string());
+        let agent_key = crate::models::task_runner_agent_key_for_project(
+            task.task_profile.as_str(),
+            task.mcp_config.requires_execution,
+            runtime_context.uses_local_connector(),
+        );
         resolve_policy(
             client,
             owner_user_id,
             None,
-            crate::models::task_runner_agent_key_for(
-                task.task_profile.as_str(),
-                task.mcp_config.requires_execution,
-            ),
+            agent_key,
             Some(runtime_context),
         )
         .await
@@ -90,6 +105,12 @@ struct TaskRunnerPolicyRuntimeContext {
     workspace_id: Option<String>,
 }
 
+impl TaskRunnerPolicyRuntimeContext {
+    fn uses_local_connector(&self) -> bool {
+        self.runtime_provider.as_deref() == Some("local_connector")
+    }
+}
+
 async fn resolve_policy(
     client: &PluginManagementClient,
     owner_user_id: &str,
@@ -98,8 +119,9 @@ async fn resolve_policy(
     runtime_context: Option<TaskRunnerPolicyRuntimeContext>,
 ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
     let runtime_context = runtime_context.unwrap_or_default();
+    let agent_key = resolved_task_runner_agent_key(agent_key, &runtime_context);
     let portable_uses_local =
-        runtime_context.runtime_provider.as_deref() == Some("local_connector");
+        runtime_context.uses_local_connector();
     let runtime_device_id = runtime_context.device_id.clone();
     let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id)
         .with_runtime_context(
@@ -128,6 +150,24 @@ async fn resolve_policy(
             )
         })
         .map(Some)
+}
+
+fn resolved_task_runner_agent_key(
+    agent_key: SystemAgentKey,
+    runtime_context: &TaskRunnerPolicyRuntimeContext,
+) -> SystemAgentKey {
+    if !chatos_agent::is_task_runner_phase_agent(agent_key) {
+        return agent_key;
+    }
+    match (
+        chatos_agent::is_task_runner_planning_agent(agent_key),
+        runtime_context.uses_local_connector(),
+    ) {
+        (true, true) => SystemAgentKey::TaskRunnerLocalPlanPhase,
+        (true, false) => SystemAgentKey::TaskRunnerPlanPhase,
+        (false, true) => SystemAgentKey::TaskRunnerLocalRunPhase,
+        (false, false) => SystemAgentKey::TaskRunnerRunPhase,
+    }
 }
 
 async fn project_runtime_context(
@@ -212,7 +252,8 @@ fn task_owner_user_id(task: &TaskRecord) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::runtime_context_for_project;
+    use super::{resolved_task_runner_agent_key, runtime_context_for_project, TaskRunnerPolicyRuntimeContext};
+    use chatos_plugin_management_sdk::SystemAgentKey;
 
     #[test]
     fn local_project_runtime_target_comes_from_managed_root() {
@@ -246,5 +287,22 @@ mod tests {
         .expect_err("local project without managed target must fail");
 
         assert!(error.contains("managed device/workspace reference"));
+    }
+
+    #[test]
+    fn runtime_provider_rewrites_task_runner_phase_agent_to_local_variant() {
+        let context = TaskRunnerPolicyRuntimeContext {
+            runtime_provider: Some("local_connector".to_string()),
+            ..TaskRunnerPolicyRuntimeContext::default()
+        };
+
+        assert_eq!(
+            resolved_task_runner_agent_key(SystemAgentKey::TaskRunnerPlanPhase, &context),
+            SystemAgentKey::TaskRunnerLocalPlanPhase
+        );
+        assert_eq!(
+            resolved_task_runner_agent_key(SystemAgentKey::TaskRunnerRunPhase, &context),
+            SystemAgentKey::TaskRunnerLocalRunPhase
+        );
     }
 }

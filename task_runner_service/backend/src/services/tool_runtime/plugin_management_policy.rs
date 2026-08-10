@@ -115,6 +115,10 @@ impl TaskRunnerCapabilityPolicy {
         self.capabilities.policy_revision.as_str()
     }
 
+    pub(crate) fn agent_key(&self) -> &str {
+        self.capabilities.agent_key.as_str()
+    }
+
     pub(crate) fn selectable_builtin_kinds(&self) -> Vec<BuiltinMcpKind> {
         let mut out = self
             .capabilities

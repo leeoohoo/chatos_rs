@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_plugin_management_sdk::SystemAgentKey;
 use crate::services::TaskRunnerCapabilityPolicy;
 
 mod mcp_inputs;
@@ -22,7 +23,8 @@ pub(super) async fn prepare_model_execution(
 ) -> Result<PreparedModelExecution, String> {
     let command_constraints =
         crate::services::plugin_runtime_relay::plugin_command_execution_constraints(run)?;
-    validate_command_target_agent(task, &command_constraints)?;
+    let task_agent_key = service.resolve_task_runner_agent_key_for_task(task).await?;
+    validate_command_target_agent(task_agent_key, &command_constraints)?;
     if !command_constraints.tool_allowlists.is_empty() && !task.mcp_config.enabled {
         return Err(
             "Plugin Command allowed tools require the task MCP runtime to be enabled".to_string(),
@@ -81,7 +83,7 @@ pub(super) async fn prepare_model_execution(
             model_config,
         )
         .await?;
-    let agent = task_runner_agent_for_task(task);
+    let agent = TaskRunnerAgent::new(task_agent_key);
     let agent_prompt =
         crate::services::plugin_management_prompts::resolve_task_runner_agent_prompt(
             service,
@@ -123,14 +125,11 @@ pub(super) async fn prepare_model_execution(
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
     let mcp_management_gateway =
-        resolve_mcp_management_gateway(task, run, sandbox_context.as_ref()).await?;
+        resolve_mcp_management_gateway(task, run, task_agent_key, sandbox_context.as_ref())
+            .await?;
     let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
     let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
-        crate::models::task_runner_agent_key_for(
-            task.task_profile.as_str(),
-            task.mcp_config.requires_execution,
-        )
-        .as_str(),
+        task_agent_key.as_str(),
     );
     let mut prefixed_input_items =
         mcp_provider_skills_prefixed_input_items(gateway_provider_skills_prompt);
@@ -182,13 +181,9 @@ pub(super) async fn prepare_model_execution(
 }
 
 fn validate_command_target_agent(
-    task: &TaskRecord,
+    task_agent_key: SystemAgentKey,
     constraints: &crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints,
 ) -> Result<(), String> {
-    let task_agent_key = crate::models::task_runner_agent_key_for(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    );
     if let Some(target_agent) = constraints.target_agent.as_deref() {
         if target_agent != task_agent_key.as_str() {
             return Err(format!(
@@ -361,17 +356,6 @@ mod prompt_cache_tests {
     }
 }
 
-fn task_runner_agent_for_task(task: &TaskRecord) -> TaskRunnerAgent {
-    if crate::models::uses_task_runner_planning_agent(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    ) {
-        TASK_RUNNER_PLAN_AGENT
-    } else {
-        TASK_RUNNER_AGENT
-    }
-}
-
 fn build_memory_scope(service: &RunService, task: &TaskRecord, run: &TaskRunRecord) -> MemoryScope {
     MemoryScope::thread(
         task.tenant_id.clone(),
@@ -462,38 +446,61 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn task_nature_selects_distinct_task_runner_agents() {
-        let mut planning = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
+    #[tokio::test]
+    async fn task_nature_selects_distinct_task_runner_agents() {
+        let mut planning = sample_task(
+            crate::models::TASK_PROFILE_CHATOS_PLAN,
+            crate::models::PUBLIC_PROJECT_ID,
+        );
         planning.mcp_config.requires_execution = false;
         let mut executing = planning.clone();
         executing.mcp_config.requires_execution = true;
-
+        let service = test_run_service(test_config());
         assert_eq!(
-            task_runner_agent_for_task(&planning).descriptor().key,
+            TaskRunnerAgent::new(
+                service
+                    .resolve_task_runner_agent_key_for_task(&planning)
+                    .await
+                    .expect("planning agent"),
+            )
+            .descriptor()
+            .key,
             TASK_RUNNER_PLAN_AGENT.descriptor().key
         );
         assert_eq!(
-            task_runner_agent_for_task(&planning).descriptor().key,
+            TaskRunnerAgent::new(
+                service
+                    .resolve_task_runner_agent_key_for_task(&planning)
+                    .await
+                    .expect("planning agent"),
+            )
+            .descriptor()
+            .key,
             SystemAgentKey::TaskRunnerPlanPhase
         );
         assert_eq!(
-            task_runner_agent_for_task(&executing).descriptor().key,
+            TaskRunnerAgent::new(
+                service
+                    .resolve_task_runner_agent_key_for_task(&executing)
+                    .await
+                    .expect("execution agent"),
+            )
+            .descriptor()
+            .key,
             TASK_RUNNER_AGENT.descriptor().key
         );
     }
 
     #[test]
     fn command_target_agent_must_match_the_existing_task_agent() {
-        let mut task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
-        task.mcp_config.requires_execution = false;
         let plan_constraints =
             crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
                 target_agent: Some(SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string()),
                 tool_allowlists: Vec::new(),
                 ..Default::default()
             };
-        validate_command_target_agent(&task, &plan_constraints).expect("matching target Agent");
+        validate_command_target_agent(SystemAgentKey::TaskRunnerPlanPhase, &plan_constraints)
+            .expect("matching target Agent");
 
         let run_constraints =
             crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
@@ -501,7 +508,7 @@ mod tests {
                 tool_allowlists: Vec::new(),
                 ..Default::default()
             };
-        assert!(validate_command_target_agent(&task, &run_constraints)
+        assert!(validate_command_target_agent(SystemAgentKey::TaskRunnerPlanPhase, &run_constraints)
             .expect_err("Command must not upgrade the task Agent")
             .contains("incompatible"));
     }

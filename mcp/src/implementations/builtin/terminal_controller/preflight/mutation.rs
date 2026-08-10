@@ -19,11 +19,10 @@ pub(super) fn validate_file_mutation_contract(
         "recovery": {
             "required_tool_family": "code_maintainer",
             "allowed_tools": [
-                "write_file",
-                "edit_file",
-                "append_file",
-                "delete_path",
-                "apply_patch"
+                "open_edit_session",
+                "stage_edit_batch",
+                "commit_edit_session",
+                "abort_edit_session"
             ],
             "guidance": "Read the current target revision and perform the change with the matching file modification tool."
         }

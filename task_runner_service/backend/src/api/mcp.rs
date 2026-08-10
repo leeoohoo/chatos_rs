@@ -90,7 +90,7 @@ pub(super) async fn list_task_capability_catalog(
         .map_err(ApiError::bad_gateway)?
         .ok_or_else(|| ApiError::internal("plugin management policy resolver is unavailable"))?;
     Ok(Json(json!({
-        "agent_key": agent_key.as_str(),
+        "agent_key": policy.agent_key(),
         "policy_revision": policy.policy_revision(),
         "selectable_builtin_mcps": policy.selectable_builtin_mcp_choices().into_iter().map(|(value, title)| json!({
             "value": value,

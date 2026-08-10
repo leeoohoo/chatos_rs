@@ -189,6 +189,7 @@ pub async fn resolve_runtime_context(
         requested_project_root,
     )
     .await;
+    let is_local_project = resolved_project_runtime.is_local_project;
     let resolved_project_id = resolved_project_runtime.project_id;
     let resolved_project_name = resolved_project_runtime.project_name;
     let resolved_project_root =
@@ -207,8 +208,11 @@ pub async fn resolve_runtime_context(
     let mut effective_mcp_resource_ids = Vec::new();
     let mut gateway_provider_skills_prompt = None;
     let mut mcp_management_runtime_session = None;
-    let agent_profile =
-        ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
+    let agent_profile = ChatosAgentProfile::from_project_locality(
+        req.plan_mode,
+        req.project_requirement_execution_planner,
+        is_local_project,
+    );
     let normalized_selected_plugin_ids =
         normalize_selected_plugin_ids(req.selected_plugin_ids.as_slice());
     let normalized_plugin_command_invocations = normalize_plugin_command_invocations(

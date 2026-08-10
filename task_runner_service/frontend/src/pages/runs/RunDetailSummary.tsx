@@ -64,8 +64,12 @@ export function RunDetailSummary({
   const agentLabel =
     agentKey === 'task_runner_plan_phase'
       ? t('runs.detail.cloudPlanningAgent')
+      : agentKey === 'task_runner_local_plan_phase'
+        ? t('runs.detail.localPlanningAgent')
       : agentKey === 'task_runner_run_phase'
         ? t('runs.detail.cloudExecutionAgent')
+        : agentKey === 'task_runner_local_run_phase'
+          ? t('runs.detail.localExecutionAgent')
         : '-';
   const totalDuration = run.started_at
     ? formatDuration(run.started_at, run.finished_at || undefined)

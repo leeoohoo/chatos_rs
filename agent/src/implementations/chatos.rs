@@ -21,10 +21,19 @@ pub struct ChatosAgentProfile {
 
 impl ChatosAgentProfile {
     pub fn from_flags(plan_mode: bool, project_requirement_execution_planner: bool) -> Self {
-        let key = if project_requirement_execution_planner {
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        } else {
-            SystemAgentKey::ChatosConversationAgent
+        Self::from_project_locality(plan_mode, project_requirement_execution_planner, false)
+    }
+
+    pub fn from_project_locality(
+        plan_mode: bool,
+        project_requirement_execution_planner: bool,
+        local_project: bool,
+    ) -> Self {
+        let key = match (project_requirement_execution_planner, local_project) {
+            (true, true) => SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
+            (true, false) => SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
+            (false, true) => SystemAgentKey::ChatosLocalConversationAgent,
+            (false, false) => SystemAgentKey::ChatosConversationAgent,
         };
         Self {
             key,
@@ -182,6 +191,22 @@ mod tests {
             Some(CHATOS_PLAN_TASK_PROFILE)
         );
         assert!(profile.plan_mode_header());
+    }
+
+    #[test]
+    fn local_projects_receive_local_agent_identities() {
+        let conversation = ChatosAgentProfile::from_project_locality(false, false, true);
+        assert_eq!(
+            conversation.key(),
+            SystemAgentKey::ChatosLocalConversationAgent
+        );
+
+        let requirement = ChatosAgentProfile::from_project_locality(false, true, true);
+        assert_eq!(
+            requirement.key(),
+            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
+        );
+        assert!(requirement.requires_project_management_mcp());
     }
 
     struct FakeStreamRuntime;

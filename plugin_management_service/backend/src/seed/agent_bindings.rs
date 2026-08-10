@@ -25,7 +25,11 @@ pub(super) async fn seed_agent_bindings(
             CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
             true,
             10,
-            BindingConditions::default(),
+            if *agent_key == CHATOS_LOCAL_CONVERSATION_AGENT_KEY {
+                local_runtime_binding_conditions()
+            } else {
+                BindingConditions::default()
+            },
             CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST,
             &[],
         )
@@ -46,6 +50,21 @@ pub(super) async fn seed_agent_bindings(
         &[],
     )
     .await?;
+    seed_agent_mcp_binding_with_tool_policy(
+        store,
+        admin_user_id,
+        CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
+        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+        true,
+        11,
+        BindingConditions {
+            task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+            ..local_runtime_binding_conditions()
+        },
+        CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST,
+        &[],
+    )
+    .await?;
     seed_agent_mcp_binding_with_conditions(
         store,
         admin_user_id,
@@ -56,10 +75,29 @@ pub(super) async fn seed_agent_bindings(
         cloud_runtime_binding_conditions(),
     )
     .await?;
+    seed_agent_mcp_binding_with_conditions(
+        store,
+        admin_user_id,
+        PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
+        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+        true,
+        10,
+        local_runtime_binding_conditions(),
+    )
+    .await?;
     seed_agent_mcp_binding(
         store,
         admin_user_id,
         PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
+        builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
+        true,
+        20,
+    )
+    .await?;
+    seed_agent_mcp_binding(
+        store,
+        admin_user_id,
+        PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
         builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
         true,
         20,
@@ -76,37 +114,72 @@ pub(super) async fn seed_agent_bindings(
         )
         .await?;
     }
-    for (agent_key, kinds) in [(
-        TASK_RUNNER_PLAN_AGENT_KEY,
-        task_runner_cloud_plan_phase_builtin_kinds(),
-    )] {
+    for agent_key in [TASK_RUNNER_PLAN_AGENT_KEY, TASK_RUNNER_LOCAL_PLAN_AGENT_KEY] {
+        let conditions = if agent_key == TASK_RUNNER_LOCAL_PLAN_AGENT_KEY {
+            Some(local_runtime_binding_conditions())
+        } else {
+            None
+        };
+        let kinds = task_runner_cloud_plan_phase_builtin_kinds();
         for (index, kind) in kinds.into_iter().enumerate() {
             let required = task_runner_cloud_plan_phase_required(kind);
             let resource_id = builtin_resource_id(kind);
+            if let Some(conditions) = conditions.clone() {
+                seed_agent_mcp_binding_with_conditions(
+                    store,
+                    admin_user_id,
+                    agent_key,
+                    resource_id.as_str(),
+                    required,
+                    10 + index as i64 * 10,
+                    conditions,
+                )
+                .await?;
+            } else {
+                seed_agent_mcp_binding(
+                    store,
+                    admin_user_id,
+                    agent_key,
+                    resource_id.as_str(),
+                    required,
+                    10 + index as i64 * 10,
+                )
+                .await?;
+            }
+        }
+    }
+    for (agent_key, kind, required, priority) in [
+        (TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20),
+        (
+            TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
+            BuiltinMcpKind::AskUser,
+            true,
+            20,
+        ),
+    ] {
+        let resource_id = builtin_resource_id(kind);
+        if agent_key == TASK_RUNNER_LOCAL_RUN_AGENT_KEY {
+            seed_agent_mcp_binding_with_conditions(
+                store,
+                admin_user_id,
+                agent_key,
+                resource_id.as_str(),
+                required,
+                priority,
+                local_runtime_binding_conditions(),
+            )
+            .await?;
+        } else {
             seed_agent_mcp_binding(
                 store,
                 admin_user_id,
                 agent_key,
                 resource_id.as_str(),
                 required,
-                10 + index as i64 * 10,
+                priority,
             )
             .await?;
         }
-    }
-    for (agent_key, kind, required, priority) in
-        [(TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20)]
-    {
-        let resource_id = builtin_resource_id(kind);
-        seed_agent_mcp_binding(
-            store,
-            admin_user_id,
-            agent_key,
-            resource_id.as_str(),
-            required,
-            priority,
-        )
-        .await?;
     }
     for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
         seed_agent_mcp_binding(
@@ -125,17 +198,44 @@ pub(super) async fn seed_agent_bindings(
         builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
     )
     .await?;
-    for (kind, priority) in task_runner_cloud_run_phase_optional_builtin_kinds() {
+    remove_seed_binding_for_all_system_scopes(
+        store,
+        TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
+        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
+    )
+    .await?;
+    for (agent_key, conditions) in [
+        (TASK_RUNNER_RUN_AGENT_KEY, None),
+        (
+            TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
+            Some(local_runtime_binding_conditions()),
+        ),
+    ] {
+        for (kind, priority) in task_runner_cloud_run_phase_optional_builtin_kinds() {
         let resource_id = builtin_resource_id(kind);
-        seed_agent_mcp_binding(
-            store,
-            admin_user_id,
-            TASK_RUNNER_RUN_AGENT_KEY,
-            resource_id.as_str(),
-            false,
-            priority,
-        )
-        .await?;
+            if let Some(conditions) = conditions.clone() {
+                seed_agent_mcp_binding_with_conditions(
+                    store,
+                    admin_user_id,
+                    agent_key,
+                    resource_id.as_str(),
+                    false,
+                    priority,
+                    conditions,
+                )
+                .await?;
+            } else {
+                seed_agent_mcp_binding(
+                    store,
+                    admin_user_id,
+                    agent_key,
+                    resource_id.as_str(),
+                    false,
+                    priority,
+                )
+                .await?;
+            }
+        }
     }
     for agent_key in BUNDLED_PONYTAIL_AGENT_KEYS {
         seed_agent_resource_binding(
@@ -204,6 +304,18 @@ pub(super) async fn seed_agent_bindings(
             &[],
         )
         .await?;
+        seed_agent_mcp_binding_with_tool_policy(
+            store,
+            admin_user_id,
+            PROJECT_MANAGEMENT_LOCAL_AGENT_KEY,
+            resource_id.as_str(),
+            true,
+            priority,
+            local_runtime_binding_conditions(),
+            tool_allowlist,
+            &[],
+        )
+        .await?;
     }
     // Capability selection only decides which tools this Agent owns. MCP Management
     // resolves the actual Project Service, Local Connector, or cloud Sandbox provider
@@ -222,6 +334,18 @@ pub(super) async fn seed_agent_bindings(
             true,
             *priority,
             BindingConditions::default(),
+            tool_allowlist,
+            &[],
+        )
+        .await?;
+        seed_agent_mcp_binding_with_tool_policy(
+            store,
+            admin_user_id,
+            PROJECT_MANAGEMENT_LOCAL_AGENT_KEY,
+            resource_id,
+            true,
+            *priority,
+            local_runtime_binding_conditions(),
             tool_allowlist,
             &[],
         )
@@ -247,6 +371,13 @@ pub(super) async fn seed_agent_bindings(
 fn cloud_runtime_binding_conditions() -> BindingConditions {
     BindingConditions {
         runtime_provider: Some("cloud".to_string()),
+        ..BindingConditions::default()
+    }
+}
+
+fn local_runtime_binding_conditions() -> BindingConditions {
+    BindingConditions {
+        runtime_provider: Some("local_connector".to_string()),
         ..BindingConditions::default()
     }
 }

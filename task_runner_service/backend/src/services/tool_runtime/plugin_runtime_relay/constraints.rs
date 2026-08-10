@@ -124,7 +124,9 @@ pub(super) fn agent_base_agent<'a>(
     }
     if ![
         SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
         SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
     ]
     .contains(&base_agent)
     {
@@ -169,7 +171,9 @@ pub(super) fn command_target_agent<'a>(
     }
     if ![
         SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
         SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
     ]
     .contains(&target_agent)
     {

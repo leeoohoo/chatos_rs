@@ -6,9 +6,7 @@ use std::sync::{
     Arc,
 };
 
-use chatos_agent::{
-    TaskRunnerAgent, TaskRunnerRunSpecInput, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
-};
+use chatos_agent::{TaskRunnerAgent, TaskRunnerRunSpecInput};
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
     TaskExecutionReviewPolicy, TaskFinalizationLifecycleHook, TaskMemoryRuntimeConfig,
@@ -134,14 +132,11 @@ impl RunService {
             plugin_sessions.as_slice(),
             hook_event,
             &chatos_plugin_management_sdk::PluginHookEventContext {
-                agent_key: Some(
-                    crate::models::task_runner_agent_key_for(
-                        task.task_profile.as_str(),
-                        task.mcp_config.requires_execution,
-                    )
-                    .as_str()
-                    .to_string(),
-                ),
+                agent_key: run
+                    .input_snapshot
+                    .get("agent_key")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
                 outcome: Some(hook_terminal_outcome),
                 summary_sha256: Some(hex::encode(Sha256::digest(
                     report

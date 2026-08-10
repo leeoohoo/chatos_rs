@@ -141,12 +141,14 @@ fn legacy_chatos_planning_agents_are_retired_in_favor_of_task_runner_plan_phase(
 }
 
 #[test]
-fn all_chatos_runtime_agents_receive_the_cloud_notepad_binding() {
+fn all_chatos_runtime_agents_receive_the_notepad_binding() {
     assert_eq!(
         CHATOS_NOTEPAD_AGENT_KEYS,
         [
             CHATOS_CONVERSATION_AGENT_KEY,
+            CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
             PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
+            PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
         ]
     );
 }
@@ -155,7 +157,10 @@ fn all_chatos_runtime_agents_receive_the_cloud_notepad_binding() {
 fn only_the_conversation_agent_can_delegate_generic_task_runner_work() {
     assert_eq!(
         CHATOS_TASK_RUNNER_AGENT_KEYS,
-        [CHATOS_CONVERSATION_AGENT_KEY]
+        [
+            CHATOS_CONVERSATION_AGENT_KEY,
+            CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
+        ]
     );
 }
 
@@ -181,10 +186,15 @@ fn system_agent_registry_contains_all_runtime_roles() {
         keys,
         vec![
             CHATOS_CONVERSATION_AGENT_KEY,
+            CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
             PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
+            PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
             TASK_RUNNER_PLAN_AGENT_KEY,
+            TASK_RUNNER_LOCAL_PLAN_AGENT_KEY,
             TASK_RUNNER_RUN_AGENT_KEY,
+            TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
             PROJECT_MANAGEMENT_AGENT_KEY,
+            PROJECT_MANAGEMENT_LOCAL_AGENT_KEY,
             LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY,
             "memory_engine_summary_agent",
             "memory_engine_rollup_agent",

@@ -1,33 +1,36 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::json;
-use std::collections::HashMap;
-use std::io::Read;
+use serde_json::{json, Value};
+use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::diff::{
-    build_diff, extract_patch_diffs, extract_patch_targets, read_text_for_diff, DiffInput,
-};
-use super::edit::{apply_edit_text, EditRequest};
+use super::diff::{build_diff, read_text_for_diff, DiffInput};
+use super::edit::{apply_edit_text, EditRequest, EditMatchInfo};
 use super::fs_ops::FsOps;
 use super::outcome::{classify_file_modification_error, FileModificationOutcome};
-use super::patch::apply_patch_limited;
 use super::revision::ModificationRevisionGuard;
-use super::service::{CodeMaintainerHooksRef, CodeMaintainerService};
+use super::service::{CodeMaintainerHooksRef, CodeMaintainerService, ToolContext};
+use super::session::{
+    EditSession, EditSessionStore, EntryKind, EntrySnapshot, SessionFileState,
+};
 use super::storage::ChangeLogStore;
-use super::utils::format_bytes;
-use sha2::{Digest, Sha256};
+use super::utils::{generate_id, sha256_bytes};
 
 use crate::tool_registry::text_result;
+
+type SharedSessionStore = Arc<Mutex<EditSessionStore>>;
+type SharedRevisionGuard = Arc<Mutex<ModificationRevisionGuard>>;
 
 pub(super) fn register_write_tools(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
-    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
-    root: PathBuf,
+    revision_guard: SharedRevisionGuard,
+    session_store: SharedSessionStore,
+    _root: PathBuf,
     allow_writes: bool,
     max_file_bytes: i64,
     max_write_bytes: i64,
@@ -35,50 +38,26 @@ pub(super) fn register_write_tools(
     workspace_note: &str,
     hooks: Option<CodeMaintainerHooksRef>,
 ) {
-    register_write_file_tool(
+    register_open_edit_session_tool(
+        service,
+        session_store.clone(),
+        writes_note,
+        workspace_note,
+    );
+    register_stage_edit_batch_tool(
         service,
         fs_ops.clone(),
-        change_log.clone(),
+        session_store.clone(),
         revision_guard.clone(),
         max_write_bytes,
-        writes_note,
         workspace_note,
-        hooks.clone(),
     );
-    register_edit_file_tool(
-        service,
-        fs_ops.clone(),
-        change_log.clone(),
-        revision_guard.clone(),
-        workspace_note,
-        hooks.clone(),
-    );
-    register_append_file_tool(
-        service,
-        fs_ops.clone(),
-        change_log.clone(),
-        revision_guard.clone(),
-        max_write_bytes,
-        writes_note,
-        workspace_note,
-        hooks.clone(),
-    );
-    register_delete_path_tool(
-        service,
-        fs_ops.clone(),
-        change_log.clone(),
-        revision_guard.clone(),
-        max_file_bytes,
-        writes_note,
-        workspace_note,
-        hooks.clone(),
-    );
-    register_apply_patch_tool(
+    register_commit_edit_session_tool(
         service,
         fs_ops,
         change_log,
         revision_guard,
-        root,
+        session_store.clone(),
         allow_writes,
         max_file_bytes,
         max_write_bytes,
@@ -86,504 +65,172 @@ pub(super) fn register_write_tools(
         workspace_note,
         hooks,
     );
+    register_abort_edit_session_tool(service, session_store, workspace_note);
 }
 
-fn register_write_file_tool(
+fn register_open_edit_session_tool(
+    service: &mut CodeMaintainerService,
+    session_store: SharedSessionStore,
+    writes_note: &str,
+    workspace_note: &str,
+) {
+    service.register_tool(
+        "open_edit_session",
+        &format!(
+            "Open a write session for the current project workspace. Use one session, stage one or more edit batches against its in-memory snapshot, then finish with commit_edit_session or abort_edit_session.\n{}.\n{}",
+            writes_note, workspace_note
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "purpose": { "type": "string" }
+            },
+            "additionalProperties": false
+        }),
+        Arc::new(move |_args, ctx| {
+            let invocation = (|| {
+                let handle = session_store
+                    .lock()
+                    .map_err(|_| "edit session store unavailable".to_string())?
+                    .open_session(ctx.run_id, ctx.conversation_id);
+                Ok(text_result(json!({
+                    "outcome": FileModificationOutcome::AlreadyApplied,
+                    "changed": false,
+                    "changed_target_count": 0,
+                    "result": handle.to_json(),
+                    "message": "Edit session opened. Stage batches against this session before committing."
+                })))
+            })();
+            record_file_modification_outcome("open_edit_session", ctx, &invocation);
+            invocation
+        }),
+    );
+}
+
+fn register_stage_edit_batch_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
-    change_log: Arc<Mutex<ChangeLogStore>>,
-    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
+    session_store: SharedSessionStore,
+    revision_guard: SharedRevisionGuard,
     max_write_bytes: i64,
-    writes_note: &str,
     workspace_note: &str,
-    hooks: Option<CodeMaintainerHooksRef>,
 ) {
     service.register_tool(
-        "write_file",
+        "stage_edit_batch",
         &format!(
-            "Write file content to the current project workspace. Use this for new files or full-file replacement when the target path is known. expected_sha256 is mandatory: use the sha256 returned by the latest read for an existing file, or null only when creating a path confirmed absent.\nMax write bytes: {}.\n{}.\n{workspace_note}",
-            format_bytes(max_write_bytes),
-            writes_note
+            "Stage one or more ordered edit operations into an existing write session without touching the file system yet. Multiple operations may target the same file; they will be applied sequentially to the session snapshot. For the first operation that touches a path, expected_sha256 must match the latest successful read of the current file, or be null only when the path is confirmed absent (and for directory deletes).\n{}\nSupported operation kinds: write, replace_text, append, delete.",
+            workspace_note
         ),
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string" },
-                "content": { "type": "string" },
-                "expected_sha256": {
-                    "type": ["string", "null"],
-                    "pattern": "^[0-9a-f]{64}$"
+                "session_id": { "type": "string", "minLength": 1 },
+                "operations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["write", "replace_text", "append", "delete"]
+                            },
+                            "path": { "type": "string" },
+                            "content": { "type": "string" },
+                            "old_text": { "type": "string" },
+                            "new_text": { "type": "string" },
+                            "start_line": { "type": "integer", "minimum": 1 },
+                            "end_line": { "type": "integer", "minimum": 1 },
+                            "before_context": { "type": "string" },
+                            "after_context": { "type": "string" },
+                            "expected_matches": { "type": "integer", "minimum": 1 },
+                            "expected_sha256": {
+                                "type": ["string", "null"],
+                                "pattern": "^[0-9a-f]{64}$"
+                            }
+                        },
+                        "additionalProperties": false,
+                        "required": ["kind", "path"]
+                    }
                 }
             },
             "additionalProperties": false,
-            "required": ["path", "content", "expected_sha256"]
+            "required": ["session_id", "operations"]
         }),
         Arc::new(move |args, ctx| {
             let invocation = (|| {
-            let path = args
-                .get("path")
-                .and_then(|value| value.as_str())
-                .ok_or("path is required".to_string())?;
-            let content = args
-                .get("content")
-                .and_then(|value| value.as_str())
-                .ok_or("content is required".to_string())?;
-            let expected_sha256 = expected_sha256(&args, "expected_sha256")?;
-            let target = fs_ops.resolve_path(path)?;
-            let existed_before = target.exists();
-            let (current_sha256, before_snapshot) = if existed_before {
-                let (_, _, sha256, current_content) = fs_ops.read_file_raw(path)?;
-                (Some(sha256), DiffInput::text(current_content))
-            } else {
-                (None, DiffInput { text: None, reason: None })
-            };
-            verify_file_revision(
-                &revision_guard,
-                ctx,
-                path,
-                expected_sha256,
-                current_sha256.as_deref(),
-                None,
-                None,
-            )?;
-            if before_snapshot.text.as_deref() == Some(content) {
-                return Ok(text_result(json!({
-                    "outcome": FileModificationOutcome::AlreadyApplied,
-                    "changed": false,
-                    "changed_target_count": 0,
+                let session_id = required_string(&args, "session_id")?;
+                let operations = args
+                    .get("operations")
+                    .and_then(Value::as_array)
+                    .ok_or("operations is required".to_string())?;
+                if operations.is_empty() {
+                    return Err("operations must contain at least one item".to_string());
+                }
+
+                let mut store = session_store
+                    .lock()
+                    .map_err(|_| "edit session store unavailable".to_string())?;
+                let session = store.get_mut(session_id, ctx.run_id)?;
+                let mut batch_changed_paths = BTreeSet::new();
+                let mut batch_matches: Vec<Value> = Vec::new();
+
+                for operation in operations {
+                    let outcome = apply_stage_operation(
+                        session,
+                        operation,
+                        &fs_ops,
+                        &revision_guard,
+                        ctx,
+                        max_write_bytes,
+                    )?;
+                    if outcome.changed {
+                        batch_changed_paths.insert(outcome.path.clone());
+                    }
+                    if let Some(info) = outcome.match_info {
+                        batch_matches.push(json!({
+                            "path": outcome.path,
+                            "match": info,
+                        }));
+                    }
+                }
+
+                session.staged_operation_count += operations.len();
+                session.touch();
+                let pending_paths = session.changed_paths();
+                let pending_path_summaries = pending_paths
+                    .iter()
+                    .filter_map(|path| session.files.get(path))
+                    .map(session_path_summary)
+                    .collect::<Vec<_>>();
+                let changed = !batch_changed_paths.is_empty();
+                Ok(text_result(json!({
+                    "outcome": FileModificationOutcome::from_changed(changed),
+                    "changed": changed,
+                    "changed_target_count": batch_changed_paths.len(),
                     "result": {
-                        "path": path,
-                        "bytes": content.len() as i64,
-                        "sha256": current_sha256,
-                        "changed": false,
-                        "already_applied": true
+                        "session_id": session.id,
+                        "staged_operation_count": session.staged_operation_count,
+                        "batch_operation_count": operations.len(),
+                        "batch_changed_paths": batch_changed_paths.into_iter().collect::<Vec<_>>(),
+                        "pending_target_count": pending_paths.len(),
+                        "pending_paths": pending_path_summaries,
                     },
-                    "message": "The requested full-file content is already present. No file-system change was applied."
-                })));
-            }
-            let result = fs_ops.write_file(path, content)?;
-            let after_snapshot = DiffInput::text(content.to_string());
-            let diff = build_diff(before_snapshot, after_snapshot);
-            let full_path = target.to_string_lossy().to_string();
-            let record = change_log
-                .lock()
-                .map_err(|_| "change log unavailable".to_string())?
-                .log_change(
-                    &result.path,
-                    "write",
-                    if existed_before { "edit" } else { "create" },
-                    result.bytes,
-                    &result.sha256,
-                    ctx.conversation_id,
-                    ctx.run_id,
-                    diff,
-                )?;
-            note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
-            Ok(text_result(json!({
-                "outcome": FileModificationOutcome::Changed,
-                "changed": true,
-                "changed_target_count": 1,
-                "previous_sha256": current_sha256,
-                "result": result,
-                "change": record
-            })))
+                    "matches": batch_matches
+                })))
             })();
-            record_file_modification_outcome("write_file", ctx, &invocation);
+            record_file_modification_outcome("stage_edit_batch", ctx, &invocation);
             invocation
         }),
     );
 }
 
-fn register_edit_file_tool(
+fn register_commit_edit_session_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
     change_log: Arc<Mutex<ChangeLogStore>>,
-    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
-    workspace_note: &str,
-    hooks: Option<CodeMaintainerHooksRef>,
-) {
-    service.register_tool(
-        "edit_file",
-        &format!(
-            "Safely edit a file in the current project workspace by replacing old_text with new_text. expected_sha256 must be the sha256 returned by the latest successful read of this file. After a stale_context or expected_match failure, re-read the target before retrying.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line. Context may be supplied as adjacent whole lines without manually adding the boundary newline.\n{workspace_note}"
-        ),
-        json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string" },
-                "old_text": { "type": "string", "minLength": 1 },
-                "new_text": { "type": "string" },
-                "start_line": { "type": "integer", "minimum": 1 },
-                "end_line": { "type": "integer", "minimum": 1 },
-                "before_context": { "type": "string" },
-                "after_context": { "type": "string" },
-                "expected_matches": { "type": "integer", "minimum": 1 },
-                "expected_sha256": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$"
-                }
-            },
-            "additionalProperties": false,
-            "required": ["path", "old_text", "new_text", "expected_sha256"]
-        }),
-        Arc::new(move |args, ctx| {
-            let invocation = (|| {
-            let path = args
-                .get("path")
-                .and_then(|value| value.as_str())
-                .ok_or("path is required".to_string())?;
-            let old_text = args
-                .get("old_text")
-                .and_then(|value| value.as_str())
-                .ok_or("old_text is required".to_string())?;
-            let new_text = args
-                .get("new_text")
-                .and_then(|value| value.as_str())
-                .ok_or("new_text is required".to_string())?;
-            let start_line = args
-                .get("start_line")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as usize);
-            let end_line = args
-                .get("end_line")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as usize);
-            let before_context = args.get("before_context").and_then(|value| value.as_str());
-            let after_context = args.get("after_context").and_then(|value| value.as_str());
-            let expected_matches = args
-                .get("expected_matches")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as usize);
-            let expected_sha256 = expected_sha256(&args, "expected_sha256")?
-                .ok_or("expected_sha256 must not be null for edit_file".to_string())?;
-
-            let (resolved_path, size, sha, content) = fs_ops.read_file_raw(path)?;
-            verify_file_revision(
-                &revision_guard,
-                ctx,
-                path,
-                Some(expected_sha256),
-                Some(sha.as_str()),
-                start_line,
-                end_line,
-            )?;
-            let edit_result = apply_edit_text(
-                &content,
-                EditRequest {
-                    old_text,
-                    new_text,
-                    start_line,
-                    end_line,
-                    before_context,
-                    after_context,
-                    expected_matches,
-                },
-            )
-            .map_err(|err| {
-                let outcome = classify_file_modification_error(err.as_str());
-                if matches!(
-                    outcome,
-                    FileModificationOutcome::StaleContext
-                        | FileModificationOutcome::ExpectedMatch
-                ) {
-                    mark_failed_modification(&revision_guard, ctx, path);
-                    edit_modification_error(
-                        outcome,
-                        err.as_str(),
-                        path,
-                        Some(sha.as_str()),
-                        start_line,
-                        end_line,
-                        content.as_str(),
-                        old_text,
-                    )
-                } else {
-                    err
-                }
-            })?;
-
-            if !edit_result.changed {
-                return Ok(text_result(json!({
-                    "outcome": FileModificationOutcome::AlreadyApplied,
-                    "changed": false,
-                    "changed_target_count": 0,
-                    "result": {
-                        "path": resolved_path,
-                        "bytes": size,
-                        "sha256": sha,
-                        "changed": false,
-                        "already_applied": true
-                    },
-                    "match": edit_result.info,
-                    "message": "The requested edit is already present. No file-system change was applied."
-                })));
-            }
-
-            let updated_content = edit_result.content.clone();
-            let write_result = fs_ops.write_file(path, &updated_content)?;
-            let diff = build_diff(DiffInput::text(content), DiffInput::text(updated_content));
-            let full_path = fs_ops.resolve_path(path)?.to_string_lossy().to_string();
-            let record = change_log
-                .lock()
-                .map_err(|_| "change log unavailable".to_string())?
-                .log_change(
-                    &write_result.path,
-                    "edit_file",
-                    "edit",
-                    write_result.bytes,
-                    &write_result.sha256,
-                    ctx.conversation_id,
-                    ctx.run_id,
-                    diff,
-                )?;
-            note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
-            Ok(text_result(json!({
-                "outcome": FileModificationOutcome::Changed,
-                "changed": true,
-                "changed_target_count": 1,
-                "result": write_result,
-                "match": edit_result.info,
-                "change": record
-            })))
-            })();
-            record_file_modification_outcome("edit_file", ctx, &invocation);
-            invocation
-        }),
-    );
-}
-
-fn register_append_file_tool(
-    service: &mut CodeMaintainerService,
-    fs_ops: FsOps,
-    change_log: Arc<Mutex<ChangeLogStore>>,
-    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
-    max_write_bytes: i64,
-    writes_note: &str,
-    workspace_note: &str,
-    hooks: Option<CodeMaintainerHooksRef>,
-) {
-    service.register_tool(
-        "append_file",
-        &format!(
-            "Append content to a file in the current project workspace. expected_sha256 is mandatory: use the sha256 returned by the latest read for an existing file, or null only when creating a path confirmed absent.\nMax write bytes: {}.\n{}.\n{workspace_note}",
-            format_bytes(max_write_bytes),
-            writes_note
-        ),
-        json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string" },
-                "content": { "type": "string" },
-                "expected_sha256": {
-                    "type": ["string", "null"],
-                    "pattern": "^[0-9a-f]{64}$"
-                }
-            },
-            "additionalProperties": false,
-            "required": ["path", "content", "expected_sha256"]
-        }),
-        Arc::new(move |args, ctx| {
-            let invocation = (|| {
-            let path = args
-                .get("path")
-                .and_then(|value| value.as_str())
-                .ok_or("path is required".to_string())?;
-            let content = args
-                .get("content")
-                .and_then(|value| value.as_str())
-                .ok_or("content is required".to_string())?;
-            let expected_sha256 = expected_sha256(&args, "expected_sha256")?;
-            let target = fs_ops.resolve_path(path)?;
-            let existed_before = target.exists();
-            let (current_sha256, before_snapshot) = if existed_before {
-                let (_, _, sha256, current_content) = fs_ops.read_file_raw(path)?;
-                (Some(sha256), DiffInput::text(current_content))
-            } else {
-                (None, DiffInput { text: None, reason: None })
-            };
-            verify_file_revision(
-                &revision_guard,
-                ctx,
-                path,
-                expected_sha256,
-                current_sha256.as_deref(),
-                None,
-                None,
-            )?;
-            if existed_before && content.is_empty() {
-                return Ok(text_result(json!({
-                    "outcome": FileModificationOutcome::AlreadyApplied,
-                    "changed": false,
-                    "changed_target_count": 0,
-                    "result": {
-                        "path": path,
-                        "sha256": current_sha256,
-                        "changed": false,
-                        "already_applied": true
-                    },
-                    "message": "The append content is empty. No file-system change was applied."
-                })));
-            }
-            let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
-                DiffInput::omitted(reason)
-            } else {
-                let mut next = before_snapshot.text.clone().unwrap_or_default();
-                next.push_str(content);
-                DiffInput::text(next)
-            };
-            let result = fs_ops.append_file(path, content)?;
-            let diff = build_diff(before_snapshot, after_snapshot);
-            let full_path = target.to_string_lossy().to_string();
-            let record = change_log
-                .lock()
-                .map_err(|_| "change log unavailable".to_string())?
-                .log_change(
-                    &result.path,
-                    "append",
-                    if existed_before { "edit" } else { "create" },
-                    result.bytes,
-                    &result.sha256,
-                    ctx.conversation_id,
-                    ctx.run_id,
-                    diff,
-                )?;
-            note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
-            Ok(text_result(json!({
-                "outcome": FileModificationOutcome::Changed,
-                "changed": true,
-                "changed_target_count": 1,
-                "previous_sha256": current_sha256,
-                "result": result,
-                "change": record
-            })))
-            })();
-            record_file_modification_outcome("append_file", ctx, &invocation);
-            invocation
-        }),
-    );
-}
-
-fn register_delete_path_tool(
-    service: &mut CodeMaintainerService,
-    fs_ops: FsOps,
-    change_log: Arc<Mutex<ChangeLogStore>>,
-    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
-    max_file_bytes: i64,
-    writes_note: &str,
-    workspace_note: &str,
-    hooks: Option<CodeMaintainerHooksRef>,
-) {
-    service.register_tool(
-        "delete_path",
-        &format!(
-            "Delete a file or directory recursively from the current project workspace. expected_sha256 is mandatory for files and must come from the latest read; use null only for a directory or a path confirmed absent.\n{}.\n{workspace_note}",
-            writes_note
-        ),
-        json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string" },
-                "expected_sha256": {
-                    "type": ["string", "null"],
-                    "pattern": "^[0-9a-f]{64}$"
-                }
-            },
-            "additionalProperties": false,
-            "required": ["path", "expected_sha256"]
-        }),
-        Arc::new(move |args, ctx| {
-            let invocation = (|| {
-            let path = args
-                .get("path")
-                .and_then(|value| value.as_str())
-                .ok_or("path is required".to_string())?;
-            let expected_sha256 = expected_sha256(&args, "expected_sha256")?;
-            let target = fs_ops.resolve_path(path)?;
-            let current_sha256 = if target.is_file() {
-                Some(fs_ops.read_file_raw(path)?.2)
-            } else {
-                None
-            };
-            verify_file_revision(
-                &revision_guard,
-                ctx,
-                path,
-                expected_sha256,
-                current_sha256.as_deref(),
-                None,
-                None,
-            )?;
-            let before_snapshot =
-                read_text_for_diff(&target, max_file_bytes).unwrap_or_else(DiffInput::omitted);
-            let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
-                DiffInput::omitted(reason)
-            } else {
-                DiffInput::text(String::new())
-            };
-            let full_path = target.to_string_lossy().to_string();
-            let delete_result = fs_ops.delete_path(path)?;
-            let exists_after_delete = target.exists();
-            if delete_result.deleted && exists_after_delete {
-                return Err(format!(
-                    "Delete reported success but path still exists: {}",
-                    delete_result.path
-                ));
-            }
-            if !delete_result.deleted {
-                return Ok(text_result(json!({
-                    "outcome": FileModificationOutcome::AlreadyApplied,
-                    "changed": false,
-                    "changed_target_count": 0,
-                    "result": {
-                        "path": delete_result.path,
-                        "deleted": false,
-                        "exists_after_delete": exists_after_delete,
-                        "already_absent": true
-                    },
-                    "message": "Path already absent. No file-system change was applied.",
-                    "hint": "Verify the exact path with list_dir before retrying delete."
-                })));
-            }
-            let diff = build_diff(before_snapshot, after_snapshot);
-            let record = change_log
-                .lock()
-                .map_err(|_| "change log unavailable".to_string())?
-                .log_change(
-                    &delete_result.path,
-                    "delete",
-                    "delete",
-                    0,
-                    "",
-                    ctx.conversation_id,
-                    ctx.run_id,
-                    diff,
-                )?;
-            note_workspace_path_changed(hooks.as_ref(), full_path.as_str());
-            Ok(text_result(json!({
-                "outcome": FileModificationOutcome::Changed,
-                "changed": true,
-                "changed_target_count": 1,
-                "result": {
-                    "path": delete_result.path,
-                    "deleted": true,
-                    "exists_after_delete": exists_after_delete,
-                    "already_absent": false
-                },
-                "change": record
-            })))
-            })();
-            record_file_modification_outcome("delete_path", ctx, &invocation);
-            invocation
-        }),
-    );
-}
-
-fn register_apply_patch_tool(
-    service: &mut CodeMaintainerService,
-    fs_ops: FsOps,
-    change_log: Arc<Mutex<ChangeLogStore>>,
-    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
-    root: PathBuf,
+    revision_guard: SharedRevisionGuard,
+    session_store: SharedSessionStore,
     allow_writes: bool,
     max_file_bytes: i64,
     max_write_bytes: i64,
@@ -592,245 +239,706 @@ fn register_apply_patch_tool(
     hooks: Option<CodeMaintainerHooksRef>,
 ) {
     service.register_tool(
-        "apply_patch",
+        "commit_edit_session",
         &format!(
-            "Apply a patch to one or more files in the current project workspace. expected_sha256_by_path is mandatory and must contain the latest read sha256 for every existing update/delete target; omit paths that the patch creates. After stale_context or expected_match, re-read every reported target before retrying.\nSupported format A (recommended): *** Begin Patch / *** Update File / *** Add File / *** Delete File / *** End Patch.\nSupported format B (stable text replace):\nUpdate File --- path/to/file\n<old content>\n+++ path/to/file\n<new content>\nEnd Patch\nFormat B requires old content to match uniquely in the file.\n{}.\n{workspace_note}",
-            writes_note
+            "Atomically commit the staged session snapshot to the current project workspace. The commit revalidates every touched path against the session baseline before making any change, so stale paths fail together instead of cascading. {}\n{}",
+            writes_note, workspace_note
         ),
         json!({
             "type": "object",
             "properties": {
-                "patch": { "type": "string", "minLength": 1 },
-                "expected_sha256_by_path": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "pattern": "^[0-9a-f]{64}$"
-                    }
-                }
+                "session_id": { "type": "string", "minLength": 1 }
             },
             "additionalProperties": false,
-            "required": ["patch", "expected_sha256_by_path"]
+            "required": ["session_id"]
         }),
         Arc::new(move |args, ctx| {
             let invocation = (|| {
-            let patch_text = args
-                .get("patch")
-                .and_then(|value| value.as_str())
-                .ok_or("patch is required".to_string())?;
-            let expected_hashes = args
-                .get("expected_sha256_by_path")
-                .and_then(serde_json::Value::as_object)
-                .ok_or("expected_sha256_by_path is required".to_string())?;
-            let patch_diffs: HashMap<String, String> = extract_patch_diffs(patch_text);
-            let patch_targets = extract_patch_targets(patch_text);
-            let mut before_snapshots: HashMap<String, DiffInput> = HashMap::new();
-            let mut current_hashes = HashMap::new();
-            let mut existing_paths = std::collections::BTreeSet::new();
-            for target in &patch_targets {
-                let before_path = fs_ops.resolve_path(&target.before_path)?;
-                if before_path.exists() {
-                    if !before_path.is_file() {
-                        return Err(format!(
-                            "patch target is not a file: {}",
-                            target.before_path
-                        ));
-                    }
-                    if existing_paths.insert(target.before_path.clone()) {
-                        let (_, _, current_sha256, _) =
-                            fs_ops.read_file_raw(target.before_path.as_str())?;
-                        let expected_sha256 = expected_hashes
-                            .get(target.before_path.as_str())
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| is_sha256(value))
-                            .ok_or_else(|| {
-                                format!(
-                                    "expected_sha256_by_path requires a valid SHA-256 for existing target {}",
-                                    target.before_path
-                                )
-                            })?;
-                        verify_file_revision(
-                            &revision_guard,
-                            ctx,
-                            target.before_path.as_str(),
-                            Some(expected_sha256),
-                            Some(current_sha256.as_str()),
-                            None,
-                            None,
-                        )?;
-                        current_hashes.insert(target.before_path.clone(), current_sha256);
-                    }
+                if !allow_writes {
+                    return Err("Writes are disabled.".to_string());
                 }
-                let before_snapshot =
-                    read_text_for_diff(&before_path, max_file_bytes).unwrap_or_else(DiffInput::omitted);
-                before_snapshots.insert(target.after_path.clone(), before_snapshot);
-            }
-            let unexpected_hash_paths = expected_hashes
-                .keys()
-                .filter(|path| !existing_paths.contains(path.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
-            if !unexpected_hash_paths.is_empty() {
-                return Err(format!(
-                    "expected_sha256_by_path contains paths that are not existing patch targets: {}",
-                    unexpected_hash_paths.join(", ")
-                ));
-            }
-            let result = apply_patch_limited(&root, patch_text, allow_writes, max_write_bytes).map_err(|err| {
-                let outcome = classify_file_modification_error(err.as_str());
-                if matches!(
-                    outcome,
-                    FileModificationOutcome::StaleContext
-                        | FileModificationOutcome::ExpectedMatch
-                ) {
-                    for path in current_hashes.keys() {
-                        mark_failed_modification(&revision_guard, ctx, path.as_str());
-                    }
-                    let first_path = current_hashes.keys().next().map(String::as_str).unwrap_or("");
-                    file_revision_error(
-                        outcome.as_str(),
-                        err.as_str(),
-                        first_path,
-                        current_hashes.get(first_path).map(String::as_str),
-                        None,
-                        None,
-                    )
-                } else {
-                    err
-                }
-            })?;
-            let mut hashes = Vec::new();
-
-            {
-                let store = change_log
+                let session_id = required_string(&args, "session_id")?;
+                let session = session_store
                     .lock()
-                    .map_err(|_| "change log unavailable".to_string())?;
-                for path in &result.updated {
-                    let full_path = fs_ops.resolve_path(path)?;
-                    let (hash, size) = file_hash_and_size(&full_path)?;
-                    let before_snapshot = before_snapshots.remove(path).unwrap_or(DiffInput {
-                        text: None,
-                        reason: None,
-                    });
-                    let after_snapshot = read_text_for_diff(&full_path, max_file_bytes)
-                        .unwrap_or_else(DiffInput::omitted);
-                    let change_kind = if before_snapshot.text.is_none()
-                        && before_snapshot.reason.is_none()
-                    {
-                        "create"
-                    } else {
-                        "edit"
-                    };
-                    let diff =
-                        build_diff(before_snapshot, after_snapshot).or_else(|| patch_diffs.get(path).cloned());
-                    store.log_change(
-                        path,
-                        "write",
-                        change_kind,
-                        size,
-                        &hash,
-                        ctx.conversation_id,
-                        ctx.run_id,
-                        diff,
-                    )?;
-                    let full_path_string = full_path.to_string_lossy().to_string();
-                    note_workspace_path_changed(hooks.as_ref(), full_path_string.as_str());
-                    hashes.push(json!({ "path": path, "sha256": hash }));
-                }
-
-                for path in &result.added {
-                    let full_path = fs_ops.resolve_path(path)?;
-                    let (hash, size) = file_hash_and_size(&full_path)?;
-                    let before_snapshot = before_snapshots.remove(path).unwrap_or(DiffInput {
-                        text: None,
-                        reason: None,
-                    });
-                    let after_snapshot = read_text_for_diff(&full_path, max_file_bytes)
-                        .unwrap_or_else(DiffInput::omitted);
-                    let diff =
-                        build_diff(before_snapshot, after_snapshot).or_else(|| patch_diffs.get(path).cloned());
-                    store.log_change(
-                        path,
-                        "write",
-                        "create",
-                        size,
-                        &hash,
-                        ctx.conversation_id,
-                        ctx.run_id,
-                        diff,
-                    )?;
-                    let full_path_string = full_path.to_string_lossy().to_string();
-                    note_workspace_path_changed(hooks.as_ref(), full_path_string.as_str());
-                    hashes.push(json!({ "path": path, "sha256": hash }));
-                }
-
-                for path in &result.deleted {
-                    let full_path = fs_ops.resolve_path(path)?;
-                    let before_snapshot = before_snapshots
-                        .remove(path)
-                        .unwrap_or_else(|| DiffInput::text(String::new()));
-                    let after_snapshot = DiffInput::text(String::new());
-                    let diff =
-                        build_diff(before_snapshot, after_snapshot).or_else(|| patch_diffs.get(path).cloned());
-                    store.log_change(
-                        path,
-                        "delete",
-                        "delete",
-                        0,
-                        "",
-                        ctx.conversation_id,
-                        ctx.run_id,
-                        diff,
-                    )?;
-                    let full_path_string = full_path.to_string_lossy().to_string();
-                    note_workspace_path_changed(hooks.as_ref(), full_path_string.as_str());
-                }
-            }
-
-            let changed = result.changed();
-            let changed_target_count = result.changed_path_count();
-            Ok(text_result(json!({
-                "outcome": FileModificationOutcome::from_changed(changed),
-                "changed": changed,
-                "changed_target_count": changed_target_count,
-                "result": result,
-                "files": hashes
-            })))
+                    .map_err(|_| "edit session store unavailable".to_string())?
+                    .take(session_id, ctx.run_id)?;
+                commit_session(
+                    session,
+                    &fs_ops,
+                    &change_log,
+                    &revision_guard,
+                    ctx,
+                    max_file_bytes,
+                    max_write_bytes,
+                    hooks.as_ref(),
+                )
             })();
-            record_file_modification_outcome("apply_patch", ctx, &invocation);
+            record_file_modification_outcome("commit_edit_session", ctx, &invocation);
             invocation
         }),
     );
 }
 
-fn expected_sha256<'a>(
-    args: &'a serde_json::Value,
-    field: &str,
-) -> Result<Option<&'a str>, String> {
-    match args.get(field) {
-        Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::String(value)) if is_sha256(value) => Ok(Some(value.as_str())),
-        Some(serde_json::Value::String(_)) => Err(format!(
-            "{field} must be a lowercase 64-character SHA-256 value"
-        )),
-        Some(_) => Err(format!("{field} must be a SHA-256 string or null")),
-        None => Err(format!("{field} is required")),
+fn register_abort_edit_session_tool(
+    service: &mut CodeMaintainerService,
+    session_store: SharedSessionStore,
+    workspace_note: &str,
+) {
+    service.register_tool(
+        "abort_edit_session",
+        &format!(
+            "Abort a write session and discard its staged in-memory snapshot without touching the file system.\n{}",
+            workspace_note
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false,
+            "required": ["session_id"]
+        }),
+        Arc::new(move |args, ctx| {
+            let invocation = (|| {
+                let session_id = required_string(&args, "session_id")?;
+                let session = session_store
+                    .lock()
+                    .map_err(|_| "edit session store unavailable".to_string())?
+                    .take(session_id, ctx.run_id)?;
+                Ok(text_result(json!({
+                    "outcome": FileModificationOutcome::AlreadyApplied,
+                    "changed": false,
+                    "changed_target_count": 0,
+                    "result": {
+                        "session_id": session.id,
+                        "discarded_target_count": session.changed_paths().len(),
+                        "staged_operation_count": session.staged_operation_count,
+                    },
+                    "message": "Edit session aborted. All staged changes were discarded."
+                })))
+            })();
+            record_file_modification_outcome("abort_edit_session", ctx, &invocation);
+            invocation
+        }),
+    );
+}
+
+#[derive(Debug)]
+struct StageOutcome {
+    path: String,
+    changed: bool,
+    match_info: Option<EditMatchInfo>,
+}
+
+fn apply_stage_operation(
+    session: &mut EditSession,
+    operation: &Value,
+    fs_ops: &FsOps,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+    max_write_bytes: i64,
+) -> Result<StageOutcome, String> {
+    let kind = required_string(operation, "kind")?;
+    let path = required_string(operation, "path")?;
+    validate_session_path_overlaps(session, path, kind)?;
+    match kind {
+        "write" => stage_write(
+            session,
+            operation,
+            path,
+            fs_ops,
+            revision_guard,
+            ctx,
+            max_write_bytes,
+        ),
+        "replace_text" => stage_replace_text(
+            session,
+            operation,
+            path,
+            fs_ops,
+            revision_guard,
+            ctx,
+            max_write_bytes,
+        ),
+        "append" => stage_append(
+            session,
+            operation,
+            path,
+            fs_ops,
+            revision_guard,
+            ctx,
+            max_write_bytes,
+        ),
+        "delete" => stage_delete(session, operation, path, fs_ops, revision_guard, ctx),
+        other => Err(format!("unsupported operation kind: {other}")),
     }
 }
 
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+fn stage_write(
+    session: &mut EditSession,
+    operation: &Value,
+    path: &str,
+    fs_ops: &FsOps,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+    max_write_bytes: i64,
+) -> Result<StageOutcome, String> {
+    let content = required_string(operation, "content")?.to_string();
+    enforce_write_size(&content, max_write_bytes)?;
+    let expected = expected_sha256(operation, "expected_sha256")?;
+    let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
+    if state.working.kind == EntryKind::Directory {
+        return Err("Target path is a directory.".to_string());
+    }
+    let changed = state.working.content.as_deref() != Some(content.as_str())
+        || state.working.kind != EntryKind::File;
+    state.working = EntrySnapshot::file(content.clone(), sha256_bytes(content.as_bytes()));
+    state.staged_operations += 1;
+    Ok(StageOutcome {
+        path: state.path.clone(),
+        changed,
+        match_info: None,
+    })
 }
 
-fn verify_file_revision(
-    revision_guard: &Arc<Mutex<ModificationRevisionGuard>>,
-    ctx: &super::service::ToolContext<'_>,
+fn stage_replace_text(
+    session: &mut EditSession,
+    operation: &Value,
+    path: &str,
+    fs_ops: &FsOps,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+    max_write_bytes: i64,
+) -> Result<StageOutcome, String> {
+    let old_text = required_string(operation, "old_text")?;
+    let new_text = operation
+        .get("new_text")
+        .and_then(Value::as_str)
+        .ok_or("new_text is required".to_string())?;
+    let expected = expected_sha256(operation, "expected_sha256")?
+        .ok_or("expected_sha256 must not be null for replace_text".to_string())?;
+    let state = get_or_load_session_file(session, path, Some(expected), fs_ops, revision_guard, ctx)?;
+    if state.working.kind != EntryKind::File {
+        return Err("Target is not a file.".to_string());
+    }
+    let start_line = optional_usize(operation, "start_line");
+    let end_line = optional_usize(operation, "end_line");
+    let before_context = operation.get("before_context").and_then(Value::as_str);
+    let after_context = operation.get("after_context").and_then(Value::as_str);
+    let expected_matches = optional_usize(operation, "expected_matches");
+    let current = state.working.content.clone().unwrap_or_default();
+    let edit_result = apply_edit_text(
+        current.as_str(),
+        EditRequest {
+            old_text,
+            new_text,
+            start_line,
+            end_line,
+            before_context,
+            after_context,
+            expected_matches,
+        },
+    )
+    .map_err(|err| {
+        let outcome = classify_file_modification_error(err.as_str());
+        if matches!(
+            outcome,
+            FileModificationOutcome::StaleContext | FileModificationOutcome::ExpectedMatch
+        ) {
+            mark_failed_modification(revision_guard, ctx, path);
+            edit_modification_error(
+                outcome,
+                err.as_str(),
+                path,
+                state.base.sha256.as_deref(),
+                start_line,
+                end_line,
+                current.as_str(),
+                old_text,
+            )
+        } else {
+            err
+        }
+    })?;
+    enforce_write_size(&edit_result.content, max_write_bytes)?;
+    let changed = edit_result.changed;
+    state.working = EntrySnapshot::file(
+        edit_result.content.clone(),
+        sha256_bytes(edit_result.content.as_bytes()),
+    );
+    state.staged_operations += 1;
+    Ok(StageOutcome {
+        path: state.path.clone(),
+        changed,
+        match_info: Some(edit_result.info),
+    })
+}
+
+fn stage_append(
+    session: &mut EditSession,
+    operation: &Value,
+    path: &str,
+    fs_ops: &FsOps,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+    max_write_bytes: i64,
+) -> Result<StageOutcome, String> {
+    let content = required_string(operation, "content")?;
+    let expected = expected_sha256(operation, "expected_sha256")?;
+    let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
+    if state.working.kind == EntryKind::Directory {
+        return Err("Target path is a directory.".to_string());
+    }
+    let mut next = state.working.content.clone().unwrap_or_default();
+    next.push_str(content);
+    enforce_write_size(&next, max_write_bytes)?;
+    let changed = state.working.kind != EntryKind::File || next != state.working.content.clone().unwrap_or_default();
+    state.working = EntrySnapshot::file(next.clone(), sha256_bytes(next.as_bytes()));
+    state.staged_operations += 1;
+    Ok(StageOutcome {
+        path: state.path.clone(),
+        changed,
+        match_info: None,
+    })
+}
+
+fn stage_delete(
+    session: &mut EditSession,
+    operation: &Value,
+    path: &str,
+    fs_ops: &FsOps,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+) -> Result<StageOutcome, String> {
+    let expected = expected_sha256(operation, "expected_sha256")?;
+    let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
+    let changed = state.working.kind != EntryKind::Missing;
+    state.working = EntrySnapshot::missing();
+    state.staged_operations += 1;
+    Ok(StageOutcome {
+        path: state.path.clone(),
+        changed,
+        match_info: None,
+    })
+}
+
+fn get_or_load_session_file<'a>(
+    session: &'a mut EditSession,
+    path: &str,
+    expected_sha256: Option<&str>,
+    fs_ops: &FsOps,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+) -> Result<&'a mut SessionFileState, String> {
+    if !session.files.contains_key(path) {
+        let snapshot = load_entry_snapshot(fs_ops, path)?;
+        verify_session_baseline(
+            revision_guard,
+            ctx,
+            path,
+            expected_sha256,
+            &snapshot,
+            None,
+            None,
+        )?;
+        session
+            .files
+            .insert(path.to_string(), SessionFileState::new(path, snapshot));
+    } else if let Some(expected) = expected_sha256 {
+        let state = session
+            .files
+            .get(path)
+            .ok_or_else(|| format!("session path unexpectedly missing: {path}"))?;
+        if state.base.kind != EntryKind::File || state.base.sha256.as_deref() != Some(expected) {
+            return Err(format!(
+                "expected_sha256 for {} does not match the active session baseline",
+                path
+            ));
+        }
+    }
+    session
+        .files
+        .get_mut(path)
+        .ok_or_else(|| format!("session path unexpectedly missing: {path}"))
+}
+
+fn commit_session(
+    session: EditSession,
+    fs_ops: &FsOps,
+    change_log: &Arc<Mutex<ChangeLogStore>>,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+    max_file_bytes: i64,
+    max_write_bytes: i64,
+    hooks: Option<&CodeMaintainerHooksRef>,
+) -> Result<Value, String> {
+    let changed_states = session
+        .files
+        .values()
+        .filter(|state| state.has_change())
+        .cloned()
+        .collect::<Vec<_>>();
+    if changed_states.is_empty() {
+        return Ok(text_result(json!({
+            "outcome": FileModificationOutcome::AlreadyApplied,
+            "changed": false,
+            "changed_target_count": 0,
+            "result": {
+                "session_id": session.id,
+                "committed_paths": [],
+                "staged_operation_count": session.staged_operation_count,
+            },
+            "message": "Session had no pending file-system changes. Nothing was committed."
+        })));
+    }
+
+    let conflicts = changed_states
+        .iter()
+        .filter_map(|state| commit_conflict_for_state(fs_ops, revision_guard, ctx, state))
+        .collect::<Vec<_>>();
+    if !conflicts.is_empty() {
+        return Err(commit_conflict_error(&conflicts));
+    }
+
+    for state in &changed_states {
+        if let Some(content) = state.working.content.as_deref() {
+            enforce_write_size(content, max_write_bytes)?;
+        }
+    }
+
+    let mut applied = Vec::new();
+    let mut rollback_applied = Vec::new();
+    for state in &changed_states {
+        let resolved = fs_ops.resolve_path(state.path.as_str())?;
+        let before_diff = read_text_for_diff(&resolved, max_file_bytes).unwrap_or_else(DiffInput::omitted);
+        let commit_result = apply_path_commit(state, resolved.as_path())?;
+        rollback_applied.push(commit_result.rollback.clone());
+        applied.push(CommittedPath {
+            state: state.clone(),
+            resolved_path: resolved,
+            before_diff,
+            result: commit_result,
+        });
+    }
+
+    let mut failure: Option<String> = None;
+    for committed in &applied {
+        if let Err(error) = committed.result.finalize() {
+            failure = Some(error);
+            break;
+        }
+    }
+
+    if let Some(error) = failure {
+        rollback_commits(rollback_applied.into_iter().rev().collect());
+        return Err(format!("commit_edit_session failed: {error}"));
+    }
+
+    let store = change_log
+        .lock()
+        .map_err(|_| "change log unavailable".to_string())?;
+    let mut files = Vec::new();
+    for committed in applied {
+        let full_path = committed.resolved_path.to_string_lossy().to_string();
+        let path = committed.state.path.clone();
+        match committed.state.working.kind {
+            EntryKind::Missing => {
+                let diff = build_diff(committed.before_diff, DiffInput::text(String::new()));
+                let record = store.log_change(
+                    path.as_str(),
+                    "commit_edit_session",
+                    "delete",
+                    0,
+                    "",
+                    ctx.conversation_id,
+                    ctx.run_id,
+                    diff,
+                )?;
+                note_workspace_path_changed(hooks, full_path.as_str());
+                files.push(json!({
+                    "path": path,
+                    "change_kind": "delete",
+                    "deleted": true,
+                    "change": record,
+                }));
+            }
+            EntryKind::File => {
+                let content = committed.state.working.content.clone().unwrap_or_default();
+                let sha256 = committed.state.working.sha256.clone().unwrap_or_default();
+                let diff = build_diff(committed.before_diff, DiffInput::text(content.clone()));
+                let change_kind = if committed.state.base.kind == EntryKind::Missing {
+                    "create"
+                } else {
+                    "edit"
+                };
+                let bytes = i64::try_from(content.len()).map_err(|_| "write too large".to_string())?;
+                let record = store.log_change(
+                    path.as_str(),
+                    "commit_edit_session",
+                    change_kind,
+                    bytes,
+                    sha256.as_str(),
+                    ctx.conversation_id,
+                    ctx.run_id,
+                    diff,
+                )?;
+                note_workspace_path_changed(hooks, full_path.as_str());
+                files.push(json!({
+                    "path": path,
+                    "change_kind": change_kind,
+                    "bytes": bytes,
+                    "sha256": sha256,
+                    "deleted": false,
+                    "change": record,
+                }));
+            }
+            EntryKind::Directory => {}
+        }
+    }
+
+    Ok(text_result(json!({
+        "outcome": FileModificationOutcome::Changed,
+        "changed": true,
+        "changed_target_count": files.len(),
+        "result": {
+            "session_id": session.id,
+            "staged_operation_count": session.staged_operation_count,
+            "committed_paths": files,
+            "session_closed": true,
+        }
+    })))
+}
+
+#[derive(Debug)]
+struct CommittedPath {
+    state: SessionFileState,
+    resolved_path: PathBuf,
+    before_diff: DiffInput,
+    result: PathCommitResult,
+}
+
+#[derive(Debug)]
+struct PathCommitResult {
+    rollback: RollbackAction,
+}
+
+impl PathCommitResult {
+    fn finalize(&self) -> Result<(), String> {
+        self.rollback.cleanup()
+    }
+}
+
+#[derive(Debug, Clone)]
+enum RollbackAction {
+    None,
+    CreatedFile { path: PathBuf },
+    ReplacedFile {
+        path: PathBuf,
+        backup: PathBuf,
+        created: PathBuf,
+    },
+    DeletedEntry {
+        path: PathBuf,
+        backup: PathBuf,
+    },
+}
+
+impl RollbackAction {
+    fn rollback(self) {
+        match self {
+            Self::None => {}
+            Self::CreatedFile { path } => {
+                let _ = fs::remove_file(path);
+            }
+            Self::ReplacedFile {
+                path,
+                backup,
+                created,
+            } => {
+                let _ = fs::remove_file(path.as_path());
+                let _ = fs::rename(backup.as_path(), path.as_path());
+                let _ = fs::remove_file(created.as_path());
+            }
+            Self::DeletedEntry { path, backup } => {
+                let _ = fs::rename(backup.as_path(), path.as_path());
+            }
+        }
+    }
+
+    fn cleanup(&self) -> Result<(), String> {
+        match self {
+            Self::None | Self::CreatedFile { .. } => Ok(()),
+            Self::ReplacedFile { backup, created, .. } => {
+                if backup.exists() {
+                    fs::remove_file(backup).map_err(|err| err.to_string())?;
+                }
+                if created.exists() {
+                    fs::remove_file(created).map_err(|err| err.to_string())?;
+                }
+                Ok(())
+            }
+            Self::DeletedEntry { backup, .. } => {
+                if backup.exists() {
+                    if backup.is_dir() {
+                        fs::remove_dir_all(backup).map_err(|err| err.to_string())?;
+                    } else {
+                        fs::remove_file(backup).map_err(|err| err.to_string())?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+fn apply_path_commit(state: &SessionFileState, resolved: &Path) -> Result<PathCommitResult, String> {
+    match state.working.kind {
+        EntryKind::Missing => apply_delete_commit(resolved),
+        EntryKind::File => apply_file_commit(state, resolved),
+        EntryKind::Directory => Err("directory staging is not commit-compatible".to_string()),
+    }
+}
+
+fn apply_delete_commit(resolved: &Path) -> Result<PathCommitResult, String> {
+    if !resolved.exists() {
+        return Ok(PathCommitResult {
+            rollback: RollbackAction::None,
+        });
+    }
+    let backup = sibling_temp_path(resolved, "delete_backup");
+    fs::rename(resolved, backup.as_path()).map_err(|err| err.to_string())?;
+    Ok(PathCommitResult {
+        rollback: RollbackAction::DeletedEntry {
+            path: resolved.to_path_buf(),
+            backup,
+        },
+    })
+}
+
+fn apply_file_commit(state: &SessionFileState, resolved: &Path) -> Result<PathCommitResult, String> {
+    let content = state.working.content.clone().unwrap_or_default();
+    let created = sibling_temp_path(resolved, "write_stage");
+    if let Some(parent) = created.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    fs::write(created.as_path(), content.as_bytes()).map_err(|err| err.to_string())?;
+    if !resolved.exists() {
+        if let Some(parent) = resolved.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::rename(created.as_path(), resolved).map_err(|err| err.to_string())?;
+        return Ok(PathCommitResult {
+            rollback: RollbackAction::CreatedFile {
+                path: resolved.to_path_buf(),
+            },
+        });
+    }
+    let backup = sibling_temp_path(resolved, "write_backup");
+    fs::rename(resolved, backup.as_path()).map_err(|err| err.to_string())?;
+    fs::rename(created.as_path(), resolved).map_err(|err| err.to_string())?;
+    Ok(PathCommitResult {
+        rollback: RollbackAction::ReplacedFile {
+            path: resolved.to_path_buf(),
+            backup,
+            created,
+        },
+    })
+}
+
+fn rollback_commits(actions: Vec<RollbackAction>) {
+    for action in actions {
+        action.rollback();
+    }
+}
+
+fn commit_conflict_for_state(
+    fs_ops: &FsOps,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
+    state: &SessionFileState,
+) -> Option<Value> {
+    let current = load_entry_snapshot(fs_ops, state.path.as_str()).ok()?;
+    if state.base.kind == current.kind {
+        if state.base.kind != EntryKind::File || state.base.sha256 == current.sha256 {
+            return None;
+        }
+    }
+    if matches!(state.base.kind, EntryKind::File) || matches!(current.kind, EntryKind::File) {
+        mark_failed_modification(revision_guard, ctx, state.path.as_str());
+    }
+    let recovery_tool = if matches!(state.base.kind, EntryKind::File) || matches!(current.kind, EntryKind::File) {
+        "read_file_raw"
+    } else {
+        "list_dir"
+    };
+    Some(json!({
+        "path": state.path,
+        "baseline_sha256": state.base.sha256,
+        "latest_sha256": current.sha256,
+        "baseline_kind": entry_kind_name(&state.base.kind),
+        "latest_kind": entry_kind_name(&current.kind),
+        "recovery": {
+            "required_next_tool": recovery_tool,
+            "recommended_args": recovery_args(state.path.as_str(), recovery_tool),
+        }
+    }))
+}
+
+fn validate_session_path_overlaps(
+    session: &EditSession,
+    path: &str,
+    kind: &str,
+) -> Result<(), String> {
+    let normalized = normalize_path(path);
+    for existing in session.files.values() {
+        if existing.path == normalized {
+            continue;
+        }
+        let nested = normalized.starts_with(format!("{}/", existing.path).as_str())
+            || existing.path.starts_with(format!("{}/", normalized).as_str());
+        if nested
+            && (kind == "delete"
+                || (existing.base.kind == EntryKind::Directory
+                    && existing.working.kind == EntryKind::Missing))
+        {
+            return Err(format!(
+                "staged path {} conflicts with overlapping session path {}",
+                normalized, existing.path
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn load_entry_snapshot(fs_ops: &FsOps, path: &str) -> Result<EntrySnapshot, String> {
+    let resolved = fs_ops.resolve_path(path)?;
+    if !resolved.exists() {
+        return Ok(EntrySnapshot::missing());
+    }
+    let metadata = fs::symlink_metadata(&resolved).map_err(|err| err.to_string())?;
+    if metadata.is_dir() {
+        return Ok(EntrySnapshot::directory());
+    }
+    if !metadata.is_file() && !metadata.file_type().is_symlink() {
+        return Err("Target path is not a regular file or directory.".to_string());
+    }
+    let (_, _, sha256, content) = fs_ops.read_file_raw(path)?;
+    Ok(EntrySnapshot::file(content, sha256))
+}
+
+fn enforce_write_size(content: &str, max_write_bytes: i64) -> Result<(), String> {
+    if content.as_bytes().len() as i64 > max_write_bytes {
+        return Err("Write exceeds max-write-bytes limit.".to_string());
+    }
+    Ok(())
+}
+
+fn verify_session_baseline(
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
     path: &str,
     expected: Option<&str>,
-    current: Option<&str>,
+    current: &EntrySnapshot,
     start_line: Option<usize>,
     end_line: Option<usize>,
 ) -> Result<(), String> {
@@ -838,34 +946,71 @@ fn verify_file_revision(
         .lock()
         .map_err(|_| "file revision guard unavailable".to_string())?;
     if guard.is_reread_required(ctx.run_id, path) {
+        let tool = if matches!(current.kind, EntryKind::File) {
+            "read_file_raw"
+        } else {
+            "list_dir"
+        };
         return Err(file_revision_error(
             "stale_context",
-            "A successful file read is required after the previous failed modification",
+            "A successful workspace read is required after the previous failed modification",
             path,
-            current,
+            current.sha256.as_deref(),
             start_line,
             end_line,
+            tool,
         ));
     }
-    if expected == current {
-        return Ok(());
+    match current.kind {
+        EntryKind::File => {
+            if expected == current.sha256.as_deref() {
+                return Ok(());
+            }
+            guard.require_reread(ctx.run_id, path);
+            Err(file_revision_error(
+                "stale_context",
+                "The target file revision does not match the staged request",
+                path,
+                current.sha256.as_deref(),
+                start_line,
+                end_line,
+                "read_file_raw",
+            ))
+        }
+        EntryKind::Missing => {
+            if expected.is_none() {
+                return Ok(());
+            }
+            Err(file_revision_error(
+                "stale_context",
+                "The target path no longer exists at the requested revision",
+                path,
+                None,
+                start_line,
+                end_line,
+                "list_dir",
+            ))
+        }
+        EntryKind::Directory => {
+            if expected.is_none() {
+                return Ok(());
+            }
+            Err(file_revision_error(
+                "stale_context",
+                "The target path is now a directory instead of the requested file revision",
+                path,
+                None,
+                start_line,
+                end_line,
+                "list_dir",
+            ))
+        }
     }
-    if current.is_some() {
-        guard.require_reread(ctx.run_id, path);
-    }
-    Err(file_revision_error(
-        "stale_context",
-        "The target file revision does not match the modification request",
-        path,
-        current,
-        start_line,
-        end_line,
-    ))
 }
 
 fn mark_failed_modification(
-    revision_guard: &Arc<Mutex<ModificationRevisionGuard>>,
-    ctx: &super::service::ToolContext<'_>,
+    revision_guard: &SharedRevisionGuard,
+    ctx: &ToolContext<'_>,
     path: &str,
 ) {
     if let Ok(mut guard) = revision_guard.lock() {
@@ -880,6 +1025,7 @@ fn file_revision_error(
     latest_sha256: Option<&str>,
     start_line: Option<usize>,
     end_line: Option<usize>,
+    recovery_tool: &str,
 ) -> String {
     serde_json::to_string(&json!({
         "category": category,
@@ -891,20 +1037,35 @@ fn file_revision_error(
             "end_line": end_line,
         },
         "recovery": {
-            "required_next_tool": if start_line.is_some() || end_line.is_some() {
-                "read_file_range"
-            } else {
-                "read_file_raw"
-            },
-            "recommended_args": {
-                "path": path,
-                "start_line": start_line,
-                "end_line": end_line,
-            },
-            "guidance": "Re-read the target, use the returned sha256 as expected_sha256, then rebuild the modification from the current content."
+            "required_next_tool": recovery_tool,
+            "recommended_args": recovery_args(path, recovery_tool),
+            "guidance": "Read the current workspace state again, open a fresh edit session, then rebuild the staged batch from the latest content."
         }
     }))
     .unwrap_or_else(|_| format!("{category}: {message}"))
+}
+
+fn recovery_args(path: &str, recovery_tool: &str) -> Value {
+    match recovery_tool {
+        "list_dir" => json!({ "path": parent_or_dot(path) }),
+        _ => json!({ "path": path }),
+    }
+}
+
+fn commit_conflict_error(conflicts: &[Value]) -> String {
+    let first = conflicts.first().cloned().unwrap_or_else(|| json!({}));
+    serde_json::to_string(&json!({
+        "category": "stale_context",
+        "error": "One or more staged paths changed after the session was opened. The session was closed without applying any file-system changes.",
+        "path": first.get("path").cloned().unwrap_or(Value::Null),
+        "latest_sha256": first.get("latest_sha256").cloned().unwrap_or(Value::Null),
+        "conflicts": conflicts,
+        "recovery": {
+            "required_next_tool": "read_file_raw",
+            "guidance": "Re-read every conflicted path, open a new edit session, and restage the batch against the latest content."
+        }
+    }))
+    .unwrap_or_else(|_| "stale_context: staged session conflict".to_string())
 }
 
 fn edit_modification_error(
@@ -924,15 +1085,16 @@ fn edit_modification_error(
         latest_sha256,
         start_line,
         end_line,
+        "read_file_raw",
     );
-    let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(base.as_str()) else {
+    let Ok(mut payload) = serde_json::from_str::<Value>(base.as_str()) else {
         return base;
     };
     payload["candidate_summary"] = edit_candidate_summary(content, old_text);
     serde_json::to_string(&payload).unwrap_or(base)
 }
 
-fn edit_candidate_summary(content: &str, old_text: &str) -> serde_json::Value {
+fn edit_candidate_summary(content: &str, old_text: &str) -> Value {
     if old_text.is_empty() {
         return json!({ "count": 0, "candidates": [] });
     }
@@ -974,19 +1136,33 @@ fn edit_candidate_summary(content: &str, old_text: &str) -> serde_json::Value {
     })
 }
 
-fn file_hash_and_size(path: &Path) -> Result<(String, i64), String> {
-    let mut file = std::fs::File::open(path).map_err(|err| err.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut total = 0u64;
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|err| err.to_string())?;
-        if read == 0 {
-            let size = i64::try_from(total).map_err(|_| "file too large to log".to_string())?;
-            return Ok((hex::encode(hasher.finalize()), size));
-        }
-        total = total.saturating_add(read as u64);
-        hasher.update(&buffer[..read]);
+fn sibling_temp_path(path: &Path, label: &str) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("workspace");
+    let temp_name = format!(".{}.{}.tmp", file_name, generate_id(label));
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(temp_name)
+}
+
+fn session_path_summary(state: &SessionFileState) -> Value {
+    json!({
+        "path": state.path,
+        "baseline_kind": entry_kind_name(&state.base.kind),
+        "staged_kind": entry_kind_name(&state.working.kind),
+        "changed": state.has_change(),
+        "staged_operations": state.staged_operations,
+        "staged_sha256": state.working_sha256(),
+    })
+}
+
+fn entry_kind_name(kind: &EntryKind) -> &'static str {
+    match kind {
+        EntryKind::Missing => "missing",
+        EntryKind::File => "file",
+        EntryKind::Directory => "directory",
     }
 }
 
@@ -996,25 +1172,72 @@ fn note_workspace_path_changed(hooks: Option<&CodeMaintainerHooksRef>, path: &st
     }
 }
 
+fn normalize_path(path: &str) -> String {
+    path.trim().replace('\\', "/")
+}
+
+fn parent_or_dot(path: &str) -> String {
+    let normalized = normalize_path(path);
+    Path::new(normalized.as_str())
+        .parent()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(".")
+        .to_string()
+}
+
+fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{field} is required"))
+}
+
+fn optional_usize(value: &Value, field: &str) -> Option<usize> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+}
+
+fn expected_sha256<'a>(args: &'a Value, field: &str) -> Result<Option<&'a str>, String> {
+    match args.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if is_sha256(value) => Ok(Some(value.as_str())),
+        Some(Value::String(_)) => Err(format!(
+            "{field} must be a lowercase 64-character SHA-256 value"
+        )),
+        Some(_) => Err(format!("{field} must be a SHA-256 string or null")),
+        None => Err(format!("{field} is required")),
+    }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn record_file_modification_outcome(
     tool: &str,
-    ctx: &super::service::ToolContext<'_>,
-    invocation: &Result<serde_json::Value, String>,
+    ctx: &ToolContext<'_>,
+    invocation: &Result<Value, String>,
 ) {
     let (outcome, success, changed, changed_target_count) = match invocation {
         Ok(value) => {
             let payload = value.get("_structured_result").unwrap_or(value);
             let changed = payload
                 .get("changed")
-                .and_then(serde_json::Value::as_bool)
+                .and_then(Value::as_bool)
                 .unwrap_or(false);
             let outcome = payload
                 .get("outcome")
-                .and_then(serde_json::Value::as_str)
+                .and_then(Value::as_str)
                 .unwrap_or_else(|| FileModificationOutcome::from_changed(changed).as_str());
             let changed_target_count = payload
                 .get("changed_target_count")
-                .and_then(serde_json::Value::as_u64)
+                .and_then(Value::as_u64)
                 .unwrap_or(u64::from(changed));
             (outcome, true, changed, changed_target_count)
         }

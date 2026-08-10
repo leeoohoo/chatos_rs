@@ -91,66 +91,35 @@ pub(super) fn automatic_file_write_recovery_calls(
         if result.success || !is_code_maintainer_write_tool(result.name.as_str()) {
             continue;
         }
-        let Some(payload) = structured_stale_context_payload(result.content.as_str()) else {
-            continue;
-        };
-        let Some(path) = payload.get("path").and_then(Value::as_str) else {
-            continue;
-        };
-        let path = path.trim();
-        if path.is_empty() {
+        let recovery_specs = structured_stale_context_recoveries(result.content.as_str());
+        if recovery_specs.is_empty() {
             continue;
         }
-        let required = payload
-            .pointer("/recovery/required_next_tool")
-            .and_then(Value::as_str)
-            .unwrap_or("read_file_raw");
-        let (required, args) = match required {
-            "read_file_range" => {
-                let start_line = payload
-                    .pointer("/recovery/recommended_args/start_line")
-                    .and_then(Value::as_u64);
-                let end_line = payload
-                    .pointer("/recovery/recommended_args/end_line")
-                    .and_then(Value::as_u64);
-                match (start_line, end_line) {
-                    (Some(start_line), Some(end_line)) => (
-                        "read_file_range",
-                        json!({
-                            "path": path,
-                            "start_line": start_line,
-                            "end_line": end_line,
-                        }),
-                    ),
-                    _ => ("read_file_raw", json!({ "path": path })),
-                }
-            }
-            "read_file_raw" => ("read_file_raw", json!({ "path": path })),
-            _ => continue,
-        };
-        let tool_name = matching_recovery_tool_name(
-            result.name.as_str(),
-            required,
-            available_names.as_slice(),
-        )
-        .ok_or_else(|| {
-            format!(
-                "MCP capability invariant violated: {} returned stale_context for {}, but the required {} capability is not available",
-                result.name, path, required
+        for (path, required, args) in recovery_specs {
+            let tool_name = matching_recovery_tool_name(
+                result.name.as_str(),
+                required.as_str(),
+                available_names.as_slice(),
             )
-        })?;
-        let dedupe_key = format!("{tool_name}\n{}", args);
-        if !seen.insert(dedupe_key) {
-            continue;
-        }
-        calls.push(json!({
-            "id": format!("runtime_recovery_{}", Uuid::new_v4()),
-            "type": "function",
-            "function": {
-                "name": tool_name,
-                "arguments": args.to_string(),
+            .ok_or_else(|| {
+                format!(
+                    "MCP capability invariant violated: {} returned stale_context for {}, but the required {} capability is not available",
+                    result.name, path, required
+                )
+            })?;
+            let dedupe_key = format!("{tool_name}\n{}", args);
+            if !seen.insert(dedupe_key) {
+                continue;
             }
-        }));
+            calls.push(json!({
+                "id": format!("runtime_recovery_{}", Uuid::new_v4()),
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": args.to_string(),
+                }
+            }));
+        }
     }
 
     Ok(calls)
@@ -159,18 +128,14 @@ pub(super) fn automatic_file_write_recovery_calls(
 fn is_code_maintainer_write_tool(name: &str) -> bool {
     name.contains("code_maintainer")
         && [
-            "write_file",
-            "edit_file",
-            "append_file",
-            "delete_path",
-            "apply_patch",
-            "patch",
+            "stage_edit_batch",
+            "commit_edit_session",
         ]
         .iter()
         .any(|suffix| name.ends_with(suffix))
 }
 
-fn structured_stale_context_payload(content: &str) -> Option<Value> {
+fn structured_stale_context_recoveries(content: &str) -> Vec<(String, String, Value)> {
     content
         .match_indices('{')
         .filter_map(|(index, _)| {
@@ -181,11 +146,53 @@ fn structured_stale_context_payload(content: &str) -> Option<Value> {
         })
         .find(|payload| {
             payload.get("category").and_then(Value::as_str) == Some("stale_context")
-                && payload
-                    .pointer("/recovery/required_next_tool")
-                    .and_then(Value::as_str)
-                    .is_some()
         })
+        .map(recovery_specs_from_payload)
+        .unwrap_or_default()
+}
+
+fn recovery_specs_from_payload(payload: Value) -> Vec<(String, String, Value)> {
+    let mut specs = Vec::new();
+    if let Some(path) = payload.get("path").and_then(Value::as_str) {
+        if let Some(spec) = recovery_spec_from_value(path, payload.get("recovery")) {
+            specs.push(spec);
+        }
+    }
+    if let Some(conflicts) = payload.get("conflicts").and_then(Value::as_array) {
+        for conflict in conflicts {
+            let Some(path) = conflict.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(spec) = recovery_spec_from_value(path, conflict.get("recovery")) {
+                specs.push(spec);
+            }
+        }
+    }
+    specs
+}
+
+fn recovery_spec_from_value(path: &str, recovery: Option<&Value>) -> Option<(String, String, Value)> {
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let recovery = recovery?;
+    let required = recovery
+        .get("required_next_tool")
+        .and_then(Value::as_str)
+        .unwrap_or("read_file_raw");
+    let args = recovery
+        .get("recommended_args")
+        .cloned()
+        .unwrap_or_else(|| default_recovery_args(path, required));
+    Some((path.to_string(), required.to_string(), args))
+}
+
+fn default_recovery_args(path: &str, required: &str) -> Value {
+    match required {
+        "list_dir" => json!({ "path": "." }),
+        _ => json!({ "path": path }),
+    }
 }
 
 fn tool_definition_name(tool: &Value) -> Option<&str> {
@@ -426,9 +433,9 @@ mod tests {
             false,
             r#"tool failed: {"category":"stale_context","path":"README.md","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"README.md"}}}"#,
         );
-        stale.name = "code_maintainer_write_apply_patch".to_string();
+        stale.name = "code_maintainer_write_commit_edit_session".to_string();
         let tools = vec![
-            serde_json::json!({"name": "code_maintainer_write_apply_patch"}),
+            serde_json::json!({"name": "code_maintainer_write_commit_edit_session"}),
             serde_json::json!({"name": "code_maintainer_read_read_file_raw"}),
         ];
 
@@ -455,7 +462,7 @@ mod tests {
             false,
             r#"{"category":"stale_context","path":"README.md","recovery":{"required_next_tool":"read_file_raw"}}"#,
         );
-        stale.name = "code_maintainer_write_edit_file".to_string();
+        stale.name = "code_maintainer_write_stage_edit_batch".to_string();
 
         let error = automatic_file_write_recovery_calls(
             &[stale],
@@ -465,6 +472,21 @@ mod tests {
 
         assert!(error.contains("MCP capability invariant violated"));
         assert!(error.contains("read_file_raw"));
+    }
+
+    #[test]
+    fn multi_conflict_commit_builds_multiple_recovery_reads() {
+        let mut stale = tool_result(
+            false,
+            r#"{"category":"stale_context","error":"conflict","conflicts":[{"path":"src/a.rs","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"src/a.rs"}}},{"path":"src/b.rs","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"src/b.rs"}}}]}"#,
+        );
+        stale.name = "code_maintainer_write_commit_edit_session".to_string();
+        let tools = vec![serde_json::json!({"name": "code_maintainer_read_read_file_raw"})];
+
+        let calls = automatic_file_write_recovery_calls(&[stale], tools.as_slice())
+            .expect("automatic recovery calls");
+
+        assert_eq!(calls.len(), 2);
     }
 
     #[test]

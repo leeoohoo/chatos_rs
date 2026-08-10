@@ -27,10 +27,7 @@ impl RunService {
         let relay = PluginRelayClient::from_task(self, task, run)?;
         ensure_local_plugin_snapshots_match_relay(&prepared, &relay, run).await?;
         prepare_local_hook_components(&mut prepared, &relay, run, effective_workspace_dir).await?;
-        let agent_key = crate::models::task_runner_agent_key_for(
-            task.task_profile.as_str(),
-            task.mcp_config.requires_execution,
-        );
+        let agent_key = self.resolve_task_runner_agent_key_for_task(task).await?;
         dispatch_required_hook_stage(
             &prepared,
             PluginHookEvent::BeforePluginPrepare,
@@ -39,8 +36,12 @@ impl RunService {
         .await?;
         prepare_local_non_hook_components(&mut prepared, &relay, run, effective_workspace_dir)
             .await?;
-        dispatch_required_hook_stage(&prepared, PluginHookEvent::SessionStart, agent_key.as_str())
-            .await?;
+        dispatch_required_hook_stage(
+            &prepared,
+            PluginHookEvent::SessionStart,
+            agent_key.as_str(),
+        )
+        .await?;
         for session in &prepared.sessions {
             session.record_ui_ready();
         }

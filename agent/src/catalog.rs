@@ -64,6 +64,15 @@ pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
     AgentToolPlane::Managed,
 );
 
+pub static CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::ChatosLocalConversationAgent,
+    "Local Chat OS Conversation Agent",
+    "chatos",
+    "Runs Chat OS conversations for Local Connector projects with an independently configurable local execution identity.",
+    false,
+    AgentToolPlane::Managed,
+);
+
 static RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::ChatosPlanningAgent,
     "Retired Chat OS Planning Agent",
@@ -83,6 +92,16 @@ pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescript
         AgentToolPlane::Managed,
     );
 
+pub static PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR: AgentDescriptor =
+    AgentDescriptor::new(
+        SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
+        "Local Project Requirement Execution Planner Agent",
+        "chatos",
+        "Splits local-project work items into concrete Task Runner execution tasks for Chat OS project requirement execution with a separate local configuration surface.",
+        true,
+        AgentToolPlane::Managed,
+    );
+
 pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerPlanPhase,
     "Cloud Task Runner Planning Agent",
@@ -92,13 +111,13 @@ pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor:
     AgentToolPlane::Managed,
 );
 
-static RETIRED_TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+pub static TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerLocalPlanPhase,
-    "Retired Local Task Runner Planning Agent",
+    "Local Task Runner Planning Agent",
     "task-runner",
-    "Retired compatibility identity. Local projects use the cloud Task Runner planning Agent and route local tools through Local Connector.",
-    false,
-    AgentToolPlane::None,
+    "Runs non-mutating Task Runner planning tasks for Local Connector projects with an independently configurable local execution identity.",
+    true,
+    AgentToolPlane::Managed,
 );
 
 pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -110,13 +129,13 @@ pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     AgentToolPlane::Managed,
 );
 
-static RETIRED_TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+pub static TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerLocalRunPhase,
-    "Retired Local Task Runner Execution Agent",
+    "Local Task Runner Execution Agent",
     "task-runner",
-    "Retired compatibility identity. Local projects use the cloud Task Runner execution Agent and route local tools through Local Connector.",
-    false,
-    AgentToolPlane::None,
+    "Executes implementation, testing, repair, deployment, and other mutating Task Runner work for Local Connector projects with a separate local configuration surface.",
+    true,
+    AgentToolPlane::Managed,
 );
 
 pub static PROJECT_MANAGEMENT_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -124,6 +143,15 @@ pub static PROJECT_MANAGEMENT_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescripto
     "Project Runtime Environment Agent",
     "project-service",
     "Inspects project files, resolves sandbox images, and persists the project runtime environment.",
+    false,
+    AgentToolPlane::Managed,
+);
+
+pub static PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::ProjectManagementLocalAgent,
+    "Local Project Runtime Environment Agent",
+    "project-service",
+    "Inspects Local Connector project files, resolves project runtime dependencies, and persists the local project runtime environment with an independently configurable local identity.",
     false,
     AgentToolPlane::Managed,
 );
@@ -183,12 +211,17 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     AgentToolPlane::None,
 );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 11] = [
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 16] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
+    &CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
+    &PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR,
     &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
+    &TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
+    &TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
     &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
+    &PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR,
@@ -227,28 +260,43 @@ pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
     matches!(
         key,
         SystemAgentKey::ChatosConversationAgent
+            | SystemAgentKey::ChatosLocalConversationAgent
             | SystemAgentKey::ChatosPlanningAgent
             | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            | SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
     )
 }
 
 pub const fn is_project_requirement_execution_planner_agent(key: SystemAgentKey) -> bool {
-    matches!(key, SystemAgentKey::ProjectRequirementExecutionPlannerAgent)
+    matches!(
+        key,
+        SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+            | SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
+    )
 }
 
 pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
     matches!(
         key,
-        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
+        SystemAgentKey::TaskRunnerPlanPhase
+            | SystemAgentKey::TaskRunnerLocalPlanPhase
+            | SystemAgentKey::TaskRunnerRunPhase
+            | SystemAgentKey::TaskRunnerLocalRunPhase
     )
 }
 
 pub const fn is_task_runner_planning_agent(key: SystemAgentKey) -> bool {
-    matches!(key, SystemAgentKey::TaskRunnerPlanPhase)
+    matches!(
+        key,
+        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerLocalPlanPhase
+    )
 }
 
 pub const fn is_task_runner_execution_agent(key: SystemAgentKey) -> bool {
-    matches!(key, SystemAgentKey::TaskRunnerRunPhase)
+    matches!(
+        key,
+        SystemAgentKey::TaskRunnerRunPhase | SystemAgentKey::TaskRunnerLocalRunPhase
+    )
 }
 
 pub const fn uses_chatos_notepad_callback(key: SystemAgentKey) -> bool {
@@ -276,17 +324,22 @@ pub const fn requires_expected_project_task_ids(key: SystemAgentKey) -> bool {
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
+        SystemAgentKey::ChatosLocalConversationAgent => {
+            &CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR
+        }
         SystemAgentKey::ChatosPlanningAgent => &RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
             &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR
         }
-        SystemAgentKey::TaskRunnerPlanPhase => &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
-        SystemAgentKey::TaskRunnerLocalPlanPhase => {
-            &RETIRED_TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR
+        SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent => {
+            &PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR
         }
+        SystemAgentKey::TaskRunnerPlanPhase => &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
+        SystemAgentKey::TaskRunnerLocalPlanPhase => &TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR,
         SystemAgentKey::TaskRunnerRunPhase => &TASK_RUNNER_AGENT_DESCRIPTOR,
-        SystemAgentKey::TaskRunnerLocalRunPhase => &RETIRED_TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
+        SystemAgentKey::TaskRunnerLocalRunPhase => &TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectManagementAgent => &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
+        SystemAgentKey::ProjectManagementLocalAgent => &PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR,
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
             &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR
         }
@@ -318,16 +371,21 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 11);
+        assert_eq!(keys.len(), 16);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
             vec![
                 "chatos_conversation_agent",
+                "chatos_local_conversation_agent",
                 "project_requirement_execution_planner_agent",
+                "project_requirement_execution_local_planner_agent",
                 "task_runner_plan_phase",
+                "task_runner_local_plan_phase",
                 "task_runner_run_phase",
+                "task_runner_local_run_phase",
                 "project_management_agent",
+                "project_management_local_agent",
                 "local_connector_command_approval_agent",
                 "memory_engine_summary_agent",
                 "memory_engine_rollup_agent",
@@ -375,22 +433,36 @@ mod tests {
     fn callback_groups_live_with_agent_catalog() {
         for key in [
             SystemAgentKey::ChatosConversationAgent,
+            SystemAgentKey::ChatosLocalConversationAgent,
             SystemAgentKey::ChatosPlanningAgent,
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
+            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
         ] {
             assert!(is_chatos_callback_agent(key));
         }
         assert!(is_task_runner_phase_agent(
             SystemAgentKey::TaskRunnerPlanPhase
         ));
+        assert!(is_task_runner_phase_agent(
+            SystemAgentKey::TaskRunnerLocalPlanPhase
+        ));
         assert!(is_task_runner_planning_agent(
             SystemAgentKey::TaskRunnerPlanPhase
+        ));
+        assert!(is_task_runner_planning_agent(
+            SystemAgentKey::TaskRunnerLocalPlanPhase
         ));
         assert!(is_task_runner_execution_agent(
             SystemAgentKey::TaskRunnerRunPhase
         ));
+        assert!(is_task_runner_execution_agent(
+            SystemAgentKey::TaskRunnerLocalRunPhase
+        ));
         assert!(uses_chatos_notepad_callback(
             SystemAgentKey::TaskRunnerRunPhase
+        ));
+        assert!(uses_chatos_notepad_callback(
+            SystemAgentKey::TaskRunnerLocalRunPhase
         ));
         assert!(uses_chatos_browser_callback(
             SystemAgentKey::ChatosConversationAgent
@@ -425,6 +497,10 @@ mod tests {
             Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
         );
         assert_eq!(
+            chatos_task_runner_tool_profile(SystemAgentKey::ChatosLocalConversationAgent),
+            Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
+        );
+        assert_eq!(
             chatos_task_runner_tool_profile(SystemAgentKey::ChatosPlanningAgent),
             Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
         );
@@ -434,8 +510,17 @@ mod tests {
             ),
             Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
         );
+        assert_eq!(
+            chatos_task_runner_tool_profile(
+                SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
+            ),
+            Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
+        );
         assert!(requires_expected_project_task_ids(
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent
+        ));
+        assert!(requires_expected_project_task_ids(
+            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
         ));
         assert!(!requires_expected_project_task_ids(
             SystemAgentKey::ChatosConversationAgent
