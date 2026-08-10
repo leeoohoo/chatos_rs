@@ -1,18 +1,28 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, SandboxProviderKind, WorkspaceExecutionTarget,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
+use serde_json::json;
+use sha2::{Digest, Sha256};
+
+use crate::providers::ProviderCancelOutcome;
+use crate::runtime::{PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
 
 use super::*;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 fn immutable_binding() -> PluginMcpRuntimeBinding {
     PluginMcpRuntimeBinding {
@@ -112,7 +122,7 @@ async fn start_local_connector(
             .get("x-local-connector-internal-token")
             .and_then(|value| value.to_str().ok())
             .unwrap();
-        chatos_service_runtime::verify_internal_service_token(
+        let claims = chatos_service_runtime::verify_internal_service_token(
             token,
             state.secret,
             CALLER_SERVICE,
@@ -120,6 +130,7 @@ async fn start_local_connector(
             PLUGIN_RELAY_SCOPE,
         )
         .unwrap();
+        assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
         state.actions.lock().unwrap().push(action.clone());
         match action.as_str() {
             "prepare" => {
@@ -254,7 +265,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,

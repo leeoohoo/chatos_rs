@@ -27,19 +27,25 @@ use crate::store::{normalized, now_rfc3339};
 mod agent_provider_prompts;
 mod agents;
 mod availability;
+#[path = "api/runtime_capabilities.rs"]
 mod capabilities;
 mod internal_auth;
 mod local_connector;
 mod local_connector_skills;
+#[path = "api/catalog/mcps.rs"]
 mod mcps;
 mod plugin_audit;
 mod plugin_catalog_sync;
 mod plugin_cloud_bundles;
+#[path = "api/oauth/plugin_cloud_credentials.rs"]
 mod plugin_cloud_credentials;
+#[path = "api/oauth/plugin_cloud_oauth.rs"]
 mod plugin_cloud_oauth;
 mod plugin_install_sources;
+#[path = "api/installations/plugin_installations.rs"]
 mod plugin_installations;
 mod plugin_marketplaces;
+#[path = "api/oauth/plugin_oauth.rs"]
 mod plugin_oauth;
 mod plugin_publishers;
 mod plugin_releases;
@@ -48,7 +54,9 @@ mod plugins;
 mod queue_operations;
 mod resource_policy;
 mod runtime_agent_prompts;
+#[path = "api/catalog/skill_packages.rs"]
 mod skill_packages;
+#[path = "api/catalog/skills.rs"]
 mod skills;
 mod system;
 

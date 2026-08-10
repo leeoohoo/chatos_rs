@@ -29,7 +29,11 @@ const message = (overallStatus: string): Message => ({
   },
 });
 
-const graph = (status: string, lastRunId: string | null): MessageTaskRunnerGraphResponse => ({
+const graph = (
+  status: string,
+  lastRunId: string | null,
+  lastRunStatus?: string,
+): MessageTaskRunnerGraphResponse => ({
   root_task_ids: ['task-1'],
   nodes: [{
     depth: 0,
@@ -40,6 +44,10 @@ const graph = (status: string, lastRunId: string | null): MessageTaskRunnerGraph
       title: 'Task 1',
       status,
       last_run_id: lastRunId,
+      last_run: lastRunId ? {
+        id: lastRunId,
+        status: lastRunStatus || status,
+      } : null,
     },
   }],
   edges: [],
@@ -78,5 +86,37 @@ describe('project execution confirmation state', () => {
     });
     expect(started.canConfirm).toBe(false);
     expect(started.hasStartedTasks).toBe(true);
+    expect(started.awaitingConfirmation).toBe(false);
+    expect(started.overallStatus).toBe('processing');
+  });
+
+  it('uses real run state instead of stale planning metadata', () => {
+    const completedGraph = graph('succeeded', 'run-1', 'succeeded');
+    const completed = resolveProjectExecutionConfirmationState({
+      graph: completedGraph,
+      message: message('planning'),
+      tasks: completedGraph.nodes.map((node) => node.task),
+    });
+    expect(completed.overallStatus).toBe('completed');
+
+    const blockedGraph = graph('blocked', 'run-2', 'blocked');
+    const blocked = resolveProjectExecutionConfirmationState({
+      graph: blockedGraph,
+      message: message('planning'),
+      tasks: blockedGraph.nodes.map((node) => node.task),
+    });
+    expect(blocked.overallStatus).toBe('blocked');
+  });
+
+  it('treats blocked execution as terminal instead of awaiting confirmation', () => {
+    const blockedGraph = graph('blocked', 'run-1');
+    const state = resolveProjectExecutionConfirmationState({
+      graph: blockedGraph,
+      message: message('blocked'),
+      tasks: blockedGraph.nodes.map((node) => node.task),
+    });
+
+    expect(state.awaitingConfirmation).toBe(false);
+    expect(state.overallStatus).toBe('blocked');
   });
 });

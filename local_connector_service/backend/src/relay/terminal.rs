@@ -1,0 +1,308 @@
+use std::collections::HashSet;
+use std::sync::atomic::Ordering;
+
+use serde_json::Value;
+use tokio::sync::broadcast;
+use uuid::Uuid;
+
+use super::{
+    default_body, ConnectorRelay, InboundRelayResponse, InboundTerminalEvent,
+    InterInstanceRelayMessage, RelayResponse, TerminalRelayEvent, TerminalRelaySubscription,
+};
+
+impl ConnectorRelay {
+    pub async fn subscribe_terminal_session(
+        &self,
+        terminal_session_id: &str,
+    ) -> Result<TerminalRelaySubscription, String> {
+        let subscription_id = Uuid::new_v4().to_string();
+        let events = {
+            let mut inner = self.inner.lock().await;
+            let limits = self.runtime_config().limits;
+            let current_subscriber_count = inner
+                .terminal_subscriptions
+                .get(terminal_session_id)
+                .map(HashSet::len)
+                .unwrap_or(0);
+            if current_subscriber_count == 0
+                && self.platform_pressure_critical.load(Ordering::Relaxed)
+            {
+                return Err(
+                    "Local Connector is temporarily pausing new terminal sessions while platform pressure is critical"
+                        .to_string(),
+                );
+            }
+            if current_subscriber_count == 0
+                && inner.terminal_subscriptions.len() >= limits.terminal_max_active_sessions
+            {
+                return Err(format!(
+                    "Local Connector terminal session capacity is exhausted at {} active sessions",
+                    limits.terminal_max_active_sessions
+                ));
+            }
+            if current_subscriber_count == 0
+                && inner.terminal_subscriptions.len() >= limits.terminal_new_session_soft_limit
+            {
+                return Err(format!(
+                    "Local Connector is temporarily pausing new terminal sessions at the soft pressure limit of {} active sessions",
+                    limits.terminal_new_session_soft_limit
+                ));
+            }
+            if current_subscriber_count >= limits.terminal_max_subscribers_per_session {
+                return Err(format!(
+                    "Local Connector terminal subscriber capacity is exhausted at {} subscribers for session {terminal_session_id}",
+                    limits.terminal_max_subscribers_per_session
+                ));
+            }
+            let events = inner
+                .terminal_events
+                .entry(terminal_session_id.to_string())
+                .or_insert_with(|| broadcast::channel(limits.terminal_event_channel_capacity).0)
+                .subscribe();
+            inner
+                .terminal_subscriptions
+                .entry(terminal_session_id.to_string())
+                .or_default()
+                .insert(subscription_id.clone());
+            events
+        };
+        if let Some(distributed) = self.distributed.as_ref() {
+            if let Err(error) = distributed
+                .coordinator
+                .register_terminal_subscriber(terminal_session_id, distributed.instance_id.as_str())
+                .await
+            {
+                self.remove_local_terminal_subscription(
+                    terminal_session_id,
+                    subscription_id.as_str(),
+                )
+                .await;
+                return Err(error);
+            }
+        }
+        Ok(TerminalRelaySubscription {
+            id: subscription_id,
+            events,
+        })
+    }
+
+    pub async fn refresh_terminal_subscription(
+        &self,
+        terminal_session_id: &str,
+        subscription_id: &str,
+    ) -> Result<bool, String> {
+        let active = {
+            let inner = self.inner.lock().await;
+            inner
+                .terminal_subscriptions
+                .get(terminal_session_id)
+                .is_some_and(|subscriptions| subscriptions.contains(subscription_id))
+        };
+        if !active {
+            return Ok(false);
+        }
+        if let Some(distributed) = self.distributed.as_ref() {
+            distributed
+                .coordinator
+                .register_terminal_subscriber(terminal_session_id, distributed.instance_id.as_str())
+                .await?;
+        }
+        Ok(true)
+    }
+
+    pub async fn drop_terminal_subscription(
+        &self,
+        terminal_session_id: &str,
+        subscription_id: &str,
+    ) -> Result<(), String> {
+        let removed_last = self
+            .remove_local_terminal_subscription(terminal_session_id, subscription_id)
+            .await;
+        let Some(distributed) = self.distributed.as_ref() else {
+            return Ok(());
+        };
+        if !removed_last {
+            return Ok(());
+        }
+        distributed
+            .coordinator
+            .unregister_terminal_subscriber(terminal_session_id, distributed.instance_id.as_str())
+            .await?;
+        let still_active = {
+            let inner = self.inner.lock().await;
+            inner
+                .terminal_subscriptions
+                .get(terminal_session_id)
+                .is_some_and(|subscriptions| !subscriptions.is_empty())
+        };
+        if still_active {
+            distributed
+                .coordinator
+                .register_terminal_subscriber(terminal_session_id, distributed.instance_id.as_str())
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn handle_inbound_text(&self, text: &str) -> Result<bool, String> {
+        let value = match serde_json::from_str::<Value>(text) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        let message_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(
+            message_type,
+            "terminal_output"
+                | "terminal_snapshot"
+                | "terminal_exit"
+                | "terminal_state"
+                | "terminal_error"
+        ) {
+            let event: InboundTerminalEvent =
+                serde_json::from_value(value).map_err(|err| err.to_string())?;
+            return self.publish_terminal_event(event).await;
+        }
+        if !matches!(
+            message_type,
+            "sandbox_response"
+                | "mcp"
+                | "model_runtime_response"
+                | "terminal_response"
+                | "terminal_session_create_response"
+                | "terminal_close_response"
+                | "plugin_prepare_response"
+                | "plugin_execute_response"
+                | "plugin_cancel_response"
+                | "plugin_ui_asset_response"
+                | "plugin_artifact_list_response"
+                | "plugin_artifact_read_response"
+                | "plugin_artifact_create_response"
+                | "plugin_artifact_update_response"
+                | "relay_response"
+        ) {
+            return Ok(false);
+        }
+        let inbound: InboundRelayResponse =
+            serde_json::from_value(value).map_err(|err| err.to_string())?;
+        let status = inbound.status.unwrap_or(200);
+        let response = RelayResponse {
+            request_id: inbound.request_id.clone(),
+            status,
+            headers: inbound.headers.unwrap_or_default(),
+            body: inbound.body.unwrap_or_else(default_body),
+        };
+        if self.complete_response(response.clone()).await {
+            return Ok(true);
+        }
+        self.route_remote_response(response).await
+    }
+
+    async fn remove_local_terminal_subscription(
+        &self,
+        terminal_session_id: &str,
+        subscription_id: &str,
+    ) -> bool {
+        let mut inner = self.inner.lock().await;
+        let Some(subscriptions) = inner.terminal_subscriptions.get_mut(terminal_session_id) else {
+            return false;
+        };
+        if !subscriptions.remove(subscription_id) || !subscriptions.is_empty() {
+            return false;
+        }
+        inner.terminal_subscriptions.remove(terminal_session_id);
+        inner.terminal_events.remove(terminal_session_id);
+        true
+    }
+
+    async fn publish_terminal_event(&self, inbound: InboundTerminalEvent) -> Result<bool, String> {
+        let original_message_type = inbound.message_type.clone();
+        let terminal_session_id = inbound.terminal_session_id.clone();
+        let body = inbound.body.unwrap_or_else(|| {
+            let mut body = serde_json::Map::new();
+            if let Some(data) = inbound.data {
+                body.insert("data".to_string(), Value::String(data));
+            }
+            if let Some(code) = inbound.code {
+                body.insert("code".to_string(), Value::Number(code.into()));
+            }
+            if let Some(busy) = inbound.busy {
+                body.insert("busy".to_string(), Value::Bool(busy));
+            }
+            if let Some(error) = inbound.error {
+                body.insert("error".to_string(), Value::String(error));
+            }
+            Value::Object(body)
+        });
+        let event = self.normalize_terminal_event(TerminalRelayEvent {
+            message_type: original_message_type,
+            terminal_session_id: terminal_session_id.clone(),
+            body,
+        });
+        let delivered_locally = self.publish_local_terminal_event(event.clone()).await;
+        let Some(distributed) = self.distributed.as_ref() else {
+            return Ok(delivered_locally);
+        };
+        let subscriber_instances = distributed
+            .coordinator
+            .terminal_subscriber_instances(terminal_session_id.as_str())
+            .await?;
+        for subscriber_instance in subscriber_instances {
+            if subscriber_instance == distributed.instance_id {
+                continue;
+            }
+            if let Err(error) = distributed
+                .coordinator
+                .publish_instance_message(
+                    subscriber_instance.as_str(),
+                    &InterInstanceRelayMessage::TerminalEvent {
+                        event: event.clone(),
+                    },
+                )
+                .await
+            {
+                tracing::warn!(
+                    terminal_session_id = terminal_session_id.as_str(),
+                    subscriber_instance = subscriber_instance.as_str(),
+                    error = error.as_str(),
+                    "route Local Connector terminal event to subscriber instance failed"
+                );
+            }
+        }
+        Ok(true)
+    }
+
+    pub(super) async fn publish_local_terminal_event(&self, event: TerminalRelayEvent) -> bool {
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner
+                .terminal_events
+                .get(event.terminal_session_id.as_str())
+                .cloned()
+        };
+        sender.is_some_and(|sender| sender.send(event).is_ok())
+    }
+
+    fn normalize_terminal_event(&self, event: TerminalRelayEvent) -> TerminalRelayEvent {
+        let runtime = self.runtime_config();
+        let within_budget = serde_json::to_vec(&event)
+            .map(|bytes| bytes.len() <= runtime.limits.terminal_max_event_bytes)
+            .unwrap_or(false);
+        if within_budget {
+            return event;
+        }
+        TerminalRelayEvent {
+            message_type: "terminal_error".to_string(),
+            terminal_session_id: event.terminal_session_id,
+            body: serde_json::json!({
+                "error": format!(
+                    "terminal relay event exceeded {} bytes and was dropped",
+                    runtime.limits.terminal_max_event_bytes
+                ),
+                "original_message_type": event.message_type,
+            }),
+        }
+    }
+}

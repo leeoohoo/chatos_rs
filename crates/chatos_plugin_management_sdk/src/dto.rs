@@ -148,13 +148,16 @@ impl std::str::FromStr for SystemMcpKey {
 #[serde(rename_all = "snake_case")]
 pub enum SystemAgentKey {
     ChatosConversationAgent,
+    ChatosLocalConversationAgent,
     ChatosPlanningAgent,
     ProjectRequirementExecutionPlannerAgent,
+    ProjectRequirementExecutionLocalPlannerAgent,
     TaskRunnerPlanPhase,
     TaskRunnerLocalPlanPhase,
     TaskRunnerRunPhase,
     TaskRunnerLocalRunPhase,
     ProjectManagementAgent,
+    ProjectManagementLocalAgent,
     LocalConnectorCommandApprovalAgent,
     MemoryEngineSummaryAgent,
     MemoryEngineRollupAgent,
@@ -164,13 +167,18 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 17] = [
         Self::ChatosConversationAgent,
+        Self::ChatosLocalConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
+        Self::ProjectRequirementExecutionLocalPlannerAgent,
         Self::TaskRunnerPlanPhase,
+        Self::TaskRunnerLocalPlanPhase,
         Self::TaskRunnerRunPhase,
+        Self::TaskRunnerLocalRunPhase,
         Self::ProjectManagementAgent,
+        Self::ProjectManagementLocalAgent,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
         Self::MemoryEngineRollupAgent,
@@ -182,15 +190,20 @@ impl SystemAgentKey {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
+            Self::ChatosLocalConversationAgent => "chatos_local_conversation_agent",
             Self::ChatosPlanningAgent => "chatos_planning_agent",
             Self::ProjectRequirementExecutionPlannerAgent => {
                 "project_requirement_execution_planner_agent"
+            }
+            Self::ProjectRequirementExecutionLocalPlannerAgent => {
+                "project_requirement_execution_local_planner_agent"
             }
             Self::TaskRunnerPlanPhase => "task_runner_plan_phase",
             Self::TaskRunnerLocalPlanPhase => "task_runner_local_plan_phase",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::TaskRunnerLocalRunPhase => "task_runner_local_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
+            Self::ProjectManagementLocalAgent => "project_management_local_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
             Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",
             Self::MemoryEngineRollupAgent => "memory_engine_rollup_agent",
@@ -488,6 +501,10 @@ pub struct AgentBindingRecord {
     pub conditions: BindingConditions,
     #[serde(default)]
     pub component_allowlist: Vec<String>,
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
+    #[serde(default)]
+    pub tool_blocklist: Vec<String>,
     pub created_by: String,
     pub updated_by: String,
     pub created_at: String,

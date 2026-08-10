@@ -32,6 +32,8 @@ pub(super) fn build_remote_server_record(
         certificate_path: normalized_optional(input.certificate_path),
         default_remote_path: normalized_optional(input.default_remote_path),
         host_key_policy: normalize_remote_server_host_key_policy(input.host_key_policy.as_deref())?,
+        local_connector_device_id: normalized_optional(input.local_connector_device_id),
+        local_connector_workspace_id: normalized_optional(input.local_connector_workspace_id),
         enabled: input.enabled.unwrap_or(true),
         last_tested_at: None,
         last_test_status: None,
@@ -91,6 +93,14 @@ fn remote_servers_can_reuse(existing: &RemoteServerRecord, candidate: &RemoteSer
             existing.default_remote_path.as_deref(),
             candidate.default_remote_path.as_deref(),
         )
+        && optional_text_matches(
+            existing.local_connector_device_id.as_deref(),
+            candidate.local_connector_device_id.as_deref(),
+        )
+        && optional_text_matches(
+            existing.local_connector_workspace_id.as_deref(),
+            candidate.local_connector_workspace_id.as_deref(),
+        )
         && text_matches(
             existing.host_key_policy.as_str(),
             candidate.host_key_policy.as_str(),
@@ -115,8 +125,8 @@ fn normalized_text(value: Option<&str>) -> Option<&str> {
 }
 
 pub(super) fn normalize_remote_server_port(value: Option<i64>) -> Result<i64, String> {
-    let port = value.unwrap_or(chatos_remote_runtime::DEFAULT_SSH_PORT);
-    if !chatos_remote_runtime::is_valid_ssh_port(port) {
+    let port = value.unwrap_or(22);
+    if !(1..=u16::MAX as i64).contains(&port) {
         Err("port 必须在 1-65535 之间".to_string())
     } else {
         Ok(port)
@@ -124,9 +134,10 @@ pub(super) fn normalize_remote_server_port(value: Option<i64>) -> Result<i64, St
 }
 
 pub(super) fn normalize_remote_server_auth_type(value: &str) -> Result<String, String> {
-    chatos_remote_runtime::SshAuthType::parse(value)
-        .map(|value| value.as_str().to_string())
-        .ok_or_else(|| "auth_type 仅支持 password / private_key / private_key_cert".to_string())
+    match value.trim() {
+        "password" | "private_key" | "private_key_cert" => Ok(value.trim().to_string()),
+        _ => Err("auth_type 仅支持 password / private_key / private_key_cert".to_string()),
+    }
 }
 
 pub(super) fn normalize_remote_server_host_key_policy(
@@ -136,14 +147,29 @@ pub(super) fn normalize_remote_server_host_key_policy(
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .unwrap_or("accept_new");
-    chatos_remote_runtime::HostKeyPolicy::parse(normalized)
-        .map(|value| value.as_str().to_string())
-        .ok_or_else(|| "host_key_policy 仅支持 accept_new / strict".to_string())
+    match normalized {
+        "accept_new" | "strict" => Ok(normalized.to_string()),
+        _ => Err("host_key_policy 仅支持 accept_new / strict".to_string()),
+    }
 }
 
 pub(super) fn validate_remote_server_auth_fields(
     record: &RemoteServerRecord,
 ) -> Result<(), String> {
+    if record
+        .local_connector_device_id
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("远程服务器必须绑定 Local Connector 设备".to_string());
+    }
+    if record
+        .local_connector_workspace_id
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("远程服务器必须绑定 Local Connector 工作区".to_string());
+    }
     match record.auth_type.as_str() {
         "password" => {
             if record

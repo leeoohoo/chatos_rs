@@ -131,7 +131,7 @@ pub async fn sync_chat_turn_snapshot(
         enabled_mcp_ids: &context.enabled_mcp_ids_for_snapshot,
         selected_commands: selected_commands.as_slice(),
         plugin_command_invocations: context.plugin_command_invocations_for_snapshot.as_slice(),
-        plugin_agent_selection: context.plugin_agent_selection_for_snapshot.as_ref(),
+        plugin_agent_selection: None,
         unavailable_builtin_tools,
         builtin_mcp_prompt_debug: Some(&builtin_prompt_debug),
         actual_context_mode: effective_actual_context_mode,

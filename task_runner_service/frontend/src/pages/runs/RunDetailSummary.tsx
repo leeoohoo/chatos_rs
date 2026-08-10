@@ -6,6 +6,7 @@ import {
   Descriptions,
   Space,
   Tag,
+  Typography,
 } from 'antd';
 import dayjs from 'dayjs';
 
@@ -54,6 +55,7 @@ export function RunDetailSummary({
   onRetry,
 }: RunDetailSummaryProps) {
   const runStatusLabel = (status: TaskRunStatus) => t(`runs.status.${status}`);
+  const pluginCloudRuntimeLabel = t('runs.detail.pluginCloudRuntime');
   const inputSnapshot =
     run.input_snapshot && typeof run.input_snapshot === 'object'
       ? (run.input_snapshot as Record<string, unknown>)
@@ -62,9 +64,20 @@ export function RunDetailSummary({
   const agentLabel =
     agentKey === 'task_runner_plan_phase'
       ? t('runs.detail.cloudPlanningAgent')
+      : agentKey === 'task_runner_local_plan_phase'
+        ? t('runs.detail.localPlanningAgent')
       : agentKey === 'task_runner_run_phase'
         ? t('runs.detail.cloudExecutionAgent')
+        : agentKey === 'task_runner_local_run_phase'
+          ? t('runs.detail.localExecutionAgent')
         : '-';
+  const totalDuration = run.started_at
+    ? formatDuration(run.started_at, run.finished_at || undefined)
+    : '-';
+  const formatPluginTarget = (deviceId?: string | null, workspaceId?: string | null) => {
+    const runtime = deviceId || pluginCloudRuntimeLabel;
+    return workspaceId ? `${runtime} / ${workspaceId}` : runtime;
+  };
 
   return (
     <>
@@ -99,12 +112,23 @@ export function RunDetailSummary({
         <Descriptions.Item label={t('runs.detail.agent')}>{agentLabel}</Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.plugins')}>
           {run.plugin_snapshots?.length ? (
-            <Space wrap>
+            <Space direction="vertical" size="small" style={{ width: '100%' }}>
               {run.plugin_snapshots.map((plugin) => (
-                <Tag key={`${plugin.plugin_id}:${plugin.release_id}`} color="purple">
-                  {plugin.plugin_id} / v{plugin.version} / {plugin.component_snapshots.length}{' '}
-                  {t('runs.detail.pluginComponents')}
-                </Tag>
+                <Space
+                  key={`${plugin.plugin_id}:${plugin.release_id}`}
+                  direction="vertical"
+                  size={0}
+                  style={{ width: '100%' }}
+                >
+                  <Tag color="purple">{plugin.plugin_id}</Tag>
+                  <Typography.Text type="secondary">
+                    {t('runs.detail.pluginSnapshotSummary', {
+                      version: `v${plugin.version}`,
+                      target: formatPluginTarget(plugin.device_id, plugin.workspace_id),
+                      componentCount: plugin.component_snapshots.length,
+                    })}
+                  </Typography.Text>
+                </Space>
               ))}
             </Space>
           ) : (
@@ -117,11 +141,11 @@ export function RunDetailSummary({
               {Array.from(
                 new Set(
                   run.plugin_snapshots.map(
-                    (plugin) => `${plugin.device_id}/${plugin.workspace_id || '-'}`,
+                    (plugin) => formatPluginTarget(plugin.device_id, plugin.workspace_id),
                   ),
                 ),
               ).map((target) => (
-                <Tag key={target} color="cyan">
+                <Tag key={target} color={target.startsWith(pluginCloudRuntimeLabel) ? 'blue' : 'cyan'}>
                   {target}
                 </Tag>
               ))}
@@ -145,6 +169,9 @@ export function RunDetailSummary({
         </Descriptions.Item>
         <Descriptions.Item label={t('runs.column.finishedAt')}>
           {run.finished_at ? dayjs(run.finished_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.totalDuration')}>
+          {totalDuration}
         </Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.resultSummary')}>
           {formatUserVisibleRunText(run.result_summary, t)}
@@ -182,4 +209,14 @@ export function RunDetailSummary({
       </Descriptions>
     </>
   );
+}
+
+function formatDuration(startedAt: string, finishedAt?: string): string {
+  const seconds = Math.max(0, dayjs(finishedAt).diff(dayjs(startedAt), 'second'));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  return [hours, minutes, remainingSeconds]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
 }

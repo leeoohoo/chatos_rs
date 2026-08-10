@@ -232,6 +232,12 @@ impl MongoStore {
             false,
         )
         .await?;
+        self.ensure_index(
+            &self.ask_user_prompts,
+            doc! { "resolution_event_pending": 1, "status": 1, "updated_at": 1 },
+            false,
+        )
+        .await?;
 
         self.ensure_index(&self.users, doc! { "id": 1 }, true)
             .await?;

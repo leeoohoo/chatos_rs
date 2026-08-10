@@ -344,6 +344,28 @@ pub async fn sandbox_environment_mcp_proxy(
     ))
 }
 
+pub async fn sandbox_environment_browser_mcp_proxy(
+    Path(environment_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .environment_browser_mcp_proxy(
+                &auth,
+                environment_id.as_str(),
+                header_text(&headers, "x-chatos-service-id").as_deref(),
+                binding.as_ref(),
+                payload,
+            )
+            .await?,
+    ))
+}
+
 pub async fn sandbox_environment_cloud_stdio_mcp_call(
     Path(environment_id): Path<String>,
     State(state): State<AppState>,
@@ -466,6 +488,22 @@ pub async fn sandbox_mcp_proxy(
     ))
 }
 
+pub async fn sandbox_browser_mcp_proxy(
+    Path(sandbox_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<SandboxAuthContext>,
+    headers: HeaderMap,
+    Json(input): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let binding = sandbox_mcp_runtime_binding(&headers);
+    Ok(Json(
+        state
+            .manager
+            .browser_mcp_proxy(&auth, sandbox_id.as_str(), binding.as_ref(), input)
+            .await?,
+    ))
+}
+
 pub async fn sandbox_cloud_stdio_mcp_call(
     Path(sandbox_id): Path<String>,
     State(state): State<AppState>,
@@ -522,6 +560,7 @@ fn sandbox_mcp_runtime_binding(
         owner_user_id: header_text(headers, "x-mcp-management-owner-user-id")?,
         project_id: header_text(headers, "x-mcp-management-project-id")?,
         run_id: header_text(headers, "x-mcp-management-run-id")?,
+        runtime_session_id: header_text(headers, "x-mcp-management-session-id"),
     })
 }
 

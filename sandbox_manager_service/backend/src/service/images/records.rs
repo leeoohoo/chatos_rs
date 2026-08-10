@@ -129,8 +129,6 @@ pub(super) fn local_image_record(
     );
     record.id = tag.to_string();
     record.image_ref = image_ref.to_string();
-    record.initialized = true;
-    record.status = "ready".to_string();
     Some(record)
 }
 

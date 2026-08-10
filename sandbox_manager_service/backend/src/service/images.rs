@@ -9,6 +9,7 @@ use base64::engine::general_purpose;
 use base64::Engine as _;
 use chatos_mcp::sandbox_images::custom_build_script_hash;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -35,6 +36,7 @@ const JOB_STATUS_SUCCEEDED: &str = "succeeded";
 const JOB_STATUS_FAILED: &str = "failed";
 const MAX_JOB_OUTPUT_LEN: usize = 80_000;
 const MAX_CUSTOM_BUILD_SCRIPT_LEN: usize = 128 * 1024;
+const IMAGE_DEFINITION_LABEL: &str = "chatos.image.definition-sha";
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ImageJobStore {
@@ -77,6 +79,7 @@ struct ImageBuildSpec {
     record: SandboxImageRecord,
     install_features: Vec<String>,
     custom_build_script: Option<String>,
+    definition_hash: String,
 }
 
 pub(crate) async fn catalog(
@@ -100,6 +103,9 @@ pub(crate) async fn catalog(
             .iter()
             .filter_map(|image_ref| local_image_record(config, backend, image_ref))
             .collect::<Vec<_>>();
+        for image in &mut local_images {
+            apply_status(config, backend, image).await;
+        }
         local_images.sort_by(|left, right| left.name.cmp(&right.name));
         images.extend(local_images);
     }
@@ -125,6 +131,7 @@ pub(crate) async fn start_initialize_job(
     let feature_specs = image_specs::canonical_features(features)?;
     let custom_build_script = normalize_custom_build_script(custom_build_script)?;
     let custom_script_hash = custom_build_script.as_deref().map(custom_build_script_hash);
+    let definition_hash = image_definition_hash(config)?;
     let image = generated_image_record(
         config,
         backend,
@@ -142,9 +149,14 @@ pub(crate) async fn start_initialize_job(
         return Ok(job);
     }
     if matches!(backend, SandboxBackendKind::Mock)
-        || image_exists(config, backend, image.image_ref.as_str())
-            .await
-            .unwrap_or(false)
+        || image_definition_is_current(
+            config,
+            backend,
+            image.image_ref.as_str(),
+            definition_hash.as_str(),
+        )
+        .await
+        .unwrap_or(false)
     {
         let job = completed_initialize_job(
             backend,
@@ -187,6 +199,7 @@ pub(crate) async fn start_initialize_job(
         record: image,
         install_features,
         custom_build_script,
+        definition_hash,
     };
     tokio::spawn(async move {
         run_initialize_job(jobs, config, backend, job_id, build).await;
@@ -276,6 +289,11 @@ async fn run_initialize_job(
         .arg("chatos.managed=true")
         .arg("--label")
         .arg("chatos.image.kind=sandbox-agent")
+        .arg("--label")
+        .arg(format!(
+            "{IMAGE_DEFINITION_LABEL}={}",
+            build.definition_hash
+        ))
         .arg("-f")
         .arg(&config.image_dockerfile)
         .arg("--build-arg")
@@ -490,7 +508,23 @@ async fn apply_status(
         return;
     }
 
-    match image_exists(config, backend, image.image_ref.as_str()).await {
+    let status = if image.buildable {
+        match image_definition_hash(config) {
+            Ok(definition_hash) => {
+                image_definition_is_current(
+                    config,
+                    backend,
+                    image.image_ref.as_str(),
+                    definition_hash.as_str(),
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        image_exists(config, backend, image.image_ref.as_str()).await
+    };
+    match status {
         Ok(true) => {
             image.initialized = true;
             image.status = "ready".to_string();
@@ -579,6 +613,48 @@ async fn image_exists(
     Ok(output.status.success())
 }
 
+fn image_definition_hash(config: &AppConfig) -> Result<String, String> {
+    let content = std::fs::read(&config.image_dockerfile).map_err(|error| {
+        format!(
+            "read sandbox image Dockerfile {} failed: {error}",
+            config.image_dockerfile.display()
+        )
+    })?;
+    Ok(image_definition_hash_bytes(content.as_slice()))
+}
+
+fn image_definition_hash_bytes(content: &[u8]) -> String {
+    let digest = Sha256::digest(content);
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+async fn image_definition_is_current(
+    config: &AppConfig,
+    backend: SandboxBackendKind,
+    image_ref: &str,
+    expected_hash: &str,
+) -> Result<bool, String> {
+    let cli = container_cli(config, backend);
+    let output = Command::new(cli)
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            format!("{{{{ index .Config.Labels \"{IMAGE_DEFINITION_LABEL}\" }}}}").as_str(),
+            image_ref,
+        ])
+        .output()
+        .await
+        .map_err(|error| format!("{cli} image definition inspect failed: {error}"))?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    Ok(String::from_utf8_lossy(output.stdout.as_slice()).trim() == expected_hash)
+}
+
 async fn image_id_for_ref(cli: &str, image_ref: &str) -> Option<String> {
     let output = Command::new(cli)
         .args(["image", "inspect", "--format", "{{.Id}}", image_ref])
@@ -611,6 +687,25 @@ mod tests {
             .expect_err("missing default image must not be used for a lease");
         assert!(error.contains("Default"));
         assert!(error.contains("not initialized"));
+    }
+
+    #[test]
+    fn image_definition_hash_changes_with_dockerfile_content() {
+        let original = image_definition_hash_bytes(b"FROM ubuntu:24.04\n");
+        let changed = image_definition_hash_bytes(b"FROM ubuntu:24.04\nRUN apt-get update\n");
+        assert_eq!(original.len(), 64);
+        assert_ne!(original, changed);
+    }
+
+    #[test]
+    fn local_generated_image_requires_definition_status_inspection() {
+        let config = AppConfig::for_tests();
+        let image_ref = format!("{}:dev-node24", normalized_tag_prefix(&config));
+        let record = local_image_record(&config, SandboxBackendKind::Docker, &image_ref)
+            .expect("generated image reference");
+
+        assert!(!record.initialized);
+        assert_eq!(record.status, "unknown");
     }
 
     #[tokio::test]

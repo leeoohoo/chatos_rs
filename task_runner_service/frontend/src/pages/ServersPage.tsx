@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
   Form,
@@ -50,6 +50,23 @@ export function ServersPage() {
   const [form] = Form.useForm<RemoteServerFormValues>();
   const routeServerId = searchParams.get('server_id') || undefined;
   const authType = Form.useWatch('auth_type', form) || 'password';
+  const connectorDeviceId = Form.useWatch('local_connector_device_id', form) || '';
+  const connectorQuery = useQuery({
+    queryKey: ['task-plugin-connectors'],
+    queryFn: api.listTaskPluginConnectors,
+  });
+  const connectorDeviceOptions = (connectorQuery.data?.devices || []).map((device) => ({
+    label: `${device.display_name} (${device.status})`,
+    value: device.id,
+    disabled: device.status !== 'online',
+  }));
+  const connectorWorkspaceOptions = (connectorQuery.data?.workspaces || [])
+    .filter((workspace) => workspace.device_id === connectorDeviceId)
+    .map((workspace) => ({
+      label: `${workspace.display_name} (${workspace.local_path_alias})`,
+      value: workspace.id,
+      disabled: workspace.status !== 'enabled',
+    }));
   const {
     authTypeOptions,
     authTypeFilterOptions,
@@ -167,6 +184,8 @@ export function ServersPage() {
       certificate_path: '',
       default_remote_path: '',
       host_key_policy: 'accept_new',
+      local_connector_device_id: undefined,
+      local_connector_workspace_id: undefined,
       enabled: true,
     });
     setDrawerOpen(true);
@@ -185,6 +204,8 @@ export function ServersPage() {
       certificate_path: server.certificate_path || '',
       default_remote_path: server.default_remote_path || '',
       host_key_policy: normalizeHostKeyPolicy(server.host_key_policy),
+      local_connector_device_id: server.local_connector_device_id || undefined,
+      local_connector_workspace_id: server.local_connector_workspace_id || undefined,
       enabled: server.enabled,
     });
     setDrawerOpen(true);
@@ -283,6 +304,9 @@ export function ServersPage() {
         form={form}
         authType={authType}
         authTypeOptions={authTypeOptions}
+        connectorDeviceOptions={connectorDeviceOptions}
+        connectorWorkspaceOptions={connectorWorkspaceOptions}
+        connectorLoading={connectorQuery.isLoading}
         saving={createServerMutation.isPending || updateServerMutation.isPending}
         testingDraft={testDraftMutation.isPending}
         onClose={closeEditor}

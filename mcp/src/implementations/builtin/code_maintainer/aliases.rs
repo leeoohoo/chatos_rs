@@ -41,20 +41,6 @@ pub(super) fn append_compat_aliases(service: &CodeMaintainerService, tools: &mut
         }));
     }
 
-    if service.has_tool("apply_patch") {
-        tools.push(json!({
-            "name": "patch",
-            "description": "Compatibility alias for apply_patch in the current project workspace.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "patch": { "type": "string", "minLength": 1 }
-                },
-                "additionalProperties": false,
-                "required": ["patch"]
-            }
-        }));
-    }
 }
 
 pub(super) fn maybe_call_compat_tool(
@@ -66,14 +52,6 @@ pub(super) fn maybe_call_compat_tool(
     match name {
         "read_file" => call_read_file_alias(service, args, ctx).map(Some),
         "search_files" => call_search_files_alias(service, args, ctx).map(Some),
-        "patch" => {
-            if !service.has_tool("apply_patch") {
-                return Err("Tool not found: patch".to_string());
-            }
-            service
-                .call_registered_tool("apply_patch", args.clone(), ctx)
-                .map(Some)
-        }
         _ => Ok(None),
     }
 }

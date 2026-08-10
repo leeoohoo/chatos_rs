@@ -362,10 +362,14 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
                     执行计划已放弃，任务未启动。你可以回到需求页面重新生成。
                   </div>
                 ) : confirmationState.isProjectExecution
-                && ['failed', 'error', 'cancelled', 'canceled']
+                && ['failed', 'error', 'blocked', 'cancelled', 'canceled']
                   .includes(confirmationState.overallStatus) ? (
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
-                    <span>执行计划没有完整生成，任务未启动。</span>
+                    <span>{confirmationState.overallStatus === 'blocked'
+                      ? '当前执行批次存在阻塞任务，请查看任务详情并处理后重试。'
+                      : confirmationState.hasStartedTasks
+                        ? '当前执行批次存在失败或取消任务，请查看任务详情。'
+                        : '执行计划没有完整生成，任务未启动。'}</span>
                     <button
                       type="button"
                       className="rounded-md border border-red-300 bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-red-100 disabled:cursor-wait disabled:opacity-60"

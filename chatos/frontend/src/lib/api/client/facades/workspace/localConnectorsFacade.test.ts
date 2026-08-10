@@ -60,7 +60,7 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
     ).rejects.toThrow('Local Connector 功能只能在 Chat OS 桌面客户端中使用');
   });
 
-  it('loads the Task Runner executable Plugin catalog for the exact device', async () => {
+  it('loads the Task Runner executable Plugin catalog for the exact project', async () => {
     vi.stubGlobal('window', {
       chatosLocalRuntime: { apiRequest: vi.fn() },
     });
@@ -69,27 +69,21 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
 
     await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
       context as never,
-      'device-1',
+      'project-1',
     );
 
     expect(request).toHaveBeenCalledWith(
-      '/task-runner/available-plugins?device_id=device-1',
+      '/task-runner/available-plugins?project_id=project-1',
     );
 
     await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
       context as never,
-      'device-1',
+      'project-1',
       true,
     );
     expect(request).toHaveBeenLastCalledWith(
-      '/task-runner/available-plugins?device_id=device-1&plan_mode=true',
+      '/task-runner/available-plugins?project_id=project-1&plan_mode=true',
     );
-
-    await workspaceLocalConnectorFacade.listTaskRunnerAvailablePlugins.call(
-      context as never,
-      null,
-    );
-    expect(request).toHaveBeenLastCalledWith('/task-runner/available-plugins');
   });
 
   it('creates a cloud-managed project for the selected local workspace', async () => {

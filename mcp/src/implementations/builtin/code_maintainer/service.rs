@@ -11,6 +11,8 @@ use super::aliases::{append_compat_aliases, maybe_call_compat_tool};
 use super::fs_ops::FsOps;
 use super::registration_read::register_read_tools;
 use super::registration_write::register_write_tools;
+use super::revision::guard_for_workspace;
+use super::session::store_for_workspace;
 use super::storage::ChangeLogStore;
 use super::utils::{ensure_dir, generate_id, normalize_name};
 
@@ -76,6 +78,8 @@ impl CodeMaintainerService {
         let change_log =
             ChangeLogStore::new(&server_name, opts.project_id.clone(), opts.db_path.clone())?;
         let change_log = Arc::new(Mutex::new(change_log));
+        let revision_guard = guard_for_workspace(root.as_path())?;
+        let session_store = store_for_workspace(root.as_path())?;
 
         let fs_ops = FsOps::new(
             root.clone(),
@@ -117,6 +121,7 @@ impl CodeMaintainerService {
             register_read_tools(
                 &mut service,
                 fs_ops.clone(),
+                revision_guard.clone(),
                 workspace_note.as_str(),
                 opts.max_file_bytes,
             );
@@ -127,6 +132,8 @@ impl CodeMaintainerService {
                 &mut service,
                 fs_ops,
                 change_log,
+                revision_guard,
+                session_store,
                 root,
                 opts.allow_writes,
                 opts.max_file_bytes,

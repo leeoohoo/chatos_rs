@@ -1,0 +1,84 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+body {
+  background: #f5f7fa;
+}
+
+.task-list-table {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.04);
+}
+
+.task-list-table .ant-table {
+  background: transparent;
+}
+
+.task-list-table .ant-table-container {
+  border-inline-start: 0 !important;
+  border-top: 0 !important;
+}
+
+.task-list-table .ant-table-thead > tr > th {
+  padding-top: 14px;
+  padding-bottom: 14px;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+
+.task-list-table .ant-table-tbody > tr > td {
+  padding-top: 14px;
+  padding-bottom: 14px;
+  vertical-align: top;
+}
+
+.task-list-table .ant-table-pagination.ant-pagination {
+  margin: 16px;
+}
+
+.task-task-cell,
+.task-schedule-cell,
+.task-remote-cell {
+  width: 100%;
+}
+
+.task-task-title {
+  margin-bottom: 0 !important;
+}
+
+.task-cell-meta {
+  display: block;
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.task-cell-link {
+  padding-inline: 0 !important;
+  height: auto;
+}
+
+.task-editor-drawer .ant-drawer-body,
+.task-detail-drawer .ant-drawer-body,
+.task-mcp-preview-modal .ant-modal-body {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+}
+
+.task-mcp-preview-modal .ant-modal-content {
+  overflow: hidden;
+}
+
+.task-mcp-preview-prompt {
+  max-height: min(62vh, 720px);
+  overflow: auto;
+}
+
+@media (max-width: 900px) {
+  .task-list-table {
+    border-radius: 12px;
+  }
+}

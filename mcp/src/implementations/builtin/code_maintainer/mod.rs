@@ -9,6 +9,8 @@ mod outcome;
 mod patch;
 mod registration_read;
 mod registration_write;
+mod revision;
+mod session;
 mod service;
 mod storage;
 #[cfg(test)]

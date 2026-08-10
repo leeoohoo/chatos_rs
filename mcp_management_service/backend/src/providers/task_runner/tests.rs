@@ -7,10 +7,17 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
+use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
-    WorkspaceProviderKind,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
+use chatos_mcp_service::METHOD_TOOLS_LIST;
+use chatos_plugin_management_sdk::SystemAgentKey;
+use serde_json::{json, Value};
+
+use crate::runtime::RuntimeSessionSnapshot;
 
 use super::*;
 
@@ -81,7 +88,7 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(
         headers["x-mcp-management-agent-key"],
-        "task_runner_run_phase"
+        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase.as_str()
     );
     assert_eq!(headers["x-mcp-management-session-id"], "session-1");
     assert_eq!(
@@ -101,6 +108,10 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
     assert_eq!(
         headers["x-mcp-management-source-user-message-id"],
         "message-1"
+    );
+    assert_eq!(
+        headers["x-mcp-management-contact-agent-id"],
+        "chatos-agent-1"
     );
     assert_eq!(
         headers["x-mcp-management-expected-project-task-ids"],
@@ -207,7 +218,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
             Some("source-session-1"),
             Some("message-1"),
             Some("model-1"),
-            Some("chatos_plan"),
+            Some(CHATOS_PLAN_TASK_PROFILE),
             expected_project_task_ids.as_slice(),
             i64::MAX,
         )
@@ -226,11 +237,14 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(
         headers["x-mcp-management-agent-key"],
-        "chatos_conversation_agent"
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent.as_str()
     );
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
     assert_eq!(headers["x-mcp-management-turn-id"], "turn-1");
-    assert_eq!(headers["x-mcp-management-task-profile"], "chatos_plan");
+    assert_eq!(
+        headers["x-mcp-management-task-profile"],
+        CHATOS_PLAN_TASK_PROFILE
+    );
     assert_eq!(
         headers["x-mcp-management-source-session-id"],
         "source-session-1"
@@ -291,7 +305,9 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+            .as_str()
+            .to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
@@ -300,7 +316,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         task_id: Some("task-1".to_string()),
         source_session_id: Some("source-session-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
-        contact_agent_id: None,
+        contact_agent_id: Some("chatos-agent-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
         expected_project_task_ids: vec!["project-task-1".to_string()],
         sandbox_target: None,

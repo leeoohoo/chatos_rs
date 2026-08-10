@@ -9,6 +9,7 @@ import type {
   AgentProviderPromptRecord,
   AgentMcpBindingsResponse,
   AdminAiModelConfig,
+  BindingConditions,
   CurrentUser,
   ListResponse,
   LoginPayload,
@@ -269,7 +270,13 @@ export const api = {
     ),
   updateAgentMcpBindings: (
     agentKey: string,
-    bindings: Array<{ mcp_id: string; mode: string }>,
+    bindings: Array<{
+      mcp_id: string;
+      mode: string;
+      conditions?: BindingConditions;
+      tool_allowlist?: string[];
+      tool_blocklist?: string[];
+    }>,
   ) =>
     request<AgentMcpBindingsResponse>(`/api/system-agents/${agentKey}/mcp-bindings`, {
       method: 'PUT',

@@ -16,17 +16,14 @@ use std::sync::{Arc, Mutex};
 
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
-use chatos_plugin_management_sdk::{PluginAgentSelection, PluginCommandInvocation};
+use chatos_plugin_management_sdk::PluginCommandInvocation;
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use self::mcp_management_gateway::{resolve_mcp_management_gateway, McpManagementGatewayRequest};
 use self::policy::merge_optional_system_prompts;
 use self::support::{is_concrete_project_id, normalize_optional_text};
-use self::task_runner::{
-    normalize_plugin_agent_selection, normalize_plugin_command_invocations,
-    normalize_selected_plugin_ids,
-};
+use self::task_runner::{normalize_plugin_command_invocations, normalize_selected_plugin_ids};
 use self::workspace::{authorize_runtime_workspace_dir, resolve_runtime_project_root};
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
@@ -38,8 +35,7 @@ use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::{
-    TurnRuntimeSnapshotPluginAgentSelectionDto, TurnRuntimeSnapshotPluginCommandInvocationDto,
-    TurnRuntimeSnapshotSelectedCommandDto,
+    TurnRuntimeSnapshotPluginCommandInvocationDto, TurnRuntimeSnapshotSelectedCommandDto,
 };
 use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::services::{
@@ -56,7 +52,6 @@ pub struct ConversationRuntimeRequest {
     pub remote_connection_id: Option<String>,
     pub selected_plugin_ids: Vec<String>,
     pub plugin_command_invocations: Vec<PluginCommandInvocation>,
-    pub plugin_agent_selection: Option<PluginAgentSelection>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
     pub project_requirement_execution_task_ids: Vec<String>,
@@ -79,7 +74,6 @@ pub struct ResolvedConversationRuntimeContext {
     pub builtin_mcp_system_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub plugin_command_invocations_for_snapshot: Vec<TurnRuntimeSnapshotPluginCommandInvocationDto>,
-    pub plugin_agent_selection_for_snapshot: Option<TurnRuntimeSnapshotPluginAgentSelectionDto>,
     pub resolved_project_id: Option<String>,
     pub resolved_project_name: Option<String>,
     pub resolved_project_root: Option<String>,
@@ -195,6 +189,7 @@ pub async fn resolve_runtime_context(
         requested_project_root,
     )
     .await;
+    let is_local_project = resolved_project_runtime.is_local_project;
     let resolved_project_id = resolved_project_runtime.project_id;
     let resolved_project_name = resolved_project_runtime.project_name;
     let resolved_project_root =
@@ -213,17 +208,16 @@ pub async fn resolve_runtime_context(
     let mut effective_mcp_resource_ids = Vec::new();
     let mut gateway_provider_skills_prompt = None;
     let mut mcp_management_runtime_session = None;
-    let agent_profile =
-        ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
+    let agent_profile = ChatosAgentProfile::from_project_locality(
+        req.plan_mode,
+        req.project_requirement_execution_planner,
+        is_local_project,
+    );
     let normalized_selected_plugin_ids =
         normalize_selected_plugin_ids(req.selected_plugin_ids.as_slice());
     let normalized_plugin_command_invocations = normalize_plugin_command_invocations(
         normalized_selected_plugin_ids.as_slice(),
         req.plugin_command_invocations.as_slice(),
-    );
-    let normalized_plugin_agent_selection = normalize_plugin_agent_selection(
-        normalized_selected_plugin_ids.as_slice(),
-        req.plugin_agent_selection.as_ref(),
     );
     let plugin_command_invocations_for_snapshot = normalized_plugin_command_invocations
         .iter()
@@ -237,13 +231,6 @@ pub async fn resolve_runtime_context(
                 .map(|arguments| hex::encode(Sha256::digest(arguments.as_bytes()))),
         })
         .collect::<Vec<_>>();
-    let plugin_agent_selection_for_snapshot =
-        normalized_plugin_agent_selection.as_ref().map(|selection| {
-            TurnRuntimeSnapshotPluginAgentSelectionDto {
-                plugin_id: selection.plugin_id.clone(),
-                agent_id: selection.agent_id.clone(),
-            }
-        });
 
     let agent_system_prompt = match plugin_management_prompts::resolve_for_model(
         agent_profile.key(),
@@ -340,7 +327,6 @@ pub async fn resolve_runtime_context(
         builtin_mcp_system_prompt,
         selected_commands_for_snapshot,
         plugin_command_invocations_for_snapshot,
-        plugin_agent_selection_for_snapshot,
         resolved_project_id,
         resolved_project_name,
         resolved_project_root,

@@ -86,6 +86,9 @@ export const MessageTaskChangesModal: FC<MessageTaskChangesModalProps> = ({
       widthClassName="max-w-6xl"
     >
       <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+          口径 {changes?.comparison_scope || 'run_incremental'}
+        </span>
         <span className="rounded-full bg-emerald-500/12 px-2 py-1 text-emerald-700 dark:text-emerald-200">
           新增 {countValue(changes, 'added')}
         </span>
@@ -99,6 +102,13 @@ export const MessageTaskChangesModal: FC<MessageTaskChangesModalProps> = ({
           <span className="text-muted-foreground">正在加载...</span>
         ) : null}
       </div>
+
+      {changes?.base_commit || changes?.result_commit ? (
+        <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+          <span>基线提交 {changes.base_commit || '-'}</span>
+          <span>结果提交 {changes.result_commit || '-'}</span>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

@@ -4,6 +4,7 @@
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
 use serde_json::Value;
 
 use crate::api::internal_auth::{
@@ -318,9 +319,9 @@ fn task_runner_internal_mcp_auth(
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::forbidden("task runner MCP sync branch requires task profile"))?;
     if !is_supported_task_runner_mcp_profile(task_profile.as_str()) {
-        return Err(ApiError::forbidden(
-            "task runner MCP sync branch only supports chatos_plan",
-        ));
+        return Err(ApiError::forbidden(format!(
+            "task runner MCP sync branch only supports {CHATOS_PLAN_TASK_PROFILE}"
+        )));
     }
     let owner_user_id = header_text(headers, "x-task-runner-owner-user-id")
         .map_err(ApiError::bad_request)?
@@ -386,7 +387,7 @@ fn mcp_management_internal_user(headers: &HeaderMap) -> Result<CurrentUser, ApiE
 }
 
 fn is_supported_task_runner_mcp_profile(value: &str) -> bool {
-    value.eq_ignore_ascii_case("chatos_plan")
+    value.eq_ignore_ascii_case(CHATOS_PLAN_TASK_PROFILE)
 }
 
 fn header_text(headers: &HeaderMap, key: &'static str) -> Result<Option<String>, String> {
@@ -410,6 +411,7 @@ mod tests {
     use std::time::Duration;
 
     use axum::http::HeaderValue;
+    use chatos_agent::SystemAgentKey;
 
     use super::*;
     use crate::config::AppConfig;
@@ -504,7 +506,7 @@ mod tests {
         let (config, mut headers) = signed_task_runner_request("task-runner-secret");
         headers.insert(
             "x-task-runner-task-profile",
-            HeaderValue::from_static("chatos_plan"),
+            HeaderValue::from_static(CHATOS_PLAN_TASK_PROFILE),
         );
         headers.insert(
             "x-task-runner-owner-user-id",
@@ -548,7 +550,7 @@ mod tests {
         assert_eq!(err.status, StatusCode::FORBIDDEN);
         assert_eq!(
             err.message,
-            "task runner MCP sync branch only supports chatos_plan"
+            format!("task runner MCP sync branch only supports {CHATOS_PLAN_TASK_PROFILE}")
         );
     }
 
@@ -557,7 +559,7 @@ mod tests {
         let (config, mut headers) = signed_task_runner_request("wrong-secret");
         headers.insert(
             "x-task-runner-task-profile",
-            HeaderValue::from_static("chatos_plan"),
+            HeaderValue::from_static(CHATOS_PLAN_TASK_PROFILE),
         );
         headers.insert(
             "x-task-runner-owner-user-id",
@@ -602,7 +604,7 @@ mod tests {
         );
         headers.insert(
             "x-task-runner-task-profile",
-            HeaderValue::from_static("chatos_plan"),
+            HeaderValue::from_static(CHATOS_PLAN_TASK_PROFILE),
         );
         headers.insert(
             "x-task-runner-owner-user-id",
@@ -620,7 +622,7 @@ mod tests {
         let (config, mut headers) = signed_task_runner_request("task-runner-secret");
         headers.insert(
             "x-task-runner-task-profile",
-            HeaderValue::from_static("chatos_plan"),
+            HeaderValue::from_static(CHATOS_PLAN_TASK_PROFILE),
         );
 
         let err = task_runner_internal_mcp_user(&config, &headers)
@@ -687,7 +689,7 @@ mod tests {
         );
         headers.insert(
             "x-mcp-management-agent-key",
-            HeaderValue::from_static("task_runner_run_phase"),
+            HeaderValue::from_static(SystemAgentKey::TaskRunnerRunPhase.as_str()),
         );
         headers.insert(
             "x-mcp-management-session-id",
@@ -747,6 +749,8 @@ mod tests {
             cloud_project_max_unpacked_bytes: 1024 * 1024,
             cloud_project_max_files: 100,
             cloud_project_git_timeout: Duration::from_millis(5_000),
+            environment_analysis_timeout: Duration::from_secs(60),
+            environment_analysis_stale_after: Duration::from_secs(60),
             task_runner_base_url: Some("http://127.0.0.1:39090".to_string()),
             task_runner_request_timeout: Duration::from_millis(10_000),
             task_runner_internal_secret: Some("sync-secret".to_string()),

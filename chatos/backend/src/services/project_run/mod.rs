@@ -20,10 +20,6 @@ mod environment_validation;
 #[path = "file_limits.rs"]
 mod file_limits;
 
-const SHELL_BUILTINS: &[&str] = &[
-    "cd", "export", "unset", "alias", "unalias", "source", ".", "echo", "printf", "test", "[",
-];
-
 #[derive(Debug, Clone)]
 pub struct RunDispatchResult {
     pub terminal_id: String,
@@ -49,9 +45,7 @@ pub(crate) use self::analyzer::{
 pub(crate) use self::cache::{
     clear_cached_environment_snapshot, read_cached_catalog, write_cached_catalog,
 };
-pub(crate) use self::dispatcher::{
-    dispatch_command, resolve_execution, validate_command_preflight,
-};
+pub(crate) use self::dispatcher::resolve_execution;
 pub(crate) use self::environment::{
     load_environment_selection, load_environment_snapshot, refresh_environment_snapshot,
     save_environment_selection,
@@ -59,4 +53,3 @@ pub(crate) use self::environment::{
 pub(crate) use self::environment_runtime::{
     env_overrides_for_target, resolve_command_with_toolchains,
 };
-pub(crate) use self::environment_validation::validate_project_run_target;

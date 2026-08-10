@@ -14,6 +14,14 @@ pub(in crate::services::environment_agent::tool_provider) fn environment_has_pro
         || required_services
             .as_array()
             .is_some_and(|services| !services.is_empty())
+        || detected_stack
+            .pointer("/source_snapshot/requires_application_runtime")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || detected_stack
+            .pointer("/source_snapshot/application_candidates")
+            .and_then(Value::as_array)
+            .is_some_and(|applications| !applications.is_empty())
         || [
             "language",
             "languages",

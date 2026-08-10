@@ -181,7 +181,15 @@ fn compact_runtime_environment_payload(
                         "display_name": service.get("display_name"),
                         "version": service.get("version"),
                         "required": service.get("required"),
+                        "image": service.get("image"),
+                        "provisioning": service.get("provisioning"),
+                        "provisioning_mode": service.get("provisioning_mode"),
+                        "workspace_docker_required": service.get("workspace_docker_required"),
+                        "connection": service.get("connection"),
+                        "connection_variables": service.get("connection_variables"),
                         "ports": service.get("ports"),
+                        "healthcheck": service.get("healthcheck"),
+                        "migration_commands": service.get("migration_commands"),
                         "reason": service.get("reason"),
                     })
                 })
@@ -358,7 +366,14 @@ mod tests {
                 "service_type": "postgresql",
                 "display_name": "PostgreSQL",
                 "required": true,
+                "image": "postgres:16-alpine",
+                "provisioning_mode": "independent_dependency_service",
+                "workspace_docker_required": false,
+                "connection": "injected DATABASE_URL",
+                "connection_variables": ["DATABASE_URL"],
                 "ports": [{"container_port": 5432}],
+                "healthcheck": "pg_isready",
+                "migration_commands": ["psql \"$DATABASE_URL\" -f db/migrations/001.sql"],
                 "env_vars": {"POSTGRES_PASSWORD": "secret-service-value"}
             }]),
             env_vars: json!({"DATABASE_URL": "super-secret-dsn"}),
@@ -458,6 +473,18 @@ mod tests {
         assert_eq!(
             payload.pointer("/environment/generated_config_files/0/path"),
             Some(&json!(".chatos/runtime/docker-compose.yml"))
+        );
+        assert_eq!(
+            payload.pointer("/environment/required_services/0/provisioning_mode"),
+            Some(&json!("independent_dependency_service"))
+        );
+        assert_eq!(
+            payload.pointer("/environment/required_services/0/workspace_docker_required"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            payload.pointer("/environment/required_services/0/connection_variables/0"),
+            Some(&json!("DATABASE_URL"))
         );
     }
 }

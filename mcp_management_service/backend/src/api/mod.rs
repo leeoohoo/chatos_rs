@@ -405,6 +405,18 @@ mod tests {
             Some(&serde_json::json!(0))
         );
         assert_eq!(
+            body.pointer("/runtime_invocations/registration/store_unavailable"),
+            Some(&serde_json::json!(0))
+        );
+        assert_eq!(
+            body.pointer("/runtime_invocations/session_closed_reclaimed_total"),
+            Some(&serde_json::json!(0))
+        );
+        assert_eq!(
+            body.pointer("/runtime_invocations/duration/completed_count"),
+            Some(&serde_json::json!(0))
+        );
+        assert_eq!(
             body.pointer("/runtime_invocations/file_modifications/total"),
             Some(&serde_json::json!(0))
         );
@@ -459,6 +471,13 @@ mod tests {
         ));
         assert!(body.contains("chatos_mcp_runtime_session_cache_entries{"));
         assert!(body.contains("chatos_mcp_runtime_session_cache_hits_total{"));
+        assert!(body.contains(
+            "chatos_mcp_runtime_invocation_metrics_available{service=\"mcp-management-service\"} 1"
+        ));
+        assert!(body.contains("chatos_mcp_runtime_invocations_active{"));
+        assert!(body.contains(
+            "chatos_mcp_runtime_invocation_registration_failures_total{service=\"mcp-management-service\",category=\"store_unavailable\"} 0"
+        ));
         assert!(!body.contains("rabbitmq_url"));
         assert!(!body.contains("amqp://"));
     }

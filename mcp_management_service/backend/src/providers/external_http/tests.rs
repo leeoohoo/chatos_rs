@@ -1,15 +1,27 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::{HashMap, HashSet};
+
 use axum::http::HeaderMap as AxumHeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
-    WorkspaceProviderKind,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
+use chatos_mcp_service::METHOD_NOTIFICATIONS_CANCELLED;
+use reqwest::header::HeaderMap;
+use reqwest::redirect::Policy;
+use serde_json::{json, Value};
+
+use crate::providers::ProviderCancelOutcome;
+use crate::runtime::{ExternalHttpProviderBinding, RuntimeSessionSnapshot};
 
 use super::*;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 fn route() -> ResolvedMcpRoute {
     ResolvedMcpRoute {
@@ -32,7 +44,7 @@ fn snapshot(binding: ExternalHttpProviderBinding) -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,

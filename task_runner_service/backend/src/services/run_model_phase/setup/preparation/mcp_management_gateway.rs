@@ -7,11 +7,11 @@ use chatos_mcp_gateway::McpManagementGatewayBuilder;
 use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle, SandboxExecutionTarget,
 };
-use chatos_mcp_runtime::McpHttpServer;
-use chatos_plugin_management_sdk::SystemMcpKey;
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, McpHttpServer};
+use chatos_plugin_management_sdk::{SystemAgentKey, SystemMcpKey};
 use tracing::info;
 
-use crate::models::{TaskRecord, TaskRunRecord};
+use crate::models::{TaskMcpConfig, TaskRecord, TaskRunRecord};
 
 use crate::services::sandbox_runtime::SandboxRuntimeContext;
 
@@ -23,14 +23,11 @@ const TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS: u64 = chatos_mcp::PROCESS_WAIT_MAX_TIM
 pub(super) async fn resolve_mcp_management_gateway(
     task: &TaskRecord,
     run: &TaskRunRecord,
+    agent_key: SystemAgentKey,
     sandbox_context: Option<&SandboxRuntimeContext>,
 ) -> Result<ResolvedMcpManagementGateway, String> {
     let owner_user_id = normalized_task_owner_user_id(task)
         .ok_or_else(|| "task owner user id is required for MCP Management".to_string())?;
-    let agent_key = crate::models::task_runner_agent_key_for(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    );
     let sandbox_provider = sandbox_context
         .map(SandboxRuntimeContext::provider_kind)
         .transpose()?;
@@ -48,6 +45,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         contact_agent_id: None,
         default_model_config_id: task.default_model_config_id.clone(),
         expected_project_task_ids: Vec::new(),
+        requested_mcp_ids: Some(requested_mcp_resource_ids(&task.mcp_config)),
         locale: Some(if task.mcp_config.locale().is_english() {
             "en-US".to_string()
         } else {
@@ -140,4 +138,76 @@ fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
+    let builtin_kinds = complete_builtin_kind_dependencies(
+        config
+            .enabled_builtin_kinds
+            .iter()
+            .filter_map(|kind| builtin_kind_by_any(kind)),
+    );
+    let mut resource_ids = builtin_kinds
+        .iter()
+        .filter_map(|kind| chatos_mcp::system_mcp_descriptor_by_any(kind.kind_name()))
+        .map(|descriptor| descriptor.resource_id.to_string())
+        .chain(
+            config
+                .external_mcp_config_ids
+                .iter()
+                .filter_map(|resource_id| {
+                    let resource_id = resource_id.trim();
+                    (!resource_id.is_empty()).then(|| resource_id.to_string())
+                }),
+        )
+        .collect::<Vec<_>>();
+    resource_ids.sort();
+    resource_ids.dedup();
+    resource_ids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authoritative_task_mcp_config_maps_to_runtime_resource_scope() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec![
+                "BrowserTools".to_string(),
+                "CodeMaintainerRead".to_string(),
+                "BrowserTools".to_string(),
+            ],
+            external_mcp_config_ids: vec![
+                " external-mcp-1 ".to_string(),
+                "external-mcp-1".to_string(),
+            ],
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(
+            requested_mcp_resource_ids(&config),
+            vec![
+                "builtin_browser_tools".to_string(),
+                "builtin_code_maintainer_read".to_string(),
+                "external-mcp-1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mutating_task_scope_includes_required_read_dependency() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(
+            requested_mcp_resource_ids(&config),
+            vec![
+                "builtin_code_maintainer_read".to_string(),
+                "builtin_code_maintainer_write".to_string(),
+            ]
+        );
+    }
 }

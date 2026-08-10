@@ -49,9 +49,13 @@ fn mcp(id: &str, visibility: &str) -> McpRecord {
 fn binding_view(id: &str, visibility: &str, mode: &str, bindable: bool) -> AgentMcpBindingView {
     AgentMcpBindingView {
         mcp: mcp(id, visibility),
+        binding_id: None,
         mode: mode.to_string(),
         bindable,
         unavailable_reason: None,
+        conditions: BindingConditions::default(),
+        tool_allowlist: Vec::new(),
+        tool_blocklist: Vec::new(),
     }
 }
 

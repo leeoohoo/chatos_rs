@@ -108,12 +108,6 @@ export function useInputAreaController({
   const pluginMentionDiscoveryRequestedRef = useRef(false);
   const client = useApiClient();
   const { alert } = useDialogService();
-  const pluginPicker = useTaskPluginPicker({
-    client,
-    conversationId,
-    disabled,
-    planMode: planModeEnabled,
-  });
   const normalizeNullableText = useCallback((value: string | null | undefined) => {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : null;
@@ -261,6 +255,13 @@ export function useInputAreaController({
     isGuidingMode: false,
     showProjectFileButton,
   });
+  const pluginPicker = useTaskPluginPicker({
+    client,
+    conversationId,
+    projectId: selectedRuntimeProject?.id || selectedProjectId,
+    disabled,
+    planMode: planModeEnabled,
+  });
 
   useEffect(() => {
     if (
@@ -357,22 +358,6 @@ export function useInputAreaController({
     if (pluginPicker.selectedPluginIds.length === 0) {
       return false;
     }
-    if (!pluginPicker.selectedDeviceId) {
-      void alert({
-        title: t('inputArea.plugin.invalidTitle'),
-        message: t('inputArea.plugin.deviceRequired'),
-        type: 'warning',
-      });
-      return true;
-    }
-    if (pluginPicker.browserWorkspaceRequired) {
-      void alert({
-        title: t('inputArea.plugin.invalidTitle'),
-        message: t('inputArea.plugin.browserNeedsWorkspace'),
-        type: 'warning',
-      });
-      return true;
-    }
     if (pluginPicker.commandArgumentIssue) {
       void alert({
         title: t('inputArea.plugin.invalidTitle'),
@@ -384,9 +369,7 @@ export function useInputAreaController({
     return false;
   }, [
     alert,
-    pluginPicker.browserWorkspaceRequired,
     pluginPicker.commandArgumentIssue,
-    pluginPicker.selectedDeviceId,
     pluginPicker.selectedPluginIds.length,
     t,
   ]);
@@ -408,11 +391,8 @@ export function useInputAreaController({
     onSend,
     requireModelSelection,
     requireValidPluginSelection,
-    pluginDeviceId: pluginPicker.selectedDeviceId,
-    pluginWorkspaceId: pluginPicker.selectedWorkspaceId,
     selectedPluginIds: pluginPicker.selectedPluginIds,
     pluginCommandInvocations: pluginPicker.pluginCommandInvocations,
-    pluginAgentSelection: pluginPicker.selectedAgentSelection,
     commandMessageFallback: pluginPicker.commandMessageFallback,
     clearSelectedPlugins: pluginPicker.clearSelectedPlugins,
     selectedProjectId,

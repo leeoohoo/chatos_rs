@@ -7,10 +7,14 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, ProjectExecutionContext, SandboxProviderKind,
-    WorkspaceProviderKind,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxExecutionTarget, SandboxProviderKind, WorkspaceProviderKind,
 };
+use chatos_mcp_service::{METHOD_TOOLS_CALL, METHOD_TOOLS_LIST};
+use chatos_plugin_management_sdk::SystemAgentKey;
+use serde_json::{json, Value};
 
 use super::*;
 
@@ -56,9 +60,18 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
         1024 * 1024,
     )
     .expect("provider");
+    let mut bound_snapshot = snapshot();
+    bound_snapshot.sandbox_target = Some(SandboxExecutionTarget {
+        provider: SandboxProviderKind::Cloud,
+        pairing_id: None,
+        sandbox_id: "environment-1".to_string(),
+        lease_id: "lease-1".to_string(),
+        is_environment: true,
+        service_id: Some("workspace".to_string()),
+    });
     let outcome = provider
         .call_tool(
-            &snapshot(),
+            &bound_snapshot,
             &route(SystemMcpKey::AskUser, CHATOS_PROVIDER_REF.to_string()),
             "prompt_choices",
             json!({
@@ -82,10 +95,15 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(
         headers["x-mcp-management-agent-key"],
-        "chatos_conversation_agent"
+        chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent.as_str()
     );
     assert_eq!(headers["x-mcp-management-session-id"], "session-1");
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
+    assert_eq!(headers["x-mcp-management-sandbox-provider"], "cloud");
+    assert_eq!(headers["x-mcp-management-sandbox-id"], "environment-1");
+    assert_eq!(headers["x-mcp-management-sandbox-lease-id"], "lease-1");
+    assert_eq!(headers["x-mcp-management-sandbox-is-environment"], "true");
+    assert_eq!(headers["x-mcp-management-sandbox-service-id"], "workspace");
     assert_eq!(headers["x-mcp-management-turn-id"], "turn-1");
     assert_eq!(
         headers["x-mcp-management-source-session-id"],
@@ -114,7 +132,7 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
 
     let outcome = provider
         .call_tool(
-            &snapshot(),
+            &bound_snapshot,
             &route(SystemMcpKey::Notepad, CHATOS_PROVIDER_REF.to_string()),
             "create_note",
             json!({"title": "Gateway note", "content": "bound to owner"}),
@@ -213,6 +231,154 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
 }
 
 #[tokio::test]
+async fn cloud_browser_call_is_authorized_by_chatos_and_executed_in_the_bound_sandbox() {
+    let chatos_requests = CapturedRequest::default();
+    let chatos_app = Router::new()
+        .route(
+            "/internal/mcp-management/mcp/{system_key}",
+            post(
+                |State(captured): State<CapturedRequest>,
+                 Path(system_key): Path<String>,
+                 headers: HeaderMap,
+                 Json(body): Json<Value>| async move {
+                    *captured.0.lock().expect("capture ChatOS request") =
+                        Some((system_key, headers, body.clone()));
+                    Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {
+                            "authorized": true,
+                            "target_ref": "sandbox:sandbox-1/lease:lease-1"
+                        }
+                    }))
+                },
+            ),
+        )
+        .with_state(chatos_requests.clone());
+    let chatos_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ChatOS mock");
+    let chatos_address = chatos_listener.local_addr().expect("ChatOS mock address");
+    tokio::spawn(async move {
+        axum::serve(chatos_listener, chatos_app)
+            .await
+            .expect("serve ChatOS mock");
+    });
+
+    let sandbox_request = Arc::new(Mutex::new(None::<(HeaderMap, Value)>));
+    let sandbox_capture = sandbox_request.clone();
+    let sandbox_app = Router::new()
+        .route(
+            "/api/internal/sandboxes/sandbox-1",
+            axum::routing::get(|| async {
+                Json(json!({
+                    "id": "lease-1",
+                    "sandbox_id": "sandbox-1",
+                    "tenant_id": "user-1",
+                    "project_id": "project-1",
+                    "run_id": "run-1",
+                    "status": "ready",
+                    "lease_kind": "sandbox",
+                    "environment_services": []
+                }))
+            }),
+        )
+        .route(
+            "/api/internal/sandboxes/sandbox-1/browser-mcp",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let captured = sandbox_capture.clone();
+                async move {
+                    *captured.lock().expect("capture sandbox request") =
+                        Some((headers, body.clone()));
+                    Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"content": [{"type": "text", "text": "sandbox-ok"}]}
+                    }))
+                }
+            }),
+        );
+    let sandbox_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind Sandbox Manager mock");
+    let sandbox_address = sandbox_listener
+        .local_addr()
+        .expect("Sandbox Manager mock address");
+    tokio::spawn(async move {
+        axum::serve(sandbox_listener, sandbox_app)
+            .await
+            .expect("serve Sandbox Manager mock");
+    });
+
+    let cloud_sandbox = CloudSandboxProvider::new(
+        reqwest::Client::new(),
+        format!("http://{sandbox_address}"),
+        Duration::from_secs(5),
+        Some("sandbox-secret".to_string()),
+        1024 * 1024,
+    )
+    .expect("Cloud Sandbox provider");
+    let provider = ChatosProvider::new(
+        reqwest::Client::new(),
+        format!("http://{chatos_address}"),
+        Duration::from_secs(5),
+        Duration::from_secs(60),
+        Duration::from_secs(120),
+        Some("chatos-provider-secret".to_string()),
+        1024 * 1024,
+    )
+    .expect("ChatOS provider")
+    .with_cloud_sandbox(cloud_sandbox);
+    let mut bound_snapshot = snapshot();
+    bound_snapshot.run_id = Some("run-1".to_string());
+    bound_snapshot.sandbox_target = Some(SandboxExecutionTarget {
+        provider: SandboxProviderKind::Cloud,
+        pairing_id: None,
+        sandbox_id: "sandbox-1".to_string(),
+        lease_id: "lease-1".to_string(),
+        is_environment: false,
+        service_id: None,
+    });
+
+    let outcome = provider
+        .call_tool(
+            &bound_snapshot,
+            &route(SystemMcpKey::BrowserTools, CHATOS_PROVIDER_REF.to_string()),
+            "browser_navigate",
+            json!({"url": "http://localhost:5173"}),
+            "browser-call-1",
+        )
+        .await
+        .expect("cloud browser call");
+    assert_eq!(outcome.result["content"][0]["text"], "sandbox-ok");
+
+    let (system_key, headers, authorization) = chatos_requests
+        .0
+        .lock()
+        .expect("captured ChatOS request")
+        .clone()
+        .expect("ChatOS authorization request");
+    assert_eq!(system_key, SystemMcpKey::BrowserTools.as_str());
+    assert_eq!(
+        authorization["method"],
+        CLOUD_BROWSER_EXECUTION_AUTHORIZE_METHOD
+    );
+    assert_eq!(authorization["params"]["operation"], METHOD_TOOLS_CALL);
+    assert_eq!(authorization["params"]["name"], "browser_navigate");
+    assert_eq!(headers["x-mcp-management-sandbox-id"], "sandbox-1");
+
+    let (headers, call) = sandbox_request
+        .lock()
+        .expect("captured Sandbox Manager request")
+        .clone()
+        .expect("Sandbox Browser request");
+    assert_eq!(headers["x-mcp-management-session-id"], "session-1");
+    assert_eq!(headers["x-chatos-sandbox-lease-id"], "lease-1");
+    assert_eq!(call["method"], METHOD_TOOLS_CALL);
+    assert_eq!(call["params"]["name"], "browser_navigate");
+}
+
+#[tokio::test]
 async fn prepare_routes_materializes_the_live_chatos_browser_catalog() {
     let captured = CapturedRequest::default();
     let app = Router::new()
@@ -278,7 +444,9 @@ async fn prepare_routes_materializes_the_live_chatos_browser_catalog() {
             "user-1",
             SystemAgentKey::ChatosConversationAgent,
             "project-1",
+            None,
             Some("conversation-1"),
+            None,
             i64::MAX,
         )
         .await;
@@ -327,6 +495,8 @@ async fn prepare_routes_marks_cloud_browser_unavailable_without_source_session()
             "user-1",
             SystemAgentKey::ChatosConversationAgent,
             "project-1",
+            None,
+            None,
             None,
             i64::MAX,
         )
@@ -464,7 +634,9 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "chatos_conversation_agent".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent
+            .as_str()
+            .to_string(),
         task_profile: None,
         project_id: "project-1".to_string(),
         device_id: None,

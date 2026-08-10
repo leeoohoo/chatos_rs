@@ -35,6 +35,7 @@ export const useRemoteConnectionFormActions = ({
     clearFeedback,
     clearVerificationState,
     editingRemoteConnectionId,
+    editingRemoteConnection,
     hydrateForEdit,
     pendingVerificationConnectionId,
     pendingVerificationDraftPayload,
@@ -84,7 +85,7 @@ export const useRemoteConnectionFormActions = ({
     const built = buildRemoteConnectionPayload(
       readCurrentFormValues(),
       remoteConnections,
-      editingRemoteConnectionId,
+      editingRemoteConnection,
       t,
     );
     if ('error' in built) {
@@ -124,6 +125,7 @@ export const useRemoteConnectionFormActions = ({
     applyRemoteErrorFeedback,
     clearFeedback,
     editingRemoteConnectionId,
+    editingRemoteConnection,
     readCurrentFormValues,
     remoteConnections,
     setPendingVerificationConnectionId,
@@ -142,7 +144,7 @@ export const useRemoteConnectionFormActions = ({
     const built = buildRemoteConnectionPayload(
       readCurrentFormValues(),
       remoteConnections,
-      editingRemoteConnectionId,
+      editingRemoteConnection,
       t,
     );
     if ('error' in built) {
@@ -180,6 +182,7 @@ export const useRemoteConnectionFormActions = ({
     clearFeedback,
     createRemoteConnection,
     editingRemoteConnectionId,
+    editingRemoteConnection,
     readCurrentFormValues,
     remoteConnections,
     setRemoteError,

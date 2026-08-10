@@ -8,7 +8,7 @@ use chatos_mcp::{
     system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
 };
 use chatos_mcp_management_sdk::{ResolvedMcpRoute, RuntimeToolDescriptor};
-use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp, SystemAgentKey};
+use chatos_plugin_management_sdk::{AgentBindingRecord, ResolvedAgentCapabilities, ResolvedMcp};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -79,12 +79,7 @@ pub fn materialize_runtime_tools_with_plugin_components(
                         resolved.resource.id
                     )
                 })?;
-            if !resource_allows_tool(
-                capabilities.agent_key.as_str(),
-                resolved,
-                route,
-                original_name,
-            ) {
+            if !resource_allows_tool(resolved, route, original_name) {
                 continue;
             }
             let exposed_name = route.exposed_tool_name(original_name);
@@ -234,8 +229,19 @@ fn plugin_binding_allows_tool(binding: &PluginMcpRuntimeBinding, tool_name: &str
             .any(|blocked| blocked == tool_name)
 }
 
+fn binding_allows_tool(binding: &AgentBindingRecord, tool_name: &str) -> bool {
+    (binding.tool_allowlist.is_empty()
+        || binding
+            .tool_allowlist
+            .iter()
+            .any(|allowed| allowed == tool_name))
+        && !binding
+            .tool_blocklist
+            .iter()
+            .any(|blocked| blocked == tool_name)
+}
+
 fn resource_allows_tool(
-    agent_key: &str,
     resolved: &ResolvedMcp,
     route: &ResolvedMcpRoute,
     original_tool_name: &str,
@@ -255,31 +261,8 @@ fn resource_allows_tool(
         .any(|name| name.trim() == original_tool_name);
     allowed_by_allowlist
         && !blocked_by_blocklist
+        && binding_allows_tool(&resolved.binding, original_tool_name)
         && route_allows_system_tool(route, original_tool_name)
-        && agent_allows_system_tool(agent_key, route, original_tool_name)
-}
-
-fn agent_allows_system_tool(
-    agent_key: &str,
-    route: &ResolvedMcpRoute,
-    original_tool_name: &str,
-) -> bool {
-    let Some(descriptor) = system_mcp_descriptor_by_resource_id(route.resource_id.as_str()) else {
-        return true;
-    };
-    if agent_key != SystemAgentKey::ProjectManagementAgent.as_str() {
-        return true;
-    }
-    match descriptor.key {
-        SystemMcpKey::SandboxImages => {
-            matches!(original_tool_name, "get_image_catalog" | "search_images")
-        }
-        SystemMcpKey::ProjectManagement => {
-            chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
-                .contains(&original_tool_name)
-        }
-        _ => true,
-    }
 }
 
 pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &str) -> bool {
@@ -369,7 +352,9 @@ mod tests {
             },
             binding: AgentBindingRecord {
                 id: "binding-1".to_string(),
-                agent_key: "task_runner_run_phase".to_string(),
+                agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+                    .as_str()
+                    .to_string(),
                 binding_scope: "user_override".to_string(),
                 owner_user_id: Some("user-1".to_string()),
                 resource_kind: "mcp".to_string(),
@@ -379,6 +364,8 @@ mod tests {
                 priority: 100,
                 conditions: BindingConditions::default(),
                 component_allowlist: Vec::new(),
+                tool_allowlist: Vec::new(),
+                tool_blocklist: Vec::new(),
                 created_by: "user-1".to_string(),
                 updated_by: "user-1".to_string(),
                 created_at: "now".to_string(),
@@ -397,7 +384,9 @@ mod tests {
 
     fn capabilities_with_mcp(resolved: ResolvedMcp) -> ResolvedAgentCapabilities {
         ResolvedAgentCapabilities {
-            agent_key: "task_runner_run_phase".to_string(),
+            agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+                .as_str()
+                .to_string(),
             owner_user_id: "user-1".to_string(),
             policy_revision: "policy-1".to_string(),
             generated_at: "now".to_string(),

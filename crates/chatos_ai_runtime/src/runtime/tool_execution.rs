@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{json, Value};
 use tracing::info;
+use uuid::Uuid;
 
 use chatos_mcp_runtime::{ToolResult, ToolResultCallback};
 
@@ -17,8 +19,18 @@ use super::summaries::summarize_tool_result_names;
 
 pub(super) struct RuntimeToolExecution {
     pub(super) tool_results: Vec<ToolResult>,
+    pub(super) tool_calls: Vec<Value>,
     pub(super) tool_call_items: Vec<Value>,
     pub(super) tool_output_items: Vec<Value>,
+}
+
+impl RuntimeToolExecution {
+    pub(super) fn extend(&mut self, other: Self) {
+        self.tool_results.extend(other.tool_results);
+        self.tool_calls.extend(other.tool_calls);
+        self.tool_call_items.extend(other.tool_call_items);
+        self.tool_output_items.extend(other.tool_output_items);
+    }
 }
 
 pub(super) fn next_consecutive_failed_tool_batch_count(
@@ -64,6 +76,158 @@ pub(super) fn fatal_tool_execution_error(tool_results: &[ToolResult]) -> Option<
         .map(|result| result.content.clone())
 }
 
+pub(super) fn automatic_file_write_recovery_calls(
+    tool_results: &[ToolResult],
+    available_tools: &[Value],
+) -> Result<Vec<Value>, String> {
+    let available_names = available_tools
+        .iter()
+        .filter_map(tool_definition_name)
+        .collect::<Vec<_>>();
+    let mut seen = HashSet::new();
+    let mut calls = Vec::new();
+
+    for result in tool_results {
+        if result.success || !is_code_maintainer_write_tool(result.name.as_str()) {
+            continue;
+        }
+        let recovery_specs = structured_stale_context_recoveries(result.content.as_str());
+        if recovery_specs.is_empty() {
+            continue;
+        }
+        for (path, required, args) in recovery_specs {
+            let tool_name = matching_recovery_tool_name(
+                result.name.as_str(),
+                required.as_str(),
+                available_names.as_slice(),
+            )
+            .ok_or_else(|| {
+                format!(
+                    "MCP capability invariant violated: {} returned stale_context for {}, but the required {} capability is not available",
+                    result.name, path, required
+                )
+            })?;
+            let dedupe_key = format!("{tool_name}\n{}", args);
+            if !seen.insert(dedupe_key) {
+                continue;
+            }
+            calls.push(json!({
+                "id": format!("runtime_recovery_{}", Uuid::new_v4()),
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": args.to_string(),
+                }
+            }));
+        }
+    }
+
+    Ok(calls)
+}
+
+fn is_code_maintainer_write_tool(name: &str) -> bool {
+    name.contains("code_maintainer")
+        && [
+            "stage_edit_batch",
+            "commit_edit_session",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+}
+
+fn structured_stale_context_recoveries(content: &str) -> Vec<(String, String, Value)> {
+    content
+        .match_indices('{')
+        .filter_map(|(index, _)| {
+            serde_json::Deserializer::from_str(&content[index..])
+                .into_iter::<Value>()
+                .next()
+                .and_then(Result::ok)
+        })
+        .find(|payload| {
+            payload.get("category").and_then(Value::as_str) == Some("stale_context")
+        })
+        .map(recovery_specs_from_payload)
+        .unwrap_or_default()
+}
+
+fn recovery_specs_from_payload(payload: Value) -> Vec<(String, String, Value)> {
+    let mut specs = Vec::new();
+    if let Some(path) = payload.get("path").and_then(Value::as_str) {
+        if let Some(spec) = recovery_spec_from_value(path, payload.get("recovery")) {
+            specs.push(spec);
+        }
+    }
+    if let Some(conflicts) = payload.get("conflicts").and_then(Value::as_array) {
+        for conflict in conflicts {
+            let Some(path) = conflict.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(spec) = recovery_spec_from_value(path, conflict.get("recovery")) {
+                specs.push(spec);
+            }
+        }
+    }
+    specs
+}
+
+fn recovery_spec_from_value(path: &str, recovery: Option<&Value>) -> Option<(String, String, Value)> {
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let recovery = recovery?;
+    let required = recovery
+        .get("required_next_tool")
+        .and_then(Value::as_str)
+        .unwrap_or("read_file_raw");
+    let args = recovery
+        .get("recommended_args")
+        .cloned()
+        .unwrap_or_else(|| default_recovery_args(path, required));
+    Some((path.to_string(), required.to_string(), args))
+}
+
+fn default_recovery_args(path: &str, required: &str) -> Value {
+    match required {
+        "list_dir" => json!({ "path": "." }),
+        _ => json!({ "path": path }),
+    }
+}
+
+fn tool_definition_name(tool: &Value) -> Option<&str> {
+    tool.get("name")
+        .and_then(Value::as_str)
+        .or_else(|| tool.pointer("/function/name").and_then(Value::as_str))
+}
+
+fn matching_recovery_tool_name<'a>(
+    failed_tool_name: &str,
+    required_tool: &str,
+    available_names: &'a [&str],
+) -> Option<&'a str> {
+    let namespace = failed_tool_name
+        .split_once("_write_")
+        .map(|(prefix, _)| prefix);
+    let preferred = namespace.map(|prefix| format!("{prefix}_read_{required_tool}"));
+    preferred
+        .as_deref()
+        .and_then(|name| available_names.iter().copied().find(|item| *item == name))
+        .or_else(|| {
+            available_names
+                .iter()
+                .copied()
+                .find(|name| *name == required_tool)
+        })
+        .or_else(|| {
+            let namespace = namespace?;
+            available_names
+                .iter()
+                .copied()
+                .find(|name| name.starts_with(namespace) && name.ends_with(required_tool))
+        })
+}
+
 fn truncate_chars(value: &str, max_chars: usize) -> String {
     let mut chars = value.chars();
     let mut output = chars.by_ref().take(max_chars).collect::<String>();
@@ -98,14 +262,24 @@ pub(super) async fn execute_runtime_tools(
     options: &AiRuntimeOptions,
     iteration: usize,
 ) -> Result<RuntimeToolExecution, String> {
+    let (instrumented_tool_calls, invocation_ids) = instrument_tool_calls(tool_calls)?;
     if let Some(cb) = &options.callbacks.on_tools_start {
-        cb(tool_calls.clone());
+        cb(instrumented_tool_calls);
     }
     let tool_result_callback: Option<ToolResultCallback> =
         options.callbacks.on_tools_stream.as_ref().map(|cb| {
             let cb = Arc::clone(cb);
+            let invocation_ids = Arc::clone(&invocation_ids);
             Arc::new(move |result: &chatos_mcp_runtime::ToolResult| {
-                cb(serde_json::to_value(result).unwrap_or_else(|_| json!({})));
+                let Some(invocation_id) = invocation_ids.get(result.tool_call_id.as_str()) else {
+                    tracing::warn!(
+                        tool_call_id = result.tool_call_id.as_str(),
+                        tool_name = result.name.as_str(),
+                        "ignored orphan tool result without a registered invocation"
+                    );
+                    return;
+                };
+                cb(instrument_tool_result(result, invocation_id));
             }) as ToolResultCallback
         });
     let tool_call_values = tool_calls.as_array().map(Vec::as_slice).unwrap_or(&[]);
@@ -120,8 +294,19 @@ pub(super) async fn execute_runtime_tools(
     if options.is_aborted() {
         return Err("aborted".to_string());
     }
+    validate_terminal_tool_results(tool_results.as_slice(), invocation_ids.as_ref())?;
     if let Some(cb) = &options.callbacks.on_tools_end {
-        cb(json!({ "tool_results": tool_results }));
+        cb(json!({
+            "tool_results": tool_results
+                .iter()
+                .map(|result| instrument_tool_result(
+                    result,
+                    invocation_ids
+                        .get(result.tool_call_id.as_str())
+                        .expect("validated invocation id"),
+                ))
+                .collect::<Vec<_>>(),
+        }));
     }
     if let Some(error) = fatal_tool_execution_error(tool_results.as_slice()) {
         return Err(error);
@@ -146,9 +331,75 @@ pub(super) async fn execute_runtime_tools(
 
     Ok(RuntimeToolExecution {
         tool_results,
+        tool_calls: tool_call_values.to_vec(),
         tool_call_items,
         tool_output_items,
     })
+}
+
+fn instrument_tool_calls(
+    tool_calls: &Value,
+) -> Result<(Value, Arc<HashMap<String, String>>), String> {
+    let calls = tool_calls
+        .as_array()
+        .ok_or_else(|| "tool call payload must be an array".to_string())?;
+    let mut instrumented = Vec::with_capacity(calls.len());
+    let mut invocation_ids = HashMap::with_capacity(calls.len());
+    for call in calls {
+        let call_id = crate::tool_call::extract_tool_call_id(call)
+            .ok_or_else(|| "tool call is missing a stable call id".to_string())?;
+        if invocation_ids.contains_key(call_id) {
+            return Err(format!("duplicate tool call id in one batch: {call_id}"));
+        }
+        let invocation_id = Uuid::new_v4().to_string();
+        let mut value = call.clone();
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "tool call must be a JSON object".to_string())?;
+        object.insert(
+            "invocation_id".to_string(),
+            Value::String(invocation_id.clone()),
+        );
+        invocation_ids.insert(call_id.to_string(), invocation_id);
+        instrumented.push(value);
+    }
+    Ok((Value::Array(instrumented), Arc::new(invocation_ids)))
+}
+
+fn instrument_tool_result(result: &ToolResult, invocation_id: &str) -> Value {
+    let mut value = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "invocation_id".to_string(),
+            Value::String(invocation_id.to_string()),
+        );
+    }
+    value
+}
+
+fn validate_terminal_tool_results(
+    results: &[ToolResult],
+    invocation_ids: &HashMap<String, String>,
+) -> Result<(), String> {
+    let mut completed = HashSet::with_capacity(results.len());
+    for result in results {
+        let invocation_id = invocation_ids
+            .get(result.tool_call_id.as_str())
+            .ok_or_else(|| format!("orphan tool result: {}", result.tool_call_id))?;
+        if !completed.insert(invocation_id.as_str()) {
+            return Err(format!(
+                "duplicate terminal tool result for invocation {invocation_id}"
+            ));
+        }
+    }
+    if completed.len() != invocation_ids.len() {
+        return Err(format!(
+            "tool invocation/result mismatch: expected {}, received {}",
+            invocation_ids.len(),
+            completed.len()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -156,8 +407,9 @@ mod tests {
     use chatos_mcp_runtime::ToolResult;
 
     use super::{
-        fatal_tool_execution_error, next_consecutive_failed_tool_batch_count,
-        repeated_tool_failure_error,
+        automatic_file_write_recovery_calls, fatal_tool_execution_error, instrument_tool_calls,
+        next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
+        validate_terminal_tool_results,
     };
 
     fn tool_result(success: bool, content: &str) -> ToolResult {
@@ -173,6 +425,100 @@ mod tests {
             fatal_error: false,
             transient_model_input: None,
         }
+    }
+
+    #[test]
+    fn stale_code_maintainer_write_builds_a_scoped_automatic_read() {
+        let mut stale = tool_result(
+            false,
+            r#"tool failed: {"category":"stale_context","path":"README.md","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"README.md"}}}"#,
+        );
+        stale.name = "code_maintainer_write_commit_edit_session".to_string();
+        let tools = vec![
+            serde_json::json!({"name": "code_maintainer_write_commit_edit_session"}),
+            serde_json::json!({"name": "code_maintainer_read_read_file_raw"}),
+        ];
+
+        let calls = automatic_file_write_recovery_calls(&[stale], tools.as_slice())
+            .expect("automatic recovery calls");
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0]["function"]["name"],
+            "code_maintainer_read_read_file_raw"
+        );
+        let args: serde_json::Value = serde_json::from_str(
+            calls[0]["function"]["arguments"]
+                .as_str()
+                .expect("arguments"),
+        )
+        .expect("recovery args");
+        assert_eq!(args, serde_json::json!({"path": "README.md"}));
+    }
+
+    #[test]
+    fn missing_read_recovery_is_an_immediate_capability_invariant_error() {
+        let mut stale = tool_result(
+            false,
+            r#"{"category":"stale_context","path":"README.md","recovery":{"required_next_tool":"read_file_raw"}}"#,
+        );
+        stale.name = "code_maintainer_write_stage_edit_batch".to_string();
+
+        let error = automatic_file_write_recovery_calls(
+            &[stale],
+            &[serde_json::json!({"name": "unrelated_read_file_raw"})],
+        )
+        .expect_err("missing required read capability must fail immediately");
+
+        assert!(error.contains("MCP capability invariant violated"));
+        assert!(error.contains("read_file_raw"));
+    }
+
+    #[test]
+    fn multi_conflict_commit_builds_multiple_recovery_reads() {
+        let mut stale = tool_result(
+            false,
+            r#"{"category":"stale_context","error":"conflict","conflicts":[{"path":"src/a.rs","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"src/a.rs"}}},{"path":"src/b.rs","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"src/b.rs"}}}]}"#,
+        );
+        stale.name = "code_maintainer_write_commit_edit_session".to_string();
+        let tools = vec![serde_json::json!({"name": "code_maintainer_read_read_file_raw"})];
+
+        let calls = automatic_file_write_recovery_calls(&[stale], tools.as_slice())
+            .expect("automatic recovery calls");
+
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn tool_invocations_are_unique_and_terminal_results_must_pair_exactly() {
+        let calls = serde_json::json!([
+            {"id": "call-1", "function": {"name": "read_file", "arguments": "{}"}},
+            {"id": "call-2", "function": {"name": "read_file", "arguments": "{}"}}
+        ]);
+        let (instrumented, invocation_ids) = instrument_tool_calls(&calls).expect("instrument");
+        let items = instrumented.as_array().expect("instrumented calls");
+        assert_ne!(items[0]["invocation_id"], items[1]["invocation_id"]);
+
+        let mut first = tool_result(true, "ok");
+        first.tool_call_id = "call-1".to_string();
+        let mut second = tool_result(true, "ok");
+        second.tool_call_id = "call-2".to_string();
+        validate_terminal_tool_results(&[first.clone(), second], invocation_ids.as_ref())
+            .expect("paired results");
+
+        let error = validate_terminal_tool_results(&[first], invocation_ids.as_ref())
+            .expect_err("missing result must fail");
+        assert!(error.contains("expected 2, received 1"));
+    }
+
+    #[test]
+    fn duplicate_tool_call_ids_are_rejected_before_execution() {
+        let calls = serde_json::json!([
+            {"id": "call-1", "function": {"name": "read_file", "arguments": "{}"}},
+            {"id": "call-1", "function": {"name": "read_file", "arguments": "{}"}}
+        ]);
+        let error = instrument_tool_calls(&calls).expect_err("duplicate call id must fail");
+        assert!(error.contains("duplicate tool call id"));
     }
 
     #[test]

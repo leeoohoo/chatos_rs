@@ -34,14 +34,6 @@ impl TerminalLogService {
         repo::create_terminal_log(&log).await
     }
 
-    pub async fn list(
-        terminal_id: &str,
-        limit: Option<i64>,
-        offset: i64,
-    ) -> Result<Vec<TerminalLog>, String> {
-        repo::list_terminal_logs(terminal_id, limit, offset).await
-    }
-
     pub async fn list_recent(terminal_id: &str, limit: i64) -> Result<Vec<TerminalLog>, String> {
         repo::list_terminal_logs_recent(terminal_id, limit).await
     }

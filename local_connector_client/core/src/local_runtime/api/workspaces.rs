@@ -2,16 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::fs;
-use std::path::Path as FsPath;
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::workspace::paths::{
-    canonicalize_existing_dir, normalize_relative_workspace_path, relative_to_workspace,
-    resolve_workspace_dir,
-};
+use crate::workspace::directory_ops::create_workspace_directory;
+use crate::workspace::paths::{relative_to_workspace, resolve_workspace_dir};
 use crate::{LocalRuntime, WorkspaceState};
 
 use super::context::owner_context;
@@ -179,42 +176,12 @@ fn list_workspace_directory(
     })
 }
 
-fn create_workspace_directory(
-    workspace: &WorkspaceState,
-    requested_path: &str,
-) -> anyhow::Result<String> {
-    let normalized = normalize_relative_workspace_path(requested_path)?;
-    if normalized == "." {
-        anyhow::bail!("directory path must not be the workspace root");
-    }
-    let root = canonicalize_existing_dir(workspace.absolute_root.as_path())?;
-    let mut current = root;
-    for component in FsPath::new(normalized.as_str()).components() {
-        let std::path::Component::Normal(segment) = component else {
-            anyhow::bail!("directory path contains an unsupported component");
-        };
-        current.push(segment);
-        match fs::symlink_metadata(current.as_path()) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                anyhow::bail!("directory path crosses a symbolic link");
-            }
-            Ok(metadata) if !metadata.is_dir() => {
-                anyhow::bail!("directory path contains a non-directory entry");
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(current.as_path())?;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(normalized)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{create_workspace_directory, list_workspace_directory};
+    use super::list_workspace_directory;
+    use crate::workspace::directory_ops::create_workspace_directory;
     use crate::WorkspaceState;
+    use std::path::PathBuf;
 
     fn workspace(root: PathBuf) -> WorkspaceState {
         WorkspaceState {
@@ -225,8 +192,6 @@ mod tests {
             project_config_trust: None,
         }
     }
-
-    use std::path::PathBuf;
 
     #[test]
     fn lists_and_creates_directories_relative_to_the_authorized_workspace() {

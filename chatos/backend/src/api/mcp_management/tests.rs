@@ -3,7 +3,10 @@
 
 use serde_json::json;
 
+use super::browser::{cloud_browser_binding, is_valid_cloud_sandbox_browser_target};
 use super::*;
+use crate::models::message::Message;
+use crate::models::session::Session;
 
 #[test]
 fn audit_action_uses_the_actual_mcp_operation_and_tool_name() {
@@ -46,6 +49,47 @@ fn binding_parser_requires_registered_agent_and_immutable_identity() {
     assert_eq!(binding.source_session_id.as_deref(), Some("conversation-1"));
     assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
     assert_eq!(binding.contact_agent_id.as_deref(), Some("contact-agent-1"));
+}
+
+#[test]
+fn binding_parser_preserves_the_complete_cloud_sandbox_target() {
+    let mut headers = HeaderMap::new();
+    for (key, value) in [
+        ("x-mcp-management-owner-user-id", "user-1"),
+        ("x-mcp-management-agent-key", "chatos_conversation_agent"),
+        ("x-mcp-management-session-id", "mcp-session-1"),
+        ("x-mcp-management-session-expires-at-unix", "4102444800"),
+        ("x-mcp-management-project-id", "project-1"),
+        ("x-mcp-management-source-session-id", "conversation-1"),
+        ("x-mcp-management-sandbox-provider", "cloud"),
+        ("x-mcp-management-sandbox-id", "environment-1"),
+        ("x-mcp-management-sandbox-lease-id", "lease-1"),
+        ("x-mcp-management-sandbox-is-environment", "true"),
+        ("x-mcp-management-sandbox-service-id", "workspace"),
+    ] {
+        headers.insert(
+            axum::http::HeaderName::from_static(key),
+            value.parse().expect("header value"),
+        );
+    }
+    let binding = mcp_management_binding_from_headers(&headers).expect("binding");
+    let target = binding.sandbox_target.expect("sandbox target");
+    assert_eq!(target.provider, SandboxProviderKind::Cloud);
+    assert_eq!(target.sandbox_id, "environment-1");
+    assert_eq!(target.lease_id, "lease-1");
+    assert!(target.is_environment);
+    assert_eq!(target.service_id.as_deref(), Some("workspace"));
+    assert_eq!(target.provider_ref(), "sandbox:environment-1/lease:lease-1");
+    assert!(is_valid_cloud_sandbox_browser_target(&target));
+
+    let mut wrong_service = target.clone();
+    wrong_service.service_id = None;
+    assert!(!is_valid_cloud_sandbox_browser_target(&wrong_service));
+
+    let mut local = target;
+    local.provider = SandboxProviderKind::LocalConnector;
+    local.pairing_id = Some("pairing-1".to_string());
+    assert!(!is_valid_cloud_sandbox_browser_target(&local));
 }
 
 #[test]
@@ -202,5 +246,6 @@ fn binding() -> McpManagementBinding {
         source_session_id: Some("conversation-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),
+        sandbox_target: None,
     }
 }

@@ -6,9 +6,7 @@ use std::sync::{
     Arc,
 };
 
-use chatos_agent::{
-    TaskRunnerAgent, TaskRunnerRunSpecInput, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
-};
+use chatos_agent::{TaskRunnerAgent, TaskRunnerRunSpecInput};
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
     TaskExecutionReviewPolicy, TaskFinalizationLifecycleHook, TaskMemoryRuntimeConfig,
@@ -47,6 +45,7 @@ use super::{summarized_report_content, RunService};
 mod callbacks;
 mod completion;
 mod setup;
+pub(super) mod supply_chain;
 
 const HARNESS_MERGE_CONFLICT_MAX_RUNS: usize = 3;
 const SANDBOX_INFRASTRUCTURE_MAX_RETRIES: usize = 3;
@@ -128,34 +127,17 @@ impl RunService {
         let mut report = self
             .execute_prepared_model_run(&task, &run, &model_config, prepared_execution)
             .await;
-        let hook_event = if report.status == chatos_ai_runtime::AiTurnStatus::Completed {
-            chatos_plugin_management_sdk::PluginHookEvent::RunCompleted
-        } else {
-            chatos_plugin_management_sdk::PluginHookEvent::RunFailed
-        };
+        let (hook_event, hook_terminal_outcome) = plugin_hook_terminal_state(&report);
         let hook_outcome = dispatch_prepared_plugin_hooks(
             plugin_sessions.as_slice(),
             hook_event,
             &chatos_plugin_management_sdk::PluginHookEventContext {
-                agent_key: Some(
-                    crate::models::task_runner_agent_key_for(
-                        task.task_profile.as_str(),
-                        task.mcp_config.requires_execution,
-                    )
-                    .as_str()
-                    .to_string(),
-                ),
-                outcome: Some(match report.status {
-                    chatos_ai_runtime::AiTurnStatus::Completed => {
-                        chatos_plugin_management_sdk::PluginHookOutcome::Succeeded
-                    }
-                    chatos_ai_runtime::AiTurnStatus::Failed => {
-                        chatos_plugin_management_sdk::PluginHookOutcome::Failed
-                    }
-                    chatos_ai_runtime::AiTurnStatus::Aborted => {
-                        chatos_plugin_management_sdk::PluginHookOutcome::Cancelled
-                    }
-                }),
+                agent_key: run
+                    .input_snapshot
+                    .get("agent_key")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                outcome: Some(hook_terminal_outcome),
                 summary_sha256: Some(hex::encode(Sha256::digest(
                     report
                         .error
@@ -417,6 +399,35 @@ fn run_has_harness_merge_conflict(run: &TaskRunRecord) -> bool {
         .is_some_and(|status| status == "merge_conflict")
 }
 
+fn plugin_hook_terminal_state(
+    report: &TaskRunReport,
+) -> (
+    chatos_plugin_management_sdk::PluginHookEvent,
+    chatos_plugin_management_sdk::PluginHookOutcome,
+) {
+    use chatos_ai_runtime::{AiTurnStatus, TaskExecutionOutcomeStatus};
+    use chatos_plugin_management_sdk::{PluginHookEvent, PluginHookOutcome};
+
+    match report.status {
+        AiTurnStatus::Failed => (PluginHookEvent::RunFailed, PluginHookOutcome::Failed),
+        AiTurnStatus::Aborted => (PluginHookEvent::RunFailed, PluginHookOutcome::Cancelled),
+        AiTurnStatus::Completed => match report
+            .execution_outcome
+            .as_ref()
+            .map(|outcome| outcome.status)
+        {
+            Some(TaskExecutionOutcomeStatus::Succeeded) => {
+                (PluginHookEvent::RunCompleted, PluginHookOutcome::Succeeded)
+            }
+            Some(TaskExecutionOutcomeStatus::Cancelled) => {
+                (PluginHookEvent::RunFailed, PluginHookOutcome::Cancelled)
+            }
+            Some(TaskExecutionOutcomeStatus::Blocked | TaskExecutionOutcomeStatus::Failed)
+            | None => (PluginHookEvent::RunFailed, PluginHookOutcome::Failed),
+        },
+    }
+}
+
 fn is_sandbox_infrastructure_failure(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
     (normalized.contains("sandbox manager lease is not runnable")
@@ -426,8 +437,15 @@ fn is_sandbox_infrastructure_failure(error: &str) -> bool {
 
 #[cfg(test)]
 mod harness_merge_retry_tests {
-    use super::{is_sandbox_infrastructure_failure, run_has_harness_merge_conflict};
+    use super::{
+        is_sandbox_infrastructure_failure, plugin_hook_terminal_state,
+        run_has_harness_merge_conflict,
+    };
     use crate::models::TaskRunRecord;
+    use chatos_ai_runtime::{
+        AiTurnStatus, TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskRunReport,
+    };
+    use chatos_plugin_management_sdk::{PluginHookEvent, PluginHookOutcome};
     use serde_json::json;
 
     #[test]
@@ -473,5 +491,56 @@ mod harness_merge_retry_tests {
         assert!(!is_sandbox_infrastructure_failure(
             "No such file or directory"
         ));
+    }
+
+    #[test]
+    fn plugin_terminal_hook_uses_business_outcome_instead_of_protocol_completion() {
+        let mut report = completed_task_report();
+        report.execution_outcome = Some(TaskExecutionOutcome::succeeded(
+            "verified",
+            vec!["tests passed".to_string()],
+        ));
+        assert_eq!(
+            plugin_hook_terminal_state(&report),
+            (PluginHookEvent::RunCompleted, PluginHookOutcome::Succeeded)
+        );
+
+        report.execution_outcome = Some(TaskExecutionOutcome {
+            status: TaskExecutionOutcomeStatus::Blocked,
+            summary: "blocked".to_string(),
+            blocking_reason: Some("database unavailable".to_string()),
+            unmet_acceptance_criteria: vec!["integration test passes".to_string()],
+            verification_evidence: vec!["connection refused".to_string()],
+            referenced_paths: Vec::new(),
+            referenced_endpoints: Vec::new(),
+        });
+        assert_eq!(
+            plugin_hook_terminal_state(&report),
+            (PluginHookEvent::RunFailed, PluginHookOutcome::Failed)
+        );
+
+        report.execution_outcome = None;
+        assert_eq!(
+            plugin_hook_terminal_state(&report),
+            (PluginHookEvent::RunFailed, PluginHookOutcome::Failed)
+        );
+    }
+
+    fn completed_task_report() -> TaskRunReport {
+        TaskRunReport {
+            task_id: "task-1".to_string(),
+            run_id: "run-1".to_string(),
+            model_config_id: Some("model-1".to_string()),
+            status: AiTurnStatus::Completed,
+            execution_outcome: None,
+            content: Some("done".to_string()),
+            reasoning: None,
+            error: None,
+            tool_calls: None,
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            response_id: None,
+            completed_at: crate::models::now_rfc3339(),
+        }
     }
 }

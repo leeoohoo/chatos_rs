@@ -42,6 +42,8 @@ pub struct AppConfig {
     pub cloud_project_max_unpacked_bytes: u64,
     pub cloud_project_max_files: usize,
     pub cloud_project_git_timeout: Duration,
+    pub environment_analysis_timeout: Duration,
+    pub environment_analysis_stale_after: Duration,
     pub task_runner_base_url: Option<String>,
     pub task_runner_request_timeout: Duration,
     pub task_runner_internal_secret: Option<String>,
@@ -135,6 +137,22 @@ impl AppConfig {
         )?;
         let cloud_project_git_timeout_ms =
             required_u64("PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS")?.max(1_000);
+        let environment_analysis_timeout_ms =
+            required_u64("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS")?;
+        let environment_analysis_stale_after_ms =
+            required_u64("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS")?;
+        if environment_analysis_timeout_ms < 60_000 {
+            return Err(
+                "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS must be at least 60000"
+                    .to_string(),
+            );
+        }
+        if environment_analysis_stale_after_ms < environment_analysis_timeout_ms {
+            return Err(
+                "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS must be greater than or equal to PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS"
+                    .to_string(),
+            );
+        }
 
         let config = Self {
             host,
@@ -188,6 +206,10 @@ impl AppConfig {
             )?,
             cloud_project_max_files: required_usize("PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES")?,
             cloud_project_git_timeout: Duration::from_millis(cloud_project_git_timeout_ms),
+            environment_analysis_timeout: Duration::from_millis(environment_analysis_timeout_ms),
+            environment_analysis_stale_after: Duration::from_millis(
+                environment_analysis_stale_after_ms,
+            ),
             task_runner_base_url: Some(required_text("PROJECT_SERVICE_TASK_RUNNER_BASE_URL")?),
             task_runner_request_timeout: Duration::from_millis(task_runner_request_timeout_ms),
             task_runner_internal_secret: Some(required_text(

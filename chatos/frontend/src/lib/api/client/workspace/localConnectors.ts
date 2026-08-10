@@ -34,11 +34,11 @@ export const listLocalConnectorWorkspaces = (
 
 export const listTaskRunnerAvailablePlugins = (
   request: ApiRequestFn,
-  deviceId?: string | null,
+  projectId: string,
   planMode = false,
 ): Promise<TaskRunnerAvailablePluginsResponse> => {
   const query = buildQuery({
-    device_id: deviceId || undefined,
+    project_id: projectId,
     plan_mode: planMode ? 'true' : undefined,
   });
   return request<TaskRunnerAvailablePluginsResponse>(`/task-runner/available-plugins${query}`);

@@ -7,7 +7,7 @@ use std::io::{Cursor, Write};
 
 use chatos_plugin_management_sdk::{
     build_plugin_mcp_cloud_runtime_bundle, parse_plugin_manifest, plugin_component_descriptors,
-    PluginManifestSource, PluginReleaseRecord, PluginReleaseSignature,
+    PluginManifestSource, PluginReleaseRecord, PluginReleaseSignature, SystemAgentKey,
 };
 use chatos_plugin_package::{
     build_cloud_component_bundles, build_plugin_mcp_cloud_runtime_bundles_from_package,
@@ -20,6 +20,8 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 fn manifest_raw() -> String {
     json!({
@@ -41,7 +43,7 @@ fn manifest_raw() -> String {
         "commands": [{
             "componentKey": "review",
             "source": "./commands/review.md",
-            "targetAgent": "task_runner_run_phase"
+            "targetAgent": RUN_AGENT_KEY
         }],
         "interface": {
             "displayName": "Package Demo",

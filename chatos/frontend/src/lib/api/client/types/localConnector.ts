@@ -55,15 +55,6 @@ export interface TaskRunnerSelectablePluginCommandResponse {
   allowed_tools?: string[];
 }
 
-export interface TaskRunnerSelectablePluginAgentResponse {
-  agent_id: string;
-  display_name: string;
-  description?: string | null;
-  base_agent: string;
-  allowed_tools?: string[];
-  max_iterations: number;
-}
-
 export interface TaskRunnerSelectablePluginComponentResponse {
   component_key: string;
   kind: 'skill_collection' | 'mcp_server' | 'connected_app' | 'command' | 'agent' | 'hook_set' | 'ui_contribution';
@@ -91,7 +82,6 @@ export interface TaskRunnerSelectablePluginResponse {
   component_keys: string[];
   components: TaskRunnerSelectablePluginComponentResponse[];
   commands: TaskRunnerSelectablePluginCommandResponse[];
-  agents: TaskRunnerSelectablePluginAgentResponse[];
 }
 
 export interface TaskRunnerAvailablePluginsResponse {

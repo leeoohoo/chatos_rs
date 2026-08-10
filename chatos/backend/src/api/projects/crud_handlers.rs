@@ -10,7 +10,7 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::api::local_connectors::{
-    local_connector_display_path, parse_local_connector_root_path,
+    close_local_terminal_session, local_connector_display_path, parse_local_connector_root_path,
     reconcile_local_connector_project,
 };
 use crate::core::auth::AuthUser;
@@ -22,9 +22,10 @@ use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
 use crate::models::project::{Project, ProjectService};
+use crate::models::terminal::TerminalService;
+use crate::models::terminal_log::TerminalLogService;
 use crate::services::chatos_memory_mappings;
 use crate::services::realtime::publish_projects_updated;
-use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::{ProjectQuery, UpdateProjectRequest};
 use super::memory_sync::{sync_active_project, sync_archived_project};
@@ -328,13 +329,7 @@ pub(super) async fn delete_project(
     if let Err(err) = ensure_project_visible_on_request(&project, &headers) {
         return err;
     }
-    let manager = get_terminal_manager();
-    let _ = manager
-        .close_project_run_terminals(
-            project.user_id.as_deref().or(Some(auth.user_id.as_str())),
-            project.id.as_str(),
-        )
-        .await;
+    cleanup_project_run_terminals(&project, auth.user_id.as_str()).await;
     match ProjectService::delete(&id).await {
         Ok(_) => {
             if let Err(err) = sync_archived_project(&project).await {
@@ -359,5 +354,54 @@ pub(super) async fn delete_project(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),
         ),
+    }
+}
+
+async fn cleanup_project_run_terminals(project: &Project, fallback_user_id: &str) {
+    let user_id = project.user_id.as_deref().unwrap_or(fallback_user_id);
+    let terminals = match TerminalService::list_project_runs_by_project_id(
+        Some(user_id.to_string()),
+        project.id.as_str(),
+    )
+    .await
+    {
+        Ok(terminals) => terminals,
+        Err(err) => {
+            warn!(
+                project_id = project.id.as_str(),
+                error = err.as_str(),
+                "list project-run terminal metadata before project deletion failed"
+            );
+            return;
+        }
+    };
+
+    for terminal in terminals {
+        if let Some(root_ref) = parse_local_connector_root_path(terminal.cwd.as_str()) {
+            if let Err((status, Json(body))) = close_local_terminal_session(
+                root_ref.device_id.as_str(),
+                root_ref.workspace_id.as_str(),
+                terminal.id.as_str(),
+            )
+            .await
+            {
+                warn!(
+                    project_id = project.id.as_str(),
+                    terminal_id = terminal.id.as_str(),
+                    status = %status,
+                    error = %body,
+                    "close Local Connector project-run terminal before deletion failed"
+                );
+            }
+        }
+        let _ = TerminalLogService::delete_by_terminal(terminal.id.as_str()).await;
+        if let Err(err) = TerminalService::delete(terminal.id.as_str()).await {
+            warn!(
+                project_id = project.id.as_str(),
+                terminal_id = terminal.id.as_str(),
+                error = err.as_str(),
+                "delete project-run terminal metadata failed"
+            );
+        }
     }
 }

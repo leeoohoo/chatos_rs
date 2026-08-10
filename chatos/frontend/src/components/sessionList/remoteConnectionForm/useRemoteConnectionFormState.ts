@@ -24,6 +24,8 @@ export const useRemoteConnectionFormState = () => {
   const [remoteCertificatePath, setRemoteCertificatePath] = useState('');
   const [remoteDefaultPath, setRemoteDefaultPath] = useState('');
   const [remoteHostKeyPolicy, setRemoteHostKeyPolicy] = useState<HostKeyPolicy>('strict');
+  const [remoteLocalConnectorDeviceId, setRemoteLocalConnectorDeviceId] = useState('');
+  const [remoteLocalConnectorWorkspaceId, setRemoteLocalConnectorWorkspaceId] = useState('');
   const [remoteJumpEnabled, setRemoteJumpEnabled] = useState(false);
   const [remoteJumpMode, setRemoteJumpMode] = useState<JumpHostMode>('manual');
   const [remoteJumpConnectionId, setRemoteJumpConnectionId] = useState('');
@@ -39,6 +41,7 @@ export const useRemoteConnectionFormState = () => {
   const [remoteTesting, setRemoteTesting] = useState(false);
   const [remoteSaving, setRemoteSaving] = useState(false);
   const [editingRemoteConnectionId, setEditingRemoteConnectionId] = useState<string | null>(null);
+  const [editingRemoteConnection, setEditingRemoteConnection] = useState<RemoteConnection | null>(null);
   const [remoteVerificationModalOpen, setRemoteVerificationModalOpen] = useState(false);
   const [remoteVerificationPrompt, setRemoteVerificationPrompt] = useState('');
   const [remoteVerificationCode, setRemoteVerificationCode] = useState('');
@@ -69,6 +72,7 @@ export const useRemoteConnectionFormState = () => {
 
   const resetForCreate = useCallback(() => {
     setEditingRemoteConnectionId(null);
+    setEditingRemoteConnection(null);
     setRemoteName('');
     setRemoteHost('');
     setRemotePort('22');
@@ -79,6 +83,8 @@ export const useRemoteConnectionFormState = () => {
     setRemoteCertificatePath('');
     setRemoteDefaultPath('');
     setRemoteHostKeyPolicy('strict');
+    setRemoteLocalConnectorDeviceId('');
+    setRemoteLocalConnectorWorkspaceId('');
     setRemoteJumpEnabled(false);
     setRemoteJumpMode('manual');
     setRemoteJumpConnectionId('');
@@ -93,25 +99,28 @@ export const useRemoteConnectionFormState = () => {
 
   const hydrateForEdit = useCallback((connection: RemoteConnection) => {
     setEditingRemoteConnectionId(connection.id);
+    setEditingRemoteConnection(connection);
     setRemoteName(connection.name || '');
     setRemoteHost(connection.host || '');
     setRemotePort(String(connection.port || 22));
     setRemoteUsername(connection.username || '');
     setRemoteAuthType(connection.authType || 'private_key');
-    setRemotePassword(connection.password || '');
-    setRemotePrivateKeyPath(connection.privateKeyPath || '');
-    setRemoteCertificatePath(connection.certificatePath || '');
+    setRemotePassword('');
+    setRemotePrivateKeyPath('');
+    setRemoteCertificatePath('');
     setRemoteDefaultPath(connection.defaultRemotePath || '');
     setRemoteHostKeyPolicy(connection.hostKeyPolicy || 'strict');
+    setRemoteLocalConnectorDeviceId(connection.localConnectorDeviceId || '');
+    setRemoteLocalConnectorWorkspaceId(connection.localConnectorWorkspaceId || '');
     setRemoteJumpEnabled(Boolean(connection.jumpEnabled));
     setRemoteJumpMode(connection.jumpConnectionId ? 'existing' : 'manual');
     setRemoteJumpConnectionId(connection.jumpConnectionId || '');
     setRemoteJumpHost(connection.jumpHost || '');
     setRemoteJumpPort(String(connection.jumpPort || 22));
     setRemoteJumpUsername(connection.jumpUsername || '');
-    setRemoteJumpPrivateKeyPath(connection.jumpPrivateKeyPath || '');
-    setRemoteJumpCertificatePath(connection.jumpCertificatePath || '');
-    setRemoteJumpPassword(connection.jumpPassword || '');
+    setRemoteJumpPrivateKeyPath('');
+    setRemoteJumpCertificatePath('');
+    setRemoteJumpPassword('');
     resetProgressState();
   }, [resetProgressState]);
 
@@ -126,6 +135,8 @@ export const useRemoteConnectionFormState = () => {
     certificatePath: remoteCertificatePath,
     defaultPath: remoteDefaultPath,
     hostKeyPolicy: remoteHostKeyPolicy,
+    localConnectorDeviceId: remoteLocalConnectorDeviceId,
+    localConnectorWorkspaceId: remoteLocalConnectorWorkspaceId,
     jumpEnabled: remoteJumpEnabled,
     jumpMode: remoteJumpMode,
     jumpConnectionId: remoteJumpConnectionId,
@@ -146,6 +157,8 @@ export const useRemoteConnectionFormState = () => {
     remoteCertificatePath,
     remoteDefaultPath,
     remoteHostKeyPolicy,
+    remoteLocalConnectorDeviceId,
+    remoteLocalConnectorWorkspaceId,
     remoteJumpEnabled,
     remoteJumpMode,
     remoteJumpConnectionId,
@@ -180,6 +193,10 @@ export const useRemoteConnectionFormState = () => {
     setRemoteDefaultPath,
     remoteHostKeyPolicy,
     setRemoteHostKeyPolicy,
+    remoteLocalConnectorDeviceId,
+    setRemoteLocalConnectorDeviceId,
+    remoteLocalConnectorWorkspaceId,
+    setRemoteLocalConnectorWorkspaceId,
     remoteJumpEnabled,
     setRemoteJumpEnabled,
     remoteJumpMode,
@@ -210,6 +227,8 @@ export const useRemoteConnectionFormState = () => {
     setRemoteSaving,
     editingRemoteConnectionId,
     setEditingRemoteConnectionId,
+    editingRemoteConnection,
+    setEditingRemoteConnection,
     remoteVerificationModalOpen,
     setRemoteVerificationModalOpen,
     remoteVerificationPrompt,

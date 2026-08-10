@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::PathBuf;
-
-use chatos_mcp::{
-    system_mcp_descriptor_by_resource_id, SystemMcpKey, WebToolsOptions, WebToolsService,
-};
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use chatos_mcp::WebToolsService;
 use serde_json::Value;
 
 use crate::runtime::RuntimeSessionSnapshot;
 
 use super::{ProviderCallError, ProviderCallOutcome};
+
+mod init;
 
 #[derive(Clone)]
 pub(super) struct EmbeddedProvider {
@@ -20,28 +17,10 @@ pub(super) struct EmbeddedProvider {
 }
 
 impl EmbeddedProvider {
-    pub(super) fn new(work_dir: PathBuf, response_limit_bytes: usize) -> Result<Self, String> {
-        let web_tools = WebToolsService::new(WebToolsOptions {
-            server_name: "web_tools".to_string(),
-            workspace_dir: work_dir.join("web_tools"),
-            ..WebToolsOptions::default()
-        })?;
-        Ok(Self {
-            web_tools,
-            response_limit_bytes,
-        })
-    }
-
-    pub(super) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        route.provider_kind == McpProviderKind::Embedded
-            && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-                .is_some_and(|descriptor| descriptor.key == SystemMcpKey::WebTools)
-    }
-
     pub(super) async fn call_tool(
         &self,
         _snapshot: &RuntimeSessionSnapshot,
-        route: &ResolvedMcpRoute,
+        route: &chatos_mcp_management_sdk::ResolvedMcpRoute,
         original_tool_name: &str,
         arguments: Value,
         _invocation_id: &str,
@@ -76,33 +55,4 @@ impl EmbeddedProvider {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chatos_mcp_management_sdk::McpRetryClass;
-
-    fn route(resource_id: &str) -> ResolvedMcpRoute {
-        ResolvedMcpRoute {
-            resource_id: resource_id.to_string(),
-            server_name: "web_tools".to_string(),
-            provider_kind: McpProviderKind::Embedded,
-            provider_ref: Some("mcp-management-service".to_string()),
-            tool_namespace: "web_tools".to_string(),
-            allow_writes: false,
-            retry_class: McpRetryClass::IdempotentRead,
-            cancel_supported: true,
-            reason: "test".to_string(),
-        }
-    }
-
-    #[test]
-    fn embedded_provider_supports_only_the_stateless_web_tools_route() {
-        let provider = EmbeddedProvider::new(
-            std::env::temp_dir().join("chatos-mcp-management-embedded-test"),
-            1024 * 1024,
-        )
-        .unwrap();
-        assert!(provider.supports(&route("builtin_web_tools")));
-        assert!(!provider.supports(&route("builtin_notepad")));
-        assert!(!provider.supports(&route("builtin_browser_tools")));
-    }
-}
+mod tests;

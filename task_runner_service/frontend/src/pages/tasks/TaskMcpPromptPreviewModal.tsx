@@ -26,9 +26,10 @@ export function TaskMcpPromptPreviewModal({
 }: TaskMcpPromptPreviewModalProps) {
   return (
     <Modal
+      className="task-mcp-preview-modal"
       title={title}
       open={open}
-      width={860}
+      width="min(1320px, calc(100vw - 48px))"
       footer={[
         <Button key="close" onClick={onClose}>
           {t('common.close')}

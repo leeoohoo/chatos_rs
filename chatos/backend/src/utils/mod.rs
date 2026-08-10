@@ -6,7 +6,6 @@ pub mod attachments;
 pub mod events;
 pub mod log_helpers;
 pub mod model_config;
-pub(crate) mod process_output;
 pub mod sse;
 pub mod workspace;
 pub mod ws_outbound;

@@ -3,6 +3,7 @@
 
 import type { FormInstance } from 'antd';
 import {
+  Alert,
   Button,
   Drawer,
   Form,
@@ -30,6 +31,9 @@ type ServerEditorDrawerProps = {
   form: FormInstance<RemoteServerFormValues>;
   authType: RemoteServerAuthType;
   authTypeOptions: Array<{ label: string; value: string }>;
+  connectorDeviceOptions: Array<{ label: string; value: string; disabled?: boolean }>;
+  connectorWorkspaceOptions: Array<{ label: string; value: string; disabled?: boolean }>;
+  connectorLoading: boolean;
   saving: boolean;
   testingDraft: boolean;
   onClose: () => void;
@@ -44,6 +48,9 @@ export function ServerEditorDrawer({
   form,
   authType,
   authTypeOptions,
+  connectorDeviceOptions,
+  connectorWorkspaceOptions,
+  connectorLoading,
   saving,
   testingDraft,
   onClose,
@@ -74,6 +81,12 @@ export function ServerEditorDrawer({
       }
     >
       <Form<RemoteServerFormValues> layout="vertical" form={form} onFinish={onSubmit}>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t('servers.form.connectorNotice')}
+        />
         <Form.Item
           name="name"
           label={t('servers.form.name')}
@@ -81,6 +94,33 @@ export function ServerEditorDrawer({
         >
           <Input />
         </Form.Item>
+        <Space size="middle" style={{ width: '100%' }} align="start">
+          <Form.Item
+            name="local_connector_device_id"
+            label={t('servers.form.connectorDevice')}
+            style={{ flex: 1 }}
+            rules={[{ required: true, message: t('servers.form.connectorDeviceRequired') }]}
+          >
+            <Select
+              loading={connectorLoading}
+              options={connectorDeviceOptions}
+              placeholder={t('servers.form.connectorDevicePlaceholder')}
+              onChange={() => form.setFieldValue('local_connector_workspace_id', undefined)}
+            />
+          </Form.Item>
+          <Form.Item
+            name="local_connector_workspace_id"
+            label={t('servers.form.connectorWorkspace')}
+            style={{ flex: 1 }}
+            rules={[{ required: true, message: t('servers.form.connectorWorkspaceRequired') }]}
+          >
+            <Select
+              loading={connectorLoading}
+              options={connectorWorkspaceOptions}
+              placeholder={t('servers.form.connectorWorkspacePlaceholder')}
+            />
+          </Form.Item>
+        </Space>
         <Space size="middle" style={{ width: '100%' }} align="start">
           <Form.Item
             name="host"

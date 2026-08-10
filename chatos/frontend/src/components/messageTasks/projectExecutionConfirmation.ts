@@ -22,6 +22,29 @@ export interface ProjectExecutionConfirmationState {
   overallStatus: string;
 }
 
+const deriveStartedExecutionStatus = (tasks: MessageTaskRunnerTask[]): string => {
+  const statuses = tasks.map((task) => (
+    readString(task.last_run?.status)
+    || readString(task.status)
+    || ''
+  ).toLowerCase());
+  if (statuses.includes('blocked')) {
+    return 'blocked';
+  }
+  if (statuses.some((status) => ['failed', 'error'].includes(status))) {
+    return 'failed';
+  }
+  if (statuses.some((status) => ['cancelled', 'canceled'].includes(status))) {
+    return 'cancelled';
+  }
+  if (statuses.length > 0 && statuses.every((status) => (
+    ['completed', 'succeeded', 'success', 'archived'].includes(status)
+  ))) {
+    return 'completed';
+  }
+  return 'processing';
+};
+
 export const resolveProjectExecutionConfirmationState = ({
   graph,
   message,
@@ -56,15 +79,21 @@ export const resolveProjectExecutionConfirmationState = ({
     'completed',
     'failed',
     'error',
+    'blocked',
     'stopped',
     'cancelled',
     'canceled',
   ].includes(executionStatus);
-  const awaitingConfirmation = explicitlyAwaitingConfirmation
-    || (graphReadyForConfirmation && !hasStartedTasks && !terminalPlanStatus);
+  const awaitingConfirmation = !hasStartedTasks && (
+    explicitlyAwaitingConfirmation
+    || (graphReadyForConfirmation && !terminalPlanStatus)
+  );
+  const startedExecutionStatus = hasStartedTasks
+    ? deriveStartedExecutionStatus(tasks)
+    : '';
   const overallStatus = awaitingConfirmation
     ? 'awaiting_confirmation'
-    : executionStatus || confirmationStatus;
+    : startedExecutionStatus || executionStatus || confirmationStatus;
   const projectId = readString(execution?.project_id)
     || readString(taskRunnerAsync?.project_id);
   const requirementId = readString(execution?.requirement_id)

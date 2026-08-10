@@ -157,26 +157,76 @@ for pid in sorted(matched, reverse=True):
 PY
 }
 
-conflicting_local_dev_task_runner_pids() {
+conflicting_local_dev_service_pids() {
   python3 - "$ROOT_DIR" <<'PY'
 import os
 import subprocess
 import sys
 
 root = os.path.realpath(sys.argv[1])
+service_bins = {
+    "config_center_service_backend",
+    "user_service_backend",
+    "memory_engine",
+    "project_management_service_backend",
+    "plugin_management_service_backend",
+    "local_connector_service_backend",
+    "mcp_management_service_backend",
+    "sandbox_manager_service_backend",
+    "task_runner_service_backend",
+    "chat_app_server_rs",
+}
+frontend_markers = (
+    "/chatos/frontend/",
+    "/config_center_service/frontend/",
+    "/user_service/frontend/",
+    "/memory_engine/frontend/",
+    "/project_management_service/frontend/",
+    "/plugin_management_service/frontend/",
+    "/task_runner_service/frontend/",
+    "/sandbox_manager_service/frontend/",
+)
 current = os.getpid()
 parent = os.getppid()
-output = subprocess.check_output(["ps", "eww", "-axo", "pid=,command="], text=True)
+rows = []
+output = subprocess.check_output(["ps", "-axo", "pid=,ppid=,command="], text=True)
 for line in output.splitlines():
-    parts = line.strip().split(None, 1)
-    if len(parts) < 2:
+    parts = line.strip().split(None, 2)
+    if len(parts) < 3:
         continue
-    pid, command = int(parts[0]), parts[1]
-    if pid in {current, parent} or root in command:
+    pid, ppid, command = int(parts[0]), int(parts[1]), parts[2]
+    if pid in {current, parent}:
         continue
+    rows.append((pid, ppid, command))
+
+matched = set()
+for pid, _ppid, command in rows:
     executable = command.split(None, 1)[0]
-    if os.path.basename(executable) != "task_runner_service_backend":
+    executable_path = os.path.realpath(executable)
+    try:
+        belongs_to_current_workspace = os.path.commonpath([root, executable_path]) == root
+    except ValueError:
+        belongs_to_current_workspace = False
+    executable_name = os.path.basename(executable_path)
+    if executable_name in service_bins:
+        if not belongs_to_current_workspace:
+            matched.add(pid)
         continue
+    is_managed_frontend = (
+        "/node_modules/.bin/vite" in command
+        or "/node_modules/@esbuild/" in command
+    )
+    if not is_managed_frontend or not any(marker in command for marker in frontend_markers):
+        continue
+    if root not in command:
+        matched.add(pid)
+
+matched_parents = {ppid for pid, ppid, _command in rows if pid in matched}
+for pid, _ppid, command in rows:
+    if pid in matched_parents and command.startswith("npm run dev"):
+        matched.add(pid)
+
+for pid in sorted(matched):
     print(pid)
 PY
 }
@@ -229,13 +279,13 @@ stop_repo_managed_processes() {
   done < <(repo_managed_pids)
 }
 
-stop_conflicting_local_dev_task_runners() {
+stop_conflicting_local_dev_services() {
   local pid
   while IFS= read -r pid; do
     if [[ -n "$pid" ]]; then
-      stop_pid "$pid" "conflicting Task Runner from another local-dev workspace"
+      stop_pid "$pid" "conflicting service from another local-dev workspace"
     fi
-  done < <(conflicting_local_dev_task_runner_pids)
+  done < <(conflicting_local_dev_service_pids)
 }
 
 stop_managed_ports() {
@@ -270,12 +320,12 @@ managed_ports_busy() {
 cleanup_local_dev_processes() {
   local attempt
   for attempt in 1 2 3 4 5; do
-    stop_conflicting_local_dev_task_runners
+    stop_conflicting_local_dev_services
     stop_repo_managed_processes
     stop_managed_ports
     if ! managed_ports_busy \
       && [[ -z "$(repo_managed_pids)" ]] \
-      && [[ -z "$(conflicting_local_dev_task_runner_pids)" ]]; then
+      && [[ -z "$(conflicting_local_dev_service_pids)" ]]; then
       return 0
     fi
     sleep 1

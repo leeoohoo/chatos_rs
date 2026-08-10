@@ -48,6 +48,8 @@ type TaskDetailDrawerProps = {
   task: TaskRecord | null;
   loading: boolean;
   detailLastRunId?: string | null;
+  detailLastRun?: TaskRunRecord;
+  detailLastRunLoading: boolean;
   detailResultSummary?: string | null;
   remoteOperations: TaskRemoteOperationView[];
   remoteOperationStats: TaskRemoteOperationStats;
@@ -87,6 +89,8 @@ export function TaskDetailDrawer({
   task,
   loading,
   detailLastRunId,
+  detailLastRun,
+  detailLastRunLoading,
   detailResultSummary,
   remoteOperations,
   remoteOperationStats,
@@ -119,11 +123,15 @@ export function TaskDetailDrawer({
   onOpenServers,
   onOpenDetail,
 }: TaskDetailDrawerProps) {
+  const pluginCloudRuntimeLabel = t('tasks.detail.pluginCloudRuntime');
+  const formatPluginTarget = (deviceId?: string | null) => deviceId || pluginCloudRuntimeLabel;
+
   return (
     <Drawer
+      className="task-detail-drawer"
       title={task ? t('tasks.detail.titleWithName', { title: task.title }) : t('tasks.detail.title')}
       open={open}
-      width={760}
+      width="min(1200px, calc(100vw - 32px))"
       onClose={onClose}
     >
       {task ? (
@@ -240,36 +248,74 @@ export function TaskDetailDrawer({
               <Tag color="processing">{t('tasks.mcpProgramManaged')}</Tag>
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.pluginTarget')}>
-              {task.plugin_config?.device_id ? (
+              {detailLastRunLoading && detailLastRunId ? (
+                t('common.loading')
+              ) : detailLastRun?.plugin_snapshots?.length ? (
                 <Space wrap>
-                  <Tag color="cyan">{task.plugin_config.device_id}</Tag>
-                  {task.plugin_config.workspace_id ? (
-                    <Tag color="geekblue">{task.plugin_config.workspace_id}</Tag>
-                  ) : null}
+                  {Array.from(new Set(detailLastRun.plugin_snapshots.map((plugin) => (
+                    formatPluginTarget(plugin.device_id)
+                  )))).map((target) => (
+                    <Tag key={target} color={target === pluginCloudRuntimeLabel ? 'blue' : 'cyan'}>
+                      {target}
+                    </Tag>
+                  ))}
                 </Space>
+              ) : task.project_id === '-1' ? (
+                <Tag color="blue">{pluginCloudRuntimeLabel}</Tag>
               ) : (
-                t('common.noData')
+                t('tasks.detail.pluginProjectRuntimePending')
               )}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.plugins')}>
-              {task.plugin_config?.selected_plugins?.length ? (
-                <Space wrap>
-                  {task.plugin_config.selected_plugins.map((plugin) => (
-                    <Space key={plugin.plugin_id} wrap size={4}>
+              {detailLastRunLoading && detailLastRunId ? (
+                t('common.loading')
+              ) : detailLastRun?.plugin_snapshots?.length ? (
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                  {detailLastRun.plugin_snapshots.map((plugin) => (
+                    <Space
+                      key={`${plugin.plugin_id}:${plugin.release_id}`}
+                      direction="vertical"
+                      size={0}
+                      style={{ width: '100%' }}
+                    >
                       <Tag color="purple">{plugin.plugin_id}</Tag>
-                      {(plugin.selected_command_ids || []).map((commandId) => (
-                        <Tag key={`${plugin.plugin_id}:${commandId}`} color="orange">
-                          /{commandId}
-                        </Tag>
-                      ))}
-                      {(plugin.selected_agent_ids || []).map((agentId) => (
-                        <Tag key={`${plugin.plugin_id}:${agentId}`} color="magenta">
-                          @{agentId}
-                        </Tag>
-                      ))}
+                      <Typography.Text type="secondary">
+                        {t('tasks.detail.pluginSnapshotSummary', {
+                          version: `v${plugin.version}`,
+                          target: formatPluginTarget(plugin.device_id),
+                          componentCount: plugin.component_snapshots.length,
+                        })}
+                      </Typography.Text>
                     </Space>
                   ))}
                 </Space>
+              ) : task.plugin_config?.selected_plugins?.length ? (
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                  {task.plugin_config.selected_plugins.map((plugin) => (
+                    <Space
+                      key={plugin.plugin_id}
+                      direction="vertical"
+                      size={0}
+                      style={{ width: '100%' }}
+                    >
+                      <Tag color="purple">{plugin.plugin_id}</Tag>
+                      <Typography.Text type="secondary">
+                        {t('tasks.detail.pluginPendingSnapshot')}
+                      </Typography.Text>
+                      {(plugin.selected_command_ids || []).length ? (
+                        <Typography.Text type="secondary">
+                          {t('tasks.detail.pluginCommandList', {
+                            commands: (plugin.selected_command_ids || []).map((commandId) => (
+                              `/${commandId}`
+                            )).join(', '),
+                          })}
+                        </Typography.Text>
+                      ) : null}
+                    </Space>
+                  ))}
+                </Space>
+              ) : !detailLastRunId ? (
+                t('tasks.detail.pluginsPendingRun')
               ) : (
                 t('common.noData')
               )}
@@ -336,6 +382,13 @@ export function TaskDetailDrawer({
               {renderStringTags(
                 mcpResolution?.server_local_builtin_kinds,
                 'cyan',
+                mcpResolutionLoading ? t('common.loading') : t('common.noData'),
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.mcpExternalServers')}>
+              {renderStringTags(
+                mcpResolution?.external_mcp_config_ids,
+                'green',
                 mcpResolutionLoading ? t('common.loading') : t('common.noData'),
               )}
             </Descriptions.Item>

@@ -32,7 +32,6 @@ use crate::models::project_run::ProjectRunCatalog;
 pub(crate) use change_detection::{classify_project_run_path_change, ProjectRunPathChangeKind};
 pub(super) use go::detect_go_entrypoints;
 pub(super) use rust::detect_rust_bins;
-pub(super) use target_model::{is_same_cwd, normalized_cwd};
 
 use scan::detect_targets_sync;
 

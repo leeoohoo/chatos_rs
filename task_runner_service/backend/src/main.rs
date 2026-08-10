@@ -10,17 +10,19 @@ use opentelemetry_sdk::Resource;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use task_runner_service_backend::{
-    build_internal_router, build_public_router,
+    build_internal_router, build_public_router, configure_task_terminal_runtime,
     internal_tls::{load_internal_mtls_config, TaskRunnerInternalTlsConfig},
     load_task_runner_dotenv,
     scheduler::spawn_task_scheduler,
     services::{spawn_chatos_callback_queue_consumer, spawn_chatos_callback_reconciler},
-    spawn_ask_user_resolution_outbox_reconciler, spawn_run_cancel_outbox_reconciler,
-    spawn_run_dispatch_outbox_reconciler, spawn_run_event_consumer,
-    spawn_run_post_process_consumer, spawn_run_post_process_outbox_reconciler,
-    spawn_run_terminal_outbox_reconciler, spawn_worker_control_consumer,
+    spawn_ask_user_prompt_retention, spawn_ask_user_resolution_outbox_reconciler,
+    spawn_run_cancel_outbox_reconciler, spawn_run_dispatch_outbox_reconciler,
+    spawn_run_event_consumer, spawn_run_event_retention, spawn_run_post_process_consumer,
+    spawn_run_post_process_outbox_reconciler, spawn_run_terminal_outbox_reconciler,
+    spawn_task_terminal_retention, spawn_worker_control_consumer,
     worker::spawn_task_worker,
-    AppConfig, AppState,
+    AppConfig, AppState, AskUserPromptRetentionPolicy, RunEventRetentionPolicy,
+    TaskTerminalRetentionPolicy,
 };
 
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -51,6 +53,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     let pressure_state =
         task_runner_service_backend::pressure::TaskRunnerPressureState::new(pressure_policy);
+    let run_event_retention_policy = RunEventRetentionPolicy::from_managed_env()?;
+    let ask_user_prompt_retention_policy = AskUserPromptRetentionPolicy::from_managed_env()?;
+    let terminal_retention_policy = TaskTerminalRetentionPolicy::from_managed_env()?;
+    configure_task_terminal_runtime(terminal_retention_policy)?;
     let mut config = AppConfig::from_env()?;
     let _telemetry = init_tracing(&config)?;
     resolve_downstream_services(&mut config).await;
@@ -127,6 +133,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "task runner queue topology configured"
     );
     let mut background_handles = Vec::new();
+    background_handles.push(spawn_task_terminal_retention());
     background_handles.push(spawn_run_dispatch_outbox_reconciler(
         app_state.task_queue_topology.clone(),
         app_state.run_service.clone(),
@@ -163,6 +170,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             app_state.task_service.clone(),
             app_state.run_service.clone(),
             pressure_state.clone(),
+            app_state.runtime_stats.clone(),
+        ));
+        background_handles.push(spawn_run_event_retention(
+            run_event_retention_policy,
+            app_state.run_service.clone(),
+            app_state.runtime_stats.clone(),
+        ));
+        background_handles.push(spawn_ask_user_prompt_retention(
+            ask_user_prompt_retention_policy,
+            app_state.ask_user_prompt_service.clone(),
             app_state.runtime_stats.clone(),
         ));
     }

@@ -30,6 +30,12 @@ pub(super) struct CreateLocalDirectoryRequest {
     pub(super) user_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct LocalConnectorDirectoryCreateResponse {
+    pub(super) path: String,
+    pub(super) created: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateLocalConnectorProjectRequest {
     pub(super) name: Option<String>,
@@ -135,6 +141,17 @@ pub(super) struct RelayTerminalInputRequest<'a> {
     pub(super) workspace_id: &'a str,
     pub(super) terminal_session_id: &'a str,
     pub(super) data: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct RelayTerminalCloseRequest<'a> {
+    pub(super) workspace_id: &'a str,
+    pub(super) terminal_session_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct RelayWorkspaceDirectoryCreateRequest<'a> {
+    pub(super) path: &'a str,
 }
 
 #[derive(Debug, Serialize)]

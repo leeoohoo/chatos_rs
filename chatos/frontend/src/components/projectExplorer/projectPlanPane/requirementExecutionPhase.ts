@@ -95,7 +95,7 @@ export const resolveRequirementExecutionProcessPhase = ({
   }
   if (
     failureDetected
-    || ['failed', 'error'].includes(normalizedServerStatus || overallStatus)
+    || ['failed', 'error', 'blocked'].includes(normalizedServerStatus || overallStatus)
     || taskStatuses.some((status) => FAILED_TASK_STATUSES.has(status))
   ) {
     return 'failed';

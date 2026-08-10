@@ -8,15 +8,29 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
+use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, SandboxProviderKind, WorkspaceExecutionTarget,
+    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    SandboxProviderKind, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     plugin_command_snapshot_sha256, PluginCloudComponentBundle, PluginComponentDescriptor,
-    PluginExecutionHost, PluginManagementClientConfig, PluginPathRef,
+    PluginComponentKind, PluginExecutionHost, PluginManagementClient, PluginManagementClientConfig,
+    PluginPathRef,
 };
+use chatos_plugin_package::plugin_cloud_bundle_sha256;
+use serde_json::json;
+use sha2::{Digest, Sha256};
 
+use super::validation::{
+    agent_tool_definition, sha256_text, validate_cloud_component_bundle,
+    validate_cloud_component_policy, validate_command_snapshot, validate_native_skill_snapshot,
+    validate_native_tool_snapshot_hash, validate_tool_snapshot,
+};
 use super::*;
+use crate::runtime::{PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot};
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBinding {
     PluginToolComponentRuntimeBinding {
@@ -43,7 +57,7 @@ fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBindi
                 ),
                 ("argument_hint".to_string(), json!("[path]")),
                 ("requires_confirmation".to_string(), json!(true)),
-                ("target_agent".to_string(), json!("task_runner_run_phase")),
+                ("target_agent".to_string(), json!(RUN_AGENT_KEY)),
                 (
                     "allowed_tools".to_string(),
                     json!(["browser_tools_browser_snapshot"]),
@@ -83,7 +97,7 @@ fn agent_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBinding
                     "description".to_string(),
                     json!("Review the current change"),
                 ),
-                ("base_agent".to_string(), json!("task_runner_run_phase")),
+                ("base_agent".to_string(), json!(RUN_AGENT_KEY)),
                 (
                     "allowed_tools".to_string(),
                     json!(["browser_tools_browser_snapshot"]),
@@ -117,7 +131,7 @@ fn command_snapshot(
         Some("Review the current change"),
         Some("[path]"),
         true,
-        Some("task_runner_run_phase"),
+        Some(RUN_AGENT_KEY),
         &["browser_tools_browser_snapshot".to_string()],
         binding.component_content_sha256.as_str(),
         prompt,
@@ -135,7 +149,7 @@ fn command_snapshot(
         "description": "Review the current change",
         "argument_hint": "[path]",
         "requires_confirmation": true,
-        "target_agent": "task_runner_run_phase",
+        "target_agent": RUN_AGENT_KEY,
         "allowed_tools": ["browser_tools_browser_snapshot"],
         "confirmation_approved": confirmation_approved,
         "content_sha256": binding.component_content_sha256,
@@ -195,7 +209,7 @@ fn snapshot(
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
@@ -240,7 +254,7 @@ fn cloud_snapshot(
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
@@ -316,11 +330,17 @@ async fn start_local_connector(
             query.get("workspace_id").map(String::as_str),
             Some("workspace-1")
         );
+        assert_eq!(
+            headers
+                .get("x-local-connector-owner-user-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("user-1")
+        );
         let token = headers
             .get("x-local-connector-internal-token")
             .and_then(|value| value.to_str().ok())
             .unwrap();
-        chatos_service_runtime::verify_internal_service_token(
+        let claims = chatos_service_runtime::verify_internal_service_token(
             token,
             state.secret,
             CALLER_SERVICE,
@@ -328,6 +348,7 @@ async fn start_local_connector(
             PLUGIN_RELAY_SCOPE,
         )
         .unwrap();
+        assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
         state
             .requests
             .lock()
@@ -543,7 +564,7 @@ fn cloud_agent_bundle_publishes_apply_but_confirmation_commands_fail_closed() {
         .and_then(Value::as_str)
         .unwrap();
     assert!(text.starts_with(THIRD_PARTY_PLUGIN_ENVELOPE));
-    assert!(text.contains("Base Agent: task_runner_run_phase"));
+    assert!(text.contains(format!("Base Agent: {RUN_AGENT_KEY}").as_str()));
 
     let confirmation_command = command_binding(PluginExecutionHost::Cloud);
     assert!(validate_cloud_component_policy(&confirmation_command).is_err());

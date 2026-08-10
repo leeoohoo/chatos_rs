@@ -43,6 +43,14 @@ pub async fn create_remote_connection(connection: &RemoteConnection) -> Result<S
                 "host_key_policy",
                 Bson::String(conn_mongo.host_key_policy.clone()),
             ),
+            (
+                "local_connector_device_id",
+                Bson::String(conn_mongo.local_connector_device_id.clone()),
+            ),
+            (
+                "local_connector_workspace_id",
+                Bson::String(conn_mongo.local_connector_workspace_id.clone()),
+            ),
             ("jump_enabled", Bson::Boolean(conn_mongo.jump_enabled)),
             (
                 "jump_connection_id",
@@ -111,6 +119,8 @@ pub async fn update_remote_connection(id: &str, data: &RemoteConnection) -> Resu
                     "certificate_path": data_mongo.certificate_path,
                     "default_remote_path": data_mongo.default_remote_path,
                     "host_key_policy": data_mongo.host_key_policy,
+                    "local_connector_device_id": data_mongo.local_connector_device_id,
+                    "local_connector_workspace_id": data_mongo.local_connector_workspace_id,
                     "jump_enabled": data_mongo.jump_enabled,
                     "jump_connection_id": data_mongo.jump_connection_id,
                     "jump_host": data_mongo.jump_host,

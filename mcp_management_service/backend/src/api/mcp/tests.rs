@@ -4,6 +4,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
+
 use super::*;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -20,7 +22,9 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        agent_key: "task_runner_run_phase".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+            .as_str()
+            .to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: Some("device-1".to_string()),
@@ -134,6 +138,14 @@ fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGra
     }
 }
 
+async fn persist_runtime_session(state: &AppState, snapshot: &RuntimeSessionSnapshot) {
+    state
+        .runtime_sessions
+        .insert(snapshot.clone())
+        .await
+        .expect("persist test Runtime Session");
+}
+
 #[tokio::test]
 async fn tools_list_returns_only_session_namespaced_tools() {
     let state = AppState::new(crate::config::AppConfig::test())
@@ -159,6 +171,39 @@ async fn tools_list_returns_only_session_namespaced_tools() {
             .and_then(Value::as_str),
         Some("demo_search")
     );
+}
+
+#[tokio::test]
+async fn tool_call_rejects_a_closed_session_before_provider_execution() {
+    let state = AppState::new(crate::config::AppConfig::test())
+        .await
+        .unwrap();
+    let snapshot = snapshot();
+
+    let response = handle_session_request(
+        JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!("closed-session-request")),
+            method: METHOD_TOOLS_CALL.to_string(),
+            params: json!({"name": "demo_search", "arguments": {}}),
+        },
+        &snapshot,
+        &state,
+        Ok(None),
+    )
+    .await;
+
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code),
+        Some(MCP_ERROR_AUTH_REQUIRED)
+    );
+    assert_eq!(
+        response.error.as_ref().map(|error| error.message.as_str()),
+        Some("runtime session was closed or has expired")
+    );
+    let stats = state.runtime_invocations.stats().await.unwrap();
+    assert_eq!(stats.registration.session_closed, 1);
+    assert_eq!(stats.total_active, 0);
 }
 
 #[tokio::test]
@@ -205,6 +250,7 @@ async fn tools_call_dispatches_the_original_name_to_project_service() {
             "inputSchema": {"type": "object"}
         }),
     }];
+    persist_runtime_session(&state, &snapshot).await;
     let response = handle_session_request(
         JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
@@ -277,11 +323,7 @@ async fn long_running_tool_returns_accepted_and_persists_async_result() {
             "annotations": {"x-chatos-preferAsync": true}
         }),
     }];
-    state
-        .runtime_sessions
-        .insert(snapshot.clone())
-        .await
-        .expect("persist async runtime session");
+    persist_runtime_session(&state, &snapshot).await;
     let response = handle_session_request(
         JsonRpcRequest {
             jsonrpc: Some("2.0".to_string()),
@@ -388,6 +430,7 @@ async fn ask_user_invocation_waits_for_user_and_completes_with_the_answer() {
     config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let snapshot = Arc::new(ask_user_snapshot());
+    persist_runtime_session(&state, &snapshot).await;
     let call_state = state.clone();
     let call_snapshot = Arc::clone(&snapshot);
     let call = tokio::spawn(async move {
@@ -536,6 +579,7 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
             "annotations": {"readOnlyHint": true}
         }),
     }];
+    persist_runtime_session(&state, &snapshot).await;
     let snapshot = Arc::new(snapshot);
     let call_snapshot = Arc::clone(&snapshot);
     let call_state = state.clone();
@@ -722,7 +766,7 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     assert!(!grant_matches_snapshot(&wrong_agent, &snapshot));
 
     let mut wrong_task_profile = claims.clone();
-    wrong_task_profile.task_profile = Some("chatos_plan".to_string());
+    wrong_task_profile.task_profile = Some(CHATOS_PLAN_TASK_PROFILE.to_string());
     assert!(!grant_matches_snapshot(&wrong_task_profile, &snapshot));
 
     let mut wrong_project = claims.clone();

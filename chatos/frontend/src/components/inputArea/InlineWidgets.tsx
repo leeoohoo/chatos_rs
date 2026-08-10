@@ -8,10 +8,7 @@ import type { AiModelConfig } from '../../types';
 import type { TaskRunnerSelectablePluginResponse } from '../../lib/api/client/types';
 import { thinkingOptionsForProvider } from '../../lib/modelThinkingOptions';
 import type { InputAreaRefObject } from './InputAreaComposerTypes';
-import type {
-  SelectedTaskPluginAgent,
-  SelectedTaskPluginCommand,
-} from './useTaskPluginPicker';
+import type { SelectedTaskPluginCommand } from './useTaskPluginPicker';
 
 interface InputAreaAttachmentsPreviewProps {
   attachments: File[];
@@ -21,13 +18,11 @@ interface InputAreaAttachmentsPreviewProps {
 export const InputAreaPluginChips: React.FC<{
   plugins: TaskRunnerSelectablePluginResponse[];
   commands: SelectedTaskPluginCommand[];
-  agent: SelectedTaskPluginAgent | null;
   onRemove: (pluginId: string) => void;
   onRemoveCommand: (pluginId: string, commandId: string) => void;
-  onRemoveAgent: () => void;
-}> = ({ plugins, commands, agent, onRemove, onRemoveCommand, onRemoveAgent }) => {
+}> = ({ plugins, commands, onRemove, onRemoveCommand }) => {
   const { t } = useI18n();
-  if (plugins.length === 0 && commands.length === 0 && !agent) {
+  if (plugins.length === 0 && commands.length === 0) {
     return null;
   }
   return (
@@ -76,27 +71,6 @@ export const InputAreaPluginChips: React.FC<{
           </button>
         </div>
       ))}
-      {agent ? (
-        <div
-          key={agent.key}
-          className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-xs"
-        >
-          <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300">
-            @{agent.agent.agent_id}
-          </span>
-          <span className="max-w-40 truncate text-muted-foreground">
-            {agent.plugin.display_name}
-          </span>
-          <button
-            type="button"
-            onClick={onRemoveAgent}
-            className="text-muted-foreground hover:text-destructive"
-            aria-label={t('inputArea.plugin.removeAgent', { agent: agent.agent.display_name })}
-          >
-            ×
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 };

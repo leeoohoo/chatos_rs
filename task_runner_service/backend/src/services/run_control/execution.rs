@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::TaskMcpConfig;
 use crate::services::TaskRunnerCapabilityPolicy;
 
 impl RunService {
@@ -79,6 +80,11 @@ impl RunService {
         };
         let mut task = task;
         if let Err(err) = capability_policy.apply_to_task(&mut task) {
+            self.finish_failed_before_execution(&task, &mut run, ".", err)
+                .await;
+            return;
+        }
+        if let Err(err) = ensure_queued_mcp_scope_unchanged(&task, &run) {
             self.finish_failed_before_execution(&task, &mut run, ".", err)
                 .await;
             return;
@@ -216,5 +222,90 @@ impl RunService {
         {
             warn!("failed to append failed event for run {}: {}", run.id, err);
         }
+    }
+}
+
+fn ensure_queued_mcp_scope_unchanged(task: &TaskRecord, run: &TaskRunRecord) -> Result<(), String> {
+    let Some(value) = run.input_snapshot.get("mcp_config") else {
+        // Runs queued before MCP scope freezing was introduced remain executable.
+        return Ok(());
+    };
+    let queued = serde_json::from_value::<TaskMcpConfig>(value.clone())
+        .map_err(|error| format!("queued MCP scope snapshot is invalid: {error}"))?;
+    let queued_scope = frozen_mcp_resource_scope(&queued);
+    let current_scope = frozen_mcp_resource_scope(&task.mcp_config);
+    if queued_scope != current_scope {
+        return Err(format!(
+            "MCP capability scope changed after this run was queued; queued=[{}], current=[{}]",
+            queued_scope.join(","),
+            current_scope.join(",")
+        ));
+    }
+    Ok(())
+}
+
+fn frozen_mcp_resource_scope(config: &TaskMcpConfig) -> Vec<String> {
+    let builtin_kinds = chatos_mcp_runtime::complete_builtin_kind_dependencies(
+        config
+            .enabled_builtin_kinds
+            .iter()
+            .filter_map(|kind| chatos_mcp_runtime::builtin_kind_by_any(kind)),
+    );
+    let mut resource_ids = builtin_kinds
+        .iter()
+        .filter_map(|kind| chatos_mcp::system_mcp_descriptor_by_any(kind.kind_name()))
+        .map(|descriptor| descriptor.resource_id.to_string())
+        .chain(
+            config
+                .external_mcp_config_ids
+                .iter()
+                .filter_map(|resource_id| {
+                    let resource_id = resource_id.trim();
+                    (!resource_id.is_empty()).then(|| resource_id.to_string())
+                }),
+        )
+        .collect::<Vec<_>>();
+    resource_ids.sort();
+    resource_ids.dedup();
+    resource_ids
+}
+
+#[cfg(test)]
+mod mcp_scope_freeze_tests {
+    use super::*;
+
+    #[test]
+    fn frozen_scope_contains_only_selected_resources_and_required_dependencies() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
+            external_mcp_config_ids: vec!["postgres-mcp".to_string()],
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(
+            frozen_mcp_resource_scope(&config),
+            vec![
+                "builtin_code_maintainer_read".to_string(),
+                "builtin_code_maintainer_write".to_string(),
+                "postgres-mcp".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn frozen_scope_detects_an_unselected_optional_mcp() {
+        let selected = TaskMcpConfig {
+            external_mcp_config_ids: vec!["postgres-mcp".to_string()],
+            ..TaskMcpConfig::default()
+        };
+        let expanded = TaskMcpConfig {
+            external_mcp_config_ids: vec!["browser-mcp".to_string(), "postgres-mcp".to_string()],
+            ..TaskMcpConfig::default()
+        };
+
+        assert_ne!(
+            frozen_mcp_resource_scope(&selected),
+            frozen_mcp_resource_scope(&expanded)
+        );
     }
 }

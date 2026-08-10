@@ -24,6 +24,35 @@ pub enum TaskRunStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum TaskRunAttemptStatus {
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Blocked,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunAttemptRecord {
+    pub attempt_id: String,
+    pub sequence: i64,
+    pub status: TaskRunAttemptStatus,
+    pub started_at: String,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub recovery_reason: Option<String>,
+    #[serde(default)]
+    pub sandbox_id: Option<String>,
+    #[serde(default)]
+    pub lease_id: Option<String>,
+    #[serde(default)]
+    pub model_response_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ChatosCallbackDeliveryStatus {
     Pending,
     Enqueued,
@@ -118,6 +147,8 @@ pub struct TaskRunRecord {
     #[serde(default)]
     pub attempt: i64,
     #[serde(default)]
+    pub attempts: Vec<TaskRunAttemptRecord>,
+    #[serde(default)]
     pub chatos_callback_delivery: Option<ChatosCallbackDeliveryState>,
     pub created_at: String,
     pub updated_at: String,
@@ -173,9 +204,77 @@ impl TaskRunRecord {
             claim_token: None,
             claim_until: None,
             attempt: 0,
+            attempts: Vec::new(),
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,
+        }
+    }
+
+    pub fn begin_attempt(&mut self, attempt_id: &str, started_at: &str) {
+        if self
+            .attempts
+            .iter()
+            .any(|attempt| attempt.attempt_id == attempt_id)
+        {
+            return;
+        }
+        for attempt in self
+            .attempts
+            .iter_mut()
+            .filter(|attempt| attempt.status == TaskRunAttemptStatus::Running)
+        {
+            attempt.status = TaskRunAttemptStatus::Interrupted;
+            attempt.finished_at = Some(started_at.to_string());
+        }
+        self.attempts.push(TaskRunAttemptRecord {
+            attempt_id: attempt_id.to_string(),
+            sequence: self.attempt,
+            status: TaskRunAttemptStatus::Running,
+            started_at: started_at.to_string(),
+            finished_at: None,
+            recovery_reason: (self.attempt > 1).then(|| "worker_claim_expired".to_string()),
+            sandbox_id: None,
+            lease_id: None,
+            model_response_id: None,
+        });
+    }
+
+    pub fn bind_current_attempt_environment(&mut self, sandbox_id: &str, lease_id: &str) {
+        if let Some(attempt) = self
+            .attempts
+            .iter_mut()
+            .rev()
+            .find(|attempt| attempt.status == TaskRunAttemptStatus::Running)
+        {
+            attempt.sandbox_id = Some(sandbox_id.to_string());
+            attempt.lease_id = Some(lease_id.to_string());
+        }
+    }
+
+    pub fn bind_current_attempt_model_response(&mut self, response_id: Option<&str>) {
+        let Some(response_id) = response_id.map(str::trim).filter(|value| !value.is_empty()) else {
+            return;
+        };
+        if let Some(attempt) = self
+            .attempts
+            .iter_mut()
+            .rev()
+            .find(|attempt| attempt.status == TaskRunAttemptStatus::Running)
+        {
+            attempt.model_response_id = Some(response_id.to_string());
+        }
+    }
+
+    pub fn finish_current_attempt(&mut self, status: TaskRunAttemptStatus, finished_at: &str) {
+        if let Some(attempt) = self
+            .attempts
+            .iter_mut()
+            .rev()
+            .find(|attempt| attempt.status == TaskRunAttemptStatus::Running)
+        {
+            attempt.status = status;
+            attempt.finished_at = Some(finished_at.to_string());
         }
     }
 }
@@ -193,7 +292,8 @@ pub fn task_run_memory_thread_id(task_memory_thread_id: &str, run_id: &str) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::task_run_memory_thread_id;
+    use super::{task_run_memory_thread_id, TaskRunAttemptStatus, TaskRunRecord};
+    use serde_json::json;
 
     #[test]
     fn task_runs_receive_distinct_memory_threads() {
@@ -213,6 +313,32 @@ mod tests {
             task_run_memory_thread_id("task-1:run:run-1", "run-1"),
             "task-1:run:run-1"
         );
+    }
+
+    #[test]
+    fn run_attempt_records_environment_response_and_terminal_state() {
+        let mut run = TaskRunRecord::queued(
+            "run-1".to_string(),
+            "task-1".to_string(),
+            "model-1".to_string(),
+            "thread-1".to_string(),
+            json!({}),
+            Vec::new(),
+            "2026-08-07T00:00:00Z".to_string(),
+        );
+        run.attempt = 1;
+        run.begin_attempt("claim-1", "2026-08-07T00:01:00Z");
+        run.bind_current_attempt_environment("sandbox-1", "lease-1");
+        run.bind_current_attempt_model_response(Some("response-1"));
+        run.finish_current_attempt(TaskRunAttemptStatus::Succeeded, "2026-08-07T00:02:00Z");
+
+        assert_eq!(run.attempts.len(), 1);
+        let attempt = &run.attempts[0];
+        assert_eq!(attempt.sandbox_id.as_deref(), Some("sandbox-1"));
+        assert_eq!(attempt.lease_id.as_deref(), Some("lease-1"));
+        assert_eq!(attempt.model_response_id.as_deref(), Some("response-1"));
+        assert_eq!(attempt.status, TaskRunAttemptStatus::Succeeded);
+        assert_eq!(attempt.finished_at.as_deref(), Some("2026-08-07T00:02:00Z"));
     }
 }
 
@@ -433,6 +559,11 @@ pub struct RunOutputChangeManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunOutputChangesResponse {
     pub run_id: String,
+    #[serde(default)]
+    pub base_commit: Option<String>,
+    #[serde(default)]
+    pub result_commit: Option<String>,
+    pub comparison_scope: String,
     pub counts: RunOutputFileChangeCounts,
     pub files: Vec<RunOutputFileChange>,
     pub total: usize,

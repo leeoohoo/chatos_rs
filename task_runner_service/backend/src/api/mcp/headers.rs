@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::{
+    is_task_runner_execution_agent as is_task_runner_execution_key,
+    is_task_runner_planning_agent as is_task_runner_planning_key, parse_system_agent_key,
+};
+
 use super::*;
 
 pub(super) fn mcp_management_binding_from_headers(
@@ -10,9 +15,7 @@ pub(super) fn mcp_management_binding_from_headers(
         |key: &'static str| header_text(headers, key).ok_or_else(|| format!("{key} is required"));
     let owner_user_id = required("x-mcp-management-owner-user-id")?;
     let agent_key_text = required("x-mcp-management-agent-key")?;
-    let agent_key = chatos_plugin_management_sdk::SystemAgentKey::ALL
-        .into_iter()
-        .find(|key| key.as_str() == agent_key_text)
+    let agent_key = parse_system_agent_key(&agent_key_text)
         .ok_or_else(|| "x-mcp-management-agent-key is not a registered System Agent".to_string())?;
     Ok(McpManagementBinding {
         owner_user_id,
@@ -29,6 +32,7 @@ pub(super) fn mcp_management_binding_from_headers(
         task_id: header_text(headers, "x-mcp-management-task-id"),
         source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
         source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
+        contact_agent_id: header_text(headers, "x-mcp-management-contact-agent-id"),
         default_model_config_id: header_text(headers, "x-mcp-management-default-model-config-id"),
         task_profile: header_text(headers, "x-mcp-management-task-profile")
             .map(|value| crate::models::normalize_task_profile(Some(value.as_str())))
@@ -69,16 +73,14 @@ pub(super) fn task_matches_bound_agent(
     task: &crate::models::TaskRecord,
     agent_key: chatos_plugin_management_sdk::SystemAgentKey,
 ) -> bool {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
     let planning = crate::models::uses_task_runner_planning_agent(
         task.task_profile.as_str(),
         task.mcp_config.requires_execution,
     );
     if planning {
-        agent_key == SystemAgentKey::TaskRunnerPlanPhase
+        is_task_runner_planning_key(agent_key)
     } else {
-        agent_key == SystemAgentKey::TaskRunnerRunPhase
+        is_task_runner_execution_key(agent_key)
     }
 }
 

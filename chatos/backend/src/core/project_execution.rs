@@ -17,37 +17,6 @@ pub const CHATOS_CLIENT_SURFACE_HEADER: &str = "x-chatos-client-surface";
 pub const CHATOS_CLIENT_SURFACE_COMPAT_HEADER: &str = "x-requested-with";
 pub const LOCAL_CONNECTOR_DESKTOP_SURFACE: &str = "local-connector-desktop";
 
-pub fn request_is_local_connector_desktop(headers: &HeaderMap) -> bool {
-    [
-        CHATOS_CLIENT_SURFACE_HEADER,
-        CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-    ]
-    .into_iter()
-    .filter_map(|header| headers.get(header))
-    .any(|value| {
-        value
-            .to_str()
-            .ok()
-            .map(str::trim)
-            .is_some_and(|value| value.eq_ignore_ascii_case(LOCAL_CONNECTOR_DESKTOP_SURFACE))
-    })
-}
-
-pub fn require_local_connector_desktop(
-    headers: &HeaderMap,
-) -> Result<(), (StatusCode, Json<Value>)> {
-    if request_is_local_connector_desktop(headers) {
-        return Ok(());
-    }
-    Err((
-        StatusCode::FORBIDDEN,
-        Json(json!({
-            "code": "desktop_client_required",
-            "error": "Local Connector 功能只能在 Chat OS 桌面客户端中使用",
-        })),
-    ))
-}
-
 pub fn project_is_visible_on_request(_project: &Project, _headers: &HeaderMap) -> bool {
     true
 }
@@ -100,9 +69,8 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     use super::{
-        project_is_visible_on_request, request_is_local_connector_desktop,
-        CHATOS_CLIENT_SURFACE_COMPAT_HEADER, CHATOS_CLIENT_SURFACE_HEADER,
-        LOCAL_CONNECTOR_DESKTOP_SURFACE,
+        project_is_visible_on_request, CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
+        CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
     };
     use crate::models::project::Project;
 
@@ -143,23 +111,5 @@ mod tests {
             &local,
             &compatibility_headers
         ));
-    }
-
-    #[test]
-    fn desktop_surface_requires_the_expected_value_on_either_supported_header() {
-        for header in [
-            CHATOS_CLIENT_SURFACE_HEADER,
-            CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-        ] {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header,
-                HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
-            );
-            assert!(request_is_local_connector_desktop(&headers));
-
-            headers.insert(header, HeaderValue::from_static("XMLHttpRequest"));
-            assert!(!request_is_local_connector_desktop(&headers));
-        }
     }
 }

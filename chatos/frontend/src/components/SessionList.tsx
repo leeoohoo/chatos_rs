@@ -246,6 +246,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         remoteCertificatePath={controller.remoteForm.remoteCertificatePath}
         remoteDefaultPath={controller.remoteForm.remoteDefaultPath}
         remoteHostKeyPolicy={controller.remoteForm.remoteHostKeyPolicy}
+        remoteLocalConnectorWorkspaceId={controller.remoteForm.remoteLocalConnectorWorkspaceId}
         remoteJumpEnabled={controller.remoteForm.remoteJumpEnabled}
         remoteJumpMode={controller.remoteForm.remoteJumpMode}
         remoteJumpConnectionId={controller.remoteForm.remoteJumpConnectionId}
@@ -274,6 +275,8 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setRemoteCertificatePath={controller.remoteForm.setRemoteCertificatePath}
         setRemoteDefaultPath={controller.remoteForm.setRemoteDefaultPath}
         setRemoteHostKeyPolicy={controller.remoteForm.setRemoteHostKeyPolicy}
+        setRemoteLocalConnectorDeviceId={controller.remoteForm.setRemoteLocalConnectorDeviceId}
+        setRemoteLocalConnectorWorkspaceId={controller.remoteForm.setRemoteLocalConnectorWorkspaceId}
         setRemoteJumpEnabled={controller.remoteForm.setRemoteJumpEnabled}
         setRemoteJumpMode={controller.remoteForm.setRemoteJumpMode}
         setRemoteJumpConnectionId={controller.remoteForm.setRemoteJumpConnectionId}

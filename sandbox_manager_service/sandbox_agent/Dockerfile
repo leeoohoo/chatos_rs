@@ -23,8 +23,8 @@ ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/
 ENV CARGO_NET_RETRY=10
 ENV CARGO_HTTP_TIMEOUT=600
-ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
-ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
+ENV RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
 
 RUN mkdir -p /root/.cargo \
     && printf '%s\n' \
@@ -61,6 +61,7 @@ FROM mcr.microsoft.com/devcontainers/base:dev-ubuntu-24.04
 ARG SANDBOX_FEATURES=java@21,node@24,rust@stable,go@1.26
 ARG SANDBOX_CUSTOM_SCRIPT_B64=
 ARG SANDBOX_PLAYWRIGHT_VERSION=1.55.0
+ARG AGENT_BROWSER_VERSION=0.31.2
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CHATOS_AGENT_HOST=0.0.0.0
@@ -76,8 +77,8 @@ ENV RUSTUP_HOME=/opt/chatos/rustup
 ENV UV_INSTALL_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/chatos/python
 ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/opt/chatos/cargo/bin:/usr/local/bin:$PATH
-ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
-ENV RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup
+ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
+ENV RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
 
 RUN set -eux; \
     java_version=""; \
@@ -110,7 +111,7 @@ RUN set -eux; \
         *) echo "unsupported sandbox runtime: $runtime" >&2; exit 2 ;; \
       esac; \
     done; \
-    base_packages="bash ca-certificates cmake curl g++ gcc git gnupg jq make openssh-client pkg-config python3 python3-pip python3-venv ripgrep software-properties-common unzip wget xz-utils zip libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libxcb1 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libcairo2 libpango-1.0-0 libasound2t64"; \
+    base_packages="bash ca-certificates cmake curl g++ gcc git gnupg jq make openssh-client pkg-config postgresql-client python3 python3-pip python3-venv ripgrep software-properties-common unzip wget xz-utils zip libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libxcb1 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libcairo2 libpango-1.0-0 libasound2t64"; \
     apt-get update; \
     apt-get install -y --no-install-recommends $base_packages; \
     apt-get clean; \
@@ -134,6 +135,10 @@ RUN set -eux; \
       npm install -g pnpm yarn; \
       mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"; \
       npx --yes "playwright@${SANDBOX_PLAYWRIGHT_VERSION}" install chromium; \
+      npm install -g "agent-browser@${AGENT_BROWSER_VERSION}"; \
+      chromium_path="$(find "$PLAYWRIGHT_BROWSERS_PATH" -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) | head -n 1)"; \
+      test -n "$chromium_path"; \
+      ln -sfn "$chromium_path" /usr/local/bin/chatos-sandbox-chromium; \
       chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"; \
       npm cache clean --force; \
       apt-get clean; \
@@ -174,7 +179,13 @@ RUN set -eux; \
     if [ -n "$rust_channel" ]; then \
       case "$rust_channel" in stable|beta|nightly|1.85.1|1.88.0|1.92.0|1.96.1) true ;; *) echo "unsupported Rust channel: $rust_channel" >&2; exit 2 ;; esac; \
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | CARGO_HOME=/opt/chatos/cargo RUSTUP_HOME="$RUSTUP_HOME" sh -s -- -y --profile minimal --default-toolchain "$rust_channel"; \
+        | CARGO_HOME=/opt/chatos/cargo \
+          RUSTUP_HOME="$RUSTUP_HOME" \
+          RUSTUP_DIST_SERVER=https://static.rust-lang.org \
+          RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup \
+          sh -s -- -y --profile minimal --default-toolchain "$rust_channel" \
+            --component rustfmt \
+            --component clippy; \
     fi; \
     if [ -n "$dotnet_channel" ]; then \
       case "$dotnet_channel" in 8.0|9.0|10.0) true ;; *) echo "unsupported .NET version: $dotnet_channel" >&2; exit 2 ;; esac; \
@@ -270,6 +281,9 @@ ENV HOME=/home/sandbox
 ENV CARGO_HOME=/home/sandbox/.cargo
 ENV UV_CACHE_DIR=/home/sandbox/.cache/uv
 ENV XDG_CACHE_HOME=/home/sandbox/.cache
+ENV AGENT_BROWSER_BIN=/usr/local/bin/agent-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chatos-sandbox-chromium
+ENV AGENT_BROWSER_SOCKET_DIR=/home/sandbox/.cache/agent-browser
 
 WORKDIR /workspace
 EXPOSE 49888

@@ -49,7 +49,7 @@ export const InputAreaPluginPicker = ({
             <div>
               <div className="text-sm font-medium">{t('inputArea.plugin.title')}</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                {t('inputArea.plugin.description')}
+                {t('inputArea.plugin.descriptionProject')}
               </div>
             </div>
             <button
@@ -62,41 +62,6 @@ export const InputAreaPluginPicker = ({
             </button>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="text-xs text-muted-foreground">
-              <span className="mb-1 block">{t('inputArea.plugin.device')}</span>
-              <select
-                value={pluginPicker.selectedDeviceId || ''}
-                onChange={(event) => { void pluginPicker.selectDevice(event.target.value); }}
-                disabled={pluginPicker.loading}
-                className="w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground"
-              >
-                <option value="">{t('inputArea.plugin.noDevice')}</option>
-                {pluginPicker.devices.map((device) => (
-                  <option key={device.id} value={device.id}>
-                    {device.display_name || device.displayName || device.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs text-muted-foreground">
-              <span className="mb-1 block">{t('inputArea.plugin.workspace')}</span>
-              <select
-                value={pluginPicker.selectedWorkspaceId || ''}
-                onChange={(event) => pluginPicker.setSelectedWorkspaceId(event.target.value || null)}
-                disabled={!pluginPicker.selectedDeviceId || pluginPicker.loading}
-                className="w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground"
-              >
-                <option value="">{t('inputArea.plugin.noWorkspace')}</option>
-                {pluginPicker.deviceWorkspaces.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.display_name || workspace.displayName || workspace.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
           <input
             value={pluginPicker.search}
             onChange={(event) => pluginPicker.setSearch(event.target.value)}
@@ -106,11 +71,6 @@ export const InputAreaPluginPicker = ({
 
           {pluginPicker.error ? (
             <div className="mt-2 text-xs text-destructive">{pluginPicker.error}</div>
-          ) : null}
-          {pluginPicker.browserWorkspaceRequired ? (
-            <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-              {t('inputArea.plugin.browserNeedsWorkspace')}
-            </div>
           ) : null}
           {pluginPicker.commandArgumentIssue ? (
             <div className="mt-2 text-xs text-destructive">
@@ -126,7 +86,7 @@ export const InputAreaPluginPicker = ({
             ) : null}
             {!pluginPicker.loading && pluginPicker.filteredPlugins.length === 0 ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
-                {t('inputArea.plugin.empty')}
+                {t('inputArea.plugin.emptyProject')}
               </div>
             ) : null}
             {!pluginPicker.loading && pluginPicker.filteredPlugins.map((plugin) => {
@@ -144,7 +104,6 @@ export const InputAreaPluginPicker = ({
                       type="checkbox"
                       checked={selected}
                       onChange={() => pluginPicker.togglePlugin(plugin.id)}
-                      disabled={plugin.requires_device && !pluginPicker.selectedDeviceId}
                       className="mt-1"
                     />
                     <span className="min-w-0 flex-1">
@@ -224,66 +183,6 @@ export const InputAreaPluginPicker = ({
                       ) : null}
                     </span>
                   </label>
-
-                  {(Array.isArray(plugin.agents) ? plugin.agents : []).length > 0 ? (
-                    <div className="mt-3 space-y-2 border-t pt-2">
-                      <div className="text-[11px] font-medium text-muted-foreground">
-                        {t('inputArea.plugin.agents')}
-                      </div>
-                      {(Array.isArray(plugin.agents) ? plugin.agents : []).map((agent) => {
-                        const agentSelected = pluginPicker.selectedAgentSelection?.plugin_id
-                          === plugin.id
-                          && pluginPicker.selectedAgentSelection?.agent_id === agent.agent_id;
-                        const allowedTools = Array.isArray(agent.allowed_tools)
-                          ? agent.allowed_tools
-                          : [];
-                        return (
-                          <label
-                            key={agent.agent_id}
-                            className={cn(
-                              'flex cursor-pointer items-start gap-2 rounded-md border bg-background/70 p-2',
-                              agentSelected && 'border-emerald-500/60 bg-emerald-500/5',
-                            )}
-                          >
-                            <input
-                              type="radio"
-                              name="task-plugin-agent"
-                              checked={agentSelected}
-                              onChange={() => pluginPicker.selectAgent(plugin.id, agent.agent_id)}
-                              className="mt-0.5"
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="flex flex-wrap items-center gap-1.5">
-                                <span className="font-mono text-xs text-emerald-700 dark:text-emerald-300">
-                                  @{agent.agent_id}
-                                </span>
-                                <span className="text-xs font-medium">{agent.display_name}</span>
-                              </span>
-                              {agent.description ? (
-                                <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                                  {agent.description}
-                                </span>
-                              ) : null}
-                              <span className="mt-1 block text-[10px] text-muted-foreground">
-                                {t('inputArea.plugin.agentBase', { agent: agent.base_agent })}
-                                {' · '}
-                                {t('inputArea.plugin.agentIterations', {
-                                  count: agent.max_iterations,
-                                })}
-                              </span>
-                              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
-                                {allowedTools.length > 0
-                                  ? t('inputArea.plugin.agentTools', {
-                                    tools: allowedTools.join(' · '),
-                                  })
-                                  : t('inputArea.plugin.agentNoExtraTools')}
-                              </span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  ) : null}
 
                   {(Array.isArray(plugin.commands) ? plugin.commands : []).length > 0 ? (
                     <div className="mt-3 space-y-2 border-t pt-2">

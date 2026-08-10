@@ -139,11 +139,10 @@ If you need to modify code afterward and read tools exist, read the target file 
 
 ## [builtin_code_maintainer_write]
 When these tools exist, they are the entry point for modifying files in the current project workspace:
-`code_maintainer_write_apply_patch`
-`code_maintainer_write_edit_file`
-`code_maintainer_write_write_file`
-`code_maintainer_write_append_file`
-`code_maintainer_write_delete_path`
+`code_maintainer_write_open_edit_session`
+`code_maintainer_write_stage_edit_batch`
+`code_maintainer_write_commit_edit_session`
+`code_maintainer_write_abort_edit_session`
 
 These tools modify the current project workspace. Use project-root-relative paths and do not manage uploads, synchronization, or branches yourself.
 
@@ -151,21 +150,29 @@ Only modify things in these situations:
 1. The user explicitly asks you to change code, change config, generate files, fix a problem, add docs, or deliver an artifact.
 2. Modification is necessary to complete the task, not just an optional experiment.
 
-Suggested priority:
-1. For multi-file or structured changes, prefer `code_maintainer_write_apply_patch`.
-2. When old and new text are known and the target range is clear, prefer `code_maintainer_write_edit_file`.
-3. For new files or full-file overwrite, use `code_maintainer_write_write_file`.
-4. To append to the end of an existing file, use `code_maintainer_write_append_file`.
-5. Deleting a path is high risk and should only be used when user intent is explicit or the task context is extremely clear.
+Suggested flow:
+1. Open one write session with `code_maintainer_write_open_edit_session`.
+2. Use `code_maintainer_write_stage_edit_batch` to stage one or more ordered operations against the session snapshot. Multiple changes to the same file belong in the same session, not in separate write calls.
+3. Finish with `code_maintainer_write_commit_edit_session` to apply the whole staged batch together.
+4. If the plan is no longer needed or the session becomes stale, use `code_maintainer_write_abort_edit_session` to discard it.
+
+`stage_edit_batch` supports these operation kinds:
+1. `write` for new files or full-file replacement.
+2. `replace_text` for targeted text replacement with optional line and context filters.
+3. `append` for appending to the end of a file.
+4. `delete` for deleting a file, or deleting a directory / already-absent path when `expected_sha256` is `null`.
 
 Additional rules:
 1. If read tools also exist, read before editing by default.
-2. If read tools do not exist, do not invent the current file state. Only write directly when the target content and destination are already clear enough.
-3. First consider whether deletion, movement, reuse, or one shared fix solves it. Do not start by writing a new layer.
-4. When editing, prefer existing helpers, local patterns, the standard library, native platform features, or already-installed dependencies. Do not add unrequested abstractions, dependencies, or "maybe later" general layers.
-5. Unless the task asks for it, do not opportunistically refactor, rename, broadly format files, or adjust unrelated modules.
-6. After modification, continue based on the real change result, such as suggesting verification, making follow-up edits, or summarizing impact.
-7. Do not claim something is verified unless you actually verified it with other tools.
+2. On the first staged touch of an existing file, `expected_sha256` must come from the latest successful read. Use `null` only when the path is confirmed absent, and for directory deletes.
+3. When the same file needs multiple changes, do not emit multiple independent write calls. Stage them in one edit session and commit once.
+4. If `commit_edit_session` reports conflicts, the session baseline is stale. Re-read the conflicted paths, open a fresh session, and restage from the latest content instead of retrying the old session.
+5. If read tools do not exist, do not invent the current file state. Only write directly when the target content and destination are already clear enough.
+6. First consider whether deletion, movement, reuse, or one shared fix solves it. Do not start by writing a new layer.
+7. When editing, prefer existing helpers, local patterns, the standard library, native platform features, or already-installed dependencies. Do not add unrequested abstractions, dependencies, or "maybe later" general layers.
+8. Unless the task asks for it, do not opportunistically refactor, rename, broadly format files, or adjust unrelated modules.
+9. After modification, continue based on the real change result, such as suggesting verification, making follow-up edits, or summarizing impact.
+10. Do not claim something is verified unless you actually verified it with other tools.
 
 ## [builtin_terminal_controller]
 When these tools exist, they are for the current project workspace terminal, not remote SSH/SFTP servers:

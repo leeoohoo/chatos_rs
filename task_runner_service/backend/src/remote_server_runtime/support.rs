@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde::Serialize;
-
 use chatos_mcp::RemoteConnectionControllerContext;
-use chatos_remote_runtime::join_remote_path;
-
-pub(super) use chatos_remote_runtime::normalize_remote_path;
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub(super) struct ConnectionSummary {
@@ -17,15 +13,6 @@ pub(super) struct ConnectionSummary {
     pub(super) username: String,
     pub(super) auth_type: String,
     pub(super) default_remote_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct RemoteEntry {
-    pub(super) path: String,
-    pub(super) name: String,
-    pub(super) is_dir: bool,
-    pub(super) size: Option<u64>,
-    pub(super) modified_at: Option<String>,
 }
 
 pub(super) fn resolve_connection_id(
@@ -47,10 +34,6 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
-}
-
-pub(super) fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 pub(super) fn command_danger_reason(command: &str) -> Option<&'static str> {
@@ -89,45 +72,21 @@ pub(super) fn truncate_text(input: &str, max_chars: usize) -> (String, bool) {
     (input.chars().take(max_chars).collect::<String>(), true)
 }
 
-pub(super) fn parse_directory_entries(base_path: &str, output: &str) -> Vec<RemoteEntry> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split('\t');
-            let name = parts.next()?.trim();
-            if name.is_empty() {
-                return None;
-            }
-            let entry_type = parts.next().unwrap_or("");
-            let size = parts.next().and_then(|value| value.parse::<u64>().ok());
-            let modified_at = parts
-                .next()
-                .and_then(|value| value.parse::<f64>().ok())
-                .and_then(|value| chrono::DateTime::<chrono::Utc>::from_timestamp(value as i64, 0))
-                .map(|value| value.to_rfc3339());
-
-            Some(RemoteEntry {
-                path: join_remote_path(base_path, name),
-                name: name.to_string(),
-                is_dir: entry_type == "d",
-                size,
-                modified_at,
-            })
-        })
-        .collect()
-}
-
-pub(super) fn split_file_output(output: String) -> (String, bool, Option<u64>) {
-    let marker = "__TASK_RUNNER_FILE_TRUNCATED__";
-    if let Some(index) = output.find(marker) {
-        let content = output[..index].trim_end_matches('\n').to_string();
-        let metadata = &output[index + marker.len()..];
-        let source_size = metadata
-            .split_whitespace()
-            .find_map(|part| part.strip_prefix("size="))
-            .and_then(|value| value.parse::<u64>().ok());
-        (content, true, source_size)
+pub(super) fn normalize_remote_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return ".".to_string();
+    }
+    let mut normalized = trimmed.replace('\\', "/");
+    while normalized.contains("//") {
+        normalized = normalized.replace("//", "/");
+    }
+    if normalized != "/" {
+        normalized = normalized.trim_end_matches('/').to_string();
+    }
+    if normalized.is_empty() {
+        ".".to_string()
     } else {
-        (output, false, None)
+        normalized
     }
 }

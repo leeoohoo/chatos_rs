@@ -12,6 +12,8 @@ pub struct InternalServiceTokenClaims {
     pub iss: String,
     pub sub: String,
     pub caller: String,
+    #[serde(default)]
+    pub owner_user_id: Option<String>,
     pub aud: String,
     pub scope: String,
     pub trace_id: String,
@@ -37,6 +39,26 @@ pub fn issue_internal_service_token(
     )
 }
 
+pub fn issue_internal_service_token_for_owner(
+    secret: &str,
+    issuer: &str,
+    audience: &str,
+    scope: &str,
+    ttl_seconds: u64,
+    owner_user_id: &str,
+) -> Result<String, String> {
+    let trace_id = Uuid::new_v4().to_string();
+    issue_internal_service_token_with_trace_id_for_owner(
+        secret,
+        issuer,
+        audience,
+        scope,
+        ttl_seconds,
+        trace_id.as_str(),
+        owner_user_id,
+    )
+}
+
 pub fn issue_internal_service_token_with_trace_id(
     secret: &str,
     issuer: &str,
@@ -49,12 +71,61 @@ pub fn issue_internal_service_token_with_trace_id(
     let trace_id = Uuid::parse_str(trace_id.trim())
         .map_err(|_| "internal service token trace id must be a UUID".to_string())?
         .to_string();
+    issue_internal_service_token_with_trace_id_internal(
+        secret,
+        issuer,
+        audience,
+        scope,
+        ttl_seconds,
+        trace_id,
+        None,
+    )
+}
+
+pub fn issue_internal_service_token_with_trace_id_for_owner(
+    secret: &str,
+    issuer: &str,
+    audience: &str,
+    scope: &str,
+    ttl_seconds: u64,
+    trace_id: &str,
+    owner_user_id: &str,
+) -> Result<String, String> {
+    ensure_crypto_provider();
+    let trace_id = Uuid::parse_str(trace_id.trim())
+        .map_err(|_| "internal service token trace id must be a UUID".to_string())?
+        .to_string();
+    let owner_user_id = owner_user_id.trim();
+    if owner_user_id.is_empty() {
+        return Err("internal service token owner user id must not be empty".to_string());
+    }
+    issue_internal_service_token_with_trace_id_internal(
+        secret,
+        issuer,
+        audience,
+        scope,
+        ttl_seconds,
+        trace_id,
+        Some(owner_user_id.to_string()),
+    )
+}
+
+fn issue_internal_service_token_with_trace_id_internal(
+    secret: &str,
+    issuer: &str,
+    audience: &str,
+    scope: &str,
+    ttl_seconds: u64,
+    trace_id: String,
+    owner_user_id: Option<String>,
+) -> Result<String, String> {
     let now = unix_timestamp()?;
     let ttl_seconds = ttl_seconds.clamp(5, 300) as usize;
     let claims = InternalServiceTokenClaims {
         iss: issuer.to_string(),
         sub: issuer.to_string(),
         caller: issuer.to_string(),
+        owner_user_id,
         aud: audience.to_string(),
         scope: scope.to_string(),
         trace_id,
@@ -124,7 +195,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        issue_internal_service_token, issue_internal_service_token_with_trace_id, unix_timestamp,
+        issue_internal_service_token, issue_internal_service_token_for_owner,
+        issue_internal_service_token_with_trace_id,
+        issue_internal_service_token_with_trace_id_for_owner, unix_timestamp,
         verify_internal_service_token,
     };
 
@@ -158,6 +231,7 @@ mod tests {
         .expect("verify token");
         assert_eq!(claims.sub, "task-runner");
         assert_eq!(claims.caller, "task-runner");
+        assert_eq!(claims.owner_user_id, None);
         Uuid::parse_str(claims.trace_id.as_str()).expect("valid trace id");
         assert!(claims.exp > claims.iat);
         assert!(verify_internal_service_token(
@@ -226,6 +300,7 @@ mod tests {
         )
         .expect("verify operation-bound token");
         assert_eq!(claims.trace_id, trace_id);
+        assert_eq!(claims.owner_user_id, None);
         assert!(issue_internal_service_token_with_trace_id(
             "a-long-test-internal-secret",
             "configuration-center",
@@ -233,6 +308,60 @@ mod tests {
             "queue.dead_letter.archive",
             60,
             "not-a-uuid",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn owner_user_id_is_signed_when_requested() {
+        let trace_id = Uuid::new_v4().to_string();
+        let token = issue_internal_service_token_for_owner(
+            "a-long-test-internal-secret",
+            "task-runner",
+            "local-connector-service",
+            "relay.mcp",
+            60,
+            "user-1",
+        )
+        .expect("issue owner-bound token");
+        let claims = verify_internal_service_token(
+            token.as_str(),
+            "a-long-test-internal-secret",
+            "task-runner",
+            "local-connector-service",
+            "relay.mcp",
+        )
+        .expect("verify owner-bound token");
+        assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
+
+        let token_with_trace = issue_internal_service_token_with_trace_id_for_owner(
+            "a-long-test-internal-secret",
+            "task-runner",
+            "local-connector-service",
+            "relay.mcp",
+            60,
+            trace_id.as_str(),
+            "user-2",
+        )
+        .expect("issue owner-bound token with trace");
+        let claims_with_trace = verify_internal_service_token(
+            token_with_trace.as_str(),
+            "a-long-test-internal-secret",
+            "task-runner",
+            "local-connector-service",
+            "relay.mcp",
+        )
+        .expect("verify owner-bound token with trace");
+        assert_eq!(claims_with_trace.trace_id, trace_id);
+        assert_eq!(claims_with_trace.owner_user_id.as_deref(), Some("user-2"));
+
+        assert!(issue_internal_service_token_for_owner(
+            "a-long-test-internal-secret",
+            "task-runner",
+            "local-connector-service",
+            "relay.mcp",
+            60,
+            "   ",
         )
         .is_err());
     }

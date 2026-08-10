@@ -13,7 +13,7 @@ use chatos_plugin_management_sdk::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::mcp_adapter::load_verified_manifest;
+use super::mcp_runtime::load_verified_manifest;
 use super::portable_bundle::validate_local_portable_bundle;
 use crate::plugins::PluginInstaller;
 

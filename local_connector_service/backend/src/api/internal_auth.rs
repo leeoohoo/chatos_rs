@@ -10,11 +10,13 @@ use crate::models::CurrentUser;
 pub(super) const TOKEN_AUDIENCE: &str = "local-connector-service";
 pub(super) const MCP_RELAY_SCOPE: &str = "relay.mcp";
 pub(super) const TERMINAL_RELAY_SCOPE: &str = "relay.terminal";
+pub(super) const REMOTE_CONNECTION_RELAY_SCOPE: &str = "remote-connection.execute";
 pub(super) const SKILL_RELAY_SCOPE: &str = "relay.skill";
 pub(super) const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 pub(super) const PLUGIN_UI_READ_SCOPE: &str = "plugin.ui.read";
 pub(super) const PLUGIN_ARTIFACT_READ_SCOPE: &str = "plugin.artifact.read";
 pub(super) const PLUGIN_ARTIFACT_WRITE_SCOPE: &str = "plugin.artifact.write";
+pub(super) const WORKSPACE_DIRECTORY_WRITE_SCOPE: &str = "workspace.directory.write";
 pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
 pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
 pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
@@ -100,10 +102,24 @@ pub(super) fn internal_service_auth_from_request(
     )
     .map_err(|_| ApiError::unauthorized("invalid Local Connector internal API token"))?;
 
-    let owner_user_id = header_text(headers, "x-local-connector-owner-user-id")
-        .or_else(|| header_text(headers, "x-chatos-owner-user-id"))
-        .ok_or_else(|| ApiError::unauthorized("Local Connector owner user id is required"))?
+    let owner_user_id = claims
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::unauthorized("Local Connector internal API token is missing owner user id")
+        })?
         .to_string();
+    if let Some(header_owner_user_id) = header_text(headers, "x-local-connector-owner-user-id")
+        .or_else(|| header_text(headers, "x-chatos-owner-user-id"))
+    {
+        if header_owner_user_id != owner_user_id {
+            return Err(ApiError::unauthorized(
+                "Local Connector owner user id header does not match the signed token",
+            ));
+        }
+    }
     let service_name = caller.replace('-', "_");
     let user = CurrentUser {
         principal_type: "service".to_string(),
@@ -169,6 +185,20 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
         ) => Some(InternalAccess {
             scope: PLUGIN_ARTIFACT_WRITE_SCOPE,
             allowed_callers: &[CHATOS_CALLER],
+        }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "workspaces", _, "directories"],
+        ) => Some(InternalAccess {
+            scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
+            allowed_callers: &[CHATOS_CALLER],
+        }),
+        (
+            &Method::POST,
+            ["api", "local-connectors", "relay", _, "remote-connections", "test" | "command" | "sftp"],
+        ) => Some(InternalAccess {
+            scope: REMOTE_CONNECTION_RELAY_SCOPE,
+            allowed_callers: &[TASK_RUNNER_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
             scope: SANDBOX_ROUTING_READ_SCOPE,
@@ -279,12 +309,13 @@ mod tests {
             TASK_RUNNER_CALLER.to_string(),
             "a-long-task-runner-local-connector-secret".to_string(),
         );
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-task-runner-local-connector-secret",
             TASK_RUNNER_CALLER,
             TOKEN_AUDIENCE,
             MCP_RELAY_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue token");
         let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
@@ -317,6 +348,36 @@ mod tests {
             "/api/local-connectors/devices",
         )
         .is_err());
+    }
+
+    #[test]
+    fn task_runner_remote_connection_token_is_scope_and_path_bound() {
+        let mut config = test_config();
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-local-connector-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            "a-long-task-runner-local-connector-secret",
+            TASK_RUNNER_CALLER,
+            TOKEN_AUDIENCE,
+            REMOTE_CONNECTION_RELAY_SCOPE,
+            60,
+            "user-1",
+        )
+        .expect("issue token");
+        let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
+
+        for path in [
+            "/api/local-connectors/relay/device-1/remote-connections/test",
+            "/api/local-connectors/relay/device-1/remote-connections/command",
+            "/api/local-connectors/relay/device-1/remote-connections/sftp",
+        ] {
+            let user = internal_service_user_from_request(&config, &headers, &Method::POST, path)
+                .expect("matching request")
+                .expect("service user");
+            assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
+        }
     }
 
     #[test]
@@ -360,12 +421,13 @@ mod tests {
             TASK_RUNNER_CALLER.to_string(),
             "a-long-task-runner-local-connector-secret".to_string(),
         );
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-task-runner-local-connector-secret",
             TASK_RUNNER_CALLER,
             TOKEN_AUDIENCE,
             MCP_RELAY_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue token");
         let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
@@ -385,12 +447,13 @@ mod tests {
             MCP_MANAGEMENT_CALLER.to_string(),
             "a-long-mcp-management-local-connector-secret".to_string(),
         );
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-mcp-management-local-connector-secret",
             MCP_MANAGEMENT_CALLER,
             TOKEN_AUDIENCE,
             MCP_RELAY_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue MCP Management token");
         let headers = signed_headers(MCP_MANAGEMENT_CALLER, token.as_str());
@@ -404,12 +467,13 @@ mod tests {
         .expect("service user");
         assert_eq!(user.user_id, "service:mcp-management-service:user-1");
 
-        let plugin_token = chatos_service_runtime::issue_internal_service_token(
+        let plugin_token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-mcp-management-local-connector-secret",
             MCP_MANAGEMENT_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_RELAY_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue Plugin relay token");
         let plugin_headers = signed_headers(MCP_MANAGEMENT_CALLER, plugin_token.as_str());
@@ -430,12 +494,13 @@ mod tests {
         )
         .is_err());
 
-        let sandbox_token = chatos_service_runtime::issue_internal_service_token(
+        let sandbox_token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-mcp-management-local-connector-secret",
             MCP_MANAGEMENT_CALLER,
             TOKEN_AUDIENCE,
             SANDBOX_SERVICE_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue Sandbox service token");
         let sandbox_headers = signed_headers(MCP_MANAGEMENT_CALLER, sandbox_token.as_str());
@@ -491,12 +556,13 @@ mod tests {
             TASK_RUNNER_CALLER.to_string(),
             "a-long-task-runner-local-connector-secret".to_string(),
         );
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-task-runner-local-connector-secret",
             TASK_RUNNER_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_RELAY_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue Plugin relay token");
         let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
@@ -529,12 +595,13 @@ mod tests {
             TASK_RUNNER_CALLER.to_string(),
             "a-long-task-runner-local-connector-secret".to_string(),
         );
-        let token = chatos_service_runtime::issue_internal_service_token(
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-chatos-local-connector-secret",
             CHATOS_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_UI_READ_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue Plugin UI read token");
         let headers = signed_headers(CHATOS_CALLER, token.as_str());
@@ -555,12 +622,13 @@ mod tests {
         )
         .is_err());
 
-        let task_runner_token = chatos_service_runtime::issue_internal_service_token(
+        let task_runner_token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-task-runner-local-connector-secret",
             TASK_RUNNER_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_UI_READ_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue wrong-caller Plugin UI token");
         let task_runner_headers = signed_headers(TASK_RUNNER_CALLER, task_runner_token.as_str());
@@ -572,12 +640,13 @@ mod tests {
         )
         .is_err());
 
-        let artifact_token = chatos_service_runtime::issue_internal_service_token(
+        let artifact_token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-chatos-local-connector-secret",
             CHATOS_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_ARTIFACT_READ_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue Plugin Artifact token");
         let artifact_headers = signed_headers(CHATOS_CALLER, artifact_token.as_str());
@@ -604,12 +673,13 @@ mod tests {
         )
         .is_err());
 
-        let artifact_write_token = chatos_service_runtime::issue_internal_service_token(
+        let artifact_write_token = chatos_service_runtime::issue_internal_service_token_for_owner(
             "a-long-chatos-local-connector-secret",
             CHATOS_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_ARTIFACT_WRITE_SCOPE,
             60,
+            "user-1",
         )
         .expect("issue Plugin Artifact write token");
         let artifact_write_headers = signed_headers(CHATOS_CALLER, artifact_write_token.as_str());
@@ -666,12 +736,13 @@ mod tests {
                 "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
             ),
         ] {
-            let token = chatos_service_runtime::issue_internal_service_token(
+            let token = chatos_service_runtime::issue_internal_service_token_for_owner(
                 "a-long-task-runner-local-connector-secret",
                 TASK_RUNNER_CALLER,
                 TOKEN_AUDIENCE,
                 scope,
                 60,
+                "user-1",
             )
             .expect("issue token");
             let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
@@ -682,7 +753,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn mismatched_owner_header_is_rejected_even_with_valid_signed_token() {
+        let mut config = test_config();
+        config.internal_api_secrets.insert(
+            TASK_RUNNER_CALLER.to_string(),
+            "a-long-task-runner-local-connector-secret".to_string(),
+        );
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            "a-long-task-runner-local-connector-secret",
+            TASK_RUNNER_CALLER,
+            TOKEN_AUDIENCE,
+            MCP_RELAY_SCOPE,
+            60,
+            "user-1",
+        )
+        .expect("issue owner-bound token");
+        let headers = signed_headers_for_owner(TASK_RUNNER_CALLER, token.as_str(), "user-2");
+        let error = internal_service_auth_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .expect_err("mismatched owner header must be rejected");
+        assert_eq!(
+            error.message(),
+            "Local Connector owner user id header does not match the signed token"
+        );
+    }
+
     fn signed_headers(caller: &'static str, token: &str) -> HeaderMap {
+        signed_headers_for_owner(caller, token, "user-1")
+    }
+
+    fn signed_headers_for_owner(
+        caller: &'static str,
+        token: &str,
+        owner_user_id: &str,
+    ) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert("x-local-connector-caller", HeaderValue::from_static(caller));
         headers.insert(
@@ -691,7 +800,7 @@ mod tests {
         );
         headers.insert(
             "x-local-connector-owner-user-id",
-            HeaderValue::from_static("user-1"),
+            HeaderValue::from_str(owner_user_id).expect("owner header"),
         );
         headers
     }

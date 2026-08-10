@@ -176,11 +176,14 @@ mod tests {
         tests::{capabilities_with_plugin, resolved_plugin},
     };
     use super::*;
+    use chatos_agent::SystemAgentKey;
     use chatos_plugin_management_sdk::{
         parse_plugin_manifest, plugin_component_descriptors, PluginAvailabilityStatus,
         PluginComponentSnapshot, PluginComponentStatus, PluginManifestSource,
         ResolvedPluginComponent,
     };
+
+    const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
     fn resolved_plugin_with_manifest(raw: &str, required: bool) -> ResolvedPlugin {
         let manifest = parse_plugin_manifest(raw, PluginManifestSource::Chatos).unwrap();
@@ -298,7 +301,7 @@ mod tests {
                 "commands": [{
                     "componentKey": "review",
                     "source": "./commands/review.md",
-                    "targetAgent": "task_runner_run_phase"
+                    "targetAgent": "TASK_RUNNER_RUN_PHASE"
                 }],
                 "interface": {
                     "displayName": "Review Command",
@@ -307,7 +310,9 @@ mod tests {
                     "developerName": "ChatOS",
                     "category": "Developer Tools"
                 }
-            }"#,
+            }"#
+            .replace("TASK_RUNNER_RUN_PHASE", RUN_AGENT_KEY)
+            .as_str(),
             false,
         );
         let command_result =
@@ -333,7 +338,7 @@ mod tests {
                 "agents": [{
                     "componentKey": "reviewer",
                     "source": "./agents/reviewer.md",
-                    "baseAgent": "task_runner_run_phase"
+                    "baseAgent": "TASK_RUNNER_RUN_PHASE"
                 }],
                 "interface": {
                     "displayName": "Review Agent",
@@ -342,7 +347,9 @@ mod tests {
                     "developerName": "ChatOS",
                     "category": "Developer Tools"
                 }
-            }"#,
+            }"#
+            .replace("TASK_RUNNER_RUN_PHASE", RUN_AGENT_KEY)
+            .as_str(),
             false,
         );
         let agent_result = materialize_mcp_candidates(&capabilities_with_plugin(agent)).unwrap();

@@ -8,6 +8,7 @@ use super::TaskRunnerRemoteConnectionStore;
 pub(super) async fn resolve_enabled_server(
     store: &TaskRunnerRemoteConnectionStore,
     connection_id: &str,
+    owner_user_id: &str,
 ) -> Result<RemoteServerRecord, String> {
     let server = store
         .store
@@ -17,7 +18,19 @@ pub(super) async fn resolve_enabled_server(
     if !server.enabled {
         return Err(format!("远程服务器已禁用: {connection_id}"));
     }
+    if !server_owned_by(&server, owner_user_id) {
+        return Err(format!("远程服务器不存在: {connection_id}"));
+    }
     Ok(server)
+}
+
+pub(super) fn server_owned_by(server: &RemoteServerRecord, owner_user_id: &str) -> bool {
+    server
+        .owner_user_id
+        .as_deref()
+        .or(server.creator_user_id.as_deref())
+        .map(str::trim)
+        .is_some_and(|value| value == owner_user_id.trim())
 }
 
 pub(super) async fn touch_server(

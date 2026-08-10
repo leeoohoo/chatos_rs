@@ -5,6 +5,10 @@ use super::core::{bearer_token_from_headers, current_user_from_user_service_toke
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chatos_agent::{
+    chatos_task_runner_tool_profile, is_chatos_callback_agent, is_chatos_plan_task_profile,
+    is_task_runner_phase_agent,
+};
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde::de::DeserializeOwned;
@@ -67,26 +71,35 @@ pub(super) async fn list_task_capability_catalog(
         .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?;
     let task_profile = crate::models::normalize_task_profile(query.task_profile.as_deref())
         .map_err(ApiError::bad_request)?;
-    let agent_key = crate::models::task_runner_agent_key_for_runtime(
+    let agent_key = crate::models::task_runner_agent_key_for(
         task_profile.as_str(),
         query.requires_execution.unwrap_or(true),
-        query.runtime_provider.as_deref(),
     );
+    let project_id = crate::models::normalize_project_id(query.project_id.clone());
     let policy = state
         .task_service
-        .resolve_task_runner_policy_for_agent_runtime(
+        .resolve_task_runner_policy_for_agent_project(
             Some(&user),
             Some(owner_user_id),
             agent_key,
-            query.device_id.clone(),
-            query.runtime_provider.clone(),
+            project_id.as_str(),
+            Some(task_profile.as_str()),
+            None,
         )
         .await
         .map_err(ApiError::bad_gateway)?
         .ok_or_else(|| ApiError::internal("plugin management policy resolver is unavailable"))?;
     Ok(Json(json!({
-        "agent_key": agent_key.as_str(),
+        "agent_key": policy.agent_key(),
         "policy_revision": policy.policy_revision(),
+        "selectable_builtin_mcps": policy.selectable_builtin_mcp_choices().into_iter().map(|(value, title)| json!({
+            "value": value,
+            "title": title,
+        })).collect::<Vec<_>>(),
+        "selectable_external_mcps": policy.selectable_external_mcp_choices().into_iter().map(|(value, title)| json!({
+            "value": value,
+            "title": title,
+        })).collect::<Vec<_>>(),
         "selectable_plugins": policy.selectable_plugin_views(),
     })))
 }
@@ -172,8 +185,7 @@ where
 pub(super) struct TaskCapabilityCatalogQuery {
     task_profile: Option<String>,
     requires_execution: Option<bool>,
-    runtime_provider: Option<String>,
-    device_id: Option<String>,
+    project_id: Option<String>,
 }
 
 pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<McpServerInfo> {
@@ -325,6 +337,7 @@ struct McpManagementBinding {
     task_id: Option<String>,
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
+    contact_agent_id: Option<String>,
     default_model_config_id: Option<String>,
     task_profile: Option<String>,
     expected_project_task_ids: std::collections::BTreeSet<String>,
@@ -412,35 +425,33 @@ async fn dispatch_bound_task_runner_tool(
     request: JsonRpcRequest,
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
-    if !matches!(
-        binding.agent_key,
-        SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-    ) {
+    if !is_chatos_callback_agent(binding.agent_key) {
         return task_runner_mcp_error(
             request.id.unwrap_or(Value::Null),
             -32001,
             "configured Agent is not allowed to use Task Runner Service MCP",
         );
     }
-    let current_user = CurrentUser {
-        id: format!("mcp-management:{}", binding.session_id),
-        username: format!("mcp-management-{}", binding.agent_key.as_str()),
-        display_name: format!("MCP Management {}", binding.agent_key.as_str()),
-        role: crate::models::UserRole::Agent,
-        owner_user_id: Some(binding.owner_user_id.clone()),
-        owner_username: None,
-        owner_display_name: None,
+    let current_user = match bound_task_creator(
+        binding,
+        request.method == chatos_mcp_service::METHOD_TOOLS_CALL,
+    ) {
+        Ok(current_user) => current_user,
+        Err(message) => {
+            return task_runner_mcp_error(request.id.unwrap_or(Value::Null), -32001, message)
+        }
     };
-    let is_requirement_planner =
-        binding.agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent;
     let is_chatos_plan = binding
         .task_profile
         .as_deref()
-        .is_some_and(|value| value.eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN));
+        .is_some_and(is_chatos_plan_task_profile);
+    let Some(tool_profile) = chatos_task_runner_tool_profile(binding.agent_key) else {
+        return task_runner_mcp_error(
+            request.id.unwrap_or(Value::Null),
+            -32001,
+            "configured Agent has no ChatOS Task Runner tool profile",
+        );
+    };
     let request_context = McpRequestContext {
         project_id: Some(binding.project_id.clone()),
         source_session_id: binding.source_session_id.clone(),
@@ -449,14 +460,7 @@ async fn dispatch_bound_task_runner_tool(
         default_model_config_id: binding.default_model_config_id.clone(),
         workspace_dir: None,
         remote_server_config: None,
-        tool_profile: Some(
-            if is_requirement_planner {
-                "project_requirement_execution_planner"
-            } else {
-                "chatos_async_planner"
-            }
-            .to_string(),
-        ),
+        tool_profile: Some(tool_profile.to_string()),
         task_profile: binding.task_profile.clone(),
         builtin_prompt_locale: None,
         chatos_plan_mode: is_chatos_plan,
@@ -469,18 +473,35 @@ async fn dispatch_bound_task_runner_tool(
         .await
 }
 
+fn bound_task_creator(
+    binding: &McpManagementBinding,
+    require_contact_agent: bool,
+) -> Result<CurrentUser, String> {
+    let creator_id = match binding.contact_agent_id.clone() {
+        Some(contact_agent_id) => contact_agent_id,
+        None if require_contact_agent => {
+            return Err("ChatOS Task Runner tool call requires bound contact_agent_id".to_string())
+        }
+        None => format!("mcp-management:{}", binding.session_id),
+    };
+    Ok(CurrentUser {
+        id: creator_id.clone(),
+        username: creator_id.clone(),
+        display_name: creator_id,
+        role: crate::models::UserRole::Agent,
+        owner_user_id: Some(binding.owner_user_id.clone()),
+        owner_username: None,
+        owner_display_name: None,
+    })
+}
+
 async fn dispatch_bound_task_process_log(
     state: &AppState,
     request: JsonRpcRequest,
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
     let id = request.id.unwrap_or(Value::Null);
-    if !matches!(
-        binding.agent_key,
-        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-    ) {
+    if !is_task_runner_phase_agent(binding.agent_key) {
         return task_runner_mcp_error(
             id,
             -32001,
@@ -586,13 +607,8 @@ async fn dispatch_bound_ask_user(
     request: JsonRpcRequest,
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
-    use chatos_plugin_management_sdk::SystemAgentKey;
-
     let id = request.id.unwrap_or(Value::Null);
-    if !matches!(
-        binding.agent_key,
-        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-    ) {
+    if !is_task_runner_phase_agent(binding.agent_key) {
         return task_runner_mcp_error(
             id,
             -32001,

@@ -7,7 +7,6 @@ use std::path::Path as FsPath;
 use crate::core::user_visible_path::display_path;
 use crate::models::terminal::Terminal;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
-use crate::services::terminal_manager::TerminalsManager;
 
 use super::{DEFAULT_TERMINAL_HISTORY_LIMIT, MAX_TERMINAL_HISTORY_LIMIT};
 
@@ -64,13 +63,12 @@ pub(super) fn derive_terminal_name(path: &str) -> String {
         .unwrap_or_else(|| "Terminal".to_string())
 }
 
-pub(super) fn attach_busy(manager: &TerminalsManager, terminal: Terminal) -> Value {
+pub(super) fn terminal_response(terminal: Terminal) -> Value {
     let mut value = serde_json::to_value(&terminal).unwrap_or(Value::Null);
-    let busy = manager.get_busy(&terminal.id).unwrap_or(false);
     if let Value::Object(ref mut map) = value {
         let display_cwd = display_path(terminal.cwd.as_str());
         map.insert("cwd".to_string(), Value::String(display_cwd.clone()));
-        map.insert("busy".to_string(), Value::Bool(busy));
+        map.insert("busy".to_string(), Value::Bool(false));
         map.insert("display_cwd".to_string(), Value::String(display_cwd));
     }
     value

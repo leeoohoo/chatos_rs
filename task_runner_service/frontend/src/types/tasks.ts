@@ -38,7 +38,6 @@ export interface SelectedTaskPlugin {
   plugin_id: string;
   selected_skill_ids: string[];
   selected_command_ids: string[];
-  selected_agent_ids?: string[];
 }
 
 export interface TaskPluginCommandInvocation {
@@ -64,17 +63,6 @@ export interface SelectableTaskPluginCommand {
   allowed_tools?: string[];
 }
 
-export interface SelectableTaskPluginAgent {
-  agent_id: string;
-  display_name: string;
-  description?: string | null;
-  base_agent:
-    | 'task_runner_plan_phase'
-    | 'task_runner_run_phase';
-  allowed_tools?: string[];
-  max_iterations: number;
-}
-
 export interface SelectableTaskPlugin {
   id: string;
   plugin_key: string;
@@ -83,10 +71,12 @@ export interface SelectableTaskPlugin {
   version: string;
   release_id: string;
   artifact_sha256: string;
-  device_id: string;
+  device_id?: string | null;
+  execution_type: string;
+  requires_device: boolean;
+  component_hosts: Record<string, 'cloud' | 'local' | 'portable'>;
   component_keys: string[];
   commands: SelectableTaskPluginCommand[];
-  agents: SelectableTaskPluginAgent[];
 }
 
 export interface TaskPluginConnectorDevice {
@@ -115,7 +105,9 @@ export interface TaskPluginConnectorsResponse {
 export interface TaskCapabilityCatalogResponse {
   agent_key:
     | 'task_runner_plan_phase'
-    | 'task_runner_run_phase';
+    | 'task_runner_local_plan_phase'
+    | 'task_runner_run_phase'
+    | 'task_runner_local_run_phase';
   policy_revision: string;
   selectable_plugins: SelectableTaskPlugin[];
 }

@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::extract::Query;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_mcp_service::{
@@ -14,13 +14,13 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tracing::warn;
 
-use crate::api::projects::memory_sync::sync_active_project;
+use crate::api::projects::memory_sync::{sync_active_project, sync_archived_project};
 use crate::core::auth::AuthUser;
-use crate::core::project_execution::require_local_connector_desktop;
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
 use crate::models::project::{Project, ProjectService};
+use crate::models::remote_connection::RemoteConnection;
 use crate::services::realtime::publish_projects_updated;
 
 mod connector_client;
@@ -32,8 +32,10 @@ mod types;
 
 use connector_client::{
     connector_delete_json, connector_get_json, connector_post_json,
-    connector_post_json_with_headers, local_connector_mcp_relay_path,
+    connector_post_json_with_headers, connector_post_json_with_timeout,
+    local_connector_mcp_relay_path,
 };
+pub(crate) use connector_client::{local_connector_tls_connector, local_connector_websocket_url};
 use directory_payload::local_connector_directory_list_payload;
 pub(crate) use project_reconciliation::reconcile_local_connector_project;
 pub(crate) use root_path::{
@@ -44,11 +46,14 @@ use root_path::{
     local_relative_basename, sanitize_optional_local_relative_path,
     sanitize_required_local_relative_path,
 };
-pub(crate) use terminal_relay::{create_local_terminal_session, send_local_terminal_input};
+pub(crate) use terminal_relay::{
+    close_local_terminal_session, create_local_terminal_session, send_local_terminal_input,
+};
 use types::{
     CreateLocalConnectorProjectRequest, CreateLocalDirectoryRequest, CreateProjectBindingRequest,
-    DeviceQuery, LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorWorkspace,
-    LocalFsQuery, McpToolCallParams, McpToolCallRequest, WorkspaceQuery,
+    DeviceQuery, LocalConnectorDevice, LocalConnectorDirectoryCreateResponse,
+    LocalConnectorProjectBinding, LocalConnectorWorkspace, LocalFsQuery, McpToolCallParams,
+    McpToolCallRequest, RelayWorkspaceDirectoryCreateRequest, WorkspaceQuery,
 };
 const LOCAL_CONNECTOR_BINDING_MODE_MCP: &str = "local_mcp";
 const LOCAL_CONNECTOR_BINDING_MODE_TERMINAL: &str = "local_terminal";
@@ -70,14 +75,159 @@ pub fn router() -> Router {
         )
 }
 
+pub(crate) async fn test_remote_connection_via_connector(
+    connection: &RemoteConnection,
+    verification_code: Option<&str>,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/test",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    connector_post_json(
+        path.as_str(),
+        &json!({
+            "workspace_id": connection.local_connector_workspace_id,
+            "connection": remote_connection_execution_payload(connection),
+            "verification_code": verification_code,
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn run_remote_command_via_connector(
+    connection: &RemoteConnection,
+    command: &str,
+    timeout: Duration,
+    verification_code: Option<&str>,
+) -> Result<String, String> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/command",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    let timeout_ms = timeout.as_millis().clamp(1_000, 600_000) as u64;
+    let response = connector_post_json_with_timeout::<Value, _>(
+        path.as_str(),
+        &json!({
+            "workspace_id": connection.local_connector_workspace_id,
+            "connection": remote_connection_execution_payload(connection),
+            "command": command,
+            "timeout_ms": timeout_ms,
+            "verification_code": verification_code,
+        }),
+        timeout.saturating_add(Duration::from_secs(10)),
+    )
+    .await
+    .map_err(connector_remote_execution_error)?;
+    response
+        .get("output")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "Local Connector 远程命令响应缺少 output".to_string())
+}
+
+pub(crate) async fn close_remote_terminal_via_connector(
+    connection: &RemoteConnection,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/terminal/close",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    connector_post_json(
+        path.as_str(),
+        &json!({
+            "workspace_id": connection.local_connector_workspace_id,
+            "terminal_session_id": connection.id,
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn remote_sftp_via_connector(
+    connection: &RemoteConnection,
+    operation: &str,
+    payload: Value,
+    verification_code: Option<&str>,
+    timeout: Duration,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/remote-connections/sftp",
+        urlencoding::encode(connection.local_connector_device_id.as_str())
+    );
+    let mut body = match payload {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    body.insert(
+        "workspace_id".to_string(),
+        Value::String(connection.local_connector_workspace_id.clone()),
+    );
+    body.insert(
+        "connection_id".to_string(),
+        Value::String(connection.id.clone()),
+    );
+    body.insert(
+        "operation".to_string(),
+        Value::String(operation.to_string()),
+    );
+    body.insert(
+        "connection".to_string(),
+        remote_connection_execution_payload(connection),
+    );
+    if let Some(code) = verification_code {
+        body.insert(
+            "verification_code".to_string(),
+            Value::String(code.to_string()),
+        );
+    }
+    connector_post_json_with_timeout(
+        path.as_str(),
+        &Value::Object(body),
+        timeout.max(Duration::from_secs(20)),
+    )
+    .await
+}
+
+pub(crate) fn remote_connection_execution_payload(connection: &RemoteConnection) -> Value {
+    json!({
+        "host": connection.host,
+        "port": connection.port,
+        "username": connection.username,
+        "auth_type": connection.auth_type,
+        "password": connection.password,
+        "private_key_path": connection.private_key_path,
+        "certificate_path": connection.certificate_path,
+        "host_key_policy": connection.host_key_policy,
+        "jump_enabled": connection.jump_enabled,
+        "jump_host": connection.jump_host,
+        "jump_port": connection.jump_port,
+        "jump_username": connection.jump_username,
+        "jump_private_key_path": connection.jump_private_key_path,
+        "jump_certificate_path": connection.jump_certificate_path,
+        "jump_password": connection.jump_password,
+    })
+}
+
+pub(crate) fn connector_remote_execution_error(error: (StatusCode, Json<Value>)) -> String {
+    let (_, Json(value)) = error;
+    if value.get("code").and_then(Value::as_str) == Some("second_factor_required") {
+        let prompt = value
+            .get("challenge_prompt")
+            .and_then(Value::as_str)
+            .unwrap_or("请输入验证码 / OTP");
+        return format!("__CHATOS_SECOND_FACTOR_REQUIRED__:{prompt}");
+    }
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("detail").and_then(Value::as_str))
+        .unwrap_or("Local Connector 远程执行失败")
+        .to_string()
+}
+
 async fn list_devices(
     auth: AuthUser,
-    headers: HeaderMap,
     Query(query): Query<DeviceQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     if let Err(err) = resolve_user_id(query.user_id, &auth) {
         return err;
     }
@@ -91,12 +241,8 @@ async fn list_devices(
 
 async fn list_workspaces(
     auth: AuthUser,
-    headers: HeaderMap,
     Query(query): Query<WorkspaceQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     let _ = auth;
     let devices =
         match connector_get_json::<Vec<LocalConnectorDevice>>("/api/local-connectors/devices", &[])
@@ -148,12 +294,8 @@ async fn list_workspaces(
 
 async fn list_directory(
     auth: AuthUser,
-    headers: HeaderMap,
     Query(query): Query<LocalFsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     if let Err(err) = resolve_user_id(query.user_id, &auth) {
         return err;
     }
@@ -193,12 +335,8 @@ async fn list_directory(
 
 async fn create_directory(
     auth: AuthUser,
-    headers: HeaderMap,
     Json(req): Json<CreateLocalDirectoryRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     if let Err(err) = resolve_user_id(req.user_id, &auth) {
         return err;
     }
@@ -217,33 +355,15 @@ async fn create_directory(
         Ok(value) => value,
         Err(err) => return err,
     };
-    match call_local_mcp_tool(
-        device_id.as_str(),
-        workspace_id.as_str(),
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_TERMINAL],
-        "execute_command",
-        json!({
-            "path": ".",
-            "common": format!("mkdir -p -- {}", shell_quote(path.as_str())),
-            "background": false,
-        }),
-    )
-    .await
+    match create_local_connector_directory(device_id.as_str(), workspace_id.as_str(), path.as_str())
+        .await
     {
-        Ok(value) if value.get("exit_code").and_then(Value::as_i64).unwrap_or(0) == 0 => (
+        Ok(value) => (
             StatusCode::OK,
             Json(json!({
-                "path": path,
-                "created": true,
+                "path": value.path,
+                "created": value.created,
             })),
-        ),
-        Ok(value) => error(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "error": "Local Connector 创建目录失败",
-                "detail": value,
-            }),
         ),
         Err(err) => err,
     }
@@ -251,12 +371,8 @@ async fn create_directory(
 
 async fn create_project(
     auth: AuthUser,
-    headers: HeaderMap,
     Json(req): Json<CreateLocalConnectorProjectRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     let user_id = match resolve_user_id(req.user_id, &auth) {
         Ok(user_id) => user_id,
         Err(err) => return err,
@@ -337,8 +453,13 @@ async fn create_project(
         {
             Ok(binding) => bindings.push(binding),
             Err(err) => {
-                rollback_local_connector_project(saved.id.as_str(), &bindings).await;
-                return err;
+                return project_create_error_with_rollback(
+                    saved.clone(),
+                    bindings.as_slice(),
+                    err,
+                    false,
+                )
+                .await;
             }
         }
     }
@@ -349,14 +470,20 @@ async fn create_project(
             error = err.as_str(),
             "sync memory project failed after local connector project create"
         );
-        rollback_local_connector_project(saved.id.as_str(), &bindings).await;
-        return error(
+        let failure = error(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({
                 "error": "sync memory project failed",
                 "detail": err,
             }),
         );
+        return project_create_error_with_rollback(
+            saved.clone(),
+            bindings.as_slice(),
+            failure,
+            true,
+        )
+        .await;
     }
 
     publish_projects_updated(
@@ -512,11 +639,21 @@ fn extract_mcp_tool_result(response: Value) -> Result<Value, (StatusCode, Json<V
     })
 }
 
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
+pub(crate) async fn create_local_connector_directory(
+    device_id: &str,
+    workspace_id: &str,
+    path: &str,
+) -> Result<LocalConnectorDirectoryCreateResponse, (StatusCode, Json<Value>)> {
+    let relay_path = format!(
+        "/api/local-connectors/relay/{}/workspaces/{}/directories",
+        urlencoding::encode(device_id),
+        urlencoding::encode(workspace_id)
+    );
+    connector_post_json::<LocalConnectorDirectoryCreateResponse, _>(
+        relay_path.as_str(),
+        &RelayWorkspaceDirectoryCreateRequest { path },
+    )
+    .await
 }
 
 async fn create_project_binding(
@@ -596,18 +733,93 @@ async fn load_owned_online_workspace(
     Ok((device, workspace))
 }
 
-async fn rollback_local_connector_project(
-    project_id: &str,
+pub(crate) async fn validate_local_connector_execution_target(
+    device_id: &str,
+    workspace_id: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let _device = load_owned_device(device_id).await?;
+    let workspace = load_owned_workspace(device_id, workspace_id).await?;
+    if workspace.status != LOCAL_CONNECTOR_WORKSPACE_ACTIVE {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "Local Connector workspace 已停用",
+        ));
+    }
+    Ok(())
+}
+
+async fn project_create_error_with_rollback(
+    project: Project,
     bindings: &[LocalConnectorProjectBinding],
-) {
+    err: (StatusCode, Json<Value>),
+    compensate_memory: bool,
+) -> (StatusCode, Json<Value>) {
+    let rollback_result =
+        rollback_local_connector_project(&project, bindings, compensate_memory).await;
+    match rollback_result {
+        Ok(()) => err,
+        Err(rollback_error) => rollback_incomplete_response(err, rollback_error),
+    }
+}
+
+async fn rollback_local_connector_project(
+    project: &Project,
+    bindings: &[LocalConnectorProjectBinding],
+    compensate_memory: bool,
+) -> Result<(), String> {
+    let mut failures = Vec::new();
     for binding in bindings {
         let path = format!(
             "/api/local-connectors/project-bindings/{}",
             urlencoding::encode(binding.id.as_str())
         );
-        let _ = connector_delete_json(path.as_str()).await;
+        if let Err((status, detail)) = connector_delete_json(path.as_str()).await {
+            failures.push(format!(
+                "delete binding {} failed with {}: {}",
+                binding.id,
+                status,
+                response_summary(&detail.0)
+            ));
+        }
     }
-    let _ = ProjectService::delete(project_id).await;
+    if let Err(err) = ProjectService::delete(project.id.as_str()).await {
+        failures.push(format!("delete project {} failed: {err}", project.id));
+    }
+    if compensate_memory {
+        if let Err(err) = sync_archived_project(project).await {
+            failures.push(format!("archive memory project failed: {err}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+fn rollback_incomplete_response(
+    err: (StatusCode, Json<Value>),
+    rollback_error: String,
+) -> (StatusCode, Json<Value>) {
+    let (status, Json(detail)) = err;
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "error": "Local Connector 项目创建失败，且回滚不完整",
+            "original_status": status.as_u16(),
+            "detail": detail,
+            "rollback_error": rollback_error,
+        })),
+    )
+}
+
+fn response_summary(value: &Value) -> String {
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("detail").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 fn required_text(value: Option<String>, field: &str) -> Result<String, (StatusCode, Json<Value>)> {

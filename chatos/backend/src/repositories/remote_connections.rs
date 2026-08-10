@@ -63,6 +63,14 @@ pub(super) fn normalize_doc(doc: &Document) -> Option<RemoteConnection> {
             .get_str("host_key_policy")
             .unwrap_or("strict")
             .to_string(),
+        local_connector_device_id: doc
+            .get_str("local_connector_device_id")
+            .unwrap_or_default()
+            .to_string(),
+        local_connector_workspace_id: doc
+            .get_str("local_connector_workspace_id")
+            .unwrap_or_default()
+            .to_string(),
         jump_enabled,
         jump_connection_id: doc
             .get_str("jump_connection_id")

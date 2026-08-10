@@ -11,10 +11,12 @@ use serde_json::Value;
 use crate::tool_registry::{async_text_tool_handler, block_on_result, text_result, ToolRegistry};
 
 mod parsing;
+mod preflight;
 mod schema;
 
 use self::parsing::{coerce_process_data, required_trimmed_string};
 pub use self::parsing::{coerce_process_identifier, resolve_wait_timeout_ms};
+use self::preflight::validate_command_preflight;
 use self::schema::{
     execute_command_schema, process_compat_schema, process_kill_schema, process_list_schema,
     process_log_schema, process_poll_schema, process_wait_schema, process_write_schema,
@@ -223,7 +225,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "execute_command",
-            "Run a shell command in the current project workspace with path switching. Use `path` as a project-root-relative directory; omit it to run at the project root. Use background=true for long-running commands and track them with process_poll/process_wait.",
+            "Run a shell command in the current project workspace with path switching. Use `path` as a project-root-relative directory; omit it to run at the project root. Change project file content with the dedicated file modification tools, not Python/Node scripts, shell redirection, tee, in-place editors, or patch utilities. Node.js test, build, lint, and package-exec commands require an installed dependency state and may not mask failures with `|| true`; install dependencies first when the structured preflight result requires it. Use background=true for long-running commands and track them with process_poll/process_wait.",
             execute_command_schema(),
             async_text_tool_handler(move |args| {
                 let path = args
@@ -272,6 +274,11 @@ impl TerminalControllerService {
                 let ctx = bound.clone();
                 let store = store.inner();
                 Ok(async move {
+                    validate_command_preflight(
+                        ctx.root.as_path(),
+                        path.as_str(),
+                        command.as_str(),
+                    )?;
                     store
                         .execute_command(ctx, path, command, background, permissions)
                         .await

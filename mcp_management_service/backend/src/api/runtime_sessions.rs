@@ -6,6 +6,10 @@ use std::collections::{HashMap, HashSet};
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use chatos_agent::{
+    is_chatos_callback_agent, is_task_runner_phase_agent, parse_system_agent_key,
+    requires_expected_project_task_ids,
+};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute,
@@ -47,6 +51,11 @@ pub(super) async fn resolve_runtime_session(
         "expected_project_task_ids",
         200,
     )?;
+    let requested_mcp_ids = request
+        .requested_mcp_ids
+        .clone()
+        .map(|items| normalized_unique_items(items, "requested_mcp_ids", 200))
+        .transpose()?;
     let mut project_context = state
         .project_context_client
         .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
@@ -95,6 +104,7 @@ pub(super) async fn resolve_runtime_session(
     if !capabilities.agent_enabled {
         return Err(ApiError::conflict("configured Agent is disabled"));
     }
+    apply_requested_mcp_scope(&mut capabilities, requested_mcp_ids.as_deref())?;
     let session_id = format!("mcp_session_{}", Uuid::new_v4().simple());
     let expires_at_unix = state
         .runtime_grants
@@ -164,7 +174,9 @@ pub(super) async fn resolve_runtime_session(
             request.owner_user_id.trim(),
             agent_key,
             request.project_id.trim(),
+            request.run_id.as_deref(),
             request.source_session_id.as_deref(),
+            sandbox_target.as_ref(),
             expires_at_unix,
         )
         .await;
@@ -531,7 +543,24 @@ pub(super) async fn close_runtime_session(
             "runtime session was already closed or expired",
         ));
     };
+    let reclaimed_invocations = state
+        .runtime_invocations
+        .close_session(snapshot.session_id.as_str())
+        .await;
     state.providers.close_session(&snapshot).await;
+    let reclaimed_invocations = reclaimed_invocations.map_err(|error| {
+        tracing::error!(
+            session_id = snapshot.session_id.as_str(),
+            error = error.as_str(),
+            "close active Runtime Invocations for Runtime Session failed"
+        );
+        ApiError::internal(error)
+    })?;
+    tracing::info!(
+        session_id = snapshot.session_id.as_str(),
+        reclaimed_invocations,
+        "closed Runtime Session active invocations"
+    );
     record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "close", "succeeded");
     Ok(Json(CloseRuntimeSessionResponse {
         session_id: snapshot.session_id.clone(),
@@ -583,6 +612,41 @@ fn apply_live_tool_snapshots(
     }
 }
 
+fn apply_requested_mcp_scope(
+    capabilities: &mut chatos_plugin_management_sdk::ResolvedAgentCapabilities,
+    requested_mcp_ids: Option<&[String]>,
+) -> Result<(), ApiError> {
+    let Some(requested_mcp_ids) = requested_mcp_ids else {
+        return Ok(());
+    };
+    let requested = requested_mcp_ids.iter().cloned().collect::<HashSet<_>>();
+    let available = capabilities
+        .mcps
+        .iter()
+        .map(|resolved| resolved.resource.id.clone())
+        .collect::<HashSet<_>>();
+    let mut unknown = requested
+        .difference(&available)
+        .cloned()
+        .collect::<Vec<_>>();
+    unknown.sort();
+    if !unknown.is_empty() {
+        return Err(ApiError::conflict(format!(
+            "requested MCP resources are not present in the configured Agent policy: {}",
+            unknown.join(", ")
+        )));
+    }
+    capabilities.mcps.retain(|resolved| {
+        resolved.binding.required || requested.contains(resolved.resource.id.as_str())
+    });
+    for resolved in &mut capabilities.mcps {
+        if requested.contains(resolved.resource.id.as_str()) {
+            resolved.binding.required = true;
+        }
+    }
+    Ok(())
+}
+
 fn capability_runtime_provider(
     context: &chatos_mcp_management_sdk::ProjectExecutionContext,
 ) -> &'static str {
@@ -603,9 +667,7 @@ fn capability_runtime_provider(
 
 fn parse_agent_key(value: &str) -> Result<SystemAgentKey, ApiError> {
     let value = value.trim();
-    let agent_key = SystemAgentKey::ALL
-        .into_iter()
-        .find(|key| key.as_str() == value)
+    let agent_key = parse_system_agent_key(value)
         .ok_or_else(|| ApiError::bad_request(format!("unknown system Agent key: {value}")))?;
     let tool_plane = chatos_agent::agent_descriptor(agent_key).tool_plane;
     if !tool_plane.uses_managed_gateway() {
@@ -686,12 +748,7 @@ fn validate_task_runner_provider_context(
             && route.provider_ref.as_deref() == Some("chatos")
     });
     if has_route(SystemMcpKey::TaskRunnerService) {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::ChatosConversationAgent
-                | SystemAgentKey::ChatosPlanningAgent
-                | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        ) {
+        if !is_chatos_callback_agent(agent_key) {
             return Err(ApiError::conflict(
                 "Task Runner Service MCP is only valid for ChatOS task planning Agents",
             ));
@@ -709,19 +766,14 @@ fn validate_task_runner_provider_context(
                 )));
             }
         }
-        if agent_key == SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-            && expected_project_task_ids.is_empty()
-        {
+        if requires_expected_project_task_ids(agent_key) && expected_project_task_ids.is_empty() {
             return Err(ApiError::conflict(
                 "project requirement execution planner requires expected_project_task_ids",
             ));
         }
     }
     if has_route(SystemMcpKey::TaskProcessLog) {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-        ) {
+        if !is_task_runner_phase_agent(agent_key) {
             return Err(ApiError::conflict(
                 "Task Process Log MCP is only valid for Task Runner phase Agents",
             ));
@@ -738,10 +790,7 @@ fn validate_task_runner_provider_context(
         }
     }
     if has_task_runner_ask_user_route {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-        ) {
+        if !is_task_runner_phase_agent(agent_key) {
             return Err(ApiError::conflict(
                 "Task Runner Ask User MCP is only valid for Task Runner phase Agents",
             ));
@@ -758,12 +807,7 @@ fn validate_task_runner_provider_context(
         }
     }
     if has_chatos_ask_user_route {
-        if !matches!(
-            agent_key,
-            SystemAgentKey::ChatosConversationAgent
-                | SystemAgentKey::ChatosPlanningAgent
-                | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        ) {
+        if !is_chatos_callback_agent(agent_key) {
             return Err(ApiError::conflict(
                 "ChatOS Ask User MCP is only valid for ChatOS conversation Agents",
             ));

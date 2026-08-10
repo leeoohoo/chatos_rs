@@ -33,7 +33,6 @@ const plugins: TaskRunnerSelectablePluginResponse[] = [{
     argument_hint: '[path]',
     requires_confirmation: true,
   }],
-  agents: [],
 }];
 
 describe('Plugin Command composer helpers', () => {

@@ -16,6 +16,10 @@ pub struct RemoteServerRecord {
     pub certificate_path: Option<String>,
     pub default_remote_path: Option<String>,
     pub host_key_policy: String,
+    #[serde(default)]
+    pub local_connector_device_id: Option<String>,
+    #[serde(default)]
+    pub local_connector_workspace_id: Option<String>,
     pub enabled: bool,
     pub last_tested_at: Option<String>,
     pub last_test_status: Option<String>,
@@ -51,6 +55,8 @@ pub struct CreateRemoteServerRequest {
     pub certificate_path: Option<String>,
     pub default_remote_path: Option<String>,
     pub host_key_policy: Option<String>,
+    pub local_connector_device_id: Option<String>,
+    pub local_connector_workspace_id: Option<String>,
     pub enabled: Option<bool>,
 }
 
@@ -66,6 +72,8 @@ pub struct UpdateRemoteServerRequest {
     pub certificate_path: Option<String>,
     pub default_remote_path: Option<String>,
     pub host_key_policy: Option<String>,
+    pub local_connector_device_id: Option<String>,
+    pub local_connector_workspace_id: Option<String>,
     pub enabled: Option<bool>,
 }
 
@@ -81,6 +89,8 @@ pub struct TestRemoteServerRequest {
     pub certificate_path: Option<String>,
     pub default_remote_path: Option<String>,
     pub host_key_policy: Option<String>,
+    pub local_connector_device_id: Option<String>,
+    pub local_connector_workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

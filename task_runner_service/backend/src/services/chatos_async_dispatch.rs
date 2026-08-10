@@ -432,4 +432,44 @@ mod tests {
         assert_ne!(runs[0].task_id, runs[1].task_id);
         assert_eq!(store.list_runs(None).await.expect("runs").len(), 2);
     }
+
+    #[tokio::test]
+    async fn blocked_prerequisite_does_not_release_dependent_task() {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        store
+            .save_model_config(model_config())
+            .await
+            .expect("save model");
+        let mut prerequisite = ready_task("blocked-prerequisite");
+        prerequisite.status = TaskStatus::Blocked;
+        store
+            .save_task(prerequisite)
+            .await
+            .expect("save prerequisite");
+        let dependent = store
+            .save_task(ready_task("dependent"))
+            .await
+            .expect("save dependent");
+        store
+            .set_task_prerequisites(
+                dependent.id.as_str(),
+                vec!["blocked-prerequisite".to_string()],
+            )
+            .await
+            .expect("save prerequisites");
+        let service = RunService::new(
+            config,
+            store.clone(),
+            AskUserPromptService::new(store.clone()),
+        );
+
+        let runs = service
+            .dispatch_ready_chatos_async_tasks(&[dependent])
+            .await
+            .expect("dispatch DAG wave");
+
+        assert!(runs.is_empty());
+        assert!(store.list_runs(None).await.expect("runs").is_empty());
+    }
 }

@@ -155,10 +155,14 @@ use crate::catalog::{
     SANDBOX_MANAGER_LEASE_TTL_SECONDS_CONFIG_KEY, SANDBOX_MANAGER_MONGODB_DATABASE_CONFIG_KEY,
     SANDBOX_MANAGER_PORT_CONFIG_KEY, SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     TASK_RUNNER_ADMIN_DISPLAY_NAME_CONFIG_KEY, TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY,
-    TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY, TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY,
-    TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
-    TASK_RUNNER_DATABASE_URL_CONFIG_KEY, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
-    TASK_RUNNER_HOST_CONFIG_KEY, TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
+    TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY,
+    TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
+    TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+    TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY,
+    TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY, TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY,
+    TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY, TASK_RUNNER_DATABASE_URL_CONFIG_KEY,
+    TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY, TASK_RUNNER_HOST_CONFIG_KEY,
+    TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
     TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY, TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY,
@@ -182,7 +186,13 @@ use crate::catalog::{
     TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY,
+    TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
+    TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+    TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY,
     TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY, TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY,
+    TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+    TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
+    TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY, TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
     TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY,
     TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY,
     USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
@@ -768,6 +778,23 @@ fn task_runner_runtime_backfill_adds_all_service_defaults() {
     );
     assert!(changed_keys.contains(&TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys.contains(&TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY.to_string())
+    );
+    assert!(changed_keys
+        .contains(&TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string()));
@@ -1741,7 +1768,7 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
         ),
         (
             LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY.to_string(),
-            json!("redis://127.0.0.1:6379/0"),
+            json!("redis://:change_me_valkey_password@127.0.0.1:6379/0"),
         ),
         (
             LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY.to_string(),
@@ -1851,7 +1878,7 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
     );
     assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_VALKEY_URL"),
-        Some(&"redis://127.0.0.1:6379/0".to_string())
+        Some(&"redis://:change_me_valkey_password@127.0.0.1:6379/0".to_string())
     );
     assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_VALKEY_KEY_PREFIX"),
@@ -2616,6 +2643,10 @@ fn project_service_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys
         .contains(&PROJECT_SERVICE_CLOUD_PROJECT_MAX_UNPACKED_BYTES_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
 }
 
@@ -2709,6 +2740,14 @@ fn project_service_snapshot_exposes_runtime_environment_aliases() {
         (
             PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(120_000),
+        ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY.to_string(),
+            json!(30 * 60 * 1_000),
+        ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY.to_string(),
+            json!(35 * 60 * 1_000),
         ),
     ]);
 
@@ -2805,6 +2844,18 @@ fn project_service_snapshot_exposes_runtime_environment_aliases() {
             .env
             .get("PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS"),
         Some(&"120000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS"),
+        Some(&(30 * 60 * 1_000).to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS"),
+        Some(&(35 * 60 * 1_000).to_string())
     );
 }
 

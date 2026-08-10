@@ -20,6 +20,8 @@ pub(super) struct CreateRemoteConnectionRequest {
     pub(super) certificate_path: Option<String>,
     pub(super) default_remote_path: Option<String>,
     pub(super) host_key_policy: Option<String>,
+    pub(super) local_connector_device_id: Option<String>,
+    pub(super) local_connector_workspace_id: Option<String>,
     pub(super) jump_enabled: Option<bool>,
     pub(super) jump_connection_id: Option<String>,
     pub(super) jump_host: Option<String>,
@@ -43,6 +45,8 @@ pub(super) struct UpdateRemoteConnectionRequest {
     pub(super) certificate_path: Option<String>,
     pub(super) default_remote_path: Option<String>,
     pub(super) host_key_policy: Option<String>,
+    pub(super) local_connector_device_id: Option<String>,
+    pub(super) local_connector_workspace_id: Option<String>,
     pub(super) jump_enabled: Option<bool>,
     pub(super) jump_connection_id: Option<String>,
     pub(super) jump_host: Option<String>,
@@ -71,14 +75,6 @@ pub(super) enum WsInput {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub(super) enum WsOutput {
-    #[serde(rename = "output")]
-    Output { data: String },
-    #[serde(rename = "snapshot")]
-    Snapshot { data: String },
-    #[serde(rename = "exit")]
-    Exit { code: i32 },
-    #[serde(rename = "state")]
-    State { busy: bool },
     #[serde(rename = "error")]
     Error {
         error: String,
@@ -88,21 +84,4 @@ pub(super) enum WsOutput {
     },
     #[serde(rename = "pong")]
     Pong { timestamp: String },
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct SftpTransferStatus {
-    pub(super) id: String,
-    pub(super) connection_id: String,
-    pub(super) user_id: String,
-    pub(super) direction: String,
-    pub(super) state: String,
-    pub(super) total_bytes: Option<u64>,
-    pub(super) transferred_bytes: u64,
-    pub(super) percent: Option<f64>,
-    pub(super) current_path: Option<String>,
-    pub(super) message: Option<String>,
-    pub(super) error: Option<String>,
-    pub(super) created_at: String,
-    pub(super) updated_at: String,
 }

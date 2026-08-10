@@ -2,10 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::config::AppConfig;
 
 impl RemoteServerService {
-    pub(crate) fn new(store: AppStore) -> Self {
-        Self { store }
+    pub(crate) fn new(config: AppConfig, store: AppStore) -> Self {
+        Self { config, store }
     }
 
     async fn first_task_referencing_server(
@@ -85,6 +86,12 @@ impl RemoteServerService {
         if let Some(host_key_policy) = patch.host_key_policy {
             record.host_key_policy =
                 normalize_remote_server_host_key_policy(Some(host_key_policy.as_str()))?;
+        }
+        if let Some(device_id) = patch.local_connector_device_id {
+            record.local_connector_device_id = normalized_optional(Some(device_id));
+        }
+        if let Some(workspace_id) = patch.local_connector_workspace_id {
+            record.local_connector_workspace_id = normalized_optional(Some(workspace_id));
         }
         if let Some(enabled) = patch.enabled {
             if !enabled {
@@ -178,7 +185,7 @@ mod tests {
     async fn test_service() -> RemoteServerService {
         let config = test_config();
         let store = AppStore::new(&config).await.expect("store");
-        RemoteServerService::new(store)
+        RemoteServerService::new(config, store)
     }
 
     fn agent_user(owner_user_id: &str) -> CurrentUser {
@@ -205,6 +212,8 @@ mod tests {
             certificate_path: None,
             default_remote_path: None,
             host_key_policy: Some("accept_new".to_string()),
+            local_connector_device_id: Some("device-1".to_string()),
+            local_connector_workspace_id: Some("workspace-1".to_string()),
             enabled: Some(true),
         }
     }

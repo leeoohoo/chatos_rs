@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::cmp::Ordering;
-
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
@@ -10,13 +8,13 @@ use chatos_mcp::{RemoteConnectionControllerContext, RemoteConnectionControllerSt
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
-use super::ssh::{
-    download_sftp_file, run_ssh_command, test_remote_server_connectivity, upload_sftp_file,
+use super::connector::{remote_sftp_request, run_remote_command, test_remote_server_connectivity};
+use super::store_helpers::{
+    persist_test_result, resolve_enabled_server, server_owned_by, touch_server,
 };
-use super::store_helpers::{persist_test_result, resolve_enabled_server, touch_server};
 use super::support::{
-    command_danger_reason, normalize_remote_path, parse_directory_entries, resolve_connection_id,
-    shell_quote, split_file_output, truncate_text, ConnectionSummary,
+    command_danger_reason, normalize_remote_path, resolve_connection_id, truncate_text,
+    ConnectionSummary,
 };
 use super::TaskRunnerRemoteConnectionStore;
 
@@ -26,12 +24,17 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         &self,
         context: RemoteConnectionControllerContext,
     ) -> Result<Value, String> {
+        let owner_user_id = owner_user_id(&context)?;
         let mut list = self
             .store
             .list_remote_servers()
             .await?
             .into_iter()
-            .filter(|item| item.enabled)
+            .filter(|item| {
+                item.enabled
+                    && has_local_connector_binding(item)
+                    && server_owned_by(item, owner_user_id)
+            })
             .collect::<Vec<_>>();
         if let Some(default_connection_id) = context
             .default_remote_connection_id
@@ -67,8 +70,15 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         connection_id: Option<String>,
     ) -> Result<Value, String> {
         let connection_id = resolve_connection_id(&context, connection_id)?;
-        let server = resolve_enabled_server(self, &connection_id).await?;
-        let response = match test_remote_server_connectivity(&server, Some(server.id.clone())).await
+        let owner_user_id = owner_user_id(&context)?;
+        let server = resolve_enabled_server(self, &connection_id, owner_user_id).await?;
+        let response = match test_remote_server_connectivity(
+            &self.config,
+            owner_user_id,
+            &server,
+            Some(server.id.clone()),
+        )
+        .await
         {
             Ok(response) => {
                 persist_test_result(self, &server.id, true, response.remote_host.clone()).await?;
@@ -113,7 +123,8 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         }
 
         let connection_id = resolve_connection_id(&context, connection_id)?;
-        let server = resolve_enabled_server(self, &connection_id).await?;
+        let owner_user_id = owner_user_id(&context)?;
+        let server = resolve_enabled_server(self, &connection_id, owner_user_id).await?;
         let timeout = timeout_seconds
             .unwrap_or(context.command_timeout_seconds)
             .clamp(1, context.max_command_timeout_seconds);
@@ -121,8 +132,14 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
             .unwrap_or(context.max_output_chars)
             .clamp(128, context.max_output_chars.max(128));
 
-        let output =
-            run_ssh_command(&server, command.as_str(), Duration::from_secs(timeout)).await?;
+        let output = run_remote_command(
+            &self.config,
+            owner_user_id,
+            &server,
+            command.as_str(),
+            Duration::from_secs(timeout),
+        )
+        .await?;
         let (output_text, truncated) = truncate_text(output.as_str(), output_limit);
         touch_server(self, &server.id).await?;
 
@@ -148,7 +165,8 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         limit: Option<usize>,
     ) -> Result<Value, String> {
         let connection_id = resolve_connection_id(&context, connection_id)?;
-        let server = resolve_enabled_server(self, &connection_id).await?;
+        let owner_user_id = owner_user_id(&context)?;
+        let server = resolve_enabled_server(self, &connection_id, owner_user_id).await?;
         let normalized_path = normalize_remote_path(
             path.as_deref()
                 .filter(|value| !value.trim().is_empty())
@@ -156,26 +174,20 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
                 .unwrap_or("."),
         );
         let entry_limit = limit.unwrap_or(200).clamp(1, 1000);
-        let script = format!(
-            "set -e; P={quoted}; if [ ! -d \"$P\" ]; then printf '__TASK_RUNNER_DIR_NOT_FOUND__\\n'; else cd \"$P\"; find . -mindepth 1 -maxdepth 1 -printf '%P\\t%y\\t%s\\t%T@\\n'; fi",
-            quoted = shell_quote(normalized_path.as_str()),
-        );
-        let output = run_ssh_command(
+        let response = remote_sftp_request(
+            &self.config,
+            owner_user_id,
             &server,
-            script.as_str(),
+            "list",
+            json!({ "path": normalized_path }),
             Duration::from_secs(context.command_timeout_seconds),
         )
         .await?;
-        if output.contains("__TASK_RUNNER_DIR_NOT_FOUND__") {
-            return Err(format!("远程目录不存在: {normalized_path}"));
-        }
-
-        let mut entries = parse_directory_entries(normalized_path.as_str(), output.as_str());
-        entries.sort_by(|left, right| match (left.is_dir, right.is_dir) {
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            _ => left.name.to_lowercase().cmp(&right.name.to_lowercase()),
-        });
+        let mut entries = response
+            .get("entries")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let truncated = entries.len() > entry_limit;
         if truncated {
             entries.truncate(entry_limit);
@@ -184,7 +196,7 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
 
         Ok(json!({
             "connection_id": server.id,
-            "path": normalized_path,
+            "path": response.get("path").cloned().unwrap_or_else(|| json!(normalized_path)),
             "count": entries.len(),
             "entries_truncated": truncated,
             "entries": entries,
@@ -199,34 +211,33 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         max_bytes: Option<usize>,
     ) -> Result<Value, String> {
         let connection_id = resolve_connection_id(&context, connection_id)?;
-        let server = resolve_enabled_server(self, &connection_id).await?;
+        let owner_user_id = owner_user_id(&context)?;
+        let server = resolve_enabled_server(self, &connection_id, owner_user_id).await?;
         let normalized_path = normalize_remote_path(path.as_str());
         let read_limit = max_bytes
             .unwrap_or(context.max_read_file_bytes)
             .clamp(1, context.max_read_file_bytes.max(1));
-        let script = format!(
-            "set -e; P={quoted}; if [ ! -f \"$P\" ]; then printf '__TASK_RUNNER_FILE_NOT_FOUND__\\n'; else SZ=$(wc -c < \"$P\" 2>/dev/null || echo 0); head -c {limit} \"$P\"; if [ \"$SZ\" -gt {limit} ]; then printf '\\n__TASK_RUNNER_FILE_TRUNCATED__ size=%s limit={limit}\\n' \"$SZ\"; fi; fi",
-            quoted = shell_quote(normalized_path.as_str()),
-            limit = read_limit,
-        );
-        let output = run_ssh_command(
+        let response = remote_sftp_request(
+            &self.config,
+            owner_user_id,
             &server,
-            script.as_str(),
+            "read_file",
+            json!({ "remote_path": normalized_path, "max_bytes": read_limit }),
             Duration::from_secs(context.command_timeout_seconds),
         )
         .await?;
-        if output.contains("__TASK_RUNNER_FILE_NOT_FOUND__") {
-            return Err(format!("远程文件不存在: {normalized_path}"));
-        }
-        let (content, truncated, source_size) = split_file_output(output);
+        let bytes = decode_sftp_content(&response)?;
+        let content = String::from_utf8(bytes).map_err(|_| {
+            "远程文件不是有效 UTF-8 文本；请使用 download_file encoding=\"base64\"".to_string()
+        })?;
         touch_server(self, &server.id).await?;
 
         Ok(json!({
             "connection_id": server.id,
             "path": normalized_path,
             "max_bytes": read_limit,
-            "source_size_bytes": source_size,
-            "truncated": truncated,
+            "source_size_bytes": response.get("source_size").cloned().unwrap_or(Value::Null),
+            "truncated": response.get("truncated").cloned().unwrap_or(json!(false)),
             "content": content,
         }))
     }
@@ -240,22 +251,26 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         max_bytes: Option<usize>,
     ) -> Result<Value, String> {
         let connection_id = resolve_connection_id(&context, connection_id)?;
-        let server = resolve_enabled_server(self, &connection_id).await?;
+        let owner_user_id = owner_user_id(&context)?;
+        let server = resolve_enabled_server(self, &connection_id, owner_user_id).await?;
         let normalized_path = normalize_remote_path(path.as_str());
         let transfer_limit = max_bytes
             .unwrap_or(context.max_read_file_bytes)
             .clamp(1, context.max_read_file_bytes.max(1));
-        let result = download_sftp_file(
+        let result = remote_sftp_request(
+            &self.config,
+            owner_user_id,
             &server,
-            normalized_path.as_str(),
-            transfer_limit,
+            "read_file",
+            json!({ "remote_path": normalized_path, "max_bytes": transfer_limit }),
             Duration::from_secs(context.command_timeout_seconds),
         )
         .await?;
-        let content_size_bytes = result.content.len();
+        let bytes = decode_sftp_content(&result)?;
+        let content_size_bytes = bytes.len();
         let content = match encoding.as_str() {
-            "base64" => BASE64_STANDARD.encode(result.content.as_slice()),
-            "text" => String::from_utf8(result.content).map_err(|_| {
+            "base64" => BASE64_STANDARD.encode(bytes.as_slice()),
+            "text" => String::from_utf8(bytes).map_err(|_| {
                 "远程文件不是有效 UTF-8 文本；请使用 encoding=\"base64\" 重新下载".to_string()
             })?,
             _ => return Err("encoding must be one of: text, base64".to_string()),
@@ -267,9 +282,9 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
             "path": normalized_path,
             "encoding": encoding,
             "max_bytes": transfer_limit,
-            "source_size_bytes": result.source_size,
+            "source_size_bytes": result.get("source_size").cloned().unwrap_or(Value::Null),
             "content_size_bytes": content_size_bytes,
-            "truncated": result.truncated,
+            "truncated": result.get("truncated").cloned().unwrap_or(json!(false)),
             "content": content,
         }))
     }
@@ -285,7 +300,8 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
         overwrite: bool,
     ) -> Result<Value, String> {
         let connection_id = resolve_connection_id(&context, connection_id)?;
-        let server = resolve_enabled_server(self, &connection_id).await?;
+        let owner_user_id = owner_user_id(&context)?;
+        let server = resolve_enabled_server(self, &connection_id, owner_user_id).await?;
         let normalized_path = normalize_remote_path(path.as_str());
         let bytes = match encoding.as_str() {
             "base64" => BASE64_STANDARD
@@ -302,15 +318,24 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
                 max_upload_bytes
             ));
         }
-        let bytes_written = upload_sftp_file(
+        let result = remote_sftp_request(
+            &self.config,
+            owner_user_id,
             &server,
-            normalized_path.as_str(),
-            bytes,
-            create_parent_dirs,
-            overwrite,
+            "write_file",
+            json!({
+                "remote_path": normalized_path,
+                "content_base64": BASE64_STANDARD.encode(bytes),
+                "create_parent_dirs": create_parent_dirs,
+                "overwrite": overwrite,
+            }),
             Duration::from_secs(context.command_timeout_seconds),
         )
         .await?;
+        let bytes_written = result
+            .get("bytes_written")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "Local Connector SFTP response is missing bytes_written".to_string())?;
         touch_server(self, &server.id).await?;
 
         Ok(json!({
@@ -322,4 +347,37 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
             "overwrite": overwrite,
         }))
     }
+}
+
+fn owner_user_id(context: &RemoteConnectionControllerContext) -> Result<&str, String> {
+    context
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "remote connection controller is missing owner user context".to_string())
+}
+
+fn decode_sftp_content(response: &Value) -> Result<Vec<u8>, String> {
+    BASE64_STANDARD
+        .decode(
+            response
+                .get("content_base64")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "Local Connector SFTP response is missing content_base64".to_string()
+                })?,
+        )
+        .map_err(|error| format!("decode Local Connector SFTP content failed: {error}"))
+}
+
+fn has_local_connector_binding(server: &crate::models::RemoteServerRecord) -> bool {
+    server
+        .local_connector_device_id
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        && server
+            .local_connector_workspace_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
 }

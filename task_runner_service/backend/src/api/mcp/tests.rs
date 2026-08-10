@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_agent::{SystemAgentKey, CHATOS_PLAN_TASK_PROFILE};
+
 use super::*;
 
 #[test]
@@ -12,7 +14,9 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
     );
     headers.insert(
         "x-mcp-management-agent-key",
-        " task_runner_run_phase ".parse().expect("valid header"),
+        format!(" {} ", SystemAgentKey::TaskRunnerRunPhase.as_str())
+            .parse()
+            .expect("valid header"),
     );
     headers.insert(
         "x-mcp-management-session-id",
@@ -43,8 +47,14 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         " message-1 ".parse().expect("valid header"),
     );
     headers.insert(
+        "x-mcp-management-contact-agent-id",
+        " chatos-agent-1 ".parse().expect("valid header"),
+    );
+    headers.insert(
         "x-mcp-management-task-profile",
-        " chatos_plan ".parse().expect("valid header"),
+        format!(" {CHATOS_PLAN_TASK_PROFILE} ")
+            .parse()
+            .expect("valid header"),
     );
     headers.insert(
         "x-mcp-management-expected-project-task-ids",
@@ -55,7 +65,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
 
     let binding = mcp_management_binding_from_headers(&headers).expect("valid binding");
     assert_eq!(binding.owner_user_id, "user-1");
-    assert_eq!(binding.agent_key.as_str(), "task_runner_run_phase");
+    assert_eq!(binding.agent_key, SystemAgentKey::TaskRunnerRunPhase);
     assert_eq!(binding.session_id, "session-1");
     assert_eq!(binding.session_expires_at_unix, 4_102_444_800);
     assert_eq!(binding.project_id, "project-1");
@@ -66,7 +76,11 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         Some("source-session-1")
     );
     assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
-    assert_eq!(binding.task_profile.as_deref(), Some("chatos_plan"));
+    assert_eq!(binding.contact_agent_id.as_deref(), Some("chatos-agent-1"));
+    assert_eq!(
+        binding.task_profile.as_deref(),
+        Some(CHATOS_PLAN_TASK_PROFILE)
+    );
     assert_eq!(
         binding.expected_project_task_ids,
         std::collections::BTreeSet::from([
@@ -97,6 +111,7 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
         task_id: Some("task-1".to_string()),
         source_session_id: None,
         source_user_message_id: None,
+        contact_agent_id: None,
         default_model_config_id: None,
         task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
         expected_project_task_ids: std::collections::BTreeSet::new(),
@@ -109,6 +124,40 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
     let mut expiring = binding;
     expiring.session_expires_at_unix = chrono::Utc::now().timestamp() + 60;
     assert!(bound_ask_user_prompt_timeout_ms(&expiring).is_err());
+}
+
+#[test]
+fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
+    let binding = McpManagementBinding {
+        owner_user_id: "user-1".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
+        session_id: "session-1".to_string(),
+        session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
+        project_id: "project-1".to_string(),
+        run_id: None,
+        turn_id: Some("turn-1".to_string()),
+        task_id: None,
+        source_session_id: Some("source-session-1".to_string()),
+        source_user_message_id: Some("message-1".to_string()),
+        contact_agent_id: Some("chatos-agent-1".to_string()),
+        default_model_config_id: None,
+        task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
+        expected_project_task_ids: std::collections::BTreeSet::new(),
+    };
+
+    let creator = bound_task_creator(&binding, true).expect("bound ChatOS creator");
+
+    assert_eq!(creator.id, "chatos-agent-1");
+    assert_eq!(creator.username, "chatos-agent-1");
+    assert_eq!(creator.display_name, "chatos-agent-1");
+    assert_eq!(creator.effective_owner_user_id(), Some("user-1"));
+
+    let mut missing_agent = binding;
+    missing_agent.contact_agent_id = None;
+    assert!(bound_task_creator(&missing_agent, true)
+        .expect_err("tool calls without a ChatOS Agent must fail")
+        .contains("contact_agent_id"));
+    assert!(bound_task_creator(&missing_agent, false).is_ok());
 }
 
 #[test]

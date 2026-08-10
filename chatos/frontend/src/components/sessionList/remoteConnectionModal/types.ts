@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { RemoteConnection } from '../../../types';
+import type { LocalConnectorWorkspaceOption } from '../CreateResourceModals';
 import type {
   HostKeyPolicy,
   JumpHostMode,
@@ -24,6 +25,10 @@ export interface RemoteConnectionModalProps {
   remoteCertificatePath: string;
   remoteDefaultPath: string;
   remoteHostKeyPolicy: HostKeyPolicy;
+  localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
+  localConnectorLoading: boolean;
+  localConnectorError: string | null;
+  remoteLocalConnectorWorkspaceId: string;
   remoteJumpEnabled: boolean;
   remoteJumpMode: JumpHostMode;
   remoteJumpConnectionId: string;
@@ -52,6 +57,8 @@ export interface RemoteConnectionModalProps {
   onRemoteCertificatePathChange: (value: string) => void;
   onRemoteDefaultPathChange: (value: string) => void;
   onRemoteHostKeyPolicyChange: (value: HostKeyPolicy) => void;
+  onRemoteLocalConnectorWorkspaceChange: (workspaceId: string) => void;
+  onRefreshLocalConnectorWorkspaces: () => void;
   onRemoteJumpEnabledChange: (value: boolean) => void;
   onRemoteJumpModeChange: (value: JumpHostMode) => void;
   onRemoteJumpConnectionIdChange: (value: string) => void;

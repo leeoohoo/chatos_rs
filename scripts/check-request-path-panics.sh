@@ -11,7 +11,7 @@ TARGETS=(
   "chatos/backend/src/api/fs"
   "chatos/backend/src/services/v2/ai_client/history_tools.rs"
   "chatos/backend/src/services/v2/ai_client/mod.rs"
-  "chatos/backend/src/services/mcp_loader.rs"
+  "chatos/backend/src/services/tool_runtime/loader.rs"
   "chatos/backend/src/services/user_settings.rs"
   "chatos/backend/src/utils/model_config.rs"
 )

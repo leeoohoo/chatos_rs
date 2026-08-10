@@ -30,6 +30,8 @@ export interface RemoteConnectionFormPayload {
   certificate_path?: string;
   default_remote_path?: string;
   host_key_policy?: HostKeyPolicy;
+  local_connector_device_id: string;
+  local_connector_workspace_id: string;
   jump_enabled?: boolean;
   jump_connection_id?: string;
   jump_host?: string;
@@ -51,6 +53,8 @@ export interface RemoteConnectionFormValues {
   certificatePath: string;
   defaultPath: string;
   hostKeyPolicy: HostKeyPolicy;
+  localConnectorDeviceId: string;
+  localConnectorWorkspaceId: string;
   jumpEnabled: boolean;
   jumpMode: JumpHostMode;
   jumpConnectionId: string;
@@ -160,7 +164,7 @@ export const getKeyFilePickerTitle = (target: KeyFilePickerTarget, t?: Translate
 export const buildRemoteConnectionPayload = (
   values: RemoteConnectionFormValues,
   availableRemoteConnections: RemoteConnection[] = [],
-  editingRemoteConnectionId?: string | null,
+  editingRemoteConnection?: RemoteConnection | null,
   t?: TranslateFn,
 ): { payload: RemoteConnectionFormPayload } | { error: string } => {
   const {
@@ -174,6 +178,8 @@ export const buildRemoteConnectionPayload = (
     certificatePath,
     defaultPath,
     hostKeyPolicy,
+    localConnectorDeviceId,
+    localConnectorWorkspaceId,
     jumpEnabled,
     jumpMode,
     jumpConnectionId,
@@ -185,19 +191,27 @@ export const buildRemoteConnectionPayload = (
     jumpPassword,
   } = values;
 
+  const editingRemoteConnectionId = editingRemoteConnection?.id ?? null;
+  const canReuseSavedPassword = editingRemoteConnection?.hasPassword === true;
+  const canReuseSavedPrivateKey = editingRemoteConnection?.hasPrivateKeyPath === true;
+  const canReuseSavedCertificate = editingRemoteConnection?.hasCertificatePath === true;
+
   if (!host.trim()) {
     return { error: translateSessionListMessage(t, 'remoteConnection.error.hostRequired') };
   }
   if (!username.trim()) {
     return { error: translateSessionListMessage(t, 'remoteConnection.error.usernameRequired') };
   }
-  if (authType === 'password' && !password.trim()) {
+  if (!localConnectorDeviceId.trim() || !localConnectorWorkspaceId.trim()) {
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.executionTargetRequired') };
+  }
+  if (authType === 'password' && !password.trim() && !canReuseSavedPassword) {
     return { error: translateSessionListMessage(t, 'remoteConnection.error.passwordRequired') };
   }
-  if (authType !== 'password' && !privateKeyPath.trim()) {
+  if (authType !== 'password' && !privateKeyPath.trim() && !canReuseSavedPrivateKey) {
     return { error: translateSessionListMessage(t, 'remoteConnection.error.privateKeyRequired') };
   }
-  if (authType === 'private_key_cert' && !certificatePath.trim()) {
+  if (authType === 'private_key_cert' && !certificatePath.trim() && !canReuseSavedCertificate) {
     return { error: translateSessionListMessage(t, 'remoteConnection.error.certificateRequired') };
   }
   const normalizedJumpConnectionId = jumpConnectionId.trim();
@@ -257,11 +271,15 @@ export const buildRemoteConnectionPayload = (
       port: parsedPort,
       username: username.trim(),
       auth_type: authType,
-      password: authType === 'password' ? password : undefined,
-      private_key_path: authType === 'password' ? undefined : privateKeyPath.trim(),
-      certificate_path: authType === 'private_key_cert' ? certificatePath.trim() : undefined,
+      password: authType === 'password' && password.trim() ? password.trim() : undefined,
+      private_key_path:
+        authType === 'password' || !privateKeyPath.trim() ? undefined : privateKeyPath.trim(),
+      certificate_path:
+        authType !== 'private_key_cert' || !certificatePath.trim() ? undefined : certificatePath.trim(),
       default_remote_path: defaultPath.trim() || undefined,
       host_key_policy: hostKeyPolicy,
+      local_connector_device_id: localConnectorDeviceId.trim(),
+      local_connector_workspace_id: localConnectorWorkspaceId.trim(),
       jump_enabled: jumpEnabled,
       jump_connection_id:
         jumpEnabled && jumpMode === 'existing' ? normalizedJumpConnectionId : undefined,

@@ -1,30 +1,25 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::Json;
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
-use crate::core::project_execution::require_local_connector_desktop;
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
 
 use super::connector_client::connector_post_json;
 use super::types::{
-    LocalTerminalExecRequest, RelayTerminalExecRequest, RelayTerminalInputRequest,
-    RelayTerminalSessionCreateRequest,
+    LocalTerminalExecRequest, RelayTerminalCloseRequest, RelayTerminalExecRequest,
+    RelayTerminalInputRequest, RelayTerminalSessionCreateRequest,
 };
 use super::{load_owned_online_workspace, required_text};
 
 pub(super) async fn exec_terminal_command(
     auth: AuthUser,
-    headers: HeaderMap,
     Json(req): Json<LocalTerminalExecRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = require_local_connector_desktop(&headers) {
-        return err;
-    }
     if let Err(err) = resolve_user_id(req.user_id, &auth) {
         return err;
     }
@@ -106,6 +101,25 @@ pub(crate) async fn send_local_terminal_input(
             workspace_id,
             terminal_session_id,
             data,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn close_local_terminal_session(
+    device_id: &str,
+    workspace_id: &str,
+    terminal_session_id: &str,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let path = format!(
+        "/api/local-connectors/relay/{}/terminal/close",
+        urlencoding::encode(device_id)
+    );
+    connector_post_json::<Value, _>(
+        path.as_str(),
+        &RelayTerminalCloseRequest {
+            workspace_id,
+            terminal_session_id,
         },
     )
     .await

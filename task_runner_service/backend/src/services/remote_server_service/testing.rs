@@ -7,6 +7,7 @@ impl RemoteServerService {
     pub async fn test_remote_server_draft(
         &self,
         input: TestRemoteServerRequest,
+        owner_user_id: &str,
     ) -> Result<RemoteServerTestResponse, String> {
         let name = input
             .name
@@ -47,6 +48,8 @@ impl RemoteServerService {
             host_key_policy: normalize_remote_server_host_key_policy(
                 input.host_key_policy.as_deref(),
             )?,
+            local_connector_device_id: normalized_optional(input.local_connector_device_id),
+            local_connector_workspace_id: normalized_optional(input.local_connector_workspace_id),
             enabled: true,
             last_tested_at: None,
             last_test_status: None,
@@ -64,32 +67,41 @@ impl RemoteServerService {
         };
         validate_remote_server_auth_fields(&draft)?;
 
-        Ok(match test_remote_server_connectivity(&draft, None).await {
-            Ok(response) => response,
-            Err(err) => RemoteServerTestResponse {
-                ok: false,
-                server_id: None,
-                name: draft.name,
-                host: draft.host,
-                port: draft.port,
-                username: draft.username,
-                auth_type: draft.auth_type,
-                remote_host: None,
-                error: Some(err),
-                tested_at: now_rfc3339(),
+        Ok(
+            match test_remote_server_connectivity(&self.config, owner_user_id, &draft, None).await {
+                Ok(response) => response,
+                Err(err) => RemoteServerTestResponse {
+                    ok: false,
+                    server_id: None,
+                    name: draft.name,
+                    host: draft.host,
+                    port: draft.port,
+                    username: draft.username,
+                    auth_type: draft.auth_type,
+                    remote_host: None,
+                    error: Some(err),
+                    tested_at: now_rfc3339(),
+                },
             },
-        })
+        )
     }
 
     pub async fn test_remote_server_saved(
         &self,
         id: &str,
+        owner_user_id: &str,
     ) -> Result<Option<RemoteServerTestResponse>, String> {
         let Some(mut record) = self.store.get_remote_server(id).await? else {
             return Ok(None);
         };
 
-        let response = match test_remote_server_connectivity(&record, Some(record.id.clone())).await
+        let response = match test_remote_server_connectivity(
+            &self.config,
+            owner_user_id,
+            &record,
+            Some(record.id.clone()),
+        )
+        .await
         {
             Ok(response) => {
                 record.last_tested_at = Some(response.tested_at.clone());

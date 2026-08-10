@@ -19,8 +19,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use super::mcp_adapter::load_verified_manifest;
-use super::stdio_sandbox::PluginStdioSandboxLauncher;
+use super::mcp_runtime::{load_verified_manifest, PluginStdioSandboxLauncher};
 use crate::plugins::{ActivePluginInstallation, PluginInstaller};
 
 const MAX_HOOK_SET_BYTES: u64 = 512 * 1024;

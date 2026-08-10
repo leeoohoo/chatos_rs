@@ -1,14 +1,74 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use reqwest::Method;
+use serde::Deserialize;
+
+use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::{now_rfc3339, ProjectRecord};
 use crate::state::AppState;
+use crate::trace_context::InternalTraceContextExt;
+use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
 
 use super::cloud_import::{create_harness_repo_for_project, HarnessProjectRepoResponse};
 
 pub const HARNESS_PROVISION_STATUS_PENDING: &str = "pending";
 pub const HARNESS_PROVISION_STATUS_READY: &str = "ready";
 pub const HARNESS_PROVISION_STATUS_FAILED: &str = "failed";
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct HarnessApiAccess {
+    pub(crate) access_token: String,
+    pub(crate) harness_uid: String,
+    pub(crate) space_identifier: String,
+}
+
+pub(crate) async fn fetch_harness_api_access(
+    state: &AppState,
+    owner_user_id: &str,
+) -> Result<HarnessApiAccess, String> {
+    let secret = state
+        .config
+        .user_service_internal_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET is not configured".to_string()
+        })?;
+    let endpoint = format!(
+        "{}/api/internal/harness/users/{}/access",
+        state
+            .config
+            .user_service_internal_base_url
+            .trim()
+            .trim_end_matches('/'),
+        urlencoding::encode(owner_user_id.trim())
+    );
+    let response = crate::user_model_runtime_client::signed_user_service_request(
+        state
+            .config
+            .user_service_internal_http_client
+            .request(Method::GET, endpoint),
+        secret,
+        crate::user_model_runtime_client::HARNESS_ACCESS_READ_SCOPE,
+    )?
+    .with_internal_trace_context()
+    .send()
+    .await
+    .map_err(|err| format!("user_service Harness access request failed: {err}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let text =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
+        return Err(format!(
+            "user_service Harness access request failed: {status} {text}"
+        ));
+    }
+    read_response_json_limited::<HarnessApiAccess>(response, JSON_BODY_LIMIT_BYTES)
+        .await
+        .map_err(|err| format!("parse user_service Harness access response failed: {err}"))
+}
 
 pub async fn ensure_harness_repo_for_project(
     state: &AppState,

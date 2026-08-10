@@ -1,37 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::{PluginAgentSelection, PluginCommandInvocation};
+use chatos_plugin_management_sdk::PluginCommandInvocation;
 
 const MAX_PLUGIN_COMMAND_INVOCATIONS: usize = 64;
 const MAX_PLUGIN_COMMAND_ARGUMENT_BYTES: usize = 16 * 1024;
-const MAX_PLUGIN_COMPONENT_ID_BYTES: usize = 256;
-
-pub(super) fn normalize_plugin_agent_selection(
-    selected_plugin_ids: &[String],
-    selection: Option<&PluginAgentSelection>,
-) -> Option<PluginAgentSelection> {
-    let selection = selection?;
-    let plugin_id = selection.plugin_id.trim();
-    let agent_id = selection.agent_id.trim();
-    if plugin_id.is_empty()
-        || agent_id.is_empty()
-        || plugin_id.len() > MAX_PLUGIN_COMPONENT_ID_BYTES
-        || agent_id.len() > MAX_PLUGIN_COMPONENT_ID_BYTES
-        || plugin_id.contains('\0')
-        || agent_id.contains('\0')
-        || !selected_plugin_ids
-            .iter()
-            .any(|selected| selected == plugin_id)
-    {
-        return None;
-    }
-    Some(PluginAgentSelection {
-        plugin_id: plugin_id.to_string(),
-        agent_id: agent_id.to_string(),
-    })
-}
-
 pub(super) fn normalize_selected_plugin_ids(selected_plugin_ids: &[String]) -> Vec<String> {
     let mut normalized_plugin_ids = Vec::new();
     for plugin_id in selected_plugin_ids {
@@ -94,24 +67,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plugin_selection_is_normalized_for_snapshots() {
+    fn plugin_selection_is_normalized() {
         let selected = normalize_selected_plugin_ids(&[
             " plugin-a ".to_string(),
             "plugin-a".to_string(),
             "plugin-b".to_string(),
         ]);
         assert_eq!(selected, vec!["plugin-a", "plugin-b"]);
-
-        let selection = normalize_plugin_agent_selection(
-            selected.as_slice(),
-            Some(&PluginAgentSelection {
-                plugin_id: " plugin-a ".to_string(),
-                agent_id: " reviewer ".to_string(),
-            }),
-        )
-        .expect("normalized selection");
-        assert_eq!(selection.plugin_id, "plugin-a");
-        assert_eq!(selection.agent_id, "reviewer");
     }
 
     #[test]

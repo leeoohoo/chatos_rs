@@ -158,6 +158,41 @@ mod tests {
     }
 
     #[test]
+    fn workspace_runtime_features_ignore_stale_workspace_selections() {
+        let mut backend = runtime_image(
+            "backend",
+            "application",
+            Some("FROM rust:1.85-bookworm\n"),
+            None,
+        );
+        apply_program_managed_image_policy(&mut backend);
+        backend.features = serde_json::json!(["rust@1.85", "cargo"]);
+
+        let mut workspace = runtime_image("workspace", "workspace", None, None);
+        apply_program_managed_image_policy(&mut workspace);
+        workspace.features = serde_json::json!(["rust@1.85", "go@1.26"]);
+
+        assert_eq!(
+            workspace_runtime_features(
+                &[backend, workspace],
+                &serde_json::json!({"analysis_requirement": "run cargo build"}),
+            ),
+            vec!["rust@1.85".to_string()]
+        );
+    }
+
+    #[test]
+    fn standalone_go_build_requirement_selects_go_runtime() {
+        assert_eq!(
+            workspace_runtime_features(
+                &[],
+                &serde_json::json!({"analysis_requirement": "run go build ./..."}),
+            ),
+            vec!["go".to_string()]
+        );
+    }
+
+    #[test]
     fn project_boundary_creates_one_workspace_and_keeps_applications_peer_equal() {
         let mut environment = ProjectRuntimeEnvironmentRecord {
             project_id: "project-1".to_string(),

@@ -5,11 +5,12 @@ use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::Value;
-use std::path::Path as FsPath;
 
-use super::super::fs::policy::{AuthorizedPath, FsPathPolicy, FsPolicyError};
+use crate::api::local_connectors::{
+    close_local_terminal_session, create_local_terminal_session, parse_local_connector_root_path,
+    send_local_terminal_input, validate_local_connector_workspace_ref, LocalConnectorRootRef,
+};
 use crate::core::auth::AuthUser;
-use crate::core::path_guard::{canonicalize_existing_dir, path_is_within_root};
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
@@ -18,78 +19,38 @@ use crate::core::validation::normalize_non_empty;
 use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
-use crate::services::project_run::validate_command_preflight;
 use crate::services::realtime::{
     publish_terminal_list_invalidated, publish_terminal_state_changed,
-};
-use crate::services::terminal_manager::get_terminal_manager;
-
-use crate::api::local_connectors::{
-    parse_local_connector_root_path, validate_local_connector_workspace_ref,
 };
 
 use super::contracts::InterruptTerminalRequest;
 use super::{
-    attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest,
+    derive_terminal_name, terminal_response, CreateTerminalRequest, DispatchTerminalCommandRequest,
     TerminalQuery,
 };
 
-fn fs_policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
-    (
-        err.status_code(),
-        Json(serde_json::json!({ "error": err.message() })),
-    )
+fn connector_error_message(err: (StatusCode, Json<Value>)) -> String {
+    let (status, Json(value)) = err;
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .map(|message| format!("{message} ({status})"))
+        .unwrap_or_else(|| format!("{value} ({status})"))
 }
 
-async fn authorize_terminal_cwd(
-    auth: &AuthUser,
+async fn require_local_connector_root(
     raw: &str,
-    empty_message: &str,
-    invalid_message: &str,
-) -> Result<AuthorizedPath, (StatusCode, Json<Value>)> {
-    if raw.trim().is_empty() {
-        return Err((
+) -> Result<(LocalConnectorRootRef, String), (StatusCode, Json<Value>)> {
+    let root_ref = parse_local_connector_root_path(raw).ok_or_else(|| {
+        (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": empty_message })),
-        ));
-    }
-    let policy = FsPathPolicy::for_user(auth)
-        .await
-        .map_err(fs_policy_error_tuple)?;
-    let authorized = policy
-        .authorize_existing_dir(raw, invalid_message, invalid_message)
-        .map_err(fs_policy_error_tuple)?;
-    policy
-        .require_write(&authorized)
-        .map_err(fs_policy_error_tuple)?;
-    Ok(authorized)
-}
-
-async fn ensure_cwd_matches_project(
-    auth: &AuthUser,
-    project_id: Option<&str>,
-    cwd: &std::path::Path,
-) -> Result<(), (StatusCode, Json<Value>)> {
-    let Some(project_id) = project_id else {
-        return Ok(());
-    };
-    let project = ensure_owned_project(project_id, auth)
-        .await
-        .map_err(map_project_access_error)?;
-    let project_root =
-        canonicalize_existing_dir(FsPath::new(project.root_path.as_str())).map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "项目目录不存在或不是目录" })),
-            )
-        })?;
-    if !path_is_within_root(cwd, project_root.as_path()) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "终端目录必须位于当前项目目录内" })),
-        ));
-    }
-    Ok(())
+            Json(serde_json::json!({
+                "error": "Chatos 不执行本机终端；终端目录必须来自在线 Local Connector 工作区"
+            })),
+        )
+    })?;
+    let alias = validate_local_connector_workspace_ref(&root_ref).await?;
+    Ok((root_ref, alias))
 }
 
 async fn ensure_local_cwd_matches_project(
@@ -106,7 +67,7 @@ async fn ensure_local_cwd_matches_project(
     if project.root_path.trim() != cwd.trim() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "本地 Connector 终端必须绑定当前本地项目目录" })),
+            Json(serde_json::json!({ "error": "Local Connector 终端必须绑定当前本地项目目录" })),
         ));
     }
     Ok(())
@@ -120,13 +81,13 @@ pub(super) async fn list_terminals(
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
-    let manager = get_terminal_manager();
     match TerminalService::list(Some(user_id)).await {
         Ok(list) => {
             let active_terminals = cleanup_exited_terminals(list).await;
             let items = active_terminals
                 .into_iter()
-                .map(|t| attach_busy(&manager, t))
+                .filter(|terminal| parse_local_connector_root_path(&terminal.cwd).is_some())
+                .map(terminal_response)
                 .collect::<Vec<_>>();
             (StatusCode::OK, Json(Value::Array(items)))
         }
@@ -137,9 +98,9 @@ pub(super) async fn list_terminals(
     }
 }
 
-async fn cleanup_exited_terminals(terminals: Vec<Terminal>) -> Vec<Terminal> {
-    let mut active = Vec::with_capacity(terminals.len());
-    for terminal in terminals {
+async fn cleanup_exited_terminals(items: Vec<Terminal>) -> Vec<Terminal> {
+    let mut active = Vec::with_capacity(items.len());
+    for terminal in items {
         if terminal.status.trim().eq_ignore_ascii_case("exited") {
             let _ = TerminalLogService::delete_by_terminal(terminal.id.as_str()).await;
             let _ = TerminalService::delete(terminal.id.as_str()).await;
@@ -173,95 +134,57 @@ pub(super) async fn create_terminal(
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
-    let normalized_project_id = normalize_non_empty(project_id);
-
-    if let Some(raw_cwd) = cwd.as_deref() {
-        if let Some(root_ref) = parse_local_connector_root_path(raw_cwd) {
-            let alias = match validate_local_connector_workspace_ref(&root_ref).await {
-                Ok(alias) => alias,
-                Err(err) => return err,
-            };
-            if let Err(err) =
-                ensure_local_cwd_matches_project(&auth, normalized_project_id.as_deref(), raw_cwd)
-                    .await
-            {
-                return err;
-            }
-            let terminal_name =
-                normalize_non_empty(name).unwrap_or_else(|| derive_terminal_name(alias.as_str()));
-            let terminal = Terminal::new(
-                terminal_name,
-                raw_cwd.trim().to_string(),
-                TERMINAL_KIND_SHARED.to_string(),
-                Some(user_id.clone()),
-                normalized_project_id,
-            );
-            if let Err(err) = terminals::create_terminal(&terminal).await {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": err })),
-                );
-            }
-            publish_terminal_list_invalidated(
-                user_id.as_str(),
-                Some(terminal.id.as_str()),
-                terminal.project_id.as_deref(),
-                "created",
-                Some(&terminal),
-            );
-            publish_terminal_state_changed(user_id.as_str(), &terminal, false, "created", None);
-            let manager = get_terminal_manager();
-            return (StatusCode::CREATED, Json(attach_busy(&manager, terminal)));
-        }
-    }
-
-    let cwd = match authorize_terminal_cwd(
-        &auth,
-        cwd.as_deref().unwrap_or(""),
-        "终端目录不能为空",
-        "终端目录不存在或不是目录",
-    )
-    .await
-    {
-        Ok(path) => path,
+    let cwd = cwd.unwrap_or_default();
+    let (_, alias) = match require_local_connector_root(cwd.as_str()).await {
+        Ok(value) => value,
         Err(err) => return err,
     };
+    let normalized_project_id = normalize_non_empty(project_id);
     if let Err(err) =
-        ensure_cwd_matches_project(&auth, normalized_project_id.as_deref(), cwd.path.as_path())
+        ensure_local_cwd_matches_project(&auth, normalized_project_id.as_deref(), cwd.as_str())
             .await
     {
         return err;
     }
-    let cwd = cwd.path.to_string_lossy().to_string();
 
-    let name = normalize_non_empty(name).unwrap_or_else(|| derive_terminal_name(&cwd));
-
-    let manager = get_terminal_manager();
-    match manager
-        .create(
-            name,
-            cwd,
-            TERMINAL_KIND_SHARED.to_string(),
-            Some(user_id),
-            normalized_project_id,
-        )
-        .await
-    {
-        Ok(terminal) => (StatusCode::CREATED, Json(attach_busy(&manager, terminal))),
-        Err(err) => (
+    let terminal_name =
+        normalize_non_empty(name).unwrap_or_else(|| derive_terminal_name(alias.as_str()));
+    let terminal = Terminal::new(
+        terminal_name,
+        cwd.trim().to_string(),
+        TERMINAL_KIND_SHARED.to_string(),
+        Some(user_id.clone()),
+        normalized_project_id,
+    );
+    if let Err(err) = terminals::create_terminal(&terminal).await {
+        return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": err })),
-        ),
+        );
     }
+    publish_terminal_list_invalidated(
+        user_id.as_str(),
+        Some(terminal.id.as_str()),
+        terminal.project_id.as_deref(),
+        "created",
+        Some(&terminal),
+    );
+    publish_terminal_state_changed(user_id.as_str(), &terminal, false, "created", None);
+    (StatusCode::CREATED, Json(terminal_response(terminal)))
 }
 
 pub(super) async fn get_terminal(
     auth: AuthUser,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    let manager = get_terminal_manager();
     match ensure_owned_terminal(&id, &auth).await {
-        Ok(terminal) => (StatusCode::OK, Json(attach_busy(&manager, terminal))),
+        Ok(terminal) if parse_local_connector_root_path(&terminal.cwd).is_some() => {
+            (StatusCode::OK, Json(terminal_response(terminal)))
+        }
+        Ok(_) => (
+            StatusCode::GONE,
+            Json(serde_json::json!({ "error": "该终端来自已移除的 Chatos 本机终端运行时" })),
+        ),
         Err(err) => map_terminal_access_error(err),
     }
 }
@@ -270,22 +193,33 @@ pub(super) async fn delete_terminal(
     auth: AuthUser,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    let owned_terminal = match ensure_owned_terminal(&id, &auth).await {
+    let terminal = match ensure_owned_terminal(&id, &auth).await {
         Ok(terminal) => terminal,
         Err(err) => return map_terminal_access_error(err),
     };
-    let terminal_user_id = owned_terminal.user_id.clone();
-    let terminal_project_id = owned_terminal.project_id.clone();
-    let manager = get_terminal_manager();
-    let _ = manager.close_silently(&id).await;
+    if let Some(root_ref) = parse_local_connector_root_path(&terminal.cwd) {
+        if let Err(err) = close_local_terminal_session(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
+            terminal.id.as_str(),
+        )
+        .await
+        {
+            tracing::warn!(
+                terminal_id = terminal.id.as_str(),
+                error = connector_error_message(err).as_str(),
+                "close Local Connector terminal before deleting metadata failed"
+            );
+        }
+    }
     let _ = TerminalLogService::delete_by_terminal(&id).await;
     match TerminalService::delete(&id).await {
         Ok(_) => {
-            if let Some(user_id) = terminal_user_id.as_deref() {
+            if let Some(user_id) = terminal.user_id.as_deref() {
                 publish_terminal_list_invalidated(
                     user_id,
                     Some(id.as_str()),
-                    terminal_project_id.as_deref(),
+                    terminal.project_id.as_deref(),
                     "deleted",
                     None,
                 );
@@ -300,31 +234,6 @@ pub(super) async fn delete_terminal(
             Json(serde_json::json!({ "error": err })),
         ),
     }
-}
-
-fn normalized_cwd(path: &str) -> String {
-    let trimmed = path.trim().trim_end_matches(&['/', '\\'][..]);
-    if trimmed.is_empty() {
-        path.trim().to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn is_same_cwd(left: &str, right: &str) -> bool {
-    normalized_cwd(left) == normalized_cwd(right)
-}
-
-fn terminal_name_from_cwd(cwd: &str) -> String {
-    let trimmed = cwd.trim().trim_end_matches(&['/', '\\'][..]);
-    if trimmed.is_empty() {
-        return "Terminal".to_string();
-    }
-    FsPath::new(trimmed)
-        .file_name()
-        .map(|value| value.to_string_lossy().to_string())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| derive_terminal_name(trimmed))
 }
 
 pub(super) async fn dispatch_terminal_command(
@@ -342,25 +251,18 @@ pub(super) async fn dispatch_terminal_command(
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
-    let cwd = match authorize_terminal_cwd(
-        &auth,
-        cwd.as_deref().unwrap_or(""),
-        "运行目录不能为空",
-        "运行目录不存在或不是目录",
-    )
-    .await
-    {
-        Ok(path) => path,
+    let cwd = cwd.unwrap_or_default();
+    let (root_ref, alias) = match require_local_connector_root(cwd.as_str()).await {
+        Ok(value) => value,
         Err(err) => return err,
     };
     let normalized_project_id = normalize_non_empty(project_id);
     if let Err(err) =
-        ensure_cwd_matches_project(&auth, normalized_project_id.as_deref(), cwd.path.as_path())
+        ensure_local_cwd_matches_project(&auth, normalized_project_id.as_deref(), cwd.as_str())
             .await
     {
         return err;
     }
-    let cwd = cwd.path.to_string_lossy().to_string();
     let command = match normalize_non_empty(command) {
         Some(value) => value,
         None => {
@@ -370,16 +272,8 @@ pub(super) async fn dispatch_terminal_command(
             );
         }
     };
-    if let Err(err) = validate_command_preflight(command.as_str(), cwd.as_str()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": err })),
-        );
-    }
-    let allow_create = create_if_missing.unwrap_or(true);
 
-    let manager = get_terminal_manager();
-    let mut terminals = match TerminalService::list(Some(user_id.clone())).await {
+    let mut candidates = match TerminalService::list(Some(user_id.clone())).await {
         Ok(items) => items,
         Err(err) => {
             return (
@@ -388,74 +282,119 @@ pub(super) async fn dispatch_terminal_command(
             );
         }
     };
-
-    terminals.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
-    let reusable = terminals.into_iter().find(|terminal| {
-        if terminal.status != "running" {
-            return false;
-        }
-        if !is_same_cwd(terminal.cwd.as_str(), cwd.as_str()) {
-            return false;
-        }
-        if let Some(project_id) = normalized_project_id.as_deref() {
-            if terminal.project_id.as_deref() != Some(project_id) {
-                return false;
-            }
-        }
-        !manager.get_busy(terminal.id.as_str()).unwrap_or(false)
+    candidates.sort_by(|left, right| right.last_active_at.cmp(&left.last_active_at));
+    candidates.retain(|terminal| {
+        terminal.status == "running"
+            && terminal.cwd.trim() == cwd.trim()
+            && normalized_project_id
+                .as_deref()
+                .map(|project_id| terminal.project_id.as_deref() == Some(project_id))
+                .unwrap_or(true)
     });
 
+    let mut reusable = None;
+    for terminal in candidates {
+        let state = match create_local_terminal_session(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
+            terminal.id.as_str(),
+            root_ref.relative_path.as_deref(),
+            120,
+            32,
+        )
+        .await
+        {
+            Ok(state) => state,
+            Err(err) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({ "error": connector_error_message(err) })),
+                );
+            }
+        };
+        if !state.get("busy").and_then(Value::as_bool).unwrap_or(false) {
+            reusable = Some(terminal);
+            break;
+        }
+    }
+
+    let allow_create = create_if_missing.unwrap_or(true);
     let (terminal, reused) = if let Some(terminal) = reusable {
         (terminal, true)
     } else if allow_create {
-        let name = terminal_name_from_cwd(cwd.as_str());
-        match manager
-            .create(
-                name,
-                cwd.clone(),
-                TERMINAL_KIND_SHARED.to_string(),
-                Some(user_id.clone()),
-                normalized_project_id.clone(),
-            )
-            .await
-        {
-            Ok(terminal) => (terminal, false),
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": err })),
-                );
-            }
-        }
-    } else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "未找到可复用终端，且未允许自动创建" })),
+        let terminal = Terminal::new(
+            derive_terminal_name(alias.as_str()),
+            cwd.trim().to_string(),
+            TERMINAL_KIND_SHARED.to_string(),
+            Some(user_id.clone()),
+            normalized_project_id,
         );
-    };
-
-    let session = match manager.ensure_running(&terminal).await {
-        Ok(session) => session,
-        Err(err) => {
+        if let Err(err) = terminals::create_terminal(&terminal).await {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": err })),
             );
         }
+        publish_terminal_list_invalidated(
+            user_id.as_str(),
+            Some(terminal.id.as_str()),
+            terminal.project_id.as_deref(),
+            "created",
+            Some(&terminal),
+        );
+        publish_terminal_state_changed(user_id.as_str(), &terminal, false, "created", None);
+        if let Err(err) = create_local_terminal_session(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
+            terminal.id.as_str(),
+            root_ref.relative_path.as_deref(),
+            120,
+            32,
+        )
+        .await
+        {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": connector_error_message(err) })),
+            );
+        }
+        (terminal, false)
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "error": "未找到空闲 Local Connector 终端，且未允许自动创建" }),
+            ),
+        );
     };
 
     let input = format!("{command}\n");
-    if let Err(err) = session.write_input(input.as_str()) {
+    if let Err(err) = send_local_terminal_input(
+        root_ref.device_id.as_str(),
+        root_ref.workspace_id.as_str(),
+        terminal.id.as_str(),
+        input.as_str(),
+    )
+    .await
+    {
         return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": connector_error_message(err) })),
         );
     }
 
-    let cmd_log = TerminalLog::new(terminal.id.clone(), "command".to_string(), command.clone());
-    let input_log = TerminalLog::new(terminal.id.clone(), "input".to_string(), input.clone());
-    let _ = TerminalLogService::create(cmd_log).await;
-    let _ = TerminalLogService::create(input_log).await;
+    let _ = TerminalLogService::create(TerminalLog::new(
+        terminal.id.clone(),
+        "command".to_string(),
+        command.clone(),
+    ))
+    .await;
+    let _ = TerminalLogService::create(TerminalLog::new(
+        terminal.id.clone(),
+        "input".to_string(),
+        input,
+    ))
+    .await;
     let _ = TerminalService::touch(terminal.id.as_str()).await;
 
     (
@@ -480,56 +419,42 @@ pub(super) async fn interrupt_terminal_command(
         Ok(terminal) => terminal,
         Err(err) => return map_terminal_access_error(err),
     };
-    let manager = get_terminal_manager();
-    let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
-    if reason == "project_run_restart" {
-        match manager.close(&id).await {
-            Ok(_) => {
-                let _ = TerminalService::touch(terminal.id.as_str()).await;
-                let _ = TerminalLogService::create(TerminalLog::new(
-                    terminal.id.clone(),
-                    "signal".to_string(),
-                    format!("terminate:{reason}"),
-                ))
-                .await;
-                return (
-                    StatusCode::OK,
-                    Json(serde_json::json!({
-                        "terminal_id": terminal.id,
-                        "terminal_name": terminal.name,
-                        "interrupted": true,
-                        "signal": "SIGTERM",
-                        "reason": reason,
-                    })),
-                );
-            }
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": err })),
-                );
-            }
-        }
-    }
-    let session = match manager.ensure_running(&terminal).await {
-        Ok(session) => session,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": err })),
-            );
-        }
+    let root_ref = match require_local_connector_root(terminal.cwd.as_str()).await {
+        Ok((root_ref, _)) => root_ref,
+        Err(err) => return err,
     };
-    if let Err(err) = session.write_input("\u{3}") {
+    let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
+    let result = if reason == "project_run_restart" {
+        close_local_terminal_session(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
+            terminal.id.as_str(),
+        )
+        .await
+    } else {
+        send_local_terminal_input(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
+            terminal.id.as_str(),
+            "\u{3}",
+        )
+        .await
+    };
+    if let Err(err) = result {
         return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": connector_error_message(err) })),
         );
     }
+    let signal = if reason == "project_run_restart" {
+        "close"
+    } else {
+        "SIGINT"
+    };
     let _ = TerminalLogService::create(TerminalLog::new(
         terminal.id.clone(),
         "signal".to_string(),
-        format!("ctrl_c:{reason}"),
+        format!("{signal}:{reason}"),
     ))
     .await;
     let _ = TerminalService::touch(terminal.id.as_str()).await;
@@ -539,7 +464,7 @@ pub(super) async fn interrupt_terminal_command(
             "terminal_id": terminal.id,
             "terminal_name": terminal.name,
             "interrupted": true,
-            "signal": "SIGINT",
+            "signal": signal,
             "reason": reason,
         })),
     )

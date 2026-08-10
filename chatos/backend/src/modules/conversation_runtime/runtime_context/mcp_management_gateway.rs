@@ -82,6 +82,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         contact_agent_id: normalized(request.contact_agent_id),
         default_model_config_id: normalized(request.default_model_config_id),
         expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
+        requested_mcp_ids: None,
         locale: normalized(request.locale),
         requested_device_id: None,
         requested_sandbox_provider: None,

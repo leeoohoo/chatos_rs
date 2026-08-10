@@ -21,6 +21,8 @@ const buildFormValues = (
   certificatePath: '',
   defaultPath: '/srv/app',
   hostKeyPolicy: 'strict',
+  localConnectorDeviceId: 'device-1',
+  localConnectorWorkspaceId: 'workspace-1',
   jumpEnabled: false,
   jumpMode: 'manual',
   jumpConnectionId: '',
@@ -60,6 +62,8 @@ describe('sessionList helpers', () => {
       certificate_path: undefined,
       default_remote_path: '/srv/app',
       host_key_policy: 'strict',
+      local_connector_device_id: 'device-1',
+      local_connector_workspace_id: 'workspace-1',
       jump_enabled: false,
       jump_connection_id: undefined,
       jump_host: undefined,
@@ -83,6 +87,15 @@ describe('sessionList helpers', () => {
     expect(result).toEqual({ error: '启用跳板机后需填写跳板机主机和用户名' });
   });
 
+  it('requires a Local Connector execution location', () => {
+    const result = buildRemoteConnectionPayload(buildFormValues({
+      localConnectorDeviceId: '',
+      localConnectorWorkspaceId: '',
+    }));
+
+    expect(result).toEqual({ error: '请选择 Local Connector 执行位置' });
+  });
+
   it('copies an existing remote connection snapshot for jump host mode', () => {
     const result = buildRemoteConnectionPayload(
       buildFormValues({
@@ -97,12 +110,17 @@ describe('sessionList helpers', () => {
         port: 2222,
         username: 'jump-user',
         authType: 'private_key_cert',
-        password: null,
-        privateKeyPath: '/tmp/jump_id_rsa',
-        certificatePath: '/tmp/jump_id_rsa-cert.pub',
+        hasPassword: false,
+        hasPrivateKeyPath: true,
+        hasCertificatePath: true,
         defaultRemotePath: null,
         hostKeyPolicy: 'strict',
+        localConnectorDeviceId: 'device-1',
+        localConnectorWorkspaceId: 'workspace-1',
         jumpEnabled: false,
+        hasJumpPrivateKeyPath: false,
+        hasJumpCertificatePath: false,
+        hasJumpPassword: false,
         userId: null,
         createdAt: new Date('2026-01-01T00:00:00Z'),
         updatedAt: new Date('2026-01-01T00:00:00Z'),
@@ -143,5 +161,46 @@ describe('sessionList helpers', () => {
 
     expect(result.payload.jump_private_key_path).toBe('/tmp/jump_id_rsa');
     expect(result.payload.jump_certificate_path).toBe('/tmp/jump_id_rsa-cert.pub');
+  });
+
+  it('allows editing a password connection without echoing the saved password', () => {
+    const result = buildRemoteConnectionPayload(
+      buildFormValues({
+        authType: 'password',
+        password: '',
+        privateKeyPath: '',
+      }),
+      [],
+      {
+        id: 'conn-1',
+        name: 'prod',
+        host: 'example.com',
+        port: 22,
+        username: 'root',
+        authType: 'password',
+        hasPassword: true,
+        hasPrivateKeyPath: false,
+        hasCertificatePath: false,
+        defaultRemotePath: null,
+        hostKeyPolicy: 'strict',
+        localConnectorDeviceId: 'device-1',
+        localConnectorWorkspaceId: 'workspace-1',
+        jumpEnabled: false,
+        hasJumpPrivateKeyPath: false,
+        hasJumpCertificatePath: false,
+        hasJumpPassword: false,
+        userId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        lastActiveAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    );
+
+    expect('payload' in result).toBe(true);
+    if (!('payload' in result)) {
+      return;
+    }
+
+    expect(result.payload.password).toBeUndefined();
   });
 });

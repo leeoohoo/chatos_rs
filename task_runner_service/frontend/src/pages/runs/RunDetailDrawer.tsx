@@ -24,6 +24,7 @@ import type {
 } from './runEventUtils';
 import { RunDetailSummary } from './RunDetailSummary';
 import { RunEventsTimeline } from './RunEventsTimeline';
+import { RunAttemptsTimeline } from './RunAttemptsTimeline';
 import { RunModelRequestsSection } from './RunModelRequestsSection';
 import { RunPromptsSection } from './RunPromptsSection';
 import { RunRemoteOperationsSection } from './RunRemoteOperationsSection';
@@ -134,6 +135,8 @@ export function RunDetailDrawer({
             onCancel={onCancel}
             onRetry={onRetry}
           />
+
+          <RunAttemptsTimeline t={t} attempts={run.attempts || []} />
 
           <RunRemoteOperationsSection
             t={t}

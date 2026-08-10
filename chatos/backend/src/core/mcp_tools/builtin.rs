@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use crate::builtin::remote_connection_controller::ChatosRemoteConnectionControllerStore;
-use crate::builtin::terminal_controller::ChatosTerminalControllerStore;
 use crate::services::mcp_loader::{BuiltinMcpKind, McpBuiltinServer};
 use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
@@ -15,7 +14,7 @@ use crate::services::shared_builtin_notepad::ChatosNotepadStore;
 use chatos_mcp::{
     AgentBuilderStoreRef, AskUserStoreRef, BrowserVisionAdapterRef, BuiltinToolServiceDependencies,
     CodeMaintainerHooksRef, MemoryReaderStoreRef, NotepadStoreRef,
-    RemoteConnectionControllerStoreRef, TerminalControllerStoreRef,
+    RemoteConnectionControllerStoreRef,
 };
 
 pub use chatos_mcp::SharedBuiltinToolService as BuiltinToolService;
@@ -51,9 +50,7 @@ fn chatos_dependencies(
             )));
         }
         BuiltinMcpKind::TerminalController => {
-            dependencies.terminal_controller_store = Some(TerminalControllerStoreRef::new(
-                Arc::new(ChatosTerminalControllerStore),
-            ));
+            return Err("TerminalController execution is not hosted by ChatOS".to_string());
         }
         BuiltinMcpKind::Notepad => {
             let user_id = normalized_value(server.user_id.as_deref()).unwrap_or("builtin");

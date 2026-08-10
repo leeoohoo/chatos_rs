@@ -19,8 +19,10 @@ type FileRangeRead = (String, u64, String, usize, usize, usize, String);
 #[derive(Clone, Debug)]
 pub struct FsOps {
     root: PathBuf,
+    #[allow(dead_code)]
     allow_writes: bool,
     max_file_bytes: i64,
+    #[allow(dead_code)]
     max_write_bytes: i64,
     search_limit: usize,
 }
@@ -34,6 +36,7 @@ pub struct FileEntry {
     pub mtime_ms: u128,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct DeleteResult {
     pub path: String,
@@ -221,6 +224,7 @@ impl FsOps {
         )
     }
 
+    #[allow(dead_code)]
     pub fn write_file(&self, rel_path: &str, content: &str) -> Result<WriteResult, String> {
         if !self.allow_writes {
             return Err("Writes are disabled.".to_string());
@@ -241,6 +245,7 @@ impl FsOps {
         })
     }
 
+    #[allow(dead_code)]
     pub fn append_file(&self, rel_path: &str, content: &str) -> Result<WriteResult, String> {
         if !self.allow_writes {
             return Err("Writes are disabled.".to_string());
@@ -260,13 +265,16 @@ impl FsOps {
             .open(&target)
             .map_err(|err| err.to_string())?;
         file.write_all(buffer).map_err(|err| err.to_string())?;
+        file.flush().map_err(|err| err.to_string())?;
+        let file_buffer = fs::read(&target).map_err(|err| err.to_string())?;
         Ok(WriteResult {
-            bytes: buffer.len() as i64,
-            sha256: sha256_bytes(buffer),
+            bytes: file_buffer.len() as i64,
+            sha256: sha256_bytes(&file_buffer),
             path: rel_path.to_string(),
         })
     }
 
+    #[allow(dead_code)]
     pub fn delete_path(&self, rel_path: &str) -> Result<DeleteResult, String> {
         if !self.allow_writes {
             return Err("Writes are disabled.".to_string());
@@ -305,6 +313,7 @@ pub struct SearchResult {
     pub text: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct WriteResult {
     pub bytes: i64,

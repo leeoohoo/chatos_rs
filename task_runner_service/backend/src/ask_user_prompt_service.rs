@@ -17,9 +17,9 @@ use tokio::sync::Notify;
 
 use crate::config::AppConfig;
 use crate::models::{
-    now_rfc3339, AskUserPromptRecord, AskUserPromptStatus, AskUserPromptTaskCountRecord,
-    CancelAskUserPromptRequest, PaginatedResponse, PromptListFilters, SubmitAskUserPromptRequest,
-    TaskRunEventRecord,
+    now_rfc3339, AskUserPromptPruneResult, AskUserPromptRecord, AskUserPromptStatus,
+    AskUserPromptTaskCountRecord, CancelAskUserPromptRequest, PaginatedResponse, PromptListFilters,
+    SubmitAskUserPromptRequest, TaskRunEventRecord,
 };
 use crate::platform_queue::TaskQueueTopology;
 use crate::services::sanitize_prompt_list_filters;
@@ -70,6 +70,16 @@ impl AskUserPromptService {
 
     pub(crate) fn signal_prompt_resolved(&self, prompt_id: &str) {
         self.waiters.wake(prompt_id);
+    }
+
+    pub async fn prune_terminal_prompts_before(
+        &self,
+        cutoff: &str,
+        candidate_limit: usize,
+    ) -> Result<AskUserPromptPruneResult, String> {
+        self.store
+            .prune_terminal_ask_user_prompts_before(cutoff, candidate_limit)
+            .await
     }
 
     pub(crate) async fn publish_resolution_event_if_needed(

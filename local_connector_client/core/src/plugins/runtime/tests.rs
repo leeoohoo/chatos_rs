@@ -22,6 +22,7 @@ use chat_app_server_rs::{
     validate_plugin_artifact_read_response_for_test,
     validate_plugin_artifact_write_response_for_test, PreparedPluginArtifactRelayRequest,
 };
+use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     PluginArtifactListResponse, PluginArtifactReadResponse, PluginArtifactUiAccess,
     PluginArtifactWriteOperation, PluginArtifactWriteResponse, PluginExecutionHost,
@@ -47,7 +48,7 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::mcp_adapter::{
+use super::mcp_runtime::{
     PluginMcpInvocationCancelOutcome, PluginMcpInvoker, PreparedPluginMcpTransport,
 };
 use super::*;
@@ -58,6 +59,8 @@ use crate::plugins::{PluginCredentialScope, PluginCredentialVault};
 use crate::secure_storage::SecureStorage;
 use crate::state::WorkspaceState;
 use crate::LocalState;
+
+const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
 #[test]
 fn loads_active_skill_instructions_and_only_reachable_lazy_resources() {
@@ -121,7 +124,7 @@ fn portable_skill_uses_the_canonical_bundle_hash_and_rejects_cloud_execution() {
         .active_installation(PLUGIN_ID)
         .expect("read active installation")
         .expect("active installation");
-    let manifest = super::mcp_adapter::load_verified_manifest(&installation)
+    let manifest = super::mcp_runtime::load_verified_manifest(&installation)
         .expect("verified installed Manifest");
     let component_key = installation.version.inventory.components[0]
         .component_key
@@ -436,7 +439,7 @@ async fn plugin_relay_prepares_signed_command_arguments_and_requires_local_confi
         prepare
             .pointer("/body/commands/0/target_agent")
             .and_then(Value::as_str),
-        Some("task_runner_run_phase")
+        Some(RUN_AGENT_KEY)
     );
     assert_eq!(
         prepare.pointer("/body/commands/0/allowed_tools"),
@@ -798,7 +801,7 @@ async fn plugin_relay_prepares_exact_signed_agent_profile() {
         prepare
             .pointer("/body/agents/0/base_agent")
             .and_then(Value::as_str),
-        Some("task_runner_run_phase")
+        Some(RUN_AGENT_KEY)
     );
     assert_eq!(
         prepare.pointer("/body/agents/0/allowed_tools"),
@@ -2421,7 +2424,7 @@ async fn signed_packaged_connector_hooks_run_end_to_end_without_a_listener() {
                 "operation": "dispatch_hook_event",
                 "event": "SessionStart",
                 "context": {
-                    "agentKey": "task_runner_run_phase",
+                    "agentKey": RUN_AGENT_KEY,
                     "summarySha256": hex::encode(Sha256::digest(b"private user content")),
                 },
             }),
@@ -3709,7 +3712,7 @@ async fn plugin_stdio_mcp_seatbelt_enforces_read_only_root_runtime_dirs_and_netw
     vault
         .upsert(&scope, b"sandbox-secret")
         .expect("store Seatbelt stdio MCP credential");
-    let launcher = super::stdio_sandbox::PluginStdioSandboxLauncher::discover()
+    let launcher = super::mcp_runtime::PluginStdioSandboxLauncher::discover()
         .expect("discover Plugin stdio Seatbelt launcher");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),

@@ -389,6 +389,7 @@ mod tests {
             aud: "memory-engine".to_string(),
             scope: "memory.operator".to_string(),
             trace_id: trace_id.to_string(),
+            owner_user_id: None,
             iat: 1,
             exp: 2,
         })

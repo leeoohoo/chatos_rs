@@ -8,6 +8,10 @@ use super::*;
 pub struct TaskMcpRequestConfig {
     #[serde(default)]
     pub requires_execution: Option<bool>,
+    #[serde(default)]
+    pub enabled_builtin_kinds: Vec<String>,
+    #[serde(default)]
+    pub external_mcp_config_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,13 +193,23 @@ mod task_mcp_request_config_tests {
     use super::*;
 
     #[test]
-    fn request_accepts_only_execution_intent() {
+    fn request_accepts_execution_intent_and_agent_mcp_selection() {
         let request = serde_json::from_value::<TaskMcpRequestConfig>(serde_json::json!({
-            "requires_execution": false
+            "requires_execution": false,
+            "enabled_builtin_kinds": ["CodeMaintainerRead"],
+            "external_mcp_config_ids": ["postgres-mcp"]
         }))
-        .expect("execution intent");
+        .expect("task MCP selection");
 
         assert_eq!(request.requires_execution, Some(false));
+        assert_eq!(
+            request.enabled_builtin_kinds,
+            vec!["CodeMaintainerRead".to_string()]
+        );
+        assert_eq!(
+            request.external_mcp_config_ids,
+            vec!["postgres-mcp".to_string()]
+        );
     }
 
     #[test]
@@ -205,7 +219,6 @@ mod task_mcp_request_config_tests {
             "init_mode",
             "builtin_prompt_mode",
             "builtin_prompt_locale",
-            "enabled_builtin_kinds",
             "workspace_dir",
             "sandbox_enabled",
             "sandbox_manager_base_url",
@@ -217,7 +230,6 @@ mod task_mcp_request_config_tests {
             "additional_writable_roots",
             "execution_service_id",
             "default_remote_server_id",
-            "external_mcp_config_ids",
             "selected_skill_ids",
             "skill_policy_revision",
             "ephemeral_http_servers",

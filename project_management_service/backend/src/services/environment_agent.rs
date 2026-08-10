@@ -4,7 +4,7 @@
 use crate::models::*;
 use crate::state::AppState;
 use crate::user_model_runtime_client::resolve_default_environment_initialization_model_runtime;
-use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest, PROJECT_ENVIRONMENT_AGENT};
+use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest};
 use chatos_ai_runtime::ModelRuntimeConfig;
 use chatos_mcp_runtime::McpExecutor;
 use serde_json::{json, Value};
@@ -19,6 +19,7 @@ mod mcp_servers;
 mod memory;
 mod progress;
 mod routing;
+mod source_snapshot;
 mod tool_provider;
 
 pub use self::progress::get_project_runtime_environment_progress;

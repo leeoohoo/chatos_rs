@@ -2,17 +2,28 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::run_model_phase::supply_chain::SupplyChainEvidenceState;
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    RuntimeBeforeModelRequest, RuntimeIterationContext, RuntimeLifecycleHook,
-    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
-    TaskExecutionReviewTrigger,
+    AiResponse, RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
+    RuntimeIterationContext, RuntimeLifecycleHook, TaskExecutionOutcome,
+    TaskExecutionOutcomeStatus, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
+    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
 };
+#[cfg(test)]
+#[path = "runtime_state/tests.rs"]
+mod tests;
+
+const TASK_OUTCOME_REVIEW_REASON: &str = "task_execution_outcome_review";
+const TASK_EXECUTION_OUTCOME_METADATA_KEY: &str = "task_execution_outcome";
 
 struct TaskRunnerLifecycleHook {
     finalization: TaskFinalizationLifecycleHook,
     progress: Arc<TaskExecutionProgressState>,
     active_review: parking_lot::Mutex<Option<TaskExecutionReviewCheckpoint>>,
+    visible_response: parking_lot::Mutex<Option<AiResponse>>,
+    execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+    requires_execution: bool,
     store: crate::store::AppStore,
     run_id: String,
 }
@@ -21,6 +32,8 @@ impl TaskRunnerLifecycleHook {
     fn new(
         max_iterations: usize,
         progress: Arc<TaskExecutionProgressState>,
+        execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+        requires_execution: bool,
         store: crate::store::AppStore,
         run_id: String,
     ) -> Self {
@@ -28,12 +41,19 @@ impl TaskRunnerLifecycleHook {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
             progress,
             active_review: parking_lot::Mutex::new(None),
+            visible_response: parking_lot::Mutex::new(None),
+            execution_outcome,
+            requires_execution,
             store,
             run_id,
         }
     }
 
-    fn record_review_checkpoint(&self, checkpoint: TaskExecutionReviewCheckpoint) {
+    fn record_review_checkpoint(
+        &self,
+        checkpoint: TaskExecutionReviewCheckpoint,
+        confirmed_project_paths: &[String],
+    ) {
         let payload = json!({
             "iteration": checkpoint.iteration,
             "trigger": checkpoint.trigger.as_str(),
@@ -48,6 +68,7 @@ impl TaskRunnerLifecycleHook {
             "context_action": "persistent_guidance",
             "disabled_tool_names": [],
             "review_contract": "evidence_driven_next_action",
+            "confirmed_project_paths": confirmed_project_paths,
         });
         self.store.append_run_event_sync(TaskRunEventRecord::new(
             self.run_id.clone(),
@@ -65,6 +86,11 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
         self.progress.begin_iteration(context.iteration);
+        if context.reason == TASK_OUTCOME_REVIEW_REASON {
+            return Ok(RuntimeBeforeModelRequest::unchanged()
+                .with_stream_output(false)
+                .with_tools_enabled(false));
+        }
         let iteration = context.iteration;
         let mut before = self.finalization.before_model_request(context).await?;
         if !before.tools_enabled {
@@ -72,20 +98,101 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         }
 
         let detected_checkpoint = self.progress.should_trigger_review(iteration);
+        let confirmed_project_paths = self.progress.confirmed_project_paths();
         if let Some(checkpoint) = detected_checkpoint {
-            self.record_review_checkpoint(checkpoint);
+            self.record_review_checkpoint(checkpoint, &confirmed_project_paths);
         }
         if let Some(checkpoint) =
             persistent_review_checkpoint(&self.active_review, detected_checkpoint)
         {
             // Keep the decision contract present after each tool result. Otherwise a bounded
             // locate/edit action can return to an unconstrained exploration loop on the next turn.
-            before
-                .input_items
-                .push(checkpoint_guidance_message(checkpoint));
+            before.input_items.push(checkpoint_guidance_message(
+                checkpoint,
+                &confirmed_project_paths,
+            ));
         }
         Ok(before)
     }
+
+    async fn after_final_response(
+        &self,
+        context: RuntimeFinalResponseContext,
+    ) -> Result<RuntimeFinalResponseAction, String> {
+        if context.reason == TASK_OUTCOME_REVIEW_REASON {
+            let outcome = parse_task_execution_outcome(context.response.content.as_str())?;
+            *self.execution_outcome.lock() = Some(outcome);
+            let visible_response =
+                self.visible_response.lock().take().ok_or_else(|| {
+                    "task execution outcome review lost visible response".to_string()
+                })?;
+            return Ok(RuntimeFinalResponseAction::Replace(Box::new(
+                visible_response,
+            )));
+        }
+
+        *self.visible_response.lock() = Some(context.response.clone());
+        Ok(RuntimeFinalResponseAction::Continue {
+            input_items: vec![
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": context.response.content
+                    }]
+                }),
+                task_execution_outcome_review_message(self.requires_execution),
+            ],
+            reason: TASK_OUTCOME_REVIEW_REASON.to_string(),
+        })
+    }
+
+    async fn final_response_metadata(
+        &self,
+        _context: RuntimeFinalResponseContext,
+    ) -> Result<Option<Value>, String> {
+        self.execution_outcome
+            .lock()
+            .clone()
+            .map(|outcome| {
+                serde_json::to_value(outcome)
+                    .map(|outcome| json!({(TASK_EXECUTION_OUTCOME_METADATA_KEY): outcome}))
+                    .map_err(|err| format!("failed to serialize task execution outcome: {err}"))
+            })
+            .transpose()
+    }
+}
+
+fn task_execution_outcome_review_message(requires_execution: bool) -> Value {
+    let evidence_rule = if requires_execution {
+        "This task requires execution. Success evidence must cite actual tool results, changed project files, and necessary command or test results; prose claims are not evidence."
+    } else {
+        "This is a non-execution planning task. Success evidence may cite concrete sections of the delivered planning response that satisfy the requested artifacts; do not require file changes, a sandbox, or command execution unless the task explicitly requested them."
+    };
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule} Return exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result without paths, ports, or URLs\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"],\"referenced_paths\":[\"workspace-relative/path\"],\"referenced_endpoints\":[\"http://127.0.0.1:4000/health\"]}}\nSet status to succeeded only when every required acceptance criterion has concrete evidence and all necessary verification has passed. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Put every user-facing file or directory reference in referenced_paths using workspace-relative paths only. Put every user-facing URL or port-bearing address in referenced_endpoints as an absolute HTTP/HTTPS URL without credentials. Keep summary free of paths, ports, and URLs because the platform builds those receipt sections from validated references. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
+        }]
+    })
+}
+
+fn parse_task_execution_outcome(content: &str) -> Result<TaskExecutionOutcome, String> {
+    let outcome = serde_json::from_str::<TaskExecutionOutcome>(content.trim())
+        .map_err(|err| format!("invalid task execution outcome JSON: {err}"))?;
+    if !matches!(
+        outcome.status,
+        TaskExecutionOutcomeStatus::Succeeded | TaskExecutionOutcomeStatus::Blocked
+    ) {
+        return Err(
+            "task execution outcome review may only return succeeded or blocked".to_string(),
+        );
+    }
+    outcome.validate()?;
+    Ok(outcome)
 }
 
 fn persistent_review_checkpoint(
@@ -99,7 +206,10 @@ fn persistent_review_checkpoint(
     *active_review
 }
 
-fn checkpoint_guidance_message(checkpoint: TaskExecutionReviewCheckpoint) -> Value {
+fn checkpoint_guidance_message(
+    checkpoint: TaskExecutionReviewCheckpoint,
+    confirmed_project_paths: &[String],
+) -> Value {
     let decision_focus = match checkpoint.trigger {
         TaskExecutionReviewTrigger::ReadOnlyLoop =>
             "归并现有文件与命令证据：如果它们已覆盖全部硬性验收项就 COMPLETE；否则锁定依赖顺序中第一项未满足要求，并选择 IMPLEMENT 或 VERIFY。",
@@ -110,12 +220,22 @@ fn checkpoint_guidance_message(checkpoint: TaskExecutionReviewCheckpoint) -> Val
         TaskExecutionReviewTrigger::StaleProjectWrite =>
             "已有失败结果表明最近一次代码写入未生效。选择 IMPLEMENT，把最近一次成功读取的目标内容作为权威版本，直接生成基于该文本的精确编辑；写入成功后转入必要验证。",
     };
+    let confirmed_path_guidance = if confirmed_project_paths.is_empty() {
+        "当前还没有来自成功读取、搜索或修改结果的已确认项目路径。只有现有证据确实无法定位实现时，只允许执行一次限定目录、关键词和预期命中的 LOCATE 动作；该动作返回后必须使用新证据进入 IMPLEMENT、VERIFY、COMPLETE 或 BLOCKED，不得继续扩大搜索范围。".to_string()
+    } else {
+        format!(
+            "以下路径已由成功的读取、搜索或修改工具结果确认，可直接作为后续动作的项目路径索引：{}。必须直接复用这些路径，不得从任务描述或自然语言摘要重新猜测路径，也不得仅为确认它们存在而重复全仓搜索。",
+            serde_json::to_string(confirmed_project_paths)
+                .expect("confirmed project paths must serialize")
+        )
+    };
     json!({
         "role": "system",
         "content": format!(
             "[工程决策复盘]\n\
              你现在承担工程复盘决策角色。当前上下文已经提供任务目标、验收标准、已读取文件、已执行命令及其结果。你的职责是依据这些证据替执行过程选定并推进下一步，而不是评价先前行为、提醒发生了重复，或输出复盘说明。\n\
              本次决策重点：{decision_focus}\n\
+             路径证据：{confirmed_path_guidance}\n\
              \n\
              请在内部完成决策，不向用户展示分析草稿：\n\
              1. 重建验收契约：从任务目标和验收标准中提取硬性要求，使用现有文件内容、函数实现、命令、退出码和错误结果逐项判断。每个结论都必须有具体证据；没有证据的要求视为未满足。\n\
@@ -143,6 +263,7 @@ impl RunService {
         tool_result_model_budget_limits: ToolResultModelBudgetLimits,
         max_iterations: usize,
         review_policy: TaskExecutionReviewPolicy,
+        requires_execution: bool,
         effective_workspace_dir: &str,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
@@ -153,11 +274,15 @@ impl RunService {
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
         let abort_token = tokio_util::sync::CancellationToken::new();
         let progress = Arc::new(TaskExecutionProgressState::new(review_policy));
+        let execution_outcome = Arc::new(parking_lot::Mutex::new(None));
+        let supply_chain_evidence =
+            Arc::new(parking_lot::Mutex::new(SupplyChainEvidenceState::default()));
         let callbacks = self.build_runtime_callbacks(
             run.id.clone(),
             Arc::clone(&pending_stream_event),
             path_redactor.clone(),
             Arc::clone(&progress),
+            Arc::clone(&supply_chain_evidence),
         );
         let cancel_requested = Arc::new(AtomicBool::new(self.store.is_cancel_requested(&run.id)));
         if cancel_requested.load(Ordering::Relaxed) {
@@ -171,6 +296,8 @@ impl RunService {
             .with_lifecycle_hook(Some(Arc::new(TaskRunnerLifecycleHook::new(
                 max_iterations,
                 progress,
+                Arc::clone(&execution_outcome),
+                requires_execution,
                 self.store.clone(),
                 run.id.clone(),
             ))))
@@ -184,6 +311,8 @@ impl RunService {
         RuntimeExecutionState {
             runtime_options,
             pending_stream_event,
+            execution_outcome,
+            supply_chain_evidence,
         }
     }
 
@@ -193,6 +322,7 @@ impl RunService {
         pending_stream_event: PendingRunStreamState,
         path_redactor: crate::services::path_redaction::WorkspacePathRedactor,
         progress: Arc<TaskExecutionProgressState>,
+        supply_chain_evidence: Arc<parking_lot::Mutex<SupplyChainEvidenceState>>,
     ) -> RuntimeCallbacks {
         let store_for_callbacks = self.store.clone();
         let run_id_for_chunk = run_id.clone();
@@ -249,7 +379,9 @@ impl RunService {
                 let run_id = run_id.clone();
                 let pending = Arc::clone(&pending_stream_event);
                 let path_redactor = path_redactor.clone();
+                let supply_chain_evidence = Arc::clone(&supply_chain_evidence);
                 move |payload| {
+                    supply_chain_evidence.lock().observe_tool_calls(&payload);
                     flush_pending_stream_event(
                         &store,
                         run_id.as_str(),
@@ -271,8 +403,10 @@ impl RunService {
                 let run_id = run_id.clone();
                 let path_redactor = path_redactor.clone();
                 let progress = Arc::clone(&progress);
+                let supply_chain_evidence = Arc::clone(&supply_chain_evidence);
                 move |payload| {
                     progress.observe_tool_result(&payload);
+                    supply_chain_evidence.lock().observe_tool_result(&payload);
                     let mut payload = sanitize_runtime_event_payload(payload);
                     path_redactor.redact_value(&mut payload);
                     let browser_session = browser_session_event_payload(&payload);
@@ -483,198 +617,5 @@ fn redact_all_values(value: &mut Value) {
             *other = Value::String(EVENT_SECRET_VALUE_MASK.to_string());
         }
         _ => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn review_checkpoint(trigger: TaskExecutionReviewTrigger) -> TaskExecutionReviewCheckpoint {
-        TaskExecutionReviewCheckpoint {
-            iteration: 24,
-            trigger,
-            read_only_iterations: 24,
-            missing_read_failures: 2,
-            checkpoints_since_action: 3,
-            policy: TaskExecutionReviewPolicy::default(),
-        }
-    }
-
-    #[test]
-    fn checkpoint_guidance_requires_one_actionable_review_decision() {
-        let guidance = checkpoint_guidance_message(review_checkpoint(
-            TaskExecutionReviewTrigger::ReadOnlyLoop,
-        ));
-        let content = guidance["content"].as_str().expect("guidance content");
-
-        for expected in [
-            "IMPLEMENT",
-            "LOCATE",
-            "VERIFY",
-            "COMPLETE",
-            "BLOCKED",
-            "状态 + 证据依据 + 未满足的验收项",
-            "目标文件/函数或唯一命令 + 具体动作 + 完成判据",
-            "每个结论都必须有具体证据",
-            "下一条可见输出只能是执行该指令的一次工具调用",
-            "失败就引用新失败的具体原因给出纠正后的",
-            "工具始终完整可用",
-        ] {
-            assert!(content.contains(expected), "missing {expected}");
-        }
-        for forbidden in [
-            "第 3 次",
-            "当前计数",
-            "连续多轮只读/观察",
-            "你又在重复",
-            "工具已临时关闭",
-        ] {
-            assert!(!content.contains(forbidden), "unexpected {forbidden}");
-        }
-        assert!(!content.contains("关闭观察类工具"));
-    }
-
-    #[test]
-    fn review_contract_persists_and_accepts_newer_checkpoint_evidence() {
-        let active_review = parking_lot::Mutex::new(None);
-        assert!(persistent_review_checkpoint(&active_review, None).is_none());
-
-        let first = review_checkpoint(TaskExecutionReviewTrigger::ReadOnlyLoop);
-        assert_eq!(
-            persistent_review_checkpoint(&active_review, Some(first)),
-            Some(first)
-        );
-        assert_eq!(
-            persistent_review_checkpoint(&active_review, None),
-            Some(first)
-        );
-
-        let newer = review_checkpoint(TaskExecutionReviewTrigger::StaleProjectWrite);
-        assert_eq!(
-            persistent_review_checkpoint(&active_review, Some(newer)),
-            Some(newer)
-        );
-        assert_eq!(
-            persistent_review_checkpoint(&active_review, None),
-            Some(newer)
-        );
-    }
-
-    #[test]
-    fn missing_path_review_directs_a_bounded_location_step() {
-        let guidance = checkpoint_guidance_message(review_checkpoint(
-            TaskExecutionReviewTrigger::MissingTargetedReads,
-        ));
-        let content = guidance["content"].as_str().expect("guidance content");
-
-        assert!(content.contains("已有工具结果否定了当前路径假设"));
-        assert!(content.contains("只执行一次限定目录、关键词和预期命中的定位动作"));
-    }
-
-    #[test]
-    fn stale_write_review_directs_an_exact_rebased_edit() {
-        let guidance = checkpoint_guidance_message(review_checkpoint(
-            TaskExecutionReviewTrigger::StaleProjectWrite,
-        ));
-        let content = guidance["content"].as_str().expect("guidance content");
-
-        assert!(content.contains("最近一次代码写入未生效"));
-        assert!(content.contains("最近一次成功读取的目标内容作为权威版本"));
-        assert!(content.contains("直接生成基于该文本的精确编辑"));
-        assert!(content.contains("写入成功后转入必要验证"));
-    }
-
-    #[test]
-    fn browser_session_event_is_extracted_from_nested_tool_result() {
-        let payload = json!({
-            "name": "browser_tools_browser_navigate",
-            "result": {
-                "success": true,
-                "browser_session": {
-                    "id": "h_session_123",
-                    "mode": "managed",
-                    "status": "active",
-                    "event": "updated"
-                }
-            }
-        });
-
-        let session = browser_session_event_payload(&payload).expect("browser session");
-        assert_eq!(session["id"], "h_session_123");
-        assert_eq!(session["status"], "active");
-    }
-
-    #[test]
-    fn sanitize_runtime_event_payload_redacts_ask_user_tool_results() {
-        let payload = json!({
-            "name": "ask_user_prompt_mixed_form",
-            "success": true,
-            "content": serde_json::to_string(&json!({
-                "status": "submitted",
-                "values": {
-                    "public_port_policy": "direct_open_defaults",
-                    "admin_password": "super-secret"
-                },
-                "selection": "proceed"
-            })).expect("content"),
-            "result": {
-                "status": "submitted",
-                "values": {
-                    "token": "secret-token"
-                },
-                "selection": "proceed"
-            }
-        });
-
-        let sanitized = sanitize_runtime_event_payload(payload);
-        let content = sanitized["content"].as_str().expect("content");
-
-        assert!(!content.contains("super-secret"));
-        assert!(content.contains(EVENT_SECRET_VALUE_MASK));
-        assert_eq!(
-            sanitized["result"]["values"]["token"],
-            EVENT_SECRET_VALUE_MASK
-        );
-        assert_eq!(sanitized["result"]["selection"], "proceed");
-    }
-
-    #[test]
-    fn sanitize_runtime_event_payload_redacts_ask_user_output_in_model_input() {
-        let payload = json!({
-            "input": [
-                {
-                    "type": "function_call_output",
-                    "call_id": "call_1",
-                    "output": serde_json::to_string(&json!({
-                        "status": "submitted",
-                        "values": {
-                            "admin_password": "super-secret"
-                        },
-                        "selection": "proceed"
-                    })).expect("output")
-                }
-            ]
-        });
-
-        let sanitized = sanitize_runtime_event_payload(payload);
-        let output = sanitized["input"][0]["output"].as_str().expect("output");
-
-        assert!(!output.contains("super-secret"));
-        assert!(output.contains(EVENT_SECRET_VALUE_MASK));
-    }
-
-    #[test]
-    fn sanitize_runtime_event_payload_keeps_unrelated_status_values_objects() {
-        let payload = json!({
-            "status": "ok",
-            "values": {
-                "debug": "keep-me"
-            }
-        });
-
-        let sanitized = sanitize_runtime_event_payload(payload);
-
-        assert_eq!(sanitized["values"]["debug"], "keep-me");
     }
 }

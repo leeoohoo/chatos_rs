@@ -277,11 +277,19 @@ pub struct PublishAgentPromptRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMcpBindingView {
     pub mcp: McpRecord,
+    #[serde(default)]
+    pub binding_id: Option<String>,
     pub mode: String,
     #[serde(default = "default_true")]
     pub bindable: bool,
     #[serde(default)]
     pub unavailable_reason: Option<String>,
+    #[serde(default)]
+    pub conditions: BindingConditions,
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
+    #[serde(default)]
+    pub tool_blocklist: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +322,12 @@ pub struct AgentPluginBindingsResponse {
 pub struct AgentMcpBindingSelection {
     pub mcp_id: String,
     pub mode: String,
+    #[serde(default)]
+    pub conditions: BindingConditions,
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
+    #[serde(default)]
+    pub tool_blocklist: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -349,6 +363,8 @@ pub struct AgentBindingPayload {
     pub priority: Option<i64>,
     pub conditions: Option<BindingConditions>,
     pub component_allowlist: Option<Vec<String>>,
+    pub tool_allowlist: Option<Vec<String>>,
+    pub tool_blocklist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

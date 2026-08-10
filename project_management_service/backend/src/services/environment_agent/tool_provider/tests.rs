@@ -535,6 +535,19 @@ fn runnable_stack_cannot_be_downgraded_to_not_runnable() {
         &json!([{"type": "redis"}]),
         &[],
     ));
+    assert!(environment_has_provisionable_evidence(
+        &json!({
+            "source_snapshot": {
+                "requires_application_runtime": true,
+                "application_candidates": [
+                    {"source_root": "apps/api"},
+                    {"source_root": "apps/web"}
+                ]
+            }
+        }),
+        &json!([]),
+        &[],
+    ));
     assert!(!environment_has_provisionable_evidence(
         &json!({"source": "scan"}),
         &json!([]),

@@ -5,6 +5,7 @@ use super::super::internal_skills::{
     internal_skill_bundle_hash, internal_skill_catalog, InternalSkillCatalogItem,
 };
 use super::*;
+use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     verify_plugin_release_signature, PluginComponentKind, PluginExecutionHost,
 };
@@ -113,7 +114,10 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
         bundled_ponytail_release().expect("bundled Ponytail Release");
 
     assert_eq!(BUNDLED_MARKETPLACE_REVISION, "2026-08-01.1");
-    assert_eq!(BUNDLED_PONYTAIL_AGENT_KEYS, ["task_runner_run_phase"]);
+    assert_eq!(
+        BUNDLED_PONYTAIL_AGENT_KEYS,
+        [SystemAgentKey::TaskRunnerRunPhase.as_str()]
+    );
     assert_eq!(release.plugin_id, BUNDLED_PONYTAIL_PLUGIN_ID);
     assert_eq!(release.version, BUNDLED_PONYTAIL_VERSION);
     assert_eq!(release.artifact_sha256, BUNDLED_PONYTAIL_ARTIFACT_SHA256);

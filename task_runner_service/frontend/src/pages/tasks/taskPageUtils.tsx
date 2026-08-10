@@ -6,7 +6,6 @@ import { Typography } from 'antd';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  CreateTaskPayload,
   RemoteServerRecord,
   TaskRecord,
   TaskRunEventRecord,
@@ -16,6 +15,7 @@ import type {
   TaskScheduleMode,
   TaskStatus,
   AskUserPromptStatus,
+  UpdateTaskPayload,
 } from '../../types';
 import {
   isRemoteToolName,
@@ -34,54 +34,18 @@ export type TaskFormValues = {
   description?: string;
   priority?: number;
   status: TaskStatus;
-  projectId: string;
   default_model_config_id?: string;
-  requiresExecution: boolean;
   prerequisite_task_ids?: string[];
   tagsText?: string;
-  pluginDeviceId?: string;
-  pluginWorkspaceId?: string;
-  selectedPluginIds?: string[];
-  pluginCommandSelections?: Record<string, boolean>;
-  pluginCommandArguments?: Record<string, string>;
-  pluginAgentSelection?: string;
   scheduleMode: TaskScheduleMode;
   scheduleRunAt?: string;
   scheduleIntervalSeconds?: number;
-  taskProfile: TaskProfile;
 };
 
 export type RunTaskFormValues = {
   model_config_id?: string;
   prompt_override?: string;
 };
-
-export function buildCreateTaskFormValues(
-  routeProjectId?: string,
-): TaskFormValues {
-  return {
-    title: '',
-    objective: '',
-    description: '',
-    priority: 0,
-    status: 'draft',
-    taskProfile: 'default',
-    projectId: normalizeTaskProjectId(routeProjectId),
-    default_model_config_id: undefined,
-    requiresExecution: true,
-    prerequisite_task_ids: [],
-    tagsText: '',
-    pluginDeviceId: undefined,
-    pluginWorkspaceId: undefined,
-    selectedPluginIds: [],
-    pluginCommandSelections: {},
-    pluginCommandArguments: {},
-    pluginAgentSelection: undefined,
-    scheduleMode: 'manual',
-    scheduleRunAt: undefined,
-    scheduleIntervalSeconds: undefined,
-  };
-}
 
 export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
   return {
@@ -90,86 +54,20 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     description: task.description || '',
     priority: task.priority,
     status: task.status,
-    taskProfile: task.task_profile || 'default',
-    projectId: normalizeTaskProjectId(task.project_id),
     default_model_config_id: task.default_model_config_id || undefined,
-    requiresExecution: task.mcp_config.requires_execution ?? true,
     prerequisite_task_ids: task.prerequisite_task_ids || [],
     tagsText: task.tags.join(', '),
-    pluginDeviceId: task.plugin_config?.device_id || undefined,
-    pluginWorkspaceId: task.plugin_config?.workspace_id || undefined,
-    selectedPluginIds:
-      task.plugin_config?.selected_plugins?.map((plugin) => plugin.plugin_id) || [],
-    pluginCommandSelections: Object.fromEntries(
-      (task.plugin_config?.selected_plugins || []).flatMap((plugin) =>
-        (plugin.selected_command_ids || []).map((commandId) => [
-          taskPluginCommandKey(plugin.plugin_id, commandId),
-          true,
-        ]),
-      ),
-    ),
-    pluginCommandArguments: Object.fromEntries(
-      (task.plugin_config?.command_invocations || [])
-        .filter((invocation) => invocation.arguments?.trim())
-        .map((invocation) => [
-          taskPluginCommandKey(invocation.plugin_id, invocation.command_id),
-          invocation.arguments!.trim(),
-        ]),
-    ),
-    pluginAgentSelection: (task.plugin_config?.selected_plugins || [])
-      .flatMap((plugin) =>
-        (plugin.selected_agent_ids || []).map((agentId) =>
-          taskPluginAgentKey(plugin.plugin_id, agentId),
-        ),
-      )[0],
     scheduleMode: task.schedule.mode,
     scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
     scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
   };
 }
 
-export function buildTaskPayload(
-  values: TaskFormValues,
-  options: {
-    routeProjectId?: string;
-  },
-): CreateTaskPayload | null {
+export function buildTaskUpdatePayload(values: TaskFormValues): UpdateTaskPayload | null {
   const schedule = buildSchedulePayload(values);
   if (!schedule) {
     return null;
   }
-
-  const selectedPluginIds = values.selectedPluginIds || [];
-  const selectedPluginIdSet = new Set(selectedPluginIds);
-  const selectedCommandsByPlugin = new Map<string, string[]>();
-  Object.entries(values.pluginCommandSelections || {}).forEach(([key, selected]) => {
-    if (!selected) {
-      return;
-    }
-    const parsed = parseTaskPluginCommandKey(key);
-    if (!parsed || !selectedPluginIdSet.has(parsed.pluginId)) {
-      return;
-    }
-    const commands = selectedCommandsByPlugin.get(parsed.pluginId) || [];
-    if (!commands.includes(parsed.commandId)) {
-      commands.push(parsed.commandId);
-    }
-    selectedCommandsByPlugin.set(parsed.pluginId, commands);
-  });
-  const commandInvocations = Array.from(selectedCommandsByPlugin.entries()).flatMap(
-    ([pluginId, commandIds]) =>
-      commandIds.flatMap((commandId) => {
-        const argumentsValue = values.pluginCommandArguments?.[
-          taskPluginCommandKey(pluginId, commandId)
-        ]?.trim();
-        return argumentsValue
-          ? [{ plugin_id: pluginId, command_id: commandId, arguments: argumentsValue }]
-          : [];
-      }),
-  );
-  const selectedAgent = values.pluginAgentSelection
-    ? parseTaskPluginAgentKey(values.pluginAgentSelection)
-    : null;
 
   return {
     title: values.title,
@@ -177,88 +75,14 @@ export function buildTaskPayload(
     description: values.description?.trim() || undefined,
     priority: values.priority,
     status: values.status,
-    task_profile: values.taskProfile,
     default_model_config_id: values.default_model_config_id,
-    project_id: normalizeTaskProjectId(values.projectId || options.routeProjectId),
     prerequisite_task_ids: values.prerequisite_task_ids || [],
     tags: values.tagsText
       ?.split(',')
       .map((item) => item.trim())
       .filter(Boolean),
     schedule,
-    plugin_config: {
-      device_id: values.pluginDeviceId?.trim() || undefined,
-      workspace_id: values.pluginWorkspaceId?.trim() || undefined,
-      selected_plugins: selectedPluginIds.map((pluginId) => ({
-        plugin_id: pluginId,
-        selected_skill_ids: [],
-        selected_command_ids: selectedCommandsByPlugin.get(pluginId) || [],
-        selected_agent_ids:
-          selectedAgent?.pluginId === pluginId && selectedPluginIdSet.has(pluginId)
-            ? [selectedAgent.agentId]
-            : [],
-      })),
-      command_invocations: commandInvocations,
-    },
-    mcp_config: {
-      requires_execution: values.requiresExecution,
-    },
   };
-}
-
-export function taskPluginCommandKey(pluginId: string, commandId: string): string {
-  return JSON.stringify([pluginId, commandId]);
-}
-
-export function taskPluginAgentKey(pluginId: string, agentId: string): string {
-  return JSON.stringify([pluginId, agentId]);
-}
-
-function parseTaskPluginAgentKey(
-  value: string,
-): { pluginId: string; agentId: string } | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== 2 ||
-      typeof parsed[0] !== 'string' ||
-      typeof parsed[1] !== 'string'
-    ) {
-      return null;
-    }
-    const pluginId = parsed[0].trim();
-    const agentId = parsed[1].trim();
-    return pluginId && agentId ? { pluginId, agentId } : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseTaskPluginCommandKey(
-  value: string,
-): { pluginId: string; commandId: string } | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== 2 ||
-      typeof parsed[0] !== 'string' ||
-      typeof parsed[1] !== 'string' ||
-      !parsed[0].trim() ||
-      !parsed[1].trim()
-    ) {
-      return null;
-    }
-    return { pluginId: parsed[0], commandId: parsed[1] };
-  } catch {
-    return null;
-  }
-}
-
-function normalizeTaskProjectId(value?: string | null): string {
-  const trimmed = value?.trim();
-  return trimmed && trimmed !== '0' ? trimmed : '-1';
 }
 
 export const taskProfileValues: TaskProfile[] = ['default', 'chatos_plan'];

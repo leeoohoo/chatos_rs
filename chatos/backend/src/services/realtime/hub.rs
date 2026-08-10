@@ -25,9 +25,9 @@ use super::types::{
     ProjectChangeSummaryRealtimePayload, ProjectMembersUpdatedRealtimePayload,
     ProjectRunCatalogRealtimePayload, ProjectRunInstanceRealtimePayload,
     ProjectRunStateRealtimePayload, ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope,
-    RealtimeEventPayload, RemoteConnectionsUpdatedRealtimePayload,
-    RemoteSftpTransferRealtimePayload, ReviewRepairRealtimePayload, SessionsUpdatedRealtimePayload,
-    TaskBoardRealtimePayload, TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
+    RealtimeEventPayload, RemoteConnectionsUpdatedRealtimePayload, ReviewRepairRealtimePayload,
+    SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
+    TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
 };
 
 const REALTIME_CHANNEL_CAPACITY: usize = 512;
@@ -305,7 +305,7 @@ pub fn publish_remote_connections_updated(
             RemoteConnectionsUpdatedRealtimePayload {
                 reason: reason.to_string(),
                 connection_id: connection_id.map(|value| value.to_string()),
-                connection,
+                connection: connection.map(|item| item.to_view()),
             },
         ),
         ts: now_rfc3339(),
@@ -570,21 +570,6 @@ pub fn publish_chat_stream_event(
             stream_type: stream_type.to_string(),
             raw,
         }),
-        ts: now_rfc3339(),
-    });
-}
-
-pub fn publish_remote_sftp_transfer_updated(
-    user_id: &str,
-    payload: RemoteSftpTransferRealtimePayload,
-) {
-    REALTIME_HUB.send(RealtimeEventEnvelope {
-        message_type: "event",
-        event: "remote.sftp.transfer.updated",
-        user_id: user_id.to_string(),
-        conversation_id: None,
-        project_id: None,
-        payload: RealtimeEventPayload::RemoteSftpTransfer(payload),
         ts: now_rfc3339(),
     });
 }

@@ -308,7 +308,7 @@ export const RequirementExecutionProcessActions: React.FC<{
         : phase === 'completed'
           ? '全部任务已完成，执行结果已同步回项目 Plan。'
         : phase === 'failed'
-          ? '当前批次存在失败任务，可查看详情、重试或重新规划。'
+          ? '当前批次存在失败或阻塞任务，可查看详情、重试或重新规划。'
         : actuallyStarted
           ? '执行确认已收到，任务正在按依赖顺序启动。'
           : '完整任务依赖图生成前，执行按钮保持禁用。'}
@@ -317,7 +317,7 @@ export const RequirementExecutionProcessActions: React.FC<{
       {!cancellationSettling && retryableFailedTaskCount > 0 ? (
         <button
           type="button"
-          aria-label={`重试失败任务，共 ${retryableFailedTaskCount} 个`}
+          aria-label={`重试失败或阻塞任务，共 ${retryableFailedTaskCount} 个`}
           className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200"
           disabled={Boolean(retryingTaskId)}
           onClick={onOpenFailedTaskRetry}
@@ -325,7 +325,7 @@ export const RequirementExecutionProcessActions: React.FC<{
           {retryingTaskId
             ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
             : <RotateCcw className="h-3.5 w-3.5" />}
-          重试失败任务
+          重试失败或阻塞任务
           <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] leading-none text-white">
             {retryableFailedTaskCount}
           </span>

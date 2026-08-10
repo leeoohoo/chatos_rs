@@ -127,7 +127,6 @@ impl MongoStore {
                         "worker_id": worker_id,
                         "claim_token": claim_token,
                         "claim_until": claim_until,
-                        "started_at": now.as_str(),
                         "updated_at": now.as_str(),
                     },
                     "$inc": { "attempt": 1_i64 },
@@ -144,7 +143,43 @@ impl MongoStore {
             )
             .await
         {
-            Ok(run) => Ok(run),
+            Ok(Some(mut run)) => {
+                run.begin_attempt(claim_token, now.as_str());
+                let attempt = run
+                    .attempts
+                    .iter()
+                    .find(|attempt| attempt.attempt_id == claim_token)
+                    .ok_or_else(|| "run claim did not create an attempt record".to_string())?;
+                let mut update = doc! {
+                    "$push": {
+                        "attempts": bson::to_bson(attempt).map_err(|err| err.to_string())?,
+                    }
+                };
+                if run.started_at.is_none() {
+                    update.insert("$set", doc! { "started_at": now.as_str() });
+                }
+                let result = self
+                    .runs
+                    .update_one(
+                        doc! {
+                            "id": run.id.as_str(),
+                            "claim_token": claim_token,
+                            "attempts.attempt_id": { "$ne": claim_token },
+                        },
+                        update,
+                        None,
+                    )
+                    .await
+                    .map_err(|err| err.to_string())?;
+                if result.modified_count == 0 {
+                    return Err(lost_run_claim_error(&run.id));
+                }
+                if run.started_at.is_none() {
+                    run.started_at = Some(now);
+                }
+                Ok(Some(run))
+            }
+            Ok(None) => Ok(None),
             Err(err) if is_mongo_execution_lane_conflict(&err.to_string()) => Ok(None),
             Err(err) => Err(err.to_string()),
         }
@@ -595,6 +630,14 @@ impl MongoStore {
         for mut run in candidates {
             let was_cancel_requested = run.cancel_requested;
             let should_requeue = !was_cancel_requested && run.attempt < max_attempts.max(1);
+            let attempt_status = if was_cancel_requested {
+                TaskRunAttemptStatus::Cancelled
+            } else if should_requeue {
+                TaskRunAttemptStatus::Interrupted
+            } else {
+                TaskRunAttemptStatus::Failed
+            };
+            run.finish_current_attempt(attempt_status, reconciled_at);
             let (next_status, next_status_text, result_summary, error_message, callback_event) =
                 if was_cancel_requested {
                     (
@@ -627,6 +670,7 @@ impl MongoStore {
                 "updated_at": reconciled_at,
                 "result_summary": result_summary.as_str(),
                 "cancel_requested": false,
+                "attempts": bson::to_bson(&run.attempts).map_err(|err| err.to_string())?,
             };
             if let Some(callback_event) = callback_event {
                 set_doc.insert("finished_at", reconciled_at);
@@ -651,7 +695,6 @@ impl MongoStore {
                 "claim_until": "",
             };
             if should_requeue {
-                unset_doc.insert("started_at", "");
                 unset_doc.insert("finished_at", "");
                 unset_doc.insert("error_message", "");
                 unset_doc.insert("usage", "");
@@ -681,9 +724,6 @@ impl MongoStore {
                 continue;
             }
             run.status = next_status;
-            if should_requeue {
-                run.started_at = None;
-            }
             run.finished_at = (!should_requeue).then(|| reconciled_at.to_string());
             run.updated_at = reconciled_at.to_string();
             run.result_summary = Some(result_summary);

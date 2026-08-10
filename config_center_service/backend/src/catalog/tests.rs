@@ -115,6 +115,9 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
         TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
         TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
         TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
+        TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
+        TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
+        TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
     ] {
         let definition = definitions
             .iter()
@@ -138,6 +141,39 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
         json!(default_task_runner_execution_environment_mode())
     );
     assert_eq!(environment_mode.enum_options, vec!["local", "cloud"]);
+
+    let audit_level = definitions
+        .iter()
+        .find(|definition| definition.key == TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY)
+        .expect("task runner Node.js audit level definition");
+    assert_eq!(audit_level.value_type, "enum");
+    assert_eq!(audit_level.default_value, json!("high"));
+    assert_eq!(audit_level.enum_options, vec!["high"]);
+
+    let dependency_requirements = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY
+        })
+        .expect("task runner Node.js dependency requirements definition");
+    assert_eq!(dependency_requirements.value_type, "json");
+    assert_eq!(
+        dependency_requirements.default_value["react"],
+        json!("^19.2.7")
+    );
+    assert_eq!(
+        dependency_requirements.default_value["vite"],
+        json!("^8.1.4")
+    );
+
+    let install_script_allowlist = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY
+        })
+        .expect("task runner install script allowlist definition");
+    assert_eq!(install_script_allowlist.value_type, "json");
+    assert_eq!(install_script_allowlist.default_value, json!(["esbuild"]));
 
     for (key, expected_default) in [
         (
@@ -735,6 +771,16 @@ fn catalog_exposes_project_service_runtime_routes_via_env_projection() {
             "PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS",
             "duration_ms",
         ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY,
+            "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
+            PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY,
+            "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS",
+            "duration_ms",
+        ),
     ] {
         let definition = definitions
             .iter()
@@ -1082,6 +1128,109 @@ fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
 }
 
 #[test]
+fn catalog_exposes_task_runner_run_event_retention_controls() {
+    let definitions = builtin_definitions();
+    for (key, env_alias, expected_default) in [
+        (
+            TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY,
+            "TASK_RUNNER_RUN_EVENT_RETENTION_DAYS",
+            json!(30),
+        ),
+        (
+            TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS",
+            json!(3_600_000),
+        ),
+        (
+            TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
+            "TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE",
+            json!(200),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Task Runner retention definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
+    }
+}
+
+#[test]
+fn catalog_exposes_task_runner_terminal_retention_controls() {
+    let definitions = builtin_definitions();
+    for (key, env_alias, expected_default) in [
+        (
+            TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES",
+            json!(4_000),
+        ),
+        (
+            TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_MAX_SESSIONS",
+            json!(512),
+        ),
+        (
+            TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS",
+            json!(86_400),
+        ),
+        (
+            TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS",
+            json!(60_000),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Task Runner terminal definition for {key}"));
+        assert_eq!(definition.scope, "service");
+        assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
+    }
+}
+
+#[test]
+fn catalog_exposes_task_runner_ask_user_prompt_retention_controls() {
+    let definitions = builtin_definitions();
+    for (key, env_alias, expected_default) in [
+        (
+            TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY,
+            "TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS",
+            json!(90),
+        ),
+        (
+            TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
+            "TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS",
+            json!(3_600_000),
+        ),
+        (
+            TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
+            "TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE",
+            json!(200),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| {
+                panic!("missing Task Runner Ask User retention definition for {key}")
+            });
+        assert_eq!(definition.scope, "service");
+        assert_eq!(definition.service_name.as_deref(), Some("task-runner"));
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
+    }
+}
+
+#[test]
 fn catalog_exposes_shared_memory_policies_for_server_and_client() {
     let definitions = builtin_definitions();
     let memory_definitions = definitions
@@ -1362,6 +1511,21 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
         assert_eq!(definition.reload_mode, "restart_required");
         assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
     }
+}
+
+#[test]
+fn local_connector_valkey_url_is_an_authenticated_secret() {
+    let definitions = builtin_definitions();
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.key == LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY)
+        .expect("Local Connector Valkey URL definition");
+
+    assert_eq!(definition.sensitivity, "secret");
+    assert_eq!(
+        definition.default_value,
+        json!("redis://:change_me_valkey_password@127.0.0.1:6379/0")
+    );
 }
 
 #[test]

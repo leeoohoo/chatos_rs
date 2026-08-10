@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use chatos_ai_runtime::TaskBuiltinMcpPromptMode;
+use chatos_mcp_runtime::{
+    builtin_servers_from_kinds, configurable_builtin_kinds, default_runtime_builtin_kinds,
+    BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider, McpExecutorBuilder,
+};
+use serde_json::Value;
+
+use crate::models::{
+    mcp_builtin_kind_guide, McpCatalogEntry, McpPromptPreviewRequest, McpPromptPreviewResponse,
+    McpUnavailableTool, TaskMcpConfig,
+};
+
+use super::builtin_providers::{build_builtin_registry, build_task_runner_builtin_provider};
+use super::workspace_mcp::{
+    resolve_workspace_dir_with_base, runtime_selected_builtin_kinds, selected_builtin_kinds,
+};
+use super::{normalized_optional, McpCatalogService, TaskService};
+
+#[path = "mcp_catalog_service/catalog.rs"]
+mod catalog;
+#[path = "mcp_catalog_service/prompt_preview.rs"]
+mod prompt_preview;

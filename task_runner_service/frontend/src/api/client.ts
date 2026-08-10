@@ -167,7 +167,7 @@ export const api = {
   listTaskCapabilityCatalog: (options?: {
     task_profile?: 'default' | 'chatos_plan';
     requires_execution?: boolean;
-    device_id?: string;
+    project_id?: string;
   }) =>
     request<TaskCapabilityCatalogResponse>(
       withQuery('/api/tasks/capabilities/catalog', {
@@ -176,7 +176,7 @@ export const api = {
           options?.requires_execution === undefined
             ? undefined
             : String(options.requires_execution),
-        device_id: options?.device_id,
+        project_id: options?.project_id,
       }),
     ),
   listTaskPluginConnectors: () =>
@@ -314,7 +314,7 @@ export const api = {
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
     ),
-  listRunsPage: (filters?: RunListFilters) =>
+  listRunsPage: (filters?: RunListFilters, signal?: AbortSignal) =>
     request<PaginatedResponse<TaskRunRecord>>(
       withQuery('/api/runs/page', {
         task_id: filters?.task_id,
@@ -324,6 +324,7 @@ export const api = {
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
+      { signal },
     ),
   listRunSummaries: (filters?: {
     ids?: string[];
@@ -354,7 +355,8 @@ export const api = {
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
     ),
-  getRun: (runId: string) => request<TaskRunRecord>(`/api/runs/${runId}`),
+  getRun: (runId: string, signal?: AbortSignal) =>
+    request<TaskRunRecord>(`/api/runs/${runId}`, { signal }),
   listTaskRuns: (taskId: string, filters?: Omit<RunListFilters, 'task_id'>) =>
     request<TaskRunRecord[]>(
       withQuery(`/api/tasks/${taskId}/runs`, {
@@ -367,6 +369,7 @@ export const api = {
   getRunEvents: (
     runId: string,
     cursor?: { after_created_at: string; after_id: string; limit?: number },
+    signal?: AbortSignal,
   ) =>
     request<TaskRunEventRecord[]>(
       withQuery(`/api/runs/${runId}/events`, {
@@ -374,6 +377,7 @@ export const api = {
         after_id: cursor?.after_id,
         limit: cursor?.limit === undefined ? undefined : String(cursor.limit),
       }),
+      { signal },
     ),
   listRunPrompts: (
     runId: string,
@@ -447,7 +451,7 @@ export const api = {
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
     ),
-  listPromptsPage: (filters?: PromptListFilters) =>
+  listPromptsPage: (filters?: PromptListFilters, signal?: AbortSignal) =>
     request<PaginatedResponse<AskUserPromptRecord>>(
       withQuery('/api/prompts/page', {
         task_id: filters?.taskId,
@@ -456,6 +460,7 @@ export const api = {
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
+      { signal },
     ),
   listPromptTaskCounts: (filters?: { status?: AskUserPromptStatus }) =>
     request<AskUserPromptTaskCountRecord[]>(

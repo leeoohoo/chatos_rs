@@ -77,28 +77,34 @@
 
 ## [builtin_code_maintainer_write]
 当存在这些工具时，它们是本地项目文件修改入口：
-`code_maintainer_write_patch`
-`code_maintainer_write_edit_file`
-`code_maintainer_write_write_file`
-`code_maintainer_write_append_file`
-`code_maintainer_write_delete_path`
+`code_maintainer_write_open_edit_session`
+`code_maintainer_write_stage_edit_batch`
+`code_maintainer_write_commit_edit_session`
+`code_maintainer_write_abort_edit_session`
 
 只有在下面这些情况下才应该修改：
 1. 用户明确要求你改代码、改配置、生成文件、修复问题、补文档或落结果。
 2. 这是完成任务的必要步骤，而不是可有可无的尝试。
 
-优先级建议：
-1. 多文件或结构化修改，优先 `code_maintainer_write_patch`。
-2. 已知旧文本和新文本、范围比较确定时，优先 `code_maintainer_write_edit_file`。
-3. 新建文件、整体覆盖文件时，使用 `code_maintainer_write_write_file`。
-4. 需要在已有文件末尾追加时，使用 `code_maintainer_write_append_file`。
-5. 删除路径是高风险动作，只在用户意图明确或任务上下文非常明确时使用 `code_maintainer_write_delete_path`。
+推荐流程：
+1. 先 `code_maintainer_write_open_edit_session` 打开一次写会话。
+2. 用 `code_maintainer_write_stage_edit_batch` 顺序暂存一个或多个操作；同一文件多次修改要放进同一个会话里。
+3. 用 `code_maintainer_write_commit_edit_session` 一次性提交。
+4. 如果不再需要或会话冲突，用 `code_maintainer_write_abort_edit_session` 丢弃暂存内容。
+
+`stage_edit_batch` 支持的操作：
+1. `write`
+2. `replace_text`
+3. `append`
+4. `delete`
 
 额外原则：
 1. 如果同时存在读取工具，默认先读后改。
-2. 如果没有读取工具，不要编造文件现状；只有在目标内容和落点足够明确时才直接写。
-3. 修改后要基于真实变更结果继续推进，例如建议验证、继续补改或总结影响范围。
-4. 不要宣称“已验证通过”，除非你真的用其他工具完成了验证。
+2. 首次触达现有文件时，`expected_sha256` 必须来自最新成功读取；只在确认路径不存在时才允许 `null`。
+3. 如果 `commit_edit_session` 返回冲突，重新读取冲突路径并打开新会话，不要继续重试旧会话。
+4. 如果没有读取工具，不要编造文件现状；只有在目标内容和落点足够明确时才直接写。
+5. 修改后要基于真实变更结果继续推进，例如建议验证、继续补改或总结影响范围。
+6. 不要宣称“已验证通过”，除非你真的用其他工具完成了验证。
 
 ## [builtin_terminal_controller]
 当存在这些工具时，它们只用于本地项目终端，而不是远程服务器：

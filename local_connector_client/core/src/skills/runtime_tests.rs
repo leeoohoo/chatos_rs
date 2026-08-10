@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 
+use chatos_agent::SystemAgentKey;
 use chatos_mcp_runtime::{BuiltinToolProvider, ToolCallContext};
 use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions, ResolvedSkill, ResourceMetadata, SkillContent,
@@ -108,7 +109,7 @@ fn resolved_skill(inventory: &crate::skills::LocalSkillInventoryItem) -> Resolve
         },
         binding: AgentBindingRecord {
             id: "binding-visualize".to_string(),
-            agent_key: "task_runner_run_phase".to_string(),
+            agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
             binding_scope: "global_default".to_string(),
             owner_user_id: None,
             resource_kind: "skill".to_string(),

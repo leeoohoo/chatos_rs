@@ -32,6 +32,48 @@ export const providerLabels: Record<RuntimeEnvironmentProvider, string> = {
   cloud_sandbox_manager: '云端沙箱',
 };
 
+const analysisStageLabels: Record<string, string> = {
+  queued: '等待分析',
+  resolving_source_snapshot: '固定源码快照',
+  running_agent_analysis: '分析技术栈',
+  pending_model_configuration: '等待模型配置',
+  source_snapshot_failed: '源码快照失败',
+  model_configuration_failed: '模型配置失败',
+  memory_initialization_failed: '上下文初始化失败',
+  agent_analysis_failed: '技术栈分析失败',
+  agent_result_missing: '分析结果缺失',
+  analysis_stale: '分析超时',
+  completed: '分析完成',
+};
+
+export interface RuntimeAnalysisEvidence {
+  stage?: string;
+  defaultBranch?: string;
+  sourceCommit?: string;
+  snapshotId?: string;
+  scannedFileCount?: number;
+  applicationCount?: number;
+}
+
+export function runtimeAnalysisEvidence(value: unknown): RuntimeAnalysisEvidence {
+  const stack = asRecord(value);
+  const snapshot = asRecord(stack?.source_snapshot);
+  const progress = asRecord(stack?.analysis_progress);
+  const stage = fieldText(progress, ['current_stage']);
+  const scannedFileCount = numberField(snapshot, 'scanned_file_count');
+  const applicationCount = Array.isArray(snapshot?.application_candidates)
+    ? snapshot.application_candidates.length
+    : undefined;
+  return {
+    stage: stage ? analysisStageLabels[stage] || stage : undefined,
+    defaultBranch: fieldText(snapshot, ['default_branch']),
+    sourceCommit: fieldText(snapshot, ['source_commit']),
+    snapshotId: fieldText(snapshot, ['snapshot_id']),
+    scannedFileCount,
+    applicationCount,
+  };
+}
+
 export function runtimeStatusTag(status?: ProjectRuntimeEnvironmentStatus) {
   if (!status) {
     return <Tag>未知</Tag>;
@@ -261,6 +303,11 @@ export function fieldText(record: JsonRecord | undefined, fields: string[]) {
     }
   }
   return undefined;
+}
+
+function numberField(record: JsonRecord | undefined, field: string) {
+  const value = record?.[field];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 export function renderCompactJson(value: unknown) {

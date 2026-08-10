@@ -20,6 +20,7 @@ import {
   Statistic,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd';
@@ -37,15 +38,60 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { api, clearToken, getToken, setToken } from './api';
+import { QueueOperationsPanel } from './QueueOperationsPanel';
 import type {
   ConfigDefinition,
   ConfigRelease,
   ConfigValue,
   CurrentUser,
-  QueueOperationsStream,
 } from './types';
 
 type PageKey = 'dashboard' | 'config' | 'releases' | 'queues' | 'instances' | 'audit';
+
+const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
+  'chatos-backend': { label: 'Chat OS', order: 10 },
+  'task-runner': { label: 'Task Runner', order: 20 },
+  'mcp-management-service': { label: 'MCP 管理', order: 30 },
+  'memory-engine': { label: 'Memory Engine', order: 40 },
+  'project-service': { label: '项目服务', order: 50 },
+  'sandbox-manager': { label: '沙箱管理', order: 60 },
+  'user-service': { label: '用户服务', order: 70 },
+  'plugin-management-service': { label: '插件管理', order: 80 },
+  'local-connector-service': { label: '本地连接器', order: 90 },
+  'configuration-center': { label: '配置中心', order: 100 },
+  'official-website': { label: '官方网站', order: 110 },
+  'platform-shared': { label: '平台与共享', order: 120 },
+  developer: { label: '开发参数', order: 900 },
+};
+
+function configAreaKey(definition: ConfigDefinition) {
+  const serviceName = definition.service_name?.trim();
+  if (serviceName) {
+    return serviceName;
+  }
+  const categoryRoot = definition.category.split('/')[0]?.trim().toLowerCase();
+  if (categoryRoot === 'chat os') return 'chatos-backend';
+  if (categoryRoot === 'task runner') return 'task-runner';
+  if (categoryRoot === 'mcp management') return 'mcp-management-service';
+  if (categoryRoot === 'memory engine') return 'memory-engine';
+  if (categoryRoot === 'project service') return 'project-service';
+  if (categoryRoot === 'sandbox manager') return 'sandbox-manager';
+  if (categoryRoot === 'user service') return 'user-service';
+  if (categoryRoot === 'plugin management') return 'plugin-management-service';
+  if (categoryRoot === 'local connector') return 'local-connector-service';
+  if (categoryRoot === 'configuration center') return 'configuration-center';
+  if (categoryRoot === 'developer') return 'developer';
+  return 'platform-shared';
+}
+
+function configAreaLabel(key: string) {
+  return CONFIG_AREA_META[key]?.label || key;
+}
+
+function configCategoryLabel(category: string) {
+  const [, ...rest] = category.split('/').map((part) => part.trim());
+  return rest.length > 0 ? rest.join(' / ') : category;
+}
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(getToken()));
@@ -171,7 +217,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
           {page === 'dashboard' && <Dashboard environment={environment} />}
           {page === 'config' && <ConfigEditor environment={environment} />}
           {page === 'releases' && <ReleaseHistory environment={environment} />}
-          {page === 'queues' && <QueueOperations environment={environment} />}
+          {page === 'queues' && <QueueOperationsPanel environment={environment} />}
           {page === 'instances' && <Instances />}
           {page === 'audit' && <AuditLog />}
         </Layout.Content>
@@ -241,6 +287,10 @@ function ConfigEditor({ environment }: { environment: string }) {
   const [changes, setChanges] = useState<Record<string, ConfigValue>>({});
   const [publishMessage, setPublishMessage] = useState('');
   const [customOpen, setCustomOpen] = useState(false);
+  const [activeArea, setActiveArea] = useState(
+    localStorage.getItem('chatos.configuration-center.config-area') || 'chatos-backend',
+  );
+  const [configSearch, setConfigSearch] = useState('');
   const [customForm] = Form.useForm<{
     key: string;
     display_name: string;
@@ -318,15 +368,47 @@ function ConfigEditor({ environment }: { environment: string }) {
   });
 
   const definitions = catalog.data || [];
-  const groups = useMemo(() => {
+  const areas = useMemo(() => {
     const next = new Map<string, ConfigDefinition[]>();
     definitions.forEach((definition) => {
+      const key = configAreaKey(definition);
+      const items = next.get(key) || [];
+      items.push(definition);
+      next.set(key, items);
+    });
+    return [...next.entries()]
+      .map(([key, items]) => ({
+        key,
+        label: configAreaLabel(key),
+        items: [...items].sort((left, right) => left.ui_order - right.ui_order),
+      }))
+      .sort((left, right) => {
+        const order = (CONFIG_AREA_META[left.key]?.order ?? 500)
+          - (CONFIG_AREA_META[right.key]?.order ?? 500);
+        return order || left.label.localeCompare(right.label, 'zh-CN');
+      });
+  }, [definitions]);
+  const selectedArea = areas.find((area) => area.key === activeArea) || areas[0];
+  const normalizedSearch = configSearch.trim().toLocaleLowerCase('zh-CN');
+  const visibleDefinitions = (selectedArea?.items || []).filter((definition) => {
+    if (!normalizedSearch) return true;
+    return [
+      definition.display_name,
+      definition.description,
+      definition.key,
+      definition.category,
+      definition.service_name || '',
+    ].some((value) => value.toLocaleLowerCase('zh-CN').includes(normalizedSearch));
+  });
+  const groups = useMemo(() => {
+    const next = new Map<string, ConfigDefinition[]>();
+    visibleDefinitions.forEach((definition) => {
       const items = next.get(definition.category) || [];
       items.push(definition);
       next.set(definition.category, items);
     });
     return [...next.entries()];
-  }, [definitions]);
+  }, [visibleDefinitions]);
 
   if (catalog.isLoading || effective.isLoading || draft.isLoading) {
     return <div className="centered"><Spin size="large" /></div>;
@@ -348,6 +430,12 @@ function ConfigEditor({ environment }: { environment: string }) {
       }
       return next;
     });
+  };
+
+  const selectArea = (key: string) => {
+    localStorage.setItem('chatos.configuration-center.config-area', key);
+    setActiveArea(key);
+    setConfigSearch('');
   };
 
   const confirmPublish = () => {
@@ -393,11 +481,50 @@ function ConfigEditor({ environment }: { environment: string }) {
           </Button>
         </Space>
       </Card>
+      <Card className="config-navigation-card">
+        <div className="config-navigation-header">
+          <div>
+            <Typography.Title level={5} style={{ margin: 0 }}>配置分类</Typography.Title>
+            <Typography.Text type="secondary">
+              按服务域查看配置，当前共 {definitions.length} 项
+            </Typography.Text>
+          </div>
+          <Input.Search
+            allowClear
+            value={configSearch}
+            onChange={(event) => setConfigSearch(event.target.value)}
+            placeholder={`搜索${selectedArea?.label || ''}配置`}
+            className="config-search"
+          />
+        </div>
+        <Tabs
+          activeKey={selectedArea?.key}
+          onChange={selectArea}
+          className="config-area-tabs"
+          items={areas.map((area) => ({
+            key: area.key,
+            label: (
+              <span className="config-tab-label">
+                {area.label}
+                <span className="config-tab-count">{area.items.length}</span>
+              </span>
+            ),
+          }))}
+        />
+      </Card>
       {groups.map(([category, items]) => (
-        <Card key={category} title={category}>
+        <Card
+          key={category}
+          title={(
+            <Space size={8}>
+              <span>{configCategoryLabel(category)}</span>
+              <Tag>{items.length} 项</Tag>
+            </Space>
+          )}
+        >
           <Row gutter={[24, 20]}>
             {items.map((definition) => (
-              <Col span={12} key={definition.key}>
+              <Col xs={24} xl={12} key={definition.key}>
                 <div className="config-field">
                   <Space size={6} wrap>
                     <Typography.Text strong>{definition.display_name}</Typography.Text>
@@ -421,6 +548,11 @@ function ConfigEditor({ environment }: { environment: string }) {
           </Row>
         </Card>
       ))}
+      {groups.length === 0 && (
+        <Card>
+          <Empty description={configSearch ? '当前分类没有匹配的配置' : '当前分类暂无配置'} />
+        </Card>
+      )}
       <Modal
         open={customOpen}
         title="新增开发参数"
@@ -593,307 +725,6 @@ function Instances() {
         ]}
       />
     </Card>
-  );
-}
-
-function QueueOperations({ environment }: { environment: string }) {
-  const { message } = AntdApp.useApp();
-  const queryClient = useQueryClient();
-  const [replayTarget, setReplayTarget] = useState<QueueOperationsStream | null>(null);
-  const [replayItemId, setReplayItemId] = useState('');
-  const [replayTenantId, setReplayTenantId] = useState('');
-  const [replaySourceId, setReplaySourceId] = useState('');
-  const [replayVersion, setReplayVersion] = useState<number | null>(null);
-  const [replayEventType, setReplayEventType] = useState<string>();
-  const [replayReason, setReplayReason] = useState('');
-  const query = useQuery({
-    queryKey: ['queue-operations', environment],
-    queryFn: () => api.queueOperations(environment),
-    refetchInterval: 10000,
-  });
-  const streams = query.data?.streams || [];
-  const unavailable = streams.filter((stream) => !stream.runtime.available).length;
-  const deadLetters = streams.reduce(
-    (total, stream) => total + queueRuntime(stream, 'dead_letter').messages,
-    0,
-  );
-  const mainBacklog = streams.reduce(
-    (total, stream) => total + queueRuntime(stream, 'main').messages,
-    0,
-  );
-  const consumerGaps = streams.filter((stream) => {
-    const main = queueRuntime(stream, 'main');
-    return main.messages > 0 && main.consumers === 0;
-  }).length;
-  const replay = useMutation({
-    mutationFn: () => api.replayQueueItem(environment, {
-      service: replayTarget?.service || '',
-      stream: replayTarget?.stream || '',
-      item_id: replayItemId.trim(),
-      tenant_id: replayTarget?.service === 'memory-engine' ? replayTenantId.trim() : undefined,
-      source_id: replayTarget?.service === 'memory-engine' ? replaySourceId.trim() : undefined,
-      version: ['memory-engine', 'plugin-management'].includes(replayTarget?.service || '')
-        ? replayVersion || undefined
-        : undefined,
-      event_type: replayTarget?.stream === 'subject_memory' ? replayEventType : undefined,
-      reason: replayReason.trim(),
-    }),
-    onSuccess: async (result) => {
-      message.success(
-        replayTarget?.service === 'mcp-management'
-          ? 'MCP 终态死信已归档，工具不会重新执行'
-          : result.dead_letter_archived ? '重放已入队，旧死信已归档' : '重放已入队，旧死信待归档',
-      );
-      setReplayTarget(null);
-      setReplayItemId('');
-      setReplayTenantId('');
-      setReplaySourceId('');
-      setReplayVersion(null);
-      setReplayEventType(undefined);
-      setReplayReason('');
-      await queryClient.invalidateQueries({ queryKey: ['queue-operations', environment] });
-      await queryClient.invalidateQueries({ queryKey: ['audit'] });
-    },
-    onError: (error: Error) => message.error(error.message),
-  });
-
-  return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={6}><Card><Statistic title="生效 Revision" value={query.data?.revision || 0} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="主队列积压" value={mainBacklog} valueStyle={{ color: mainBacklog > 0 ? '#d97706' : '#15803d' }} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="DLQ 消息" value={deadLetters} valueStyle={{ color: deadLetters > 0 ? '#b42318' : '#15803d' }} /></Card></Col>
-        <Col xs={24} md={6}><Card><Statistic title="异常流" value={unavailable + consumerGaps} valueStyle={{ color: unavailable + consumerGaps > 0 ? '#b42318' : '#15803d' }} /></Card></Col>
-      </Row>
-      <Card
-        title="统一异步流状态"
-        extra={<Typography.Text type="secondary">每 10 秒刷新，仅使用 {environment} 当前生效配置</Typography.Text>}
-      >
-        <Table
-          rowKey={(stream) => `${stream.service}:${stream.stream}`}
-          loading={query.isLoading || query.isFetching}
-          dataSource={streams}
-          pagination={false}
-          scroll={{ x: 1050 }}
-          columns={[
-            { title: '服务', dataIndex: 'service', width: 170 },
-            { title: '异步流', dataIndex: 'stream', width: 170, render: (value) => <Tag>{value}</Tag> },
-            {
-              title: '状态',
-              width: 120,
-              render: (_, stream) => queueHealthTag(stream),
-            },
-            {
-              title: '主队列',
-              width: 240,
-              render: (_, stream) => queueCell(stream.main_queue, queueRuntime(stream, 'main')),
-            },
-            {
-              title: '延迟重试',
-              width: 220,
-              render: (_, stream) => queueCell(stream.retry_queue, queueRuntime(stream, 'retry')),
-            },
-            {
-              title: '死信队列',
-              width: 240,
-              render: (_, stream) => queueCell(stream.dead_letter_queue, queueRuntime(stream, 'dead_letter'), true),
-            },
-            {
-              title: '操作',
-              fixed: 'right',
-              width: 110,
-              render: (_, stream) => {
-                const supported = (
-                  stream.service === 'task-runner' && stream.stream === 'run_post_process'
-                ) || (
-                  stream.service === 'memory-engine'
-                  && ['summary', 'rollup', 'subject_memory'].includes(stream.stream)
-                ) || (
-                  stream.service === 'plugin-management' && stream.stream === 'catalog_sync'
-                ) || (
-                  stream.service === 'mcp-management' && stream.stream === 'async_tool'
-                );
-                return (
-                  <Button
-                    danger
-                    size="small"
-                    disabled={!supported || queueRuntime(stream, 'dead_letter').messages === 0}
-                    onClick={() => {
-                      setReplayTarget(stream);
-                      setReplayItemId('');
-                      setReplayTenantId('');
-                      setReplaySourceId('');
-                      setReplayVersion(null);
-                      setReplayEventType(undefined);
-                      setReplayReason('');
-                    }}
-                  >
-                    {stream.service === 'mcp-management' ? '人工归档' : '人工重放'}
-                  </Button>
-                );
-              },
-            },
-          ]}
-        />
-      </Card>
-      <Modal
-        title={queueReplayTitle(replayTarget)}
-        open={Boolean(replayTarget)}
-        okText={replayTarget?.service === 'mcp-management' ? '确认归档' : '确认重放'}
-        cancelText="取消"
-        confirmLoading={replay.isPending}
-        okButtonProps={{
-          danger: true,
-          disabled: replayItemId.trim().length === 0
-            || replayReason.trim().length < 8
-            || (replayTarget?.service === 'memory-engine' && (
-              replayTenantId.trim().length === 0
-              || replaySourceId.trim().length === 0
-              || !replayVersion
-              || (replayTarget.stream === 'subject_memory' && !replayEventType)
-            ))
-            || (replayTarget?.service === 'plugin-management' && !replayVersion),
-        }}
-        onCancel={() => setReplayTarget(null)}
-        onOk={() => replay.mutate()}
-      >
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Typography.Text type="secondary">
-            {queueReplayDescription(replayTarget)}
-          </Typography.Text>
-          {replayTarget?.service === 'memory-engine' && (
-            <>
-              <Input
-                value={replayTenantId}
-                onChange={(event) => setReplayTenantId(event.target.value)}
-                placeholder="Tenant ID"
-              />
-              <Input
-                value={replaySourceId}
-                onChange={(event) => setReplaySourceId(event.target.value)}
-                placeholder="Source ID"
-              />
-              <InputNumber
-                value={replayVersion}
-                onChange={setReplayVersion}
-                min={1}
-                precision={0}
-                placeholder="Dead-letter version"
-                style={{ width: '100%' }}
-              />
-              {replayTarget.stream === 'subject_memory' && (
-                <Select
-                  value={replayEventType}
-                  onChange={setReplayEventType}
-                  placeholder="选择 Subject Memory 事件类型"
-                  options={[
-                    { value: 'source_available', label: '摘要来源事件 (source_available)' },
-                    { value: 'scope_requested', label: '记忆范围事件 (scope_requested)' },
-                  ]}
-                />
-              )}
-            </>
-          )}
-          {replayTarget?.service === 'plugin-management' && (
-            <InputNumber
-              value={replayVersion}
-              onChange={setReplayVersion}
-              min={1}
-              precision={0}
-              placeholder="Dead-letter version"
-              style={{ width: '100%' }}
-            />
-          )}
-          <Input
-            value={replayItemId}
-            onChange={(event) => setReplayItemId(event.target.value)}
-            placeholder={queueReplayItemPlaceholder(replayTarget)}
-          />
-          <Input.TextArea
-            value={replayReason}
-            onChange={(event) => setReplayReason(event.target.value)}
-            placeholder={`${replayTarget?.service === 'mcp-management' ? '归档' : '重放'}原因，至少 8 个字符`}
-            rows={4}
-            maxLength={500}
-            showCount
-          />
-        </Space>
-      </Modal>
-    </Space>
-  );
-}
-
-function queueReplayItemPlaceholder(stream: QueueOperationsStream | null) {
-  if (!stream || stream.service === 'task-runner') return 'Run ID';
-  if (stream.service === 'mcp-management') return 'Invocation ID';
-  if (stream.service === 'plugin-management') return 'Marketplace ID';
-  if (stream.stream === 'summary') return 'Thread ID';
-  if (stream.stream === 'rollup') return 'Summary ID';
-  return 'Summary ID 或 Scope Key';
-}
-
-function queueReplayTitle(stream: QueueOperationsStream | null) {
-  if (stream?.service === 'mcp-management') return '人工归档 MCP 终态死信';
-  if (stream?.service === 'memory-engine') return '人工重放 Memory Engine 死信';
-  if (stream?.service === 'plugin-management') return '人工重放 Plugin Catalog 死信';
-  return '人工重放 Run 后处理死信';
-}
-
-function queueReplayDescription(stream: QueueOperationsStream | null) {
-  if (stream?.service === 'mcp-management') {
-    return '该失败结果已经返回原 AI 调用方。系统只归档与 Invocation 身份及耗尽重试次数完全匹配的旧 DLQ 消息，不会恢复 Outbox、重新投递或再次执行工具。';
-  }
-  if (stream?.service === 'memory-engine') {
-    return '系统只会重放租户、来源、业务 ID 和旧版本完全匹配的死信；新 Outbox 经确认发布后，才归档对应旧消息。';
-  }
-  if (stream?.service === 'plugin-management') {
-    return '系统只会恢复 Marketplace ID 与旧版本完全匹配的 Catalog Outbox；新版本确认发布后，才归档对应旧 DLQ 消息。';
-  }
-  return '系统将重置该 Run 的后处理 dead-letter 状态、重建 Outbox，并在确认发布后归档匹配的旧 DLQ 消息。';
-}
-
-function queueRuntime(stream: QueueOperationsStream, role: 'main' | 'retry' | 'dead_letter') {
-  return stream.runtime.queues.find((queue) => queue.role === role) || {
-    role,
-    name: '',
-    messages: 0,
-    consumers: 0,
-  };
-}
-
-function queueHealthTag(stream: QueueOperationsStream) {
-  if (!stream.runtime.available) {
-    return <Tag color="red">不可观测</Tag>;
-  }
-  const main = queueRuntime(stream, 'main');
-  const deadLetter = queueRuntime(stream, 'dead_letter');
-  if (deadLetter.messages > 0) {
-    return <Tag color="red">存在死信</Tag>;
-  }
-  if (main.messages > 0 && main.consumers === 0) {
-    return <Tag color="volcano">无消费者</Tag>;
-  }
-  if (main.messages > 0 || queueRuntime(stream, 'retry').messages > 0) {
-    return <Tag color="gold">处理中</Tag>;
-  }
-  return <Tag color="green">正常</Tag>;
-}
-
-function queueCell(
-  name: string,
-  runtime: { messages: number; consumers: number },
-  danger = false,
-) {
-  return (
-    <Space direction="vertical" size={2}>
-      <Typography.Text className="queue-name">{name}</Typography.Text>
-      <Space size={6}>
-        <Tag color={danger && runtime.messages > 0 ? 'red' : runtime.messages > 0 ? 'gold' : 'default'}>
-          消息 {runtime.messages}
-        </Tag>
-        <Tag color={runtime.consumers > 0 ? 'blue' : 'default'}>消费者 {runtime.consumers}</Tag>
-      </Space>
-    </Space>
   );
 }
 

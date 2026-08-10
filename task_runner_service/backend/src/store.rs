@@ -22,13 +22,14 @@ use tracing::warn;
 
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
-    now_rfc3339, AskUserPromptRecord, AskUserPromptStatus, AskUserPromptTaskCountRecord,
-    ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus, ModelConfigRecord,
-    ModelConfigUsageRecord, PaginatedResponse, PromptListFilters, RemoteServerRecord,
-    RunExecutionStats, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
-    TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord,
-    TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, UserRecord,
+    now_rfc3339, AskUserPromptPruneResult, AskUserPromptRecord, AskUserPromptStatus,
+    AskUserPromptTaskCountRecord, ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus,
+    ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
+    RemoteServerRecord, RunEventPruneResult, RunExecutionStats, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
+    TaskRunAttemptRecord, TaskRunAttemptStatus, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
+    UserRecord,
 };
 
 mod app_models;
@@ -74,6 +75,14 @@ fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecor
         run.cancel_event_pending = false;
     }
     if task_run_status_is_terminal(run.status) {
+        if let Some(attempt_status) = run_attempt_status_for_run_status(run.status) {
+            let finished_at = run
+                .finished_at
+                .as_deref()
+                .unwrap_or(run.updated_at.as_str())
+                .to_string();
+            run.finish_current_attempt(attempt_status, finished_at.as_str());
+        }
         run.claim_token = None;
         run.claim_until = None;
         ensure_terminal_callback_pending(&mut run);
@@ -93,6 +102,7 @@ fn ensure_run_post_process_pending(run: &mut TaskRunRecord) {
 }
 
 fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
+    merge_run_attempts(&mut run.attempts, &current.attempts);
     run.post_process_completed |= current.post_process_completed;
     run.post_process_dead_lettered |= current.post_process_dead_lettered;
     run.memory_summary_processed |= current.memory_summary_processed;
@@ -132,6 +142,48 @@ fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
     } else {
         run.terminal_cleanup_event_pending |= current.terminal_cleanup_event_pending;
     }
+}
+
+fn run_attempt_status_for_run_status(status: TaskRunStatus) -> Option<TaskRunAttemptStatus> {
+    match status {
+        TaskRunStatus::Succeeded => Some(TaskRunAttemptStatus::Succeeded),
+        TaskRunStatus::Failed => Some(TaskRunAttemptStatus::Failed),
+        TaskRunStatus::Cancelled => Some(TaskRunAttemptStatus::Cancelled),
+        TaskRunStatus::Blocked => Some(TaskRunAttemptStatus::Blocked),
+        TaskRunStatus::Queued | TaskRunStatus::Running => None,
+    }
+}
+
+fn merge_run_attempts(
+    attempts: &mut Vec<TaskRunAttemptRecord>,
+    current_attempts: &[TaskRunAttemptRecord],
+) {
+    for current in current_attempts {
+        let Some(incoming) = attempts
+            .iter_mut()
+            .find(|attempt| attempt.attempt_id == current.attempt_id)
+        else {
+            attempts.push(current.clone());
+            continue;
+        };
+        if current.status != TaskRunAttemptStatus::Running {
+            incoming.status = current.status;
+            incoming.finished_at = current.finished_at.clone();
+        }
+        if incoming.recovery_reason.is_none() {
+            incoming.recovery_reason = current.recovery_reason.clone();
+        }
+        if incoming.sandbox_id.is_none() {
+            incoming.sandbox_id = current.sandbox_id.clone();
+        }
+        if incoming.lease_id.is_none() {
+            incoming.lease_id = current.lease_id.clone();
+        }
+        if incoming.model_response_id.is_none() {
+            incoming.model_response_id = current.model_response_id.clone();
+        }
+    }
+    attempts.sort_by_key(|attempt| attempt.sequence);
 }
 
 fn terminal_callback_event_for_status(status: TaskRunStatus) -> Option<&'static str> {

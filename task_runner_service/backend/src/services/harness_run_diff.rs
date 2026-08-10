@@ -35,7 +35,7 @@ impl RunService {
             return Ok(None);
         };
         if report.status == "no_changes" {
-            return Ok(Some(empty_changes_response(run, limit, offset)));
+            return Ok(Some(empty_changes_response(run, &report, limit, offset)));
         }
         if report.status != "committed" {
             return Ok(None);
@@ -117,6 +117,9 @@ impl RunService {
                 .collect::<Vec<_>>();
             Ok(RunOutputChangesResponse {
                 run_id: run.id.clone(),
+                base_commit: Some(report.base_commit.clone()),
+                result_commit: report.result_commit.clone(),
+                comparison_scope: "run_incremental".to_string(),
                 counts,
                 files,
                 total,
@@ -263,7 +266,7 @@ async fn clone_run_branch(
     .map(|_| ())
 }
 
-fn harness_output_report_from_run(
+pub(super) fn harness_output_report_from_run(
     run: &TaskRunRecord,
 ) -> Result<Option<HarnessRunOutputReport>, String> {
     let Some(value) = run
@@ -350,11 +353,15 @@ fn count_file_changes(files: &[RunOutputFileChange]) -> RunOutputFileChangeCount
 
 fn empty_changes_response(
     run: &TaskRunRecord,
+    report: &HarnessRunOutputReport,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> RunOutputChangesResponse {
     RunOutputChangesResponse {
         run_id: run.id.clone(),
+        base_commit: Some(report.base_commit.clone()),
+        result_commit: report.result_commit.clone(),
+        comparison_scope: "run_incremental".to_string(),
         counts: RunOutputFileChangeCounts::default(),
         files: Vec::new(),
         total: 0,

@@ -109,7 +109,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         "Managed terminal execution and process lifecycle tools.",
         true,
         "shared",
-        CHATOS_TASK_LOCAL_HOSTS,
+        TASK_AND_LOCAL_HOSTS,
         TerminalController
     ),
     embedded_descriptor!(
@@ -442,6 +442,15 @@ mod tests {
 
         assert_eq!(descriptor.key, SystemMcpKey::TaskProcessLog);
         assert_eq!(descriptor.backend, SystemMcpBackend::RunScopedBuiltin);
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
+    }
+
+    #[test]
+    fn terminal_controller_executes_only_in_task_runner_or_local_connector() {
+        let descriptor = system_mcp_descriptor(SystemMcpKey::TerminalController);
+
+        assert!(!descriptor.supports_implementation_host(SystemMcpHost::Chatos));
         assert!(descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
         assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
     }

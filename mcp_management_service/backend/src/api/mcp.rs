@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 use axum::extract::State;
@@ -10,25 +11,31 @@ use axum::Json;
 use chatos_mcp::{system_mcp_descriptor, SystemMcpKey};
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, RuntimeToolDescriptor};
 use chatos_mcp_service::{
-    jsonrpc_error, jsonrpc_ok, CancelledNotificationParams, JsonRpcRequest, JsonRpcResponse,
-    MCP_ERROR_AUTH_REQUIRED, MCP_ERROR_CAPACITY_EXHAUSTED, MCP_ERROR_INTERNAL,
-    MCP_ERROR_INVALID_PARAMS, MCP_ERROR_INVOCATION_CANCELLED, MCP_ERROR_METHOD_NOT_FOUND,
-    MCP_ERROR_UNKNOWN_EXECUTION_STATE, METHOD_INITIALIZE, METHOD_NOTIFICATIONS_CANCELLED,
+    jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
+    MCP_ERROR_CAPACITY_EXHAUSTED, MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS,
+    MCP_ERROR_METHOD_NOT_FOUND, METHOD_INITIALIZE, METHOD_NOTIFICATIONS_CANCELLED,
     METHOD_NOTIFICATIONS_INITIALIZED, METHOD_PING, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
 };
+#[cfg(test)]
+use chatos_mcp_service::{MCP_ERROR_INVOCATION_CANCELLED, MCP_ERROR_UNKNOWN_EXECUTION_STATE};
 use mongodb::bson::DateTime;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::async_dispatch::{AsyncToolEnqueueError, QueuedAsyncToolCallEnvelope};
 use crate::capabilities::route_allows_system_tool;
-use crate::providers::ProviderCancelOutcome;
 use crate::runtime::{
     RuntimeInvocationRecord, RuntimeInvocationRegisterError, RuntimeInvocationStatus,
     RuntimeSessionSnapshot,
 };
 use crate::state::AppState;
-use std::sync::Arc;
+
+#[path = "mcp/cancellation.rs"]
+mod cancellation;
+
+use self::cancellation::{
+    handle_cancel_notification, handle_cancelled_tool_call, wait_for_cancellation, DispatchResult,
+};
 
 const MCP_RESULT_REPLY_TO_HEADER: &str = "x-mcp-result-reply-to";
 
@@ -246,20 +253,33 @@ async fn handle_tool_call(
         expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
         expires_at_unix: snapshot.expires_at_unix,
     };
-    if let Err(error) = state.runtime_invocations.register(invocation).await {
+    if let Err(error) = register_runtime_invocation(state, snapshot, invocation).await {
         let (code, message) = match &error {
+            RuntimeInvocationRegisterError::DuplicateActiveId => (
+                MCP_ERROR_INVALID_PARAMS,
+                "JSON-RPC request id is already active in this runtime session",
+            ),
             RuntimeInvocationRegisterError::CapacityExhausted { .. } => (
                 MCP_ERROR_CAPACITY_EXHAUSTED,
                 "runtime invocation capacity is exhausted",
             ),
-            RuntimeInvocationRegisterError::Store(_) => (
+            RuntimeInvocationRegisterError::StoreUnavailable(_) => (
                 MCP_ERROR_INTERNAL,
-                "runtime invocation registry is unavailable or request id is already active",
+                "runtime invocation registry is unavailable",
+            ),
+            RuntimeInvocationRegisterError::SessionClosed => (
+                MCP_ERROR_AUTH_REQUIRED,
+                "runtime session was closed or has expired",
+            ),
+            RuntimeInvocationRegisterError::InvalidRecord(_) => (
+                MCP_ERROR_INTERNAL,
+                "runtime invocation registration was rejected",
             ),
         };
         tracing::error!(
             invocation_id = invocation_id.as_str(),
             session_id = snapshot.session_id.as_str(),
+            error_category = error.category(),
             error = %error,
             "register Runtime Invocation failed"
         );
@@ -387,6 +407,50 @@ async fn handle_tool_call(
             );
             jsonrpc_error(id, error.code, error.message)
         }
+    }
+}
+
+async fn register_runtime_invocation(
+    state: &AppState,
+    snapshot: &RuntimeSessionSnapshot,
+    invocation: RuntimeInvocationRecord,
+) -> Result<(), RuntimeInvocationRegisterError> {
+    if let Err(error) = ensure_runtime_session_is_active(state, snapshot.session_id.as_str()).await
+    {
+        state.runtime_invocations.observe_register_error(&error);
+        return Err(error);
+    }
+    let invocation_id = invocation.invocation_id.clone();
+    state.runtime_invocations.register(invocation).await?;
+    if let Err(error) = ensure_runtime_session_is_active(state, snapshot.session_id.as_str()).await
+    {
+        if let Err(close_error) = state
+            .runtime_invocations
+            .close_registered_invocation(invocation_id.as_str(), snapshot.session_id.as_str())
+            .await
+        {
+            let error = RuntimeInvocationRegisterError::StoreUnavailable(format!(
+                "close Runtime Invocation after session validation failed: {close_error}"
+            ));
+            state.runtime_invocations.observe_register_error(&error);
+            return Err(error);
+        }
+        state.runtime_invocations.observe_register_error(&error);
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn ensure_runtime_session_is_active(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(), RuntimeInvocationRegisterError> {
+    match state.runtime_sessions.get(session_id).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(RuntimeInvocationRegisterError::SessionClosed),
+        Err(error) => Err(RuntimeInvocationRegisterError::StoreUnavailable(format!(
+            "verify Runtime Session before invocation registration failed: {error}"
+        ))),
     }
 }
 
@@ -664,176 +728,8 @@ pub(crate) async fn execute_async_tool_call(
     Ok(())
 }
 
-enum DispatchResult {
-    Completed(Result<crate::providers::ProviderCallOutcome, crate::providers::ProviderCallError>),
-    CancelRequested,
-    RegistryFailed(String),
-}
-
-async fn wait_for_cancellation(state: &AppState, invocation_id: &str) -> Result<(), String> {
-    state
-        .runtime_invocations
-        .wait_for_cancellation(invocation_id)
-        .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn handle_cancelled_tool_call(
-    id: Value,
-    snapshot: &RuntimeSessionSnapshot,
-    route: &chatos_mcp_management_sdk::ResolvedMcpRoute,
-    exposed_tool_name: &str,
-    invocation_id: &str,
-    mutation_may_have_started: bool,
-    duration_ms: u64,
-    state: &AppState,
-) -> JsonRpcResponse {
-    let provider_outcome = state
-        .providers
-        .cancel_invocation(snapshot, route, invocation_id)
-        .await;
-    let (status, terminal_status, code, message) = match provider_outcome {
-        Ok(ProviderCancelOutcome::Cancelled) => (
-            "cancelled",
-            Some(RuntimeInvocationStatus::Cancelled),
-            MCP_ERROR_INVOCATION_CANCELLED,
-            "invocation_cancelled",
-        ),
-        Ok(ProviderCancelOutcome::CancelRequested | ProviderCancelOutcome::NotSupported)
-        | Err(_)
-            if mutation_may_have_started =>
-        {
-            (
-                "unknown_execution_state",
-                Some(RuntimeInvocationStatus::UnknownExecutionState),
-                MCP_ERROR_UNKNOWN_EXECUTION_STATE,
-                "unknown_execution_state",
-            )
-        }
-        Ok(ProviderCancelOutcome::CancelRequested | ProviderCancelOutcome::NotSupported)
-        | Err(_) => (
-            "cancel_requested",
-            None,
-            MCP_ERROR_INVOCATION_CANCELLED,
-            "cancel_requested",
-        ),
-    };
-    record_tool_access_audit(snapshot, route, exposed_tool_name, status);
-    if let Some(terminal_status) = terminal_status {
-        if let Err(error) = state
-            .runtime_invocations
-            .finish_cancellation(invocation_id, terminal_status)
-            .await
-        {
-            tracing::error!(
-                invocation_id,
-                error = error.as_str(),
-                "persist Runtime Invocation cancellation outcome failed"
-            );
-        }
-    }
-    if let Err(error) = provider_outcome {
-        tracing::warn!(
-            invocation_id,
-            error_code = error.code,
-            error = error.message.as_str(),
-            "Provider cancellation propagation failed"
-        );
-    }
-    tracing::info!(
-        invocation_id,
-        session_id = snapshot.session_id.as_str(),
-        resource_id = route.resource_id.as_str(),
-        exposed_tool_name,
-        provider_kind = route.provider_kind.as_str(),
-        duration_ms,
-        status,
-        cancel_outcome = status,
-        "MCP Provider invocation cancellation completed"
-    );
-    jsonrpc_error(id, code, message)
-}
-
-async fn handle_cancel_notification(
-    id: Value,
-    params: Value,
-    snapshot: &RuntimeSessionSnapshot,
-    state: &AppState,
-) -> JsonRpcResponse {
-    let params = match CancelledNotificationParams::parse(params) {
-        Ok(params) => params,
-        Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
-    };
-    let request_id_key = match request_id_key(&params.request_id) {
-        Ok(value) => value,
-        Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
-    };
-    let record = match state
-        .runtime_invocations
-        .request_cancel_by_request(snapshot.session_id.as_str(), request_id_key.as_str())
-        .await
-    {
-        Ok(record) => record,
-        Err(error) => {
-            tracing::error!(
-                session_id = snapshot.session_id.as_str(),
-                error = error.as_str(),
-                "request Runtime Invocation cancellation failed"
-            );
-            return jsonrpc_error(
-                id,
-                MCP_ERROR_INTERNAL,
-                "runtime invocation registry is unavailable",
-            );
-        }
-    };
-    let Some(record) = record else {
-        return jsonrpc_ok(id, json!({"status": "invocation_not_found"}));
-    };
-    if record.status == RuntimeInvocationStatus::CancelRequested {
-        if let Err(error) = state
-            .async_tool_dispatch
-            .publish_cancellation(record.invocation_id.as_str())
-            .await
-        {
-            tracing::error!(
-                invocation_id = record.invocation_id.as_str(),
-                error = %error,
-                "publish Runtime Invocation cancellation event failed"
-            );
-            return jsonrpc_error(
-                id,
-                MCP_ERROR_INTERNAL,
-                "runtime invocation cancellation event is unavailable",
-            );
-        }
-    }
-    jsonrpc_ok(
-        id,
-        json!({
-            "invocationId": record.invocation_id,
-            "status": cancel_response_status(&record),
-        }),
-    )
-}
-
 pub(super) fn cancel_response_status(record: &RuntimeInvocationRecord) -> &'static str {
-    match record.status {
-        RuntimeInvocationStatus::Queued
-        | RuntimeInvocationStatus::Running
-        | RuntimeInvocationStatus::WaitingForUser
-        | RuntimeInvocationStatus::CancelRequested => {
-            if record.mutation_may_have_started && !record.cancel_supported {
-                "unknown_execution_state"
-            } else {
-                "cancel_requested"
-            }
-        }
-        RuntimeInvocationStatus::Completed => "already_completed",
-        RuntimeInvocationStatus::Failed => "already_failed",
-        RuntimeInvocationStatus::Cancelled => "cancelled",
-        RuntimeInvocationStatus::UnknownExecutionState => "unknown_execution_state",
-    }
+    cancellation::cancel_response_status(record)
 }
 
 fn request_id_key(id: &Value) -> Result<String, &'static str> {

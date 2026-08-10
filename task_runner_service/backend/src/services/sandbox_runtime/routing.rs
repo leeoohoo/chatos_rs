@@ -692,12 +692,13 @@ async fn resolve_local_connector_sandbox_route(
         return Err("Local Connector task and project owners do not match".to_string());
     }
     let secret = local_connector_internal_secret(config)?;
-    let token = chatos_service_runtime::issue_internal_service_token(
+    let token = chatos_service_runtime::issue_internal_service_token_for_owner(
         secret.as_str(),
         "task-runner",
         "local-connector-service",
         "sandbox-routing.read",
         60,
+        owner_user_id,
     )?;
     let service_base = local_connector_service_base_url(config)?;
     let response = config

@@ -307,6 +307,8 @@ export interface AgentBindingRecord {
   priority: number;
   conditions: BindingConditions;
   component_allowlist: string[];
+  tool_allowlist: string[];
+  tool_blocklist: string[];
   created_by: string;
   updated_by: string;
   created_at: string;
@@ -315,9 +317,13 @@ export interface AgentBindingRecord {
 
 export interface AgentMcpBindingView {
   mcp: McpRecord;
+  binding_id?: string | null;
   mode: McpBindingMode;
   bindable: boolean;
   unavailable_reason?: string | null;
+  conditions: BindingConditions;
+  tool_allowlist: string[];
+  tool_blocklist: string[];
 }
 
 export interface AgentMcpBindingsResponse {

@@ -55,6 +55,20 @@ fn response_text(value: &serde_json::Value) -> String {
         .to_string()
 }
 
+fn response_json(value: &serde_json::Value) -> serde_json::Value {
+    serde_json::from_str(response_text(value).as_str()).expect("structured tool response")
+}
+
+fn open_session(service: &CodeMaintainerService, conversation: Option<&str>) -> String {
+    let opened = service
+        .call_tool("open_edit_session", json!({}), conversation)
+        .expect("open edit session");
+    response_json(&opened)["result"]["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string()
+}
+
 #[test]
 fn list_tools_contains_compat_aliases() {
     let (service, _root) = build_service(true);
@@ -70,7 +84,11 @@ fn list_tools_contains_compat_aliases() {
 
     assert!(names.iter().any(|name| name == "read_file"));
     assert!(names.iter().any(|name| name == "search_files"));
-    assert!(names.iter().any(|name| name == "patch"));
+    assert!(names.iter().any(|name| name == "open_edit_session"));
+    assert!(names.iter().any(|name| name == "stage_edit_batch"));
+    assert!(names.iter().any(|name| name == "commit_edit_session"));
+    assert!(names.iter().any(|name| name == "abort_edit_session"));
+    assert!(!names.iter().any(|name| name == "patch"));
 }
 
 #[test]
@@ -149,15 +167,485 @@ fn search_files_alias_accepts_file_path() {
 }
 
 #[test]
-fn patch_alias_maps_to_apply_patch() {
+fn stage_and_commit_create_new_file_from_absent_path() {
     let (service, root) = build_service(true);
-    let patch_text =
-        "*** Begin Patch\n*** Add File: alias_patch.txt\n+hello from alias\n*** End Patch\n";
-    service
-        .call_tool("patch", json!({ "patch": patch_text }), None)
-        .expect("apply patch via alias");
+    let session_id = open_session(&service, None);
 
-    let created = root.join("alias_patch.txt");
-    let content = fs::read_to_string(created).expect("read created file");
-    assert_eq!(content.trim(), "hello from alias");
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "first",
+                    "expected_sha256": null
+                }]
+            }),
+            None,
+        )
+        .expect("stage new file");
+    service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            None,
+        )
+        .expect("commit new file");
+
+    assert_eq!(
+        fs::read_to_string(root.join("revision.txt")).expect("read result"),
+        "first"
+    );
+}
+
+#[test]
+fn stage_existing_file_requires_latest_read_revision() {
+    let (service, root) = build_service(true);
+    let path = root.join("revision.txt");
+    fs::write(&path, "first").expect("seed file");
+    let session_id = open_session(&service, None);
+
+    let stale = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "second",
+                    "expected_sha256": null
+                }]
+            }),
+            None,
+        )
+        .expect_err("existing file must reject null revision");
+    let stale_payload: serde_json::Value = serde_json::from_str(&stale).expect("stale payload");
+    assert_eq!(stale_payload["category"], "stale_context");
+    let latest = stale_payload["latest_sha256"]
+        .as_str()
+        .expect("latest hash")
+        .to_string();
+
+    let blocked_retry = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": open_session(&service, None),
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "second",
+                    "expected_sha256": latest
+                }]
+            }),
+            None,
+        )
+        .expect_err("stale failure must force a read before retry");
+    assert!(blocked_retry.contains("successful workspace read is required"));
+
+    let read = service
+        .call_tool("read_file_raw", json!({ "path": "revision.txt" }), None)
+        .expect("read current file");
+    let sha256 = response_json(&read)["sha256"]
+        .as_str()
+        .expect("read hash")
+        .to_string();
+    let fresh_session = open_session(&service, None);
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": fresh_session,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "second",
+                    "expected_sha256": sha256
+                }]
+            }),
+            None,
+        )
+        .expect("stage after fresh read");
+    service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": fresh_session }),
+            None,
+        )
+        .expect("commit after fresh read");
+
+    assert_eq!(fs::read_to_string(path).expect("read result"), "second");
+}
+
+#[test]
+fn stage_replace_text_rejects_external_revision_drift_until_reread() {
+    let (service, root) = build_service(true);
+    let path = root.join("src.rs");
+    fs::write(&path, "fn value() -> i32 { 1 }\n").expect("write source");
+    let initial_read = service
+        .call_tool("read_file_raw", json!({ "path": "src.rs" }), None)
+        .expect("initial read");
+    let initial_hash = response_json(&initial_read)["sha256"]
+        .as_str()
+        .expect("initial hash")
+        .to_string();
+
+    fs::write(&path, "fn value() -> i32 { 2 }\n").expect("external update");
+    let session_id = open_session(&service, None);
+    let stale = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "src.rs",
+                    "old_text": "{ 1 }",
+                    "new_text": "{ 3 }",
+                    "expected_sha256": initial_hash
+                }]
+            }),
+            None,
+        )
+        .expect_err("external drift must be rejected");
+    let stale_payload: serde_json::Value = serde_json::from_str(&stale).expect("stale payload");
+    let latest_hash = stale_payload["latest_sha256"]
+        .as_str()
+        .expect("latest hash")
+        .to_string();
+
+    let retry = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": open_session(&service, None),
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "src.rs",
+                    "old_text": "{ 2 }",
+                    "new_text": "{ 3 }",
+                    "expected_sha256": latest_hash
+                }]
+            }),
+            None,
+        )
+        .expect_err("latest hash from error cannot bypass reread");
+    assert!(retry.contains("successful workspace read is required"));
+
+    let current_read = service
+        .call_tool(
+            "read_file_range",
+            json!({ "path": "src.rs", "start_line": 1, "end_line": 1 }),
+            None,
+        )
+        .expect("fresh targeted read");
+    let current_hash = response_json(&current_read)["sha256"]
+        .as_str()
+        .expect("current hash")
+        .to_string();
+    let fresh_session = open_session(&service, None);
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": fresh_session,
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "src.rs",
+                    "old_text": "{ 2 }",
+                    "new_text": "{ 3 }",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "expected_sha256": current_hash
+                }]
+            }),
+            None,
+        )
+        .expect("stage after reread");
+    service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": fresh_session }),
+            None,
+        )
+        .expect("commit after reread");
+
+    assert_eq!(
+        fs::read_to_string(path).expect("read edited file"),
+        "fn value() -> i32 { 3 }\n"
+    );
+}
+
+#[test]
+fn expected_match_failure_is_classified_and_requires_reread() {
+    let (service, root) = build_service(true);
+    fs::write(root.join("matches.txt"), "same\nsame\n").expect("write matches");
+    let read = service
+        .call_tool("read_file_raw", json!({ "path": "matches.txt" }), None)
+        .expect("read matches");
+    let hash = response_json(&read)["sha256"]
+        .as_str()
+        .expect("hash")
+        .to_string();
+    let session_id = open_session(&service, None);
+
+    let ambiguous = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "matches.txt",
+                    "old_text": "same",
+                    "new_text": "new",
+                    "expected_sha256": hash
+                }]
+            }),
+            None,
+        )
+        .expect_err("ambiguous edit must fail");
+    let payload: serde_json::Value =
+        serde_json::from_str(&ambiguous).expect("expected match payload");
+    assert_eq!(payload["category"], "expected_match");
+    assert!(payload["error"]
+        .as_str()
+        .unwrap()
+        .contains("candidate matches"));
+    assert_eq!(payload["candidate_summary"]["count"], 2);
+    assert_eq!(payload["candidate_summary"]["candidates"][0]["line"], 1);
+    assert!(payload["candidate_summary"]["candidates"][0]["context"]
+        .as_str()
+        .unwrap()
+        .contains("1: same"));
+
+    let retry = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": open_session(&service, None),
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "matches.txt",
+                    "old_text": "same",
+                    "new_text": "new",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "expected_sha256": payload["latest_sha256"].as_str().unwrap()
+                }]
+            }),
+            None,
+        )
+        .expect_err("retry must require a read");
+    assert!(retry.contains("successful workspace read is required"));
+}
+
+#[test]
+fn commit_session_revalidates_existing_targets() {
+    let (service, root) = build_service(true);
+    fs::write(root.join("patch.txt"), "before\n").expect("write patch target");
+    let read = service
+        .call_tool("read_file_raw", json!({ "path": "patch.txt" }), None)
+        .expect("read patch target");
+    let hash = response_json(&read)["sha256"]
+        .as_str()
+        .expect("patch target hash")
+        .to_string();
+    let session_id = open_session(&service, None);
+
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "patch.txt",
+                    "old_text": "before",
+                    "new_text": "after",
+                    "expected_sha256": hash
+                }]
+            }),
+            None,
+        )
+        .expect("stage patch replacement");
+    fs::write(root.join("patch.txt"), "drifted\n").expect("external drift before commit");
+    let stale = service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            None,
+        )
+        .expect_err("commit must reject stale session");
+    let payload: serde_json::Value = serde_json::from_str(&stale).expect("commit conflict payload");
+    assert_eq!(payload["category"], "stale_context");
+    assert_eq!(payload["conflicts"][0]["path"], "patch.txt");
+    assert_eq!(
+        fs::read_to_string(root.join("patch.txt")).expect("patched content"),
+        "drifted\n"
+    );
+}
+
+#[test]
+fn same_file_multiple_operations_commit_once() {
+    let (service, root) = build_service(true);
+    fs::write(
+        root.join("main.tsx"),
+        "const value = 1;\nconsole.log(value);\n",
+    )
+    .expect("write main");
+    fs::write(root.join("api.ts"), "export const api = 1;\n").expect("write api");
+    let main_hash = response_json(
+        &service
+            .call_tool("read_file_raw", json!({ "path": "main.tsx" }), None)
+            .expect("read main"),
+    )["sha256"]
+        .as_str()
+        .expect("main hash")
+        .to_string();
+    let api_hash = response_json(
+        &service
+            .call_tool("read_file_raw", json!({ "path": "api.ts" }), None)
+            .expect("read api"),
+    )["sha256"]
+        .as_str()
+        .expect("api hash")
+        .to_string();
+    let session_id = open_session(&service, None);
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [
+                    {
+                        "kind": "replace_text",
+                        "path": "main.tsx",
+                        "old_text": "value = 1",
+                        "new_text": "value = 2",
+                        "expected_sha256": main_hash
+                    },
+                    {
+                        "kind": "replace_text",
+                        "path": "main.tsx",
+                        "old_text": "console.log(value);",
+                        "new_text": "console.log(value + 1);",
+                        "expected_sha256": main_hash
+                    },
+                    {
+                        "kind": "append",
+                        "path": "main.tsx",
+                        "content": "// done\\n",
+                        "expected_sha256": main_hash
+                    },
+                    {
+                        "kind": "replace_text",
+                        "path": "api.ts",
+                        "old_text": "api = 1",
+                        "new_text": "api = 2",
+                        "expected_sha256": api_hash
+                    }
+                ]
+            }),
+            None,
+        )
+        .expect("stage multi-operation batch");
+    let committed = service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            None,
+        )
+        .expect("commit session");
+    let payload = response_json(&committed);
+    assert_eq!(payload["changed_target_count"], 2);
+    assert_eq!(
+        fs::read_to_string(root.join("main.tsx")).expect("main after commit"),
+        "const value = 2;\nconsole.log(value + 1);\n// done\\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("api.ts")).expect("api after commit"),
+        "export const api = 2;\n"
+    );
+}
+
+#[test]
+fn separate_read_and_write_services_share_reread_gate() {
+    let root = unique_temp_dir("code_maintainer_split_workspace");
+    fs::create_dir_all(&root).expect("create split workspace");
+    fs::write(root.join("shared.txt"), "current").expect("write shared file");
+    let build = |server_name: &str, enable_read_tools: bool, enable_write_tools: bool| {
+        CodeMaintainerService::new(CodeMaintainerOptions {
+            server_name: server_name.to_string(),
+            root: root.clone(),
+            project_id: Some("split-project".to_string()),
+            allow_writes: enable_write_tools,
+            max_file_bytes: 256 * 1024,
+            max_write_bytes: 1024 * 1024,
+            search_limit: 40,
+            enable_read_tools,
+            enable_write_tools,
+            conversation_id: None,
+            run_id: None,
+            db_path: None,
+            hooks: None,
+        })
+        .expect("build split service")
+    };
+    let reader = build("split_reader", true, false);
+    let writer = build("split_writer", false, true);
+    let conversation = Some("shared-conversation");
+
+    writer
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": open_session(&writer, conversation),
+                "operations": [{
+                    "kind": "write",
+                    "path": "shared.txt",
+                    "content": "updated",
+                    "expected_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+                }]
+            }),
+            conversation,
+        )
+        .expect_err("wrong hash must arm shared reread gate");
+    let read = reader
+        .call_tool(
+            "read_file_raw",
+            json!({ "path": "shared.txt" }),
+            conversation,
+        )
+        .expect("read service clears shared gate");
+    let hash = response_json(&read)["sha256"]
+        .as_str()
+        .expect("shared hash")
+        .to_string();
+    let session_id = open_session(&writer, conversation);
+    writer
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": "shared.txt",
+                    "content": "updated",
+                    "expected_sha256": hash
+                }]
+            }),
+            conversation,
+        )
+        .expect("write service observes read service state");
+    writer
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            conversation,
+        )
+        .expect("commit updated file");
 }

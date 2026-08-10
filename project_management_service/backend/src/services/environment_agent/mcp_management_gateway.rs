@@ -48,8 +48,7 @@ pub(super) async fn resolve_project_environment_mcp(
     run_id: &str,
     model_config_id: &str,
 ) -> Result<ProjectEnvironmentMcpGateway, String> {
-    let request =
-        runtime_session_request(owner_user_id, project.id.as_str(), run_id, model_config_id);
+    let request = runtime_session_request(project, owner_user_id, run_id, model_config_id);
     let resolved = McpManagementGatewayBuilder::new("project-service", request, tool_timeout())
         .with_async_result_transport(chatos_mcp_runtime::McpAsyncResultTransport::RabbitMq)
         .resolve()
@@ -72,16 +71,24 @@ pub(super) async fn resolve_project_environment_mcp(
 }
 
 fn runtime_session_request(
+    project: &ProjectRecord,
     owner_user_id: &str,
-    project_id: &str,
     run_id: &str,
     model_config_id: &str,
 ) -> CreateRuntimeSessionRequest {
+    let agent_key = if matches!(
+        project.source_type,
+        crate::models::ProjectSourceType::Local | crate::models::ProjectSourceType::LocalConnector
+    ) {
+        SystemAgentKey::ProjectManagementLocalAgent
+    } else {
+        SystemAgentKey::ProjectManagementAgent
+    };
     CreateRuntimeSessionRequest {
         tenant_id: owner_user_id.trim().to_string(),
         owner_user_id: owner_user_id.trim().to_string(),
-        agent_key: SystemAgentKey::ProjectManagementAgent.as_str().to_string(),
-        project_id: project_id.trim().to_string(),
+        agent_key: agent_key.as_str().to_string(),
+        project_id: project.id.trim().to_string(),
         run_id: Some(run_id.trim().to_string()),
         turn_id: None,
         task_id: None,
@@ -91,6 +98,7 @@ fn runtime_session_request(
         contact_agent_id: None,
         default_model_config_id: Some(model_config_id.trim().to_string()),
         expected_project_task_ids: Vec::new(),
+        requested_mcp_ids: None,
         locale: Some("zh-CN".to_string()),
         requested_device_id: None,
         requested_sandbox_provider: None,
@@ -112,9 +120,51 @@ fn tool_timeout() -> Duration {
 mod tests {
     use super::*;
 
+    fn sample_project(source_type: crate::models::ProjectSourceType) -> ProjectRecord {
+        ProjectRecord {
+            id: "project-1".to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: Some("user".to_string()),
+            owner_display_name: Some("User".to_string()),
+            name: "Project".to_string(),
+            root_path: None,
+            git_url: None,
+            source_type,
+            execution_plane: crate::models::ProjectExecutionPlane::Cloud,
+            cloud_import_source: crate::models::CloudImportSource::None,
+            import_status: crate::models::ProjectImportStatus::None,
+            source_git_url: None,
+            harness_space_identifier: None,
+            harness_repo_identifier: None,
+            harness_repo_path: None,
+            harness_git_url: None,
+            harness_git_ssh_url: None,
+            harness_default_branch: None,
+            harness_provision_status: None,
+            harness_provision_error: None,
+            harness_provisioned_at: None,
+            import_error: None,
+            import_started_at: None,
+            import_finished_at: None,
+            description: None,
+            status: crate::models::ProjectStatus::Active,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            archived_at: None,
+        }
+    }
+
     #[test]
     fn runtime_session_is_bound_to_project_agent_run_and_model() {
-        let request = runtime_session_request("user-1", "project-1", "run-1", "model-1");
+        let request = runtime_session_request(
+            &sample_project(crate::models::ProjectSourceType::Cloud),
+            "user-1",
+            "run-1",
+            "model-1",
+        );
         assert_eq!(request.owner_user_id, "user-1");
         assert_eq!(request.project_id, "project-1");
         assert_eq!(
@@ -126,5 +176,20 @@ mod tests {
         assert_eq!(request.locale.as_deref(), Some("zh-CN"));
         assert!(request.sandbox_target.is_none());
         assert!(request.requested_sandbox_provider.is_none());
+    }
+
+    #[test]
+    fn local_projects_bind_runtime_sessions_to_local_environment_agent() {
+        let request = runtime_session_request(
+            &sample_project(crate::models::ProjectSourceType::LocalConnector),
+            "user-1",
+            "run-1",
+            "model-1",
+        );
+
+        assert_eq!(
+            request.agent_key,
+            SystemAgentKey::ProjectManagementLocalAgent.as_str()
+        );
     }
 }

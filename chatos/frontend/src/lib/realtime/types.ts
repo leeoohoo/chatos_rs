@@ -185,11 +185,12 @@ export interface RealtimeRemoteConnectionsUpdatedPayloadWrapper {
     username?: string;
     auth_type?: 'private_key' | 'private_key_cert' | 'password';
     authType?: 'private_key' | 'private_key_cert' | 'password';
-    password?: string | null;
-    private_key_path?: string | null;
-    privateKeyPath?: string | null;
-    certificate_path?: string | null;
-    certificatePath?: string | null;
+    has_password?: boolean;
+    hasPassword?: boolean;
+    has_private_key_path?: boolean;
+    hasPrivateKeyPath?: boolean;
+    has_certificate_path?: boolean;
+    hasCertificatePath?: boolean;
     default_remote_path?: string | null;
     defaultRemotePath?: string | null;
     host_key_policy?: 'strict' | 'accept_new';
@@ -204,12 +205,12 @@ export interface RealtimeRemoteConnectionsUpdatedPayloadWrapper {
     jumpPort?: number | null;
     jump_username?: string | null;
     jumpUsername?: string | null;
-    jump_private_key_path?: string | null;
-    jumpPrivateKeyPath?: string | null;
-    jump_certificate_path?: string | null;
-    jumpCertificatePath?: string | null;
-    jump_password?: string | null;
-    jumpPassword?: string | null;
+    has_jump_private_key_path?: boolean;
+    hasJumpPrivateKeyPath?: boolean;
+    has_jump_certificate_path?: boolean;
+    hasJumpCertificatePath?: boolean;
+    has_jump_password?: boolean;
+    hasJumpPassword?: boolean;
     user_id?: string | null;
     userId?: string | null;
     created_at?: string;
@@ -430,22 +431,6 @@ export interface RealtimeChatStreamPayloadWrapper {
   };
 }
 
-export interface RealtimeRemoteSftpTransferPayloadWrapper {
-  kind: 'remote_sftp_transfer';
-  id: string;
-  connection_id: string;
-  direction: 'upload' | 'download';
-  state: 'pending' | 'running' | 'cancelling' | 'success' | 'error' | 'cancelled';
-  total_bytes?: number | null;
-  transferred_bytes: number;
-  percent?: number | null;
-  current_path?: string | null;
-  message?: string | null;
-  error?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export type RealtimeProjectScopedPayload =
   | RealtimeReviewRepairPayloadWrapper
   | RealtimeConversationSummariesUpdatedPayloadWrapper
@@ -472,7 +457,6 @@ export interface RealtimeEventEnvelope {
     | RealtimeProjectScopedPayload
     | RealtimeTaskBoardPayloadWrapper
     | RealtimeAskUserPromptPayloadWrapper
-    | RealtimeChatStreamPayloadWrapper
-    | RealtimeRemoteSftpTransferPayloadWrapper;
+    | RealtimeChatStreamPayloadWrapper;
   ts: string;
 }

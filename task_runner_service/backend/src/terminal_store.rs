@@ -8,7 +8,11 @@ use tokio::sync::{Mutex, RwLock};
 mod ops;
 mod output;
 mod pathing;
+mod retention;
 mod runtime;
+
+pub use retention::{spawn_task_terminal_retention, TaskTerminalRetentionPolicy};
+pub use runtime::configure_task_terminal_runtime;
 
 struct TerminalSession {
     meta: Mutex<TerminalSessionMeta>,
@@ -16,9 +20,18 @@ struct TerminalSession {
     logs: Mutex<TerminalLogBuffer>,
 }
 
-#[derive(Default)]
 struct TerminalRuntimeState {
     sessions: RwLock<std::collections::HashMap<String, std::sync::Arc<TerminalSession>>>,
+    policy: TaskTerminalRetentionPolicy,
+}
+
+impl TerminalRuntimeState {
+    fn new(policy: TaskTerminalRetentionPolicy) -> Self {
+        Self {
+            sessions: RwLock::new(std::collections::HashMap::new()),
+            policy,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

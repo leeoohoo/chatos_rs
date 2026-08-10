@@ -31,6 +31,8 @@ fn binding(scope: &str) -> AgentBindingRecord {
         priority: 100,
         conditions: BindingConditions::default(),
         component_allowlist: Vec::new(),
+        tool_allowlist: Vec::new(),
+        tool_blocklist: Vec::new(),
         created_by: "user-1".to_string(),
         updated_by: "user-1".to_string(),
         created_at: "now".to_string(),
@@ -507,7 +509,12 @@ fn disabled_mcp_bindings_are_persisted_but_excluded_from_runtime() {
 
 #[test]
 fn automatic_user_resources_are_optional_and_owner_scoped() {
-    let binding = automatic_user_binding("task_runner_run_phase", "user-1", "mcp", "mcp-1");
+    let binding = automatic_user_binding(
+        chatos_agent::SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        "user-1",
+        "mcp",
+        "mcp-1",
+    );
     assert!(!binding.required);
     assert_eq!(binding.owner_user_id.as_deref(), Some("user-1"));
     assert_eq!(binding.resource_kind, RESOURCE_KIND_MCP);

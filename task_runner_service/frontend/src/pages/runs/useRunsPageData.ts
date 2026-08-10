@@ -75,14 +75,14 @@ export function useRunsPageData({
 
   const runsQuery = useQuery({
     queryKey: ['runs', taskFilterId, statusFilter, routeModelConfigId, runPage, runPageSize],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.listRunsPage({
         task_id: taskFilterId,
         status: statusFilter === 'all' ? undefined : statusFilter,
         model_config_id: routeModelConfigId,
         limit: runPageSize,
         offset: (runPage - 1) * runPageSize,
-      }),
+      }, signal),
     refetchInterval: (query) => activeRefreshInterval(runPageHasActiveItems(query.state.data)),
   });
   const modelsQuery = useQuery({
@@ -95,24 +95,36 @@ export function useRunsPageData({
   });
   const selectedRunQuery = useQuery({
     queryKey: ['run', selectedRunId],
-    queryFn: () => api.getRun(selectedRunId!),
+    queryFn: async ({ signal }) => {
+      const run = await api.getRun(selectedRunId!, signal);
+      if (run.id !== selectedRunId) {
+        throw new Error(`Run response identity mismatch: expected ${selectedRunId}, received ${run.id}`);
+      }
+      return run;
+    },
     enabled: Boolean(selectedRunId),
     refetchInterval: (query) =>
       activeRefreshInterval(isActiveRunStatus(query.state.data?.status)),
   });
   const runEventsQuery = useQuery({
     queryKey: ['run-events', selectedRunId],
-    queryFn: () => api.getRunEvents(selectedRunId!),
+    queryFn: async ({ signal }) => {
+      const events = await api.getRunEvents(selectedRunId!, undefined, signal);
+      if (events.some((event) => event.run_id !== selectedRunId)) {
+        throw new Error(`Run event response contained events outside Run ${selectedRunId}`);
+      }
+      return events;
+    },
     enabled: Boolean(selectedRunId),
   });
   const runPromptsQuery = useQuery({
     queryKey: ['run-prompts', selectedRunId, runPromptPage, runPromptPageSize],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.listPromptsPage({
         runId: selectedRunId!,
         limit: runPromptPageSize,
         offset: (runPromptPage - 1) * runPromptPageSize,
-      }),
+      }, signal),
     enabled: Boolean(selectedRunId),
   });
 
@@ -155,13 +167,15 @@ export function useRunsPageData({
       return null;
     }
     return (
-      selectedRunQuery.data ||
+      (selectedRunQuery.data?.id === selectedRunId ? selectedRunQuery.data : undefined) ||
       (runsQuery.data?.items || []).find((run) => run.id === selectedRunId) ||
       null
     );
   }, [selectedRunId, selectedRunQuery.data, runsQuery.data]);
 
-  const selectedRunEvents = runEventsQuery.data || [];
+  const selectedRunEvents = (runEventsQuery.data || []).filter(
+    (event) => event.run_id === selectedRunId,
+  );
   const selectedToolCalls = useMemo(
     () => collectToolCalls(selectedRunEvents, selectedRun?.report),
     [selectedRun?.report, selectedRunEvents],

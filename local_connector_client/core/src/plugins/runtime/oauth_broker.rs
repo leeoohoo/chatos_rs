@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
-use super::mcp_adapter::load_verified_manifest;
+use super::mcp_runtime::load_verified_manifest;
 use crate::plugins::{PluginCredentialVault, PluginInstaller};
 
 mod refresh;

@@ -8,7 +8,7 @@ COMPOSE_VALIDATION_ENV := SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID=compose-valid
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
 .PHONY: local-connector-client local-connector-client-status local-connector-client-stop
 .PHONY: build build-rust build-frontends test smoke smoke-repo smoke-cloud-mcp smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
-.PHONY: test-chat-app-server test-chat-app test-user-service
+.PHONY: test-chat-app-server test-chat-app test-user-service test-task-runner-service test-local-connector-service test-local-connector-client test-mcp-management-service test-memory-engine
 .PHONY: type-check-user-service-frontend
 
 help:
@@ -32,7 +32,7 @@ help:
 	@echo "  make docker-ps              # show Docker service status"
 	@echo "  make local-connector-client # separately run the host-side Local Connector client"
 	@echo "  make build                  # build Rust services and frontends"
-	@echo "  make test                   # run repo checks and focused tests"
+	@echo "  make test                   # run repo checks and core backend/frontend tests"
 	@echo "  make smoke                  # run lightweight repo checks"
 	@echo "  make smoke-cloud-mcp        # run live cloud MCP Management integration smoke"
 	@echo "  make smoke-local-project-entry # verify Config Center -> ChatOS local-project UI switch"
@@ -124,7 +124,7 @@ build-frontends:
 	@cd sandbox_manager_service/frontend && npm run build
 	@cd official_website_service/frontend && npm run build
 
-test: smoke test-chat-app-server test-chat-app test-user-service
+test: smoke test-chat-app-server test-chat-app test-user-service test-task-runner-service test-local-connector-service test-local-connector-client test-mcp-management-service test-memory-engine
 
 smoke: smoke-repo
 
@@ -153,7 +153,9 @@ smoke-repo:
 	@bash scripts/check-hotspot-line-budgets.sh
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
-	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
+	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh local_connector_client/restart_services.sh
+	@bash local_connector_client/restart_services.sh check
+	@if LOCAL_CONNECTOR_INTERNAL_MTLS_PORT=39232 LOCAL_CONNECTOR_CORE_API_PORT=39232 bash local_connector_client/restart_services.sh check >/dev/null 2>&1; then echo "Local Connector port collision check unexpectedly passed" >&2; exit 1; fi
 	@$(COMPOSE_VALIDATION_ENV) docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
 	@bash -n scripts/smoke-mcp-management-cloud.sh scripts/smoke-mcp-management-cloud-discovery.sh
 	@bash -n scripts/smoke-local-project-entry-config.sh
@@ -173,6 +175,21 @@ test-user-service:
 	@cd user_service/backend && cargo test -q
 	@cd user_service/frontend && npm run type-check
 	@cd user_service/frontend && npm run build
+
+test-task-runner-service:
+	@cargo test -p task_runner_service_backend -q
+
+test-local-connector-service:
+	@cargo test -p local_connector_service_backend -q
+
+test-local-connector-client:
+	@cargo test -p local_connector_client_core -q
+
+test-mcp-management-service:
+	@cargo test -p mcp_management_service_backend -q
+
+test-memory-engine:
+	@cd memory_engine/backend && cargo test -q
 
 code-size-report:
 	@bash scripts/code-size-report.sh

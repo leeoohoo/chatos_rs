@@ -79,11 +79,6 @@ async fn resolve_runtime_binding(
     project_id: &str,
 ) -> Result<(ProjectRecord, String, Vec<String>), String> {
     require_matching_header(headers, PROJECT_ID_HEADER, project_id)?;
-    require_matching_header(
-        headers,
-        AGENT_KEY_HEADER,
-        SystemAgentKey::ProjectManagementAgent.as_str(),
-    )?;
     let _session_id = required_header(headers, SESSION_ID_HEADER)?;
     let owner_user_id = required_header(headers, OWNER_USER_ID_HEADER)?;
     let run_id = required_header(headers, RUN_ID_HEADER)?.to_string();
@@ -92,6 +87,15 @@ async fn resolve_runtime_binding(
         .get_project(project_id)
         .await?
         .ok_or_else(|| format!("项目不存在: {project_id}"))?;
+    let expected_agent_key = if matches!(
+        project.source_type,
+        crate::models::ProjectSourceType::Local | crate::models::ProjectSourceType::LocalConnector
+    ) {
+        SystemAgentKey::ProjectManagementLocalAgent.as_str()
+    } else {
+        SystemAgentKey::ProjectManagementAgent.as_str()
+    };
+    require_matching_header(headers, AGENT_KEY_HEADER, expected_agent_key)?;
     if project.owner_user_id.as_deref().map(str::trim) != Some(owner_user_id) {
         return Err("runtime session owner does not match project owner".to_string());
     }

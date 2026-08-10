@@ -29,7 +29,6 @@ pub use api::message_task_runner::{
     validate_plugin_artifact_write_response_for_test, PreparedPluginArtifactRelayRequest,
 };
 
-use crate::services::terminal_manager::get_terminal_manager;
 use internal_tls::{load_internal_mtls_config, ChatosInternalTlsConfig};
 
 pub async fn run_server_from_env() -> Result<(), String> {
@@ -124,10 +123,6 @@ async fn shutdown_signal() {
                 warn!("Failed to listen for SIGTERM: {}", err);
                 let _ = signal::ctrl_c().await;
                 info!("Shutdown signal received via Ctrl+C");
-                let manager = get_terminal_manager();
-                if let Err(err) = manager.shutdown_all_project_run_terminals().await {
-                    warn!("Failed to shutdown project run terminals cleanly: {}", err);
-                }
                 return;
             }
         };
@@ -145,10 +140,5 @@ async fn shutdown_signal() {
     {
         let _ = signal::ctrl_c().await;
         info!("Shutdown signal received via Ctrl+C");
-    }
-
-    let manager = get_terminal_manager();
-    if let Err(err) = manager.shutdown_all_project_run_terminals().await {
-        warn!("Failed to shutdown project run terminals cleanly: {}", err);
     }
 }

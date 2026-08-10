@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::SystemAgentKey;
+
 pub const PLUGIN_COMMAND_MAX_ALLOWED_TOOLS: usize = 128;
 pub const PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES: usize = 256;
 pub const PLUGIN_AGENT_DEFAULT_MAX_ITERATIONS: usize = 600;
@@ -174,7 +176,7 @@ pub struct PluginAgent {
 }
 
 pub fn default_plugin_agent_base_agent() -> String {
-    "task_runner_run_phase".to_string()
+    SystemAgentKey::TaskRunnerRunPhase.as_str().to_string()
 }
 
 pub const fn default_plugin_agent_max_iterations() -> usize {

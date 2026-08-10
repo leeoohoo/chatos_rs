@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::{agent_prompt_checksum, AgentPromptVendor};
+use chatos_plugin_management_sdk::{agent_prompt_checksum, AgentPromptVendor, SystemAgentKey};
 
 use crate::models::{
     AgentPromptBundleVersionRecord, AgentPromptVersionPrompt, AgentPromptVersionRecord,
@@ -213,52 +213,74 @@ pub(super) async fn backfill_agent_prompt_versions(store: &AppStore) -> Result<(
     Ok(())
 }
 
-fn baseline_prompts() -> [(&'static str, &'static str); 11] {
+fn baseline_prompts() -> [(&'static str, &'static str); 16] {
     [
         (
-            "chatos_conversation_agent",
+            SystemAgentKey::ChatosConversationAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/chatos_conversation_agent.md"),
         ),
         (
-            "project_requirement_execution_planner_agent",
+            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
+            include_str!("../../seed_data/agent_prompts/chatos_local_conversation_agent.md"),
+        ),
+        (
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
             include_str!(
                 "../../seed_data/agent_prompts/project_requirement_execution_planner_agent.md"
             ),
         ),
         (
-            "task_runner_plan_phase",
+            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
+            include_str!(
+                "../../seed_data/agent_prompts/project_requirement_execution_local_planner_agent.md"
+            ),
+        ),
+        (
+            SystemAgentKey::TaskRunnerPlanPhase.as_str(),
             include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
         ),
         (
-            "task_runner_run_phase",
+            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
+            include_str!("../../seed_data/agent_prompts/task_runner_local_plan_phase.md"),
+        ),
+        (
+            SystemAgentKey::TaskRunnerRunPhase.as_str(),
             include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
         ),
         (
-            "project_management_agent",
+            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
+            include_str!("../../seed_data/agent_prompts/task_runner_local_run_phase.md"),
+        ),
+        (
+            SystemAgentKey::ProjectManagementAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/project_management_agent.md"),
         ),
         (
-            "local_connector_command_approval_agent",
+            SystemAgentKey::ProjectManagementLocalAgent.as_str(),
+            include_str!("../../seed_data/agent_prompts/project_management_local_agent.md"),
+        ),
+        (
+            SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/local_connector_command_approval_agent.md"),
         ),
         (
-            "memory_engine_summary_agent",
+            SystemAgentKey::MemoryEngineSummaryAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/memory_engine_summary_agent.md"),
         ),
         (
-            "memory_engine_rollup_agent",
+            SystemAgentKey::MemoryEngineRollupAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/memory_engine_rollup_agent.md"),
         ),
         (
-            "memory_engine_subject_memory_agent",
+            SystemAgentKey::MemoryEngineSubjectMemoryAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/memory_engine_subject_memory_agent.md"),
         ),
         (
-            "memory_engine_memory_rollup_agent",
+            SystemAgentKey::MemoryEngineMemoryRollupAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/memory_engine_memory_rollup_agent.md"),
         ),
         (
-            "memory_engine_thread_repair_agent",
+            SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
             include_str!("../../seed_data/agent_prompts/memory_engine_thread_repair_agent.md"),
         ),
     ]
@@ -281,10 +303,14 @@ mod tests {
     fn language_sensitive_agents_follow_the_user_language() {
         let prompts = baseline_prompts();
         for agent_key in [
-            "chatos_conversation_agent",
-            "project_requirement_execution_planner_agent",
-            "task_runner_plan_phase",
-            "task_runner_run_phase",
+            SystemAgentKey::ChatosConversationAgent.as_str(),
+            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
+            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
+            SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
+            SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
         ] {
             let content = prompts
                 .iter()
@@ -293,7 +319,12 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing prompt: {agent_key}"));
             assert!(content.contains("用户语言") || content.contains("用户当前语言"));
             assert!(content.contains("代码标识符"));
-            if agent_key == "task_runner_plan_phase" {
+            if [
+                SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
+            ]
+            .contains(&agent_key)
+            {
                 assert!(content.contains("你是项目规划助手"));
                 assert!(content.contains("源码修改、构建、测试、部署和环境启动由后续执行阶段承接"));
                 assert!(content.contains("当前项目的身份和名称属于用户已确认的上下文"));
@@ -308,7 +339,12 @@ mod tests {
                 assert!(content.contains("最终回执控制在三段以内"));
                 assert!(content.contains("直接陈述交付结果"));
             }
-            if agent_key == "task_runner_run_phase" {
+            if [
+                SystemAgentKey::TaskRunnerRunPhase.as_str(),
+                SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
+            ]
+            .contains(&agent_key)
+            {
                 assert!(content.contains("都针对同一个当前项目工作区"));
                 assert!(content.contains("自动收集工作区输出"));
                 assert!(content.contains("重复复制"));

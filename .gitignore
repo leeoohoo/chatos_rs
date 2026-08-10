@@ -73,7 +73,6 @@ __pycache__/
 /docs/db_connection_hub/**/*.tsbuildinfo
 !/docs/plans/
 /docs/plans/*
-!/docs/plans/README.md
 !/docs/plans/ASK_USER_TASKRUNNER_CHATOS_INTEGRATION_PLAN.zh-CN.md
 !/docs/plans/CHATOS_PLAN_MODE_TASK_RUNNER_INTEGRATION_PLAN.zh-CN.md
 !/docs/plans/CHATOS_REQUIREMENT_EXECUTION_SIMPLE_PLAN.zh-CN.md

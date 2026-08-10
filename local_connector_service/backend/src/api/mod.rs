@@ -42,9 +42,11 @@ mod plugin_management_plugins;
 mod plugin_management_prompts;
 mod plugin_management_skills;
 mod project_bindings;
+mod remote_connection_relay;
 mod router;
 mod sandbox_pairings;
 mod terminal_relay;
+mod workspace_directory_relay;
 mod workspaces;
 
 pub use self::auth_middleware::ApiError;
@@ -78,6 +80,10 @@ use self::plugin_management_skills::{
 use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
 };
+use self::remote_connection_relay::{
+    remote_connection_command_relay, remote_connection_test_relay, remote_sftp_relay,
+    remote_terminal_close_relay, remote_terminal_ws_relay,
+};
 pub use self::router::{build_internal_router, build_public_router};
 #[cfg(feature = "test-support")]
 pub use self::router::{
@@ -88,8 +94,10 @@ use self::sandbox_pairings::{
     load_owned_sandbox_pairing, update_sandbox_pairing,
 };
 use self::terminal_relay::{
+    drop_terminal_subscription, terminal_close_relay, terminal_event_to_ws_payload,
     terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
 };
+use self::workspace_directory_relay::workspace_directory_create_relay;
 use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };

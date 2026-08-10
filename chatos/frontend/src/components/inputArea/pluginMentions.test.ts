@@ -27,7 +27,6 @@ const plugin = (
   component_keys: ['browser.tools/v1'],
   components: [],
   commands: [],
-  agents: [],
   ...overrides,
 });
 

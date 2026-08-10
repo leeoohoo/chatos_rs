@@ -2,9 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::fs_ops::FsOps;
+use super::revision::ModificationRevisionGuard;
 use super::service::CodeMaintainerService;
 use super::utils::format_bytes;
 
@@ -13,11 +14,23 @@ use crate::tool_registry::text_result;
 pub(super) fn register_read_tools(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     workspace_note: &str,
     max_file_bytes: i64,
 ) {
-    register_read_file_raw_tool(service, fs_ops.clone(), workspace_note);
-    register_read_file_range_tool(service, fs_ops.clone(), workspace_note, max_file_bytes);
+    register_read_file_raw_tool(
+        service,
+        fs_ops.clone(),
+        revision_guard.clone(),
+        workspace_note,
+    );
+    register_read_file_range_tool(
+        service,
+        fs_ops.clone(),
+        revision_guard,
+        workspace_note,
+        max_file_bytes,
+    );
     register_list_dir_tool(service, fs_ops.clone(), workspace_note);
     register_search_text_tool(service, fs_ops, workspace_note);
 }
@@ -25,6 +38,7 @@ pub(super) fn register_read_tools(
 fn register_read_file_raw_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     workspace_note: &str,
 ) {
     service.register_tool(
@@ -41,7 +55,7 @@ fn register_read_file_raw_tool(
             "additionalProperties": false,
             "required": ["path"]
         }),
-        Arc::new(move |args, _ctx| {
+        Arc::new(move |args, ctx| {
             let path = args
                 .get("path")
                 .and_then(|value| value.as_str())
@@ -51,6 +65,10 @@ fn register_read_file_raw_tool(
                 .and_then(|value| value.as_bool())
                 .unwrap_or(true);
             let (path, size, sha256, content) = fs_ops.read_file_raw(path)?;
+            revision_guard
+                .lock()
+                .map_err(|_| "file revision guard unavailable".to_string())?
+                .record_read(ctx.run_id, path.as_str());
             let normalized_lines: Vec<String> = content
                 .split('\n')
                 .map(|line| line.trim_end_matches('\r').to_string())
@@ -92,6 +110,7 @@ fn register_read_file_raw_tool(
 fn register_read_file_range_tool(
     service: &mut CodeMaintainerService,
     fs_ops: FsOps,
+    revision_guard: Arc<Mutex<ModificationRevisionGuard>>,
     workspace_note: &str,
     max_file_bytes: i64,
 ) {
@@ -112,7 +131,7 @@ fn register_read_file_range_tool(
             "additionalProperties": false,
             "required": ["path", "start_line", "end_line"]
         }),
-        Arc::new(move |args, _ctx| {
+        Arc::new(move |args, ctx| {
             let path = args
                 .get("path")
                 .and_then(|value| value.as_str())
@@ -131,6 +150,10 @@ fn register_read_file_range_tool(
                 .unwrap_or(false);
             let (path, size, sha256, start, end, total, content) =
                 fs_ops.read_file_range(path, start_line, end_line, with_numbers)?;
+            revision_guard
+                .lock()
+                .map_err(|_| "file revision guard unavailable".to_string())?
+                .record_read(ctx.run_id, path.as_str());
             Ok(text_result(json!({
                 "path": path,
                 "size_bytes": size,

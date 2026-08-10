@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::Path as FsPath;
-
 use crate::core::validation::normalize_non_empty;
 use crate::models::remote_connection::{NewRemoteConnection, RemoteConnection};
 
@@ -18,6 +16,10 @@ pub(super) fn normalize_create_request(
     let port = normalize_port(req.port.unwrap_or(22))?;
     let auth_type = normalize_auth_type(req.auth_type)?;
     let host_key_policy = normalize_host_key_policy(req.host_key_policy)?;
+    let local_connector_device_id = normalize_non_empty(req.local_connector_device_id)
+        .ok_or_else(|| "local_connector_device_id 不能为空".to_string())?;
+    let local_connector_workspace_id = normalize_non_empty(req.local_connector_workspace_id)
+        .ok_or_else(|| "local_connector_workspace_id 不能为空".to_string())?;
     let jump_enabled = req.jump_enabled.unwrap_or(false);
     let jump_connection_id = normalize_non_empty(req.jump_connection_id);
 
@@ -40,17 +42,6 @@ pub(super) fn normalize_create_request(
         private_key_path.as_deref(),
         certificate_path.as_deref(),
     )?;
-    validate_file_path_if_present(private_key_path.as_deref(), "private_key_path 文件不存在")?;
-    validate_file_path_if_present(certificate_path.as_deref(), "certificate_path 文件不存在")?;
-    validate_file_path_if_present(
-        jump_private_key_path.as_deref(),
-        "jump_private_key_path 文件不存在",
-    )?;
-    validate_file_path_if_present(
-        jump_certificate_path.as_deref(),
-        "jump_certificate_path 文件不存在",
-    )?;
-
     let jump_host = normalize_non_empty(req.jump_host);
     let jump_username = normalize_non_empty(req.jump_username);
     let jump_port = req.jump_port.map(normalize_port).transpose()?.or(Some(22));
@@ -72,6 +63,8 @@ pub(super) fn normalize_create_request(
         certificate_path,
         default_remote_path: normalize_non_empty(req.default_remote_path),
         host_key_policy,
+        local_connector_device_id,
+        local_connector_workspace_id,
         jump_enabled,
         jump_connection_id: if jump_enabled {
             jump_connection_id
@@ -117,6 +110,20 @@ pub(super) fn normalize_update_request(
         req.host_key_policy
             .or(Some(existing.host_key_policy.clone())),
     )?;
+    let local_connector_device_id = req
+        .local_connector_device_id
+        .and_then(|value| normalize_non_empty(Some(value)))
+        .unwrap_or(existing.local_connector_device_id.clone());
+    let local_connector_workspace_id = req
+        .local_connector_workspace_id
+        .and_then(|value| normalize_non_empty(Some(value)))
+        .unwrap_or(existing.local_connector_workspace_id.clone());
+    if local_connector_device_id.is_empty() {
+        return Err("local_connector_device_id 不能为空".to_string());
+    }
+    if local_connector_workspace_id.is_empty() {
+        return Err("local_connector_workspace_id 不能为空".to_string());
+    }
     let password_candidate = merge_optional_text(req.password, existing.password.clone());
     let private_key_candidate =
         merge_optional_text(req.private_key_path, existing.private_key_path.clone());
@@ -129,50 +136,58 @@ pub(super) fn normalize_update_request(
         _ => return Err("不支持的 auth_type".to_string()),
     };
 
-    let replacing_jump_config = req.jump_enabled.is_some();
     let jump_enabled = req.jump_enabled.unwrap_or(existing.jump_enabled);
-    let jump_connection_id = if replacing_jump_config {
-        normalize_non_empty(req.jump_connection_id)
+    let requested_jump_connection_id = normalize_non_empty(req.jump_connection_id.clone());
+    let jump_uses_existing_connection = jump_enabled && requested_jump_connection_id.is_some();
+    let jump_connection_id = if jump_enabled {
+        if jump_uses_existing_connection {
+            requested_jump_connection_id
+        } else {
+            None
+        }
     } else {
-        merge_optional_text(req.jump_connection_id, existing.jump_connection_id.clone())
+        None
     };
 
-    let jump_host = if replacing_jump_config {
-        normalize_non_empty(req.jump_host)
-    } else {
+    let jump_host = if jump_enabled {
         merge_optional_text(req.jump_host, existing.jump_host.clone())
-    };
-    let jump_username = if replacing_jump_config {
-        normalize_non_empty(req.jump_username)
     } else {
+        None
+    };
+    let jump_username = if jump_enabled {
         merge_optional_text(req.jump_username, existing.jump_username.clone())
-    };
-    let jump_private_key_path = if replacing_jump_config {
-        normalize_non_empty(req.jump_private_key_path)
     } else {
+        None
+    };
+    let jump_private_key_path = if jump_enabled && !jump_uses_existing_connection {
         merge_optional_text(
             req.jump_private_key_path,
             existing.jump_private_key_path.clone(),
         )
-    };
-    let jump_certificate_path = if replacing_jump_config {
-        normalize_non_empty(req.jump_certificate_path)
     } else {
+        None
+    };
+    let jump_certificate_path = if jump_enabled && !jump_uses_existing_connection {
         merge_optional_text(
             req.jump_certificate_path,
             existing.jump_certificate_path.clone(),
         )
-    };
-    let jump_password = if replacing_jump_config {
-        normalize_non_empty(req.jump_password)
     } else {
+        None
+    };
+    let jump_password = if jump_enabled && !jump_uses_existing_connection {
         merge_optional_text(req.jump_password, existing.jump_password.clone())
+    } else {
+        None
     };
 
-    let jump_port = match req.jump_port {
-        Some(v) => Some(normalize_port(v)?),
-        None if replacing_jump_config => Some(22),
-        None => existing.jump_port.or(Some(22)),
+    let jump_port = if jump_enabled {
+        match req.jump_port {
+            Some(v) => Some(normalize_port(v)?),
+            None => existing.jump_port.or(Some(22)),
+        }
+    } else {
+        None
     };
 
     validate_auth_fields(
@@ -181,17 +196,6 @@ pub(super) fn normalize_update_request(
         private_key_path.as_deref(),
         certificate_path.as_deref(),
     )?;
-    validate_file_path_if_present(private_key_path.as_deref(), "private_key_path 文件不存在")?;
-    validate_file_path_if_present(certificate_path.as_deref(), "certificate_path 文件不存在")?;
-    validate_file_path_if_present(
-        jump_private_key_path.as_deref(),
-        "jump_private_key_path 文件不存在",
-    )?;
-    validate_file_path_if_present(
-        jump_certificate_path.as_deref(),
-        "jump_certificate_path 文件不存在",
-    )?;
-
     if jump_enabled && (jump_host.is_none() || jump_username.is_none()) {
         return Err("启用跳板机时 jump_host 和 jump_username 为必填".to_string());
     }
@@ -216,26 +220,16 @@ pub(super) fn normalize_update_request(
             existing.default_remote_path,
         ),
         host_key_policy,
+        local_connector_device_id,
+        local_connector_workspace_id,
         jump_enabled,
-        jump_connection_id: if jump_enabled {
-            jump_connection_id
-        } else {
-            None
-        },
-        jump_host: if jump_enabled { jump_host } else { None },
-        jump_port: if jump_enabled { jump_port } else { None },
-        jump_username: if jump_enabled { jump_username } else { None },
-        jump_private_key_path: if jump_enabled {
-            jump_private_key_path
-        } else {
-            None
-        },
-        jump_certificate_path: if jump_enabled {
-            jump_certificate_path
-        } else {
-            None
-        },
-        jump_password: if jump_enabled { jump_password } else { None },
+        jump_connection_id,
+        jump_host,
+        jump_port,
+        jump_username,
+        jump_private_key_path,
+        jump_certificate_path,
+        jump_password,
         user_id: existing.user_id,
         created_at: existing.created_at,
         updated_at: existing.updated_at,
@@ -263,7 +257,7 @@ fn merge_optional_text(value: Option<String>, fallback: Option<String>) -> Optio
 }
 
 fn normalize_port(port: i64) -> Result<i64, String> {
-    if !chatos_remote_runtime::is_valid_ssh_port(port) {
+    if !(1..=u16::MAX as i64).contains(&port) {
         return Err("端口范围必须在 1-65535".to_string());
     }
     Ok(port)
@@ -271,16 +265,18 @@ fn normalize_port(port: i64) -> Result<i64, String> {
 
 fn normalize_auth_type(value: Option<String>) -> Result<String, String> {
     let raw = normalize_non_empty(value).unwrap_or_else(|| "private_key".to_string());
-    chatos_remote_runtime::SshAuthType::parse(raw.as_str())
-        .map(|value| value.as_str().to_string())
-        .ok_or_else(|| "auth_type 仅支持 private_key、private_key_cert 或 password".to_string())
+    match raw.as_str() {
+        "password" | "private_key" | "private_key_cert" => Ok(raw),
+        _ => Err("auth_type 仅支持 private_key、private_key_cert 或 password".to_string()),
+    }
 }
 
 fn normalize_host_key_policy(value: Option<String>) -> Result<String, String> {
     let raw = normalize_non_empty(value).unwrap_or_else(|| "strict".to_string());
-    chatos_remote_runtime::HostKeyPolicy::parse(raw.as_str())
-        .map(|value| value.as_str().to_string())
-        .ok_or_else(|| "host_key_policy 仅支持 strict 或 accept_new".to_string())
+    match raw.as_str() {
+        "strict" | "accept_new" => Ok(raw),
+        _ => Err("host_key_policy 仅支持 strict 或 accept_new".to_string()),
+    }
 }
 
 fn validate_auth_fields(
@@ -309,15 +305,6 @@ fn validate_auth_fields(
             }
         }
         _ => return Err("不支持的 auth_type".to_string()),
-    }
-    Ok(())
-}
-
-fn validate_file_path_if_present(path: Option<&str>, error_message: &str) -> Result<(), String> {
-    if let Some(path) = path {
-        if !FsPath::new(path).is_file() {
-            return Err(error_message.to_string());
-        }
     }
     Ok(())
 }

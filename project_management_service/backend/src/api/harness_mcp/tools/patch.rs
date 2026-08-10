@@ -22,6 +22,10 @@ pub(in super::super) async fn tool_apply_patch(
     args: &Value,
 ) -> Result<Value, String> {
     let patch = required_string(args, "patch")?;
+    let expected_hashes = args
+        .get("expected_sha256_by_path")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "expected_sha256_by_path is required".to_string())?;
     if patch.trim().is_empty() {
         return Err("patch is required".to_string());
     }
@@ -31,8 +35,14 @@ pub(in super::super) async fn tool_apply_patch(
     }
     ensure_action_count(targets.len())?;
     let temp_root = create_temp_patch_dir(ctx.project_id.as_str())?;
-    let result =
-        apply_patch_from_harness(ctx, temp_root.as_path(), patch, targets.as_slice()).await;
+    let result = apply_patch_from_harness(
+        ctx,
+        temp_root.as_path(),
+        patch,
+        targets.as_slice(),
+        expected_hashes,
+    )
+    .await;
     let _ = std::fs::remove_dir_all(temp_root.as_path());
     let (applied, actions) = result?;
     if actions.is_empty() {
@@ -68,6 +78,7 @@ async fn apply_patch_from_harness(
     temp_root: &FsPath,
     patch: &str,
     targets: &[PatchTarget],
+    expected_hashes: &serde_json::Map<String, Value>,
 ) -> Result<(ApplyPatchResult, Vec<HarnessCommitAction>), String> {
     let mut existing_by_path = BTreeMap::new();
     for path in unique_patch_read_paths(targets) {
@@ -80,12 +91,71 @@ async fn apply_patch_from_harness(
             Err(err) => return Err(err),
         }
     }
+    verify_patch_revisions(&existing_by_path, expected_hashes)?;
     ensure_move_targets_do_not_exist(ctx, targets, &existing_by_path).await?;
 
     let applied = apply_patch_limited(temp_root, patch, true, DEFAULT_MAX_WRITE_BYTES)
         .map_err(|err| patch_error_with_recovery(err.as_str()))?;
     let actions = patch_commit_actions(temp_root, &applied, targets, &existing_by_path)?;
     Ok((applied, actions))
+}
+
+fn verify_patch_revisions(
+    existing_by_path: &BTreeMap<String, HarnessFile>,
+    expected_hashes: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    for (path, file) in existing_by_path {
+        let expected = expected_hashes
+            .get(path)
+            .and_then(Value::as_str)
+            .filter(|value| is_sha256(value))
+            .ok_or_else(|| {
+                format!(
+                    "expected_sha256_by_path requires a valid SHA-256 for existing target {path}"
+                )
+            })?;
+        if expected != file.sha256 {
+            return Err(patch_revision_error(path, file.sha256.as_str()));
+        }
+    }
+    let unexpected = expected_hashes
+        .keys()
+        .filter(|path| !existing_by_path.contains_key(path.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unexpected.is_empty() {
+        return Err(format!(
+            "expected_sha256_by_path contains paths that are not existing patch targets: {}",
+            unexpected.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+fn patch_revision_error(path: &str, latest_sha256: &str) -> String {
+    serde_json::to_string(&json!({
+        "category": "stale_context",
+        "error": "The target file revision does not match the patch request",
+        "path": path,
+        "latest_sha256": latest_sha256,
+        "conflict_range": {
+            "start_line": Value::Null,
+            "end_line": Value::Null,
+        },
+        "recovery": {
+            "required_next_tool": "read_file_raw",
+            "recommended_args": { "path": path },
+            "guidance": "Re-read every reported patch target and rebuild the patch from current content."
+        }
+    }))
+    .unwrap_or_else(|_| "stale_context: patch target revision mismatch".to_string())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 async fn ensure_move_targets_do_not_exist(
@@ -255,4 +325,58 @@ fn temp_repo_path(root: &FsPath, rel_path: &str) -> Result<PathBuf, String> {
         out.push(part);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn harness_file(path: &str, sha256: &str) -> HarnessFile {
+        HarnessFile {
+            path: path.to_string(),
+            size: 4,
+            sha256: sha256.to_string(),
+            harness_blob_sha: "blob-sha".to_string(),
+            content: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn patch_requires_hash_for_every_existing_target() {
+        let sha256 = "a".repeat(64);
+        let existing = BTreeMap::from([(
+            "src/main.rs".to_string(),
+            harness_file("src/main.rs", sha256.as_str()),
+        )]);
+        let error = verify_patch_revisions(&existing, &serde_json::Map::new())
+            .expect_err("missing existing target revision must fail");
+
+        assert!(error.contains("src/main.rs"));
+        assert!(error.contains("requires a valid SHA-256"));
+    }
+
+    #[test]
+    fn patch_revision_mismatch_returns_stale_context() {
+        let latest = "b".repeat(64);
+        let existing = BTreeMap::from([(
+            "src/main.rs".to_string(),
+            harness_file("src/main.rs", latest.as_str()),
+        )]);
+        let expected = serde_json::Map::from_iter([(
+            "src/main.rs".to_string(),
+            Value::String("a".repeat(64)),
+        )]);
+        let error = verify_patch_revisions(&existing, &expected)
+            .expect_err("stale patch target revision must fail");
+        let payload: Value = serde_json::from_str(&error).expect("structured stale error");
+
+        assert_eq!(payload["category"], "stale_context");
+        assert_eq!(payload["path"], "src/main.rs");
+        assert_eq!(payload["latest_sha256"], latest);
+    }
+
+    #[test]
+    fn patch_allows_new_targets_without_revision_entries() {
+        assert!(verify_patch_revisions(&BTreeMap::new(), &serde_json::Map::new()).is_ok());
+    }
 }

@@ -15,6 +15,49 @@ const SAFE_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const SAFE_ARTIFACT_REVISION = /^[0-9A-Za-z][0-9A-Za-z._-]{0,119}$/;
 const SAFE_RELEASE_EPOCH = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
+function isPlatformMetadataName(name) {
+  return name === '.DS_Store' || name.startsWith('._');
+}
+
+function platformMetadataPaths(root) {
+  const metadataPaths = [];
+  if (!fs.existsSync(root)) {
+    return metadataPaths;
+  }
+  function visit(relativeRoot) {
+    const absoluteRoot = path.join(root, relativeRoot);
+    for (const entry of fs.readdirSync(absoluteRoot)) {
+      const relativePath = path.join(relativeRoot, entry);
+      const absolutePath = path.join(root, relativePath);
+      if (isPlatformMetadataName(entry)) {
+        metadataPaths.push(relativePath);
+        continue;
+      }
+      if (fs.lstatSync(absolutePath).isDirectory()) {
+        visit(relativePath);
+      }
+    }
+  }
+  visit('');
+  return metadataPaths;
+}
+
+function removePlatformMetadata(root) {
+  for (const relativePath of platformMetadataPaths(root).reverse()) {
+    fs.rmSync(path.join(root, relativePath), { recursive: true, force: true });
+  }
+}
+
+function assertNoPlatformMetadata(root) {
+  const metadataPaths = platformMetadataPaths(root);
+  if (metadataPaths.length > 0) {
+    throw new Error([
+      `Staged Plugin Bundle contains macOS filesystem metadata: ${root}`,
+      ...metadataPaths.slice(0, 20).map((relativePath) => `  unexpected: ${relativePath.split(path.sep).join('/')}`),
+    ].join('\n'));
+  }
+}
+
 function parseArgs(argv) {
   const args = { verifyOnly: false };
   for (let index = 0; index < argv.length; index += 1) {
@@ -277,6 +320,9 @@ function copyBundleTree(sourceRoot, destinationRoot, platform, relativeRoot = ''
   if (stat.isDirectory()) {
     fs.mkdirSync(destination, { recursive: true });
     for (const entry of fs.readdirSync(source).sort()) {
+      if (isPlatformMetadataName(entry)) {
+        continue;
+      }
       copyBundleTree(sourceRoot, destinationRoot, platform, path.join(relativeRoot, entry));
     }
     return;
@@ -324,6 +370,21 @@ function fileChecksums(root, excluded = new Set()) {
     }
   }
   return checksums;
+}
+
+function checksumMismatchDetails(expected, actual) {
+  const differences = [];
+  const paths = [...new Set([...Object.keys(expected), ...Object.keys(actual)])].sort();
+  for (const relativePath of paths) {
+    if (!(relativePath in expected)) {
+      differences.push(`  unexpected: ${relativePath}`);
+    } else if (!(relativePath in actual)) {
+      differences.push(`  missing: ${relativePath}`);
+    } else if (expected[relativePath] !== actual[relativePath]) {
+      differences.push(`  changed: ${relativePath}`);
+    }
+  }
+  return differences.slice(0, 20);
 }
 
 function pluginArtifactHash(pluginName, artifactRevision, skills) {
@@ -392,6 +453,9 @@ function expectedPluginEntry(context, plugin, outputRoot, platform, stage) {
       path.join(bundleRoot, 'sbom.spdx.json'),
       prettyJson(sbomDocument(plugin, skills, version, plugin.release_epoch, artifactHash)),
     );
+    // ExFAT stores macOS extended attributes as AppleDouble files beside the
+    // real files. They are filesystem metadata, not distributable content.
+    removePlatformMetadata(bundleRoot);
     const checksums = fileChecksums(
       bundleRoot,
       new Set(['.chatos-plugin/checksums.json']),
@@ -400,6 +464,7 @@ function expectedPluginEntry(context, plugin, outputRoot, platform, stage) {
       path.join(bundleRoot, '.chatos-plugin', 'checksums.json'),
       prettyJson({ schemaVersion: 1, files: checksums }),
     );
+    removePlatformMetadata(bundleRoot);
   }
   verifyBundle(bundleRoot, manifest);
   const stagedChecksums = fileChecksums(bundleRoot);
@@ -452,7 +517,10 @@ function verifyBundle(bundleRoot, expectedManifest) {
   }
   const actual = fileChecksums(bundleRoot, new Set(['.chatos-plugin/checksums.json']));
   if (JSON.stringify(checksumIndex.files) !== JSON.stringify(actual)) {
-    throw new Error(`Staged Plugin file checksum mismatch: ${bundleRoot}`);
+    throw new Error([
+      `Staged Plugin file checksum mismatch: ${bundleRoot}`,
+      ...checksumMismatchDetails(checksumIndex.files, actual),
+    ].join('\n'));
   }
 }
 
@@ -464,6 +532,8 @@ function stageOrVerify(args) {
     fs.mkdirSync(outputRoot, { recursive: true });
   } else if (!fs.statSync(outputRoot).isDirectory()) {
     throw new Error(`Staged Plugin Bundle root is missing: ${outputRoot}`);
+  } else {
+    assertNoPlatformMetadata(outputRoot);
   }
   const plugins = context.pluginCatalog.plugins.map((plugin) => expectedPluginEntry(
     context,
@@ -489,6 +559,8 @@ function stageOrVerify(args) {
     }
   } else {
     fs.writeFileSync(indexPath, prettyJson(index));
+    removePlatformMetadata(outputRoot);
+    assertNoPlatformMetadata(outputRoot);
   }
   if (plugins.length !== 12 || plugins.flatMap((plugin) => plugin.skills).length !== 28) {
     throw new Error('Staged Plugin Bundle index must cover exactly 12 Plugins and 28 Skills');

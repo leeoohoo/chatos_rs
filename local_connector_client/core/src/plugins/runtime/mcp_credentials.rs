@@ -18,7 +18,7 @@ const MAX_STDIO_ENVIRONMENT_VARIABLES: usize = 64;
 const SECRET_HANDLE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
-pub(super) struct PluginCredentialBindings {
+pub(in crate::plugins::runtime) struct PluginCredentialBindings {
     vault: PluginCredentialVault,
     owner_user_id: String,
     device_id: String,
@@ -43,7 +43,7 @@ impl fmt::Debug for PluginCredentialBindings {
 }
 
 impl PluginCredentialBindings {
-    pub(super) fn prepare(
+    pub(in crate::plugins::runtime) fn prepare(
         vault: Option<PluginCredentialVault>,
         owner_user_id: &str,
         device_id: &str,
@@ -70,11 +70,11 @@ impl PluginCredentialBindings {
         Ok(Some(bindings))
     }
 
-    pub(super) fn snapshot_sha256(&self) -> &str {
+    pub(in crate::plugins::runtime) fn snapshot_sha256(&self) -> &str {
         self.snapshot_sha256.as_str()
     }
 
-    pub(super) fn verify(&self) -> Result<()> {
+    pub(in crate::plugins::runtime) fn verify(&self) -> Result<()> {
         if self.current_snapshot_sha256()? != self.snapshot_sha256 {
             bail!("Plugin MCP credential snapshot changed after prepare");
         }
@@ -132,12 +132,14 @@ impl PluginCredentialBindings {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct PluginStdioEnvironmentTemplates {
+pub(in crate::plugins::runtime) struct PluginStdioEnvironmentTemplates {
     variables: BTreeMap<String, String>,
 }
 
 impl PluginStdioEnvironmentTemplates {
-    pub(super) fn parse(environment: &BTreeMap<String, String>) -> Result<Self> {
+    pub(in crate::plugins::runtime) fn parse(
+        environment: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         if environment.len() > MAX_STDIO_ENVIRONMENT_VARIABLES {
             bail!("Plugin stdio MCP environment exceeds the variable count limit");
         }
@@ -156,15 +158,15 @@ impl PluginStdioEnvironmentTemplates {
         Ok(Self { variables })
     }
 
-    pub(super) fn secret_names(&self) -> BTreeSet<String> {
+    pub(in crate::plugins::runtime) fn secret_names(&self) -> BTreeSet<String> {
         self.variables.values().cloned().collect()
     }
 
-    pub(super) fn variable_names(&self) -> impl Iterator<Item = String> + '_ {
+    pub(in crate::plugins::runtime) fn variable_names(&self) -> impl Iterator<Item = String> + '_ {
         self.variables.keys().cloned()
     }
 
-    pub(super) fn resolve(
+    pub(in crate::plugins::runtime) fn resolve(
         &self,
         bindings: Option<&PluginCredentialBindings>,
     ) -> Result<ResolvedPluginValues> {
@@ -186,12 +188,12 @@ impl PluginStdioEnvironmentTemplates {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct PluginHttpHeaderTemplates {
+pub(in crate::plugins::runtime) struct PluginHttpHeaderTemplates {
     templates: BTreeMap<String, PluginValueTemplate>,
 }
 
 impl PluginHttpHeaderTemplates {
-    pub(super) fn parse(headers: &BTreeMap<String, String>) -> Result<Self> {
+    pub(in crate::plugins::runtime) fn parse(headers: &BTreeMap<String, String>) -> Result<Self> {
         if headers.len() > MAX_HTTP_HEADERS {
             bail!("Plugin HTTP MCP exceeds the header count limit");
         }
@@ -214,18 +216,18 @@ impl PluginHttpHeaderTemplates {
         Ok(Self { templates })
     }
 
-    pub(super) fn secret_names(&self) -> BTreeSet<String> {
+    pub(in crate::plugins::runtime) fn secret_names(&self) -> BTreeSet<String> {
         self.templates
             .values()
             .filter_map(|template| template.secret_name.clone())
             .collect()
     }
 
-    pub(super) fn contains(&self, header_name: &str) -> bool {
+    pub(in crate::plugins::runtime) fn contains(&self, header_name: &str) -> bool {
         self.templates.contains_key(header_name)
     }
 
-    pub(super) fn resolve(
+    pub(in crate::plugins::runtime) fn resolve(
         &self,
         bindings: Option<&PluginCredentialBindings>,
     ) -> Result<ResolvedPluginValues> {
@@ -310,10 +312,10 @@ impl PluginValueTemplate {
     }
 }
 
-pub(super) struct ResolvedPluginValues(HashMap<String, String>);
+pub(in crate::plugins::runtime) struct ResolvedPluginValues(HashMap<String, String>);
 
 impl ResolvedPluginValues {
-    pub(super) fn as_map(&self) -> &HashMap<String, String> {
+    pub(in crate::plugins::runtime) fn as_map(&self) -> &HashMap<String, String> {
         &self.0
     }
 
@@ -323,7 +325,7 @@ impl ResolvedPluginValues {
         }
     }
 
-    pub(super) fn cloned_map(&self) -> HashMap<String, String> {
+    pub(in crate::plugins::runtime) fn cloned_map(&self) -> HashMap<String, String> {
         self.0.clone()
     }
 }

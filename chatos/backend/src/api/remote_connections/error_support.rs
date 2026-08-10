@@ -7,7 +7,18 @@ use serde_json::Value;
 
 use crate::core::remote_connection_error_codes::remote_connection_codes;
 
-use super::{extract_second_factor_required_prompt, WsOutput};
+use super::WsOutput;
+
+pub(super) fn extract_second_factor_required_prompt(error: &str) -> Option<String> {
+    const PREFIX: &str = "__CHATOS_SECOND_FACTOR_REQUIRED__:";
+    let index = error.find(PREFIX)?;
+    error[index + PREFIX.len()..]
+        .split(['。', '\n', '\r'])
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
 
 pub(super) fn error_payload(error: impl Into<String>, code: &'static str) -> Json<Value> {
     Json(serde_json::json!({ "error": error.into(), "code": code }))

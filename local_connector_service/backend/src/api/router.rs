@@ -24,19 +24,21 @@ use super::{
     list_workspaces, mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
     plugin_artifact_read_relay, plugin_artifact_update_relay, plugin_cancel_relay,
     plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
-    proxy_plugin_release_artifact, require_internal_auth, require_public_auth,
-    resolve_local_runtime_capabilities, revoke_device, sandbox_facade_path, sandbox_facade_root,
-    skill_cancel_relay, skill_execute_relay, skill_prepare_relay, sync_user_skill_inventory,
-    system_stats_handler, terminal_exec_relay, terminal_input_relay, terminal_session_create_relay,
-    terminal_ws_relay, update_local_mcp, update_local_mcp_status,
-    update_managed_requirements_assignment, update_managed_requirements_policy,
-    update_plugin_preference, update_project_binding, update_sandbox_pairing,
-    update_user_skill_preference, update_workspace, user_service_protected_proxy,
-    user_service_public_proxy, AuthState,
+    proxy_plugin_release_artifact, remote_connection_command_relay, remote_connection_test_relay,
+    remote_sftp_relay, remote_terminal_close_relay, remote_terminal_ws_relay,
+    require_internal_auth, require_public_auth, resolve_local_runtime_capabilities, revoke_device,
+    sandbox_facade_path, sandbox_facade_root, skill_cancel_relay, skill_execute_relay,
+    skill_prepare_relay, sync_user_skill_inventory, system_stats_handler, terminal_close_relay,
+    terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
+    update_local_mcp, update_local_mcp_status, update_managed_requirements_assignment,
+    update_managed_requirements_policy, update_plugin_preference, update_project_binding,
+    update_sandbox_pairing, update_user_skill_preference, update_workspace,
+    user_service_protected_proxy, user_service_public_proxy, workspace_directory_create_relay,
+    AuthState,
 };
 
 fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
-    let auth_state = AuthState::from_app_state(&state);
+    let auth_state = AuthState::from_app_state(state);
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/model-configs", any(user_service_protected_proxy))
@@ -146,6 +148,10 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             "/api/local-connectors/relay/{device_id}/plugins/ui/assets",
             post(plugin_ui_asset_relay),
         )
+        .route(
+            "/api/local-connectors/relay/{device_id}/workspaces/{workspace_id}/directories",
+            post(workspace_directory_create_relay),
+        )
         .merge(plugin_artifact_routes())
         .route(
             "/api/plugin-management/agent-capabilities/{agent_key}",
@@ -201,12 +207,36 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             post(terminal_exec_relay),
         )
         .route(
+            "/api/local-connectors/relay/{device_id}/remote-connections/test",
+            post(remote_connection_test_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/remote-connections/command",
+            post(remote_connection_command_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/remote-connections/sftp",
+            post(remote_sftp_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/remote-connections/terminal/ws",
+            get(remote_terminal_ws_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/remote-connections/terminal/close",
+            post(remote_terminal_close_relay),
+        )
+        .route(
             "/api/local-connectors/relay/{device_id}/terminal/sessions",
             post(terminal_session_create_relay),
         )
         .route(
             "/api/local-connectors/relay/{device_id}/terminal/input",
             post(terminal_input_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/terminal/close",
+            post(terminal_close_relay),
         )
         .route(
             "/api/local-connectors/relay/{device_id}/terminal/ws",
@@ -321,7 +351,7 @@ pub fn build_plugin_artifact_relay_test_router(
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
         .route_layer(middleware::from_fn_with_state(
             auth_state,
-            require_public_auth,
+            require_internal_auth,
         ))
         .with_state(relay_state))
 }
@@ -342,7 +372,7 @@ pub fn build_plugin_artifact_relay_store_test_router(
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
         .route_layer(middleware::from_fn_with_state(
             auth_state,
-            require_public_auth,
+            require_internal_auth,
         ))
         .with_state(relay_state))
 }

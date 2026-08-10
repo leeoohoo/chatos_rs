@@ -322,16 +322,6 @@ fn render_prometheus_metrics() -> String {
     );
 
     body.push_str(
-        "# HELP chatos_terminal_sessions_active Active local terminal processes managed by ChatOS.\n\
-# TYPE chatos_terminal_sessions_active gauge\n",
-    );
-    let _ = writeln!(
-        body,
-        "chatos_terminal_sessions_active{{service=\"chatos-backend\"}} {}",
-        crate::services::terminal_manager::get_terminal_manager().active_session_count()
-    );
-
-    body.push_str(
         "# HELP chatos_conversation_turns_active Active conversation turns managed by ChatOS.\n\
 # TYPE chatos_conversation_turns_active gauge\n",
     );

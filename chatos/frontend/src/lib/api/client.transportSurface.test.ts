@@ -72,8 +72,6 @@ describe('direct API transport surface header', () => {
       [],
       false,
       {
-        pluginDeviceId: 'device-1',
-        pluginWorkspaceId: 'workspace-1',
         selectedPluginIds: ['plugin-browser'],
         pluginCommandInvocations: [{
           plugin_id: 'plugin-browser',
@@ -84,8 +82,6 @@ describe('direct API transport surface header', () => {
     );
 
     expect(requestedJsonBody(fetchMock)).toMatchObject({
-      plugin_device_id: 'device-1',
-      plugin_workspace_id: 'workspace-1',
       selected_plugin_ids: ['plugin-browser'],
       plugin_command_invocations: [{
         plugin_id: 'plugin-browser',
