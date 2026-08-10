@@ -84,9 +84,10 @@ export function McpPromptPreviewCard({ preview }: { preview: McpPromptPreviewRes
       <div>
         <Typography.Text strong>{t('mcpPreview.promptContent')}</Typography.Text>
         <Typography.Paragraph
+          className="task-mcp-preview-prompt"
           style={{
             background: '#fafafa',
-            padding: 12,
+            padding: 16,
             borderRadius: 6,
             marginBottom: 0,
             marginTop: 8,

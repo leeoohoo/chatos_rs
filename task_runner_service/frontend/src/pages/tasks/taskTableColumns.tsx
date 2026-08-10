@@ -69,10 +69,12 @@ export function buildTaskTableColumns({
       render: (_, record) => {
         const remoteActivity = taskRowRemoteActivityByTaskId.get(record.id);
         return (
-          <Space direction="vertical" size={4}>
-            <Space direction="vertical" size={0}>
-              <Typography.Text strong>{record.title}</Typography.Text>
-              <Typography.Text type="secondary">{record.objective}</Typography.Text>
+          <Space direction="vertical" size={6} className="task-task-cell">
+            <Space direction="vertical" size={2}>
+              <Typography.Text strong className="task-task-title">{record.title}</Typography.Text>
+              <Typography.Text type="secondary" className="task-cell-meta">
+                {record.objective}
+              </Typography.Text>
             </Space>
             <Space size={[4, 4]} wrap>
               <Tag color={taskProfileColorMap[record.task_profile] || 'default'}>
@@ -88,12 +90,12 @@ export function buildTaskTableColumns({
                 <Tag>{t('tasks.manual')}</Tag>
               )}
               {record.parent_task_id ? (
-                <Typography.Text type="secondary">
+                <Typography.Text type="secondary" className="task-cell-meta">
                   parent: {record.parent_task_id.slice(0, 8)}
                 </Typography.Text>
               ) : null}
               {record.source_run_id ? (
-                <Typography.Text type="secondary">
+                <Typography.Text type="secondary" className="task-cell-meta">
                   run: {record.source_run_id.slice(0, 8)}
                 </Typography.Text>
               ) : null}
@@ -113,7 +115,7 @@ export function buildTaskTableColumns({
               </Space>
             ) : null}
             {remoteActivity ? (
-              <Space direction="vertical" size={0}>
+              <Space direction="vertical" size={4} className="task-remote-cell">
                 <Space size={[4, 4]} wrap>
                   <Tag color={remoteActivity.failedCount > 0 ? 'error' : 'success'}>
                     {t('tasks.remoteOperations', { count: remoteActivity.total })}
@@ -123,7 +125,7 @@ export function buildTaskTableColumns({
                     <Tag color="blue">{remoteActivity.latest.connectionName}</Tag>
                   ) : null}
                 </Space>
-                <Typography.Text type="secondary">
+                <Typography.Text type="secondary" className="task-cell-meta">
                   {remoteActivity.latest?.command ||
                     remoteActivity.latest?.path ||
                     remoteActivity.latest?.summary ||
@@ -168,7 +170,7 @@ export function buildTaskTableColumns({
           <Button
             type="link"
             size="small"
-            style={{ paddingInline: 0 }}
+            className="task-cell-link"
             onClick={() => navigate(`/tasks?project_id=${encodeURIComponent(projectId)}`)}
           >
             {label}
@@ -188,7 +190,7 @@ export function buildTaskTableColumns({
           <Button
             type="link"
             size="small"
-            style={{ paddingInline: 0 }}
+            className="task-cell-link"
             onClick={() => navigate(`/models?model_id=${encodeURIComponent(value)}`)}
           >
             {modelNameMap.get(value) || value}
@@ -236,12 +238,12 @@ export function buildTaskTableColumns({
           return <Tag>{scheduleModeLabels.manual}</Tag>;
         }
         return (
-          <Space direction="vertical" size={2}>
+          <Space direction="vertical" size={6} className="task-schedule-cell">
             <Space size={[4, 4]} wrap>
               <Tag color="processing">{scheduleModeLabels[schedule.mode]}</Tag>
               {schedule.interval_seconds ? <Tag>{schedule.interval_seconds}s</Tag> : null}
             </Space>
-            <Typography.Text type="secondary">
+            <Typography.Text type="secondary" className="task-cell-meta">
               {t('tasks.schedule.next')}:{' '}
               {schedule.next_run_at
                 ? dayjs(schedule.next_run_at).format('YYYY-MM-DD HH:mm:ss')

@@ -204,17 +204,78 @@ body {
 }
 
 .mcp-binding-search {
-  width: 280px;
-  margin-bottom: 14px;
+  width: min(320px, 100%);
+}
+
+.agent-mcp-modal .ant-modal-body {
+  padding-top: 16px;
+}
+
+.mcp-binding-notice {
+  margin-bottom: 16px;
+}
+
+.mcp-binding-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.mcp-binding-stats {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mcp-binding-table-shell {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+}
+
+.mcp-binding-table .ant-table {
+  background: transparent;
+}
+
+.mcp-binding-table .ant-table-container {
+  border-inline-start: 0 !important;
+  border-top: 0 !important;
+}
+
+.mcp-binding-table .ant-table-thead > tr > th {
+  padding-top: 14px;
+  padding-bottom: 14px;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
 }
 
 .mcp-binding-table .ant-table-tbody > tr > td {
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
 .mcp-mode-control {
   width: 100%;
+}
+
+.mcp-mode-cell {
+  width: 100%;
+}
+
+.mcp-binding-name,
+.mcp-binding-policy,
+.mcp-binding-status {
+  width: 100%;
+}
+
+.mcp-binding-meta {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .prompt-page-heading {
@@ -329,5 +390,14 @@ body {
 
   .app-content {
     padding: 16px;
+  }
+
+  .mcp-binding-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mcp-binding-search {
+    width: 100%;
   }
 }

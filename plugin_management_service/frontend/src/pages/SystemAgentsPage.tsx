@@ -263,12 +263,13 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       {
         title: t('table.name'),
         dataIndex: ['mcp', 'display_name'],
+        width: 300,
         render: (_, item) => (
-          <Space direction="vertical" size={0}>
+          <Space direction="vertical" size={2} className="mcp-binding-name">
             <Space size={6} wrap>
               <Typography.Text strong>{mcpDisplayName(item.mcp, t)}</Typography.Text>
             </Space>
-            <Typography.Text type="secondary">
+            <Typography.Text type="secondary" className="mcp-binding-meta">
               {item.mcp.name} · {item.mcp.id}
             </Typography.Text>
           </Space>
@@ -277,14 +278,14 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       {
         title: t('table.source'),
         key: 'source',
-        width: 290,
+        width: 180,
         render: (_, item) => (
-          <Space direction="vertical" size={2}>
+          <Space direction="vertical" size={6}>
             <Space size={4} wrap>
               <VisibilityTag value={item.mcp.visibility} />
               <RuntimeKindTag value={item.mcp.runtime.kind} />
             </Space>
-            <Typography.Text type="secondary">
+            <Typography.Text type="secondary" className="mcp-binding-meta">
               {sourceKindLabel(item.mcp.source_kind, t)}
               {item.mcp.plugin_id ? ` · ${item.mcp.plugin_id}` : ''}
             </Typography.Text>
@@ -294,9 +295,9 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       {
         title: t('agent.mcpConditions'),
         key: 'conditions',
-        width: 220,
+        width: 180,
         render: (_, item) => (
-          <Space direction="vertical" size={2}>
+          <Space size={[4, 4]} wrap>
             {bindingConditionEntries(item.conditions).length > 0 ? (
               bindingConditionEntries(item.conditions).map(([label, value]) => (
                 <Tag key={`${label}:${value}`}>{`${label}=${value}`}</Tag>
@@ -310,9 +311,9 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       {
         title: t('agent.mcpToolPolicy'),
         key: 'tool_policy',
-        width: 250,
+        width: 230,
         render: (_, item) => (
-          <Space direction="vertical" size={2}>
+          <Space direction="vertical" size={6} className="mcp-binding-policy">
             <Space size={4} wrap>
               {item.tool_allowlist.length > 0 ? (
                 <Tag color="blue">
@@ -327,7 +328,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
                 </Tag>
               ) : null}
             </Space>
-            <Typography.Text type="secondary">
+            <Typography.Text type="secondary" className="mcp-binding-meta">
               {toolPolicyPreview(item.tool_allowlist, item.tool_blocklist)}
             </Typography.Text>
           </Space>
@@ -338,7 +339,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         dataIndex: ['mcp', 'enabled'],
         width: 145,
         render: (enabled, item) => (
-          <Space direction="vertical" size={2}>
+          <Space direction="vertical" size={6} className="mcp-binding-status">
             <EnabledTag enabled={enabled} />
             <Tag
               color={
@@ -357,9 +358,9 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
       {
         title: t('agent.mcpMode'),
         key: 'mode',
-        width: 310,
+        width: 210,
         render: (_, item) => (
-          <Space direction="vertical" size={4} className="full-width">
+          <div className="mcp-mode-cell">
             <Segmented
               className="mcp-mode-control"
               block
@@ -385,7 +386,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
                 }))
               }
             />
-          </Space>
+          </div>
         ),
       },
     ],
@@ -415,13 +416,14 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         pagination={false}
       />
       <Modal
+        className="agent-mcp-modal"
         title={
           selectedAgent
             ? `${agentDisplayName(selectedAgent, t)} · ${t('agent.configureMcp')}`
             : t('agent.configureMcp')
         }
         open={modalOpen}
-        width={1180}
+        width="min(1480px, calc(100vw - 48px))"
         onCancel={() => setModalOpen(false)}
         onOk={() => saveMutation.mutate()}
         confirmLoading={saveMutation.isPending}
@@ -433,26 +435,35 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
           showIcon
           message={t('agent.mcpCatalogNotice')}
         />
-        <Typography.Text type="secondary">
-          {t('agent.mcpCatalogStats', mcpStats)}
-        </Typography.Text>
-        <Input.Search
-          className="mcp-binding-search"
-          allowClear
-          value={search}
-          placeholder={t('agent.searchMcp')}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <Table
-          rowKey={(item) => bindingRowKey(item)}
-          className="mcp-binding-table"
-          columns={mcpColumns}
-          dataSource={mcpItems}
-          loading={bindingsQuery.isLoading}
-          pagination={false}
-          tableLayout="fixed"
-          scroll={{ y: 520 }}
-        />
+        <div className="mcp-binding-toolbar">
+          <Typography.Text type="secondary" className="mcp-binding-stats">
+            {t('agent.mcpCatalogStats', mcpStats)}
+          </Typography.Text>
+          <Input.Search
+            className="mcp-binding-search"
+            allowClear
+            value={search}
+            placeholder={t('agent.searchMcp')}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+        <div className="mcp-binding-table-shell">
+          <Table
+            rowKey={(item) => bindingRowKey(item)}
+            className="mcp-binding-table"
+            columns={mcpColumns}
+            dataSource={mcpItems}
+            loading={bindingsQuery.isLoading}
+            pagination={false}
+            size="middle"
+            tableLayout="fixed"
+            scroll={
+              mcpItems.length > 6
+                ? { x: 1450, y: 440 }
+                : { x: 1450 }
+            }
+          />
+        </div>
       </Modal>
     </div>
   );

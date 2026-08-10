@@ -101,9 +101,10 @@ export function TaskEditorDrawer({
 
   return (
     <Drawer
+      className="task-editor-drawer"
       title={t('tasks.drawer.edit')}
       open={open}
-      width={760}
+      width="min(1120px, calc(100vw - 32px))"
       destroyOnClose
       onClose={onClose}
       extra={(
@@ -157,15 +158,24 @@ export function TaskEditorDrawer({
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.plugins')}>
               {editingTask.plugin_config.selected_plugins.length ? (
-                <Space wrap>
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
                   {editingTask.plugin_config.selected_plugins.map((plugin) => (
-                    <Space key={plugin.plugin_id} wrap size={4}>
+                    <Space
+                      key={plugin.plugin_id}
+                      direction="vertical"
+                      size={0}
+                      style={{ width: '100%' }}
+                    >
                       <Tag color="purple">{plugin.plugin_id}</Tag>
-                      {plugin.selected_command_ids.map((commandId) => (
-                        <Tag key={`${plugin.plugin_id}:${commandId}`} color="orange">
-                          /{commandId}
-                        </Tag>
-                      ))}
+                      {plugin.selected_command_ids.length ? (
+                        <Typography.Text type="secondary">
+                          {t('tasks.detail.pluginCommandList', {
+                            commands: plugin.selected_command_ids.map((commandId) => (
+                              `/${commandId}`
+                            )).join(', '),
+                          })}
+                        </Typography.Text>
+                      ) : null}
                     </Space>
                   ))}
                 </Space>

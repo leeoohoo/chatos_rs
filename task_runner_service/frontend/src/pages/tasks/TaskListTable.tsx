@@ -40,6 +40,7 @@ export function TaskListTable({
 
   return (
     <Table<TaskRecord>
+      className="task-list-table"
       rowKey="id"
       rowSelection={rowSelection}
       loading={loading}
@@ -52,6 +53,7 @@ export function TaskListTable({
         showSizeChanger: true,
         onChange: onPageChange,
       }}
+      tableLayout="fixed"
       scroll={{ x: 1650 }}
       locale={{
         emptyText: (

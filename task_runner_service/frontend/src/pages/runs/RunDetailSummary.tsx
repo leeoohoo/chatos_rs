@@ -6,6 +6,7 @@ import {
   Descriptions,
   Space,
   Tag,
+  Typography,
 } from 'antd';
 import dayjs from 'dayjs';
 
@@ -54,6 +55,7 @@ export function RunDetailSummary({
   onRetry,
 }: RunDetailSummaryProps) {
   const runStatusLabel = (status: TaskRunStatus) => t(`runs.status.${status}`);
+  const pluginCloudRuntimeLabel = t('runs.detail.pluginCloudRuntime');
   const inputSnapshot =
     run.input_snapshot && typeof run.input_snapshot === 'object'
       ? (run.input_snapshot as Record<string, unknown>)
@@ -68,6 +70,10 @@ export function RunDetailSummary({
   const totalDuration = run.started_at
     ? formatDuration(run.started_at, run.finished_at || undefined)
     : '-';
+  const formatPluginTarget = (deviceId?: string | null, workspaceId?: string | null) => {
+    const runtime = deviceId || pluginCloudRuntimeLabel;
+    return workspaceId ? `${runtime} / ${workspaceId}` : runtime;
+  };
 
   return (
     <>
@@ -102,12 +108,23 @@ export function RunDetailSummary({
         <Descriptions.Item label={t('runs.detail.agent')}>{agentLabel}</Descriptions.Item>
         <Descriptions.Item label={t('runs.detail.plugins')}>
           {run.plugin_snapshots?.length ? (
-            <Space wrap>
+            <Space direction="vertical" size="small" style={{ width: '100%' }}>
               {run.plugin_snapshots.map((plugin) => (
-                <Tag key={`${plugin.plugin_id}:${plugin.release_id}`} color="purple">
-                  {plugin.plugin_id} / v{plugin.version} / {plugin.component_snapshots.length}{' '}
-                  {t('runs.detail.pluginComponents')}
-                </Tag>
+                <Space
+                  key={`${plugin.plugin_id}:${plugin.release_id}`}
+                  direction="vertical"
+                  size={0}
+                  style={{ width: '100%' }}
+                >
+                  <Tag color="purple">{plugin.plugin_id}</Tag>
+                  <Typography.Text type="secondary">
+                    {t('runs.detail.pluginSnapshotSummary', {
+                      version: `v${plugin.version}`,
+                      target: formatPluginTarget(plugin.device_id, plugin.workspace_id),
+                      componentCount: plugin.component_snapshots.length,
+                    })}
+                  </Typography.Text>
+                </Space>
               ))}
             </Space>
           ) : (
@@ -120,11 +137,11 @@ export function RunDetailSummary({
               {Array.from(
                 new Set(
                   run.plugin_snapshots.map(
-                    (plugin) => `${plugin.device_id}/${plugin.workspace_id || '-'}`,
+                    (plugin) => formatPluginTarget(plugin.device_id, plugin.workspace_id),
                   ),
                 ),
               ).map((target) => (
-                <Tag key={target} color="cyan">
+                <Tag key={target} color={target.startsWith(pluginCloudRuntimeLabel) ? 'blue' : 'cyan'}>
                   {target}
                 </Tag>
               ))}

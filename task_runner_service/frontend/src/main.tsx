@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import 'antd/dist/reset.css';
 
 import App from './App';
+import './styles.css';
 
 const queryClient = new QueryClient();
 const routerBasename =
