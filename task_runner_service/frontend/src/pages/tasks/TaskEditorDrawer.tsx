@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { FormInstance } from 'antd';
 import {
   Alert,
@@ -21,7 +21,6 @@ import {
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   SelectableTaskPlugin,
-  TaskPluginConnectorsResponse,
   TaskProjectRuntimeEnvironmentResponse,
   TaskRecord,
   TaskScheduleMode,
@@ -53,9 +52,6 @@ type TaskEditorDrawerProps = {
   projectOptions: SelectOption[];
   prerequisiteTaskOptions: SelectOption[];
   selectablePlugins?: SelectableTaskPlugin[];
-  pluginConnectors?: TaskPluginConnectorsResponse;
-  pluginConnectorsLoading?: boolean;
-  pluginConnectorsUnavailable?: boolean;
   pluginCatalogLoading?: boolean;
   runtimeEnvironment?: TaskProjectRuntimeEnvironmentResponse;
   runtimeEnvironmentLoading?: boolean;
@@ -74,9 +70,6 @@ export function TaskEditorDrawer({
   projectOptions,
   prerequisiteTaskOptions,
   selectablePlugins = [],
-  pluginConnectors,
-  pluginConnectorsLoading = false,
-  pluginConnectorsUnavailable = false,
   pluginCatalogLoading = false,
   runtimeEnvironment,
   runtimeEnvironmentLoading = false,
@@ -88,8 +81,6 @@ export function TaskEditorDrawer({
   const selectedProjectId = Form.useWatch('projectId', form);
   const requiresExecution = Form.useWatch('requiresExecution', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
-  const pluginDeviceId = Form.useWatch('pluginDeviceId', form);
-  const pluginWorkspaceId = Form.useWatch('pluginWorkspaceId', form);
   const selectedPluginIds = Form.useWatch('selectedPluginIds', form) || [];
   const pluginCommandSelections =
     Form.useWatch('pluginCommandSelections', form) || {};
@@ -139,42 +130,10 @@ export function TaskEditorDrawer({
       })),
     [t],
   );
-  const onlinePluginDevices = useMemo(
-    () => (pluginConnectors?.devices || []).filter((device) => device.status === 'online'),
-    [pluginConnectors?.devices],
-  );
-  const pluginDeviceOptions = useMemo(
-    () =>
-      (pluginConnectors?.devices || []).map((device) => ({
-        label: `${device.display_name} (${device.os || 'unknown'}) / ${device.status}`,
-        value: device.id,
-        disabled: device.status !== 'online',
-      })),
-    [pluginConnectors?.devices],
-  );
-  const activePluginWorkspaces = useMemo(
-    () =>
-      (pluginConnectors?.workspaces || []).filter(
-        (workspace) =>
-          workspace.device_id === pluginDeviceId && workspace.status === 'active',
-      ),
-    [pluginConnectors?.workspaces, pluginDeviceId],
-  );
-  const pluginWorkspaceOptions = useMemo(
-    () =>
-      (pluginConnectors?.workspaces || [])
-        .filter((workspace) => workspace.device_id === pluginDeviceId)
-        .map((workspace) => ({
-          label: `${workspace.display_name} (${workspace.local_path_alias}) / ${workspace.status}`,
-          value: workspace.id,
-          disabled: workspace.status !== 'active',
-        })),
-    [pluginConnectors?.workspaces, pluginDeviceId],
-  );
   const pluginOptions = useMemo(
     () =>
       selectablePlugins.map((plugin) => ({
-        label: `${plugin.display_name} / v${plugin.version}`,
+        label: `${plugin.display_name} / v${plugin.version} / ${plugin.execution_type}`,
         value: plugin.id,
       })),
     [selectablePlugins],
@@ -187,8 +146,12 @@ export function TaskEditorDrawer({
       })),
     [selectablePlugins, selectedPluginIds],
   );
-  const browserPluginSelected = selectedPluginDetails.some(
-    ({ plugin }) => plugin?.plugin_key === 'browser',
+  const browserPluginSelected = selectedPluginDetails.some(({ plugin }) =>
+    Boolean(
+      plugin &&
+        (plugin.plugin_key.toLowerCase().includes('browser') ||
+          plugin.component_keys.includes('browser-tools')),
+    ),
   );
   const pluginAgentOptions = useMemo(
     () =>
@@ -200,18 +163,6 @@ export function TaskEditorDrawer({
       ),
     [selectedPluginDetails],
   );
-  useEffect(() => {
-    if (pluginDeviceId || onlinePluginDevices.length !== 1) {
-      return;
-    }
-    form.setFieldValue('pluginDeviceId', onlinePluginDevices[0].id);
-  }, [form, onlinePluginDevices, pluginDeviceId]);
-  useEffect(() => {
-    if (!pluginDeviceId || pluginWorkspaceId || activePluginWorkspaces.length !== 1) {
-      return;
-    }
-    form.setFieldValue('pluginWorkspaceId', activePluginWorkspaces[0].id);
-  }, [activePluginWorkspaces, form, pluginDeviceId, pluginWorkspaceId]);
   return (
     <Drawer
       title={editingTask ? t('tasks.drawer.edit') : t('tasks.drawer.create')}
@@ -399,107 +350,17 @@ export function TaskEditorDrawer({
           {t('tasks.form.plugins')}
         </Typography.Title>
 
-        {pluginConnectorsUnavailable ? (
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message={t('tasks.form.pluginConnectorsUnavailable')}
-          />
-        ) : !pluginConnectorsLoading && !onlinePluginDevices.length ? (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message={t('tasks.form.pluginConnectorsOffline')}
-          />
-        ) : null}
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-            columnGap: 16,
-            alignItems: 'start',
-          }}
-        >
-          <Form.Item
-            name="pluginDeviceId"
-            label={t('tasks.form.pluginDevice')}
-            extra={t('tasks.form.pluginDeviceHelp')}
-            rules={[
-              {
-                validator: async (_, value) => {
-                  if (!selectedPluginIds.length || value) {
-                    return;
-                  }
-                  throw new Error(t('tasks.form.pluginDeviceRequired'));
-                },
-              },
-            ]}
-          >
-            <Select
-              allowClear
-              showSearch
-              loading={pluginConnectorsLoading}
-              optionFilterProp="label"
-              options={pluginDeviceOptions}
-              placeholder={t('tasks.form.pluginDevicePlaceholder')}
-              onChange={(value) => {
-                if (value !== pluginDeviceId) {
-                  form.setFieldsValue({
-                    pluginWorkspaceId: undefined,
-                    selectedPluginIds: [],
-                    pluginCommandSelections: {},
-                    pluginCommandArguments: {},
-                    pluginAgentSelection: undefined,
-                  });
-                }
-              }}
-            />
-          </Form.Item>
-          <Form.Item
-            name="pluginWorkspaceId"
-            label={t('tasks.form.pluginWorkspace')}
-            extra={t('tasks.form.pluginWorkspaceHelp')}
-            rules={[
-              {
-                validator: async (_, value) => {
-                  if (!browserPluginSelected || value) {
-                    return;
-                  }
-                  throw new Error(t('tasks.form.pluginWorkspaceRequired'));
-                },
-              },
-            ]}
-          >
-            <Select
-              allowClear
-              showSearch
-              disabled={!pluginDeviceId}
-              optionFilterProp="label"
-              options={pluginWorkspaceOptions}
-              placeholder={t('tasks.form.pluginWorkspacePlaceholder')}
-            />
-          </Form.Item>
-        </div>
-
         <Form.Item
           name="selectedPluginIds"
           label={t('tasks.form.plugins')}
-          extra={
-            pluginDeviceId
-              ? selectablePlugins.length
-                ? t('tasks.form.pluginsHelp')
-                : t('tasks.form.pluginsEmpty')
-              : t('tasks.form.pluginsChooseDevice')
-          }
+          extra={selectablePlugins.length
+            ? t('tasks.form.pluginsHelp')
+            : t('tasks.form.pluginsEmpty')}
         >
           <Select
             mode="multiple"
             allowClear
             showSearch
-            disabled={!pluginDeviceId}
             loading={pluginCatalogLoading}
             optionFilterProp="label"
             maxTagCount="responsive"

@@ -49,11 +49,9 @@ type UseTasksPageDataParams = {
   mcpPreviewTask: TaskRecord | null;
   batchRunTaskIds: string[];
   editingTaskId?: string;
-  taskEditorOpen: boolean;
   editorProjectId?: string;
   editorTaskProfile?: TaskProfile;
   editorRequiresExecution?: boolean;
-  editorPluginDeviceId?: string;
 };
 
 function normalizeProjectId(value?: string | null) {
@@ -100,11 +98,9 @@ export function useTasksPageData({
   mcpPreviewTask,
   batchRunTaskIds,
   editingTaskId,
-  taskEditorOpen,
   editorProjectId,
   editorTaskProfile,
   editorRequiresExecution,
-  editorPluginDeviceId,
 }: UseTasksPageDataParams) {
   const scheduleModeLabels = useMemo(
     () =>
@@ -236,20 +232,14 @@ export function useTasksPageData({
       'task-capability-catalog',
       editorTaskProfile || 'default',
       editorRequiresExecution ?? true,
-      editorPluginDeviceId || '',
+      normalizeProjectId(editorProjectId),
     ],
     queryFn: () =>
       api.listTaskCapabilityCatalog({
         task_profile: editorTaskProfile || 'default',
         requires_execution: editorRequiresExecution ?? true,
-        device_id: editorPluginDeviceId?.trim() || undefined,
+        project_id: normalizeProjectId(editorProjectId),
       }),
-  });
-  const taskPluginConnectorsQuery = useQuery({
-    queryKey: ['task-plugin-connectors'],
-    queryFn: api.listTaskPluginConnectors,
-    enabled: taskEditorOpen,
-    retry: false,
   });
   const remoteServersQuery = useQuery({
     queryKey: ['remote-servers'],
@@ -496,7 +486,6 @@ export function useTasksPageData({
     projectsQuery,
     projectRuntimeEnvironmentQuery,
     taskCapabilityCatalogQuery,
-    taskPluginConnectorsQuery,
     remoteServersQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,

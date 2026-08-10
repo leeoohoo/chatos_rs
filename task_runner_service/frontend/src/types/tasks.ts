@@ -83,7 +83,10 @@ export interface SelectableTaskPlugin {
   version: string;
   release_id: string;
   artifact_sha256: string;
-  device_id: string;
+  device_id?: string | null;
+  execution_type: string;
+  requires_device: boolean;
+  component_hosts: Record<string, 'cloud' | 'local' | 'portable'>;
   component_keys: string[];
   commands: SelectableTaskPluginCommand[];
   agents: SelectableTaskPluginAgent[];

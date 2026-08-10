@@ -256,15 +256,10 @@ export function TaskDetailDrawer({
                     </Tag>
                   ))}
                 </Space>
-              ) : task.plugin_config?.device_id ? (
-                <Space wrap>
-                  <Tag color="cyan">{task.plugin_config.device_id}</Tag>
-                  {task.plugin_config.workspace_id ? (
-                    <Tag color="geekblue">{task.plugin_config.workspace_id}</Tag>
-                  ) : null}
-                </Space>
+              ) : task.project_id === '-1' ? (
+                <Tag color="blue">{t('tasks.detail.pluginCloudRuntime')}</Tag>
               ) : (
-                t('common.noData')
+                t('tasks.detail.pluginProjectRuntimePending')
               )}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.plugins')}>

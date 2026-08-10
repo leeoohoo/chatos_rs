@@ -46,14 +46,6 @@ pub fn task_runner_agent_key_for(
     task_profile: &str,
     requires_execution: bool,
 ) -> chatos_plugin_management_sdk::SystemAgentKey {
-    task_runner_agent_key_for_runtime(task_profile, requires_execution, None)
-}
-
-pub fn task_runner_agent_key_for_runtime(
-    task_profile: &str,
-    requires_execution: bool,
-    _runtime_provider: Option<&str>,
-) -> chatos_plugin_management_sdk::SystemAgentKey {
     if uses_task_runner_planning_agent(task_profile, requires_execution) {
         chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
     } else {
@@ -79,14 +71,6 @@ mod task_runner_agent_routing_tests {
         assert_eq!(
             task_runner_agent_key_for(TASK_PROFILE_DEFAULT, false),
             SystemAgentKey::TaskRunnerRunPhase
-        );
-        assert_eq!(
-            task_runner_agent_key_for_runtime(TASK_PROFILE_DEFAULT, true, Some("local_connector")),
-            SystemAgentKey::TaskRunnerRunPhase
-        );
-        assert_eq!(
-            task_runner_agent_key_for_runtime(TASK_PROFILE_CHATOS_PLAN, false, Some("local")),
-            SystemAgentKey::TaskRunnerPlanPhase
         );
     }
 }

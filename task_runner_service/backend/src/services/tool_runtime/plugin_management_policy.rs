@@ -44,6 +44,8 @@ const BUILTIN_RUNTIME_KIND: &str = chatos_plugin_management_sdk::LEGACY_BUILTIN_
 pub(crate) struct TaskRunnerCapabilityPolicy {
     capabilities: ResolvedAgentCapabilities,
     portable_uses_local: bool,
+    runtime_device_id: Option<String>,
+    runtime_workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,7 +96,19 @@ impl TaskRunnerCapabilityPolicy {
         Ok(Self {
             capabilities,
             portable_uses_local,
+            runtime_device_id: None,
+            runtime_workspace_id: None,
         })
+    }
+
+    fn with_project_runtime_target(
+        mut self,
+        device_id: Option<String>,
+        workspace_id: Option<String>,
+    ) -> Self {
+        self.runtime_device_id = device_id;
+        self.runtime_workspace_id = workspace_id;
+        self
     }
 
     pub(crate) fn policy_revision(&self) -> &str {
@@ -155,15 +169,6 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn validate_plugin_config(&self, config: &TaskPluginConfig) -> Result<(), String> {
-        if config.device_id.is_some() {
-            normalized_plugin_identifier(
-                config.device_id.as_deref().unwrap_or_default(),
-                "device_id",
-            )?;
-        }
-        if config.workspace_id.is_some() {
-            normalized_optional_plugin_text(config.workspace_id.as_deref(), "workspace_id")?;
-        }
         let mut seen_plugins = HashSet::new();
         let mut selected_agent_count = 0usize;
         for selected in &config.selected_plugins {
@@ -211,8 +216,8 @@ impl TaskRunnerCapabilityPolicy {
                 self.portable_uses_local,
             )? {
                 normalized_plugin_identifier(
-                    config.device_id.as_deref().unwrap_or_default(),
-                    "device_id",
+                    self.runtime_device_id.as_deref().unwrap_or_default(),
+                    "project device_id",
                 )?;
             }
             selected_agent_count =
@@ -289,8 +294,8 @@ impl TaskRunnerCapabilityPolicy {
                 plugin_snapshot(
                     plugin,
                     selected,
-                    task.plugin_config.device_id.as_deref(),
-                    task.plugin_config.workspace_id.as_deref(),
+                    self.runtime_device_id.as_deref(),
+                    self.runtime_workspace_id.as_deref(),
                     command_invocations.as_slice(),
                     self.capabilities.agent_key.as_str(),
                     self.portable_uses_local,

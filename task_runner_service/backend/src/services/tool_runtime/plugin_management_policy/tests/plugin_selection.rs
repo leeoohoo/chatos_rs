@@ -20,11 +20,16 @@ fn local_runtime_capabilities() -> ResolvedAgentCapabilities {
 fn local_runtime_policy(
     capabilities: ResolvedAgentCapabilities,
 ) -> Result<TaskRunnerCapabilityPolicy, String> {
-    TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, true)
+    TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, true).map(|policy| {
+        policy.with_project_runtime_target(
+            Some("device-1".to_string()),
+            Some("project-workspace".to_string()),
+        )
+    })
 }
 
 #[test]
-fn plugin_selection_requires_exact_device_and_produces_immutable_run_snapshot() {
+fn plugin_snapshot_uses_project_target_and_ignores_legacy_task_target() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];
     capabilities.mcps.push(resolved_mcp(
@@ -37,8 +42,8 @@ fn plugin_selection_requires_exact_device_and_produces_immutable_run_snapshot() 
     let policy = local_runtime_policy(capabilities).expect("Plugin policy");
     let mut task = task();
     task.plugin_config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
-        workspace_id: Some("workspace-1".to_string()),
+        device_id: Some("legacy-device".to_string()),
+        workspace_id: Some("legacy-workspace".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -57,7 +62,12 @@ fn plugin_selection_requires_exact_device_and_produces_immutable_run_snapshot() 
     assert_eq!(snapshots[0].plugin_id, "plugin-browser");
     assert_eq!(snapshots[0].release_id, "release-browser-1");
     assert_eq!(snapshots[0].device_id.as_deref(), Some("device-1"));
-    assert_eq!(snapshots[0].workspace_id.as_deref(), Some("workspace-1"));
+    assert_eq!(
+        snapshots[0].workspace_id.as_deref(),
+        Some("project-workspace")
+    );
+    assert!(task.plugin_config.device_id.is_none());
+    assert!(task.plugin_config.workspace_id.is_none());
     assert_eq!(snapshots[0].artifact_sha256, "a".repeat(64));
     assert_eq!(snapshots[0].component_snapshots.len(), 1);
     assert_eq!(snapshots[0].component_snapshots[0].component_key, "browser");
@@ -131,7 +141,7 @@ fn plugin_ui_is_pinned_as_a_signed_run_component_without_executable_operations()
 }
 
 #[test]
-fn plugin_selection_without_device_fails_closed() {
+fn local_plugin_selection_without_project_target_fails_closed() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];
     capabilities.mcps.push(resolved_mcp(
@@ -141,7 +151,8 @@ fn plugin_selection_without_device_fails_closed() {
         false,
         true,
     ));
-    let policy = local_runtime_policy(capabilities).expect("Plugin policy");
+    let policy = TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, true)
+        .expect("Plugin policy without project target");
     let config = TaskPluginConfig {
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),

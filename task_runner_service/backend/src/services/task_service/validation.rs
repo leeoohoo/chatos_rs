@@ -83,6 +83,7 @@ impl TaskService {
         &self,
         config: &TaskMcpConfig,
         plugin_config: &chatos_plugin_management_sdk::TaskPluginConfig,
+        project_id: &str,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
@@ -90,6 +91,7 @@ impl TaskService {
         self.validate_task_capability_selection_for_agent(
             config,
             plugin_config,
+            project_id,
             current_user,
             task_owner_user_id,
             agent_key,
@@ -113,21 +115,17 @@ impl TaskService {
         &self,
         config: &TaskMcpConfig,
         plugin_config: &chatos_plugin_management_sdk::TaskPluginConfig,
+        project_id: &str,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     ) -> Result<bool, String> {
         let Some(policy) = self
-            .resolve_task_runner_policy_for_agent_on_device(
+            .resolve_task_runner_policy_for_agent_project(
                 current_user,
                 task_owner_user_id,
                 agent_key,
-                plugin_config
-                    .device_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string),
+                project_id,
             )
             .await?
         else {
@@ -137,6 +135,26 @@ impl TaskService {
         policy.validate_plugin_config(plugin_config)?;
         Ok(true)
     }
+}
+
+pub(super) fn reject_task_level_plugin_runtime_target(
+    config: &chatos_plugin_management_sdk::TaskPluginConfig,
+) -> Result<(), String> {
+    if config
+        .device_id
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        || config
+            .workspace_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err(
+            "Plugin execution device and workspace are project properties and cannot be set on a task"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn ensure_owned_service_resource_access(
@@ -175,4 +193,39 @@ fn resource_owner_or_creator<'a>(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_task_level_plugin_runtime_target;
+    use chatos_plugin_management_sdk::TaskPluginConfig;
+
+    #[test]
+    fn task_plugin_runtime_target_must_not_be_overridden() {
+        for config in [
+            TaskPluginConfig {
+                device_id: Some("device-1".to_string()),
+                ..TaskPluginConfig::default()
+            },
+            TaskPluginConfig {
+                workspace_id: Some("workspace-1".to_string()),
+                ..TaskPluginConfig::default()
+            },
+        ] {
+            let error = reject_task_level_plugin_runtime_target(&config)
+                .expect_err("task-level runtime target must be rejected");
+            assert!(error.contains("project properties"));
+        }
+    }
+
+    #[test]
+    fn empty_task_plugin_runtime_target_is_accepted_for_legacy_payloads() {
+        let config = TaskPluginConfig {
+            device_id: Some("  ".to_string()),
+            workspace_id: Some(String::new()),
+            ..TaskPluginConfig::default()
+        };
+        reject_task_level_plugin_runtime_target(&config)
+            .expect("empty legacy target values do not override the project");
+    }
 }

@@ -39,8 +39,6 @@ export type TaskFormValues = {
   requiresExecution: boolean;
   prerequisite_task_ids?: string[];
   tagsText?: string;
-  pluginDeviceId?: string;
-  pluginWorkspaceId?: string;
   selectedPluginIds?: string[];
   pluginCommandSelections?: Record<string, boolean>;
   pluginCommandArguments?: Record<string, string>;
@@ -71,8 +69,6 @@ export function buildCreateTaskFormValues(
     requiresExecution: true,
     prerequisite_task_ids: [],
     tagsText: '',
-    pluginDeviceId: undefined,
-    pluginWorkspaceId: undefined,
     selectedPluginIds: [],
     pluginCommandSelections: {},
     pluginCommandArguments: {},
@@ -96,8 +92,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     requiresExecution: task.mcp_config.requires_execution ?? true,
     prerequisite_task_ids: task.prerequisite_task_ids || [],
     tagsText: task.tags.join(', '),
-    pluginDeviceId: task.plugin_config?.device_id || undefined,
-    pluginWorkspaceId: task.plugin_config?.workspace_id || undefined,
     selectedPluginIds:
       task.plugin_config?.selected_plugins?.map((plugin) => plugin.plugin_id) || [],
     pluginCommandSelections: Object.fromEntries(
@@ -187,8 +181,6 @@ export function buildTaskPayload(
       .filter(Boolean),
     schedule,
     plugin_config: {
-      device_id: values.pluginDeviceId?.trim() || undefined,
-      workspace_id: values.pluginWorkspaceId?.trim() || undefined,
       selected_plugins: selectedPluginIds.map((pluginId) => ({
         plugin_id: pluginId,
         selected_skill_ids: [],

@@ -167,7 +167,7 @@ export const api = {
   listTaskCapabilityCatalog: (options?: {
     task_profile?: 'default' | 'chatos_plan';
     requires_execution?: boolean;
-    device_id?: string;
+    project_id?: string;
   }) =>
     request<TaskCapabilityCatalogResponse>(
       withQuery('/api/tasks/capabilities/catalog', {
@@ -176,7 +176,7 @@ export const api = {
           options?.requires_execution === undefined
             ? undefined
             : String(options.requires_execution),
-        device_id: options?.device_id,
+        project_id: options?.project_id,
       }),
     ),
   listTaskPluginConnectors: () =>

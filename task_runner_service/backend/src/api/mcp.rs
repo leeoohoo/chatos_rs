@@ -71,19 +71,18 @@ pub(super) async fn list_task_capability_catalog(
         .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?;
     let task_profile = crate::models::normalize_task_profile(query.task_profile.as_deref())
         .map_err(ApiError::bad_request)?;
-    let agent_key = crate::models::task_runner_agent_key_for_runtime(
+    let agent_key = crate::models::task_runner_agent_key_for(
         task_profile.as_str(),
         query.requires_execution.unwrap_or(true),
-        query.runtime_provider.as_deref(),
     );
+    let project_id = crate::models::normalize_project_id(query.project_id.clone());
     let policy = state
         .task_service
-        .resolve_task_runner_policy_for_agent_runtime(
+        .resolve_task_runner_policy_for_agent_project(
             Some(&user),
             Some(owner_user_id),
             agent_key,
-            query.device_id.clone(),
-            query.runtime_provider.clone(),
+            project_id.as_str(),
         )
         .await
         .map_err(ApiError::bad_gateway)?
@@ -176,8 +175,7 @@ where
 pub(super) struct TaskCapabilityCatalogQuery {
     task_profile: Option<String>,
     requires_execution: Option<bool>,
-    runtime_provider: Option<String>,
-    device_id: Option<String>,
+    project_id: Option<String>,
 }
 
 pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<McpServerInfo> {

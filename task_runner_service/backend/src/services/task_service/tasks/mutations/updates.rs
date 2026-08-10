@@ -4,6 +4,7 @@
 use super::*;
 use crate::models::normalize_task_profile;
 use crate::services::task_manager_lifecycle::{apply_task_closure, task_has_manager_lifecycle};
+use crate::services::task_service::validation::reject_task_level_plugin_runtime_target;
 
 impl TaskService {
     pub async fn update_task(
@@ -34,6 +35,7 @@ impl TaskService {
                 }
                 task.project_id = project_id;
                 project_changed = true;
+                capability_boundary_changed = true;
             }
         }
 
@@ -131,6 +133,7 @@ impl TaskService {
             }
         }
         if let Some(plugin_config) = patch.plugin_config {
+            reject_task_level_plugin_runtime_target(&plugin_config)?;
             task.plugin_config = plugin_config;
             capability_boundary_changed = true;
         }
@@ -143,22 +146,18 @@ impl TaskService {
             self.validate_task_mcp_config_for_agent(
                 &task.mcp_config,
                 &task.plugin_config,
+                task.project_id.as_str(),
                 current_user,
                 task_owner_user_id,
                 agent_key,
             )
             .await?;
             if let Some(policy) = self
-                .resolve_task_runner_policy_for_agent_on_device(
+                .resolve_task_runner_policy_for_agent_project(
                     current_user,
                     task_owner_user_id,
                     agent_key,
-                    task.plugin_config
-                        .device_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_string),
+                    task.project_id.as_str(),
                 )
                 .await?
             {
@@ -404,6 +403,28 @@ mod tests {
             .expect("task");
 
         assert_eq!(updated.project_id, project.id);
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_task_level_plugin_runtime_target() {
+        let service = test_service().await;
+        let task = create_task(&service, "task", TaskStatus::Ready).await;
+        let mut plugin_config = task.plugin_config.clone();
+        plugin_config.workspace_id = Some("workspace-1".to_string());
+
+        let error = service
+            .update_task(
+                task.id.as_str(),
+                UpdateTaskRequest {
+                    plugin_config: Some(plugin_config),
+                    ..UpdateTaskRequest::default()
+                },
+                None,
+            )
+            .await
+            .expect_err("task-level workspace must be rejected");
+
+        assert!(error.contains("project properties"));
     }
 
     #[tokio::test]

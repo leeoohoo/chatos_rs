@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::models::normalize_task_profile;
+use crate::services::task_service::validation::reject_task_level_plugin_runtime_target;
 
 impl TaskService {
     pub async fn create_task(
@@ -56,6 +57,7 @@ impl TaskService {
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let plugin_config = input.plugin_config;
+        reject_task_level_plugin_runtime_target(&plugin_config)?;
         let requested_mcp_config = input.mcp_config.unwrap_or_default();
         let mut mcp_config = TaskMcpConfig::default();
         if let Some(requires_execution) = requested_mcp_config.requires_execution {
@@ -109,6 +111,7 @@ impl TaskService {
             self.validate_task_mcp_config_for_agent(
                 &mcp_config,
                 &plugin_config,
+                project_id.as_str(),
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
@@ -118,6 +121,7 @@ impl TaskService {
             self.validate_task_capability_selection_for_agent(
                 &mcp_config,
                 &plugin_config,
+                project_id.as_str(),
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
@@ -126,16 +130,11 @@ impl TaskService {
             self.validate_task_ephemeral_http_servers(&mcp_config)?;
         }
         if let Some(policy) = self
-            .resolve_task_runner_policy_for_agent_on_device(
+            .resolve_task_runner_policy_for_agent_project(
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
-                plugin_config
-                    .device_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string),
+                project_id.as_str(),
             )
             .await?
         {
@@ -430,6 +429,20 @@ mod tests {
             .await
             .expect("create task with empty project");
         assert_eq!(task_with_empty.project_id, PUBLIC_PROJECT_ID);
+    }
+
+    #[tokio::test]
+    async fn create_task_rejects_task_level_plugin_runtime_target() {
+        let service = test_service().await;
+        let mut request = create_task_request("invalid runtime target");
+        request.plugin_config.device_id = Some("device-1".to_string());
+
+        let error = service
+            .create_task(request, None, None)
+            .await
+            .expect_err("task-level device must be rejected");
+
+        assert!(error.contains("project properties"));
     }
 
     #[tokio::test]

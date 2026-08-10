@@ -9,9 +9,8 @@ use chatos_plugin_management_sdk::SelectedPluginRef;
 use crate::models::TaskRecord;
 
 use super::{
-    dedupe_builtin_kinds, normalized_command_invocation, normalized_optional_plugin_text,
-    normalized_unique_ids, plugin_builtin_kind, plugin_task_process_log_mcp,
-    TaskRunnerCapabilityPolicy,
+    dedupe_builtin_kinds, normalized_command_invocation, normalized_unique_ids,
+    plugin_builtin_kind, plugin_task_process_log_mcp, TaskRunnerCapabilityPolicy,
 };
 
 impl TaskRunnerCapabilityPolicy {
@@ -144,12 +143,9 @@ impl TaskRunnerCapabilityPolicy {
             .iter()
             .map(normalized_command_invocation)
             .collect::<Result<Vec<_>, _>>()?;
-        task.plugin_config.device_id =
-            normalized_optional_plugin_text(task.plugin_config.device_id.as_deref(), "device_id")?;
-        task.plugin_config.workspace_id = normalized_optional_plugin_text(
-            task.plugin_config.workspace_id.as_deref(),
-            "workspace_id",
-        )?;
+        // Execution location belongs to the project and is frozen into the Run snapshot.
+        task.plugin_config.device_id = None;
+        task.plugin_config.workspace_id = None;
         task.plugin_config.selected_plugins = effective;
         task.plugin_config.command_invocations = command_invocations;
         self.inject_plugin_builtin_dependencies(task)?;
