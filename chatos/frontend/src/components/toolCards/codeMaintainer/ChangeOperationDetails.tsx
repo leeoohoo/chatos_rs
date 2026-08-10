@@ -5,16 +5,14 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
-import { StringListCard, TextBlockCard } from '../shared/primitives';
-import { asArray, asRecord, asString } from '../shared/value';
+import { RowsCard, StringListCard, TextBlockCard } from '../shared/primitives';
+import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 interface ChangeOperationDetailsProps {
-  displayName: string;
   result: unknown;
 }
 
 export const ChangeOperationDetails: React.FC<ChangeOperationDetailsProps> = ({
-  displayName,
   result,
 }) => {
   const { locale } = useI18n();
@@ -22,30 +20,45 @@ export const ChangeOperationDetails: React.FC<ChangeOperationDetailsProps> = ({
   if (!record) return null;
 
   const operationResult = asRecord(record.result);
-  const change = asRecord(record.change);
-  const files = asArray(record.files)
+  const pendingPaths = asArray(operationResult?.pending_paths)
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
-
-  const explicitPaths = files
+  const committedPaths = asArray(operationResult?.committed_paths)
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== null);
+  const structuredPaths = [...pendingPaths, ...committedPaths]
     .map((item) => asString(item.path).trim())
     .filter(Boolean);
-
-  const fallbackPaths = [
-    asString(change?.path).trim(),
-    asString(operationResult?.path).trim(),
-  ].filter(Boolean);
-
-  const touchedFiles = Array.from(new Set(
-    (explicitPaths.length > 0 ? explicitPaths : fallbackPaths),
-  ));
-
-  const isPatchTool = displayName === 'apply_patch' || displayName === 'patch';
+  const batchChangedPaths = asArray(operationResult?.batch_changed_paths)
+    .map((item) => asString(item).trim())
+    .filter(Boolean);
+  const touchedFiles = Array.from(new Set([...structuredPaths, ...batchChangedPaths]));
+  const diffPreview = committedPaths
+    .map((item) => {
+      const path = asString(item.path).trim();
+      const change = asRecord(item.change);
+      const diff = asString(change?.diff).trim();
+      return diff ? `${path ? `${path}\n` : ''}${diff}` : '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
 
   return (
     <>
-      {!isPatchTool && <StringListCard title={translateToolTitle('Touched files', locale)} values={touchedFiles} fullWidth />}
-      <TextBlockCard title={translateToolTitle('Diff preview', locale)} content={asString(change?.diff)} />
+      <RowsCard
+        title={translateToolTitle('Session summary', locale)}
+        rows={[
+          { key: 'session id', value: asString(operationResult?.session_id) },
+          { key: 'batch operations', value: asNumber(operationResult?.batch_operation_count) },
+          { key: 'staged operations', value: asNumber(operationResult?.staged_operation_count) },
+          { key: 'pending targets', value: asNumber(operationResult?.pending_target_count) },
+          { key: 'discarded targets', value: asNumber(operationResult?.discarded_target_count) },
+          { key: 'session closed', value: asBoolean(operationResult?.session_closed) },
+        ]}
+        fullWidth
+      />
+      <StringListCard title={translateToolTitle('Touched files', locale)} values={touchedFiles} fullWidth />
+      <TextBlockCard title={translateToolTitle('Diff preview', locale)} content={diffPreview} />
       <TextBlockCard title={translateToolTitle('Message', locale)} content={asString(record.message)} />
       <TextBlockCard title={translateToolTitle('Hint', locale)} content={asString(record.hint)} fullWidth={false} />
     </>

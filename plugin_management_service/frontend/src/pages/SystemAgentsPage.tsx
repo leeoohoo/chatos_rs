@@ -39,12 +39,27 @@ interface SystemAgentsPageProps {
 }
 
 interface McpBindingDraft {
-  binding_id?: string | null;
   mcp_id: string;
   mode: McpBindingMode;
-  conditions: BindingConditions;
-  tool_allowlist: string[];
-  tool_blocklist: string[];
+  variants: Array<{
+    binding_id?: string | null;
+    conditions: BindingConditions;
+    tool_allowlist: string[];
+    tool_blocklist: string[];
+  }>;
+}
+
+interface MergedMcpBindingItem {
+  mcp: AgentMcpBindingView['mcp'];
+  mode: McpBindingMode;
+  bindable: boolean;
+  unavailable_reason?: string | null;
+  variants: Array<{
+    binding_id?: string | null;
+    conditions: BindingConditions;
+    tool_allowlist: string[];
+    tool_blocklist: string[];
+  }>;
 }
 
 export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPageProps) {
@@ -78,40 +93,43 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
     enabled: isAdmin && modalOpen && Boolean(selectedAgentKey),
   });
 
+  const mergedBindingItems = useMemo(
+    () => mergeAgentMcpBindings(bindingsQuery.data?.items || []),
+    [bindingsQuery.data],
+  );
+
   useEffect(() => {
-    if (!bindingsQuery.data) {
+    if (!mergedBindingItems.length) {
       return;
     }
     setBindingDrafts(
       Object.fromEntries(
-        bindingsQuery.data.items.map((item) => [
+        mergedBindingItems.map((item) => [
           bindingRowKey(item),
           {
-            binding_id: item.binding_id,
             mcp_id: item.mcp.id,
             mode: item.mode,
-            conditions: item.conditions,
-            tool_allowlist: item.tool_allowlist,
-            tool_blocklist: item.tool_blocklist,
+            variants: item.variants,
           },
         ]),
       ),
     );
-  }, [bindingsQuery.data]);
+  }, [mergedBindingItems]);
 
   const saveMutation = useMutation({
     mutationFn: () => {
       return api.updateAgentMcpBindings(
         selectedAgentKey || '',
         Object.values(bindingDrafts)
-          .filter((binding) => binding.mode !== 'disabled')
-          .map((binding) => ({
-            mcp_id: binding.mcp_id,
-            mode: binding.mode,
-            conditions: binding.conditions,
-            tool_allowlist: binding.tool_allowlist,
-            tool_blocklist: binding.tool_blocklist,
-          })),
+          .flatMap((binding) =>
+            binding.variants.map((variant) => ({
+              mcp_id: binding.mcp_id,
+              mode: binding.mode,
+              conditions: variant.conditions,
+              tool_allowlist: variant.tool_allowlist,
+              tool_blocklist: variant.tool_blocklist,
+            })),
+          ),
       );
     },
     onSuccess: (data) => {
@@ -216,7 +234,7 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
   );
 
   const mcpItems = useMemo(() => {
-    const items = bindingsQuery.data?.items || [];
+    const items = mergedBindingItems;
     const keyword = search.trim().toLowerCase();
     if (!keyword) {
       return items;
@@ -237,28 +255,29 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         item.mcp.runtime.server_name,
         item.mcp.plugin_id,
         item.mcp.component_key,
-        item.conditions.task_profile,
-        item.conditions.project_source_type,
-        item.conditions.runtime_provider,
-        item.conditions.schedule_mode,
-        item.tool_allowlist.join(' '),
-        item.tool_blocklist.join(' '),
+        ...item.variants.flatMap((variant) => [
+          variant.conditions.task_profile,
+          variant.conditions.project_source_type,
+          variant.conditions.schedule_mode,
+          variant.tool_allowlist.join(' '),
+          variant.tool_blocklist.join(' '),
+        ]),
       ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(keyword)),
     );
-  }, [bindingsQuery.data, search]);
+  }, [mergedBindingItems, search]);
 
   const mcpStats = useMemo(() => {
-    const items = bindingsQuery.data?.items || [];
+    const items = mergedBindingItems;
     return {
       total: items.length,
       shown: mcpItems.length,
       bound: Object.values(bindingDrafts).filter((binding) => binding.mode !== 'disabled').length,
     };
-  }, [bindingDrafts, bindingsQuery.data, mcpItems.length]);
+  }, [bindingDrafts, mergedBindingItems, mcpItems.length]);
 
-  const mcpColumns = useMemo<ColumnsType<AgentMcpBindingView>>(
+  const mcpColumns = useMemo<ColumnsType<MergedMcpBindingItem>>(
     () => [
       {
         title: t('table.name'),
@@ -298,8 +317,8 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         width: 180,
         render: (_, item) => (
           <Space size={[4, 4]} wrap>
-            {bindingConditionEntries(item.conditions).length > 0 ? (
-              bindingConditionEntries(item.conditions).map(([label, value]) => (
+            {bindingConditionEntries(item).length > 0 ? (
+              bindingConditionEntries(item).map(([label, value]) => (
                 <Tag key={`${label}:${value}`}>{`${label}=${value}`}</Tag>
               ))
             ) : (
@@ -315,21 +334,23 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         render: (_, item) => (
           <Space direction="vertical" size={6} className="mcp-binding-policy">
             <Space size={4} wrap>
-              {item.tool_allowlist.length > 0 ? (
+              {allVariantsUseAllowlist(item) ? (
                 <Tag color="blue">
-                  {t('agent.mcpAllowlistCount', { count: item.tool_allowlist.length })}
+                  {t('agent.mcpAllowlistCount', { count: item.variants[0]?.tool_allowlist.length || 0 })}
                 </Tag>
               ) : (
                 <Tag>{t('agent.mcpAllTools')}</Tag>
               )}
-              {item.tool_blocklist.length > 0 ? (
+              {item.variants.some((variant) => variant.tool_blocklist.length > 0) ? (
                 <Tag color="orange">
-                  {t('agent.mcpBlocklistCount', { count: item.tool_blocklist.length })}
+                  {t('agent.mcpBlocklistCount', {
+                    count: Math.max(...item.variants.map((variant) => variant.tool_blocklist.length)),
+                  })}
                 </Tag>
               ) : null}
             </Space>
             <Typography.Text type="secondary" className="mcp-binding-meta">
-              {toolPolicyPreview(item.tool_allowlist, item.tool_blocklist)}
+              {toolPolicyPreview(item)}
             </Typography.Text>
           </Space>
         ),
@@ -375,11 +396,8 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
                   ...current,
                   [bindingRowKey(item)]: {
                     ...(current[bindingRowKey(item)] || {
-                      binding_id: item.binding_id,
                       mcp_id: item.mcp.id,
-                      conditions: item.conditions,
-                      tool_allowlist: item.tool_allowlist,
-                      tool_blocklist: item.tool_blocklist,
+                      variants: item.variants,
                     }),
                     mode: value as McpBindingMode,
                   },
@@ -469,25 +487,118 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
   );
 }
 
-function bindingRowKey(item: AgentMcpBindingView): string {
-  return item.binding_id || `${item.mcp.id}::__default__`;
+function bindingRowKey(item: MergedMcpBindingItem): string {
+  return item.mcp.id;
 }
 
-function bindingConditionEntries(conditions: BindingConditions): Array<[string, string]> {
-  return [
-    ['task_profile', conditions.task_profile || ''],
-    ['project_source_type', conditions.project_source_type || ''],
-    ['runtime_provider', conditions.runtime_provider || ''],
-    ['schedule_mode', conditions.schedule_mode || ''],
-  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+function mergeAgentMcpBindings(items: AgentMcpBindingView[]): MergedMcpBindingItem[] {
+  const grouped = new Map<string, MergedMcpBindingItem>();
+  for (const item of items) {
+    const existing = grouped.get(item.mcp.id);
+    const variant = {
+      binding_id: item.binding_id,
+      conditions: item.conditions,
+      tool_allowlist: item.tool_allowlist,
+      tool_blocklist: item.tool_blocklist,
+    };
+    if (existing) {
+      existing.variants.push(variant);
+      existing.mode = mergeBindingModes(existing.mode, item.mode);
+      existing.bindable = existing.bindable && item.bindable;
+      existing.unavailable_reason = existing.unavailable_reason || item.unavailable_reason;
+      continue;
+    }
+    grouped.set(item.mcp.id, {
+      mcp: item.mcp,
+      mode: item.mode,
+      bindable: item.bindable,
+      unavailable_reason: item.unavailable_reason,
+      variants: [variant],
+    });
+  }
+  return Array.from(grouped.values());
 }
 
-function toolPolicyPreview(allowlist: string[], blocklist: string[]): string {
+function mergeBindingModes(left: McpBindingMode, right: McpBindingMode): McpBindingMode {
+  if (left === right) {
+    return left;
+  }
+  if (left === 'disabled' && right === 'disabled') {
+    return 'disabled';
+  }
+  if (left === 'required' && right === 'required') {
+    return 'required';
+  }
+  return 'optional';
+}
+
+function bindingConditionEntries(item: MergedMcpBindingItem): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  const hasPlanVariant = item.variants.some(
+    (variant) => normalizeConditionValue(variant.conditions.task_profile) === 'chatos_plan',
+  );
+  const hasDefaultVariant = item.variants.some(
+    (variant) => !normalizeConditionValue(variant.conditions.task_profile),
+  );
+
+  if (hasDefaultVariant && item.variants.length > 1) {
+    entries.push(['mode', '普通模式']);
+  }
+  if (hasPlanVariant) {
+    entries.push(['mode', '规划模式']);
+  }
+
+  for (const [label, value] of item.variants.flatMap((variant) => [
+    ['project_source_type', variant.conditions.project_source_type || ''] as [string, string],
+    ['schedule_mode', variant.conditions.schedule_mode || ''] as [string, string],
+  ])) {
+    if (value && !entries.some((entry) => entry[0] === label && entry[1] === value)) {
+      entries.push([label, value]);
+    }
+  }
+  return entries;
+}
+
+function allVariantsUseAllowlist(item: MergedMcpBindingItem): boolean {
+  return item.variants.every((variant) => variant.tool_allowlist.length > 0);
+}
+
+function toolPolicyPreview(item: MergedMcpBindingItem): string {
+  if (item.variants.length === 1) {
+    return renderToolPolicyText(
+      item.variants[0]?.tool_allowlist || [],
+      item.variants[0]?.tool_blocklist || [],
+    );
+  }
+  return item.variants
+    .map((variant) => {
+      const label = variantDisplayLabel(variant.conditions, item.variants.length);
+      return `${label}: ${renderToolPolicyText(variant.tool_allowlist, variant.tool_blocklist)}`;
+    })
+    .join(' · ');
+}
+
+function variantDisplayLabel(conditions: BindingConditions, variantCount: number): string {
+  const taskProfile = normalizeConditionValue(conditions.task_profile);
+  if (taskProfile === 'chatos_plan') {
+    return '规划';
+  }
+  if (!taskProfile && variantCount > 1) {
+    return '普通';
+  }
+  return '规则';
+}
+
+function renderToolPolicyText(allowlist: string[], blocklist: string[]): string {
   const parts = [
     allowlist.length > 0 ? `allow: ${allowlist.slice(0, 3).join(', ')}` : 'allow: *',
     blocklist.length > 0 ? `block: ${blocklist.slice(0, 3).join(', ')}` : null,
   ].filter((value): value is string => Boolean(value));
   return parts.join(' · ');
+}
+
+function normalizeConditionValue(value: string | null | undefined): string {
+  return (value || '').trim().toLowerCase();
 }
 
 function sourceKindLabel(value: string, t: (key: string) => string): string {

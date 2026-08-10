@@ -482,11 +482,12 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
             self.task_turn_state()?.mode = None;
             return Ok(RuntimeFinalResponseAction::Accept);
         }
-        if {
+        let should_force_finalize = {
             let state = self.task_turn_state()?;
             state.project_planning_force_finalization
                 && state.project_planning_write_failures.is_empty()
-        } {
+        };
+        if should_force_finalize {
             self.task_turn_state()?.mode = None;
             return Ok(RuntimeFinalResponseAction::Accept);
         }

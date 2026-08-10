@@ -51,6 +51,118 @@ pub(super) async fn call_harness_tool(
     .map_err(|err| (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))))
 }
 
+pub(super) async fn commit_harness_edit(
+    auth: &AuthUser,
+    path: &HarnessProjectPath,
+    mut operation: Value,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let target_path = operation
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "path is required" })),
+            )
+        })?
+        .to_string();
+    if operation.get("expected_sha256").is_none() {
+        let expected_sha256 = current_harness_revision(auth, path, target_path.as_str()).await?;
+        operation["expected_sha256"] = expected_sha256.map(Value::String).unwrap_or(Value::Null);
+    }
+
+    let opened = call_harness_tool(auth, path, "open_edit_session", json!({})).await?;
+    let session_id = opened
+        .pointer("/result/session_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "Harness MCP did not return an edit session id" })),
+            )
+        })?
+        .to_string();
+    let staged = call_harness_tool(
+        auth,
+        path,
+        "stage_edit_batch",
+        json!({
+            "session_id": session_id,
+            "operations": [operation.clone()],
+        }),
+    )
+    .await;
+    if let Err(error) = staged {
+        let _ = call_harness_tool(
+            auth,
+            path,
+            "abort_edit_session",
+            json!({ "session_id": session_id }),
+        )
+        .await;
+        return Err(error);
+    }
+    let mut committed = call_harness_tool(
+        auth,
+        path,
+        "commit_edit_session",
+        json!({ "session_id": session_id }),
+    )
+    .await?;
+    decorate_session_commit_result(&mut committed, target_path.as_str(), &operation);
+    Ok(committed)
+}
+
+async fn current_harness_revision(
+    auth: &AuthUser,
+    path: &HarnessProjectPath,
+    target_path: &str,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    match call_harness_tool(
+        auth,
+        path,
+        "read_file_raw",
+        json!({ "path": target_path, "with_line_numbers": false }),
+    )
+    .await
+    {
+        Ok(value) if value.get("status").and_then(Value::as_str) == Some("not_found") => Ok(None),
+        Ok(value) => value
+            .get("sha256")
+            .and_then(Value::as_str)
+            .map(|sha| Some(sha.to_string()))
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": "Harness MCP read did not return sha256" })),
+                )
+            }),
+        Err(error) if error_text(&error).contains("Target is not a file") => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn decorate_session_commit_result(committed: &mut Value, path: &str, operation: &Value) {
+    let result = committed
+        .as_object_mut()
+        .and_then(|payload| payload.get_mut("result"))
+        .and_then(Value::as_object_mut);
+    let Some(result) = result else {
+        return;
+    };
+    result.insert("path".to_string(), Value::String(path.to_string()));
+    if let Some(content) = operation.get("content").and_then(Value::as_str) {
+        result.insert("bytes".to_string(), json!(content.len()));
+    }
+    if operation.get("kind").and_then(Value::as_str) == Some("delete") {
+        result.insert("deleted".to_string(), Value::Bool(true));
+    }
+}
+
+fn error_text(error: &(StatusCode, Json<Value>)) -> String {
+    error.1 .0.to_string()
+}
+
 pub(super) async fn find_harness_entries(
     auth: &AuthUser,
     root: &HarnessProjectPath,

@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use chatos_plugin_management_sdk::SystemAgentKey;
 use crate::services::TaskRunnerCapabilityPolicy;
+use chatos_plugin_management_sdk::SystemAgentKey;
 
 mod mcp_inputs;
 mod mcp_management_gateway;
@@ -125,12 +125,10 @@ pub(super) async fn prepare_model_execution(
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
     let mcp_management_gateway =
-        resolve_mcp_management_gateway(task, run, task_agent_key, sandbox_context.as_ref())
-            .await?;
+        resolve_mcp_management_gateway(task, run, task_agent_key, sandbox_context.as_ref()).await?;
     let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
-    let plugin_tool_lifecycle_hook = prepared_plugin_runtime.tool_lifecycle_hook(
-        task_agent_key.as_str(),
-    );
+    let plugin_tool_lifecycle_hook =
+        prepared_plugin_runtime.tool_lifecycle_hook(task_agent_key.as_str());
     let mut prefixed_input_items =
         mcp_provider_skills_prefixed_input_items(gateway_provider_skills_prompt);
     prefixed_input_items.extend(prepared_plugin_runtime.prompt_items.clone());
@@ -508,9 +506,12 @@ mod tests {
                 tool_allowlists: Vec::new(),
                 ..Default::default()
             };
-        assert!(validate_command_target_agent(SystemAgentKey::TaskRunnerPlanPhase, &run_constraints)
-            .expect_err("Command must not upgrade the task Agent")
-            .contains("incompatible"));
+        assert!(validate_command_target_agent(
+            SystemAgentKey::TaskRunnerPlanPhase,
+            &run_constraints
+        )
+        .expect_err("Command must not upgrade the task Agent")
+        .contains("incompatible"));
     }
 
     #[test]

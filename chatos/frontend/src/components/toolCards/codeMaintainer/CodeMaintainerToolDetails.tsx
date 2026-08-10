@@ -8,13 +8,11 @@ import ListDirDetails from './ListDirDetails';
 import ReadFileDetails from './ReadFileDetails';
 import SearchMatchesDetails from './SearchMatchesDetails';
 
-const CHANGE_TOOLS = new Set([
-  'write_file',
-  'edit_file',
-  'append_file',
-  'delete_path',
-  'apply_patch',
-  'patch',
+const EDIT_SESSION_TOOLS = new Set([
+  'open_edit_session',
+  'stage_edit_batch',
+  'commit_edit_session',
+  'abort_edit_session',
 ]);
 
 interface CodeMaintainerToolDetailsProps {
@@ -50,10 +48,10 @@ export const CodeMaintainerToolDetails: React.FC<CodeMaintainerToolDetailsProps>
     );
   }
 
-  if (CHANGE_TOOLS.has(displayName)) {
+  if (EDIT_SESSION_TOOLS.has(displayName)) {
     return (
       <div className="tool-detail-stack">
-        <ChangeOperationDetails displayName={displayName} result={result} />
+        <ChangeOperationDetails result={result} />
       </div>
     );
   }

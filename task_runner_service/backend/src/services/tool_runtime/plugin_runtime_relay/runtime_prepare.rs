@@ -36,12 +36,8 @@ impl RunService {
         .await?;
         prepare_local_non_hook_components(&mut prepared, &relay, run, effective_workspace_dir)
             .await?;
-        dispatch_required_hook_stage(
-            &prepared,
-            PluginHookEvent::SessionStart,
-            agent_key.as_str(),
-        )
-        .await?;
+        dispatch_required_hook_stage(&prepared, PluginHookEvent::SessionStart, agent_key.as_str())
+            .await?;
         for session in &prepared.sessions {
             session.record_ui_ready();
         }

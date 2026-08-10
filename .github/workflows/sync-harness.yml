@@ -4,11 +4,6 @@
 name: Sync GitHub To Harness
 
 on:
-  push:
-    branches:
-      - main
-      - master
-      - "2.*"
   workflow_dispatch:
     inputs:
       harness_branch:

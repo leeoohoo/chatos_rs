@@ -120,8 +120,7 @@ async fn resolve_policy(
 ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
     let runtime_context = runtime_context.unwrap_or_default();
     let agent_key = resolved_task_runner_agent_key(agent_key, &runtime_context);
-    let portable_uses_local =
-        runtime_context.uses_local_connector();
+    let portable_uses_local = runtime_context.uses_local_connector();
     let runtime_device_id = runtime_context.device_id.clone();
     let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id)
         .with_runtime_context(
@@ -252,7 +251,9 @@ fn task_owner_user_id(task: &TaskRecord) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolved_task_runner_agent_key, runtime_context_for_project, TaskRunnerPolicyRuntimeContext};
+    use super::{
+        resolved_task_runner_agent_key, runtime_context_for_project, TaskRunnerPolicyRuntimeContext,
+    };
     use chatos_plugin_management_sdk::SystemAgentKey;
 
     #[test]

@@ -66,7 +66,9 @@ pub(super) fn resource_visible_in_runtime(
         || (visibility == VISIBILITY_SYSTEM_PRIVATE
             && matches!(
                 binding.binding_scope.as_str(),
-                BINDING_SCOPE_SYSTEM_REQUIRED | BINDING_SCOPE_GLOBAL_DEFAULT
+                BINDING_SCOPE_ADMIN_OVERRIDE
+                    | BINDING_SCOPE_SYSTEM_REQUIRED
+                    | BINDING_SCOPE_GLOBAL_DEFAULT
             ))
 }
 

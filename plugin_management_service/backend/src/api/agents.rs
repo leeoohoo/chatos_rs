@@ -137,9 +137,6 @@ pub(super) async fn update_agent_mcp_bindings(
             ));
         }
         validate_mcp_binding_mode(selection.mode.as_str())?;
-        if selection.mode == MCP_BINDING_MODE_DISABLED {
-            continue;
-        }
         selection.tool_allowlist =
             normalize_string_list(std::mem::take(&mut selection.tool_allowlist));
         selection.tool_blocklist =
@@ -171,18 +168,23 @@ pub(super) async fn update_agent_mcp_bindings(
     for (index, (mcp_id, mode, conditions, tool_allowlist, tool_blocklist)) in
         selected.into_iter().enumerate()
     {
-        let (enabled, required, binding_scope) = mcp_binding_state(mode.as_str())?;
+        let (enabled, required) = match mode.as_str() {
+            MCP_BINDING_MODE_DISABLED => (false, false),
+            MCP_BINDING_MODE_OPTIONAL => (true, false),
+            MCP_BINDING_MODE_REQUIRED => (true, true),
+            _ => unreachable!("validated MCP binding mode"),
+        };
         let now = now_rfc3339();
         let record = AgentBindingRecord {
             id: agent_resource_binding_id(
                 agent_key.as_str(),
-                binding_scope,
+                BINDING_SCOPE_ADMIN_OVERRIDE,
                 RESOURCE_KIND_MCP,
                 mcp_id.as_str(),
                 &conditions,
             ),
             agent_key: agent_key.clone(),
-            binding_scope: binding_scope.to_string(),
+            binding_scope: BINDING_SCOPE_ADMIN_OVERRIDE.to_string(),
             owner_user_id: None,
             resource_kind: RESOURCE_KIND_MCP.to_string(),
             resource_id: mcp_id,

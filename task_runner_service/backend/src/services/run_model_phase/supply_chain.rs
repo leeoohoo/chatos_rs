@@ -24,12 +24,27 @@ pub(super) struct SupplyChainEvidenceState {
     rebuilds: Vec<RebuildEvidence>,
     audit: Option<AuditEvidence>,
     package_manifest: Option<NodePackageManifestEvidence>,
-    pending_package_manifest_updates: BTreeMap<String, Option<NodePackageManifestEvidence>>,
+    pending_package_manifest_events: BTreeMap<String, PackageManifestSessionEvent>,
+    staged_package_manifest_updates: BTreeMap<String, Option<NodePackageManifestEvidence>>,
 }
 
 #[derive(Debug, Clone)]
 struct NodePackageManifestEvidence {
     requirements: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+enum PackageManifestSessionEvent {
+    Stage {
+        session_id: String,
+        update: Option<NodePackageManifestEvidence>,
+    },
+    Commit {
+        session_id: String,
+    },
+    Abort {
+        session_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -107,27 +122,41 @@ impl SupplyChainEvidenceState {
                 .as_str()
                 .and_then(|value| serde_json::from_str::<Value>(value).ok())
                 .unwrap_or(arguments);
-            let Some(update) = package_manifest_update_from_tool_call(name, &arguments) else {
+            let Some(event) = package_manifest_event_from_tool_call(name, &arguments) else {
                 continue;
             };
-            self.pending_package_manifest_updates
-                .insert(invocation_id.to_string(), update);
+            self.pending_package_manifest_events
+                .insert(invocation_id.to_string(), event);
         }
     }
 
     pub(super) fn observe_tool_result(&mut self, payload: &Value) {
         let mut applied_manifest_update = false;
         if let Some(invocation_id) = payload.get("invocation_id").and_then(Value::as_str) {
-            if payload.get("success").and_then(Value::as_bool) == Some(true)
-                && payload.get("is_error").and_then(Value::as_bool) != Some(true)
-            {
-                if let Some(update) = self.pending_package_manifest_updates.remove(invocation_id) {
-                    applied_manifest_update = true;
-                    self.node_project_observed = true;
-                    self.package_manifest = update;
+            let succeeded = payload.get("success").and_then(Value::as_bool) == Some(true)
+                && payload.get("is_error").and_then(Value::as_bool) != Some(true);
+            if let Some(event) = self.pending_package_manifest_events.remove(invocation_id) {
+                match event {
+                    PackageManifestSessionEvent::Stage { session_id, update } if succeeded => {
+                        self.staged_package_manifest_updates
+                            .insert(session_id, update);
+                    }
+                    PackageManifestSessionEvent::Commit { session_id } => {
+                        let update = self.staged_package_manifest_updates.remove(&session_id);
+                        if succeeded {
+                            if let Some(update) = update {
+                                applied_manifest_update = true;
+                                self.node_project_observed = true;
+                                self.package_manifest = update;
+                            }
+                        }
+                    }
+                    PackageManifestSessionEvent::Abort { session_id } if succeeded => {
+                        self.staged_package_manifest_updates.remove(&session_id);
+                    }
+                    PackageManifestSessionEvent::Stage { .. }
+                    | PackageManifestSessionEvent::Abort { .. } => {}
                 }
-            } else {
-                self.pending_package_manifest_updates.remove(invocation_id);
             }
         }
         if payload.get("success").and_then(Value::as_bool) == Some(true)
@@ -409,53 +438,53 @@ pub(super) fn policy_guidance(policy: &NodeSupplyChainPolicy) -> Value {
     })
 }
 
-fn package_manifest_update_from_tool_call(
+fn package_manifest_event_from_tool_call(
     name: &str,
     arguments: &Value,
-) -> Option<Option<NodePackageManifestEvidence>> {
-    if name.ends_with("apply_patch") || name.ends_with("patch") {
-        let patch = arguments.get("patch").and_then(Value::as_str)?;
-        return patch.contains("package.json").then_some(None);
+) -> Option<PackageManifestSessionEvent> {
+    let session_id = arguments.get("session_id").and_then(Value::as_str)?;
+    if name.ends_with("commit_edit_session") {
+        return Some(PackageManifestSessionEvent::Commit {
+            session_id: session_id.to_string(),
+        });
     }
-    if !["write_file", "edit_file", "append_file", "delete_path"]
-        .iter()
-        .any(|suffix| name.ends_with(suffix))
-    {
+    if name.ends_with("abort_edit_session") {
+        return Some(PackageManifestSessionEvent::Abort {
+            session_id: session_id.to_string(),
+        });
+    }
+    if !name.ends_with("stage_edit_batch") {
         return None;
     }
-    let path = arguments
-        .get("path")
-        .or_else(|| arguments.get("relative_path"))
-        .and_then(Value::as_str)?;
-    if !path.replace('\\', "/").ends_with("package.json") {
-        return None;
-    }
-    if name.ends_with("write_file") {
-        return Some(
-            arguments
+    let operations = arguments.get("operations").and_then(Value::as_array)?;
+    let mut touched = false;
+    let mut update = None;
+    for operation in operations {
+        let path = operation.get("path").and_then(Value::as_str)?;
+        if !path.replace('\\', "/").ends_with("package.json") {
+            continue;
+        }
+        touched = true;
+        update = if operation.get("kind").and_then(Value::as_str) == Some("write") {
+            operation
                 .get("content")
                 .and_then(Value::as_str)
-                .and_then(parse_package_manifest),
-        );
+                .and_then(parse_package_manifest)
+        } else {
+            None
+        };
     }
-    Some(None)
+    touched.then(|| PackageManifestSessionEvent::Stage {
+        session_id: session_id.to_string(),
+        update,
+    })
 }
 
 fn result_mutates_package_manifest(payload: &Value) -> bool {
     let Some(name) = payload.get("name").and_then(Value::as_str) else {
         return false;
     };
-    [
-        "write_file",
-        "edit_file",
-        "append_file",
-        "delete_path",
-        "apply_patch",
-        "patch",
-    ]
-    .iter()
-    .any(|suffix| name.ends_with(suffix))
-        && value_mentions_package_manifest(payload)
+    name.ends_with("commit_edit_session") && value_mentions_package_manifest(payload)
 }
 
 fn value_mentions_package_manifest(value: &Value) -> bool {
@@ -1007,26 +1036,44 @@ mod tests {
     }
 
     #[test]
-    fn package_manifest_write_is_verified_only_after_successful_tool_result() {
+    fn package_manifest_write_is_verified_only_after_successful_session_commit() {
         let mut evidence = SupplyChainEvidenceState::default();
         evidence.observe_tool_calls(&json!([{
-            "invocation_id": "inv-1",
-            "name": "harness_code_write_file",
+            "invocation_id": "inv-stage",
+            "name": "harness_code_stage_edit_batch",
             "arguments": serde_json::to_string(&json!({
-                "path": "package.json",
-                "content": serde_json::to_string(&json!({
-                    "dependencies": {"react": "^19.2.7"},
-                    "devDependencies": {"vite": "^8.1.4"}
-                })).expect("manifest")
+                "session_id": "session-1",
+                "operations": [{
+                    "kind": "write",
+                    "path": "package.json",
+                    "content": serde_json::to_string(&json!({
+                        "dependencies": {"react": "^19.2.7"},
+                        "devDependencies": {"vite": "^8.1.4"}
+                    })).expect("manifest")
+                }]
             })).expect("arguments")
         }]));
         assert!(evidence.package_manifest.is_none());
 
         evidence.observe_tool_result(&json!({
-            "invocation_id": "inv-1",
-            "name": "harness_code_write_file",
+            "invocation_id": "inv-stage",
+            "name": "harness_code_stage_edit_batch",
             "success": true,
             "is_error": false
+        }));
+        assert!(evidence.package_manifest.is_none());
+
+        evidence.observe_tool_calls(&json!([{
+            "invocation_id": "inv-commit",
+            "name": "harness_code_commit_edit_session",
+            "arguments": {"session_id": "session-1"}
+        }]));
+        evidence.observe_tool_result(&json!({
+            "invocation_id": "inv-commit",
+            "name": "harness_code_commit_edit_session",
+            "success": true,
+            "is_error": false,
+            "result": {"committed_paths": ["package.json"]}
         }));
 
         assert_eq!(
@@ -1043,16 +1090,36 @@ mod tests {
     fn later_partial_manifest_edit_invalidates_baseline_until_final_read() {
         let mut evidence = evidence_with_manifest();
         evidence.observe_tool_calls(&json!([{
-            "invocation_id": "inv-edit",
-            "name": "harness_code_edit_file",
-            "arguments": {"path": "package.json", "old_text": "^19.2.7", "new_text": "^18.0.0"}
+            "invocation_id": "inv-stage",
+            "name": "harness_code_stage_edit_batch",
+            "arguments": {
+                "session_id": "session-edit",
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "package.json",
+                    "old_text": "^19.2.7",
+                    "new_text": "^18.0.0"
+                }]
+            }
         }]));
         evidence.observe_tool_result(&json!({
-            "invocation_id": "inv-edit",
-            "name": "harness_code_edit_file",
+            "invocation_id": "inv-stage",
+            "name": "harness_code_stage_edit_batch",
+            "success": true,
+            "is_error": false
+        }));
+        assert!(evidence.package_manifest.is_some());
+        evidence.observe_tool_calls(&json!([{
+            "invocation_id": "inv-commit",
+            "name": "harness_code_commit_edit_session",
+            "arguments": {"session_id": "session-edit"}
+        }]));
+        evidence.observe_tool_result(&json!({
+            "invocation_id": "inv-commit",
+            "name": "harness_code_commit_edit_session",
             "success": true,
             "is_error": false,
-            "result": {"path": "package.json"}
+            "result": {"committed_paths": ["package.json"]}
         }));
         assert!(evidence.package_manifest.is_none());
 
@@ -1075,6 +1142,46 @@ mod tests {
         );
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("react"));
+    }
+
+    #[test]
+    fn aborted_manifest_session_discards_staged_evidence() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_calls(&json!([{
+            "invocation_id": "inv-stage",
+            "name": "harness_code_stage_edit_batch",
+            "arguments": {
+                "session_id": "session-abort",
+                "operations": [{
+                    "kind": "delete",
+                    "path": "package.json"
+                }]
+            }
+        }]));
+        evidence.observe_tool_result(&json!({
+            "invocation_id": "inv-stage",
+            "name": "harness_code_stage_edit_batch",
+            "success": true,
+            "is_error": false
+        }));
+        assert!(evidence
+            .staged_package_manifest_updates
+            .contains_key("session-abort"));
+
+        evidence.observe_tool_calls(&json!([{
+            "invocation_id": "inv-abort",
+            "name": "harness_code_abort_edit_session",
+            "arguments": {"session_id": "session-abort"}
+        }]));
+        evidence.observe_tool_result(&json!({
+            "invocation_id": "inv-abort",
+            "name": "harness_code_abort_edit_session",
+            "success": true,
+            "is_error": false
+        }));
+
+        assert!(evidence.staged_package_manifest_updates.is_empty());
+        assert!(evidence.package_manifest.is_some());
     }
 
     #[test]

@@ -69,6 +69,7 @@ pub const SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE: &str = "local_connector_bun
 pub const BINDING_SCOPE_GLOBAL_DEFAULT: &str = "global_default";
 pub const BINDING_SCOPE_USER_OVERRIDE: &str = "user_override";
 pub const BINDING_SCOPE_SYSTEM_REQUIRED: &str = "system_required";
+pub const BINDING_SCOPE_ADMIN_OVERRIDE: &str = "admin_override";
 
 pub const MCP_BINDING_MODE_DISABLED: &str = "disabled";
 pub const MCP_BINDING_MODE_OPTIONAL: &str = "optional";

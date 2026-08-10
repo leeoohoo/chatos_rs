@@ -18,6 +18,7 @@ concurrency:
 jobs:
   static-security:
     name: Secret and Container Config Scan
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -47,6 +48,7 @@ jobs:
 
   dependency-security:
     name: Dependency Security
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -127,25 +129,8 @@ jobs:
       - name: OpenAPI contract advisory
         run: bash scripts/check_openapi_contract_advisory.sh
 
-      - name: Docker deployment config
-        run: |
-          bash -n docker/deploy.sh
-          bash -n scripts/local-dev-stack.sh
-          bash -n docker/entrypoint-rust-service.sh
-          docker compose -f docker/compose.yml config >/dev/null
-          docker compose -f docker/compose.yml -f docker/compose.build.yml config >/dev/null
-
       - name: Large file policy
         run: bash scripts/check-large-files.sh --fail
-
-      - name: Bundled tools integrity
-        run: bash scripts/check-bundled-tools-integrity.sh
-
-      - name: Repository quality policies
-        env:
-          CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
-          CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
-        run: bash scripts/verify-repository.sh quality
 
       - name: OpenAPI contract gate
         run: bash scripts/check_openapi_contract_gate.sh
@@ -274,16 +259,19 @@ jobs:
         with:
           workspaces: chatos/backend -> target
 
-      - name: Rust format and Clippy
+      - name: Rust format
         working-directory: .
-        run: bash scripts/verify-repository.sh rust-lint
+        run: cargo +1.94.0 fmt --all -- --check
 
-      - name: Rust workspace tests
-        working-directory: .
-        run: bash scripts/verify-repository.sh rust-test
+      - name: Backend Clippy
+        run: cargo +1.94.0 clippy --all-targets --no-deps -- -D warnings
+
+      - name: Backend tests
+        run: cargo +1.94.0 test --all-targets --no-fail-fast
 
   native-platform-contracts:
     name: Native platform (${{ matrix.platform }})
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

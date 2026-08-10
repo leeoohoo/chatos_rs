@@ -4,7 +4,6 @@
 import React from 'react';
 import { useI18n } from '../i18n/I18nProvider';
 import { translateToolTitle } from '../i18n/toolText';
-import { getToolDisplayName } from '../lib/tools/displayName';
 import { shouldHideArgumentKey } from './toolArgumentsDetails/argumentVisibility';
 import {
   renderObjectCard,
@@ -15,7 +14,6 @@ import {
 } from './toolArgumentsDetails/cards';
 import {
   asRecord,
-  asString,
   formatCardTitle,
   formatLabel,
   formatPrimitive,
@@ -30,28 +28,11 @@ interface ToolArgumentsDetailsProps {
   rawToolName?: string;
 }
 
-const renderPatchInput = (
-  argumentsValue: Record<string, unknown>,
-  locale: 'zh-CN' | 'en-US',
-) => {
-  const patchText = asString(argumentsValue.patch).trim();
-  if (!patchText) {
-    return null;
-  }
-
-  return (
-    <div className="tool-detail-stack">
-      {renderTextBlock(translateToolTitle('Patch payload', locale), patchText)}
-    </div>
-  );
-};
-
 export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
   argumentsValue,
   rawToolName,
 }) => {
   const { locale } = useI18n();
-  const displayName = rawToolName ? getToolDisplayName(rawToolName) : '';
 
   if (typeof argumentsValue === 'string') {
     return (
@@ -87,10 +68,6 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
   const record = asRecord(argumentsValue);
   if (!record) {
     return null;
-  }
-
-  if (displayName === 'apply_patch' || displayName === 'patch') {
-    return renderPatchInput(record, locale);
   }
 
   const summaryRows: Array<{ key: string; value: string }> = [];
@@ -181,7 +158,11 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
   return (
     <div className="tool-detail-stack">
       {summaryCard}
-      {validSections}
+      {validSections.map((section, index) => (
+        <React.Fragment key={`tool-argument-section-${index}`}>
+          {section}
+        </React.Fragment>
+      ))}
     </div>
   );
 };

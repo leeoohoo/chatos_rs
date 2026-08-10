@@ -6,20 +6,17 @@ mod diff;
 mod edit;
 mod fs_ops;
 mod outcome;
-mod patch;
 mod registration_read;
 mod registration_write;
 mod revision;
-mod session;
 mod service;
+mod session;
 mod storage;
 #[cfg(test)]
 mod tests;
 mod utils;
 
-pub use self::diff::{extract_patch_targets, PatchTarget};
 pub use self::outcome::{classify_file_modification_error, FileModificationOutcome};
-pub use self::patch::{apply_patch_limited, ApplyPatchResult};
 pub use self::service::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
 };

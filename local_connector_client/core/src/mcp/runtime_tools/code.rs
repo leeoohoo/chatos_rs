@@ -22,6 +22,7 @@ pub(crate) fn code_maintainer_service_for_root(
     enable_read_tools: bool,
     enable_write_tools: bool,
 ) -> Result<CodeMaintainerService> {
+    let session_scope = project_id.clone();
     CodeMaintainerService::new(CodeMaintainerOptions {
         server_name: "local_connector_code_maintainer".to_string(),
         root: root.to_path_buf(),
@@ -32,8 +33,8 @@ pub(crate) fn code_maintainer_service_for_root(
         search_limit: MAX_LOCAL_MCP_SEARCH_RESULTS,
         enable_read_tools,
         enable_write_tools,
-        conversation_id: None,
-        run_id: None,
+        conversation_id: session_scope.clone(),
+        run_id: session_scope,
         db_path: None,
         hooks: None,
     })
@@ -46,12 +47,24 @@ pub(crate) fn normalize_code_maintainer_arguments(
     tool_name: &str,
     mut arguments: Value,
 ) -> Result<Value> {
-    if matches!(tool_name, "apply_patch" | "patch") {
-        return Ok(arguments);
-    }
     let Some(map) = arguments.as_object_mut() else {
         return Ok(arguments);
     };
+    if tool_name == "stage_edit_batch" {
+        if let Some(operations) = map.get_mut("operations").and_then(Value::as_array_mut) {
+            for operation in operations {
+                let Some(operation) = operation.as_object_mut() else {
+                    continue;
+                };
+                let Some(path) = operation.get("path").and_then(Value::as_str) else {
+                    continue;
+                };
+                let normalized = normalize_request_project_relative_path(workspace, request, path)?;
+                operation.insert("path".to_string(), Value::String(normalized));
+            }
+        }
+        return Ok(arguments);
+    }
     if let Some(path) = map.get("path").and_then(Value::as_str) {
         let normalized = normalize_request_project_relative_path(workspace, request, path)?;
         map.insert("path".to_string(), Value::String(normalized));

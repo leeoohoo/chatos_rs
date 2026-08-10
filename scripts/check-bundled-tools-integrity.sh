@@ -78,10 +78,11 @@ while read -r checksum rel extra; do
     echo "Manifest references missing bundled tool: $rel" >&2
     exit 1
   fi
+  expected_checksum="$(printf '%s' "$checksum" | tr '[:upper:]' '[:lower:]')"
   actual="$(sha256_file "$rel")"
-  if [[ "$actual" != "${checksum,,}" ]]; then
+  if [[ "$actual" != "$expected_checksum" ]]; then
     echo "Bundled tool checksum mismatch: $rel" >&2
-    echo "  expected: ${checksum,,}" >&2
+    echo "  expected: $expected_checksum" >&2
     echo "  actual:   $actual" >&2
     exit 1
   fi

@@ -201,6 +201,48 @@ fn stage_and_commit_create_new_file_from_absent_path() {
 }
 
 #[test]
+fn failed_stage_batch_does_not_leave_partial_session_changes() {
+    let (service, root) = build_service(true);
+    let session_id = open_session(&service, None);
+
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [
+                    {
+                        "kind": "write",
+                        "path": "atomic.txt",
+                        "content": "first",
+                        "expected_sha256": null
+                    },
+                    {
+                        "kind": "replace_text",
+                        "path": "atomic.txt",
+                        "old_text": "missing",
+                        "new_text": "second",
+                        "expected_sha256": null
+                    }
+                ]
+            }),
+            None,
+        )
+        .expect_err("failed operation must reject the whole stage batch");
+
+    let committed = service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            None,
+        )
+        .expect("commit empty session");
+    let payload = response_json(&committed);
+    assert_eq!(payload["changed"], false);
+    assert!(!root.join("atomic.txt").exists());
+}
+
+#[test]
 fn stage_existing_file_requires_latest_read_revision() {
     let (service, root) = build_service(true);
     let path = root.join("revision.txt");

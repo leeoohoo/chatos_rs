@@ -127,12 +127,9 @@ pub(super) fn automatic_file_write_recovery_calls(
 
 fn is_code_maintainer_write_tool(name: &str) -> bool {
     name.contains("code_maintainer")
-        && [
-            "stage_edit_batch",
-            "commit_edit_session",
-        ]
-        .iter()
-        .any(|suffix| name.ends_with(suffix))
+        && ["stage_edit_batch", "commit_edit_session"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
 }
 
 fn structured_stale_context_recoveries(content: &str) -> Vec<(String, String, Value)> {
@@ -144,9 +141,7 @@ fn structured_stale_context_recoveries(content: &str) -> Vec<(String, String, Va
                 .next()
                 .and_then(Result::ok)
         })
-        .find(|payload| {
-            payload.get("category").and_then(Value::as_str) == Some("stale_context")
-        })
+        .find(|payload| payload.get("category").and_then(Value::as_str) == Some("stale_context"))
         .map(recovery_specs_from_payload)
         .unwrap_or_default()
 }
@@ -171,7 +166,10 @@ fn recovery_specs_from_payload(payload: Value) -> Vec<(String, String, Value)> {
     specs
 }
 
-fn recovery_spec_from_value(path: &str, recovery: Option<&Value>) -> Option<(String, String, Value)> {
+fn recovery_spec_from_value(
+    path: &str,
+    recovery: Option<&Value>,
+) -> Option<(String, String, Value)> {
     let path = path.trim();
     if path.is_empty() {
         return None;

@@ -19,11 +19,7 @@ type FileRangeRead = (String, u64, String, usize, usize, usize, String);
 #[derive(Clone, Debug)]
 pub struct FsOps {
     root: PathBuf,
-    #[allow(dead_code)]
-    allow_writes: bool,
     max_file_bytes: i64,
-    #[allow(dead_code)]
-    max_write_bytes: i64,
     search_limit: usize,
 }
 
@@ -36,27 +32,18 @@ pub struct FileEntry {
     pub mtime_ms: u128,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, serde::Serialize)]
-pub struct DeleteResult {
-    pub path: String,
-    pub deleted: bool,
-}
-
 impl FsOps {
     pub fn new(
         root: PathBuf,
-        allow_writes: bool,
+        _allow_writes: bool,
         max_file_bytes: i64,
-        max_write_bytes: i64,
+        _max_write_bytes: i64,
         search_limit: usize,
     ) -> Self {
         let root = root.canonicalize().unwrap_or(root);
         Self {
             root,
-            allow_writes,
             max_file_bytes,
-            max_write_bytes,
             search_limit,
         }
     }
@@ -223,87 +210,6 @@ impl FsOps {
             max_file_bytes,
         )
     }
-
-    #[allow(dead_code)]
-    pub fn write_file(&self, rel_path: &str, content: &str) -> Result<WriteResult, String> {
-        if !self.allow_writes {
-            return Err("Writes are disabled.".to_string());
-        }
-        let target = self.resolve_path(rel_path)?;
-        let buffer = content.as_bytes();
-        if buffer.len() as i64 > self.max_write_bytes {
-            return Err("Write exceeds max-write-bytes limit.".to_string());
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        fs::write(&target, buffer).map_err(|err| err.to_string())?;
-        Ok(WriteResult {
-            bytes: buffer.len() as i64,
-            sha256: sha256_bytes(buffer),
-            path: rel_path.to_string(),
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn append_file(&self, rel_path: &str, content: &str) -> Result<WriteResult, String> {
-        if !self.allow_writes {
-            return Err("Writes are disabled.".to_string());
-        }
-        let target = self.resolve_path(rel_path)?;
-        let buffer = content.as_bytes();
-        if buffer.len() as i64 > self.max_write_bytes {
-            return Err("Write exceeds max-write-bytes limit.".to_string());
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        use std::io::Write;
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&target)
-            .map_err(|err| err.to_string())?;
-        file.write_all(buffer).map_err(|err| err.to_string())?;
-        file.flush().map_err(|err| err.to_string())?;
-        let file_buffer = fs::read(&target).map_err(|err| err.to_string())?;
-        Ok(WriteResult {
-            bytes: file_buffer.len() as i64,
-            sha256: sha256_bytes(&file_buffer),
-            path: rel_path.to_string(),
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn delete_path(&self, rel_path: &str) -> Result<DeleteResult, String> {
-        if !self.allow_writes {
-            return Err("Writes are disabled.".to_string());
-        }
-        let target = self.resolve_path(rel_path)?;
-        if target.is_dir() {
-            fs::remove_dir_all(&target).map_err(|err| err.to_string())?;
-            return Ok(DeleteResult {
-                path: rel_path.to_string(),
-                deleted: true,
-            });
-        }
-
-        if let Ok(meta) = fs::symlink_metadata(&target) {
-            if meta.file_type().is_symlink() || meta.is_file() {
-                fs::remove_file(&target).map_err(|err| err.to_string())?;
-                return Ok(DeleteResult {
-                    path: rel_path.to_string(),
-                    deleted: true,
-                });
-            }
-            return Err("Target path is not a regular file or directory.".to_string());
-        }
-
-        Ok(DeleteResult {
-            path: rel_path.to_string(),
-            deleted: false,
-        })
-    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -311,14 +217,6 @@ pub struct SearchResult {
     pub path: String,
     pub line: usize,
     pub text: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, serde::Serialize)]
-pub struct WriteResult {
-    pub bytes: i64,
-    pub sha256: String,
-    pub path: String,
 }
 
 fn inspect_binary_prefix(buffer: &[u8], inspected_bytes: &mut usize) -> Result<(), String> {

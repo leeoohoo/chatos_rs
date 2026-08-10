@@ -159,10 +159,7 @@ impl RunService {
         let agent_key = capability_policy
             .as_ref()
             .and_then(|policy| chatos_agent::parse_system_agent_key(policy.agent_key()))
-            .unwrap_or(
-                self.resolve_task_runner_agent_key_for_task(&task)
-                    .await?,
-            );
+            .unwrap_or(self.resolve_task_runner_agent_key_for_task(&task).await?);
         let mut runtime_task = task.clone();
         if let Some(policy) = capability_policy.as_ref() {
             policy.apply_to_task(&mut runtime_task)?;

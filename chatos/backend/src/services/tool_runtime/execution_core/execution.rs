@@ -21,10 +21,9 @@ use crate::utils::abort_registry;
 const HEAVY_IO_TOOL_SESSION_LIMIT: usize = 2;
 const HEAVY_IO_TOOL_GLOBAL_LIMIT: usize = 8;
 const HEAVY_IO_TOOL_NAMES: &[&str] = &[
-    "apply_patch",
+    "abort_edit_session",
+    "commit_edit_session",
     "delete_file",
-    "delete_path",
-    "edit_file",
     "list_dir",
     "list_directory",
     "read_file",
@@ -32,6 +31,8 @@ const HEAVY_IO_TOOL_NAMES: &[&str] = &[
     "read_file_raw",
     "search_files",
     "search_text",
+    "stage_edit_batch",
+    "open_edit_session",
     "write_file",
 ];
 

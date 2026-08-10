@@ -120,46 +120,58 @@ describe('ToolCallRenderer code maintainer cards', () => {
     expect(screen.queryByText('字段')).not.toBeInTheDocument();
   });
 
-  it('normalizes builtin apply_patch names and avoids tree-table fallback', () => {
-    const patchText = '*** Begin Patch\n*** Update File: src/a.ts\n@@\n-old\n+new\n*** End Patch';
-
+  it('renders staged edit-session batches without legacy patch handling', () => {
     renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
-          name: 'code_maintainer_write_builtin__apply_patch',
+          name: 'code_maintainer_write_builtin__stage_edit_batch',
           arguments: {
-            patch: patchText,
+            session_id: 'edit_session_123',
+            operations: [
+              {
+                kind: 'replace_text',
+                path: 'src/a.ts',
+                old_text: 'oldA',
+                new_text: 'newA',
+                expected_sha256: 'abc123',
+              },
+              {
+                kind: 'replace_text',
+                path: 'src/a.ts',
+                old_text: 'oldB',
+                new_text: 'newB',
+              },
+            ],
           },
           result: {
+            outcome: 'changed',
+            changed: true,
+            changed_target_count: 1,
             result: {
-              updated: ['src/a.ts'],
-              added: [],
-              deleted: [],
+              session_id: 'edit_session_123',
+              staged_operation_count: 2,
+              batch_operation_count: 2,
+              batch_changed_paths: ['src/a.ts'],
+              pending_target_count: 1,
+              pending_paths: [
+                { path: 'src/a.ts', kind: 'file', staged_operations: 2 },
+              ],
             },
-            files: [
-              { path: 'src/a.ts', sha256: 'abc123' },
-            ],
-            message: 'Applied patch successfully.',
           },
         })}
       />,
     );
 
-    expect(screen.getByText('@apply_patch')).toBeInTheDocument();
-    expect(screen.queryByText('@builtin__apply_patch')).not.toBeInTheDocument();
+    expect(screen.getByText('@stage_edit_batch')).toBeInTheDocument();
+    expect(screen.queryByText('@builtin__stage_edit_batch')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
-    expect(screen.queryByText('Patch')).not.toBeInTheDocument();
-    expect(screen.getByText('Patch payload')).toBeInTheDocument();
-    const patchCard = screen.getByText('Patch payload').closest('.tool-detail-card') as HTMLElement;
-    const patchContent = patchCard.querySelector('pre');
-    expect(patchContent).not.toBeNull();
-    expect(patchContent).toHaveTextContent(/\*\*\* Begin Patch[\s\S]*\*\*\* End Patch/);
-    expect(screen.queryByText('Patch summary')).not.toBeInTheDocument();
-    expect(screen.queryByText('Change summary')).not.toBeInTheDocument();
-    expect(screen.queryByText('Touched files')).not.toBeInTheDocument();
-    expect(screen.queryByText('abc123')).not.toBeInTheDocument();
+    expect(screen.getByText('Operations')).toBeInTheDocument();
+    expect(screen.getByText('Session summary')).toBeInTheDocument();
+    expect(screen.getByText('Touched files')).toBeInTheDocument();
+    expect(screen.getAllByText('src/a.ts').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2')).toHaveLength(2);
     expect(screen.queryByText('字段')).not.toBeInTheDocument();
   });
 

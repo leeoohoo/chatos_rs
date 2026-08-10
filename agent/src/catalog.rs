@@ -324,9 +324,7 @@ pub const fn requires_expected_project_task_ids(key: SystemAgentKey) -> bool {
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-        SystemAgentKey::ChatosLocalConversationAgent => {
-            &CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR
-        }
+        SystemAgentKey::ChatosLocalConversationAgent => &CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR,
         SystemAgentKey::ChatosPlanningAgent => &RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
             &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR

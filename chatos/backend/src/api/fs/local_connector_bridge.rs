@@ -119,15 +119,13 @@ pub(super) async fn create_file(
     let target = local_child_relative_path(parent_path, name)?;
     let root_ref = parse_local_connector_root_path(parent_path)?;
     Some(
-        match call_local_mcp_tool(
-            root_ref.device_id.as_str(),
-            root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
-            "write_file",
+        match commit_local_connector_edit(
+            &root_ref,
             json!({
+                "kind": "write",
                 "path": target,
                 "content": content,
+                "expected_sha256": null,
             }),
         )
         .await
@@ -146,13 +144,10 @@ pub(super) async fn write_file(raw_path: &str, content: &str) -> Option<(StatusC
         .find(|part| !part.trim().is_empty())
         .unwrap_or("");
     Some(
-        match call_local_mcp_tool(
-            root_ref.device_id.as_str(),
-            root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
-            "write_file",
+        match commit_local_connector_edit(
+            &root_ref,
             json!({
+                "kind": "write",
                 "path": relative_path,
                 "content": content,
             }),
@@ -163,6 +158,120 @@ pub(super) async fn write_file(raw_path: &str, content: &str) -> Option<(StatusC
             Err(err) => err,
         },
     )
+}
+
+async fn commit_local_connector_edit(
+    root_ref: &LocalConnectorRootRef,
+    mut operation: Value,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let target_path = operation
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "path is required" })),
+            )
+        })?
+        .to_string();
+    if operation.get("expected_sha256").is_none() {
+        let expected_sha256 =
+            current_local_connector_revision(root_ref, target_path.as_str()).await?;
+        operation["expected_sha256"] = expected_sha256.map(Value::String).unwrap_or(Value::Null);
+    }
+
+    let opened = call_local_mcp_tool(
+        root_ref.device_id.as_str(),
+        root_ref.workspace_id.as_str(),
+        None,
+        &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
+        "open_edit_session",
+        json!({}),
+    )
+    .await?;
+    let session_id = opened
+        .pointer("/result/session_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "Local Connector MCP did not return an edit session id" })),
+            )
+        })?
+        .to_string();
+    let staged = call_local_mcp_tool(
+        root_ref.device_id.as_str(),
+        root_ref.workspace_id.as_str(),
+        None,
+        &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
+        "stage_edit_batch",
+        json!({
+            "session_id": session_id,
+            "operations": [operation.clone()],
+        }),
+    )
+    .await;
+    if let Err(error) = staged {
+        let _ = call_local_mcp_tool(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
+            None,
+            &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
+            "abort_edit_session",
+            json!({ "session_id": session_id }),
+        )
+        .await;
+        return Err(error);
+    }
+    let mut committed = call_local_mcp_tool(
+        root_ref.device_id.as_str(),
+        root_ref.workspace_id.as_str(),
+        None,
+        &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
+        "commit_edit_session",
+        json!({ "session_id": session_id }),
+    )
+    .await?;
+    if let Some(result) = committed
+        .as_object_mut()
+        .and_then(|payload| payload.get_mut("result"))
+        .and_then(Value::as_object_mut)
+    {
+        result.insert("path".to_string(), Value::String(target_path));
+        if let Some(content) = operation.get("content").and_then(Value::as_str) {
+            result.insert("bytes".to_string(), json!(content.len()));
+        }
+    }
+    Ok(committed)
+}
+
+async fn current_local_connector_revision(
+    root_ref: &LocalConnectorRootRef,
+    target_path: &str,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    match call_local_mcp_tool_readonly(
+        root_ref.device_id.as_str(),
+        root_ref.workspace_id.as_str(),
+        None,
+        &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
+        "read_file_raw",
+        json!({ "path": target_path, "with_line_numbers": false }),
+    )
+    .await
+    {
+        Ok(value) if value.get("status").and_then(Value::as_str) == Some("not_found") => Ok(None),
+        Ok(value) => value
+            .get("sha256")
+            .and_then(Value::as_str)
+            .map(|sha| Some(sha.to_string()))
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": "Local Connector MCP read did not return sha256" })),
+                )
+            }),
+        Err(error) => Err(error),
+    }
 }
 
 fn local_list_response(

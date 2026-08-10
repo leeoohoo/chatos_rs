@@ -40,7 +40,6 @@ pub(super) fn append_compat_aliases(service: &CodeMaintainerService, tools: &mut
             }
         }));
     }
-
 }
 
 pub(super) fn maybe_call_compat_tool(

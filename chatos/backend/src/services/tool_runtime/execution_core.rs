@@ -32,9 +32,10 @@ mod tests {
             "read_file_raw",
             "search_text",
             "list_dir",
-            "write_file",
-            "edit_file",
-            "apply_patch",
+            "open_edit_session",
+            "stage_edit_batch",
+            "commit_edit_session",
+            "abort_edit_session",
         ] {
             assert!(is_heavy_io_tool_name(name), "{name} should be IO limited");
         }

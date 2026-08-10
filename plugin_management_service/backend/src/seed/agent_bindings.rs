@@ -525,8 +525,14 @@ async fn seed_agent_resource_binding_with_policy(
         resource_id,
         &conditions,
     );
+    if existing
+        .iter()
+        .any(|binding| binding_matches_admin_override(binding, resource_kind, resource_id))
+    {
+        return Ok(());
+    }
     let matching = existing
-        .into_iter()
+        .iter()
         .filter(|binding| {
             binding_matches_seed_variant(
                 binding,
@@ -536,6 +542,7 @@ async fn seed_agent_resource_binding_with_policy(
                 &conditions,
             )
         })
+        .cloned()
         .collect::<Vec<_>>();
     let now = now_rfc3339();
     let existing_desired = matching
@@ -635,6 +642,17 @@ pub(super) fn binding_matches_seed_variant(
         && binding.resource_id == resource_id
         && binding.owner_user_id.is_none()
         && binding.conditions == *conditions
+}
+
+fn binding_matches_admin_override(
+    binding: &AgentBindingRecord,
+    resource_kind: &str,
+    resource_id: &str,
+) -> bool {
+    binding.binding_scope == BINDING_SCOPE_ADMIN_OVERRIDE
+        && binding.resource_kind == resource_kind
+        && binding.resource_id == resource_id
+        && binding.owner_user_id.is_none()
 }
 
 pub(super) fn task_runner_cloud_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {

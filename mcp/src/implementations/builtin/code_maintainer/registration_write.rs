@@ -8,14 +8,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::diff::{build_diff, read_text_for_diff, DiffInput};
-use super::edit::{apply_edit_text, EditRequest, EditMatchInfo};
+use super::edit::{apply_edit_text, EditMatchInfo, EditRequest};
 use super::fs_ops::FsOps;
 use super::outcome::{classify_file_modification_error, FileModificationOutcome};
 use super::revision::ModificationRevisionGuard;
 use super::service::{CodeMaintainerHooksRef, CodeMaintainerService, ToolContext};
-use super::session::{
-    EditSession, EditSessionStore, EntryKind, EntrySnapshot, SessionFileState,
-};
+use super::session::{EditSession, EditSessionStore, EntryKind, EntrySnapshot, SessionFileState};
 use super::storage::ChangeLogStore;
 use super::utils::{generate_id, sha256_bytes};
 
@@ -38,12 +36,7 @@ pub(super) fn register_write_tools(
     workspace_note: &str,
     hooks: Option<CodeMaintainerHooksRef>,
 ) {
-    register_open_edit_session_tool(
-        service,
-        session_store.clone(),
-        writes_note,
-        workspace_note,
-    );
+    register_open_edit_session_tool(service, session_store.clone(), writes_note, workspace_note);
     register_stage_edit_batch_tool(
         service,
         fs_ops.clone(),
@@ -172,12 +165,13 @@ fn register_stage_edit_batch_tool(
                     .lock()
                     .map_err(|_| "edit session store unavailable".to_string())?;
                 let session = store.get_mut(session_id, ctx.run_id)?;
+                let mut staged_session = session.clone();
                 let mut batch_changed_paths = BTreeSet::new();
                 let mut batch_matches: Vec<Value> = Vec::new();
 
                 for operation in operations {
                     let outcome = apply_stage_operation(
-                        session,
+                        &mut staged_session,
                         operation,
                         &fs_ops,
                         &revision_guard,
@@ -195,15 +189,16 @@ fn register_stage_edit_batch_tool(
                     }
                 }
 
-                session.staged_operation_count += operations.len();
-                session.touch();
-                let pending_paths = session.changed_paths();
+                staged_session.staged_operation_count += operations.len();
+                staged_session.touch();
+                let pending_paths = staged_session.changed_paths();
                 let pending_path_summaries = pending_paths
                     .iter()
-                    .filter_map(|path| session.files.get(path))
+                    .filter_map(|path| staged_session.files.get(path))
                     .map(session_path_summary)
                     .collect::<Vec<_>>();
                 let changed = !batch_changed_paths.is_empty();
+                *session = staged_session;
                 Ok(text_result(json!({
                     "outcome": FileModificationOutcome::from_changed(changed),
                     "changed": changed,
@@ -385,7 +380,7 @@ fn stage_write(
 ) -> Result<StageOutcome, String> {
     let content = required_string(operation, "content")?.to_string();
     enforce_write_size(&content, max_write_bytes)?;
-    let expected = expected_sha256(operation, "expected_sha256")?;
+    let expected = expected_revision(operation, "expected_sha256")?;
     let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
     if state.working.kind == EntryKind::Directory {
         return Err("Target path is a directory.".to_string());
@@ -415,9 +410,8 @@ fn stage_replace_text(
         .get("new_text")
         .and_then(Value::as_str)
         .ok_or("new_text is required".to_string())?;
-    let expected = expected_sha256(operation, "expected_sha256")?
-        .ok_or("expected_sha256 must not be null for replace_text".to_string())?;
-    let state = get_or_load_session_file(session, path, Some(expected), fs_ops, revision_guard, ctx)?;
+    let expected = expected_revision(operation, "expected_sha256")?;
+    let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
     if state.working.kind != EntryKind::File {
         return Err("Target is not a file.".to_string());
     }
@@ -484,7 +478,7 @@ fn stage_append(
     max_write_bytes: i64,
 ) -> Result<StageOutcome, String> {
     let content = required_string(operation, "content")?;
-    let expected = expected_sha256(operation, "expected_sha256")?;
+    let expected = expected_revision(operation, "expected_sha256")?;
     let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
     if state.working.kind == EntryKind::Directory {
         return Err("Target path is a directory.".to_string());
@@ -492,7 +486,8 @@ fn stage_append(
     let mut next = state.working.content.clone().unwrap_or_default();
     next.push_str(content);
     enforce_write_size(&next, max_write_bytes)?;
-    let changed = state.working.kind != EntryKind::File || next != state.working.content.clone().unwrap_or_default();
+    let changed = state.working.kind != EntryKind::File
+        || next != state.working.content.clone().unwrap_or_default();
     state.working = EntrySnapshot::file(next.clone(), sha256_bytes(next.as_bytes()));
     state.staged_operations += 1;
     Ok(StageOutcome {
@@ -510,7 +505,7 @@ fn stage_delete(
     revision_guard: &SharedRevisionGuard,
     ctx: &ToolContext<'_>,
 ) -> Result<StageOutcome, String> {
-    let expected = expected_sha256(operation, "expected_sha256")?;
+    let expected = expected_revision(operation, "expected_sha256")?;
     let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
     let changed = state.working.kind != EntryKind::Missing;
     state.working = EntrySnapshot::missing();
@@ -525,12 +520,15 @@ fn stage_delete(
 fn get_or_load_session_file<'a>(
     session: &'a mut EditSession,
     path: &str,
-    expected_sha256: Option<&str>,
+    expected_revision: ExpectedRevision<'_>,
     fs_ops: &FsOps,
     revision_guard: &SharedRevisionGuard,
     ctx: &ToolContext<'_>,
 ) -> Result<&'a mut SessionFileState, String> {
     if !session.files.contains_key(path) {
+        let expected_sha256 = expected_revision
+            .into_value()
+            .ok_or_else(|| "expected_sha256 is required when a path is first staged".to_string())?;
         let snapshot = load_entry_snapshot(fs_ops, path)?;
         verify_session_baseline(
             revision_guard,
@@ -544,12 +542,16 @@ fn get_or_load_session_file<'a>(
         session
             .files
             .insert(path.to_string(), SessionFileState::new(path, snapshot));
-    } else if let Some(expected) = expected_sha256 {
+    } else if let Some(expected_sha256) = expected_revision.into_value() {
         let state = session
             .files
             .get(path)
             .ok_or_else(|| format!("session path unexpectedly missing: {path}"))?;
-        if state.base.kind != EntryKind::File || state.base.sha256.as_deref() != Some(expected) {
+        let matches = match state.base.kind {
+            EntryKind::File => state.base.sha256.as_deref() == expected_sha256,
+            EntryKind::Missing | EntryKind::Directory => expected_sha256.is_none(),
+        };
+        if !matches {
             return Err(format!(
                 "expected_sha256 for {} does not match the active session baseline",
                 path
@@ -610,7 +612,8 @@ fn commit_session(
     let mut rollback_applied = Vec::new();
     for state in &changed_states {
         let resolved = fs_ops.resolve_path(state.path.as_str())?;
-        let before_diff = read_text_for_diff(&resolved, max_file_bytes).unwrap_or_else(DiffInput::omitted);
+        let before_diff =
+            read_text_for_diff(&resolved, max_file_bytes).unwrap_or_else(DiffInput::omitted);
         let commit_result = apply_path_commit(state, resolved.as_path())?;
         rollback_applied.push(commit_result.rollback.clone());
         applied.push(CommittedPath {
@@ -671,7 +674,8 @@ fn commit_session(
                 } else {
                     "edit"
                 };
-                let bytes = i64::try_from(content.len()).map_err(|_| "write too large".to_string())?;
+                let bytes =
+                    i64::try_from(content.len()).map_err(|_| "write too large".to_string())?;
                 let record = store.log_change(
                     path.as_str(),
                     "commit_edit_session",
@@ -731,7 +735,9 @@ impl PathCommitResult {
 #[derive(Debug, Clone)]
 enum RollbackAction {
     None,
-    CreatedFile { path: PathBuf },
+    CreatedFile {
+        path: PathBuf,
+    },
     ReplacedFile {
         path: PathBuf,
         backup: PathBuf,
@@ -768,7 +774,9 @@ impl RollbackAction {
     fn cleanup(&self) -> Result<(), String> {
         match self {
             Self::None | Self::CreatedFile { .. } => Ok(()),
-            Self::ReplacedFile { backup, created, .. } => {
+            Self::ReplacedFile {
+                backup, created, ..
+            } => {
                 if backup.exists() {
                     fs::remove_file(backup).map_err(|err| err.to_string())?;
                 }
@@ -791,7 +799,10 @@ impl RollbackAction {
     }
 }
 
-fn apply_path_commit(state: &SessionFileState, resolved: &Path) -> Result<PathCommitResult, String> {
+fn apply_path_commit(
+    state: &SessionFileState,
+    resolved: &Path,
+) -> Result<PathCommitResult, String> {
     match state.working.kind {
         EntryKind::Missing => apply_delete_commit(resolved),
         EntryKind::File => apply_file_commit(state, resolved),
@@ -815,7 +826,10 @@ fn apply_delete_commit(resolved: &Path) -> Result<PathCommitResult, String> {
     })
 }
 
-fn apply_file_commit(state: &SessionFileState, resolved: &Path) -> Result<PathCommitResult, String> {
+fn apply_file_commit(
+    state: &SessionFileState,
+    resolved: &Path,
+) -> Result<PathCommitResult, String> {
     let content = state.working.content.clone().unwrap_or_default();
     let created = sibling_temp_path(resolved, "write_stage");
     if let Some(parent) = created.parent() {
@@ -866,11 +880,12 @@ fn commit_conflict_for_state(
     if matches!(state.base.kind, EntryKind::File) || matches!(current.kind, EntryKind::File) {
         mark_failed_modification(revision_guard, ctx, state.path.as_str());
     }
-    let recovery_tool = if matches!(state.base.kind, EntryKind::File) || matches!(current.kind, EntryKind::File) {
-        "read_file_raw"
-    } else {
-        "list_dir"
-    };
+    let recovery_tool =
+        if matches!(state.base.kind, EntryKind::File) || matches!(current.kind, EntryKind::File) {
+            "read_file_raw"
+        } else {
+            "list_dir"
+        };
     Some(json!({
         "path": state.path,
         "baseline_sha256": state.base.sha256,
@@ -895,7 +910,9 @@ fn validate_session_path_overlaps(
             continue;
         }
         let nested = normalized.starts_with(format!("{}/", existing.path).as_str())
-            || existing.path.starts_with(format!("{}/", normalized).as_str());
+            || existing
+                .path
+                .starts_with(format!("{}/", normalized).as_str());
         if nested
             && (kind == "delete"
                 || (existing.base.kind == EntryKind::Directory
@@ -1200,15 +1217,31 @@ fn optional_usize(value: &Value, field: &str) -> Option<usize> {
         .map(|value| value as usize)
 }
 
-fn expected_sha256<'a>(args: &'a Value, field: &str) -> Result<Option<&'a str>, String> {
+enum ExpectedRevision<'a> {
+    Omitted,
+    Value(Option<&'a str>),
+}
+
+impl<'a> ExpectedRevision<'a> {
+    fn into_value(self) -> Option<Option<&'a str>> {
+        match self {
+            Self::Omitted => None,
+            Self::Value(value) => Some(value),
+        }
+    }
+}
+
+fn expected_revision<'a>(args: &'a Value, field: &str) -> Result<ExpectedRevision<'a>, String> {
     match args.get(field) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) if is_sha256(value) => Ok(Some(value.as_str())),
+        None => Ok(ExpectedRevision::Omitted),
+        Some(Value::Null) => Ok(ExpectedRevision::Value(None)),
+        Some(Value::String(value)) if is_sha256(value) => {
+            Ok(ExpectedRevision::Value(Some(value.as_str())))
+        }
         Some(Value::String(_)) => Err(format!(
             "{field} must be a lowercase 64-character SHA-256 value"
         )),
         Some(_) => Err(format!("{field} must be a SHA-256 string or null")),
-        None => Err(format!("{field} is required")),
     }
 }
 
