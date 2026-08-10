@@ -10,7 +10,7 @@ edition = "2021"
 anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["json"] }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_agent = { path = "../../agent" }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
@@ -36,7 +36,7 @@ serde_json = "1"
 semver = "1"
 ssh2 = "0.9"
 sha2 = "0.11"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "uuid", "json"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "uuid", "json"] }
 tempfile = "3"
 portable-pty = "0.9"
 quick-xml = "0.41"
@@ -49,7 +49,7 @@ tower-http = { version = "0.7", features = ["cors", "fs"] }
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 zeroize = "1"
 
 [target.'cfg(unix)'.dependencies]
@@ -58,7 +58,7 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Accessibility"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Security_Isolation", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
-winreg = "0.10"
+winreg = "0.56"
 
 [dev-dependencies]
 chat_app_server_rs = { path = "../../chatos/backend", features = ["test-support"] }
