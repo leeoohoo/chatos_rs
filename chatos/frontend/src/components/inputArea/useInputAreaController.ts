@@ -416,7 +416,6 @@ export function useInputAreaController({
     pluginWorkspaceId: pluginPicker.requiresDevice ? pluginPicker.selectedWorkspaceId : null,
     selectedPluginIds: pluginPicker.selectedPluginIds,
     pluginCommandInvocations: pluginPicker.pluginCommandInvocations,
-    pluginAgentSelection: pluginPicker.selectedAgentSelection,
     commandMessageFallback: pluginPicker.commandMessageFallback,
     clearSelectedPlugins: pluginPicker.clearSelectedPlugins,
     selectedProjectId,

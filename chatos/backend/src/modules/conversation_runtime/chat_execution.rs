@@ -482,9 +482,6 @@ pub fn build_agent_chat_options(
     let plugin_audit_metadata = if runtime_context
         .plugin_command_invocations_for_snapshot
         .is_empty()
-        && runtime_context
-            .plugin_agent_selection_for_snapshot
-            .is_none()
     {
         None
     } else {
@@ -497,9 +494,6 @@ pub fn build_agent_chat_options(
                 "plugin_command_invocations".to_string(),
                 json!(runtime_context.plugin_command_invocations_for_snapshot),
             );
-        }
-        if let Some(selection) = runtime_context.plugin_agent_selection_for_snapshot.as_ref() {
-            metadata.insert("plugin_agent_selection".to_string(), json!(selection));
         }
         Some(Value::Object(metadata))
     };

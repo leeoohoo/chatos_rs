@@ -83,7 +83,6 @@ export const sendChatCommand = async (
       plugin_command_invocations: options?.pluginCommandInvocations?.length
         ? options.pluginCommandInvocations
         : undefined,
-      plugin_agent_selection: options?.pluginAgentSelection || undefined,
       plan_mode: options?.planMode === true,
       model_config_id: modelConfig.id,
       ai_model_config: {

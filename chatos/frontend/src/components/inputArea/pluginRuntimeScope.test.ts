@@ -39,7 +39,6 @@ const plugin = (
     requires_workspace: requiresWorkspace,
   }],
   commands: [],
-  agents: [],
 });
 
 describe('Plugin runtime scope', () => {

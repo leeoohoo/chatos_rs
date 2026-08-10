@@ -4,7 +4,6 @@
 import type {
   AiModelConfig,
   Message,
-  PluginAgentAuditEntry,
   PluginCommandAuditEntry,
 } from '../../../../types';
 import {
@@ -19,7 +18,6 @@ export const createDraftUserMessage = ({
   selectedModel,
   previewAttachments,
   pluginCommandInvocations,
-  pluginAgentSelection,
   createdAt,
 }: {
   sessionId: string;
@@ -28,7 +26,6 @@ export const createDraftUserMessage = ({
   selectedModel: AiModelConfig;
   previewAttachments: PreviewAttachment[];
   pluginCommandInvocations?: PluginCommandAuditEntry[];
-  pluginAgentSelection?: PluginAgentAuditEntry | null;
   createdAt: Date;
 }): Message => ({
   id: `temp_user_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
@@ -43,9 +40,6 @@ export const createDraftUserMessage = ({
     ...(previewAttachments.length > 0 ? { attachments: previewAttachments } : {}),
     ...(pluginCommandInvocations?.length
       ? { plugin_command_invocations: pluginCommandInvocations }
-      : {}),
-    ...(pluginAgentSelection
-      ? { plugin_agent_selection: pluginAgentSelection }
       : {}),
     model: selectedModel.model_name,
     ...buildModelConfigMetadata(selectedModel),

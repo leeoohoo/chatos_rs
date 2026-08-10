@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::{PluginAgentSelection, PluginCommandInvocation};
+use chatos_plugin_management_sdk::PluginCommandInvocation;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -28,8 +28,12 @@ pub(crate) struct ChatStreamRequest {
     pub selected_plugin_ids: Vec<String>,
     #[serde(default, alias = "pluginCommandInvocations")]
     pub plugin_command_invocations: Vec<PluginCommandInvocation>,
-    #[serde(default, alias = "pluginAgentSelection")]
-    pub plugin_agent_selection: Option<PluginAgentSelection>,
+    #[serde(
+        default,
+        rename = "plugin_agent_selection",
+        alias = "pluginAgentSelection"
+    )]
+    pub unsupported_plugin_agent_selection: Option<Value>,
     #[serde(skip_deserializing)]
     pub user_message_id: Option<String>,
     #[serde(skip_deserializing)]

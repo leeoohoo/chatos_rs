@@ -305,7 +305,7 @@ pub(super) async fn execute_requirement_inner(
         remote_connection_id: None,
         selected_plugin_ids: Vec::new(),
         plugin_command_invocations: Vec::new(),
-        plugin_agent_selection: None,
+        unsupported_plugin_agent_selection: None,
         user_message_id: Some(execution_group_id.clone()),
         project_requirement_execution_planner: true,
         project_requirement_execution_task_ids: selected_work_items

@@ -28,6 +28,14 @@ pub(crate) async fn validate_chat_stream_request(
             ),
         ));
     }
+    if req.unsupported_plugin_agent_selection.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "plugin_agent_selection is not supported; the ChatOS Agent is fixed by the authenticated conversation context"
+            })),
+        ));
+    }
     if require_responses {
         let model_runtime = resolve_shared_model_runtime_config_for_request(
             req.model_config_id.as_deref(),
@@ -53,4 +61,30 @@ pub(crate) async fn validate_chat_stream_request(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejects_task_level_plugin_agent_selection() {
+        let req: ChatStreamRequest = serde_json::from_value(json!({
+            "conversation_id": "session-1",
+            "content": "hello",
+            "plugin_agent_selection": {
+                "plugin_id": "plugin-a",
+                "agent_id": "reviewer"
+            }
+        }))
+        .expect("chat request");
+
+        let (status, payload) = validate_chat_stream_request(&req, false)
+            .await
+            .expect_err("Plugin Agent selection must fail");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(payload.0["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("not supported")));
+    }
 }

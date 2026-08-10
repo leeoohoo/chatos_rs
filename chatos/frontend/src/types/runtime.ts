@@ -7,11 +7,6 @@ export interface PluginCommandInvocationPayload {
   arguments?: string | null;
 }
 
-export interface PluginAgentSelectionPayload {
-  plugin_id: string;
-  agent_id: string;
-}
-
 export interface SendMessageRuntimeOptions {
   contactAgentId?: string | null;
   contactId?: string | null;
@@ -26,7 +21,6 @@ export interface SendMessageRuntimeOptions {
   pluginWorkspaceId?: string | null;
   selectedPluginIds?: string[];
   pluginCommandInvocations?: PluginCommandInvocationPayload[];
-  pluginAgentSelection?: PluginAgentSelectionPayload | null;
 }
 
 export type SendMessageHandler = (

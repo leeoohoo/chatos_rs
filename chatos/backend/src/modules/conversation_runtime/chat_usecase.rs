@@ -152,7 +152,6 @@ fn build_common_bootstrap_input(
         remote_connection_id: req.remote_connection_id.clone(),
         selected_plugin_ids: req.selected_plugin_ids.clone(),
         plugin_command_invocations: req.plugin_command_invocations.clone(),
-        plugin_agent_selection: req.plugin_agent_selection.clone(),
         plan_mode: req.plan_mode,
         project_requirement_execution_planner: req.project_requirement_execution_planner,
         project_requirement_execution_task_ids: req.project_requirement_execution_task_ids.clone(),

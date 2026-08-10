@@ -231,66 +231,6 @@ export const InputAreaPluginPicker = ({
                     </span>
                   </label>
 
-                  {(Array.isArray(plugin.agents) ? plugin.agents : []).length > 0 ? (
-                    <div className="mt-3 space-y-2 border-t pt-2">
-                      <div className="text-[11px] font-medium text-muted-foreground">
-                        {t('inputArea.plugin.agents')}
-                      </div>
-                      {(Array.isArray(plugin.agents) ? plugin.agents : []).map((agent) => {
-                        const agentSelected = pluginPicker.selectedAgentSelection?.plugin_id
-                          === plugin.id
-                          && pluginPicker.selectedAgentSelection?.agent_id === agent.agent_id;
-                        const allowedTools = Array.isArray(agent.allowed_tools)
-                          ? agent.allowed_tools
-                          : [];
-                        return (
-                          <label
-                            key={agent.agent_id}
-                            className={cn(
-                              'flex cursor-pointer items-start gap-2 rounded-md border bg-background/70 p-2',
-                              agentSelected && 'border-emerald-500/60 bg-emerald-500/5',
-                            )}
-                          >
-                            <input
-                              type="radio"
-                              name="task-plugin-agent"
-                              checked={agentSelected}
-                              onChange={() => pluginPicker.selectAgent(plugin.id, agent.agent_id)}
-                              className="mt-0.5"
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="flex flex-wrap items-center gap-1.5">
-                                <span className="font-mono text-xs text-emerald-700 dark:text-emerald-300">
-                                  @{agent.agent_id}
-                                </span>
-                                <span className="text-xs font-medium">{agent.display_name}</span>
-                              </span>
-                              {agent.description ? (
-                                <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                                  {agent.description}
-                                </span>
-                              ) : null}
-                              <span className="mt-1 block text-[10px] text-muted-foreground">
-                                {t('inputArea.plugin.agentBase', { agent: agent.base_agent })}
-                                {' · '}
-                                {t('inputArea.plugin.agentIterations', {
-                                  count: agent.max_iterations,
-                                })}
-                              </span>
-                              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
-                                {allowedTools.length > 0
-                                  ? t('inputArea.plugin.agentTools', {
-                                    tools: allowedTools.join(' · '),
-                                  })
-                                  : t('inputArea.plugin.agentNoExtraTools')}
-                              </span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-
                   {(Array.isArray(plugin.commands) ? plugin.commands : []).length > 0 ? (
                     <div className="mt-3 space-y-2 border-t pt-2">
                       <div className="text-[11px] font-medium text-muted-foreground">

@@ -170,10 +170,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
       <InputAreaPluginChips
         plugins={pluginPicker.selectedPlugins}
         commands={pluginPicker.selectedCommands}
-        agent={pluginPicker.selectedAgent}
         onRemove={pluginPicker.removePlugin}
         onRemoveCommand={pluginPicker.removeCommand}
-        onRemoveAgent={pluginPicker.clearSelectedAgent}
       />
       <InputAreaAttachmentsPreview
         attachments={attachments}

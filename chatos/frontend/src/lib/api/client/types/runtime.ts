@@ -3,7 +3,6 @@
 
 import type { SessionMessageResponse } from './session';
 import type {
-  PluginAgentSelectionPayload,
   PluginCommandInvocationPayload,
 } from '../../../../types';
 
@@ -149,7 +148,6 @@ export interface StreamChatOptions {
   pluginWorkspaceId?: string | null;
   selectedPluginIds?: string[];
   pluginCommandInvocations?: PluginCommandInvocationPayload[];
-  pluginAgentSelection?: PluginAgentSelectionPayload | null;
   planMode?: boolean;
   systemPrompt?: string | null;
 }

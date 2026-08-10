@@ -8,13 +8,9 @@ import { localRuntimeBridgeAvailable } from '../../lib/api/localRuntime';
 import type {
   LocalConnectorDeviceResponse,
   LocalConnectorWorkspaceResponse,
-  TaskRunnerSelectablePluginAgentResponse,
   TaskRunnerSelectablePluginResponse,
 } from '../../lib/api/client/types';
-import type {
-  PluginAgentSelectionPayload,
-  PluginCommandInvocationPayload,
-} from '../../types';
+import type { PluginCommandInvocationPayload } from '../../types';
 import {
   filterPluginCommandOptions,
   MAX_PLUGIN_COMMAND_ARGUMENT_BYTES,
@@ -57,7 +53,6 @@ interface PersistedTaskPluginSelection {
   workspaceId: string | null;
   pluginIds: string[];
   commandInvocations: PluginCommandInvocationPayload[];
-  agentSelection: PluginAgentSelectionPayload | null;
 }
 
 const readPersistedSelection = (key: string): PersistedTaskPluginSelection | null => {
@@ -77,11 +72,6 @@ const readPersistedSelection = (key: string): PersistedTaskPluginSelection | nul
         && typeof item.plugin_id === 'string'
         && typeof item.command_id === 'string'
       )),
-      agentSelection: value.agentSelection
-        && typeof value.agentSelection.plugin_id === 'string'
-        && typeof value.agentSelection.agent_id === 'string'
-        ? value.agentSelection
-        : null,
     };
   } catch {
     return null;
@@ -90,12 +80,6 @@ const readPersistedSelection = (key: string): PersistedTaskPluginSelection | nul
 
 export interface SelectedTaskPluginCommand extends TaskPluginCommandOption {
   arguments: string;
-}
-
-export interface SelectedTaskPluginAgent {
-  key: string;
-  plugin: TaskRunnerSelectablePluginResponse;
-  agent: TaskRunnerSelectablePluginAgentResponse;
 }
 
 export const useTaskPluginPicker = ({
@@ -127,9 +111,6 @@ export const useTaskPluginPicker = ({
   const [selectedCommandInvocations, setSelectedCommandInvocations] = useState<
     PluginCommandInvocationPayload[]
   >([]);
-  const [selectedAgentSelection, setSelectedAgentSelection] = useState<
-    PluginAgentSelectionPayload | null
-  >(null);
   const [search, setSearch] = useState('');
   const hydratedSelectionScopeRef = useRef<string | null>(null);
   const selectionStorageKey = useMemo(() => (
@@ -166,17 +147,6 @@ export const useTaskPluginPicker = ({
         ))
       ))
     )));
-    setSelectedAgentSelection((current) => {
-      if (!current) {
-        return null;
-      }
-      const plugin = plugins.find((item) => item.id === current.plugin_id);
-      return plugin && (Array.isArray(plugin.agents) ? plugin.agents : []).some((agent) => (
-        agent.agent_id === current.agent_id
-      ))
-        ? current
-        : null;
-    });
   }, [client, localConnectorEnabled, planMode, runtimeProvider]);
 
   const selectDevice = useCallback(async (deviceId: string) => {
@@ -194,9 +164,6 @@ export const useTaskPluginPicker = ({
     setSelectedCommandInvocations((current) => current.filter((invocation) => (
       !deviceDependentPluginIds.has(invocation.plugin_id)
     )));
-    setSelectedAgentSelection((current) => (
-      current && deviceDependentPluginIds.has(current.plugin_id) ? null : current
-    ));
     setError(null);
     const matchingWorkspaces = workspaces.filter((workspace) => (
       workspaceDeviceId(workspace) === normalized
@@ -304,9 +271,6 @@ export const useTaskPluginPicker = ({
         ? current.filter((value) => value !== pluginId)
         : [...current, pluginId]
     ));
-    setSelectedAgentSelection((current) => (
-      current?.plugin_id === pluginId ? null : current
-    ));
   }, [availablePlugins, selectedDeviceId, selectedPluginIds]);
 
   const selectPlugin = useCallback((pluginId: string) => {
@@ -326,30 +290,6 @@ export const useTaskPluginPicker = ({
   const clearSelectedPlugins = useCallback(() => {
     setSelectedPluginIds([]);
     setSelectedCommandInvocations([]);
-    setSelectedAgentSelection(null);
-  }, []);
-
-  const selectAgent = useCallback((pluginId: string, agentId: string) => {
-    const plugin = availablePlugins.find((item) => item.id === pluginId);
-    const agent = (Array.isArray(plugin?.agents) ? plugin.agents : [])
-      .find((item) => item.agent_id === agentId);
-    if (!plugin || !agent || (plugin.requires_device && !selectedDeviceId)) {
-      if (plugin?.requires_device && !selectedDeviceId) {
-        setError('该插件包含本地执行组件，请先选择 Local Connector 设备。');
-      }
-      return;
-    }
-    setSelectedPluginIds((current) => (
-      current.includes(pluginId) ? current : [...current, pluginId]
-    ));
-    setSelectedAgentSelection({
-      plugin_id: pluginId,
-      agent_id: agentId,
-    });
-  }, [availablePlugins, selectedDeviceId]);
-
-  const clearSelectedAgent = useCallback(() => {
-    setSelectedAgentSelection(null);
   }, []);
 
   const selectCommand = useCallback((
@@ -427,7 +367,6 @@ export const useTaskPluginPicker = ({
     setSelectedWorkspaceId(null);
     setSelectedPluginIds([]);
     setSelectedCommandInvocations([]);
-    setSelectedAgentSelection(null);
     if (!enabled || !selectionStorageKey) {
       return;
     }
@@ -437,7 +376,6 @@ export const useTaskPluginPicker = ({
     setSelectedWorkspaceId(persisted?.workspaceId || null);
     setSelectedPluginIds(persisted?.pluginIds || []);
     setSelectedCommandInvocations(persisted?.commandInvocations || []);
-    setSelectedAgentSelection(persisted?.agentSelection || null);
     hydratedSelectionScopeRef.current = selectionStorageKey;
     setLoading(true);
     setError(null);
@@ -457,7 +395,6 @@ export const useTaskPluginPicker = ({
       workspaceId: selectedWorkspaceId,
       pluginIds: selectedPluginIds,
       commandInvocations: selectedCommandInvocations,
-      agentSelection: selectedAgentSelection,
     };
     try {
       window.localStorage.setItem(selectionStorageKey, JSON.stringify(value));
@@ -466,7 +403,6 @@ export const useTaskPluginPicker = ({
     }
   }, [
     enabled,
-    selectedAgentSelection,
     selectedCommandInvocations,
     selectedDeviceId,
     selectedPluginIds,
@@ -487,10 +423,6 @@ export const useTaskPluginPicker = ({
         Array.isArray(plugin.commands) ? plugin.commands : []
       ).map((command) => (
         `${command.command_id} ${command.display_name} ${command.description || ''}`
-      )).join(' ')} ${(
-        Array.isArray(plugin.agents) ? plugin.agents : []
-      ).map((agent) => (
-        `${agent.agent_id} ${agent.display_name} ${agent.description || ''} ${agent.base_agent}`
       )).join(' ')}`
         .toLowerCase()
         .includes(keyword)
@@ -514,22 +446,6 @@ export const useTaskPluginPicker = ({
       }] : [];
     })
   ), [availableCommands, selectedCommandInvocations]);
-  const selectedAgent = useMemo<SelectedTaskPluginAgent | null>(() => {
-    if (!selectedAgentSelection) {
-      return null;
-    }
-    const plugin = availablePlugins.find((item) => (
-      item.id === selectedAgentSelection.plugin_id
-    ));
-    const agent = (Array.isArray(plugin?.agents) ? plugin.agents : []).find((item) => (
-      item.agent_id === selectedAgentSelection.agent_id
-    ));
-    return plugin && agent ? {
-      key: `${plugin.id}\u0000${agent.agent_id}`,
-      plugin,
-      agent,
-    } : null;
-  }, [availablePlugins, selectedAgentSelection]);
   const commandArgumentIssue = useMemo(() => selectedCommands.find(({ arguments: value }) => (
     value.includes('\0') || utf8ByteLength(value.trim()) > MAX_PLUGIN_COMMAND_ARGUMENT_BYTES
   )) || null, [selectedCommands]);
@@ -571,8 +487,6 @@ export const useTaskPluginPicker = ({
     selectedCommands,
     selectedCommandInvocations,
     pluginCommandInvocations,
-    selectedAgentSelection,
-    selectedAgent,
     commandArgumentIssue,
     commandMessageFallback,
     search,
@@ -587,8 +501,6 @@ export const useTaskPluginPicker = ({
     selectPlugin,
     togglePlugin,
     removePlugin: togglePlugin,
-    selectAgent,
-    clearSelectedAgent,
     selectCommand,
     toggleCommand,
     removeCommand,

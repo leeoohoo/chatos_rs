@@ -11,7 +11,6 @@ import {
 
 import type {
   InputAreaProps,
-  PluginAgentSelectionPayload,
   PluginCommandInvocationPayload,
   Project,
 } from '../../types';
@@ -29,7 +28,6 @@ interface UseInputAreaMessageDraftOptions {
   pluginWorkspaceId: string | null;
   selectedPluginIds: string[];
   pluginCommandInvocations: PluginCommandInvocationPayload[];
-  pluginAgentSelection: PluginAgentSelectionPayload | null;
   commandMessageFallback: string;
   clearSelectedPlugins: () => void;
   selectedProjectId: string | null;
@@ -49,7 +47,6 @@ export const useInputAreaMessageDraft = ({
   pluginWorkspaceId,
   selectedPluginIds,
   pluginCommandInvocations,
-  pluginAgentSelection,
   commandMessageFallback,
   clearSelectedPlugins,
   selectedProjectId,
@@ -122,7 +119,6 @@ export const useInputAreaMessageDraft = ({
       pluginWorkspaceId: selectedPluginIds.length > 0 ? pluginWorkspaceId : null,
       selectedPluginIds,
       pluginCommandInvocations,
-      pluginAgentSelection,
     });
     resetComposer();
   }, [
@@ -133,7 +129,6 @@ export const useInputAreaMessageDraft = ({
     onSend,
     commandMessageFallback,
     pluginCommandInvocations,
-    pluginAgentSelection,
     requireModelSelection,
     requireValidPluginSelection,
     resetComposer,

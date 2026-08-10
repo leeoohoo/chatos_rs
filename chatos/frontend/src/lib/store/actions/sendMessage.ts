@@ -3,7 +3,6 @@
 
 import type {
   Message,
-  PluginAgentSelectionPayload,
   PluginCommandInvocationPayload,
   SendMessageRuntimeOptions,
 } from '../../../types';
@@ -155,25 +154,6 @@ const normalizePluginCommandInvocations = (
     }
   }
   return normalized;
-};
-
-const normalizePluginAgentSelectionPayload = (
-  value: unknown,
-  selectedPluginIds: string[],
-): PluginAgentSelectionPayload | null => {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-  const record = value as Partial<PluginAgentSelectionPayload>;
-  const pluginId = normalizeRuntimeText(record.plugin_id);
-  const agentId = normalizeRuntimeText(record.agent_id);
-  if (!pluginId || !agentId || !selectedPluginIds.includes(pluginId)) {
-    return null;
-  }
-  return {
-    plugin_id: pluginId,
-    agent_id: agentId,
-  };
 };
 
 const attachmentTypeForFile = (file: File): ApiAttachmentPayload['type'] => {
@@ -500,10 +480,6 @@ export function createSendMessageHandler({
         runtimeOptions.pluginCommandInvocations,
       );
       const normalizedSelectedPluginIds = normalizeRuntimeIds(runtimeOptions.selectedPluginIds);
-      const normalizedPluginAgentSelection = normalizePluginAgentSelectionPayload(
-        runtimeOptions.pluginAgentSelection,
-        normalizedSelectedPluginIds,
-      );
 
       // 创建用户消息（仅前端展示，不立即保存数据库）
       const userMessageTime = new Date();
@@ -519,7 +495,6 @@ export function createSendMessageHandler({
           arguments_present: Boolean(invocation.arguments),
           arguments_sha256: null,
         })),
-        pluginAgentSelection: normalizedPluginAgentSelection,
         createdAt: userMessageTime,
       });
       const turnProcessKey = conversationTurnId || userMessage.id;
@@ -564,7 +539,6 @@ export function createSendMessageHandler({
         pluginWorkspaceId: normalizeRuntimeText(runtimeOptions.pluginWorkspaceId),
         selectedPluginIds: normalizedSelectedPluginIds,
         pluginCommandInvocations: normalizedPluginCommandInvocations,
-        pluginAgentSelection: normalizedPluginAgentSelection,
         planMode,
       });
       streamRuntimeOptions.systemPrompt = activeSystemContext?.content
@@ -595,7 +569,6 @@ export function createSendMessageHandler({
         plugin_command_invocations: streamRuntimeOptions.pluginCommandInvocations.length
           ? streamRuntimeOptions.pluginCommandInvocations
           : undefined,
-        plugin_agent_selection: streamRuntimeOptions.pluginAgentSelection || undefined,
         plan_mode: streamRuntimeOptions.planMode,
         model_config_id: selectedModelForRequest.id,
         ai_model_config: {
