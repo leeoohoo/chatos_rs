@@ -17,7 +17,11 @@ export type RuntimeKind =
   | 'local_connector_http'
   | 'local_connector_builtin_proxy';
 export type ResourceKind = 'mcp' | 'skill' | 'skill_package' | 'plugin' | 'plugin_component';
-export type BindingScope = 'global_default' | 'user_override' | 'system_required';
+export type BindingScope =
+  | 'admin_override'
+  | 'global_default'
+  | 'user_override'
+  | 'system_required';
 export type McpBindingMode = 'disabled' | 'optional' | 'required';
 export type AgentPromptVendor = 'glm' | 'deepseek' | 'gpt' | 'kimi';
 

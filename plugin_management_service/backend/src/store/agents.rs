@@ -223,6 +223,7 @@ impl AppStore {
             "agent_key": agent_key,
             "enabled": true,
             "$or": [
+                { "binding_scope": BINDING_SCOPE_ADMIN_OVERRIDE },
                 { "binding_scope": BINDING_SCOPE_SYSTEM_REQUIRED },
                 { "binding_scope": BINDING_SCOPE_GLOBAL_DEFAULT },
                 { "binding_scope": BINDING_SCOPE_USER_OVERRIDE, "owner_user_id": owner_user_id },
