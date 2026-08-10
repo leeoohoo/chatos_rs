@@ -27,8 +27,7 @@ export interface WorkspaceLocalConnectorFacade {
   listLocalConnectorDevices(userId?: string): Promise<LocalConnectorDeviceResponse[]>;
   listLocalConnectorWorkspaces(deviceId?: string): Promise<LocalConnectorWorkspaceResponse[]>;
   listTaskRunnerAvailablePlugins(
-    runtimeProvider: 'cloud' | 'local_connector',
-    deviceId?: string | null,
+    projectId: string,
     planMode?: boolean,
   ): Promise<TaskRunnerAvailablePluginsResponse>;
   listLocalConnectorDirectory(data: {
@@ -53,11 +52,10 @@ export const workspaceLocalConnectorFacade: WorkspaceLocalConnectorFacade & This
     void deviceId;
     return this.getLocalRuntimeClient().listConnectorWorkspaces();
   },
-  async listTaskRunnerAvailablePlugins(runtimeProvider, deviceId, planMode = false) {
+  async listTaskRunnerAvailablePlugins(projectId, planMode = false) {
     return workspaceApi.listTaskRunnerAvailablePlugins(
       this.getRequestFn(),
-      runtimeProvider,
-      deviceId,
+      projectId,
       planMode,
     );
   },

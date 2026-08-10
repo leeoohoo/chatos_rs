@@ -75,8 +75,6 @@ export const sendChatCommand = async (
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
       workspace_root: options?.workspaceRoot || undefined,
-      plugin_device_id: options?.pluginDeviceId || undefined,
-      plugin_workspace_id: options?.pluginWorkspaceId || undefined,
       selected_plugin_ids: options?.selectedPluginIds?.length
         ? options.selectedPluginIds
         : undefined,

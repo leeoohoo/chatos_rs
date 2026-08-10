@@ -15,7 +15,6 @@ import {
 import { useI18n } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
-import { isCloudProjectSource } from '../../lib/domain/projectSource';
 import type { InputAreaProps } from '../../types';
 import { useAttachmentsInput } from './useAttachmentsInput';
 import { useDismissiblePopover } from './useDismissiblePopover';
@@ -259,10 +258,9 @@ export function useInputAreaController({
   const pluginPicker = useTaskPluginPicker({
     client,
     conversationId,
+    projectId: selectedRuntimeProject?.id || selectedProjectId,
     disabled,
     planMode: planModeEnabled,
-    localConnectorEnabled: Boolean(selectedRuntimeProject)
-      && !isCloudProjectSource(selectedRuntimeProject),
   });
 
   useEffect(() => {
@@ -360,22 +358,6 @@ export function useInputAreaController({
     if (pluginPicker.selectedPluginIds.length === 0) {
       return false;
     }
-    if (pluginPicker.requiresDevice && !pluginPicker.selectedDeviceId) {
-      void alert({
-        title: t('inputArea.plugin.invalidTitle'),
-        message: t('inputArea.plugin.deviceRequired'),
-        type: 'warning',
-      });
-      return true;
-    }
-    if (pluginPicker.workspaceRequired) {
-      void alert({
-        title: t('inputArea.plugin.invalidTitle'),
-        message: t('inputArea.plugin.workspaceRequired'),
-        type: 'warning',
-      });
-      return true;
-    }
     if (pluginPicker.commandArgumentIssue) {
       void alert({
         title: t('inputArea.plugin.invalidTitle'),
@@ -388,10 +370,7 @@ export function useInputAreaController({
   }, [
     alert,
     pluginPicker.commandArgumentIssue,
-    pluginPicker.requiresDevice,
-    pluginPicker.selectedDeviceId,
     pluginPicker.selectedPluginIds.length,
-    pluginPicker.workspaceRequired,
     t,
   ]);
 
@@ -412,8 +391,6 @@ export function useInputAreaController({
     onSend,
     requireModelSelection,
     requireValidPluginSelection,
-    pluginDeviceId: pluginPicker.requiresDevice ? pluginPicker.selectedDeviceId : null,
-    pluginWorkspaceId: pluginPicker.requiresDevice ? pluginPicker.selectedWorkspaceId : null,
     selectedPluginIds: pluginPicker.selectedPluginIds,
     pluginCommandInvocations: pluginPicker.pluginCommandInvocations,
     commandMessageFallback: pluginPicker.commandMessageFallback,

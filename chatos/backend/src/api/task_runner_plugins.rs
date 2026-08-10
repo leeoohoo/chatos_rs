@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::auth::AuthUser;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::services::{access_token_scope, task_runner_api_client};
 
 pub fn router() -> Router {
@@ -21,8 +22,7 @@ pub fn router() -> Router {
 
 #[derive(Debug, Deserialize)]
 struct AvailablePluginsQuery {
-    device_id: Option<String>,
-    runtime_provider: String,
+    project_id: Option<String>,
     #[serde(default)]
     plan_mode: bool,
 }
@@ -31,24 +31,10 @@ async fn list_available_plugins(
     _auth: AuthUser,
     Query(query): Query<AvailablePluginsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let runtime_provider = query.runtime_provider.trim().to_ascii_lowercase();
-    if !matches!(runtime_provider.as_str(), "cloud" | "local_connector") {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "runtime_provider must be cloud or local_connector",
-        );
-    }
-    let device_id = query
-        .device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if runtime_provider == "cloud" && device_id.is_some() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "cloud Plugin discovery must not include a Local Connector device",
-        );
-    }
+    let project_id = match concrete_project_id(query.project_id.as_deref()) {
+        Ok(project_id) => project_id,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
     let Some(access_token) = access_token_scope::get_current_access_token() else {
         return error(
             StatusCode::UNAUTHORIZED,
@@ -62,8 +48,7 @@ async fn list_available_plugins(
     match task_runner_api_client::list_task_runner_available_plugins(
         config.task_runner_base_url.as_str(),
         access_token.as_str(),
-        runtime_provider.as_str(),
-        device_id,
+        project_id,
         query.plan_mode,
     )
     .await
@@ -75,4 +60,24 @@ async fn list_available_plugins(
 
 fn error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Value>) {
     (status, Json(json!({ "error": message.into() })))
+}
+
+fn concrete_project_id(value: Option<&str>) -> Result<&str, &'static str> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "0" && *value != PUBLIC_PROJECT_ID)
+        .ok_or("a concrete project_id is required for Plugin discovery")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_discovery_requires_a_concrete_project() {
+        assert_eq!(concrete_project_id(Some(" project-1 ")), Ok("project-1"));
+        assert!(concrete_project_id(None).is_err());
+        assert!(concrete_project_id(Some("0")).is_err());
+        assert!(concrete_project_id(Some(PUBLIC_PROJECT_ID)).is_err());
+    }
 }

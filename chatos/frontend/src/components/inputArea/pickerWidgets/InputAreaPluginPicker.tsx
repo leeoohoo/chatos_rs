@@ -49,9 +49,7 @@ export const InputAreaPluginPicker = ({
             <div>
               <div className="text-sm font-medium">{t('inputArea.plugin.title')}</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                {t(pluginPicker.localConnectorEnabled
-                  ? 'inputArea.plugin.descriptionLocal'
-                  : 'inputArea.plugin.descriptionCloud')}
+                {t('inputArea.plugin.descriptionProject')}
               </div>
             </div>
             <button
@@ -64,43 +62,6 @@ export const InputAreaPluginPicker = ({
             </button>
           </div>
 
-          {pluginPicker.localConnectorEnabled ? (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label className="text-xs text-muted-foreground">
-                <span className="mb-1 block">{t('inputArea.plugin.device')}</span>
-                <select
-                  value={pluginPicker.selectedDeviceId || ''}
-                  onChange={(event) => { void pluginPicker.selectDevice(event.target.value); }}
-                  disabled={pluginPicker.loading}
-                  className="w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground"
-                >
-                  <option value="">{t('inputArea.plugin.noDevice')}</option>
-                  {pluginPicker.devices.map((device) => (
-                    <option key={device.id} value={device.id}>
-                      {device.display_name || device.displayName || device.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-xs text-muted-foreground">
-                <span className="mb-1 block">{t('inputArea.plugin.workspace')}</span>
-                <select
-                  value={pluginPicker.selectedWorkspaceId || ''}
-                  onChange={(event) => pluginPicker.setSelectedWorkspaceId(event.target.value || null)}
-                  disabled={!pluginPicker.selectedDeviceId || pluginPicker.loading}
-                  className="w-full rounded-md border bg-background px-2 py-1.5 text-sm text-foreground"
-                >
-                  <option value="">{t('inputArea.plugin.noWorkspace')}</option>
-                  {pluginPicker.deviceWorkspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>
-                      {workspace.display_name || workspace.displayName || workspace.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
-
           <input
             value={pluginPicker.search}
             onChange={(event) => pluginPicker.setSearch(event.target.value)}
@@ -110,11 +71,6 @@ export const InputAreaPluginPicker = ({
 
           {pluginPicker.error ? (
             <div className="mt-2 text-xs text-destructive">{pluginPicker.error}</div>
-          ) : null}
-          {pluginPicker.workspaceRequired ? (
-            <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-              {t('inputArea.plugin.workspaceRequired')}
-            </div>
           ) : null}
           {pluginPicker.commandArgumentIssue ? (
             <div className="mt-2 text-xs text-destructive">
@@ -130,9 +86,7 @@ export const InputAreaPluginPicker = ({
             ) : null}
             {!pluginPicker.loading && pluginPicker.filteredPlugins.length === 0 ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
-                {t(pluginPicker.localConnectorEnabled
-                  ? 'inputArea.plugin.emptyLocal'
-                  : 'inputArea.plugin.emptyCloud')}
+                {t('inputArea.plugin.emptyProject')}
               </div>
             ) : null}
             {!pluginPicker.loading && pluginPicker.filteredPlugins.map((plugin) => {
@@ -150,7 +104,6 @@ export const InputAreaPluginPicker = ({
                       type="checkbox"
                       checked={selected}
                       onChange={() => pluginPicker.togglePlugin(plugin.id)}
-                      disabled={plugin.requires_device && !pluginPicker.selectedDeviceId}
                       className="mt-1"
                     />
                     <span className="min-w-0 flex-1">

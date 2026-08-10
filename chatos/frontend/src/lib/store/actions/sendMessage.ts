@@ -535,8 +535,6 @@ export function createSendMessageHandler({
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
-        pluginDeviceId: normalizeRuntimeText(runtimeOptions.pluginDeviceId),
-        pluginWorkspaceId: normalizeRuntimeText(runtimeOptions.pluginWorkspaceId),
         selectedPluginIds: normalizedSelectedPluginIds,
         pluginCommandInvocations: normalizedPluginCommandInvocations,
         planMode,
@@ -561,8 +559,6 @@ export function createSendMessageHandler({
         project_id: streamRuntimeOptions.projectId || undefined,
         project_root: streamRuntimeOptions.projectRoot || undefined,
         workspace_root: streamRuntimeOptions.workspaceRoot || undefined,
-        plugin_device_id: streamRuntimeOptions.pluginDeviceId || undefined,
-        plugin_workspace_id: streamRuntimeOptions.pluginWorkspaceId || undefined,
         selected_plugin_ids: streamRuntimeOptions.selectedPluginIds.length
           ? streamRuntimeOptions.selectedPluginIds
           : undefined,

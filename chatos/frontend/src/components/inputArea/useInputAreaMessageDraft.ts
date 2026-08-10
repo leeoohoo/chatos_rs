@@ -24,8 +24,6 @@ interface UseInputAreaMessageDraftOptions {
   onSend: InputAreaProps['onSend'];
   requireModelSelection: () => boolean;
   requireValidPluginSelection: () => boolean;
-  pluginDeviceId: string | null;
-  pluginWorkspaceId: string | null;
   selectedPluginIds: string[];
   pluginCommandInvocations: PluginCommandInvocationPayload[];
   commandMessageFallback: string;
@@ -43,8 +41,6 @@ export const useInputAreaMessageDraft = ({
   onSend,
   requireModelSelection,
   requireValidPluginSelection,
-  pluginDeviceId,
-  pluginWorkspaceId,
   selectedPluginIds,
   pluginCommandInvocations,
   commandMessageFallback,
@@ -115,8 +111,6 @@ export const useInputAreaMessageDraft = ({
     onSend(content, attachments, {
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
-      pluginDeviceId: selectedPluginIds.length > 0 ? pluginDeviceId : null,
-      pluginWorkspaceId: selectedPluginIds.length > 0 ? pluginWorkspaceId : null,
       selectedPluginIds,
       pluginCommandInvocations,
     });
@@ -133,8 +127,6 @@ export const useInputAreaMessageDraft = ({
     requireValidPluginSelection,
     resetComposer,
     selectedProjectId,
-    pluginDeviceId,
-    pluginWorkspaceId,
     selectedPluginIds,
     selectedRuntimeProject,
   ]);

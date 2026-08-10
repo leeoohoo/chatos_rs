@@ -4,12 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
-import { localRuntimeBridgeAvailable } from '../../lib/api/localRuntime';
-import type {
-  LocalConnectorDeviceResponse,
-  LocalConnectorWorkspaceResponse,
-  TaskRunnerSelectablePluginResponse,
-} from '../../lib/api/client/types';
+import type { TaskRunnerSelectablePluginResponse } from '../../lib/api/client/types';
 import type { PluginCommandInvocationPayload } from '../../types';
 import {
   filterPluginCommandOptions,
@@ -21,36 +16,16 @@ import {
   utf8ByteLength,
 } from './pluginCommands';
 import { filterPluginMentionOptions } from './pluginMentions';
-import {
-  filterPluginsForRuntime,
-  pluginRequiresLocalWorkspace,
-  pluginUsesLocalConnector,
-  taskPluginPickerEnabled,
-  type TaskPluginRuntimeProvider,
-} from './pluginRuntimeScope';
+import { taskPluginPickerEnabled } from './pluginRuntimeScope';
 import { useDismissiblePopover } from './useDismissiblePopover';
-
-const deviceStatus = (device: LocalConnectorDeviceResponse): string => (
-  String(device.status || '').trim().toLowerCase()
-);
-
-const workspaceStatus = (workspace: LocalConnectorWorkspaceResponse): string => (
-  String(workspace.status || '').trim().toLowerCase()
-);
-
-const workspaceDeviceId = (workspace: LocalConnectorWorkspaceResponse): string => (
-  String(workspace.device_id || workspace.deviceId || '').trim()
-);
 
 const normalizeError = (error: unknown): string => (
   error instanceof Error ? error.message : String(error || 'Unknown error')
 );
 
-const PLUGIN_SELECTION_STORAGE_PREFIX = 'chatos.task-plugin-selection.v3';
+const PLUGIN_SELECTION_STORAGE_PREFIX = 'chatos.task-plugin-selection.v4';
 
 interface PersistedTaskPluginSelection {
-  deviceId: string | null;
-  workspaceId: string | null;
   pluginIds: string[];
   commandInvocations: PluginCommandInvocationPayload[];
 }
@@ -64,8 +39,6 @@ const readPersistedSelection = (key: string): PersistedTaskPluginSelection | nul
       return null;
     }
     return {
-      deviceId: typeof value.deviceId === 'string' ? value.deviceId : null,
-      workspaceId: typeof value.workspaceId === 'string' ? value.workspaceId : null,
       pluginIds: value.pluginIds.filter((item): item is string => typeof item === 'string'),
       commandInvocations: value.commandInvocations.filter((item) => (
         item
@@ -85,28 +58,22 @@ export interface SelectedTaskPluginCommand extends TaskPluginCommandOption {
 export const useTaskPluginPicker = ({
   client,
   conversationId,
+  projectId,
   disabled,
   planMode,
-  localConnectorEnabled,
 }: {
   client: ApiClient;
   conversationId?: string | null;
+  projectId?: string | null;
   disabled: boolean;
   planMode: boolean;
-  localConnectorEnabled: boolean;
 }) => {
-  const enabled = taskPluginPickerEnabled(conversationId, localConnectorEnabled);
-  const runtimeProvider: TaskPluginRuntimeProvider = localConnectorEnabled
-    ? 'local_connector'
-    : 'cloud';
+  const normalizedProjectId = String(projectId || '').trim();
+  const enabled = taskPluginPickerEnabled(conversationId, normalizedProjectId);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [devices, setDevices] = useState<LocalConnectorDeviceResponse[]>([]);
-  const [workspaces, setWorkspaces] = useState<LocalConnectorWorkspaceResponse[]>([]);
   const [availablePlugins, setAvailablePlugins] = useState<TaskRunnerSelectablePluginResponse[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [selectedPluginIds, setSelectedPluginIds] = useState<string[]>([]);
   const [selectedCommandInvocations, setSelectedCommandInvocations] = useState<
     PluginCommandInvocationPayload[]
@@ -114,26 +81,21 @@ export const useTaskPluginPicker = ({
   const [search, setSearch] = useState('');
   const hydratedSelectionScopeRef = useRef<string | null>(null);
   const selectionStorageKey = useMemo(() => (
-    conversationId
-      ? `${PLUGIN_SELECTION_STORAGE_PREFIX}:${conversationId}:${planMode ? 'plan' : 'run'}:${runtimeProvider}`
+    conversationId && normalizedProjectId
+      ? `${PLUGIN_SELECTION_STORAGE_PREFIX}:${conversationId}:${normalizedProjectId}:${planMode ? 'plan' : 'run'}`
       : null
-  ), [conversationId, planMode, runtimeProvider]);
+  ), [conversationId, normalizedProjectId, planMode]);
 
   const pickerRef = useDismissiblePopover<HTMLDivElement>(open, () => setOpen(false));
 
-  const loadPluginsForDevice = useCallback(async (deviceId: string | null) => {
-    const effectiveDeviceId = localConnectorEnabled ? deviceId : null;
-    const response = await client.listTaskRunnerAvailablePlugins(
-      runtimeProvider,
-      effectiveDeviceId,
-      planMode,
-    );
+  const loadPlugins = useCallback(async () => {
+    if (!enabled) {
+      setAvailablePlugins([]);
+      return;
+    }
+    const response = await client.listTaskRunnerAvailablePlugins(normalizedProjectId, planMode);
     const plugins = Array.isArray(response?.selectable_plugins)
-      ? filterPluginsForRuntime(
-        response.selectable_plugins,
-        runtimeProvider,
-        effectiveDeviceId,
-      )
+      ? response.selectable_plugins
       : [];
     setAvailablePlugins(plugins);
     setSelectedPluginIds((current) => current.filter((pluginId) => (
@@ -147,49 +109,7 @@ export const useTaskPluginPicker = ({
         ))
       ))
     )));
-  }, [client, localConnectorEnabled, planMode, runtimeProvider]);
-
-  const selectDevice = useCallback(async (deviceId: string) => {
-    if (!localConnectorEnabled) {
-      return;
-    }
-    const normalized = deviceId.trim();
-    setSelectedDeviceId(normalized || null);
-    const deviceDependentPluginIds = new Set(availablePlugins
-      .filter((plugin) => plugin.requires_device)
-      .map((plugin) => plugin.id));
-    setSelectedPluginIds((current) => current.filter((pluginId) => (
-      !deviceDependentPluginIds.has(pluginId)
-    )));
-    setSelectedCommandInvocations((current) => current.filter((invocation) => (
-      !deviceDependentPluginIds.has(invocation.plugin_id)
-    )));
-    setError(null);
-    const matchingWorkspaces = workspaces.filter((workspace) => (
-      workspaceDeviceId(workspace) === normalized
-    ));
-    setSelectedWorkspaceId(matchingWorkspaces[0]?.id || null);
-    if (!normalized) {
-      setSelectedWorkspaceId(null);
-      setLoading(true);
-      try {
-        await loadPluginsForDevice(null);
-      } catch (loadError) {
-        setError(normalizeError(loadError));
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-    setLoading(true);
-    try {
-      await loadPluginsForDevice(normalized);
-    } catch (loadError) {
-      setError(normalizeError(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [availablePlugins, loadPluginsForDevice, localConnectorEnabled, workspaces]);
+  }, [client, enabled, normalizedProjectId, planMode]);
 
   const loadPicker = useCallback(async () => {
     if (!enabled || disabled) {
@@ -198,48 +118,13 @@ export const useTaskPluginPicker = ({
     setLoading(true);
     setError(null);
     try {
-      const [deviceItems, workspaceItems] = localConnectorEnabled && localRuntimeBridgeAvailable()
-        ? await Promise.all([
-          client.listLocalConnectorDevices(),
-          client.listLocalConnectorWorkspaces(),
-        ])
-        : [[], []];
-      const onlineDevices = (Array.isArray(deviceItems) ? deviceItems : [])
-        .filter((device) => deviceStatus(device) === 'online');
-      const activeWorkspaces = (Array.isArray(workspaceItems) ? workspaceItems : [])
-        .filter((workspace) => workspaceStatus(workspace) === 'active');
-      setDevices(onlineDevices);
-      setWorkspaces(activeWorkspaces);
-
-      const currentDeviceAvailable = selectedDeviceId
-        && onlineDevices.some((device) => device.id === selectedDeviceId);
-      const nextDeviceId = currentDeviceAvailable
-        ? selectedDeviceId
-        : null;
-      setSelectedDeviceId(nextDeviceId);
-      const matchingWorkspaces = activeWorkspaces.filter((workspace) => (
-        workspaceDeviceId(workspace) === nextDeviceId
-      ));
-      const currentWorkspaceAvailable = selectedWorkspaceId
-        && matchingWorkspaces.some((workspace) => workspace.id === selectedWorkspaceId);
-      setSelectedWorkspaceId(currentWorkspaceAvailable
-        ? selectedWorkspaceId
-        : (matchingWorkspaces[0]?.id || null));
-      await loadPluginsForDevice(nextDeviceId);
+      await loadPlugins();
     } catch (loadError) {
       setError(normalizeError(loadError));
     } finally {
       setLoading(false);
     }
-  }, [
-    client,
-    disabled,
-    enabled,
-    loadPluginsForDevice,
-    localConnectorEnabled,
-    selectedDeviceId,
-    selectedWorkspaceId,
-  ]);
+  }, [disabled, enabled, loadPlugins]);
 
   const toggleOpen = useCallback(() => {
     if (!enabled || disabled) {
@@ -254,12 +139,7 @@ export const useTaskPluginPicker = ({
   }, [disabled, enabled, loadPicker, open]);
 
   const togglePlugin = useCallback((pluginId: string) => {
-    const plugin = availablePlugins.find((item) => item.id === pluginId);
-    if (!plugin) {
-      return;
-    }
-    if (!selectedPluginIds.includes(pluginId) && plugin.requires_device && !selectedDeviceId) {
-      setError('该插件包含本地执行组件，请先选择 Local Connector 设备。');
+    if (!availablePlugins.some((plugin) => plugin.id === pluginId)) {
       return;
     }
     setError(null);
@@ -271,21 +151,16 @@ export const useTaskPluginPicker = ({
         ? current.filter((value) => value !== pluginId)
         : [...current, pluginId]
     ));
-  }, [availablePlugins, selectedDeviceId, selectedPluginIds]);
+  }, [availablePlugins]);
 
   const selectPlugin = useCallback((pluginId: string) => {
     if (!availablePlugins.some((plugin) => plugin.id === pluginId)) {
       return;
     }
-    const plugin = availablePlugins.find((item) => item.id === pluginId);
-    if (plugin?.requires_device && !selectedDeviceId) {
-      setError('该插件包含本地执行组件，请先选择 Local Connector 设备。');
-      return;
-    }
     setSelectedPluginIds((current) => (
       current.includes(pluginId) ? current : [...current, pluginId]
     ));
-  }, [availablePlugins, selectedDeviceId]);
+  }, [availablePlugins]);
 
   const clearSelectedPlugins = useCallback(() => {
     setSelectedPluginIds([]);
@@ -300,10 +175,7 @@ export const useTaskPluginPicker = ({
     const plugin = availablePlugins.find((item) => item.id === pluginId);
     const command = (Array.isArray(plugin?.commands) ? plugin.commands : [])
       .find((item) => item.command_id === commandId);
-    if (!plugin || !command || (plugin.requires_device && !selectedDeviceId)) {
-      if (plugin?.requires_device && !selectedDeviceId) {
-        setError('该插件包含本地执行组件，请先选择 Local Connector 设备。');
-      }
+    if (!plugin || !command) {
       return;
     }
     setSelectedPluginIds((current) => (
@@ -323,7 +195,7 @@ export const useTaskPluginPicker = ({
         arguments: argumentsText,
       }];
     });
-  }, [availablePlugins, selectedDeviceId]);
+  }, [availablePlugins]);
 
   const removeCommand = useCallback((pluginId: string, commandId: string) => {
     const key = pluginCommandKey(pluginId, commandId);
@@ -360,29 +232,22 @@ export const useTaskPluginPicker = ({
   useEffect(() => {
     hydratedSelectionScopeRef.current = null;
     setOpen(false);
-    setDevices([]);
-    setWorkspaces([]);
     setAvailablePlugins([]);
-    setSelectedDeviceId(null);
-    setSelectedWorkspaceId(null);
     setSelectedPluginIds([]);
     setSelectedCommandInvocations([]);
     if (!enabled || !selectionStorageKey) {
       return;
     }
     const persisted = readPersistedSelection(selectionStorageKey);
-    const deviceId = persisted?.deviceId || null;
-    setSelectedDeviceId(deviceId);
-    setSelectedWorkspaceId(persisted?.workspaceId || null);
     setSelectedPluginIds(persisted?.pluginIds || []);
     setSelectedCommandInvocations(persisted?.commandInvocations || []);
     hydratedSelectionScopeRef.current = selectionStorageKey;
     setLoading(true);
     setError(null);
-    void loadPluginsForDevice(deviceId)
+    void loadPlugins()
       .catch((loadError) => setError(normalizeError(loadError)))
       .finally(() => setLoading(false));
-  }, [enabled, loadPluginsForDevice, selectionStorageKey]);
+  }, [enabled, loadPlugins, selectionStorageKey]);
 
   useEffect(() => {
     if (!selectionStorageKey
@@ -391,8 +256,6 @@ export const useTaskPluginPicker = ({
       return;
     }
     const value: PersistedTaskPluginSelection = {
-      deviceId: selectedDeviceId,
-      workspaceId: selectedWorkspaceId,
       pluginIds: selectedPluginIds,
       commandInvocations: selectedCommandInvocations,
     };
@@ -404,15 +267,10 @@ export const useTaskPluginPicker = ({
   }, [
     enabled,
     selectedCommandInvocations,
-    selectedDeviceId,
     selectedPluginIds,
-    selectedWorkspaceId,
     selectionStorageKey,
   ]);
 
-  const deviceWorkspaces = useMemo(() => workspaces.filter((workspace) => (
-    workspaceDeviceId(workspace) === selectedDeviceId
-  )), [selectedDeviceId, workspaces]);
   const filteredPlugins = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) {
@@ -465,22 +323,14 @@ export const useTaskPluginPicker = ({
   const pluginSuggestions = useCallback((query: string) => (
     filterPluginMentionOptions(availablePlugins, query)
   ), [availablePlugins]);
-  const requiresDevice = selectedPlugins.some(pluginUsesLocalConnector);
-  const workspaceRequired = selectedPlugins.some(pluginRequiresLocalWorkspace)
-    && !selectedWorkspaceId;
 
   return {
     enabled,
-    localConnectorEnabled,
     open,
     pickerRef,
     loading,
     error,
-    devices,
-    deviceWorkspaces,
     filteredPlugins,
-    selectedDeviceId,
-    selectedWorkspaceId,
     selectedPluginIds,
     selectedPlugins,
     availableCommands,
@@ -490,14 +340,10 @@ export const useTaskPluginPicker = ({
     commandArgumentIssue,
     commandMessageFallback,
     search,
-    requiresDevice,
-    workspaceRequired,
     setSearch,
-    setSelectedWorkspaceId,
     toggleOpen,
     loadPicker,
     close: () => setOpen(false),
-    selectDevice,
     selectPlugin,
     togglePlugin,
     removePlugin: togglePlugin,
