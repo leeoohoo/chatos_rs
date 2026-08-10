@@ -35,7 +35,6 @@ type TaskListToolbarProps = {
   onStatusFilterChange: (value: 'all' | TaskStatus) => void;
   onScheduledOnlyChange: (value: boolean) => void;
   onRefresh: () => void;
-  onCreateTask: () => void;
 };
 
 export function TaskListToolbar({
@@ -57,7 +56,6 @@ export function TaskListToolbar({
   onStatusFilterChange,
   onScheduledOnlyChange,
   onRefresh,
-  onCreateTask,
 }: TaskListToolbarProps) {
   return (
     <Space style={{ justifyContent: 'space-between', width: '100%' }}>
@@ -113,9 +111,6 @@ export function TaskListToolbar({
           <Switch checked={scheduledOnly} onChange={onScheduledOnlyChange} />
         </Space>
         <Button onClick={onRefresh}>{t('common.refresh')}</Button>
-        <Button type="primary" onClick={onCreateTask}>
-          {t('tasks.newTask')}
-        </Button>
       </Space>
     </Space>
   );

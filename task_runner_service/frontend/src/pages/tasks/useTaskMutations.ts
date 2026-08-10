@@ -83,16 +83,6 @@ export function useTaskMutations({
     [messageApi, t],
   );
 
-  const createTaskMutation = useMutation({
-    mutationFn: api.createTask,
-    onSuccess: async () => {
-      await invalidateTaskQueries();
-      messageApi.success(t('tasks.created'));
-      onTaskSaved();
-    },
-    onError: (error: Error) => messageApi.error(error.message),
-  });
-
   const updateTaskMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Partial<CreateTaskPayload> }) =>
       api.updateTask(id, payload),
@@ -168,7 +158,6 @@ export function useTaskMutations({
   });
 
   return {
-    createTaskMutation,
     updateTaskMutation,
     deleteTaskMutation,
     runTaskMutation,

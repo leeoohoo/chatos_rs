@@ -12,9 +12,8 @@ import {
 
 import { useI18n } from '../i18n/I18nProvider';
 import {
-  buildCreateTaskFormValues,
   buildEditTaskFormValues,
-  buildTaskPayload,
+  buildTaskUpdatePayload,
   type TaskFormValues,
   type RunTaskFormValues,
 } from './tasks/taskPageUtils';
@@ -69,9 +68,6 @@ export function TasksPage() {
     useState<TaskMemorySummaryFilter>('all');
   const [memoryLimit, setMemoryLimit] = useState<number>(50);
   const [form] = Form.useForm<TaskFormValues>();
-  const editorProjectId = Form.useWatch('projectId', form);
-  const editorTaskProfile = Form.useWatch('taskProfile', form);
-  const editorRequiresExecution = Form.useWatch('requiresExecution', form);
   const [runForm] = Form.useForm<RunTaskFormValues>();
   const [batchRunForm] = Form.useForm<RunTaskFormValues>();
   const routeTaskId = searchParams.get('task_id');
@@ -89,8 +85,6 @@ export function TasksPage() {
     taskFollowUpQuery,
     taskRunDerivedQuery,
     taskPromptsQuery,
-    taskCapabilityCatalogQuery,
-    projectRuntimeEnvironmentQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
@@ -135,9 +129,6 @@ export function TasksPage() {
     mcpPreviewTask,
     batchRunTaskIds,
     editingTaskId: editingTask?.id,
-    editorProjectId,
-    editorTaskProfile,
-    editorRequiresExecution,
   });
 
   const { taskSubtasksQuery } = useTasksPageEffects({
@@ -157,7 +148,6 @@ export function TasksPage() {
   });
 
   const {
-    createTaskMutation,
     updateTaskMutation,
     deleteTaskMutation,
     runTaskMutation,
@@ -228,12 +218,6 @@ export function TasksPage() {
 
   function closeTaskMcpPreviewModal() {
     setMcpPreviewTask(null);
-  }
-
-  function openCreateDrawer() {
-    setEditingTask(null);
-    form.setFieldsValue(buildCreateTaskFormValues(routeProjectId));
-    setDrawerOpen(true);
   }
 
   function openEditDrawer(task: TaskRecord) {
@@ -315,17 +299,16 @@ export function TasksPage() {
   }
 
   function handleSubmit(values: TaskFormValues) {
-    const payload = buildTaskPayload(values, { routeProjectId });
+    if (!editingTask) {
+      return;
+    }
+    const payload = buildTaskUpdatePayload(values);
     if (!payload) {
       messageApi.error(t('tasks.scheduleInvalid'));
       return;
     }
 
-    if (editingTask) {
-      updateTaskMutation.mutate({ id: editingTask.id, payload });
-    } else {
-      createTaskMutation.mutate(payload);
-    }
+    updateTaskMutation.mutate({ id: editingTask.id, payload });
   }
 
   function handleRunTask(values: RunTaskFormValues) {
@@ -391,7 +374,6 @@ export function TasksPage() {
           onRefresh={() => {
             void Promise.all([tasksQuery.refetch(), taskStatsQuery.refetch()]);
           }}
-          onCreateTask={openCreateDrawer}
         />
 
         <TaskStatsCards
@@ -502,15 +484,10 @@ export function TasksPage() {
         open={drawerOpen}
         editingTask={editingTask}
         form={form}
-        saving={createTaskMutation.isPending || updateTaskMutation.isPending}
+        saving={updateTaskMutation.isPending}
         modelOptions={modelOptions}
         projectOptions={projectOptions}
         prerequisiteTaskOptions={prerequisiteTaskOptions}
-        selectablePlugins={taskCapabilityCatalogQuery.data?.selectable_plugins}
-        pluginCatalogLoading={taskCapabilityCatalogQuery.isLoading}
-        runtimeEnvironment={projectRuntimeEnvironmentQuery.data}
-        runtimeEnvironmentLoading={projectRuntimeEnvironmentQuery.isLoading}
-        runtimeEnvironmentUnavailable={projectRuntimeEnvironmentQuery.isError}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
       />

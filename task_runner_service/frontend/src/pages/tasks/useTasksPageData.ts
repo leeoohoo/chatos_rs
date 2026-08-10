@@ -10,7 +10,6 @@ import type {
   RemoteServerRecord,
   TaskProjectRecord,
   TaskRecord,
-  TaskProfile,
   TaskRunEventRecord,
   TaskRunStatus,
   TaskScheduleMode,
@@ -49,9 +48,6 @@ type UseTasksPageDataParams = {
   mcpPreviewTask: TaskRecord | null;
   batchRunTaskIds: string[];
   editingTaskId?: string;
-  editorProjectId?: string;
-  editorTaskProfile?: TaskProfile;
-  editorRequiresExecution?: boolean;
 };
 
 function normalizeProjectId(value?: string | null) {
@@ -98,9 +94,6 @@ export function useTasksPageData({
   mcpPreviewTask,
   batchRunTaskIds,
   editingTaskId,
-  editorProjectId,
-  editorTaskProfile,
-  editorRequiresExecution,
 }: UseTasksPageDataParams) {
   const scheduleModeLabels = useMemo(
     () =>
@@ -220,26 +213,6 @@ export function useTasksPageData({
   const projectsQuery = useQuery({
     queryKey: ['task-projects', 'active'],
     queryFn: () => api.listProjects('active'),
-  });
-  const projectRuntimeEnvironmentQuery = useQuery({
-    queryKey: ['task-project-runtime-environment', editorProjectId],
-    queryFn: () => api.getProjectRuntimeEnvironment(normalizeProjectId(editorProjectId)),
-    enabled: Boolean(editorProjectId && normalizeProjectId(editorProjectId) !== '-1'),
-    retry: false,
-  });
-  const taskCapabilityCatalogQuery = useQuery({
-    queryKey: [
-      'task-capability-catalog',
-      editorTaskProfile || 'default',
-      editorRequiresExecution ?? true,
-      normalizeProjectId(editorProjectId),
-    ],
-    queryFn: () =>
-      api.listTaskCapabilityCatalog({
-        task_profile: editorTaskProfile || 'default',
-        requires_execution: editorRequiresExecution ?? true,
-        project_id: normalizeProjectId(editorProjectId),
-      }),
   });
   const remoteServersQuery = useQuery({
     queryKey: ['remote-servers'],
@@ -375,10 +348,8 @@ export function useTasksPageData({
     const editingTask = (taskIndexQuery.data?.tasks || []).find(
       (task) => task.id === editingTaskId,
     );
-    return normalizeProjectId(
-      editorProjectId || editingTask?.project_id || routeProjectId,
-    );
-  }, [editingTaskId, editorProjectId, routeProjectId, taskIndexQuery.data?.tasks]);
+    return normalizeProjectId(editingTask?.project_id || routeProjectId);
+  }, [editingTaskId, routeProjectId, taskIndexQuery.data?.tasks]);
 
   const prerequisiteTaskOptions = useMemo(
     () =>
@@ -484,8 +455,6 @@ export function useTasksPageData({
     taskPromptsQuery,
     modelsQuery,
     projectsQuery,
-    projectRuntimeEnvironmentQuery,
-    taskCapabilityCatalogQuery,
     remoteServersQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,

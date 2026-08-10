@@ -367,6 +367,13 @@ export function TaskDetailDrawer({
                 mcpResolutionLoading ? t('common.loading') : t('common.noData'),
               )}
             </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.mcpExternalServers')}>
+              {renderStringTags(
+                mcpResolution?.external_mcp_config_ids,
+                'green',
+                mcpResolutionLoading ? t('common.loading') : t('common.noData'),
+              )}
+            </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.createdAt')}>
               {dayjs(task.created_at).format('YYYY-MM-DD HH:mm:ss')}
             </Descriptions.Item>
