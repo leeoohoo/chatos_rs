@@ -15,44 +15,6 @@ fn make_temp_root() -> PathBuf {
 }
 
 #[test]
-fn delete_file_is_idempotent_and_removed_from_list_dir() {
-    let root = make_temp_root();
-    let file_path = root.join("a.txt");
-    fs::write(&file_path, "hello").expect("write file");
-
-    let fs_ops = FsOps::new(root.clone(), true, 1024 * 1024, 1024 * 1024, 100);
-
-    let first = fs_ops.delete_path("a.txt").expect("first delete");
-    assert!(first.deleted);
-
-    let entries = fs_ops.list_dir(".", 100).expect("list dir after delete");
-    assert!(entries.iter().all(|entry| entry.name != "a.txt"));
-
-    let second = fs_ops.delete_path("a.txt").expect("second delete");
-    assert!(!second.deleted);
-
-    fs::remove_dir_all(&root).expect("cleanup temp root");
-}
-
-#[test]
-fn delete_path_accepts_backslash_separator() {
-    let root = make_temp_root();
-    let nested = root.join("nested");
-    fs::create_dir_all(&nested).expect("create nested dir");
-    let file_path = nested.join("b.txt");
-    fs::write(&file_path, "hello").expect("write nested file");
-
-    let fs_ops = FsOps::new(root.clone(), true, 1024 * 1024, 1024 * 1024, 100);
-    let deleted = fs_ops
-        .delete_path("nested\\b.txt")
-        .expect("delete with backslash path");
-    assert!(deleted.deleted);
-    assert!(!file_path.exists());
-
-    fs::remove_dir_all(&root).expect("cleanup temp root");
-}
-
-#[test]
 fn search_text_accepts_file_path() {
     let root = make_temp_root();
     let file_path = root.join("notes.txt");

@@ -272,12 +272,7 @@ fn tool_result_is_project_mutation(payload: &Value) -> bool {
     let Some(name) = payload.get("name").and_then(Value::as_str) else {
         return false;
     };
-    if tool_name_ends_with_any(
-        name,
-        &[
-            "commit_edit_session",
-        ],
-    ) {
+    if tool_name_ends_with_any(name, &["commit_edit_session"]) {
         return write_result_has_meaningful_project_path(payload);
     }
     false
@@ -338,12 +333,7 @@ pub fn tool_result_is_placeholder_progress_write(payload: &Value) -> bool {
     let Some(name) = payload.get("name").and_then(Value::as_str) else {
         return false;
     };
-    if !tool_name_ends_with_any(
-        name,
-        &[
-            "commit_edit_session",
-        ],
-    ) {
+    if !tool_name_ends_with_any(name, &["commit_edit_session"]) {
         return false;
     }
     let parsed_content = payload

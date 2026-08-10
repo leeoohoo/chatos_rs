@@ -199,10 +199,7 @@ pub fn classify_builtin_tool(name: &str) -> Option<BuiltinToolAccess> {
     match name.trim() {
         "read_file_raw" | "read_file_range" | "read_file" | "list_dir" | "search_text"
         | "search_files" => Some(BuiltinToolAccess::CodeRead),
-        "open_edit_session"
-        | "stage_edit_batch"
-        | "commit_edit_session"
-        | "abort_edit_session" => {
+        "open_edit_session" | "stage_edit_batch" | "commit_edit_session" | "abort_edit_session" => {
             Some(BuiltinToolAccess::CodeWrite)
         }
         "execute_command" | "get_recent_logs" | "process_list" | "process_poll" | "process_log"

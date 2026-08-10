@@ -249,24 +249,6 @@ pub(super) async fn list_harness_paths(
     .map_err(|err| err.to_string())
 }
 
-pub(super) async fn commit_single_file_action(
-    ctx: &HarnessMcpContext,
-    action: &str,
-    path: &str,
-    payload: Option<&str>,
-    sha: Option<String>,
-    title: &str,
-) -> Result<Value, String> {
-    let action_payload = HarnessCommitAction {
-        action: action.to_string(),
-        path: path.to_string(),
-        payload: payload.map(ToOwned::to_owned),
-        encoding: payload.map(|_| "utf8".to_string()),
-        sha,
-    };
-    commit_file_actions(ctx, title, vec![action_payload]).await
-}
-
 pub(super) async fn commit_file_actions(
     ctx: &HarnessMcpContext,
     title: &str,

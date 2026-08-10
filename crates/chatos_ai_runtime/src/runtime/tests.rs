@@ -141,7 +141,7 @@ async fn lifecycle_hook_can_disable_selected_tools_for_one_iteration() {
     .with_tools(vec![
         json!({"name": "read_file"}),
         json!({"type": "function", "function": {"name": "list_tasks"}}),
-        json!({"name": "write_file"}),
+        json!({"name": "commit_edit_session"}),
     ]);
     let options = AiRuntimeOptions::for_conversation("session-1")
         .with_lifecycle_hook(Some(Arc::new(FilterToolsLifecycleHook)));
@@ -151,7 +151,10 @@ async fn lifecycle_hook_can_disable_selected_tools_for_one_iteration() {
             .await
             .expect("iteration request");
 
-    assert_eq!(iteration_request.tools, vec![json!({"name": "write_file"})]);
+    assert_eq!(
+        iteration_request.tools,
+        vec![json!({"name": "commit_edit_session"})]
+    );
     assert_eq!(directive.disabled_tool_names, ["read_file", "list_tasks"]);
     assert_eq!(request.tools.len(), 3);
 }

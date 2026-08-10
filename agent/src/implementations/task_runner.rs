@@ -220,11 +220,15 @@ mod tests {
     #[test]
     fn local_projects_receive_distinct_task_runner_identities() {
         assert_eq!(
-            TaskRunnerAgent::for_project_locality(true, true).descriptor().key,
+            TaskRunnerAgent::for_project_locality(true, true)
+                .descriptor()
+                .key,
             SystemAgentKey::TaskRunnerLocalPlanPhase
         );
         assert_eq!(
-            TaskRunnerAgent::for_project_locality(false, true).descriptor().key,
+            TaskRunnerAgent::for_project_locality(false, true)
+                .descriptor()
+                .key,
             SystemAgentKey::TaskRunnerLocalRunPhase
         );
     }

@@ -24,23 +24,16 @@ describe('ConversationProcessToolSummary', () => {
       { command: 'npm test -- --run' },
     ), 'completed')).toBe('已执行 npm test -- --run');
     expect(toolActionText(buildToolActionSummary(
-      'code_maintainer_write_edit_file',
-      { path: 'src/model.ts' },
-    ), 'completed')).toBe('已修改 src/model.ts');
-  });
-
-  it('summarizes multi-file patches and status variants', () => {
-    const summary = buildToolActionSummary('apply_patch', {
-      patch: [
-        '*** Begin Patch',
-        '*** Update File: src/a.ts',
-        '*** Add File: src/b.ts',
-        '*** End Patch',
-      ].join('\n'),
-    });
-    expect(toolActionText(summary, 'completed')).toBe('已修改 2 个文件');
-    expect(toolActionText(summary, 'pending')).toBe('正在修改 2 个文件');
-    expect(toolActionText(summary, 'error')).toBe('修改 2 个文件 失败');
+      'code_maintainer_write_stage_edit_batch',
+      {
+        session_id: 'session-1',
+        operations: [{ kind: 'replace_text', path: 'src/model.ts' }],
+      },
+    ), 'completed')).toBe('已暂存修改 src/model.ts');
+    expect(toolActionText(buildToolActionSummary(
+      'code_maintainer_write_commit_edit_session',
+      { session_id: 'session-1' },
+    ), 'completed')).toBe('已提交项目修改');
   });
 
   it('keeps remote context in user-facing read summaries', () => {

@@ -595,7 +595,7 @@ mod tests {
             "plugin-mcp-1".to_string(),
             vec![
                 json!({"name": "read_file", "inputSchema": {"type": "object"}}),
-                json!({"name": "write_file", "inputSchema": {"type": "object"}}),
+                json!({"name": "stage_edit_batch", "inputSchema": {"type": "object"}}),
             ],
         )]);
         let materialized = materialize_runtime_tools_with_plugins(
@@ -612,7 +612,7 @@ mod tests {
         assert!(!materialized
             .tools
             .iter()
-            .any(|tool| tool.original_name == "write_file"));
+            .any(|tool| tool.original_name == "stage_edit_batch"));
         assert!(materialized.missing_required_tool_schemas.is_empty());
     }
 

@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_mcp::{extract_patch_targets, CodeMaintainerService, TerminalControllerService};
+use chatos_mcp::{CodeMaintainerService, TerminalControllerService};
 use chatos_mcp_service::{sort_tools_by_name, tool_name_set, McpRequestContext, McpToolProvider};
 use serde_json::Value;
 
@@ -101,30 +101,20 @@ fn authorize_file_tool_call(
                 policy.authorize_recursive_read(path.as_path())
             }
         }
-        "write_file" | "edit_file" | "append_file" => {
-            let path = required_file_tool_path(args)?;
-            let path = policy.resolve_workspace_path(path)?;
-            policy.authorize_write(path.as_path())
-        }
-        "delete_path" => {
-            let path = required_file_tool_path(args)?;
-            let path = policy.resolve_workspace_path(path)?;
-            if path.is_dir() {
-                policy.authorize_recursive_write(path.as_path())
-            } else {
-                policy.authorize_write(path.as_path())
-            }
-        }
-        "apply_patch" | "patch" => {
-            let patch = args
-                .get("patch")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "patch is required".to_string())?;
-            for target in extract_patch_targets(patch) {
-                let before = policy.resolve_workspace_path(target.before_path.as_str())?;
-                policy.authorize_write(before.as_path())?;
-                let after = policy.resolve_workspace_path(target.after_path.as_str())?;
-                policy.authorize_write(after.as_path())?;
+        "stage_edit_batch" => {
+            let operations = args
+                .get("operations")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "operations is required".to_string())?;
+            for operation in operations {
+                let path = required_file_tool_path(operation)?;
+                let path = policy.resolve_workspace_path(path)?;
+                if operation.get("kind").and_then(Value::as_str) == Some("delete") && path.is_dir()
+                {
+                    policy.authorize_recursive_write(path.as_path())?;
+                } else {
+                    policy.authorize_write(path.as_path())?;
+                }
             }
             Ok(())
         }

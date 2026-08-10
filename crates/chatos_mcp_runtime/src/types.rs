@@ -677,7 +677,7 @@ mod tests {
             .with_allowed_tool_names([" read_file_raw ", "execute_command"]);
         assert!(restricted.allows_tool_name("read_file_raw"));
         assert!(restricted.allows_tool_name("execute_command"));
-        assert!(!restricted.allows_tool_name("write_file"));
+        assert!(!restricted.allows_tool_name("stage_edit_batch"));
 
         let empty = McpHttpServer::new("remote", "http://127.0.0.1:9000/mcp")
             .with_allowed_tool_names(std::iter::empty::<String>());

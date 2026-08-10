@@ -85,11 +85,14 @@ const action = (
   failed: string,
 ): ToolActionSummary => ({ kind, completed, pending, failed });
 
-const patchPaths = (patch: string): string[] => {
-  const paths = Array.from(
-    patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm),
-    (match) => visiblePath(match[1]),
-  );
+const stagedOperationPaths = (record: Record<string, unknown>): string[] => {
+  const operations = Array.isArray(record.operations) ? record.operations : [];
+  const paths = operations
+    .map((operation) => readRecord(operation))
+    .filter((operation): operation is Record<string, unknown> => operation !== null)
+    .map((operation) => stringValue(operation, ['path']))
+    .filter(Boolean)
+    .map(visiblePath);
   return Array.from(new Set(paths));
 };
 
@@ -171,22 +174,27 @@ export const buildToolActionSummary = (
     return action('execute', `已向 ${target} 输入内容`, `正在向 ${target} 输入内容`, `向 ${target} 输入失败`);
   }
 
-  if (['write_file', 'edit_file', 'append_file'].includes(displayName)) {
-    return action('modify', `已修改 ${path}`, `正在修改 ${path}`, `修改 ${path} 失败`);
-  }
-  if (displayName === 'delete_path') {
-    return action('modify', `已删除 ${path}`, `正在删除 ${path}`, `删除 ${path} 失败`);
-  }
-  if (displayName === 'apply_patch' || displayName === 'patch') {
-    const paths = patchPaths(stringValue(args, ['patch']));
+  if (displayName === 'stage_edit_batch') {
+    const paths = stagedOperationPaths(args);
     const target = paths.length === 1
       ? paths[0]
       : paths.length > 1
         ? `${paths.length} 个文件`
         : '项目文件';
-    return action('modify', `已修改 ${target}`, `正在修改 ${target}`, `修改 ${target} 失败`);
+    return action('modify', `已暂存修改 ${target}`, `正在暂存修改 ${target}`, `暂存修改 ${target} 失败`);
   }
-
+  if (displayName === 'commit_edit_session') {
+    return action('modify', '已提交项目修改', '正在提交项目修改', '提交项目修改失败');
+  }
+  if (displayName === 'open_edit_session') {
+    return action('modify', '已开始项目修改', '正在准备项目修改', '准备项目修改失败');
+  }
+  if (displayName === 'abort_edit_session') {
+    return action('modify', '已取消项目修改', '正在取消项目修改', '取消项目修改失败');
+  }
+  if (displayName === 'write_file' && family === 'remote') {
+    return action('modify', `已修改 ${path}`, `正在修改 ${path}`, `修改 ${path} 失败`);
+  }
   if (displayName === 'browser_navigate') {
     const target = clipped(url || '网页');
     return action('browse', `已打开 ${target}`, `正在打开 ${target}`, `打开 ${target} 失败`);

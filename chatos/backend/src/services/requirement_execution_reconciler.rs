@@ -153,11 +153,11 @@ fn should_check_message(message: &Message) -> bool {
     if !message.role.trim().eq_ignore_ascii_case("user") {
         return false;
     }
-    if !message
+    if message
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.get("project_requirement_execution"))
-        .is_some()
+        .is_none()
     {
         return false;
     }

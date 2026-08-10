@@ -114,11 +114,15 @@ pub(in crate::api::fs) async fn create_dir(
     let relative = child_relative_path(&parent, name);
     let marker_path = format!("{relative}/.gitkeep");
     Some(
-        match call_harness_tool(
+        match commit_harness_edit(
             auth,
             &parent,
-            "write_file",
-            json!({ "path": marker_path, "content": "" }),
+            json!({
+                "kind": "write",
+                "path": marker_path,
+                "content": "",
+                "expected_sha256": null
+            }),
         )
         .await
         {
@@ -137,11 +141,15 @@ pub(in crate::api::fs) async fn create_file(
     let parent = parse_harness_project_path(parent_path)?;
     let relative = child_relative_path(&parent, name);
     Some(
-        match call_harness_tool(
+        match commit_harness_edit(
             auth,
             &parent,
-            "write_file",
-            json!({ "path": relative, "content": content }),
+            json!({
+                "kind": "write",
+                "path": relative,
+                "content": content,
+                "expected_sha256": null
+            }),
         )
         .await
         {
@@ -163,11 +171,14 @@ pub(in crate::api::fs) async fn write_file(
         .find(|part| !part.is_empty())
         .unwrap_or("");
     Some(
-        match call_harness_tool(
+        match commit_harness_edit(
             auth,
             &path,
-            "write_file",
-            json!({ "path": harness_relative_arg(&path), "content": content }),
+            json!({
+                "kind": "write",
+                "path": harness_relative_arg(&path),
+                "content": content
+            }),
         )
         .await
         {
@@ -189,11 +200,10 @@ pub(in crate::api::fs) async fn delete_entry(
         ));
     }
     Some(
-        match call_harness_tool(
+        match commit_harness_edit(
             auth,
             &path,
-            "delete_path",
-            json!({ "path": path.relative_path }),
+            json!({ "kind": "delete", "path": path.relative_path }),
         )
         .await
         {

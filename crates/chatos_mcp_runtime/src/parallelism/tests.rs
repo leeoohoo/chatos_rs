@@ -6,9 +6,8 @@ use std::collections::HashMap;
 use serde_json::json;
 
 use super::{
-    has_conflicting_tool_profiles, normalize_scope_locator, normalize_scope_path, paths_overlap,
-    should_parallelize_tool_batch, ToolAccessKind, ToolAccessProfile, ToolParallelismInfo,
-    ToolScope,
+    normalize_scope_locator, normalize_scope_path, should_parallelize_tool_batch,
+    ToolParallelismInfo,
 };
 
 struct TestToolInfo {
@@ -27,68 +26,6 @@ impl ToolParallelismInfo for TestToolInfo {
 }
 
 #[test]
-fn conflict_policy_detects_overlapping_write_paths() {
-    let profiles = vec![
-        ToolAccessProfile {
-            kind: ToolAccessKind::Read,
-            scope: ToolScope::Path {
-                locator: "local".to_string(),
-                path: "src/services".to_string(),
-            },
-        },
-        ToolAccessProfile {
-            kind: ToolAccessKind::Write,
-            scope: ToolScope::Path {
-                locator: "local".to_string(),
-                path: "src".to_string(),
-            },
-        },
-    ];
-    assert!(has_conflicting_tool_profiles(profiles.as_slice()));
-}
-
-#[test]
-fn conflict_policy_allows_disjoint_or_different_locator_paths() {
-    let disjoint = vec![
-        ToolAccessProfile {
-            kind: ToolAccessKind::Read,
-            scope: ToolScope::Path {
-                locator: "local".to_string(),
-                path: "docs".to_string(),
-            },
-        },
-        ToolAccessProfile {
-            kind: ToolAccessKind::Write,
-            scope: ToolScope::Path {
-                locator: "local".to_string(),
-                path: "src".to_string(),
-            },
-        },
-    ];
-    assert!(!has_conflicting_tool_profiles(disjoint.as_slice()));
-
-    let different_locators = vec![
-        ToolAccessProfile {
-            kind: ToolAccessKind::Write,
-            scope: ToolScope::Path {
-                locator: "remote:server_a".to_string(),
-                path: "srv/config.toml".to_string(),
-            },
-        },
-        ToolAccessProfile {
-            kind: ToolAccessKind::Write,
-            scope: ToolScope::Path {
-                locator: "remote:server_b".to_string(),
-                path: "srv/config.toml".to_string(),
-            },
-        },
-    ];
-    assert!(!has_conflicting_tool_profiles(
-        different_locators.as_slice()
-    ));
-}
-
-#[test]
 fn scope_normalization_is_conservative() {
     assert_eq!(
         normalize_scope_path("src/../config/app.toml"),
@@ -99,7 +36,23 @@ fn scope_normalization_is_conservative() {
         normalize_scope_locator(" Remote:SERVER-A "),
         "remote:server-a"
     );
-    assert!(paths_overlap(".", "src"));
+}
+
+#[test]
+fn session_write_tools_stay_sequential() {
+    let metadata = HashMap::from([(
+        "code_stage".to_string(),
+        TestToolInfo {
+            original_name: "stage_edit_batch".to_string(),
+            server_name: "code".to_string(),
+        },
+    )]);
+    let calls = vec![
+        json!({"function": {"name": "code_stage", "arguments": "{}"}}),
+        json!({"function": {"name": "code_stage", "arguments": "{}"}}),
+    ];
+
+    assert!(!should_parallelize_tool_batch(calls.as_slice(), &metadata));
 }
 
 #[test]

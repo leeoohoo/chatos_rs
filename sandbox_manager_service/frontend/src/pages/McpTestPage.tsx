@@ -321,9 +321,8 @@ export function McpTestPage() {
             <Button
               icon={<FileTextOutlined />}
               onClick={() =>
-                applyExample('write_file', {
-                  path: 'mcp-test.txt',
-                  content: 'hello from sandbox mcp\n',
+                applyExample('open_edit_session', {
+                  purpose: 'Sandbox MCP write test',
                 })
               }
             >

@@ -43,7 +43,10 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
         .collect::<BTreeSet<_>>();
     assert!(names.contains("read_file_raw"));
     assert!(names.contains("list_dir"));
-    assert!(names.contains("write_file"));
+    assert!(names.contains("open_edit_session"));
+    assert!(names.contains("stage_edit_batch"));
+    assert!(names.contains("commit_edit_session"));
+    assert!(names.contains("abort_edit_session"));
     assert!(names.contains("execute_command"));
     assert!(names.contains("get_recent_logs"));
     assert!(names.contains("process"));
@@ -126,6 +129,53 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
     assert_eq!(
         structured.get("content").and_then(Value::as_str),
         Some("{\"name\":\"web\"}\n")
+    );
+
+    let opened = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "open_edit_session",
+        json!({}),
+        &recorder,
+    )
+    .await
+    .expect("open edit session")
+    .expect("open result");
+    let session_id = code_maintainer_structured_result(opened)["result"]["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+    call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "stage_edit_batch",
+        json!({
+            "session_id": session_id.clone(),
+            "operations": [{
+                "kind": "write",
+                "path": "session-write.txt",
+                "content": "persisted",
+                "expected_sha256": null
+            }]
+        }),
+        &recorder,
+    )
+    .await
+    .expect("stage edit batch")
+    .expect("stage result");
+    call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "commit_edit_session",
+        json!({ "session_id": session_id }),
+        &recorder,
+    )
+    .await
+    .expect("commit edit session")
+    .expect("commit result");
+    assert_eq!(
+        fs::read_to_string(project.join("session-write.txt")).expect("read session write"),
+        "persisted"
     );
 
     let listed = call_builtin_compatible_local_tool(
@@ -339,7 +389,8 @@ async fn respects_selected_builtin_kind_header() {
         .collect::<BTreeSet<_>>();
     assert!(names.contains("read_file_raw"));
     assert!(names.contains("list_dir"));
-    assert!(!names.contains("write_file"));
+    assert!(!names.contains("open_edit_session"));
+    assert!(!names.contains("stage_edit_batch"));
     assert!(!names.contains("execute_command"));
     assert!(!names.contains("browser_navigate"));
 
@@ -348,8 +399,16 @@ async fn respects_selected_builtin_kind_header() {
         "id": "blocked-write",
         "method": "tools/call",
         "params": {
-            "name": "write_file",
-            "arguments": { "path": "package.json", "content": "{}\n" }
+            "name": "stage_edit_batch",
+            "arguments": {
+                "session_id": "missing-session",
+                "operations": [{
+                    "kind": "write",
+                    "path": "package.json",
+                    "content": "{}\n",
+                    "expected_sha256": null
+                }]
+            }
         }
     });
     let response = handle_mcp_body(&request, &state, &recorder)

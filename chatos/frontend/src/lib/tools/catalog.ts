@@ -22,12 +22,10 @@ const CODE_TOOL_NAMES = new Set([
   'list_dir',
   'search_text',
   'search_files',
-  'write_file',
-  'edit_file',
-  'append_file',
-  'delete_path',
-  'apply_patch',
-  'patch',
+  'open_edit_session',
+  'stage_edit_batch',
+  'commit_edit_session',
+  'abort_edit_session',
 ]);
 
 const BROWSER_TOOL_NAMES = new Set([

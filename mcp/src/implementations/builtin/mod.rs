@@ -48,8 +48,7 @@ pub use bundled_tools::{
 };
 pub use catalog::builtin_tool_catalog;
 pub use code_maintainer::{
-    extract_patch_targets, CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions,
-    CodeMaintainerService, PatchTarget,
+    CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
 };
 pub use memory_readers::{
     MemoryCommandReaderOptions, MemoryCommandReaderService, MemoryFullPlugin, MemoryFullSkill,

@@ -18,7 +18,7 @@ const zhTitleMap: Record<string, string> = {
   'Input payload': '输入内容',
   'Input items': '输入项',
   'Input summary': '输入摘要',
-  'Patch payload': '补丁内容',
+  'Session summary': '编辑会话摘要',
   'Result payload': '结果内容',
   'Result items': '结果项',
   'Result summary': '结果摘要',

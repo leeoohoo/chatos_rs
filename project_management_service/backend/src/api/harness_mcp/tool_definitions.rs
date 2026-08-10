@@ -78,95 +78,78 @@ fn read_tool_definitions() -> Vec<Value> {
 fn write_tool_definitions() -> Vec<Value> {
     vec![
         json!({
-            "name": "write_file",
-            "description": "Write file content to the current project workspace. expected_sha256 must be the latest read hash for an existing file, or null only for a path confirmed absent.",
+            "name": "open_edit_session",
+            "description": "Open a write session for the current project workspace. Use one session, stage one or more ordered batches, then finish with commit_edit_session or abort_edit_session.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
-                    "content": { "type": "string" },
-                    "expected_sha256": {
-                        "type": ["string", "null"],
-                        "pattern": "^[0-9a-f]{64}$"
-                    }
+                    "purpose": { "type": "string" }
                 },
-                "additionalProperties": false,
-                "required": ["path", "content", "expected_sha256"]
+                "additionalProperties": false
             }
         }),
         json!({
-            "name": "edit_file",
-            "description": "Safely edit a file in the current project workspace by replacing old_text with new_text. expected_sha256 must be the latest read hash. Use before_context / after_context or start_line/end_line when old_text appears multiple times.",
+            "name": "stage_edit_batch",
+            "description": "Stage ordered write, replace_text, append, or delete operations without changing project files yet. Multiple operations may target the same file and are applied sequentially to the session snapshot. expected_sha256 is required the first time a path is staged and may be omitted for later operations on that path.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
-                    "old_text": { "type": "string", "minLength": 1 },
-                    "new_text": { "type": "string" },
-                    "start_line": { "type": "integer", "minimum": 1 },
-                    "end_line": { "type": "integer", "minimum": 1 },
-                    "before_context": { "type": "string" },
-                    "after_context": { "type": "string" },
-                    "expected_matches": { "type": "integer", "minimum": 1 },
-                    "expected_sha256": {
-                        "type": "string",
-                        "pattern": "^[0-9a-f]{64}$"
-                    }
-                },
-                "additionalProperties": false,
-                "required": ["path", "old_text", "new_text", "expected_sha256"]
-            }
-        }),
-        json!({
-            "name": "append_file",
-            "description": "Append content to a file in the current project workspace. expected_sha256 must be the latest read hash for an existing file, or null only for a path confirmed absent.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string" },
-                    "content": { "type": "string" },
-                    "expected_sha256": {
-                        "type": ["string", "null"],
-                        "pattern": "^[0-9a-f]{64}$"
-                    }
-                },
-                "additionalProperties": false,
-                "required": ["path", "content", "expected_sha256"]
-            }
-        }),
-        json!({
-            "name": "delete_path",
-            "description": "Delete a file or directory recursively from the current project workspace. expected_sha256 is required for files and null for directories or confirmed-absent paths.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string" },
-                    "expected_sha256": {
-                        "type": ["string", "null"],
-                        "pattern": "^[0-9a-f]{64}$"
-                    }
-                },
-                "additionalProperties": false,
-                "required": ["path", "expected_sha256"]
-            }
-        }),
-        json!({
-            "name": "apply_patch",
-            "description": "Apply a patch to one or more files in the current project workspace. expected_sha256_by_path must contain the latest read hash for every existing target.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "patch": { "type": "string", "minLength": 1 },
-                    "expected_sha256_by_path": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string",
-                            "pattern": "^[0-9a-f]{64}$"
+                    "session_id": { "type": "string", "minLength": 1 },
+                    "operations": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {
+                                    "type": "string",
+                                    "enum": ["write", "replace_text", "append", "delete"]
+                                },
+                                "path": { "type": "string" },
+                                "content": { "type": "string" },
+                                "old_text": { "type": "string" },
+                                "new_text": { "type": "string" },
+                                "start_line": { "type": "integer", "minimum": 1 },
+                                "end_line": { "type": "integer", "minimum": 1 },
+                                "before_context": { "type": "string" },
+                                "after_context": { "type": "string" },
+                                "expected_matches": { "type": "integer", "minimum": 1 },
+                                "expected_sha256": {
+                                    "type": ["string", "null"],
+                                    "pattern": "^[0-9a-f]{64}$"
+                                }
+                            },
+                            "additionalProperties": false,
+                            "required": ["kind", "path"]
                         }
                     }
                 },
                 "additionalProperties": false,
-                "required": ["patch", "expected_sha256_by_path"]
+                "required": ["session_id", "operations"]
+            }
+        }),
+        json!({
+            "name": "commit_edit_session",
+            "description": "Atomically commit all staged session changes to the current project workspace. Every touched baseline is revalidated before one multi-file commit request is issued.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false,
+                "required": ["session_id"]
+            }
+        }),
+        json!({
+            "name": "abort_edit_session",
+            "description": "Discard a staged edit session without changing project files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false,
+                "required": ["session_id"]
             }
         }),
     ]
@@ -194,5 +177,10 @@ mod tests {
         assert!(!text.contains("internal Harness"));
         assert!(!text.contains("default branch"));
         assert!(!text.contains("creates a Harness commit"));
+        assert!(names.contains(&"open_edit_session"));
+        assert!(names.contains(&"stage_edit_batch"));
+        assert!(names.contains(&"commit_edit_session"));
+        assert!(names.contains(&"abort_edit_session"));
+        assert_eq!(names.len(), 8);
     }
 }

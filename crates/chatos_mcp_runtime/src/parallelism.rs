@@ -48,8 +48,6 @@ const PARALLEL_PATH_READ_TOOLS: &[&str] = &[
     "search_text",
 ];
 
-const PARALLEL_PATH_WRITE_TOOLS: &[&str] = &["edit_file", "write_file"];
-
 pub trait ToolParallelismInfo {
     fn original_name(&self) -> &str;
     fn server_name(&self) -> &str;
@@ -65,22 +63,10 @@ impl ToolParallelismInfo for ToolInfo {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ToolAccessKind {
-    Read,
-    Write,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ToolScope {
     Global,
     Path { locator: String, path: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ToolAccessProfile {
-    kind: ToolAccessKind,
-    scope: ToolScope,
 }
 
 pub fn should_parallelize_tool_batch<T>(
@@ -94,7 +80,6 @@ where
         return false;
     }
 
-    let mut access_profiles = Vec::with_capacity(tool_calls.len());
     for tool_call in tool_calls {
         let Some(prefixed_name) = extract_tool_call_name(tool_call) else {
             return false;
@@ -110,41 +95,11 @@ where
         let Ok(args) = parse_json_tool_args(args) else {
             return false;
         };
-        let Some(profile) = build_tool_access_profile(info, &args) else {
+        if resolve_tool_scope(info, &args).is_none() {
             return false;
-        };
-        access_profiles.push(profile);
-    }
-
-    !has_conflicting_tool_profiles(access_profiles.as_slice())
-}
-
-fn has_conflicting_tool_profiles(profiles: &[ToolAccessProfile]) -> bool {
-    for (index, left) in profiles.iter().enumerate() {
-        for right in profiles.iter().skip(index + 1) {
-            if tool_profiles_conflict(left, right) {
-                return true;
-            }
         }
     }
-    false
-}
-
-fn build_tool_access_profile<T>(info: &T, args: &Value) -> Option<ToolAccessProfile>
-where
-    T: ToolParallelismInfo,
-{
-    let kind = classify_tool_access_kind(info.original_name());
-    let scope = resolve_tool_scope(info, args)?;
-    Some(ToolAccessProfile { kind, scope })
-}
-
-fn classify_tool_access_kind(tool_name: &str) -> ToolAccessKind {
-    if PARALLEL_PATH_WRITE_TOOLS.contains(&tool_name) {
-        ToolAccessKind::Write
-    } else {
-        ToolAccessKind::Read
-    }
+    true
 }
 
 fn resolve_tool_scope<T>(info: &T, args: &Value) -> Option<ToolScope>
@@ -175,7 +130,7 @@ where
             &["connection_id", "remote_connection_id"],
             "local",
         ),
-        "read_file_raw" | "read_file_range" | "write_file" | "edit_file" => extract_scoped_path(
+        "read_file_raw" | "read_file_range" => extract_scoped_path(
             args,
             &["path", "rel_path", "file_path", "target_path"],
             None,
@@ -261,44 +216,6 @@ fn normalize_scope_path(raw: &str) -> String {
     } else {
         segments.join("/")
     }
-}
-
-fn tool_profiles_conflict(left: &ToolAccessProfile, right: &ToolAccessProfile) -> bool {
-    if left.kind == ToolAccessKind::Read && right.kind == ToolAccessKind::Read {
-        return false;
-    }
-    tool_scopes_overlap(&left.scope, &right.scope)
-}
-
-fn tool_scopes_overlap(left: &ToolScope, right: &ToolScope) -> bool {
-    match (left, right) {
-        (ToolScope::Global, _) | (_, ToolScope::Global) => true,
-        (
-            ToolScope::Path {
-                locator: left_locator,
-                path: left_path,
-            },
-            ToolScope::Path {
-                locator: right_locator,
-                path: right_path,
-            },
-        ) => {
-            left_locator == right_locator && paths_overlap(left_path.as_str(), right_path.as_str())
-        }
-    }
-}
-
-fn paths_overlap(left: &str, right: &str) -> bool {
-    if left == "." || right == "." {
-        return true;
-    }
-    left == right || is_path_prefix(left, right) || is_path_prefix(right, left)
-}
-
-fn is_path_prefix(path: &str, prefix: &str) -> bool {
-    path.len() > prefix.len()
-        && path.starts_with(prefix)
-        && path.as_bytes().get(prefix.len()) == Some(&b'/')
 }
 
 #[cfg(test)]

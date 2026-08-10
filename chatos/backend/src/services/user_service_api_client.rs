@@ -21,7 +21,6 @@ pub fn response_status_from_error(error: &str) -> Option<u16> {
     error
         .trim()
         .strip_prefix("user_service request failed:")?
-        .trim_start()
         .split_whitespace()
         .next()?
         .parse::<u16>()

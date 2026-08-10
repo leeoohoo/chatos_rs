@@ -23,17 +23,18 @@ use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LI
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 mod client;
-mod patch_targets;
 mod path_policy;
+mod session;
 mod text_edit;
 mod tool_definitions;
 mod tools;
 
 use self::client::HarnessApiAccessResponse;
+use self::session::{store_for_project, SharedEditSessionStore};
 use self::tool_definitions::tool_definitions;
 use self::tools::{
-    tool_append_file, tool_apply_patch, tool_delete_path, tool_edit_file, tool_list_dir,
-    tool_read_file_range, tool_read_file_raw, tool_search_text, tool_write_file,
+    tool_abort_edit_session, tool_commit_edit_session, tool_list_dir, tool_open_edit_session,
+    tool_read_file_range, tool_read_file_raw, tool_search_text, tool_stage_edit_batch,
 };
 
 const SERVER_NAME: &str = "harness_code";
@@ -50,6 +51,7 @@ struct HarnessMcpContext {
     client: reqwest::Client,
     enabled_tools: HostCapabilityPolicy,
     run_id: Option<String>,
+    session_store: SharedEditSessionStore,
 }
 
 pub(in crate::api) async fn harness_project_mcp_entrypoint(
@@ -124,7 +126,10 @@ fn requested_harness_write_tool(request: &JsonRpcRequest) -> Option<&str> {
         .filter(|name| {
             matches!(
                 *name,
-                "write_file" | "edit_file" | "append_file" | "delete_path" | "apply_patch"
+                "open_edit_session"
+                    | "stage_edit_batch"
+                    | "commit_edit_session"
+                    | "abort_edit_session"
             )
         })
 }
@@ -241,6 +246,7 @@ async fn build_harness_mcp_context(
         state.config.user_service_request_timeout,
     ))
     .map_err(|err| format!("build project workspace tool client failed: {err}"))?;
+    let session_store = store_for_project(project_id.as_str(), repo_path.as_str());
     Ok(HarnessMcpContext {
         project_id,
         repo_path,
@@ -248,6 +254,7 @@ async fn build_harness_mcp_context(
         client,
         enabled_tools,
         run_id,
+        session_store,
     })
 }
 
@@ -378,31 +385,27 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
             ensure_read_allowed(ctx)?;
             tool_search_text(ctx, &arguments).await
         }
-        "write_file" => {
+        "open_edit_session" => {
             ensure_write_allowed(ctx)?;
-            tool_write_file(ctx, &arguments).await
+            tool_open_edit_session(ctx, &arguments).await
         }
-        "edit_file" => {
+        "stage_edit_batch" => {
             ensure_write_allowed(ctx)?;
-            tool_edit_file(ctx, &arguments).await
+            tool_stage_edit_batch(ctx, &arguments).await
         }
-        "append_file" => {
+        "commit_edit_session" => {
             ensure_write_allowed(ctx)?;
-            tool_append_file(ctx, &arguments).await
+            tool_commit_edit_session(ctx, &arguments).await
         }
-        "delete_path" => {
+        "abort_edit_session" => {
             ensure_write_allowed(ctx)?;
-            tool_delete_path(ctx, &arguments).await
-        }
-        "apply_patch" => {
-            ensure_write_allowed(ctx)?;
-            tool_apply_patch(ctx, &arguments).await
+            tool_abort_edit_session(ctx, &arguments).await
         }
         other => Err(format!("Tool not found: {other}")),
     };
     if matches!(
         name,
-        "write_file" | "edit_file" | "append_file" | "delete_path" | "apply_patch"
+        "open_edit_session" | "stage_edit_batch" | "commit_edit_session" | "abort_edit_session"
     ) {
         record_file_modification_outcome(ctx, name, &invocation);
     }
@@ -571,8 +574,8 @@ mod tests {
         };
 
         assert_eq!(
-            requested_harness_write_tool(&request("apply_patch")),
-            Some("apply_patch")
+            requested_harness_write_tool(&request("stage_edit_batch")),
+            Some("stage_edit_batch")
         );
         assert_eq!(
             requested_harness_write_tool(&request("read_file_raw")),

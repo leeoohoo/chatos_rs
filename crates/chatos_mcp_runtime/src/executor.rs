@@ -611,7 +611,7 @@ mod tests {
 
         fn unavailable_tools(&self) -> Vec<(String, String)> {
             vec![(
-                "write_file".to_string(),
+                "stage_edit_batch".to_string(),
                 "Tool is disabled in Chat OS Plan task profile".to_string(),
             )]
         }
@@ -643,8 +643,8 @@ mod tests {
                 &[json!({
                     "id": "call_1",
                     "function": {
-                        "name": "disabled_server_write_file",
-                        "arguments": "{\"path\":\"a.txt\",\"content\":\"x\"}"
+                        "name": "disabled_server_stage_edit_batch",
+                        "arguments": "{\"session_id\":\"session-1\",\"operations\":[]}"
                     }
                 })],
                 ToolCallContext::default(),

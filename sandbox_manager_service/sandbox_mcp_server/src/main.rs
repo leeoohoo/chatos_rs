@@ -817,17 +817,39 @@ mod tests {
         config.effective_permissions = Some(snapshot);
         let app = build_app(config.clone()).await.expect("build app");
 
+        let (_status, opened) = post_mcp(
+            app.clone(),
+            rpc_request(
+                "open-ordinary",
+                "tools/call",
+                json!({
+                    "name": "open_edit_session",
+                    "arguments": {},
+                }),
+            ),
+            &[],
+        )
+        .await;
+        let session_id = opened
+            .pointer("/result/_structured_result/result/session_id")
+            .and_then(serde_json::Value::as_str)
+            .expect("ordinary edit session")
+            .to_string();
         let (_status, ordinary) = post_mcp(
             app.clone(),
             rpc_request(
-                "write-ordinary",
+                "stage-ordinary",
                 "tools/call",
                 json!({
-                    "name": "write_file",
+                    "name": "stage_edit_batch",
                     "arguments": {
-                        "path": "ordinary.txt",
-                        "content": "ok",
-                        "expected_sha256": null
+                        "session_id": session_id,
+                        "operations": [{
+                            "kind": "write",
+                            "path": "ordinary.txt",
+                            "content": "ok",
+                            "expected_sha256": null
+                        }]
                     },
                 }),
             ),
@@ -838,19 +860,58 @@ mod tests {
             !ordinary.to_string().contains("permission profile denies"),
             "ordinary workspace write should remain allowed: {ordinary}"
         );
+        let (_status, committed) = post_mcp(
+            app.clone(),
+            rpc_request(
+                "commit-ordinary",
+                "tools/call",
+                json!({
+                    "name": "commit_edit_session",
+                    "arguments": { "session_id": session_id },
+                }),
+            ),
+            &[],
+        )
+        .await;
+        assert!(
+            committed.get("error").is_none(),
+            "ordinary workspace commit should succeed: {committed}"
+        );
         assert!(config.workspace.join("ordinary.txt").exists());
 
+        let (_status, opened) = post_mcp(
+            app.clone(),
+            rpc_request(
+                "open-protected",
+                "tools/call",
+                json!({
+                    "name": "open_edit_session",
+                    "arguments": {},
+                }),
+            ),
+            &[],
+        )
+        .await;
+        let protected_session_id = opened
+            .pointer("/result/_structured_result/result/session_id")
+            .and_then(serde_json::Value::as_str)
+            .expect("protected edit session")
+            .to_string();
         let (_status, protected_write) = post_mcp(
             app.clone(),
             rpc_request(
-                "write-protected",
+                "stage-protected",
                 "tools/call",
                 json!({
-                    "name": "write_file",
+                    "name": "stage_edit_batch",
                     "arguments": {
-                        "path": ".git/config",
-                        "content": "blocked",
-                        "expected_sha256": null
+                        "session_id": protected_session_id,
+                        "operations": [{
+                            "kind": "write",
+                            "path": ".git/config",
+                            "content": "blocked",
+                            "expected_sha256": null
+                        }]
                     },
                 }),
             ),
