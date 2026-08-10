@@ -48,7 +48,7 @@ fn plugin_snapshot_uses_project_target_and_ignores_legacy_task_target() {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
             selected_command_ids: Vec::new(),
-            selected_agent_ids: Vec::new(),
+            selected_agent_ids: vec!["legacy-reviewer".to_string()],
         }],
         command_invocations: Vec::new(),
     };
@@ -68,6 +68,9 @@ fn plugin_snapshot_uses_project_target_and_ignores_legacy_task_target() {
     );
     assert!(task.plugin_config.device_id.is_none());
     assert!(task.plugin_config.workspace_id.is_none());
+    assert!(task.plugin_config.selected_plugins[0]
+        .selected_agent_ids
+        .is_empty());
     assert_eq!(snapshots[0].artifact_sha256, "a".repeat(64));
     assert_eq!(snapshots[0].component_snapshots.len(), 1);
     assert_eq!(snapshots[0].component_snapshots[0].component_key, "browser");
@@ -251,17 +254,13 @@ fn selected_command_enters_the_immutable_run_snapshot() {
 }
 
 #[test]
-fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
+fn plugin_agent_profiles_are_not_task_capabilities() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_agent_plugin(RUN_AGENT_KEY)];
     let policy = local_runtime_policy(capabilities).expect("Agent Plugin policy");
-    let views = policy.selectable_plugin_views();
-    assert_eq!(views[0].agents.len(), 1);
-    assert_eq!(views[0].agents[0].agent_id, "reviewer");
-    assert_eq!(views[0].agents[0].max_iterations, 12);
+    assert!(policy.selectable_plugin_views().is_empty());
 
-    let mut task = task();
-    task.plugin_config = TaskPluginConfig {
+    let config = TaskPluginConfig {
         device_id: Some("device-1".to_string()),
         workspace_id: Some("workspace-1".to_string()),
         selected_plugins: vec![SelectedPluginRef {
@@ -272,31 +271,10 @@ fn selected_agent_enters_the_immutable_run_snapshot_and_catalog() {
         }],
         command_invocations: Vec::new(),
     };
-    policy
-        .apply_to_task(&mut task)
-        .expect("apply Agent Plugin policy");
-    let snapshots = policy
-        .plugin_snapshots(&task)
-        .expect("Agent Plugin snapshots");
-    assert_eq!(snapshots[0].component_snapshots.len(), 1);
-    let component = &snapshots[0].component_snapshots[0];
-    assert_eq!(component.component_key, "reviewer");
-    assert_eq!(component.kind, PluginComponentKind::Agent);
-    assert_eq!(component.content_sha256, "e".repeat(64));
-    assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("base_agent")),
-        Some(&json!(RUN_AGENT_KEY))
-    );
-    assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("max_iterations")),
-        Some(&json!(12))
-    );
+    assert!(policy
+        .validate_plugin_config(&config)
+        .expect_err("task-level Plugin Agent selection must fail")
+        .contains("not supported"));
 }
 
 #[test]
@@ -332,7 +310,7 @@ fn hook_set_is_automatically_bound_to_the_immutable_run_snapshot() {
 }
 
 #[test]
-fn plugin_agent_must_match_the_existing_plan_or_run_agent() {
+fn plugin_agent_profiles_are_hidden_for_every_task_runner_agent() {
     let mut run_capabilities = local_runtime_capabilities();
     run_capabilities.plugins = vec![resolved_agent_plugin(PLAN_AGENT_KEY)];
     let run_policy = local_runtime_policy(run_capabilities)
@@ -343,14 +321,11 @@ fn plugin_agent_must_match_the_existing_plan_or_run_agent() {
     plan_capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
     plan_capabilities.plugins = vec![resolved_agent_plugin(PLAN_AGENT_KEY)];
     let policy = local_runtime_policy(plan_capabilities).expect("plan Agent Plugin policy");
-    assert_eq!(
-        policy.selectable_plugin_views()[0].agents[0].agent_id,
-        "reviewer"
-    );
+    assert!(policy.selectable_plugin_views().is_empty());
 }
 
 #[test]
-fn a_task_may_select_only_one_plugin_agent() {
+fn a_task_may_not_select_a_plugin_agent() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_agent_plugin(RUN_AGENT_KEY)];
     let policy = local_runtime_policy(capabilities).expect("Agent Plugin policy");
@@ -360,14 +335,14 @@ fn a_task_may_select_only_one_plugin_agent() {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
             selected_command_ids: Vec::new(),
-            selected_agent_ids: vec!["reviewer".to_string(), "second".to_string()],
+            selected_agent_ids: vec!["reviewer".to_string()],
         }],
         ..TaskPluginConfig::default()
     };
     assert!(policy
         .validate_plugin_config(&config)
-        .expect_err("multiple Plugin Agents must fail")
-        .contains("more than one Agent"));
+        .expect_err("Plugin Agent selection must fail")
+        .contains("not supported"));
 }
 
 #[test]
@@ -495,7 +470,7 @@ fn required_plugin_is_injected_into_effective_task_config() {
 }
 
 #[test]
-fn cloud_runtime_injects_enabled_agent_plugins_without_user_selection() {
+fn cloud_runtime_injects_enabled_plugins_without_user_selection() {
     let mut capabilities = local_runtime_capabilities();
     let mut plugin = resolved_plugin(false);
     plugin.catalog.name = "ponytail".to_string();

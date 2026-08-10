@@ -293,11 +293,6 @@ export function TaskDetailDrawer({
                           /{commandId}
                         </Tag>
                       ))}
-                      {(plugin.selected_agent_ids || []).map((agentId) => (
-                        <Tag key={`${plugin.plugin_id}:${agentId}`} color="magenta">
-                          @{agentId}
-                        </Tag>
-                      ))}
                     </Space>
                   ))}
                 </Space>

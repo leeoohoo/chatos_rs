@@ -118,36 +118,6 @@ pub(super) fn validate_plugin_component_selection(
         ));
     }
 
-    let available_agents = plugin
-        .components
-        .iter()
-        .filter(|component| {
-            component.available
-                && component.component.kind == PluginComponentKind::Agent
-                && plugin_component_supported_for_agent(
-                    &component.component,
-                    expected_agent,
-                    portable_uses_local,
-                )
-        })
-        .map(|component| component.component.component_key.as_str())
-        .collect::<HashSet<_>>();
-    let selected_agents =
-        normalized_unique_ids(&selected.selected_agent_ids, "selected_agent_ids")?;
-    if selected_agents.len() > 1 {
-        return Err(format!(
-            "Plugin selects more than one Agent: {}",
-            plugin.catalog.id
-        ));
-    }
-    for agent_id in &selected_agents {
-        if !available_agents.contains(agent_id.as_str()) {
-            return Err(format!(
-                "Plugin Agent is not available for {expected_agent} in {}: {agent_id}",
-                plugin.catalog.id
-            ));
-        }
-    }
     Ok(())
 }
 
@@ -165,10 +135,6 @@ pub(super) fn plugin_selection_requires_local_execution(
         normalized_unique_ids(&selected.selected_command_ids, "selected_command_ids")?
             .into_iter()
             .collect::<HashSet<_>>();
-    let selected_agent_ids =
-        normalized_unique_ids(&selected.selected_agent_ids, "selected_agent_ids")?
-            .into_iter()
-            .collect::<HashSet<_>>();
     Ok(plugin
         .components
         .iter()
@@ -178,7 +144,6 @@ pub(super) fn plugin_selection_requires_local_execution(
                 &component.component,
                 &selected_skill_ids,
                 &selected_command_ids,
-                &selected_agent_ids,
                 expected_agent,
                 portable_uses_local,
             ) && (component.component.execution_host == PluginExecutionHost::Local
@@ -209,10 +174,6 @@ pub(super) fn plugin_snapshot(
         normalized_unique_ids(&selected.selected_command_ids, "selected_command_ids")?
             .into_iter()
             .collect::<HashSet<_>>();
-    let selected_agent_ids =
-        normalized_unique_ids(&selected.selected_agent_ids, "selected_agent_ids")?
-            .into_iter()
-            .collect::<HashSet<_>>();
     let snapshots_by_key = plugin
         .component_snapshots
         .iter()
@@ -229,7 +190,6 @@ pub(super) fn plugin_snapshot(
             &component.component,
             &selected_skill_ids,
             &selected_command_ids,
-            &selected_agent_ids,
             expected_agent,
             portable_uses_local,
         ) {
@@ -240,7 +200,6 @@ pub(super) fn plugin_snapshot(
             PluginComponentKind::SkillCollection
                 | PluginComponentKind::McpServer
                 | PluginComponentKind::Command
-                | PluginComponentKind::Agent
                 | PluginComponentKind::HookSet
                 | PluginComponentKind::UiContribution
         ) {
@@ -401,7 +360,6 @@ fn component_selected_for_run(
     component: &PluginComponentDescriptor,
     selected_skill_ids: &HashSet<String>,
     selected_command_ids: &HashSet<String>,
-    selected_agent_ids: &HashSet<String>,
     expected_agent: &str,
     portable_uses_local: bool,
 ) -> bool {
@@ -420,7 +378,7 @@ fn component_selected_for_run(
         PluginComponentKind::Command => {
             selected_command_ids.contains(component.component_key.as_str())
         }
-        PluginComponentKind::Agent => selected_agent_ids.contains(component.component_key.as_str()),
+        PluginComponentKind::Agent => false,
         _ => component.required,
     }
 }
@@ -446,9 +404,7 @@ fn plugin_component_supported_for_agent(
                 || (is_task_runner_execution_agent(expected_agent)
                     && !component.metadata.contains_key("target_agent"))
         }
-        PluginComponentKind::Agent => {
-            component.metadata.get("base_agent").and_then(Value::as_str) == Some(expected_agent)
-        }
+        PluginComponentKind::Agent => false,
         PluginComponentKind::HookSet => is_task_runner_execution_agent(expected_agent),
         PluginComponentKind::UiContribution => is_task_runner_execution_agent(expected_agent),
         _ => false,

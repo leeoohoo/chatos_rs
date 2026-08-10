@@ -29,7 +29,6 @@ import {
   scheduleModeDescriptionKeys,
   scheduleModeLabelKeys,
   taskProfileLabel,
-  taskPluginAgentKey,
   taskPluginCommandKey,
   taskProfileValues,
   taskStatusValues,
@@ -152,16 +151,6 @@ export function TaskEditorDrawer({
         (plugin.plugin_key.toLowerCase().includes('browser') ||
           plugin.component_keys.includes('browser-tools')),
     ),
-  );
-  const pluginAgentOptions = useMemo(
-    () =>
-      selectedPluginDetails.flatMap(({ pluginId, plugin }) =>
-        (plugin?.agents || []).map((agent) => ({
-          label: `${plugin?.display_name || pluginId} / ${agent.display_name} / ${agent.base_agent} / ${agent.max_iterations}`,
-          value: taskPluginAgentKey(pluginId, agent.agent_id),
-        })),
-      ),
-    [selectedPluginDetails],
   );
   return (
     <Drawer
@@ -369,25 +358,6 @@ export function TaskEditorDrawer({
           />
         </Form.Item>
 
-        <Form.Item
-          name="pluginAgentSelection"
-          label={t('tasks.form.pluginAgents')}
-          extra={
-            pluginAgentOptions.length
-              ? t('tasks.form.pluginAgentsHelp')
-              : t('tasks.form.pluginAgentsEmpty')
-          }
-        >
-          <Select
-            allowClear
-            showSearch
-            disabled={!pluginAgentOptions.length}
-            optionFilterProp="label"
-            options={pluginAgentOptions}
-            placeholder={t('tasks.form.pluginAgentsPlaceholder')}
-          />
-        </Form.Item>
-
         {selectedPluginDetails.length ? (
           <Space direction="vertical" size={8} style={{ width: '100%', marginBottom: 16 }}>
             {selectedPluginDetails.map(({ pluginId, plugin }) => (
@@ -415,29 +385,6 @@ export function TaskEditorDrawer({
                   <Typography.Text type="secondary">
                     {plugin?.description || t('tasks.form.pluginUnavailable')}
                   </Typography.Text>
-                  {(plugin?.agents || []).length ? (
-                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                      <Typography.Text strong>
-                        {t('tasks.form.pluginAgents')}
-                      </Typography.Text>
-                      {(plugin?.agents || []).map((agent) => (
-                        <Space key={`${pluginId}:${agent.agent_id}`} wrap>
-                          <Tag color="magenta">@{agent.agent_id}</Tag>
-                          <Tag>{agent.base_agent}</Tag>
-                          <Tag color="cyan">
-                            {t('tasks.form.pluginAgentMaxIterations', {
-                              count: agent.max_iterations,
-                            })}
-                          </Tag>
-                          {agent.allowed_tools?.length ? (
-                            <Typography.Text type="secondary">
-                              {agent.allowed_tools.join(', ')}
-                            </Typography.Text>
-                          ) : null}
-                        </Space>
-                      ))}
-                    </Space>
-                  ) : null}
                   {(plugin?.commands || []).length ? (
                     <Space direction="vertical" size={8} style={{ width: '100%' }}>
                       <Typography.Text strong>

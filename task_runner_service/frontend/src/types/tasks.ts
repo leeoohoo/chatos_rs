@@ -38,7 +38,6 @@ export interface SelectedTaskPlugin {
   plugin_id: string;
   selected_skill_ids: string[];
   selected_command_ids: string[];
-  selected_agent_ids?: string[];
 }
 
 export interface TaskPluginCommandInvocation {
@@ -64,17 +63,6 @@ export interface SelectableTaskPluginCommand {
   allowed_tools?: string[];
 }
 
-export interface SelectableTaskPluginAgent {
-  agent_id: string;
-  display_name: string;
-  description?: string | null;
-  base_agent:
-    | 'task_runner_plan_phase'
-    | 'task_runner_run_phase';
-  allowed_tools?: string[];
-  max_iterations: number;
-}
-
 export interface SelectableTaskPlugin {
   id: string;
   plugin_key: string;
@@ -89,7 +77,6 @@ export interface SelectableTaskPlugin {
   component_hosts: Record<string, 'cloud' | 'local' | 'portable'>;
   component_keys: string[];
   commands: SelectableTaskPluginCommand[];
-  agents: SelectableTaskPluginAgent[];
 }
 
 export interface TaskPluginConnectorDevice {

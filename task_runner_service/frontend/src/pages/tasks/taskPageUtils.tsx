@@ -42,7 +42,6 @@ export type TaskFormValues = {
   selectedPluginIds?: string[];
   pluginCommandSelections?: Record<string, boolean>;
   pluginCommandArguments?: Record<string, string>;
-  pluginAgentSelection?: string;
   scheduleMode: TaskScheduleMode;
   scheduleRunAt?: string;
   scheduleIntervalSeconds?: number;
@@ -72,7 +71,6 @@ export function buildCreateTaskFormValues(
     selectedPluginIds: [],
     pluginCommandSelections: {},
     pluginCommandArguments: {},
-    pluginAgentSelection: undefined,
     scheduleMode: 'manual',
     scheduleRunAt: undefined,
     scheduleIntervalSeconds: undefined,
@@ -110,12 +108,6 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
           invocation.arguments!.trim(),
         ]),
     ),
-    pluginAgentSelection: (task.plugin_config?.selected_plugins || [])
-      .flatMap((plugin) =>
-        (plugin.selected_agent_ids || []).map((agentId) =>
-          taskPluginAgentKey(plugin.plugin_id, agentId),
-        ),
-      )[0],
     scheduleMode: task.schedule.mode,
     scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
     scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
@@ -161,10 +153,6 @@ export function buildTaskPayload(
           : [];
       }),
   );
-  const selectedAgent = values.pluginAgentSelection
-    ? parseTaskPluginAgentKey(values.pluginAgentSelection)
-    : null;
-
   return {
     title: values.title,
     objective: values.objective,
@@ -185,10 +173,6 @@ export function buildTaskPayload(
         plugin_id: pluginId,
         selected_skill_ids: [],
         selected_command_ids: selectedCommandsByPlugin.get(pluginId) || [],
-        selected_agent_ids:
-          selectedAgent?.pluginId === pluginId && selectedPluginIdSet.has(pluginId)
-            ? [selectedAgent.agentId]
-            : [],
       })),
       command_invocations: commandInvocations,
     },
@@ -200,31 +184,6 @@ export function buildTaskPayload(
 
 export function taskPluginCommandKey(pluginId: string, commandId: string): string {
   return JSON.stringify([pluginId, commandId]);
-}
-
-export function taskPluginAgentKey(pluginId: string, agentId: string): string {
-  return JSON.stringify([pluginId, agentId]);
-}
-
-function parseTaskPluginAgentKey(
-  value: string,
-): { pluginId: string; agentId: string } | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== 2 ||
-      typeof parsed[0] !== 'string' ||
-      typeof parsed[1] !== 'string'
-    ) {
-      return null;
-    }
-    const pluginId = parsed[0].trim();
-    const agentId = parsed[1].trim();
-    return pluginId && agentId ? { pluginId, agentId } : null;
-  } catch {
-    return null;
-  }
 }
 
 function parseTaskPluginCommandKey(

@@ -25,7 +25,6 @@ pub(crate) struct SelectablePluginView {
     pub component_keys: Vec<String>,
     pub components: Vec<SelectablePluginComponentView>,
     pub commands: Vec<SelectablePluginCommandView>,
-    pub agents: Vec<SelectablePluginAgentView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,16 +51,6 @@ pub(crate) struct SelectablePluginCommandView {
     pub allowed_tools: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct SelectablePluginAgentView {
-    pub agent_id: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub base_agent: String,
-    pub allowed_tools: Vec<String>,
-    pub max_iterations: usize,
-}
-
 impl TaskRunnerCapabilityPolicy {
     pub(crate) fn selectable_plugin_views(&self) -> Vec<SelectablePluginView> {
         self.selectable_plugins()
@@ -71,6 +60,7 @@ impl TaskRunnerCapabilityPolicy {
                 let component_hosts = plugin
                     .components
                     .iter()
+                    .filter(|component| component.component.kind != PluginComponentKind::Agent)
                     .map(|component| {
                         (
                             component.component.component_key.clone(),
@@ -83,6 +73,7 @@ impl TaskRunnerCapabilityPolicy {
                 let components = plugin
                     .components
                     .iter()
+                    .filter(|component| component.component.kind != PluginComponentKind::Agent)
                     .map(|component| {
                         let snapshot = plugin.component_snapshots.iter().find(|snapshot| {
                             snapshot.component.component_key == component.component.component_key
@@ -135,7 +126,10 @@ impl TaskRunnerCapabilityPolicy {
                     component_keys: plugin
                         .components
                         .iter()
-                        .filter(|component| component.available)
+                        .filter(|component| {
+                            component.available
+                                && component.component.kind != PluginComponentKind::Agent
+                        })
                         .map(|component| component.component.component_key.clone())
                         .collect(),
                     components,
@@ -197,54 +191,6 @@ impl TaskRunnerCapabilityPolicy {
                                 .filter_map(Value::as_str)
                                 .map(str::to_string)
                                 .collect(),
-                        })
-                        .collect(),
-                    agents: plugin
-                        .components
-                        .iter()
-                        .filter(|component| {
-                            component.available
-                                && component.component.kind == PluginComponentKind::Agent
-                                && component
-                                    .component
-                                    .metadata
-                                    .get("base_agent")
-                                    .and_then(Value::as_str)
-                                    == Some(self.capabilities.agent_key.as_str())
-                        })
-                        .filter_map(|component| {
-                            Some(SelectablePluginAgentView {
-                                agent_id: component.component.component_key.clone(),
-                                display_name: component.component.display_name.clone(),
-                                description: component
-                                    .component
-                                    .metadata
-                                    .get("description")
-                                    .and_then(Value::as_str)
-                                    .map(str::to_string),
-                                base_agent: component
-                                    .component
-                                    .metadata
-                                    .get("base_agent")
-                                    .and_then(Value::as_str)?
-                                    .to_string(),
-                                allowed_tools: component
-                                    .component
-                                    .metadata
-                                    .get("allowed_tools")
-                                    .and_then(Value::as_array)
-                                    .into_iter()
-                                    .flatten()
-                                    .filter_map(Value::as_str)
-                                    .map(str::to_string)
-                                    .collect(),
-                                max_iterations: component
-                                    .component
-                                    .metadata
-                                    .get("max_iterations")
-                                    .and_then(Value::as_u64)
-                                    .and_then(|value| usize::try_from(value).ok())?,
-                            })
                         })
                         .collect(),
                 })

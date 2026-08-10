@@ -67,6 +67,11 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn apply_plugins_to_task(&self, task: &mut TaskRecord) -> Result<(), String> {
+        // Legacy task snapshots may contain Plugin Agent selections. They no longer participate
+        // in execution because the system Agent is fixed by the authenticated MCP context.
+        for selected in &mut task.plugin_config.selected_plugins {
+            selected.selected_agent_ids.clear();
+        }
         self.validate_plugin_config(&task.plugin_config)?;
         let allowed_effective = self
             .selectable_plugins()
@@ -97,10 +102,7 @@ impl TaskRunnerCapabilityPolicy {
                         &selected.selected_command_ids,
                         "selected_command_ids",
                     )?,
-                    selected_agent_ids: normalized_unique_ids(
-                        &selected.selected_agent_ids,
-                        "selected_agent_ids",
-                    )?,
+                    selected_agent_ids: Vec::new(),
                 });
             }
         }

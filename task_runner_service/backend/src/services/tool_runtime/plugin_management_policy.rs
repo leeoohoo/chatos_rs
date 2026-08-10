@@ -170,11 +170,16 @@ impl TaskRunnerCapabilityPolicy {
 
     pub(crate) fn validate_plugin_config(&self, config: &TaskPluginConfig) -> Result<(), String> {
         let mut seen_plugins = HashSet::new();
-        let mut selected_agent_count = 0usize;
         for selected in &config.selected_plugins {
             let plugin_id = normalized_plugin_identifier(selected.plugin_id.as_str(), "plugin_id")?;
             if !seen_plugins.insert(plugin_id.clone()) {
                 return Err(format!("Plugin is selected more than once: {plugin_id}"));
+            }
+            if !selected.selected_agent_ids.is_empty() {
+                return Err(
+                    "Task-level Plugin Agent selection is not supported; the Task Runner Agent is fixed by the MCP execution context"
+                        .to_string(),
+                );
             }
             let plugin = self
                 .capabilities
@@ -219,11 +224,6 @@ impl TaskRunnerCapabilityPolicy {
                     self.runtime_device_id.as_deref().unwrap_or_default(),
                     "project device_id",
                 )?;
-            }
-            selected_agent_count =
-                selected_agent_count.saturating_add(selected.selected_agent_ids.len());
-            if selected_agent_count > 1 {
-                return Err("a Task may select at most one Plugin Agent".to_string());
             }
         }
         validate_command_invocations(config)?;
