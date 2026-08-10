@@ -19,8 +19,18 @@ use super::summaries::summarize_tool_result_names;
 
 pub(super) struct RuntimeToolExecution {
     pub(super) tool_results: Vec<ToolResult>,
+    pub(super) tool_calls: Vec<Value>,
     pub(super) tool_call_items: Vec<Value>,
     pub(super) tool_output_items: Vec<Value>,
+}
+
+impl RuntimeToolExecution {
+    pub(super) fn extend(&mut self, other: Self) {
+        self.tool_results.extend(other.tool_results);
+        self.tool_calls.extend(other.tool_calls);
+        self.tool_call_items.extend(other.tool_call_items);
+        self.tool_output_items.extend(other.tool_output_items);
+    }
 }
 
 pub(super) fn next_consecutive_failed_tool_batch_count(
@@ -64,6 +74,145 @@ pub(super) fn fatal_tool_execution_error(tool_results: &[ToolResult]) -> Option<
         .iter()
         .find(|result| result.fatal_error)
         .map(|result| result.content.clone())
+}
+
+pub(super) fn automatic_file_write_recovery_calls(
+    tool_results: &[ToolResult],
+    available_tools: &[Value],
+) -> Vec<Value> {
+    let available_names = available_tools
+        .iter()
+        .filter_map(tool_definition_name)
+        .collect::<Vec<_>>();
+    let mut seen = HashSet::new();
+    let mut calls = Vec::new();
+
+    for result in tool_results {
+        if result.success || !is_code_maintainer_write_tool(result.name.as_str()) {
+            continue;
+        }
+        let Some(payload) = structured_stale_context_payload(result.content.as_str()) else {
+            continue;
+        };
+        let Some(path) = payload.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        let path = path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let required = payload
+            .pointer("/recovery/required_next_tool")
+            .and_then(Value::as_str)
+            .unwrap_or("read_file_raw");
+        let (required, args) = match required {
+            "read_file_range" => {
+                let start_line = payload
+                    .pointer("/recovery/recommended_args/start_line")
+                    .and_then(Value::as_u64);
+                let end_line = payload
+                    .pointer("/recovery/recommended_args/end_line")
+                    .and_then(Value::as_u64);
+                match (start_line, end_line) {
+                    (Some(start_line), Some(end_line)) => (
+                        "read_file_range",
+                        json!({
+                            "path": path,
+                            "start_line": start_line,
+                            "end_line": end_line,
+                        }),
+                    ),
+                    _ => ("read_file_raw", json!({ "path": path })),
+                }
+            }
+            "read_file_raw" => ("read_file_raw", json!({ "path": path })),
+            _ => continue,
+        };
+        let Some(tool_name) =
+            matching_recovery_tool_name(result.name.as_str(), required, available_names.as_slice())
+        else {
+            continue;
+        };
+        let dedupe_key = format!("{tool_name}\n{}", args);
+        if !seen.insert(dedupe_key) {
+            continue;
+        }
+        calls.push(json!({
+            "id": format!("runtime_recovery_{}", Uuid::new_v4()),
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "arguments": args.to_string(),
+            }
+        }));
+    }
+
+    calls
+}
+
+fn is_code_maintainer_write_tool(name: &str) -> bool {
+    name.contains("code_maintainer")
+        && [
+            "write_file",
+            "edit_file",
+            "append_file",
+            "delete_path",
+            "apply_patch",
+            "patch",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+}
+
+fn structured_stale_context_payload(content: &str) -> Option<Value> {
+    content
+        .match_indices('{')
+        .filter_map(|(index, _)| {
+            serde_json::Deserializer::from_str(&content[index..])
+                .into_iter::<Value>()
+                .next()
+                .and_then(Result::ok)
+        })
+        .find(|payload| {
+            payload.get("category").and_then(Value::as_str) == Some("stale_context")
+                && payload
+                    .pointer("/recovery/required_next_tool")
+                    .and_then(Value::as_str)
+                    .is_some()
+        })
+}
+
+fn tool_definition_name(tool: &Value) -> Option<&str> {
+    tool.get("name")
+        .and_then(Value::as_str)
+        .or_else(|| tool.pointer("/function/name").and_then(Value::as_str))
+}
+
+fn matching_recovery_tool_name<'a>(
+    failed_tool_name: &str,
+    required_tool: &str,
+    available_names: &'a [&str],
+) -> Option<&'a str> {
+    let namespace = failed_tool_name
+        .split_once("_write_")
+        .map(|(prefix, _)| prefix);
+    let preferred = namespace.map(|prefix| format!("{prefix}_read_{required_tool}"));
+    preferred
+        .as_deref()
+        .and_then(|name| available_names.iter().copied().find(|item| *item == name))
+        .or_else(|| {
+            available_names
+                .iter()
+                .copied()
+                .find(|name| *name == required_tool)
+        })
+        .or_else(|| {
+            let namespace = namespace?;
+            available_names
+                .iter()
+                .copied()
+                .find(|name| name.starts_with(namespace) && name.ends_with(required_tool))
+        })
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {
@@ -169,6 +318,7 @@ pub(super) async fn execute_runtime_tools(
 
     Ok(RuntimeToolExecution {
         tool_results,
+        tool_calls: tool_call_values.to_vec(),
         tool_call_items,
         tool_output_items,
     })
@@ -244,7 +394,7 @@ mod tests {
     use chatos_mcp_runtime::ToolResult;
 
     use super::{
-        fatal_tool_execution_error, instrument_tool_calls,
+        automatic_file_write_recovery_calls, fatal_tool_execution_error, instrument_tool_calls,
         next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
         validate_terminal_tool_results,
     };
@@ -262,6 +412,50 @@ mod tests {
             fatal_error: false,
             transient_model_input: None,
         }
+    }
+
+    #[test]
+    fn stale_code_maintainer_write_builds_a_scoped_automatic_read() {
+        let mut stale = tool_result(
+            false,
+            r#"tool failed: {"category":"stale_context","path":"README.md","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"README.md"}}}"#,
+        );
+        stale.name = "code_maintainer_write_apply_patch".to_string();
+        let tools = vec![
+            serde_json::json!({"name": "code_maintainer_write_apply_patch"}),
+            serde_json::json!({"name": "code_maintainer_read_read_file_raw"}),
+        ];
+
+        let calls = automatic_file_write_recovery_calls(&[stale], tools.as_slice());
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0]["function"]["name"],
+            "code_maintainer_read_read_file_raw"
+        );
+        let args: serde_json::Value = serde_json::from_str(
+            calls[0]["function"]["arguments"]
+                .as_str()
+                .expect("arguments"),
+        )
+        .expect("recovery args");
+        assert_eq!(args, serde_json::json!({"path": "README.md"}));
+    }
+
+    #[test]
+    fn automatic_read_recovery_respects_available_tool_configuration() {
+        let mut stale = tool_result(
+            false,
+            r#"{"category":"stale_context","path":"README.md","recovery":{"required_next_tool":"read_file_raw"}}"#,
+        );
+        stale.name = "code_maintainer_write_edit_file".to_string();
+
+        let calls = automatic_file_write_recovery_calls(
+            &[stale],
+            &[serde_json::json!({"name": "unrelated_read_file_raw"})],
+        );
+
+        assert!(calls.is_empty());
     }
 
     #[test]

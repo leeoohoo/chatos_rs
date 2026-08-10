@@ -48,7 +48,8 @@ use self::request_error::{
 };
 use self::summaries::summarize_tool_call_names;
 use self::tool_execution::{
-    execute_runtime_tools, next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
+    automatic_file_write_recovery_calls, execute_runtime_tools,
+    next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
 };
 
 pub struct AiRuntime {
@@ -386,10 +387,33 @@ impl AiRuntime {
                 return Ok(runtime_result_from_response(response));
             };
 
-            let tool_execution =
+            let mut tool_execution =
                 execute_runtime_tools(executor.as_ref(), &tool_calls, &options, iteration).await?;
             self.save_tool_records(&options, tool_execution.tool_results.as_slice())
                 .await?;
+            let recovery_calls = automatic_file_write_recovery_calls(
+                tool_execution.tool_results.as_slice(),
+                executor.available_tools().as_slice(),
+            );
+            if !recovery_calls.is_empty() {
+                info!(
+                    conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                    conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
+                    iteration,
+                    recovery_call_count = recovery_calls.len(),
+                    "ai runtime automatically re-reading stale modification targets"
+                );
+                let recovery_execution = execute_runtime_tools(
+                    executor.as_ref(),
+                    &Value::Array(recovery_calls),
+                    &options,
+                    iteration,
+                )
+                .await?;
+                self.save_tool_records(&options, recovery_execution.tool_results.as_slice())
+                    .await?;
+                tool_execution.extend(recovery_execution);
+            }
             consecutive_failed_tool_batches = next_consecutive_failed_tool_batch_count(
                 consecutive_failed_tool_batches,
                 tool_execution.tool_results.as_slice(),
@@ -420,6 +444,7 @@ impl AiRuntime {
                         .cloned(),
                 );
             }
+            let executed_tool_calls = Value::Array(tool_execution.tool_calls.clone());
             pending_tool_calls = Some(tool_execution.tool_call_items);
             pending_tool_outputs = Some(tool_execution.tool_output_items);
             if options.iterative_context_refresh.is_none() {
@@ -427,7 +452,7 @@ impl AiRuntime {
                     request.input,
                     request.supports_responses,
                     &response.content,
-                    &tool_calls,
+                    &executed_tool_calls,
                     tool_execution.tool_results,
                     options.tool_result_model_budget_limits,
                 );
