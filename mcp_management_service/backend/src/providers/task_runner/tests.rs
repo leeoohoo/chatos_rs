@@ -110,6 +110,10 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
         "message-1"
     );
     assert_eq!(
+        headers["x-mcp-management-contact-agent-id"],
+        "chatos-agent-1"
+    );
+    assert_eq!(
         headers["x-mcp-management-expected-project-task-ids"],
         "project-task-1"
     );
@@ -312,7 +316,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         task_id: Some("task-1".to_string()),
         source_session_id: Some("source-session-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
-        contact_agent_id: None,
+        contact_agent_id: Some("chatos-agent-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
         expected_project_task_ids: vec!["project-task-1".to_string()],
         sandbox_target: None,

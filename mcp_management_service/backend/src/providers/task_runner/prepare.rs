@@ -47,6 +47,7 @@ impl TaskRunnerProvider {
             task_id,
             source_session_id,
             source_user_message_id,
+            contact_agent_id: None,
             default_model_config_id,
             task_profile,
             expected_project_task_ids,

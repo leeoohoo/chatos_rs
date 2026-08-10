@@ -47,6 +47,10 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         " message-1 ".parse().expect("valid header"),
     );
     headers.insert(
+        "x-mcp-management-contact-agent-id",
+        " chatos-agent-1 ".parse().expect("valid header"),
+    );
+    headers.insert(
         "x-mcp-management-task-profile",
         format!(" {CHATOS_PLAN_TASK_PROFILE} ")
             .parse()
@@ -72,6 +76,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         Some("source-session-1")
     );
     assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
+    assert_eq!(binding.contact_agent_id.as_deref(), Some("chatos-agent-1"));
     assert_eq!(
         binding.task_profile.as_deref(),
         Some(CHATOS_PLAN_TASK_PROFILE)
@@ -106,6 +111,7 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
         task_id: Some("task-1".to_string()),
         source_session_id: None,
         source_user_message_id: None,
+        contact_agent_id: None,
         default_model_config_id: None,
         task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
         expected_project_task_ids: std::collections::BTreeSet::new(),
@@ -118,6 +124,40 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
     let mut expiring = binding;
     expiring.session_expires_at_unix = chrono::Utc::now().timestamp() + 60;
     assert!(bound_ask_user_prompt_timeout_ms(&expiring).is_err());
+}
+
+#[test]
+fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
+    let binding = McpManagementBinding {
+        owner_user_id: "user-1".to_string(),
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
+        session_id: "session-1".to_string(),
+        session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
+        project_id: "project-1".to_string(),
+        run_id: None,
+        turn_id: Some("turn-1".to_string()),
+        task_id: None,
+        source_session_id: Some("source-session-1".to_string()),
+        source_user_message_id: Some("message-1".to_string()),
+        contact_agent_id: Some("chatos-agent-1".to_string()),
+        default_model_config_id: None,
+        task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
+        expected_project_task_ids: std::collections::BTreeSet::new(),
+    };
+
+    let creator = bound_task_creator(&binding, true).expect("bound ChatOS creator");
+
+    assert_eq!(creator.id, "chatos-agent-1");
+    assert_eq!(creator.username, "chatos-agent-1");
+    assert_eq!(creator.display_name, "chatos-agent-1");
+    assert_eq!(creator.effective_owner_user_id(), Some("user-1"));
+
+    let mut missing_agent = binding;
+    missing_agent.contact_agent_id = None;
+    assert!(bound_task_creator(&missing_agent, true)
+        .expect_err("tool calls without a ChatOS Agent must fail")
+        .contains("contact_agent_id"));
+    assert!(bound_task_creator(&missing_agent, false).is_ok());
 }
 
 #[test]

@@ -54,6 +54,10 @@ impl TaskRunnerProvider {
                 binding.source_user_message_id,
             ),
             (
+                "x-mcp-management-contact-agent-id",
+                binding.contact_agent_id,
+            ),
+            (
                 "x-mcp-management-default-model-config-id",
                 binding.default_model_config_id,
             ),

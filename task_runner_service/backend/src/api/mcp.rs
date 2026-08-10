@@ -327,6 +327,7 @@ struct McpManagementBinding {
     task_id: Option<String>,
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
+    contact_agent_id: Option<String>,
     default_model_config_id: Option<String>,
     task_profile: Option<String>,
     expected_project_task_ids: std::collections::BTreeSet<String>,
@@ -421,14 +422,14 @@ async fn dispatch_bound_task_runner_tool(
             "configured Agent is not allowed to use Task Runner Service MCP",
         );
     }
-    let current_user = CurrentUser {
-        id: format!("mcp-management:{}", binding.session_id),
-        username: format!("mcp-management-{}", binding.agent_key.as_str()),
-        display_name: format!("MCP Management {}", binding.agent_key.as_str()),
-        role: crate::models::UserRole::Agent,
-        owner_user_id: Some(binding.owner_user_id.clone()),
-        owner_username: None,
-        owner_display_name: None,
+    let current_user = match bound_task_creator(
+        binding,
+        request.method == chatos_mcp_service::METHOD_TOOLS_CALL,
+    ) {
+        Ok(current_user) => current_user,
+        Err(message) => {
+            return task_runner_mcp_error(request.id.unwrap_or(Value::Null), -32001, message)
+        }
     };
     let is_chatos_plan = binding
         .task_profile
@@ -460,6 +461,28 @@ async fn dispatch_bound_task_runner_tool(
         .task_runner_mcp_service
         .handle_jsonrpc(request, current_user, request_context)
         .await
+}
+
+fn bound_task_creator(
+    binding: &McpManagementBinding,
+    require_contact_agent: bool,
+) -> Result<CurrentUser, String> {
+    let creator_id = match binding.contact_agent_id.clone() {
+        Some(contact_agent_id) => contact_agent_id,
+        None if require_contact_agent => {
+            return Err("ChatOS Task Runner tool call requires bound contact_agent_id".to_string())
+        }
+        None => format!("mcp-management:{}", binding.session_id),
+    };
+    Ok(CurrentUser {
+        id: creator_id.clone(),
+        username: creator_id.clone(),
+        display_name: creator_id,
+        role: crate::models::UserRole::Agent,
+        owner_user_id: Some(binding.owner_user_id.clone()),
+        owner_username: None,
+        owner_display_name: None,
+    })
 }
 
 async fn dispatch_bound_task_process_log(

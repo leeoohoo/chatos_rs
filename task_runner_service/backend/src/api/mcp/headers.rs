@@ -32,6 +32,7 @@ pub(super) fn mcp_management_binding_from_headers(
         task_id: header_text(headers, "x-mcp-management-task-id"),
         source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
         source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
+        contact_agent_id: header_text(headers, "x-mcp-management-contact-agent-id"),
         default_model_config_id: header_text(headers, "x-mcp-management-default-model-config-id"),
         task_profile: header_text(headers, "x-mcp-management-task-profile")
             .map(|value| crate::models::normalize_task_profile(Some(value.as_str())))
