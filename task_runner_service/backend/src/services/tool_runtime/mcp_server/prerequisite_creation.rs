@@ -121,12 +121,6 @@ impl TaskRunnerMcpService {
         let mut project_task_by_ref = HashMap::new();
         let mut converted = Vec::new();
         for item in args.tasks {
-            if item.enabled_builtin_kinds.is_some() || item.external_mcp_config_ids.is_some() {
-                return Err(
-                    "MCP capabilities are controlled by Agent bindings and cannot be selected by AI"
-                        .to_string(),
-                );
-            }
             let client_ref = item.client_ref.trim().to_string();
             if client_ref.is_empty() {
                 return Err("client_ref 不能为空".to_string());
@@ -164,8 +158,8 @@ impl TaskRunnerMcpService {
                     // ContactAsync schedule would let the global scheduler start it
                     // before Chatos receives explicit user confirmation.
                     schedule: Some(TaskScheduleConfig::default()),
-                    enabled_builtin_kinds: None,
-                    external_mcp_config_ids: None,
+                    enabled_builtin_kinds: item.enabled_builtin_kinds,
+                    external_mcp_config_ids: item.external_mcp_config_ids,
                     plugin_device_id: None,
                     plugin_workspace_id: None,
                     selected_plugins: None,

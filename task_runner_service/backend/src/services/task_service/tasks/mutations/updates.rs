@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::models::normalize_task_profile;
+use crate::services::status_display::TaskScheduleModeExt;
 use crate::services::task_manager_lifecycle::{apply_task_closure, task_has_manager_lifecycle};
 use crate::services::task_service::validation::reject_task_level_plugin_runtime_target;
 
@@ -126,6 +127,13 @@ impl TaskService {
             task.schedule = sanitize_task_schedule_config(schedule, Some(&task.schedule))?;
         }
         if let Some(mcp_config) = patch.mcp_config {
+            if !mcp_config.enabled_builtin_kinds.is_empty()
+                || !mcp_config.external_mcp_config_ids.is_empty()
+            {
+                return Err(
+                    "任务 MCP 选择在创建时由 Agent 固化，不能通过普通任务编辑修改".to_string(),
+                );
+            }
             if let Some(requires_execution) = mcp_config.requires_execution {
                 capability_boundary_changed |=
                     task.mcp_config.requires_execution != requires_execution;
@@ -143,21 +151,26 @@ impl TaskService {
                 task.task_profile.as_str(),
                 task.mcp_config.requires_execution,
             );
-            self.validate_task_mcp_config_for_agent(
-                &task.mcp_config,
-                &task.plugin_config,
-                task.project_id.as_str(),
-                current_user,
-                task_owner_user_id,
-                agent_key,
-            )
-            .await?;
+            let _ = self
+                .validate_task_mcp_config_for_agent(
+                    &task.mcp_config,
+                    &task.plugin_config,
+                    task.project_id.as_str(),
+                    current_user,
+                    task_owner_user_id,
+                    agent_key,
+                    task.task_profile.as_str(),
+                    task.schedule.mode.mode_key(),
+                )
+                .await?;
             if let Some(policy) = self
                 .resolve_task_runner_policy_for_agent_project(
                     current_user,
                     task_owner_user_id,
                     agent_key,
                     task.project_id.as_str(),
+                    Some(task.task_profile.as_str()),
+                    Some(task.schedule.mode.mode_key()),
                 )
                 .await?
             {

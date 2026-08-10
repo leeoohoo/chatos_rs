@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use chatos_agent::{
     is_task_runner_execution_agent as is_task_runner_execution_key,
@@ -154,6 +154,31 @@ impl TaskRunnerCapabilityPolicy {
             .collect()
     }
 
+    pub(crate) fn selectable_builtin_mcp_choices(&self) -> Vec<(String, String)> {
+        self.capabilities
+            .selectable_mcps()
+            .filter_map(|item| {
+                let kind = plugin_builtin_kind(item)?;
+                let value = kind.kind_name().to_string();
+                Some((value.clone(), mcp_choice_title(item, value.as_str())))
+            })
+            .collect::<BTreeMap<_, _>>()
+            .into_iter()
+            .collect()
+    }
+
+    pub(crate) fn selectable_external_mcp_choices(&self) -> Vec<(String, String)> {
+        self.selectable_external_mcps()
+            .into_iter()
+            .map(|item| {
+                (
+                    item.resource.id.clone(),
+                    mcp_choice_title(item, item.resource.id.as_str()),
+                )
+            })
+            .collect()
+    }
+
     pub(crate) fn selectable_plugins(&self) -> Vec<&ResolvedPlugin> {
         self.capabilities
             .selectable_plugins()
@@ -234,6 +259,11 @@ impl TaskRunnerCapabilityPolicy {
         let allowed_builtin = self
             .selectable_builtin_kinds()
             .into_iter()
+            .chain(
+                self.capabilities
+                    .required_mcps()
+                    .filter_map(plugin_builtin_kind),
+            )
             .collect::<HashSet<_>>();
         for value in &config.enabled_builtin_kinds {
             let kind = builtin_kind_by_any(value)
@@ -250,6 +280,14 @@ impl TaskRunnerCapabilityPolicy {
         let allowed_external = self
             .selectable_external_mcp_ids()
             .into_iter()
+            .chain(
+                self.capabilities
+                    .required_mcps()
+                    .filter(|item| {
+                        plugin_builtin_kind(item).is_none() && !plugin_task_process_log_mcp(item)
+                    })
+                    .map(|item| item.resource.id.clone()),
+            )
             .collect::<HashSet<_>>();
         for resource_id in &config.external_mcp_config_ids {
             if !allowed_external.contains(resource_id) {
@@ -347,6 +385,44 @@ impl TaskRunnerCapabilityPolicy {
     fn is_planning_agent(&self) -> bool {
         is_task_runner_planning_agent(self.capabilities.agent_key.as_str())
     }
+}
+
+fn mcp_choice_title(item: &ResolvedMcp, selection_value: &str) -> String {
+    let display_name = item.resource.display_name.trim();
+    let display_name = if display_name.is_empty() {
+        item.resource.name.trim()
+    } else {
+        display_name
+    };
+    let tool_names = item
+        .tool_snapshot
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .take(12)
+        .collect::<Vec<_>>();
+    let mut title = if display_name.is_empty() || display_name == selection_value {
+        selection_value.to_string()
+    } else {
+        format!("{display_name} ({selection_value})")
+    };
+    if let Some(description) = item
+        .resource
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        title.push_str(" - ");
+        title.push_str(description);
+    }
+    if !tool_names.is_empty() {
+        title.push_str(" [tools: ");
+        title.push_str(tool_names.join(", ").as_str());
+        title.push(']');
+    }
+    title
 }
 
 fn plugin_builtin_kind(item: &ResolvedMcp) -> Option<BuiltinMcpKind> {

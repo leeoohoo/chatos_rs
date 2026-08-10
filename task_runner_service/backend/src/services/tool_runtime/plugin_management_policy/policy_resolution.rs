@@ -12,9 +12,13 @@ impl TaskService {
         owner_user_id: Option<&str>,
         agent_key: SystemAgentKey,
         project_id: &str,
+        task_profile: Option<&str>,
+        schedule_mode: Option<&str>,
     ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
-        let runtime_context =
+        let mut runtime_context =
             project_runtime_context(&self.store, &self.config, project_id).await?;
+        runtime_context.task_profile = task_profile.map(str::to_string);
+        runtime_context.schedule_mode = schedule_mode.map(str::to_string);
         self.resolve_task_runner_policy_for_agent_context(
             current_user,
             owner_user_id,

@@ -18,33 +18,36 @@ impl TaskRunnerCapabilityPolicy {
         self.capabilities
             .ensure_required_available()
             .map_err(|err| err.to_string())?;
+        self.validate_optional_config(&task.mcp_config)?;
         task.mcp_config.enabled = true;
 
-        let mut effective_builtin = self
-            .capabilities
-            .mcps
+        let mut effective_builtin = task
+            .mcp_config
+            .enabled_builtin_kinds
             .iter()
-            .filter(|item| item.binding.enabled && item.resource.enabled)
-            .filter_map(plugin_builtin_kind)
+            .filter_map(|value| builtin_kind_by_any(value))
+            .chain(
+                self.capabilities
+                    .required_mcps()
+                    .filter_map(plugin_builtin_kind),
+            )
             .collect::<Vec<_>>();
         dedupe_builtin_kinds(&mut effective_builtin);
+        effective_builtin.sort_by_key(|kind| kind.kind_name());
         task.mcp_config.enabled_builtin_kinds = effective_builtin
             .into_iter()
             .map(|kind| kind.kind_name().to_string())
             .collect();
 
-        let mut effective_external = self
-            .capabilities
-            .mcps
-            .iter()
-            .filter(|item| {
-                item.binding.enabled
-                    && item.resource.enabled
-                    && plugin_builtin_kind(item).is_none()
-                    && !plugin_task_process_log_mcp(item)
-            })
-            .map(|item| item.resource.id.clone())
-            .collect::<Vec<_>>();
+        let mut effective_external = task.mcp_config.external_mcp_config_ids.clone();
+        effective_external.extend(
+            self.capabilities
+                .required_mcps()
+                .filter(|item| {
+                    plugin_builtin_kind(item).is_none() && !plugin_task_process_log_mcp(item)
+                })
+                .map(|item| item.resource.id.clone()),
+        );
         effective_external.sort();
         effective_external.dedup();
         task.mcp_config.external_mcp_config_ids = effective_external;

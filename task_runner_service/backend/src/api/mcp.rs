@@ -83,6 +83,8 @@ pub(super) async fn list_task_capability_catalog(
             Some(owner_user_id),
             agent_key,
             project_id.as_str(),
+            Some(task_profile.as_str()),
+            None,
         )
         .await
         .map_err(ApiError::bad_gateway)?
@@ -90,6 +92,14 @@ pub(super) async fn list_task_capability_catalog(
     Ok(Json(json!({
         "agent_key": agent_key.as_str(),
         "policy_revision": policy.policy_revision(),
+        "selectable_builtin_mcps": policy.selectable_builtin_mcp_choices().into_iter().map(|(value, title)| json!({
+            "value": value,
+            "title": title,
+        })).collect::<Vec<_>>(),
+        "selectable_external_mcps": policy.selectable_external_mcp_choices().into_iter().map(|(value, title)| json!({
+            "value": value,
+            "title": title,
+        })).collect::<Vec<_>>(),
         "selectable_plugins": policy.selectable_plugin_views(),
     })))
 }

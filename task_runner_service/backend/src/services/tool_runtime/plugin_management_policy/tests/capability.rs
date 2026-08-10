@@ -21,7 +21,7 @@ fn ai_selectable_sets_include_every_configured_optional_mcp_capability() {
 }
 
 #[test]
-fn runtime_materializes_every_configured_enabled_mcp() {
+fn runtime_preserves_agent_selection_and_adds_required_mcps() {
     let mut task = task();
     policy().apply_to_task(&mut task).expect("apply policy");
     assert!(task.mcp_config.enabled);
@@ -93,7 +93,10 @@ fn planning_policy_materializes_its_configured_mcp_set() {
     let mut task = task();
     task.task_profile = crate::models::TASK_PROFILE_CHATOS_PLAN.to_string();
     task.mcp_config.requires_execution = false;
-    task.mcp_config.enabled_builtin_kinds.clear();
+    task.mcp_config.enabled_builtin_kinds = vec![
+        "CodeMaintainerRead".to_string(),
+        "CodeMaintainerWrite".to_string(),
+    ];
 
     policy.apply_to_task(&mut task).expect("apply plan policy");
 
@@ -185,6 +188,8 @@ fn write_validation_rejects_removed_builtins_but_accepts_configured_offline_reso
     assert!(policy().validate_optional_config(&config).is_err());
     config.enabled_builtin_kinds = vec!["CodeMaintainerWrite".to_string()];
     assert!(policy().validate_optional_config(&config).is_ok());
+    config.external_mcp_config_ids = vec!["revoked".to_string()];
+    assert!(policy().validate_optional_config(&config).is_err());
 }
 
 #[test]

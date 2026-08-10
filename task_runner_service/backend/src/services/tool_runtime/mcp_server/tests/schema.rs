@@ -23,8 +23,8 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(!properties.contains_key("status"));
     assert!(!properties.contains_key("mcp_config"));
     assert!(properties.contains_key("default_model_config_id"));
-    assert!(!properties.contains_key("enabled_builtin_kinds"));
-    assert!(!properties.contains_key("external_mcp_config_ids"));
+    assert!(properties.contains_key("enabled_builtin_kinds"));
+    assert!(properties.contains_key("external_mcp_config_ids"));
     assert!(!properties.contains_key("selected_skill_ids"));
     assert!(!properties.contains_key("plugin_device_id"));
     assert!(!properties.contains_key("plugin_workspace_id"));
@@ -192,8 +192,8 @@ fn default_agent_hides_direct_history_status_tools() {
 }
 
 #[test]
-fn create_task_args_reject_handcrafted_mcp_capability_selection() {
-    let error = CreateTaskArgs {
+fn create_task_args_preserve_agent_mcp_capability_selection() {
+    let request = CreateTaskArgs {
         title: "task".to_string(),
         description: None,
         objective: "use external tools".to_string(),
@@ -217,9 +217,19 @@ fn create_task_args_reject_handcrafted_mcp_capability_selection() {
         mcp_config: None,
     }
     .into_request()
-    .expect_err("AI MCP id selection must fail closed");
+    .expect("Agent MCP selection");
 
-    assert!(error.contains("controlled by the program"));
+    assert_eq!(
+        request
+            .mcp_config
+            .expect("MCP request")
+            .external_mcp_config_ids,
+        vec![
+            " external-mcp-1 ".to_string(),
+            String::new(),
+            "external-mcp-1".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -407,6 +417,34 @@ fn batch_create_schema_exposes_model_selection_for_each_task() {
 }
 
 #[test]
+fn task_creation_schema_exposes_agent_bound_mcp_choices() {
+    let mut tools = vec![json!({
+        "name": "create_task",
+        "inputSchema": create_task_schema(),
+    })];
+    super::super::support::enrich_tool_schemas_with_task_mcp_choices(
+        &mut tools,
+        &[super::super::support::TaskMcpSchemaChoice {
+            value: "CodeMaintainerWrite".to_string(),
+            title: "Code write [execution task]".to_string(),
+        }],
+        &[super::super::support::TaskMcpSchemaChoice {
+            value: "postgres-mcp".to_string(),
+            title: "PostgreSQL (postgres-mcp) [execution task]".to_string(),
+        }],
+    );
+
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/enabled_builtin_kinds/items/enum/0"),
+        Some(&json!("CodeMaintainerWrite"))
+    );
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/external_mcp_config_ids/items/enum/0"),
+        Some(&json!("postgres-mcp"))
+    );
+}
+
+#[test]
 fn async_planner_profile_exposes_only_planning_tools() {
     assert!(chatos_async_planner::planner_agent_tool_allowed(
         "list_tasks"
@@ -534,6 +572,7 @@ fn async_planner_preserves_only_execution_intent_before_programmatic_resolution(
         plugin_config: Default::default(),
         mcp_config: Some(TaskMcpRequestConfig {
             requires_execution: Some(false),
+            ..TaskMcpRequestConfig::default()
         }),
         prerequisite_task_ids: None,
     };
@@ -548,7 +587,7 @@ fn async_planner_preserves_only_execution_intent_before_programmatic_resolution(
 }
 
 #[test]
-fn async_planner_schema_does_not_expose_mcp_selection() {
+fn async_planner_schema_exposes_mcp_selection_without_runtime_routing() {
     let mut tools = vec![json!({
         "name": "create_task",
         "inputSchema": create_task_schema(),
@@ -560,10 +599,10 @@ fn async_planner_schema_does_not_expose_mcp_selection() {
     assert!(input_schema.get("anyOf").is_none());
     assert!(input_schema
         .pointer("/properties/enabled_builtin_kinds")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/external_mcp_config_ids")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/plugin_device_id")
         .is_none());
@@ -576,7 +615,7 @@ fn async_planner_schema_does_not_expose_mcp_selection() {
 }
 
 #[test]
-fn async_planner_batch_schema_does_not_expose_mcp_selection() {
+fn async_planner_batch_schema_exposes_per_task_mcp_selection() {
     let mut tools = vec![json!({
         "name": "create_tasks_with_prerequisites",
         "inputSchema": super::super::support::create_tasks_with_prerequisites_schema(),
@@ -590,10 +629,10 @@ fn async_planner_batch_schema_does_not_expose_mcp_selection() {
         .is_none());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/enabled_builtin_kinds")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/external_mcp_config_ids")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/plugin_device_id")
         .is_none());

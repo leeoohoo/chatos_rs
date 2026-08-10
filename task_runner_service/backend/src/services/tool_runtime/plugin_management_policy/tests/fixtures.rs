@@ -106,7 +106,7 @@ pub(super) fn task() -> TaskRecord {
                 "CodeMaintainerRead".to_string(),
                 "CodeMaintainerWrite".to_string(),
             ],
-            external_mcp_config_ids: vec!["external-1".to_string(), "revoked".to_string()],
+            external_mcp_config_ids: vec!["external-1".to_string()],
             selected_skill_ids: vec![
                 "internal_skill_remotion".to_string(),
                 "revoked-skill".to_string(),

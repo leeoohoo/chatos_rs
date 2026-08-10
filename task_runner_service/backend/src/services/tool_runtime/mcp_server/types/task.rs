@@ -52,8 +52,6 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
-    // Kept only to reject stale or handcrafted AI calls explicitly. MCP
-    // capabilities are materialized from the Agent binding by the service.
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
@@ -71,23 +69,26 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
 
 impl CreateTaskArgs {
     pub(in crate::mcp_server) fn into_request(self) -> Result<CreateTaskRequest, String> {
-        if self.enabled_builtin_kinds.is_some()
-            || self.external_mcp_config_ids.is_some()
-            || self.plugin_device_id.is_some()
+        if self.plugin_device_id.is_some()
             || self.plugin_workspace_id.is_some()
             || self.selected_plugins.is_some()
             || self.mcp_config.is_some()
         {
             return Err(
-                "Tool capabilities and runtime routing are controlled by the program through Agent bindings and cannot be selected by AI"
+                "Plugin selection and runtime routing are controlled by the program through Agent bindings and project context and cannot be selected by AI"
                     .to_string(),
             );
         }
-        let mcp_config = self
-            .requires_execution
-            .map(|requires_execution| TaskMcpRequestConfig {
-                requires_execution: Some(requires_execution),
-            });
+        let enabled_builtin_kinds = self.enabled_builtin_kinds.unwrap_or_default();
+        let external_mcp_config_ids = self.external_mcp_config_ids.unwrap_or_default();
+        let mcp_config = (self.requires_execution.is_some()
+            || !enabled_builtin_kinds.is_empty()
+            || !external_mcp_config_ids.is_empty())
+        .then_some(TaskMcpRequestConfig {
+            requires_execution: self.requires_execution,
+            enabled_builtin_kinds,
+            external_mcp_config_ids,
+        });
         Ok(CreateTaskRequest {
             title: self.title,
             description: self.description,

@@ -87,16 +87,21 @@ impl TaskService {
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
-    ) -> Result<(), String> {
-        self.validate_task_capability_selection_for_agent(
-            config,
-            plugin_config,
-            project_id,
-            current_user,
-            task_owner_user_id,
-            agent_key,
-        )
-        .await?;
+        task_profile: &str,
+        schedule_mode: &str,
+    ) -> Result<bool, String> {
+        let policy_resolved = self
+            .validate_task_capability_selection_for_agent(
+                config,
+                plugin_config,
+                project_id,
+                current_user,
+                task_owner_user_id,
+                agent_key,
+                task_profile,
+                schedule_mode,
+            )
+            .await?;
         if let Some(remote_server_id) = config.default_remote_server_id.as_deref() {
             self.ensure_remote_server_exists(remote_server_id, current_user)
                 .await?;
@@ -108,7 +113,7 @@ impl TaskService {
                 config.workspace_dir.as_deref(),
             )?;
         }
-        Ok(())
+        Ok(policy_resolved)
     }
 
     pub(super) async fn validate_task_capability_selection_for_agent(
@@ -119,6 +124,8 @@ impl TaskService {
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
+        task_profile: &str,
+        schedule_mode: &str,
     ) -> Result<bool, String> {
         let Some(policy) = self
             .resolve_task_runner_policy_for_agent_project(
@@ -126,6 +133,8 @@ impl TaskService {
                 task_owner_user_id,
                 agent_key,
                 project_id,
+                Some(task_profile),
+                Some(schedule_mode),
             )
             .await?
         else {

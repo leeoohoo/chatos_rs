@@ -143,7 +143,7 @@ export function TaskEditorDrawer({
                 )}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label={t('tasks.detail.mcpRequestedCapabilities')}>
+            <Descriptions.Item label={t('tasks.form.mcpSelectedCapabilities')}>
               <Space wrap>
                 {editingTask.mcp_config.enabled_builtin_kinds.length
                   ? editingTask.mcp_config.enabled_builtin_kinds.map((kind) => (

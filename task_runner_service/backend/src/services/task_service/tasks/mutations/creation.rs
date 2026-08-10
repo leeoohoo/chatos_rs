@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::models::normalize_task_profile;
+use crate::services::status_display::TaskScheduleModeExt;
 use crate::services::task_service::validation::reject_task_level_plugin_runtime_target;
 
 impl TaskService {
@@ -63,6 +64,8 @@ impl TaskService {
         if let Some(requires_execution) = requested_mcp_config.requires_execution {
             mcp_config.requires_execution = requires_execution;
         }
+        mcp_config.enabled_builtin_kinds = requested_mcp_config.enabled_builtin_kinds;
+        mcp_config.external_mcp_config_ids = requested_mcp_config.external_mcp_config_ids;
         if let Some(builtin_prompt_locale) =
             normalized_optional(source_context.builtin_prompt_locale.clone())
         {
@@ -107,7 +110,7 @@ impl TaskService {
         if let Some(remote_server_id) = passthrough_remote_server_id.as_ref() {
             mcp_config.default_remote_server_id = Some(remote_server_id.clone());
         }
-        if passthrough_remote_server_id.is_none() {
+        let capability_policy_resolved = if passthrough_remote_server_id.is_none() {
             self.validate_task_mcp_config_for_agent(
                 &mcp_config,
                 &plugin_config,
@@ -115,19 +118,35 @@ impl TaskService {
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
+                task_profile.as_str(),
+                schedule.mode.mode_key(),
             )
-            .await?;
+            .await?
         } else {
-            self.validate_task_capability_selection_for_agent(
-                &mcp_config,
-                &plugin_config,
-                project_id.as_str(),
-                creator,
-                task_owner_user_id.as_deref(),
-                agent_key,
-            )
-            .await?;
+            let resolved = self
+                .validate_task_capability_selection_for_agent(
+                    &mcp_config,
+                    &plugin_config,
+                    project_id.as_str(),
+                    creator,
+                    task_owner_user_id.as_deref(),
+                    agent_key,
+                    task_profile.as_str(),
+                    schedule.mode.mode_key(),
+                )
+                .await?;
             self.validate_task_ephemeral_http_servers(&mcp_config)?;
+            resolved
+        };
+        if !capability_policy_resolved
+            && (!mcp_config.enabled_builtin_kinds.is_empty()
+                || !mcp_config.external_mcp_config_ids.is_empty()
+                || !plugin_config.selected_plugins.is_empty())
+        {
+            return Err(
+                "Plugin Management policy is required to validate task MCP and Plugin selection"
+                    .to_string(),
+            );
         }
         if let Some(policy) = self
             .resolve_task_runner_policy_for_agent_project(
@@ -135,6 +154,8 @@ impl TaskService {
                 task_owner_user_id.as_deref(),
                 agent_key,
                 project_id.as_str(),
+                Some(task_profile.as_str()),
+                Some(schedule.mode.mode_key()),
             )
             .await?
         {
