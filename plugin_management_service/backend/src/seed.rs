@@ -23,8 +23,8 @@ mod system_mcps;
 use agent_bindings::seed_agent_bindings;
 #[cfg(test)]
 use agent_bindings::{
-    task_runner_cloud_plan_phase_builtin_kinds, task_runner_cloud_plan_phase_required,
-    task_runner_cloud_run_phase_optional_builtin_kinds,
+    binding_matches_seed_variant, task_runner_cloud_plan_phase_builtin_kinds,
+    task_runner_cloud_plan_phase_required, task_runner_cloud_run_phase_optional_builtin_kinds,
 };
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 #[cfg(test)]
@@ -96,13 +96,12 @@ const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[
     CHATOS_CONVERSATION_AGENT_KEY,
     CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
 ];
-const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] =
-    &[
-        TASK_RUNNER_PLAN_AGENT_KEY,
-        TASK_RUNNER_LOCAL_PLAN_AGENT_KEY,
-        TASK_RUNNER_RUN_AGENT_KEY,
-        TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
-    ];
+const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] = &[
+    TASK_RUNNER_PLAN_AGENT_KEY,
+    TASK_RUNNER_LOCAL_PLAN_AGENT_KEY,
+    TASK_RUNNER_RUN_AGENT_KEY,
+    TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
+];
 const PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS: &[(&str, i64)] = &[
     (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
     (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),

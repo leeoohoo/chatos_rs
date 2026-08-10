@@ -212,7 +212,7 @@ pub(super) async fn seed_agent_bindings(
         ),
     ] {
         for (kind, priority) in task_runner_cloud_run_phase_optional_builtin_kinds() {
-        let resource_id = builtin_resource_id(kind);
+            let resource_id = builtin_resource_id(kind);
             if let Some(conditions) = conditions.clone() {
                 seed_agent_mcp_binding_with_conditions(
                     store,
@@ -528,13 +528,13 @@ async fn seed_agent_resource_binding_with_policy(
     let matching = existing
         .into_iter()
         .filter(|binding| {
-            binding.resource_kind == resource_kind
-                && binding.resource_id == resource_id
-                && binding.owner_user_id.is_none()
-                && matches!(
-                    binding.binding_scope.as_str(),
-                    BINDING_SCOPE_SYSTEM_REQUIRED | BINDING_SCOPE_GLOBAL_DEFAULT
-                )
+            binding_matches_seed_variant(
+                binding,
+                binding_scope,
+                resource_kind,
+                resource_id,
+                &conditions,
+            )
         })
         .collect::<Vec<_>>();
     let now = now_rfc3339();
@@ -621,6 +621,20 @@ fn seed_binding_id(
         "{agent_key}__{binding_scope}__{resource_id}__{:016x}",
         hasher.finish()
     )
+}
+
+pub(super) fn binding_matches_seed_variant(
+    binding: &AgentBindingRecord,
+    binding_scope: &str,
+    resource_kind: &str,
+    resource_id: &str,
+    conditions: &BindingConditions,
+) -> bool {
+    binding.binding_scope == binding_scope
+        && binding.resource_kind == resource_kind
+        && binding.resource_id == resource_id
+        && binding.owner_user_id.is_none()
+        && binding.conditions == *conditions
 }
 
 pub(super) fn task_runner_cloud_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {

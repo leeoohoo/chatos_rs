@@ -283,6 +283,51 @@ fn chatos_task_runner_tool_policies_are_split_by_task_profile() {
 }
 
 #[test]
+fn seeded_binding_matching_preserves_task_runner_condition_variants() {
+    let default_binding = AgentBindingRecord {
+        id: "binding-default".to_string(),
+        agent_key: CHATOS_CONVERSATION_AGENT_KEY.to_string(),
+        binding_scope: BINDING_SCOPE_SYSTEM_REQUIRED.to_string(),
+        owner_user_id: None,
+        resource_kind: RESOURCE_KIND_MCP.to_string(),
+        resource_id: CHATOS_TASK_RUNNER_MCP_RESOURCE_ID.to_string(),
+        enabled: true,
+        required: true,
+        priority: 10,
+        conditions: BindingConditions::default(),
+        component_allowlist: Vec::new(),
+        tool_allowlist: CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST
+            .iter()
+            .map(|value| value.to_string())
+            .collect(),
+        tool_blocklist: Vec::new(),
+        created_by: "system".to_string(),
+        updated_by: "system".to_string(),
+        created_at: "now".to_string(),
+        updated_at: "now".to_string(),
+    };
+    let plan_conditions = BindingConditions {
+        task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+        ..BindingConditions::default()
+    };
+
+    assert!(binding_matches_seed_variant(
+        &default_binding,
+        BINDING_SCOPE_SYSTEM_REQUIRED,
+        RESOURCE_KIND_MCP,
+        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+        &BindingConditions::default(),
+    ));
+    assert!(!binding_matches_seed_variant(
+        &default_binding,
+        BINDING_SCOPE_SYSTEM_REQUIRED,
+        RESOURCE_KIND_MCP,
+        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
+        &plan_conditions,
+    ));
+}
+
+#[test]
 fn project_management_agent_read_only_tool_policies_are_seeded() {
     assert_eq!(
         PROJECT_MANAGEMENT_AGENT_SANDBOX_TOOL_ALLOWLIST,
