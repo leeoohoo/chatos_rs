@@ -7,7 +7,7 @@ use chatos_mcp_gateway::McpManagementGatewayBuilder;
 use chatos_mcp_management_sdk::{
     CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle, SandboxExecutionTarget,
 };
-use chatos_mcp_runtime::McpHttpServer;
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, McpHttpServer};
 use chatos_plugin_management_sdk::SystemMcpKey;
 use tracing::info;
 
@@ -144,10 +144,15 @@ fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
 }
 
 fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
-    let mut resource_ids = config
-        .enabled_builtin_kinds
+    let builtin_kinds = complete_builtin_kind_dependencies(
+        config
+            .enabled_builtin_kinds
+            .iter()
+            .filter_map(|kind| builtin_kind_by_any(kind)),
+    );
+    let mut resource_ids = builtin_kinds
         .iter()
-        .filter_map(|kind| chatos_mcp::system_mcp_descriptor_by_any(kind))
+        .filter_map(|kind| chatos_mcp::system_mcp_descriptor_by_any(kind.kind_name()))
         .map(|descriptor| descriptor.resource_id.to_string())
         .chain(
             config
@@ -189,6 +194,22 @@ mod tests {
                 "builtin_browser_tools".to_string(),
                 "builtin_code_maintainer_read".to_string(),
                 "external-mcp-1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mutating_task_scope_includes_required_read_dependency() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(
+            requested_mcp_resource_ids(&config),
+            vec![
+                "builtin_code_maintainer_read".to_string(),
+                "builtin_code_maintainer_write".to_string(),
             ]
         );
     }

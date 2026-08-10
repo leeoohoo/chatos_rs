@@ -148,7 +148,7 @@ fn planning_policy_accepts_explicitly_configured_mutating_tools() {
 }
 
 #[test]
-fn policy_accepts_the_exact_configured_builtin_set_without_inferred_dependencies() {
+fn policy_rejects_mutating_mcp_when_required_read_dependency_is_not_bound() {
     let mut capabilities = policy().capabilities;
     capabilities
         .mcps
@@ -164,10 +164,9 @@ fn policy_accepts_the_exact_configured_builtin_set_without_inferred_dependencies
 
     let policy = TaskRunnerCapabilityPolicy::new(capabilities)
         .expect("Plugin Management configuration is authoritative");
-    assert_eq!(
-        policy.selectable_builtin_kind_names(),
-        vec!["CodeMaintainerWrite".to_string()]
-    );
+    let mut config = TaskMcpConfig::default();
+    config.enabled_builtin_kinds = vec!["CodeMaintainerWrite".to_string()];
+    assert!(policy.validate_optional_config(&config).is_err());
 }
 
 #[test]

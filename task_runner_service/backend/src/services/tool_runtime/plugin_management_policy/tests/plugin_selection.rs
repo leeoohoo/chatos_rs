@@ -470,7 +470,7 @@ fn required_plugin_is_injected_into_effective_task_config() {
 }
 
 #[test]
-fn cloud_runtime_injects_enabled_plugins_without_user_selection() {
+fn cloud_runtime_does_not_inject_optional_plugins_without_task_selection() {
     let mut capabilities = local_runtime_capabilities();
     let mut plugin = resolved_plugin(false);
     plugin.catalog.name = "ponytail".to_string();
@@ -497,11 +497,6 @@ fn cloud_runtime_injects_enabled_plugins_without_user_selection() {
         .expect("apply cloud Plugin policy");
     let snapshots = policy.plugin_snapshots(&task).expect("Plugin snapshots");
 
-    assert_eq!(task.plugin_config.selected_plugins.len(), 1);
-    assert_eq!(
-        task.plugin_config.selected_plugins[0].plugin_id,
-        "plugin-browser"
-    );
-    assert_eq!(snapshots.len(), 1);
-    assert!(snapshots[0].device_id.is_none());
+    assert!(task.plugin_config.selected_plugins.is_empty());
+    assert!(snapshots.is_empty());
 }

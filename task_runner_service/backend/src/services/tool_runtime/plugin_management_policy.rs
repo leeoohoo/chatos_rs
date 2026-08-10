@@ -8,7 +8,7 @@ use chatos_agent::{
     is_task_runner_planning_agent as is_task_runner_planning_key, parse_system_agent_key,
 };
 use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpBackend, SystemMcpDescriptor};
-use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
     PluginCommandInvocation, PluginManagementClient, ResolveAgentCapabilitiesRequest,
     ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin, ResolvedSkill, RunPluginSnapshot,
@@ -155,10 +155,25 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn selectable_builtin_mcp_choices(&self) -> Vec<(String, String)> {
+        let allowed = self
+            .selectable_builtin_kinds()
+            .into_iter()
+            .chain(
+                self.capabilities
+                    .required_mcps()
+                    .filter_map(plugin_builtin_kind),
+            )
+            .collect::<HashSet<_>>();
         self.capabilities
             .selectable_mcps()
             .filter_map(|item| {
                 let kind = plugin_builtin_kind(item)?;
+                if !complete_builtin_kind_dependencies([kind])
+                    .into_iter()
+                    .all(|dependency| allowed.contains(&dependency))
+                {
+                    return None;
+                }
                 let value = kind.kind_name().to_string();
                 Some((value.clone(), mcp_choice_title(item, value.as_str())))
             })
@@ -265,9 +280,15 @@ impl TaskRunnerCapabilityPolicy {
                     .filter_map(plugin_builtin_kind),
             )
             .collect::<HashSet<_>>();
-        for value in &config.enabled_builtin_kinds {
-            let kind = builtin_kind_by_any(value)
-                .ok_or_else(|| format!("unknown builtin MCP kind: {value}"))?;
+        let requested_builtin = config
+            .enabled_builtin_kinds
+            .iter()
+            .map(|value| {
+                builtin_kind_by_any(value)
+                    .ok_or_else(|| format!("unknown builtin MCP kind: {value}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for kind in complete_builtin_kind_dependencies(requested_builtin) {
             if !allowed_builtin.contains(&kind) {
                 return Err(format!(
                     "builtin MCP is not selectable for {}: {}",
