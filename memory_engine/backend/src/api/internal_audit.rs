@@ -181,6 +181,7 @@ mod tests {
             aud: TOKEN_AUDIENCE.to_string(),
             scope: "memory.data".to_string(),
             trace_id: Uuid::new_v4().to_string(),
+            owner_user_id: None,
             iat: 1,
             exp: 2,
         }
