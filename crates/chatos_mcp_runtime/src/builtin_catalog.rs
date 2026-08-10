@@ -380,12 +380,18 @@ where
         }
     }
 
-    if out.contains(&BuiltinMcpKind::CodeMaintainerWrite)
+    if (out.contains(&BuiltinMcpKind::CodeMaintainerWrite)
+        || out.contains(&BuiltinMcpKind::TerminalController))
         && !out.contains(&BuiltinMcpKind::CodeMaintainerRead)
     {
         let insert_at = out
             .iter()
-            .position(|kind| *kind == BuiltinMcpKind::CodeMaintainerWrite)
+            .position(|kind| {
+                matches!(
+                    kind,
+                    BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
+                )
+            })
             .unwrap_or(out.len());
         out.insert(insert_at, BuiltinMcpKind::CodeMaintainerRead);
     }
@@ -499,16 +505,23 @@ mod tests {
     }
 
     #[test]
-    fn completes_code_maintainer_write_dependencies() {
+    fn completes_mutating_engineering_dependencies() {
         assert_eq!(
             complete_builtin_kind_dependencies([
                 BuiltinMcpKind::TerminalController,
                 BuiltinMcpKind::CodeMaintainerWrite,
             ]),
             vec![
-                BuiltinMcpKind::TerminalController,
                 BuiltinMcpKind::CodeMaintainerRead,
+                BuiltinMcpKind::TerminalController,
                 BuiltinMcpKind::CodeMaintainerWrite,
+            ]
+        );
+        assert_eq!(
+            complete_builtin_kind_dependencies([BuiltinMcpKind::TerminalController]),
+            vec![
+                BuiltinMcpKind::CodeMaintainerRead,
+                BuiltinMcpKind::TerminalController,
             ]
         );
     }

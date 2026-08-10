@@ -342,14 +342,17 @@ fn complete_required_dependencies(
 ) -> Vec<RequiredBuiltinCapability> {
     let mut out = Vec::new();
     for requirement in requirements {
-        push_required(&mut out, requirement.kind, requirement.source);
-        if requirement.kind == BuiltinMcpKind::CodeMaintainerWrite {
+        if matches!(
+            requirement.kind,
+            BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
+        ) {
             push_required(
                 &mut out,
                 BuiltinMcpKind::CodeMaintainerRead,
                 requirement.source,
             );
         }
+        push_required(&mut out, requirement.kind, requirement.source);
     }
     out
 }

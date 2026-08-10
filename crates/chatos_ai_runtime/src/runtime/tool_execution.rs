@@ -79,7 +79,7 @@ pub(super) fn fatal_tool_execution_error(tool_results: &[ToolResult]) -> Option<
 pub(super) fn automatic_file_write_recovery_calls(
     tool_results: &[ToolResult],
     available_tools: &[Value],
-) -> Vec<Value> {
+) -> Result<Vec<Value>, String> {
     let available_names = available_tools
         .iter()
         .filter_map(tool_definition_name)
@@ -128,11 +128,17 @@ pub(super) fn automatic_file_write_recovery_calls(
             "read_file_raw" => ("read_file_raw", json!({ "path": path })),
             _ => continue,
         };
-        let Some(tool_name) =
-            matching_recovery_tool_name(result.name.as_str(), required, available_names.as_slice())
-        else {
-            continue;
-        };
+        let tool_name = matching_recovery_tool_name(
+            result.name.as_str(),
+            required,
+            available_names.as_slice(),
+        )
+        .ok_or_else(|| {
+            format!(
+                "MCP capability invariant violated: {} returned stale_context for {}, but the required {} capability is not available",
+                result.name, path, required
+            )
+        })?;
         let dedupe_key = format!("{tool_name}\n{}", args);
         if !seen.insert(dedupe_key) {
             continue;
@@ -147,7 +153,7 @@ pub(super) fn automatic_file_write_recovery_calls(
         }));
     }
 
-    calls
+    Ok(calls)
 }
 
 fn is_code_maintainer_write_tool(name: &str) -> bool {
@@ -426,7 +432,8 @@ mod tests {
             serde_json::json!({"name": "code_maintainer_read_read_file_raw"}),
         ];
 
-        let calls = automatic_file_write_recovery_calls(&[stale], tools.as_slice());
+        let calls = automatic_file_write_recovery_calls(&[stale], tools.as_slice())
+            .expect("automatic recovery calls");
 
         assert_eq!(calls.len(), 1);
         assert_eq!(
@@ -443,19 +450,21 @@ mod tests {
     }
 
     #[test]
-    fn automatic_read_recovery_respects_available_tool_configuration() {
+    fn missing_read_recovery_is_an_immediate_capability_invariant_error() {
         let mut stale = tool_result(
             false,
             r#"{"category":"stale_context","path":"README.md","recovery":{"required_next_tool":"read_file_raw"}}"#,
         );
         stale.name = "code_maintainer_write_edit_file".to_string();
 
-        let calls = automatic_file_write_recovery_calls(
+        let error = automatic_file_write_recovery_calls(
             &[stale],
             &[serde_json::json!({"name": "unrelated_read_file_raw"})],
-        );
+        )
+        .expect_err("missing required read capability must fail immediately");
 
-        assert!(calls.is_empty());
+        assert!(error.contains("MCP capability invariant violated"));
+        assert!(error.contains("read_file_raw"));
     }
 
     #[test]

@@ -69,11 +69,22 @@ fn required_capability_routes_to_active_host() {
 
     assert_eq!(
         hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::LocalConnector),
-        vec![BuiltinMcpKind::TerminalController]
+        vec![
+            BuiltinMcpKind::CodeMaintainerRead,
+            BuiltinMcpKind::TerminalController,
+        ]
     );
     assert!(!resolution
         .server_local_builtin_kinds
         .contains(&BuiltinMcpKind::TerminalController));
+    assert!(resolution
+        .required_builtin_kinds
+        .contains(&RequiredBuiltinCapability {
+            kind: BuiltinMcpKind::CodeMaintainerRead,
+            source: McpCapabilityRequirementSource::CallerContract(
+                AgentMcpCaller::LocalConnectorClientAgent,
+            ),
+        }));
 }
 
 #[test]

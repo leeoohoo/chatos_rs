@@ -394,7 +394,7 @@ impl AiRuntime {
             let recovery_calls = automatic_file_write_recovery_calls(
                 tool_execution.tool_results.as_slice(),
                 executor.available_tools().as_slice(),
-            );
+            )?;
             if !recovery_calls.is_empty() {
                 info!(
                     conversation_id = options.conversation_id.as_deref().unwrap_or(""),
