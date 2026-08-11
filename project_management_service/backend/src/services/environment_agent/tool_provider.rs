@@ -269,6 +269,7 @@ impl ProjectEnvironmentToolProvider {
             .required_services
             .as_ref()
             .unwrap_or(&environment.required_services);
+        let prefer_china_mirrors = analysis_prefers_china_mirrors(&proposed_stack);
         let analysis_requirement = environment
             .detected_stack
             .get("analysis_requirement")
@@ -298,6 +299,10 @@ impl ProjectEnvironmentToolProvider {
         detected_stack.insert(
             "selected_dependencies".to_string(),
             json!(self.selected_dependencies.clone()),
+        );
+        detected_stack.insert(
+            "prefer_china_mirrors".to_string(),
+            Value::Bool(prefer_china_mirrors),
         );
         if let Some(analysis_requirement) = analysis_requirement {
             detected_stack.insert("analysis_requirement".to_string(), analysis_requirement);
@@ -355,6 +360,7 @@ impl ProjectEnvironmentToolProvider {
                     image,
                     index,
                     environment.sandbox_provider,
+                    prefer_china_mirrors,
                     None,
                 )?);
             }
@@ -491,6 +497,7 @@ fn ensure_selected_dependency_image_records(
             },
             index,
             provider,
+            false,
             None,
         )?);
     }

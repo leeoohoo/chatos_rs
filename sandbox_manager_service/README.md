@@ -47,6 +47,13 @@ BuildKit uses its own managed container and state volume, so those narrowly scop
 required for cloud image builds and cache GC. The proxy still permits container and image lifecycle
 operations, so it must remain private and must never publish port `2375` on the host.
 
+On Docker Desktop for macOS, image builds may require the Desktop-managed proxy even when the host
+shell does not export `HTTP_PROXY` or `HTTPS_PROXY`. `sandbox_manager_service_backend` now
+auto-detects the Docker engine proxy values from `docker info` only for image build arguments, so
+service-to-service calls such as Configuration Center mTLS do not inherit those proxy settings. If
+manual builds still time out during `apt-get update`, confirm that `docker info` shows reachable
+`HTTP Proxy` / `HTTPS Proxy` values and prefer those for ad-hoc `docker build` commands as well.
+
 Sandbox Manager labels every dynamically built image with its owning environment and service. It
 removes a replaced image only after the replacement container has started, and deletes environment
 images by their ownership labels when the environment is destroyed. BuildKit garbage collection is

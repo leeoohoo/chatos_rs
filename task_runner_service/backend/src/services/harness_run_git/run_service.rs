@@ -113,13 +113,12 @@ impl RunService {
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|value| value.eq_ignore_ascii_case("cloud"));
+            let snapshot_root = harness_temp_dir(run.id.as_str(), "managed-workspace");
+            let snapshot_workspace = snapshot_root.join("workspace");
+            fs::create_dir_all(&snapshot_workspace).map_err(|err| err.to_string())?;
             let (workspace_dir, owned_workspace_root) = if is_cloud {
-                let snapshot_root = harness_temp_dir(run.id.as_str(), "cloud-workspace");
-                let snapshot_workspace = snapshot_root.join("workspace");
-                fs::create_dir_all(&snapshot_workspace).map_err(|err| err.to_string())?;
                 hydrate_cloud_workspace(
                     worktree.as_path(),
-                    snapshot_workspace.as_path(),
                     access.default_branch.as_str(),
                     &secrets,
                 )
@@ -129,13 +128,16 @@ impl RunService {
                     Some(snapshot_root.to_string_lossy().to_string()),
                 )
             } else {
-                (effective_workspace_dir.to_string(), None)
+                (
+                    snapshot_workspace.to_string_lossy().to_string(),
+                    Some(snapshot_root.to_string_lossy().to_string()),
+                )
             };
 
             let base_branch = if is_cloud {
                 normalize_branch_name(access.default_branch.as_str(), "main")
             } else {
-                resolve_workspace_branch(workspace_dir.as_str(), access.default_branch.as_str())
+                resolve_workspace_branch(effective_workspace_dir, access.default_branch.as_str())
                     .await
             };
             let run_branch = format!("chatos/runs/{}", normalize_run_branch_component(&run.id));
@@ -150,7 +152,7 @@ impl RunService {
             } else {
                 let commit_message = format!("Sync project snapshot before run {}", run.id);
                 create_snapshot_commit_and_push(
-                    workspace_dir.as_str(),
+                    effective_workspace_dir,
                     worktree.as_path(),
                     base_branch.as_str(),
                     run_branch.as_str(),
@@ -159,6 +161,12 @@ impl RunService {
                 )
                 .await?
             };
+            materialize_harness_workspace(
+                worktree.as_path(),
+                Path::new(workspace_dir.as_str()),
+                run_branch.as_str(),
+            )
+            .await?;
             Ok(HarnessRunContext {
                 project_id: project.id.clone(),
                 repo_path: access.repo_path.clone(),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -37,6 +37,24 @@ const JOB_STATUS_FAILED: &str = "failed";
 const MAX_JOB_OUTPUT_LEN: usize = 80_000;
 const MAX_CUSTOM_BUILD_SCRIPT_LEN: usize = 128 * 1024;
 const IMAGE_DEFINITION_LABEL: &str = "chatos.image.definition-sha";
+const PROXY_BUILD_ARGS: [&str; 6] = [
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+];
+const MIRROR_BUILD_ARGS: [(&str, &str); 2] = [
+    (
+        "SANDBOX_MANAGER_IMAGE_APT_UBUNTU_MIRROR",
+        "SANDBOX_APT_UBUNTU_MIRROR",
+    ),
+    (
+        "SANDBOX_MANAGER_IMAGE_APT_UBUNTU_PORTS_MIRROR",
+        "SANDBOX_APT_UBUNTU_PORTS_MIRROR",
+    ),
+];
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ImageJobStore {
@@ -306,6 +324,7 @@ async fn run_initialize_job(
             .arg("--build-arg")
             .arg(format!("SANDBOX_CUSTOM_SCRIPT_B64={custom_script_b64}"));
     }
+    append_proxy_build_args(&mut command, &config, backend).await;
     command
         .arg(&config.image_build_context)
         .stdout(Stdio::piped())
@@ -390,6 +409,110 @@ async fn run_initialize_job(
         append_job_output(job, &format!("{maintenance_message}\n"));
     })
     .await;
+}
+
+async fn append_proxy_build_args(
+    command: &mut Command,
+    config: &AppConfig,
+    backend: SandboxBackendKind,
+) {
+    let mut values = BTreeMap::new();
+    for key in PROXY_BUILD_ARGS {
+        let Some(value) = std::env::var_os(key) else {
+            continue;
+        };
+        if value.is_empty() {
+            continue;
+        }
+        values.insert(key.to_string(), value.to_string_lossy().to_string());
+    }
+    if values.is_empty() {
+        values.extend(docker_engine_proxy_build_args(config, backend).await);
+    }
+    for (key, value) in values {
+        command.arg("--build-arg").arg(format!("{key}={value}"));
+    }
+    for (env_key, build_arg) in MIRROR_BUILD_ARGS {
+        let Some(value) = std::env::var_os(env_key) else {
+            continue;
+        };
+        if value.is_empty() {
+            continue;
+        }
+        command
+            .arg("--build-arg")
+            .arg(format!("{build_arg}={}", value.to_string_lossy()));
+    }
+}
+
+async fn docker_engine_proxy_build_args(
+    config: &AppConfig,
+    backend: SandboxBackendKind,
+) -> BTreeMap<String, String> {
+    if !matches!(backend, SandboxBackendKind::Docker) {
+        return BTreeMap::new();
+    }
+    let cli = container_cli(config, backend);
+    let mut info = Command::new(cli);
+    info.arg("info");
+    if crate::docker_maintenance::apply_docker_connection(config, &mut info).is_err() {
+        return BTreeMap::new();
+    }
+    let output = match info.output().await {
+        Ok(output) if output.status.success() => output,
+        _ => return BTreeMap::new(),
+    };
+    parse_docker_info_proxy_build_args(&String::from_utf8_lossy(output.stdout.as_slice()))
+}
+
+fn parse_docker_info_proxy_build_args(output: &str) -> BTreeMap<String, String> {
+    let mut http_proxy = None;
+    let mut https_proxy = None;
+    let mut no_proxy = None;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("HTTP Proxy:") {
+            http_proxy = normalized_http_proxy_value(value);
+        } else if let Some(value) = trimmed.strip_prefix("HTTPS Proxy:") {
+            https_proxy = normalized_http_proxy_value(value);
+        } else if let Some(value) = trimmed.strip_prefix("No Proxy:") {
+            no_proxy = normalized_no_proxy_value(value);
+        }
+    }
+    let mut values = BTreeMap::new();
+    if let Some(value) = http_proxy {
+        values.insert("HTTP_PROXY".to_string(), value.clone());
+        values.insert("http_proxy".to_string(), value);
+    }
+    if let Some(value) = https_proxy {
+        values.insert("HTTPS_PROXY".to_string(), value.clone());
+        values.insert("https_proxy".to_string(), value);
+    }
+    if let Some(value) = no_proxy {
+        values.insert("NO_PROXY".to_string(), value.clone());
+        values.insert("no_proxy".to_string(), value);
+    }
+    values
+}
+
+fn normalized_http_proxy_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("<nil>") {
+        None
+    } else if value.contains("://") {
+        Some(value.to_string())
+    } else {
+        Some(format!("http://{value}"))
+    }
+}
+
+fn normalized_no_proxy_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("<nil>") {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 async fn cleanup_replaced_image(
@@ -817,6 +940,30 @@ mod tests {
         .await
         .expect_err("unmanaged dependency image must be rejected");
         assert!(error.contains("not platform-managed"));
+    }
+
+    #[test]
+    fn docker_info_proxy_output_is_translated_to_build_args() {
+        let args = parse_docker_info_proxy_build_args(
+            "HTTP Proxy: http.docker.internal:3128\nHTTPS Proxy: http.docker.internal:3128\nNo Proxy: hubproxy.docker.internal\n",
+        );
+
+        assert_eq!(
+            args.get("HTTP_PROXY").map(String::as_str),
+            Some("http://http.docker.internal:3128")
+        );
+        assert_eq!(
+            args.get("http_proxy").map(String::as_str),
+            Some("http://http.docker.internal:3128")
+        );
+        assert_eq!(
+            args.get("HTTPS_PROXY").map(String::as_str),
+            Some("http://http.docker.internal:3128")
+        );
+        assert_eq!(
+            args.get("NO_PROXY").map(String::as_str),
+            Some("hubproxy.docker.internal")
+        );
     }
 }
 

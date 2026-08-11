@@ -91,7 +91,7 @@ pub(super) fn automatic_file_write_recovery_calls(
         if result.success || !is_code_maintainer_write_tool(result.name.as_str()) {
             continue;
         }
-        let recovery_specs = structured_stale_context_recoveries(result.content.as_str());
+        let recovery_specs = structured_file_write_recoveries(result.content.as_str());
         if recovery_specs.is_empty() {
             continue;
         }
@@ -103,7 +103,7 @@ pub(super) fn automatic_file_write_recovery_calls(
             )
             .ok_or_else(|| {
                 format!(
-                    "MCP capability invariant violated: {} returned stale_context for {}, but the required {} capability is not available",
+                    "MCP capability invariant violated: {} returned a recovery-capable write failure for {}, but the required {} capability is not available",
                     result.name, path, required
                 )
             })?;
@@ -132,7 +132,7 @@ fn is_code_maintainer_write_tool(name: &str) -> bool {
             .any(|suffix| name.ends_with(suffix))
 }
 
-fn structured_stale_context_recoveries(content: &str) -> Vec<(String, String, Value)> {
+fn structured_file_write_recoveries(content: &str) -> Vec<(String, String, Value)> {
     content
         .match_indices('{')
         .filter_map(|(index, _)| {
@@ -141,7 +141,12 @@ fn structured_stale_context_recoveries(content: &str) -> Vec<(String, String, Va
                 .next()
                 .and_then(Result::ok)
         })
-        .find(|payload| payload.get("category").and_then(Value::as_str) == Some("stale_context"))
+        .find(|payload| {
+            matches!(
+                payload.get("category").and_then(Value::as_str),
+                Some("stale_context" | "expected_match")
+            )
+        })
         .map(recovery_specs_from_payload)
         .unwrap_or_default()
 }
@@ -485,6 +490,35 @@ mod tests {
             .expect("automatic recovery calls");
 
         assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn expected_match_write_failure_builds_a_scoped_automatic_read() {
+        let mut expected_match = tool_result(
+            false,
+            r#"tool failed: {"category":"expected_match","path":"design/svg/validate.mjs","latest_sha256":"abc123","recovery":{"required_next_tool":"read_file_raw","recommended_args":{"path":"design/svg/validate.mjs"}},"candidate_summary":{"count":0,"candidates":[]}}"#,
+        );
+        expected_match.name = "code_maintainer_write_stage_edit_batch".to_string();
+        let tools = vec![
+            serde_json::json!({"name": "code_maintainer_write_stage_edit_batch"}),
+            serde_json::json!({"name": "code_maintainer_read_read_file_raw"}),
+        ];
+
+        let calls = automatic_file_write_recovery_calls(&[expected_match], tools.as_slice())
+            .expect("automatic recovery calls");
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0]["function"]["name"],
+            "code_maintainer_read_read_file_raw"
+        );
+        let args: serde_json::Value = serde_json::from_str(
+            calls[0]["function"]["arguments"]
+                .as_str()
+                .expect("arguments"),
+        )
+        .expect("recovery args");
+        assert_eq!(args, serde_json::json!({"path": "design/svg/validate.mjs"}));
     }
 
     #[test]

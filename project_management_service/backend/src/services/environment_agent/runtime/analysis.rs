@@ -13,6 +13,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    prefer_china_mirrors: bool,
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
     let mut environment =
         ensure_runtime_environment_for_project(&state.store, project, None).await?;
@@ -92,6 +93,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         &mut environment.detected_stack,
         analysis_requirement,
         selected_dependencies,
+        prefer_china_mirrors,
     );
     let analysis_started_at = now_rfc3339();
     environment.updated_at = analysis_started_at.clone();
@@ -248,6 +250,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             model_config_id: model_runtime.model_config_id.as_str(),
             analysis_requirement,
             selected_dependencies,
+            prefer_china_mirrors,
             source_snapshot: source_snapshot.as_ref(),
         },
     )
@@ -379,6 +382,7 @@ struct ProjectEnvironmentAgentRunContext<'a> {
     model_config_id: &'a str,
     analysis_requirement: Option<&'a str>,
     selected_dependencies: &'a [String],
+    prefer_china_mirrors: bool,
     source_snapshot: Option<&'a Value>,
 }
 
@@ -552,6 +556,7 @@ async fn run_project_environment_agent(
             run_context.run_id,
             run_context.analysis_requirement,
             run_context.selected_dependencies,
+            run_context.prefer_china_mirrors,
             run_context.source_snapshot,
             agent_prompt,
             executor,
@@ -577,6 +582,7 @@ async fn execute_project_environment_agent(
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    prefer_china_mirrors: bool,
     source_snapshot: Option<&Value>,
     agent_prompt: chatos_plugin_management_sdk::ResolvedAgentPrompt,
     executor: McpExecutor,
@@ -587,6 +593,7 @@ async fn execute_project_environment_agent(
         run_id,
         analysis_requirement,
         selected_dependencies,
+        prefer_china_mirrors,
         source_snapshot,
     )?;
     if let Some(provider_skills_prompt) = provider_skills_prompt {
@@ -639,6 +646,7 @@ fn bind_analysis_request(
     detected_stack: &mut Value,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    prefer_china_mirrors: bool,
 ) {
     if !detected_stack.is_object() {
         *detected_stack = json!({});
@@ -656,6 +664,10 @@ fn bind_analysis_request(
     object.insert(
         "selected_dependencies".to_string(),
         json!(selected_dependencies),
+    );
+    object.insert(
+        "prefer_china_mirrors".to_string(),
+        Value::Bool(prefer_china_mirrors),
     );
     if let Some(analysis_requirement) = analysis_requirement
         .map(str::trim)
@@ -675,6 +687,7 @@ fn build_project_environment_agent_prompt(
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    prefer_china_mirrors: bool,
     source_snapshot: Option<&Value>,
 ) -> Result<String, String> {
     let context = project_environment_agent_context(
@@ -683,6 +696,7 @@ fn build_project_environment_agent_prompt(
         run_id,
         analysis_requirement,
         selected_dependencies,
+        prefer_china_mirrors,
         source_snapshot,
     );
     serde_json::to_string_pretty(&context)
@@ -695,6 +709,7 @@ fn project_environment_agent_context(
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    prefer_china_mirrors: bool,
     source_snapshot: Option<&Value>,
 ) -> Value {
     json!({
@@ -709,6 +724,7 @@ fn project_environment_agent_context(
                 .map(str::trim)
                 .filter(|value| !value.is_empty()),
             "selected_dependencies": selected_dependencies,
+            "prefer_china_mirrors": prefer_china_mirrors,
         },
         "source_snapshot": source_snapshot,
     })
@@ -742,6 +758,7 @@ mod tests {
             "run-1",
             Some("Use Node.js 22 and expose port 3000"),
             &["PostgreSQL".to_string(), "Redis".to_string()],
+            true,
             None,
         );
         assert!(context.get("routing").is_none());
@@ -754,6 +771,7 @@ mod tests {
             context["analysis_request"]["selected_dependencies"],
             serde_json::json!(["PostgreSQL", "Redis"])
         );
+        assert_eq!(context["analysis_request"]["prefer_china_mirrors"], true);
         let serialized = serde_json::to_string(&context).expect("serialize context");
         for forbidden in [
             "file_provider",
@@ -777,6 +795,7 @@ mod tests {
                 "PostgreSQL".to_string(),
                 "Redis".to_string(),
             ],
+            true,
         );
         assert_eq!(
             detected_stack["selected_dependencies"],
@@ -786,5 +805,6 @@ mod tests {
             detected_stack["analysis_requirement"],
             "Build a React game and run browser tests"
         );
+        assert_eq!(detected_stack["prefer_china_mirrors"], true);
     }
 }

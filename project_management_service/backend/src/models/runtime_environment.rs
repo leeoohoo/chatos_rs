@@ -301,6 +301,8 @@ pub struct AnalyzeProjectRuntimeEnvironmentRequest {
     pub analysis_requirement: Option<String>,
     #[serde(default, alias = "selectedDependencies")]
     pub selected_dependencies: Vec<String>,
+    #[serde(default, alias = "preferChinaMirrors")]
+    pub prefer_china_mirrors: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

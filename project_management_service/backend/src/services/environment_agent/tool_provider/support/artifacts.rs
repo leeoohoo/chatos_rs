@@ -4,6 +4,12 @@
 use super::super::compose::*;
 use super::super::*;
 
+const CHINA_MIRROR_MARKER: &str = "# chatos: prefer china mirrors";
+const DEFAULT_UBUNTU_MIRROR: &str = "https://mirrors.aliyun.com/ubuntu/";
+const DEFAULT_UBUNTU_PORTS_MIRROR: &str = "https://mirrors.aliyun.com/ubuntu-ports/";
+const DEFAULT_DEBIAN_MIRROR: &str = "https://mirrors.aliyun.com/debian";
+const DEFAULT_DEBIAN_SECURITY_MIRROR: &str = "https://mirrors.aliyun.com/debian-security";
+
 pub(in crate::services::environment_agent::tool_provider) fn normalize_generated_config_files(
     inputs: Vec<ProjectRuntimeEnvironmentConfigFileInput>,
 ) -> Result<Vec<ProjectRuntimeEnvironmentConfigFileRecord>, String> {
@@ -100,6 +106,7 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
     image: ProjectRuntimeEnvironmentImageInput,
     index: usize,
     default_provider: RuntimeEnvironmentProvider,
+    prefer_china_mirrors: bool,
     image_catalog: Option<&Value>,
 ) -> Result<ProjectRuntimeEnvironmentImageRecord, String> {
     let now = now_rfc3339();
@@ -184,8 +191,95 @@ pub(in crate::services::environment_agent::tool_provider) fn image_input_to_reco
         record.error = None;
     }
     crate::services::runtime_environment::apply_program_managed_image_policy(&mut record);
+    apply_preferred_mirror_policy(&mut record, prefer_china_mirrors);
     let _ = image_catalog;
     Ok(record)
+}
+
+pub(in crate::services::environment_agent::tool_provider) fn analysis_prefers_china_mirrors(
+    detected_stack: &Value,
+) -> bool {
+    detected_stack
+        .get("prefer_china_mirrors")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn apply_preferred_mirror_policy(
+    record: &mut ProjectRuntimeEnvironmentImageRecord,
+    prefer_china_mirrors: bool,
+) {
+    if !prefer_china_mirrors || record.service_role != RuntimeServiceRole::Application {
+        return;
+    }
+    let Some(dockerfile) = record.dockerfile.as_deref() else {
+        return;
+    };
+    let rewritten = inject_china_mirror_bootstrap(dockerfile);
+    if rewritten != dockerfile {
+        record.dockerfile = Some(rewritten);
+    }
+}
+
+fn inject_china_mirror_bootstrap(dockerfile: &str) -> String {
+    let lower = dockerfile.to_ascii_lowercase();
+    if lower.contains(CHINA_MIRROR_MARKER) || !lower.contains("apt-get") {
+        return dockerfile.to_string();
+    }
+    let uses_debian_family = dockerfile.lines().any(|line| {
+        let line = line.trim().to_ascii_lowercase();
+        line.starts_with("from ")
+            && [
+                "ubuntu", "debian", "bookworm", "bullseye", "buster", "trixie", "sid", "noble",
+                "jammy", "focal",
+            ]
+            .iter()
+            .any(|marker| line.contains(marker))
+    });
+    if !uses_debian_family {
+        return dockerfile.to_string();
+    }
+    let ubuntu_mirror = normalized_env_value(
+        "SANDBOX_MANAGER_IMAGE_APT_UBUNTU_MIRROR",
+        DEFAULT_UBUNTU_MIRROR,
+    );
+    let ubuntu_ports_mirror = normalized_env_value(
+        "SANDBOX_MANAGER_IMAGE_APT_UBUNTU_PORTS_MIRROR",
+        DEFAULT_UBUNTU_PORTS_MIRROR,
+    );
+    let debian_mirror = normalized_env_value(
+        "SANDBOX_MANAGER_IMAGE_APT_DEBIAN_MIRROR",
+        DEFAULT_DEBIAN_MIRROR,
+    );
+    let debian_security_mirror = normalized_env_value(
+        "SANDBOX_MANAGER_IMAGE_APT_DEBIAN_SECURITY_MIRROR",
+        DEFAULT_DEBIAN_SECURITY_MIRROR,
+    );
+    let bootstrap = format!(
+        "{CHINA_MIRROR_MARKER}\nRUN set -eux; \\\n    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \\\n      sed -i \\\n        -e 's|http://ports.ubuntu.com/ubuntu-ports/|{ubuntu_ports_mirror}|g' \\\n        -e 's|https://ports.ubuntu.com/ubuntu-ports/|{ubuntu_ports_mirror}|g' \\\n        -e 's|http://archive.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        -e 's|https://archive.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        -e 's|http://security.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        -e 's|https://security.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        /etc/apt/sources.list.d/ubuntu.sources; \\\n    fi; \\\n    if [ -f /etc/apt/sources.list ]; then \\\n      sed -i \\\n        -e 's|http://ports.ubuntu.com/ubuntu-ports/|{ubuntu_ports_mirror}|g' \\\n        -e 's|https://ports.ubuntu.com/ubuntu-ports/|{ubuntu_ports_mirror}|g' \\\n        -e 's|http://archive.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        -e 's|https://archive.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        -e 's|http://security.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        -e 's|https://security.ubuntu.com/ubuntu/|{ubuntu_mirror}|g' \\\n        /etc/apt/sources.list; \\\n    fi; \\\n    find /etc/apt -type f \\( -name '*.list' -o -name '*.sources' \\) -print0 \\\n      | xargs -0 -r sed -i \\\n        -e 's|http://deb.debian.org/debian|{debian_mirror}|g' \\\n        -e 's|https://deb.debian.org/debian|{debian_mirror}|g' \\\n        -e 's|http://security.debian.org/debian-security|{debian_security_mirror}|g' \\\n        -e 's|https://security.debian.org/debian-security|{debian_security_mirror}|g'\n"
+    );
+    let mut output = Vec::new();
+    for line in dockerfile.lines() {
+        output.push(line.to_string());
+        if line.trim_start().to_ascii_uppercase().starts_with("FROM ") {
+            output.push(bootstrap.clone());
+        }
+    }
+    let rewritten = output.join("\n");
+    if dockerfile.ends_with('\n') {
+        format!("{rewritten}\n")
+    } else {
+        rewritten
+    }
+}
+
+fn normalized_env_value(key: &str, default: &str) -> String {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("{value}/"))
+        .unwrap_or_else(|| default.to_string())
 }
 
 fn normalize_component_root(value: &str) -> Result<String, String> {

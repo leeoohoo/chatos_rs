@@ -33,8 +33,19 @@ pub(super) fn sandbox_baseline_workspace(run_workspace: &str) -> Result<String, 
         .to_string())
 }
 
-pub(super) fn copy_workspace_to_sandbox(source: &str, destination: &str) -> Result<(), String> {
-    super::super::workspace_snapshot::copy_workspace_snapshot(source, destination)?;
+pub(super) fn copy_workspace_to_sandbox(
+    source: &str,
+    destination: &str,
+    preserve_git: bool,
+) -> Result<(), String> {
+    if preserve_git {
+        super::super::workspace_snapshot::copy_workspace_snapshot_preserving_git(
+            source,
+            destination,
+        )?;
+    } else {
+        super::super::workspace_snapshot::copy_workspace_snapshot(source, destination)?;
+    }
     prepare_sandbox_workspace_owner(Path::new(destination))
 }
 

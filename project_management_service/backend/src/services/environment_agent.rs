@@ -229,6 +229,7 @@ pub async fn analyze_project_runtime_environment(
     run_id: &str,
     analysis_requirement: Option<&str>,
     selected_dependencies: &[String],
+    prefer_china_mirrors: bool,
 ) -> Result<ProjectRuntimeEnvironmentResponse, String> {
     runtime::analysis::analyze_project_runtime_environment_impl(
         state,
@@ -237,6 +238,7 @@ pub async fn analyze_project_runtime_environment(
         run_id,
         analysis_requirement,
         selected_dependencies,
+        prefer_china_mirrors,
     )
     .await
 }

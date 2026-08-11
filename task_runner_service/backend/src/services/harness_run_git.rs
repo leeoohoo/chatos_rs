@@ -196,7 +196,6 @@ impl HarnessRunContext {
 
 async fn hydrate_cloud_workspace(
     worktree: &Path,
-    destination: &Path,
     default_branch: &str,
     secrets: &[&str],
 ) -> Result<(), String> {
@@ -227,10 +226,68 @@ async fn hydrate_cloud_workspace(
         )
         .await?;
     }
+    Ok(())
+}
+
+async fn materialize_harness_workspace(
+    worktree: &Path,
+    destination: &Path,
+    run_branch: &str,
+) -> Result<(), String> {
     copy_workspace_snapshot(
         worktree.to_string_lossy().as_ref(),
         destination.to_string_lossy().as_ref(),
+    )?;
+
+    run_git(
+        vec![
+            "-c".to_string(),
+            "init.templateDir=".to_string(),
+            "init".to_string(),
+        ],
+        Some(destination),
+        &[],
     )
+    .await?;
+    run_git(
+        vec![
+            "symbolic-ref".to_string(),
+            "HEAD".to_string(),
+            format!("refs/heads/{run_branch}"),
+        ],
+        Some(destination),
+        &[],
+    )
+    .await?;
+    for (key, value) in [
+        ("user.name", "ChatOS Task Runner"),
+        ("user.email", "task-runner@chatos.local"),
+    ] {
+        run_git(
+            vec!["config".to_string(), key.to_string(), value.to_string()],
+            Some(destination),
+            &[],
+        )
+        .await?;
+    }
+    run_git(
+        vec!["add".to_string(), "--all".to_string()],
+        Some(destination),
+        &[],
+    )
+    .await?;
+    run_git(
+        vec![
+            "commit".to_string(),
+            "--allow-empty".to_string(),
+            "--no-gpg-sign".to_string(),
+            "-m".to_string(),
+            "Initialize platform-managed task workspace".to_string(),
+        ],
+        Some(destination),
+        &[],
+    )
+    .await
 }
 
 async fn resolve_workspace_branch(workspace_dir: &str, fallback: &str) -> String {
@@ -400,7 +457,12 @@ fn scrub_secrets(mut value: String, secrets: &[&str]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_branch_name, normalize_run_branch_component};
+    use std::fs;
+
+    use super::{
+        harness_temp_dir, is_valid_branch_name, materialize_harness_workspace,
+        normalize_run_branch_component, run_git_output,
+    };
 
     #[test]
     fn run_branch_component_removes_git_ref_punctuation() {
@@ -413,5 +475,67 @@ mod tests {
         assert!(!is_valid_branch_name("../main"));
         assert!(!is_valid_branch_name("feature bad"));
         assert!(!is_valid_branch_name("HEAD"));
+    }
+
+    #[tokio::test]
+    async fn materialized_workspace_has_independent_clean_git_metadata() {
+        let root = harness_temp_dir("materialize-test", "workspace");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(source.join(".git")).expect("create source git metadata");
+        fs::write(source.join(".git/config"), "secret-source-metadata")
+            .expect("write source git metadata");
+        fs::write(source.join("tracked.txt"), "baseline\n").expect("write tracked file");
+
+        materialize_harness_workspace(&source, &destination, "chatos/runs/test")
+            .await
+            .expect("materialize managed workspace");
+
+        assert!(destination.join(".git").is_dir());
+        assert!(!fs::read_to_string(destination.join(".git/config"))
+            .expect("read managed git config")
+            .contains("secret-source-metadata"));
+        assert_eq!(
+            run_git_output(
+                vec!["branch".to_string(), "--show-current".to_string()],
+                Some(&destination),
+                &[],
+            )
+            .await
+            .expect("read managed branch")
+            .trim(),
+            "chatos/runs/test"
+        );
+        assert!(
+            run_git_output(vec!["remote".to_string()], Some(&destination), &[])
+                .await
+                .expect("read managed remotes")
+                .trim()
+                .is_empty()
+        );
+        assert!(run_git_output(
+            vec!["status".to_string(), "--porcelain".to_string()],
+            Some(&destination),
+            &[],
+        )
+        .await
+        .expect("read managed status")
+        .trim()
+        .is_empty());
+
+        fs::remove_file(destination.join("tracked.txt")).expect("delete tracked file");
+        assert_eq!(
+            run_git_output(
+                vec!["diff".to_string(), "--name-status".to_string()],
+                Some(&destination),
+                &[],
+            )
+            .await
+            .expect("read managed diff")
+            .trim(),
+            "D\ttracked.txt"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 }

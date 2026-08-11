@@ -52,11 +52,13 @@ pub(super) async fn prepare_model_execution(
         .map(|context| context.effective_workspace_dir.as_str())
         .unwrap_or(effective_workspace_dir)
         .to_string();
+    let preserve_platform_git = harness_run_context.is_some();
     let sandbox_context = service
         .prepare_sandbox_if_needed(
             task,
             run,
             effective_workspace_dir.as_str(),
+            preserve_platform_git,
             authoritative_policy,
         )
         .await?;

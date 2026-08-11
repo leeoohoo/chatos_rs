@@ -81,6 +81,7 @@ impl SandboxManagerClient {
         image_id: Option<&str>,
         environment_plan: Option<&SandboxEnvironmentPlan>,
         source_workspace: &str,
+        preserve_platform_git: bool,
         policy: SandboxLeasePolicyRequest,
     ) -> Result<CreateSandboxLeaseResponse, String> {
         if let Some(environment_plan) = environment_plan {
@@ -90,6 +91,7 @@ impl SandboxManagerClient {
                     run,
                     workspace_root,
                     source_workspace,
+                    preserve_platform_git,
                     ttl_seconds,
                     environment_plan,
                     policy,
@@ -153,6 +155,7 @@ impl SandboxManagerClient {
         run: &TaskRunRecord,
         workspace_root: &Path,
         source_workspace: &str,
+        preserve_platform_git: bool,
         ttl_seconds: u64,
         environment_plan: &SandboxEnvironmentPlan,
         policy: SandboxLeasePolicyRequest,
@@ -216,13 +219,18 @@ impl SandboxManagerClient {
                         return Err(error);
                     }
                 };
-            if let Err(error) =
-                copy_workspace_to_sandbox(source_workspace, baseline_workspace.as_str()).and_then(
-                    |_| {
-                        copy_workspace_to_sandbox(source_workspace, prepared.run_workspace.as_str())
-                    },
+            if let Err(error) = copy_workspace_to_sandbox(
+                source_workspace,
+                baseline_workspace.as_str(),
+                preserve_platform_git,
+            )
+            .and_then(|_| {
+                copy_workspace_to_sandbox(
+                    source_workspace,
+                    prepared.run_workspace.as_str(),
+                    preserve_platform_git,
                 )
-            {
+            }) {
                 let _ = self
                     .release_environment_response(&prepared, false, true)
                     .await;

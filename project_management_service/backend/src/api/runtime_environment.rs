@@ -289,6 +289,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let analysis_requirement = normalize_analysis_requirement(payload.analysis_requirement)?;
     let selected_dependencies = normalize_selected_dependencies(payload.selected_dependencies)?;
+    let prefer_china_mirrors = payload.prefer_china_mirrors;
 
     {
         let mut active = state.runtime_environment_analysis_jobs.lock().await;
@@ -353,6 +354,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let worker_access_token = access_token.0.clone();
     let worker_analysis_requirement = analysis_requirement;
     let worker_selected_dependencies = selected_dependencies;
+    let worker_prefer_china_mirrors = prefer_china_mirrors;
     tokio::spawn(async move {
         let task_state = worker_state.clone();
         let task_project = worker_project.clone();
@@ -365,6 +367,7 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
                 task_run_id.as_str(),
                 worker_analysis_requirement.as_deref(),
                 worker_selected_dependencies.as_slice(),
+                worker_prefer_china_mirrors,
             )
             .await
         });

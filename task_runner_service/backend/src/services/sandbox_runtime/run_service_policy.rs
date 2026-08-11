@@ -83,6 +83,7 @@ impl RunService {
         task: &TaskRecord,
         run: &mut TaskRunRecord,
         effective_workspace_dir: &str,
+        preserve_platform_git: bool,
         authoritative_policy: bool,
     ) -> Result<Option<SandboxRuntimeContext>, String> {
         if !task.mcp_config.requires_execution {
@@ -160,6 +161,7 @@ impl RunService {
                 route.image_id.as_deref(),
                 route.environment_plan.as_ref(),
                 effective_workspace_dir,
+                preserve_platform_git,
                 route.policy.clone(),
             )
             .await
@@ -294,6 +296,7 @@ impl RunService {
                 baseline_workspace
                     .as_deref()
                     .expect("cloud sandbox baseline path"),
+                preserve_platform_git,
             ) {
                 let _ = client.release(&context, true, true).await;
                 self.append_sandbox_event(
@@ -305,9 +308,11 @@ impl RunService {
                 .await;
                 return Err(err);
             }
-            if let Err(err) =
-                copy_workspace_to_sandbox(effective_workspace_dir, &context.run_workspace)
-            {
+            if let Err(err) = copy_workspace_to_sandbox(
+                effective_workspace_dir,
+                &context.run_workspace,
+                preserve_platform_git,
+            ) {
                 let _ = client.release(&context, true, true).await;
                 self.append_sandbox_event(
                     run,
