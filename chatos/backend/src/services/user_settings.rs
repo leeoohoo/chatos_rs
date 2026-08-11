@@ -12,6 +12,7 @@ use crate::core::pagination::parse_js_int_value;
 use crate::repositories::user_settings as repo;
 
 pub const USER_PREFERENCE_KEYS: &[&str] = &["INTERNAL_CONTEXT_LOCALE", "UI_LOCALE"];
+pub const LOCAL_PROJECT_CREATION_ENABLED_KEY: &str = "LOCAL_PROJECT_CREATION_ENABLED";
 
 fn coerce(value: &Value, key: &str) -> Value {
     if value.is_null() {
@@ -88,7 +89,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         "INTERNAL_CONTEXT_LOCALE": "zh-CN",
         "UI_LOCALE": "zh-CN",
         "TERMINAL_UI_ENABLED": true,
-        "LOCAL_PROJECT_CREATION_ENABLED": false,
+        LOCAL_PROJECT_CREATION_ENABLED_KEY: false,
     }))
 }
 
@@ -165,6 +166,13 @@ pub async fn patch_user_settings(user_id: &str, patch: &Value) -> Result<Value, 
     get_effective_user_settings(Some(user_id.to_string())).await
 }
 
+pub fn local_project_creation_enabled(settings: &Value) -> bool {
+    settings
+        .get(LOCAL_PROJECT_CREATION_ENABLED_KEY)
+        .map(|value| matches!(coerce(value, LOCAL_PROJECT_CREATION_ENABLED_KEY), Value::Bool(true)))
+        .unwrap_or(false)
+}
+
 fn preference_values(value: &Value) -> Value {
     let mut clean = serde_json::Map::new();
     if let Value::Object(values) = value {
@@ -181,7 +189,7 @@ fn preference_values(value: &Value) -> Value {
 mod tests {
     use serde_json::json;
 
-    use super::preference_values;
+    use super::{local_project_creation_enabled, preference_values};
 
     #[test]
     fn keeps_language_preferences_and_drops_managed_runtime_fields() {
@@ -197,5 +205,19 @@ mod tests {
                 "INTERNAL_CONTEXT_LOCALE": "zh-CN",
             })
         );
+    }
+
+    #[test]
+    fn reads_local_project_creation_from_effective_settings() {
+        assert!(local_project_creation_enabled(&json!({
+            "LOCAL_PROJECT_CREATION_ENABLED": true,
+        })));
+        assert!(local_project_creation_enabled(&json!({
+            "LOCAL_PROJECT_CREATION_ENABLED": "on",
+        })));
+        assert!(!local_project_creation_enabled(&json!({
+            "LOCAL_PROJECT_CREATION_ENABLED": false,
+        })));
+        assert!(!local_project_creation_enabled(&json!({})));
     }
 }
