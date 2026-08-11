@@ -22,9 +22,7 @@ use crate::core::validation::normalize_non_empty;
 use crate::models::project::{Project, ProjectService};
 use crate::models::remote_connection::RemoteConnection;
 use crate::services::realtime::publish_projects_updated;
-use crate::services::user_settings::{
-    get_effective_user_settings, local_project_creation_enabled,
-};
+use crate::services::user_settings::{get_effective_user_settings, local_project_creation_enabled};
 
 mod connector_client;
 mod directory_payload;
@@ -383,10 +381,7 @@ async fn create_project(
     match get_effective_user_settings(Some(user_id.clone())).await {
         Ok(settings) if local_project_creation_enabled(&settings) => {}
         Ok(_) => {
-            return error(
-                StatusCode::FORBIDDEN,
-                "当前配置未开启本地项目创建",
-            );
+            return error(StatusCode::FORBIDDEN, "当前配置未开启本地项目创建");
         }
         Err(err) => {
             return error(

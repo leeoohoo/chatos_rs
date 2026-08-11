@@ -592,4 +592,85 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     });
     expect(getProjectRuntimeEnvironmentProgress).toHaveBeenCalledWith('project-2');
   });
+
+  it('clears stale running progress once the environment is already ready', async () => {
+    const analyzingResponse = {
+      environment: {
+        project_id: 'project-stale-progress',
+        status: 'analyzing',
+        sandbox_enabled: true,
+        sandbox_provider: 'cloud_sandbox_manager',
+        file_provider: 'harness',
+        last_agent_run_id: 'agent-run-stale',
+        updated_at: '2026-08-11T13:20:58Z',
+      },
+      images: [],
+    };
+    const readyResponse = {
+      environment: {
+        project_id: 'project-stale-progress',
+        status: 'ready',
+        sandbox_enabled: true,
+        sandbox_provider: 'cloud_sandbox_manager',
+        file_provider: 'harness',
+        analysis_summary: '工作区镜像与依赖镜像已准备。',
+        last_agent_run_id: 'agent-run-stale',
+        updated_at: '2026-08-11T13:21:10Z',
+      },
+      images: [{
+        id: 'dependency-postgres',
+        environment_key: 'postgresql',
+        environment_type: 'dependency',
+        display_name: 'PostgreSQL 16',
+        service_id: 'postgresql',
+        service_role: 'dependency',
+        mcp_policy: {
+          managed_by: 'system',
+          attachment: 'none',
+          filesystem: false,
+          terminal: false,
+        },
+        image_provider: 'cloud_sandbox_manager',
+        image_ref: 'postgres:16-alpine',
+        status: 'ready',
+        ports: [],
+        env_vars: {},
+      }],
+    };
+    const getProjectRuntimeEnvironment = vi.fn()
+      .mockResolvedValueOnce(analyzingResponse)
+      .mockResolvedValue(readyResponse);
+    const getProjectRuntimeEnvironmentProgress = vi.fn(async () => ({
+      project_id: 'project-stale-progress',
+      run_id: 'agent-run-stale',
+      phase: 'running_agent_analysis',
+      status: 'running',
+      progress_percent: 40,
+      provider: 'cloud_sandbox_manager',
+      updated_at: '2026-08-11T13:21:00Z',
+    }));
+    const client = {
+      getProjectRuntimeEnvironment,
+      getProjectRuntimeEnvironmentProgress,
+      analyzeProjectRuntimeEnvironment: vi.fn(async () => analyzingResponse),
+    } as unknown as ApiClient;
+
+    render(
+      <ApiClientProvider client={client}>
+        <I18nProvider>
+          <CloudProjectRuntimeEnvironmentPanel
+            projectId="project-stale-progress"
+            projectName="Stale progress project"
+            projectSourceType="cloud"
+          />
+        </I18nProvider>
+      </ApiClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '初始化/重新分析' })).toBeEnabled();
+    });
+    expect(screen.queryByText('镜像初始化进度')).not.toBeInTheDocument();
+    expect(screen.getByText('工作区镜像与依赖镜像已准备。')).toBeInTheDocument();
+  });
 });

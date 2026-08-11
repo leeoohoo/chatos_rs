@@ -26,6 +26,21 @@ import {
 } from './model';
 
 const DEPENDENCY_PILL_RENDER_LIMIT = 16;
+const SVG_MARKUP_REGEX = /<svg\b[\s\S]*<\/svg>/i;
+
+const extractSvgMarkup = (content: string): string | null => {
+  const match = content.match(SVG_MARKUP_REGEX);
+  return match ? match[0] : null;
+};
+
+const shouldRenderSvgDocument = (
+  document: ProjectRequirementDocumentResponse,
+  content: string,
+): boolean => {
+  const docType = readText(document.doc_type) || readText(document.docType);
+  const format = readText(document.format).toLowerCase();
+  return docType === 'ui_svg_preview' || format === 'svg' || SVG_MARKUP_REGEX.test(content);
+};
 
 export const PlanPaneHeader: React.FC<{
   loading: boolean;
@@ -209,6 +224,16 @@ export const TechnicalDocumentsSection: React.FC<{
     ? readText(selectedDocument.updated_at) || readText(selectedDocument.updatedAt)
     : '';
   const selectedContent = selectedDocument ? readText(selectedDocument.content) : '';
+  const selectedSvgMarkup = useMemo(() => (
+    selectedDocument && shouldRenderSvgDocument(selectedDocument, selectedContent)
+      ? extractSvgMarkup(selectedContent)
+      : null
+  ), [selectedContent, selectedDocument]);
+  const selectedSvgPreviewUrl = useMemo(() => (
+    selectedSvgMarkup
+      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(selectedSvgMarkup)}`
+      : null
+  ), [selectedSvgMarkup]);
 
   return (
     <section className={cn('mt-5 border-t border-border pt-4', className)}>
@@ -309,7 +334,15 @@ export const TechnicalDocumentsSection: React.FC<{
                 </div>
               </div>
               <div className="px-3 py-2">
-                {selectedContent ? (
+                {selectedSvgPreviewUrl ? (
+                  <div className="rounded-md border border-border/70 bg-muted/10 p-3">
+                    <img
+                      alt={readText(selectedDocument.title) || requirementDocumentTypeLabel(selectedDocType)}
+                      className="block max-h-[70vh] min-h-[320px] w-full rounded-md bg-white object-contain"
+                      src={selectedSvgPreviewUrl}
+                    />
+                  </div>
+                ) : selectedContent ? (
                   <LazyMarkdownRenderer content={selectedContent} className="text-sm" />
                 ) : (
                   <div className="text-sm text-muted-foreground">暂无内容</div>

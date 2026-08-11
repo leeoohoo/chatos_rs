@@ -176,6 +176,9 @@ const anchorTaskRunnerCallbacksToSourceTurns = (
   anchoredCallbacks.forEach((callback) => {
     let insertAfter = -1;
     output.forEach((candidate, index) => {
+      if (candidate.isTaskRunnerCallbackAssistant) {
+        return;
+      }
       if (
         parsedBelongsToTaskRunnerSource(
           candidate,

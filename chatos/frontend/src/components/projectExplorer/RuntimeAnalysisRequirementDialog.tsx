@@ -113,9 +113,11 @@ const COMMON_DEPENDENCIES = [
 interface RuntimeAnalysisRequirementDialogProps {
   requirement: string;
   selectedDependencies: string[];
+  preferChinaMirrors: boolean;
   error: string | null;
   onRequirementChange: (value: string) => void;
   onSelectedDependenciesChange: (dependencies: string[]) => void;
+  onPreferChinaMirrorsChange: (value: boolean) => void;
   onCancel: () => void;
   onSubmit: () => void;
 }
@@ -123,15 +125,19 @@ interface RuntimeAnalysisRequirementDialogProps {
 export const RuntimeAnalysisRequirementDialog: React.FC<RuntimeAnalysisRequirementDialogProps> = ({
   requirement,
   selectedDependencies,
+  preferChinaMirrors,
   error,
   onRequirementChange,
   onSelectedDependenciesChange,
+  onPreferChinaMirrorsChange,
   onCancel,
   onSubmit,
 }) => {
   const { t } = useI18n();
   const selectedSet = new Set(selectedDependencies);
-  const canSubmit = Boolean(requirement.trim() || selectedDependencies.length > 0);
+  const canSubmit = Boolean(
+    requirement.trim() || selectedDependencies.length > 0 || preferChinaMirrors,
+  );
 
   const setDependencySelected = (dependency: string, checked: boolean) => {
     if (checked) {
@@ -285,6 +291,22 @@ export const RuntimeAnalysisRequirementDialog: React.FC<RuntimeAnalysisRequireme
                 {requirement.length}/{MAX_ANALYSIS_REQUIREMENT_LENGTH}
               </span>
             </div>
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm transition-colors hover:border-primary/50 hover:bg-accent/40">
+              <input
+                type="checkbox"
+                checked={preferChinaMirrors}
+                onChange={(event) => onPreferChinaMirrorsChange(event.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+              />
+              <span className="min-w-0">
+                <span className="block font-medium text-foreground">
+                  {t('cloudRuntime.preferChinaMirrorsLabel')}
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  {t('cloudRuntime.preferChinaMirrorsHint')}
+                </span>
+              </span>
+            </label>
           </section>
         </div>
 

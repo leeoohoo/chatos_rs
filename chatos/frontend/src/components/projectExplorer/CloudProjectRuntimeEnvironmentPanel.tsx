@@ -231,6 +231,9 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const progressActive = ['pending', 'queued', 'running', 'building'].includes(
     progressStatus.toLowerCase(),
   );
+  const settledEnvironment = ['ready', 'pending_configuration', 'not_runnable', 'disabled'].includes(
+    status.toLowerCase(),
+  );
   const showProgress = backendBusy || progressActive || Boolean(progressError);
   const visibleNotice = status === 'pending_configuration'
     ? actionNotice || {
@@ -238,6 +241,15 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
       message: analysisSummary || t('cloudRuntime.configurationRequired'),
     }
     : actionNotice;
+
+  useEffect(() => {
+    if (!progress) {
+      return;
+    }
+    if (!backendBusy && settledEnvironment && progressStatus.toLowerCase() !== 'failed') {
+      setProgress(null);
+    }
+  }, [backendBusy, progress, progressStatus, settledEnvironment]);
 
   useEffect(() => {
     if (!backendBusy) {

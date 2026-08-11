@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { useEffect, useMemo, useState, type FC } from 'react';
-import { Activity, ChevronDown, FileText, LoaderCircle } from 'lucide-react';
+import { Activity, ChevronDown, LoaderCircle, ScrollText } from 'lucide-react';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerTask } from '../../lib/api/client/types';
 import type { Message } from '../../types';
@@ -14,6 +14,7 @@ import { formatDateTime, readString } from './utils';
 
 interface MessageTaskInlinePanelProps {
   message: Message;
+  onRequestExpandMessage?: () => void;
 }
 
 type InlinePanelView = 'detail' | 'process' | null;
@@ -91,7 +92,10 @@ const pickTask = (
   || null
 );
 
-export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({ message }) => {
+export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
+  message,
+  onRequestExpandMessage,
+}) => {
   const [expandedView, setExpandedView] = useState<InlinePanelView>(null);
   const [pendingView, setPendingView] = useState<InlinePanelView>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -176,6 +180,7 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({ messag
       closeRun();
       return;
     }
+    onRequestExpandMessage?.();
     setExpandedView(view);
     const nextTask = pickTask(tasks, selectedTaskId);
     if (!nextTask) {
@@ -222,7 +227,11 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({ messag
           className={`inline-flex items-center gap-1 font-medium transition-colors ${viewButtonClass(expandedView === 'process')}`}
           onClick={() => handleOpenView('process')}
         >
-          {processLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+          {processLoading ? (
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Activity className="h-3.5 w-3.5" />
+          )}
           查看过程
           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expandedView === 'process' ? 'rotate-180' : ''}`} />
         </button>
@@ -231,7 +240,11 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({ messag
           className={`inline-flex items-center gap-1 font-medium transition-colors ${viewButtonClass(expandedView === 'detail')}`}
           onClick={() => handleOpenView('detail')}
         >
-          {detailLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+          {detailLoading ? (
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <ScrollText className="h-3.5 w-3.5" />
+          )}
           查看详情
           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expandedView === 'detail' ? 'rotate-180' : ''}`} />
         </button>
@@ -320,14 +333,14 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({ messag
               {objective ? (
                 <section>
                   <div className="mb-1.5 text-xs font-medium text-muted-foreground">目标</div>
-                  <CollapsibleText value={objective} />
+                  <CollapsibleText value={objective} defaultExpanded />
                 </section>
               ) : null}
 
               {description ? (
                 <section>
                   <div className="mb-1.5 text-xs font-medium text-muted-foreground">描述</div>
-                  <CollapsibleText value={description} />
+                  <CollapsibleText value={description} defaultExpanded />
                 </section>
               ) : null}
             </div>

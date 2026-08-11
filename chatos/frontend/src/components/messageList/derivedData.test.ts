@@ -327,6 +327,55 @@ describe('buildVisibleMessageState', () => {
     expect(state.assistantToolCallById.has('call-live-plan-1')).toBe(true);
   });
 
+  it('keeps task-runner callback messages for the same source turn in chronological order', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-callback-order-1',
+        content: '帮我跑一下这个任务',
+        createdAt: new Date('2026-08-11T09:07:00.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-callback-order-1',
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-callback-later',
+        content: '任务稍后完成',
+        createdAt: new Date('2026-08-11T09:28:00.000Z'),
+        messageMode: 'task_runner_callback',
+        metadata: {
+          task_runner_async: {
+            mode: 'contact_async',
+            message_kind: 'task_terminal_update',
+            source_user_message_id: 'user-callback-order-1',
+            source_turn_id: 'turn-callback-order-1',
+          },
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-callback-earlier',
+        content: '任务第一次执行失败',
+        createdAt: new Date('2026-08-11T09:16:00.000Z'),
+        messageMode: 'task_runner_callback',
+        metadata: {
+          task_runner_async: {
+            mode: 'contact_async',
+            message_kind: 'task_terminal_update',
+            source_user_message_id: 'user-callback-order-1',
+            source_turn_id: 'turn-callback-order-1',
+          },
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-callback-order-1',
+      'assistant-callback-earlier',
+      'assistant-callback-later',
+    ]);
+  });
+
   it('filters intermediate assistant text when the same response also carries tool calls', () => {
     const messages: Message[] = [
       buildUser({

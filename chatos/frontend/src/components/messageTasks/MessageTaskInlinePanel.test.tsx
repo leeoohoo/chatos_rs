@@ -27,8 +27,8 @@ const baseTask: MessageTaskRunnerTask = {
   id: 'task-1',
   title: '真实检查当前项目实现进度',
   status: 'completed',
-  description: '检查前后端和数据库实现情况。',
-  objective: '确认当前项目的真实实现状态。',
+  description: '检查前后端和数据库实现情况。\n'.repeat(20),
+  objective: '确认当前项目的真实实现状态。\n'.repeat(20),
   result_summary: '已经完成真实性检查。',
   process_log: '检查仓库结构。\n核对运行结果。',
   last_run_id: 'run-1',
@@ -93,7 +93,8 @@ describe('MessageTaskInlinePanel', () => {
   });
 
   it('expands inline process details when the process button is clicked', () => {
-    render(<MessageTaskInlinePanel message={message} />);
+    const onRequestExpandMessage = vi.fn();
+    render(<MessageTaskInlinePanel message={message} onRequestExpandMessage={onRequestExpandMessage} />);
 
     fireEvent.click(screen.getByRole('button', { name: /查看过程/i }));
 
@@ -101,18 +102,22 @@ describe('MessageTaskInlinePanel', () => {
     expect(screen.getByText('确认仓库结构')).toBeInTheDocument();
     expect(screen.getByText('已确认前后端目录和关键配置文件。')).toBeInTheDocument();
     expect(useMessageTasksMock.mock.results[0]?.value.openRun).toHaveBeenCalledWith(baseTask);
+    expect(onRequestExpandMessage).toHaveBeenCalledTimes(1);
   });
 
   it('expands inline task details when the detail button is clicked', () => {
-    render(<MessageTaskInlinePanel message={message} />);
+    const onRequestExpandMessage = vi.fn();
+    render(<MessageTaskInlinePanel message={message} onRequestExpandMessage={onRequestExpandMessage} />);
 
     fireEvent.click(screen.getByRole('button', { name: /查看详情/i }));
 
     expect(screen.getByText('执行结果')).toBeInTheDocument();
     expect(screen.getByText('已经完成真实性检查。')).toBeInTheDocument();
     expect(screen.getByText('目标')).toBeInTheDocument();
-    expect(screen.getByText('确认当前项目的真实实现状态。')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '收起' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: '展开' })).not.toBeInTheDocument();
     expect(useMessageTasksMock.mock.results[0]?.value.openDetail).toHaveBeenCalledWith(baseTask);
+    expect(onRequestExpandMessage).toHaveBeenCalledTimes(1);
   });
 
   it('does not render action buttons when the message has no task state', () => {

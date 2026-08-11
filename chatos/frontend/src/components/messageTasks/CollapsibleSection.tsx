@@ -54,15 +54,17 @@ export const CollapsibleSection: FC<CollapsibleSectionProps> = ({
 interface CollapsibleTextProps {
   value?: unknown;
   code?: boolean;
+  defaultExpanded?: boolean;
   maxHeightClassName?: string;
 }
 
 export const CollapsibleText: FC<CollapsibleTextProps> = ({
   value,
   code = false,
+  defaultExpanded = false,
   maxHeightClassName = 'max-h-72',
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const text = value === null || value === undefined || value === ''
     ? '-'
     : typeof value === 'string'
@@ -72,8 +74,8 @@ export const CollapsibleText: FC<CollapsibleTextProps> = ({
   const canToggle = text.length > 480 || lineCount > 12;
 
   useEffect(() => {
-    setExpanded(false);
-  }, [text]);
+    setExpanded(defaultExpanded);
+  }, [defaultExpanded, text]);
 
   return (
     <div>

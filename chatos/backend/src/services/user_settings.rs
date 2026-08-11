@@ -169,7 +169,12 @@ pub async fn patch_user_settings(user_id: &str, patch: &Value) -> Result<Value, 
 pub fn local_project_creation_enabled(settings: &Value) -> bool {
     settings
         .get(LOCAL_PROJECT_CREATION_ENABLED_KEY)
-        .map(|value| matches!(coerce(value, LOCAL_PROJECT_CREATION_ENABLED_KEY), Value::Bool(true)))
+        .map(|value| {
+            matches!(
+                coerce(value, LOCAL_PROJECT_CREATION_ENABLED_KEY),
+                Value::Bool(true)
+            )
+        })
         .unwrap_or(false)
 }
 
