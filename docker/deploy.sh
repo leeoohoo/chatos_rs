@@ -1008,14 +1008,23 @@ clean_build_cache() {
   local max_used_space
   local reserved_space
   local timeout
+  local prune_help
   max_used_space="$(env_value CHATOS_DOCKER_BUILD_CACHE_MAX_USED_SPACE 32gb)"
   reserved_space="$(env_value CHATOS_DOCKER_BUILD_CACHE_RESERVED_SPACE 8gb)"
   timeout="$(env_value CHATOS_DOCKER_BUILD_CACHE_TIMEOUT 180s)"
-  echo "[INFO] enforcing Docker BuildKit cache limit: max=$max_used_space reserved=$reserved_space"
-  docker builder prune --force --all \
-    --max-used-space "$max_used_space" \
-    --reserved-space "$reserved_space" \
-    --timeout "$timeout"
+  prune_help="$(docker builder prune --help 2>&1 || true)"
+  if grep -q -- '--max-used-space' <<<"$prune_help"; then
+    echo "[INFO] enforcing Docker BuildKit cache limit: max=$max_used_space reserved=$reserved_space"
+    docker builder prune --force --all \
+      --max-used-space "$max_used_space" \
+      --reserved-space "$reserved_space" \
+      --timeout "$timeout"
+  elif grep -q -- '--keep-storage' <<<"$prune_help"; then
+    echo "[INFO] enforcing legacy Docker build cache reserve: $reserved_space"
+    docker builder prune --force --all --keep-storage "$reserved_space"
+  else
+    echo "[WARN] Docker builder cache pruning is unsupported by this Docker CLI; skipping"
+  fi
 }
 
 clean_build_cache_if_enabled() {

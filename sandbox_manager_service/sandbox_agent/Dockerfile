@@ -4,6 +4,32 @@
 FROM mcr.microsoft.com/devcontainers/base:dev-ubuntu-24.04 AS agent-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
+ARG SANDBOX_APT_UBUNTU_MIRROR=https://mirrors.aliyun.com/ubuntu/
+ARG SANDBOX_APT_UBUNTU_PORTS_MIRROR=https://mirrors.aliyun.com/ubuntu-ports/
+
+RUN set -eux; \
+    ubuntu_mirror="${SANDBOX_APT_UBUNTU_MIRROR%/}/"; \
+    ubuntu_ports_mirror="${SANDBOX_APT_UBUNTU_PORTS_MIRROR%/}/"; \
+    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
+      sed -i \
+        -e "s|http://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|https://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|http://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|http://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        /etc/apt/sources.list.d/ubuntu.sources; \
+    fi; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i \
+        -e "s|http://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|https://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|http://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|http://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        /etc/apt/sources.list; \
+    fi
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -62,23 +88,54 @@ ARG SANDBOX_FEATURES=java@21,node@24,rust@stable,go@1.26
 ARG SANDBOX_CUSTOM_SCRIPT_B64=
 ARG SANDBOX_PLAYWRIGHT_VERSION=1.55.0
 ARG AGENT_BROWSER_VERSION=0.31.2
+ARG SANDBOX_APT_UBUNTU_MIRROR=https://mirrors.aliyun.com/ubuntu/
+ARG SANDBOX_APT_UBUNTU_PORTS_MIRROR=https://mirrors.aliyun.com/ubuntu-ports/
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CHATOS_AGENT_HOST=0.0.0.0
 ENV CHATOS_AGENT_PORT=49888
 ENV CHATOS_WORKSPACE=/workspace
 ENV DOTNET_ROOT=/usr/local/dotnet
+ENV GOPROXY=https://goproxy.cn,direct
 ENV JAVA_HOME=/usr/lib/jvm/default-jvm
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000
+ENV PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
 ENV UV_BREAK_SYSTEM_PACKAGES=1
+ENV UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV RUSTUP_HOME=/opt/chatos/rustup
 ENV UV_INSTALL_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/chatos/python
 ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/opt/chatos/cargo/bin:/usr/local/bin:$PATH
 ENV RUSTUP_DIST_SERVER=https://rsproxy.cn
 ENV RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
+
+RUN set -eux; \
+    ubuntu_mirror="${SANDBOX_APT_UBUNTU_MIRROR%/}/"; \
+    ubuntu_ports_mirror="${SANDBOX_APT_UBUNTU_PORTS_MIRROR%/}/"; \
+    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
+      sed -i \
+        -e "s|http://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|https://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|http://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|http://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        /etc/apt/sources.list.d/ubuntu.sources; \
+    fi; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i \
+        -e "s|http://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|https://ports.ubuntu.com/ubuntu-ports/|${ubuntu_ports_mirror}|g" \
+        -e "s|http://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://archive.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|http://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        -e "s|https://security.ubuntu.com/ubuntu/|${ubuntu_mirror}|g" \
+        /etc/apt/sources.list; \
+    fi
 
 RUN set -eux; \
     java_version=""; \
@@ -176,7 +233,7 @@ RUN set -eux; \
         arm64) go_arch="arm64" ;; \
         *) echo "unsupported Go architecture: $(dpkg --print-architecture)" >&2; exit 2 ;; \
       esac; \
-      curl -fsSL "https://go.dev/dl/go${go_version}.linux-${go_arch}.tar.gz" -o /tmp/go.tgz; \
+      curl -fsSL "https://golang.google.cn/dl/go${go_version}.linux-${go_arch}.tar.gz" -o /tmp/go.tgz; \
       rm -rf /usr/local/go; \
       tar -C /usr/local -xzf /tmp/go.tgz; \
       rm /tmp/go.tgz; \

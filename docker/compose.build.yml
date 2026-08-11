@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
+x-frontend-build-args: &frontend-build-args
+  NODE_IMAGE: ${CHATOS_FRONTEND_NODE_IMAGE:-node:24-bookworm-slim}
+  NGINX_IMAGE: ${CHATOS_FRONTEND_NGINX_IMAGE:-nginx:1.30-alpine}
+  NPM_REGISTRY: ${CHATOS_NPM_REGISTRY:-https://registry.npmjs.org}
+
 services:
   configuration-center-backend:
     build:
@@ -120,6 +125,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: chatos/frontend
 
   configuration-center-frontend:
@@ -127,6 +133,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: config_center_service/frontend
 
   user-service-frontend:
@@ -134,6 +141,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: user_service/frontend
 
   memory-engine-frontend:
@@ -141,6 +149,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: memory_engine/frontend
         VITE_MEMORY_ENGINE_API_BASE: /api/memory-engine/v1
         VITE_USER_SERVICE_API_BASE: /user-service
@@ -150,6 +159,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: project_management_service/frontend
 
   plugin-management-frontend:
@@ -157,6 +167,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: plugin_management_service/frontend
 
   task-runner-frontend:
@@ -164,6 +175,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: task_runner_service/frontend
         VITE_CONFIG_CENTER_URL: ${CONFIG_CENTER_PUBLIC_URL:-http://localhost:39271}
 
@@ -172,6 +184,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: sandbox_manager_service/frontend
 
   official-website-frontend:
@@ -179,4 +192,5 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
+        <<: *frontend-build-args
         APP_DIR: official_website_service/frontend
