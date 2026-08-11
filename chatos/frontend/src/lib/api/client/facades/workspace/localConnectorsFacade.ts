@@ -15,13 +15,6 @@ import type {
   LocalConnectorWorkspaceResponse,
   TaskRunnerAvailablePluginsResponse,
 } from '../../types';
-import { localRuntimeBridgeAvailable } from '../../../localRuntime';
-
-const requireLocalConnectorDesktop = (): void => {
-  if (!localRuntimeBridgeAvailable()) {
-    throw new Error('Local Connector 功能只能在 Chat OS 桌面客户端中使用');
-  }
-};
 
 export interface WorkspaceLocalConnectorFacade {
   listLocalConnectorDevices(userId?: string): Promise<LocalConnectorDeviceResponse[]>;
@@ -43,14 +36,10 @@ export interface WorkspaceLocalConnectorFacade {
 
 export const workspaceLocalConnectorFacade: WorkspaceLocalConnectorFacade & ThisType<ApiClient> = {
   async listLocalConnectorDevices(userId) {
-    requireLocalConnectorDesktop();
-    void userId;
-    return this.getLocalRuntimeClient().listConnectorDevices();
+    return workspaceApi.listLocalConnectorDevices(this.getRequestFn(), userId);
   },
   async listLocalConnectorWorkspaces(deviceId) {
-    requireLocalConnectorDesktop();
-    void deviceId;
-    return this.getLocalRuntimeClient().listConnectorWorkspaces();
+    return workspaceApi.listLocalConnectorWorkspaces(this.getRequestFn(), deviceId);
   },
   async listTaskRunnerAvailablePlugins(projectId, planMode = false) {
     return workspaceApi.listTaskRunnerAvailablePlugins(
@@ -60,19 +49,15 @@ export const workspaceLocalConnectorFacade: WorkspaceLocalConnectorFacade & This
     );
   },
   async listLocalConnectorDirectory(data) {
-    requireLocalConnectorDesktop();
-    return this.getLocalRuntimeClient().listConnectorDirectory(data.workspace_id, data.path);
+    return workspaceApi.listLocalConnectorDirectory(this.getRequestFn(), data);
   },
   async createLocalConnectorDirectory(data) {
-    requireLocalConnectorDesktop();
-    return this.getLocalRuntimeClient().createConnectorDirectory(data);
+    return workspaceApi.createLocalConnectorDirectory(this.getRequestFn(), data);
   },
   async createLocalConnectorProject(data) {
-    requireLocalConnectorDesktop();
     return workspaceApi.createLocalConnectorProject(this.getRequestFn(), data);
   },
   async execLocalConnectorTerminalCommand(data) {
-    requireLocalConnectorDesktop();
     return workspaceApi.execLocalConnectorTerminalCommand(this.getRequestFn(), data);
   },
 };

@@ -158,8 +158,8 @@ export const useSessionListController = ({
     localProjectCreationEnabled,
     localProjectCreationResolved,
   } = useLocalProjectCreationSetting();
-  const allowLocalProjectCreation = localRuntimeBridgeAvailable()
-    && localProjectCreationResolved
+  const desktopBridgeAvailable = localRuntimeBridgeAvailable();
+  const allowLocalProjectCreation = localProjectCreationResolved
     && localProjectCreationEnabled;
   const { confirm, alert } = useDialogService();
 
@@ -382,11 +382,11 @@ export const useSessionListController = ({
   } = useTerminalUiSetting();
   const workspaceResourceVisibility = useMemo(
     () => resolveWorkspaceResourceVisibility({
-      desktopBridgeAvailable: allowLocalProjectCreation,
+      desktopBridgeAvailable,
       terminalUiEnabled,
       terminalUiResolved,
     }),
-    [allowLocalProjectCreation, terminalUiEnabled, terminalUiResolved],
+    [desktopBridgeAvailable, terminalUiEnabled, terminalUiResolved],
   );
 
   useEffect(() => {

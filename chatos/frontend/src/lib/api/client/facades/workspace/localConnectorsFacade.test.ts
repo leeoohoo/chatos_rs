@@ -10,24 +10,14 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
     vi.unstubAllGlobals();
   });
 
-  it('reads workspace resources directly from the local runtime', async () => {
-    vi.stubGlobal('window', {
-      chatosLocalRuntime: { apiRequest: vi.fn() },
-    });
-    const listConnectorDevices = vi.fn().mockResolvedValue([{ id: 'device-1' }]);
-    const listConnectorWorkspaces = vi.fn().mockResolvedValue([{ id: 'workspace-1' }]);
-    const listConnectorDirectory = vi.fn().mockResolvedValue({ path: '.', entries: [] });
-    const createConnectorDirectory = vi.fn().mockResolvedValue({ path: 'apps', created: true });
-    const cloudRequest = vi.fn(() => {
-      throw new Error('cloud request must not run');
-    });
+  it('loads local connector resources through the cloud gateway API', async () => {
+    vi.stubGlobal('window', {});
+    const cloudRequest = vi.fn()
+      .mockResolvedValueOnce([{ id: 'device-1' }])
+      .mockResolvedValueOnce([{ id: 'workspace-1' }])
+      .mockResolvedValueOnce({ path: '.', entries: [] })
+      .mockResolvedValueOnce({ path: 'apps/new', created: true });
     const context = {
-      getLocalRuntimeClient: () => ({
-        listConnectorDevices,
-        listConnectorWorkspaces,
-        listConnectorDirectory,
-        createConnectorDirectory,
-      }),
       getRequestFn: () => cloudRequest,
     };
 
@@ -40,24 +30,35 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
     });
     await workspaceLocalConnectorFacade.createLocalConnectorDirectory.call(context as never, {
       device_id: 'device-1',
-      workspace_id: 'workspace-1',
-      path: 'apps/new',
-    });
+        workspace_id: 'workspace-1',
+        path: 'apps/new',
+      });
 
-    expect(listConnectorDirectory).toHaveBeenCalledWith('workspace-1', 'apps');
-    expect(createConnectorDirectory).toHaveBeenCalledWith({
-      device_id: 'device-1',
-      workspace_id: 'workspace-1',
-      path: 'apps/new',
+    expect(cloudRequest).toHaveBeenNthCalledWith(1, '/local-connectors/devices');
+    expect(cloudRequest).toHaveBeenNthCalledWith(2, '/local-connectors/workspaces');
+    expect(cloudRequest).toHaveBeenNthCalledWith(
+      3,
+      '/local-connectors/fs/list?device_id=device-1&workspace_id=workspace-1&path=apps',
+    );
+    expect(cloudRequest).toHaveBeenNthCalledWith(4, '/local-connectors/fs/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({
+        device_id: 'device-1',
+        workspace_id: 'workspace-1',
+        path: 'apps/new',
+      }),
     });
-    expect(cloudRequest).not.toHaveBeenCalled();
   });
 
-  it('keeps local resources unavailable in a normal browser', async () => {
+  it('allows local connector resources in a normal browser session', async () => {
     vi.stubGlobal('window', {});
+    const request = vi.fn().mockResolvedValue([{ id: 'workspace-1' }]);
+    const context = { getRequestFn: () => request };
+
     await expect(
-      workspaceLocalConnectorFacade.listLocalConnectorWorkspaces.call({} as never),
-    ).rejects.toThrow('Local Connector 功能只能在 Chat OS 桌面客户端中使用');
+      workspaceLocalConnectorFacade.listLocalConnectorWorkspaces.call(context as never),
+    ).resolves.toEqual([{ id: 'workspace-1' }]);
+    expect(request).toHaveBeenCalledWith('/local-connectors/workspaces');
   });
 
   it('loads the Task Runner executable Plugin catalog for the exact project', async () => {
@@ -87,9 +88,7 @@ describe('workspaceLocalConnectorFacade desktop routing', () => {
   });
 
   it('creates a cloud-managed project for the selected local workspace', async () => {
-    vi.stubGlobal('window', {
-      chatosLocalRuntime: { apiRequest: vi.fn() },
-    });
+    vi.stubGlobal('window', {});
     const request = vi.fn().mockResolvedValue({
       id: 'local-project-1',
       name: 'Local project',

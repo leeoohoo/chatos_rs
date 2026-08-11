@@ -129,7 +129,7 @@ describe('SessionList modals', () => {
     expect(onCreate).not.toHaveBeenCalled();
   });
 
-  it('hides local project creation when the desktop surface is unavailable', () => {
+  it('hides local project creation when the feature is disabled', () => {
     render(
       <CreateProjectModal
         isOpen

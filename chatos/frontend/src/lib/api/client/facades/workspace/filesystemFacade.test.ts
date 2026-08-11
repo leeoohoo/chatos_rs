@@ -6,14 +6,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { workspaceFilesystemFacade } from './filesystemFacade';
 
 describe('workspaceFilesystemFacade local routing', () => {
-  it('loads local project files directly through the desktop runtime', async () => {
-    const listFsEntries = vi.fn().mockResolvedValue({ entries: [] });
-    const readFsFile = vi.fn().mockResolvedValue({ content: 'hello' });
-    const cloudRequest = vi.fn(() => {
-      throw new Error('cloud filesystem request must not run');
-    });
+  it('loads local connector project files through the cloud filesystem gateway', async () => {
+    const cloudRequest = vi.fn()
+      .mockResolvedValueOnce({ entries: [] })
+      .mockResolvedValueOnce({ content: 'hello' });
     const context = {
-      getLocalRuntimeClient: () => ({ listFsEntries, readFsFile }),
       getRequestFn: () => cloudRequest,
     };
     const root = 'local://connector/device/workspace/project';
@@ -21,8 +18,13 @@ describe('workspaceFilesystemFacade local routing', () => {
     await workspaceFilesystemFacade.listFsEntries.call(context as never, root);
     await workspaceFilesystemFacade.readFsFile.call(context as never, `${root}/README.md`);
 
-    expect(listFsEntries).toHaveBeenCalledWith(root);
-    expect(readFsFile).toHaveBeenCalledWith(`${root}/README.md`);
-    expect(cloudRequest).not.toHaveBeenCalled();
+    expect(cloudRequest).toHaveBeenNthCalledWith(
+      1,
+      '/fs/entries?path=local%3A%2F%2Fconnector%2Fdevice%2Fworkspace%2Fproject',
+    );
+    expect(cloudRequest).toHaveBeenNthCalledWith(
+      2,
+      '/fs/read?path=local%3A%2F%2Fconnector%2Fdevice%2Fworkspace%2Fproject%2FREADME.md',
+    );
   });
 });

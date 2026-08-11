@@ -4,8 +4,6 @@
 import type { Project } from '../../../types';
 import type ApiClient from '../../api/client';
 import { ApiRequestError } from '../../api/client/shared';
-import { localRuntimeBridgeAvailable } from '../../api/localRuntime';
-import { resolveProjectExecutionPlane } from '../../domain/projectExecution';
 import { isTransientServiceAppError } from '../../domain/userVisibleError';
 import { normalizeProject } from '../helpers/projects';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
@@ -44,15 +42,6 @@ const projectsClientCaches = new WeakMap<ApiClient, ProjectsClientCacheState>();
 const normalizeUserId = (userId: string): string => String(userId || '').trim();
 
 const normalizeProjectId = (projectId: string): string => String(projectId || '').trim();
-
-const projectIsVisibleOnCurrentSurface = (project: Project): boolean => (
-  localRuntimeBridgeAvailable()
-  || resolveProjectExecutionPlane(project) === 'cloud'
-);
-
-const visibleProjectsOnCurrentSurface = (projects: Project[]): Project[] => (
-  projects.filter(projectIsVisibleOnCurrentSurface)
-);
 
 const getOrCreateClientCacheState = (apiClient: ApiClient): ProjectsClientCacheState => {
   const existing = projectsClientCaches.get(apiClient);
@@ -206,12 +195,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       inflight = client.getProject(normalizedProjectId)
         .then((payload) => normalizeProject(payload))
         .then((project) => {
-          if (!projectIsVisibleOnCurrentSurface(project)) {
-            throw new ApiRequestError('本地项目只能在 Chat OS 桌面客户端中打开', {
-              status: 404,
-              code: 'project_not_found',
-            });
-          }
           syncProjectDetailCache(project);
           syncProjectListCaches((projects) => upsertProject(projects, project));
           return project;
@@ -229,17 +212,6 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       const project = normalizeProject(projectPayload);
       const normalizedProjectId = normalizeProjectId(project?.id || '');
       if (!normalizedProjectId) {
-        return null;
-      }
-      if (!projectIsVisibleOnCurrentSurface(project)) {
-        removeProjectCaches(normalizedProjectId);
-        set((state: ChatStoreDraft) => {
-          state.projects = state.projects.filter((item) => item.id !== normalizedProjectId);
-          if (state.currentProjectId === normalizedProjectId) {
-            state.currentProjectId = null;
-            state.currentProject = null;
-          }
-        });
         return null;
       }
       upsertProjectCaches(project);
@@ -267,12 +239,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         let inflight = options?.force ? undefined : cacheState.listInflight.get(cacheKey);
         if (!inflight) {
           const request = client.listProjects(uid)
-            .then((list) => {
-              const formatted = visibleProjectsOnCurrentSurface(
-                Array.isArray(list) ? list.map(normalizeProject) : [],
-              );
-              return formatted;
-            });
+            .then((list) => (Array.isArray(list) ? list.map(normalizeProject) : []));
           const trackedRequest: Promise<Project[]> = request.then((formatted) => {
             if (cacheState.listInflight.get(cacheKey) === trackedRequest) {
               syncLoadedProjects(uid, formatted);
