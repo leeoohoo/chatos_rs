@@ -160,6 +160,10 @@ function createWindow() {
 function createChatosView() {
   const partition = developerMode ? 'persist:chatos-web-development' : 'persist:chatos-web';
   denyWebPermissions(session.fromPartition(partition));
+  // Keep ChatOS as a remotely hosted application, but place it in a dedicated
+  // Electron-managed web container. The local shell, settings, approvals, and
+  // privileged device controls stay outside this view, while the hosted page
+  // only receives the narrow runtime bridge declared in runtime-preload.cjs.
   chatosView = new WebContentsView({
     webPreferences: {
       contextIsolation: true,

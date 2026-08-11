@@ -73,6 +73,9 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     );
 
     expect(await screen.findByText('Python and Bun runtime detected.')).toBeInTheDocument();
+    expect(screen.getByText('云端项目')).toBeInTheDocument();
+    expect(screen.getByText('源码与运行环境都由云端侧统一编排。')).toBeInTheDocument();
+    expect(screen.getByText('文件读取来自云端仓库；镜像准备与运行状态由云端统一维护。')).toBeInTheDocument();
     expect(screen.getAllByText('已就绪').length).toBeGreaterThan(0);
     expect(screen.getByText('harness')).toBeInTheDocument();
     expect(screen.getByText('PYTHONPATH')).toBeInTheDocument();
@@ -91,6 +94,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     await waitFor(() => {
       expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-1', {
         analysis_requirement: '使用 Node.js 22，并将服务暴露在 3000 端口。',
+        prefer_china_mirrors: false,
         selected_dependencies: ['PostgreSQL', 'Redis'],
       });
     });
@@ -148,7 +152,50 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     await waitFor(() => {
       expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-dependencies', {
         analysis_requirement: undefined,
+        prefer_china_mirrors: false,
         selected_dependencies: ['PostgreSQL', 'Redis'],
+      });
+    });
+  });
+
+  it('appends the China mirror requirement when requested during analysis', async () => {
+    const response = {
+      environment: {
+        project_id: 'project-china-mirror',
+        status: 'ready',
+        sandbox_enabled: true,
+        sandbox_provider: 'cloud_sandbox_manager',
+        file_provider: 'harness',
+      },
+      images: [],
+    };
+    const analyzeProjectRuntimeEnvironment = vi.fn(async () => response);
+    const client = {
+      getProjectRuntimeEnvironment: vi.fn(async () => response),
+      analyzeProjectRuntimeEnvironment,
+    } as unknown as ApiClient;
+
+    render(
+      <ApiClientProvider client={client}>
+        <I18nProvider>
+          <CloudProjectRuntimeEnvironmentPanel
+            projectId="project-china-mirror"
+            projectName="China mirror project"
+            projectSourceType="cloud"
+          />
+        </I18nProvider>
+      </ApiClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '初始化/重新分析' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /优先生成国内镜像源 Dockerfile/ }));
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
+
+    await waitFor(() => {
+      expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-china-mirror', {
+        analysis_requirement: undefined,
+        prefer_china_mirrors: true,
+        selected_dependencies: [],
       });
     });
   });
@@ -301,8 +348,10 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     );
 
     expect((await screen.findAllByText('local_connector')).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('本地项目')).toBeInTheDocument();
+    expect(screen.getByText('云端编排运行环境，本机能力通过 Local Connector 和网关受控暴露。')).toBeInTheDocument();
+    expect(screen.getByText('当前项目不会绕过网关访问本机目录；云端只会通过 Local Connector 网关读取文件、启动本地沙箱并同步状态。')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: '已启用沙箱' })).toBeChecked();
-    expect(screen.getByText('沙箱运行环境')).toBeInTheDocument();
     expect(screen.getByText('本地沙箱构建计划')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '构建并启动本地环境' }));
     await waitFor(() => {
@@ -357,6 +406,7 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     await waitFor(() => {
       expect(analyzeProjectRuntimeEnvironment).toHaveBeenCalledWith('project-config', {
         analysis_requirement: '检查现有配置，并继续使用项目声明的运行时版本。',
+        prefer_china_mirrors: false,
         selected_dependencies: [],
       });
     });

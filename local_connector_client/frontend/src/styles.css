@@ -111,6 +111,20 @@ body {
   font-weight: 800;
 }
 
+.desktopShellBrandCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.05;
+}
+
+.desktopShellBrandCopy small {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 .desktopShellStatus {
   min-width: 0;
   flex: 1;
@@ -118,15 +132,28 @@ body {
   color: var(--text-secondary);
 }
 
+.desktopShellStatusCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
 .desktopShellStatus strong {
   color: var(--text);
   font-size: 13px;
 }
 
-.desktopShellStatus small {
+.desktopShellStatusCopy small,
+.desktopShellStatus > small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.desktopShellStatusCopy small {
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 .desktopShellActions {

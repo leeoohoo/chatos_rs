@@ -156,7 +156,19 @@ powershell -ExecutionPolicy Bypass `
 
 The publishing script computes SHA-256, uploads the ZIP through a short-lived presigned URL, and publishes the website download manifest only after the artifact upload succeeds.
 
-The Electron desktop app starts `local_connector_client_core` as a bundled local process, loads the React UI in a desktop window, and points the UI at `http://127.0.0.1:39232` for local APIs.
+The Electron desktop app starts `local_connector_client_core` as a bundled local process and keeps
+two UI surfaces separate:
+
+1. A minimal local React shell for pairing status, settings, approvals, permissions, and other
+   device-owned controls.
+2. A dedicated `WebContentsView` that loads the hosted ChatOS web application at runtime instead of
+   packaging a local ChatOS frontend bundle.
+
+The hosted ChatOS page is treated as a remote application inside a managed desktop web container,
+not as the owner of desktop state. Its Electron bridge is intentionally narrow: desktop ticket
+authentication, opening the local settings surface, and restricted `/api/local/runtime/*` calls
+that are already scoped for Local Connector runtime use. Local approvals, permission policy, and
+device administration remain in the local shell and core.
 
 The UI supports:
 
@@ -168,7 +180,7 @@ The UI supports:
 6. Sandbox image creation and sandbox lease handling in the Local Connector core through local Docker.
 7. A dedicated Skills page where Admin-provided internal Skills are visible to every user but remain disabled until the user enables them.
 8. A persistent developer-mode switch. It uses local ChatOS (`127.0.0.1:8088`), Local Connector Service (`127.0.0.1:39230`), and User Service (`127.0.0.1:39190`) with a separate Electron cookie partition; the local development stack continues to use the configured online MinIO endpoint by default.
-9. Settings render inside the main Electron window instead of a second macOS Space-aware window. Main/settings views are restored and repainted when the app becomes active, and a failed ChatOS renderer is recreated automatically.
+9. Settings render inside the main Electron window instead of a second macOS Space-aware window. The hosted ChatOS surface continues to live in its own `WebContentsView`; main/settings views are restored and repainted when the app becomes active, and a failed ChatOS renderer is recreated automatically.
 10. The system-permissions panel derives workspace, process, browser, network, Accessibility, Screen Recording, and Office Automation mappings from the signed Skill catalog. A Skill cannot be enabled while one of its mapped capabilities is not ready; on macOS, Office Automation remains enableable because its consent prompt is issued on first use.
 11. The signed macOS app declares Apple Events automation and user-selected Desktop/Documents/Downloads/network-volume/removable-volume usage descriptions. Accessibility is requested through Electron, while Screen Recording and other privacy categories link to the matching macOS settings pages.
 

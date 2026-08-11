@@ -151,15 +151,25 @@ function ShellApp() {
     <div className="desktopShell">
       <div className="desktopShellBrand">
         <Cpu size={18} />
-        <span>Chat OS</span>
+        <div className="desktopShellBrandCopy">
+          <span>Chat OS</span>
+          <small>REMOTE CHATOS IN WEBCONTENTSVIEW</small>
+        </div>
       </div>
       <div className="desktopShellStatus">
         <span className={status?.connector_running ? 'coreStatusDot online' : 'coreStatusDot'} />
-        <strong>
-          {status?.developer_mode
-            ? status?.connector_running ? '开发环境已连接' : '开发者模式'
-            : status?.connector_running ? '本机已连接' : status?.configured ? '等待连接' : '未授权本机'}
-        </strong>
+        <div className="desktopShellStatusCopy">
+          <strong>
+            {status?.developer_mode
+              ? status?.connector_running ? '开发环境已连接' : '开发者模式'
+              : status?.connector_running ? '本机已连接' : status?.configured ? '等待连接' : '未授权本机'}
+          </strong>
+          <small>
+            {status?.developer_mode
+              ? '主页面来自本机开发前端；本地能力仍由客户端壳层托管。'
+              : '主页面来自远端 Chat OS；本地能力通过独立桌面壳与受限 bridge 暴露。'}
+          </small>
+        </div>
         {status?.user?.username ? <small>{status.user.username}</small> : null}
       </div>
       <div className="desktopShellActions">
@@ -319,7 +329,7 @@ function SettingsApp() {
             <span className="pageEyebrow">SINGLE SIGN-ON</span>
             <h3>请先在 Chat OS 页面登录</h3>
             <p>
-              桌面端只保留 Chat OS 一个登录入口。登录成功后，本机会通过一次性授权票据自动完成 Local Connector 配对。
+              桌面端会在独立的 WebContentsView 容器里加载远端 Chat OS。登录成功后，本机会通过一次性授权票据自动完成 Local Connector 配对。
             </p>
             <button type="button" className="primaryButton" onClick={() => void refresh()}>
               刷新本机状态
