@@ -3,10 +3,7 @@
 
 mod context;
 mod error;
-mod filesystem;
-mod git;
 mod health;
-mod workspace_path;
 mod workspaces;
 
 use axum::routing::get;
@@ -26,6 +23,4 @@ pub(crate) fn connector_capability_router() -> Router<LocalRuntime> {
             "/api/local/runtime/workspaces/{workspace_id}/directories",
             get(workspaces::list_directory).post(workspaces::create_directory),
         )
-        .merge(filesystem::router())
-        .merge(git::router())
 }

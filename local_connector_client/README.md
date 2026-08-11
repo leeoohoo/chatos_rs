@@ -166,9 +166,9 @@ two UI surfaces separate:
 
 The hosted ChatOS page is treated as a remote application inside a managed desktop web container,
 not as the owner of desktop state. Its Electron bridge is intentionally narrow: desktop ticket
-authentication, opening the local settings surface, and restricted `/api/local/runtime/*` calls
-that are already scoped for Local Connector runtime use. Local approvals, permission policy, and
-device administration remain in the local shell and core.
+authentication, opening the local settings surface, and restricted Local Connector runtime calls
+for browser sessions and workspace selection. Local approvals, permission policy, and device
+administration remain in the local shell and core.
 
 The UI supports:
 
