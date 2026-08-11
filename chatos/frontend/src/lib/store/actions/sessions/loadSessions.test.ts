@@ -5,21 +5,14 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { localRuntimeBridgeAvailable } from '../../../api/localRuntime';
 import { createLoadSessionActions } from './loadSessions';
-
-vi.mock('../../../api/localRuntime', () => ({
-  localRuntimeBridgeAvailable: vi.fn(() => false),
-}));
 
 describe('createLoadSessionActions', () => {
   beforeEach(() => {
-    vi.mocked(localRuntimeBridgeAvailable).mockReturnValue(false);
+    vi.restoreAllMocks();
   });
 
-  it('loads desktop sessions without requiring memory contacts', async () => {
-    vi.mocked(localRuntimeBridgeAvailable).mockReturnValue(true);
-
+  it('loads sessions after refreshing cloud contacts for memory mapping', async () => {
     const state: Record<string, unknown> = {
       activePanel: 'project',
       contacts: [],
@@ -40,9 +33,16 @@ describe('createLoadSessionActions', () => {
     const set = (updater: (draft: typeof state) => void) => {
       updater(state);
     };
-    const loadContacts = vi.fn(async () => {
-      throw new Error('contacts should not load on desktop surface');
-    });
+    const loadContacts = vi.fn(async () => ([
+      {
+        id: 'contact-1',
+        agentId: 'agent-1',
+        name: 'Alice',
+        status: 'active',
+        createdAt: new Date('2026-08-11T00:00:00.000Z'),
+        updatedAt: new Date('2026-08-11T00:00:00.000Z'),
+      },
+    ]));
     const get = () => ({
       ...state,
       loadContacts,
@@ -76,7 +76,7 @@ describe('createLoadSessionActions', () => {
 
     const loaded = await actions.loadSessions({ silent: true });
 
-    expect(loadContacts).not.toHaveBeenCalled();
+    expect(loadContacts).toHaveBeenCalledTimes(1);
     expect(client.getSessions).toHaveBeenCalledWith('user-1', '-1', {
       limit: undefined,
       offset: undefined,

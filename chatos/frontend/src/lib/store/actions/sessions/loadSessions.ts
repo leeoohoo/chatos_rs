@@ -4,7 +4,6 @@
 import type { Session } from '../../../../types';
 import { debugLog } from '@/lib/utils';
 import { ApiRequestError } from '../../../api/client/shared';
-import { localRuntimeBridgeAvailable } from '../../../api/localRuntime';
 import { normalizeSession } from '../../helpers/sessions';
 import type { ContactRecord } from '../../types';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
@@ -138,10 +137,7 @@ export function createLoadSessionActions({
         }
 
         const executeLoad = async (): Promise<{ contacts: ContactRecord[]; sessions: Session[] }> => {
-          const desktopSurface = localRuntimeBridgeAvailable();
-          const contacts = desktopSurface
-            ? ((get().contacts || []) as ContactRecord[])
-            : await get().loadContacts();
+          const contacts = await get().loadContacts();
           const memoryContacts = toMemoryContacts(contacts, userId);
           const rawSessions = await client.getSessions(
             userId,
