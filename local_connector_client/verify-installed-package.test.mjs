@@ -140,8 +140,6 @@ function createFixture(platform, runtimeProfile = 'full') {
   const fixtureRoot = path.join(temporaryRoot, `base-${platform}-${runtimeProfile}`);
   const resources = path.join(fixtureRoot, 'resources');
   fs.mkdirSync(resources, { recursive: true });
-  fs.mkdirSync(path.join(resources, 'chatos-frontend'), { recursive: true });
-  fs.writeFileSync(path.join(resources, 'chatos-frontend', 'index.html'), '<!doctype html>\n');
   fs.cpSync(
     path.join(CLIENT_DIR, 'core', 'migrations'),
     path.join(resources, 'sqlite-migrations'),

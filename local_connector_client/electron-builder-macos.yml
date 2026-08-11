@@ -25,8 +25,6 @@ extraResources:
     to: skill-bundles
   - from: ../.package/macos/plugin-bundles
     to: plugin-bundles
-  - from: ../.package/macos/chatos-frontend
-    to: chatos-frontend
   - from: ../.package/macos/chrome-extension
     to: chrome-extension
   - from: ../.package/macos/sqlite-migrations

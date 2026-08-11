@@ -14,12 +14,15 @@ const {
 } = require('electron');
 const crypto = require('node:crypto');
 const path = require('node:path');
-const { startBundledChatosServer } = require('./bundled-chatos-server.cjs');
 const { isTrustedMainFrameEvent } = require('./ipc-trust.cjs');
 const { createLocalApiBridge } = require('./local-api-bridge.cjs');
 const { createDesktopTicketAuthenticator } = require('./desktop-auth.cjs');
 const { attachRetryingViewLoader } = require('./retrying-view-loader.cjs');
 const { createCoreRuntime } = require('./core-runtime.cjs');
+const {
+  resolveChatosWebUrl,
+  resolveCloudBaseUrl,
+} = require('./chatos-web-config.cjs');
 const {
   readRuntimeSettings,
   updateRuntimeSettings,
@@ -39,7 +42,6 @@ let settingsView = null;
 let settingsOpen = false;
 let chatosView = null;
 let chatosViewLoader = null;
-let bundledChatosServer = null;
 let shutdownStarted = false;
 const desktopAuthToken = crypto.randomBytes(32).toString('base64url');
 const coreRuntime = createCoreRuntime({ app, desktopAuthToken });
@@ -71,12 +73,6 @@ const authenticateDesktopTicket = createDesktopTicketAuthenticator({
 });
 const SHELL_HEIGHT = 52;
 const RUNTIME_SETTINGS_STARTUP_ATTEMPTS = 300;
-const DEVELOPER_CHATOS_WEB_URL = (
-  process.env.LOCAL_CONNECTOR_DEVELOPER_CHATOS_WEB_URL || 'http://127.0.0.1:8088'
-).trim();
-const DEVELOPER_CLOUD_BASE_URL = (
-  process.env.LOCAL_CONNECTOR_DEVELOPER_CLOUD_BASE_URL || 'http://127.0.0.1:39230'
-).trim();
 
 async function shutdownApplication() {
   try {
@@ -96,10 +92,6 @@ async function shutdownApplication() {
   }
   await coreRuntime.stopCoreProcessTree();
   coreRuntime.cleanupIpcEndpoint();
-  if (bundledChatosServer) {
-    await bundledChatosServer.close().catch(() => undefined);
-    bundledChatosServer = null;
-  }
   app.exit(0);
 }
 
@@ -319,23 +311,17 @@ function restoreMainWindowContent() {
 }
 
 function chatosWebUrl() {
-  if (developerMode) {
-    return DEVELOPER_CHATOS_WEB_URL;
-  }
-  if (!bundledChatosServer) {
-    throw new Error('Bundled Chat OS frontend server is not ready');
-  }
-  return bundledChatosServer.origin;
+  return resolveChatosWebUrl({
+    developerMode,
+    runtimeSettings: readRuntimeSettings(),
+  });
 }
 
 function localConnectorCloudBaseUrl() {
-  if (developerMode) {
-    return DEVELOPER_CLOUD_BASE_URL;
-  }
-  return (
-    process.env.LOCAL_CONNECTOR_CLOUD_BASE_URL ||
-    'https://local-connector.jgoool.com'
-  ).trim();
+  return resolveCloudBaseUrl({
+    developerMode,
+    runtimeSettings: readRuntimeSettings(),
+  });
 }
 
 async function refreshDeveloperModeFromCore() {
@@ -569,9 +555,6 @@ function closeSettingsView() {
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   denyWebPermissions(session.defaultSession);
-  bundledChatosServer = await startBundledChatosServer(
-    coreRuntime.resourcePath('chatos-frontend'),
-  );
   ipcMain.handle('local-connector:api-request', (event, request) => {
     if (!isTrustedLocalEvent(event)) {
       throw new Error('Local Connector API access requires a trusted main frame');
@@ -581,14 +564,14 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('local-connector:runtime-api-request', (event, request) => {
     if (!isTrustedRuntimeEvent(event)) {
-      throw new Error('Local Runtime API access requires the bundled Chat OS main frame');
+      throw new Error('Local Runtime API access requires a trusted Chat OS main frame');
     }
     const rendererRequest = request && typeof request === 'object' ? request : {};
     return runtimeApiBridge.requestLocalApiOverIpc({ ...rendererRequest, sender: event.sender });
   });
   ipcMain.handle('local-connector:desktop-ticket-authenticate', (event, ticket) => {
     if (!isTrustedRuntimeEvent(event)) {
-      throw new Error('Local Connector authentication requires the bundled Chat OS main frame');
+      throw new Error('Local Connector authentication requires a trusted Chat OS main frame');
     }
     return authenticateDesktopTicket(ticket);
   });
@@ -661,8 +644,13 @@ app.whenReady().then(async () => {
     ) {
       throw new Error('Local Connector settings update requires the settings window');
     }
+    const previousChatosUrl = chatosWebUrl();
     const next = updateRuntimeSettings(payload && typeof payload === 'object' ? payload : {});
-    if (next.developer_mode !== developerMode) {
+    const nextChatosUrl = resolveChatosWebUrl({
+      developerMode: next.developer_mode,
+      runtimeSettings: next,
+    });
+    if (next.developer_mode !== developerMode || nextChatosUrl !== previousChatosUrl) {
       developerMode = next.developer_mode;
       recreateChatosView();
     }

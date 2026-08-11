@@ -7,7 +7,6 @@ set -euo pipefail
 CLIENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$CLIENT_DIR/.." && pwd)"
 FRONTEND_DIR="$CLIENT_DIR/frontend"
-CHATOS_FRONTEND_DIR="$ROOT_DIR/chatos/frontend"
 STAGING_DIR="$CLIENT_DIR/.package/linux"
 DIST_DIR="$CLIENT_DIR/dist/electron-linux"
 BUILDER_CONFIG="$CLIENT_DIR/electron-builder-linux.yml"
@@ -82,10 +81,6 @@ if [[ "${CHATOS_SKIP_NPM_CI:-0}" != "1" ]]; then
     cd "$FRONTEND_DIR"
     ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
   )
-  (
-    cd "$CHATOS_FRONTEND_DIR"
-    npm ci
-  )
 fi
 
 if [[ ! -x "$FRONTEND_DIR/node_modules/.bin/electron-builder" ]]; then
@@ -96,11 +91,6 @@ fi
 (
   cd "$FRONTEND_DIR"
   npm run build:electron
-)
-
-(
-  cd "$CHATOS_FRONTEND_DIR"
-  VITE_API_BASE_URL="${LOCAL_CONNECTOR_CHATOS_API_BASE_URL:-https://app.jgoool.com/api/chatos}" npm run build
 )
 
 (
@@ -144,7 +134,6 @@ mkdir -p \
   "$STAGING_DIR/chrome-extension" \
   "$STAGING_DIR/skill-bundles" \
   "$STAGING_DIR/plugin-bundles" \
-  "$STAGING_DIR/chatos-frontend" \
   "$STAGING_DIR/sqlite-migrations"
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
 cp "$CHROME_NATIVE_HOST_BIN" "$STAGING_DIR/chatos_chrome_native_host"
@@ -165,7 +154,6 @@ node "$PLUGIN_BUNDLE_TOOL" \
   --skill-root "$CLIENT_DIR/skill_bundles/internal" \
   --output "$STAGING_DIR/plugin-bundles" \
   --platform "$TOOLS_PLATFORM"
-cp -R "$CHATOS_FRONTEND_DIR/dist/." "$STAGING_DIR/chatos-frontend/"
 cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
 chmod 755 \
   "$STAGING_DIR/local_connector_client_core" \

@@ -56,10 +56,6 @@
         "to": "skill-bundles"
       },
       {
-        "from": "electron/resources/chatos-frontend",
-        "to": "chatos-frontend"
-      },
-      {
         "from": "electron/resources/sqlite-migrations",
         "to": "sqlite-migrations"
       }
