@@ -713,8 +713,21 @@ PY
         return 0
         ;;
       failed)
+        echo "[WARN] Sandbox Manager image build attempt failed for $image_id: $error" >&2
+        python3 - "$jobs_file" "$job_id" <<'PY' >&2
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    jobs = json.load(handle)
+job = next((item for item in jobs if item.get("id") == sys.argv[2]), {})
+lines = str(job.get("output") or "").splitlines()
+if lines:
+    print("[WARN] Sandbox Manager image build output (last 24 lines):")
+    for line in lines[-24:]:
+        print(f"  {line}")
+PY
         rm -f "$catalog_file" "$job_file" "$jobs_file"
-        echo "[ERROR] Sandbox Manager image build failed for $image_id: $error" >&2
         return 1
         ;;
     esac
@@ -723,8 +736,49 @@ PY
   done
 
   rm -f "$catalog_file" "$job_file" "$jobs_file"
-  echo "[ERROR] timed out waiting for Sandbox Manager image $image_id" >&2
+  echo "[WARN] timed out waiting for Sandbox Manager image $image_id" >&2
   return 1
+}
+
+ensure_task_runner_sandbox_base_image_with_retry() {
+  local max_attempts="${CHATOS_LOCAL_DEV_SANDBOX_IMAGE_MAX_ATTEMPTS:-3}"
+  local retry_delay_seconds="${CHATOS_LOCAL_DEV_SANDBOX_IMAGE_RETRY_DELAY_SECONDS:-5}"
+  local require_image="${CHATOS_LOCAL_DEV_REQUIRE_SANDBOX_BASE_IMAGE:-false}"
+  local attempt
+
+  if [[ ! "$max_attempts" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[ERROR] CHATOS_LOCAL_DEV_SANDBOX_IMAGE_MAX_ATTEMPTS must be a positive integer" >&2
+    return 1
+  fi
+  if [[ ! "$retry_delay_seconds" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] CHATOS_LOCAL_DEV_SANDBOX_IMAGE_RETRY_DELAY_SECONDS must be a non-negative integer" >&2
+    return 1
+  fi
+
+  for (( attempt = 1; attempt <= max_attempts; attempt++ )); do
+    if ensure_task_runner_sandbox_base_image; then
+      return 0
+    fi
+    if (( attempt < max_attempts )); then
+      echo "[WARN] retrying Task Runner sandbox base image initialization ($((attempt + 1))/$max_attempts) in ${retry_delay_seconds}s" >&2
+      sleep "$retry_delay_seconds"
+    fi
+  done
+  case "$require_image" in
+    1|true|TRUE|yes|YES)
+      echo "[ERROR] Task Runner sandbox base image initialization failed after $max_attempts attempts" >&2
+      return 1
+      ;;
+    0|false|FALSE|no|NO)
+      echo "[WARN] Task Runner sandbox base image is unavailable after $max_attempts attempts; continuing local-dev startup in degraded mode" >&2
+      echo "[WARN] Read-only tasks remain available; sandbox execution tasks will stay blocked until the image can be rebuilt" >&2
+      return 0
+      ;;
+    *)
+      echo "[ERROR] CHATOS_LOCAL_DEV_REQUIRE_SANDBOX_BASE_IMAGE must be true or false" >&2
+      return 1
+      ;;
+  esac
 }
 
 ensure_frontend_dependencies() {
@@ -787,6 +841,7 @@ start_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  prepare_sandbox_docker_config
   ensure_config_center_mtls_material
   ensure_mcp_management_mtls_material
   ensure_task_runner_mtls_material
@@ -825,7 +880,7 @@ start_all() {
       fi
     fi
     if [[ "$name" == "sandbox-manager-backend" ]]; then
-      ensure_task_runner_sandbox_base_image
+      ensure_task_runner_sandbox_base_image_with_retry
     fi
     if [[ "$name" == "task-runner-scheduler" ]]; then
       ensure_managed_queue_consumers

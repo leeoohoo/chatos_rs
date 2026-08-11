@@ -8,7 +8,9 @@ use serde_json::Value;
 use chatos_mcp_runtime::ToolResult;
 use tracing::{info, warn};
 
+use crate::error_policy::is_missing_tool_call_error;
 use crate::request::AiRequestHandler;
+use crate::request_retry::is_previous_response_id_unsupported_error;
 use crate::tool_call::tool_calls_value_has_items;
 use crate::tool_runtime::append_tool_results_with_budget;
 use crate::traits::{
@@ -124,6 +126,11 @@ impl AiRuntime {
         let mut runtime_followup_items: Vec<Value> = Vec::new();
         let mut runtime_followup_appended_to_request = false;
         let mut consecutive_failed_tool_batches = 0usize;
+        let mut continuation_input = request
+            .previous_response_id
+            .as_ref()
+            .map(|_| request.input.clone());
+        let mut continuation_disabled = false;
         'runtime_loop: loop {
             if options.is_aborted() {
                 return Err("aborted".to_string());
@@ -143,6 +150,8 @@ impl AiRuntime {
             let mut input_rebuilt_for_iteration = false;
             if iteration > 1 {
                 if let Some(refresh) = &options.iterative_context_refresh {
+                    request.previous_response_id = None;
+                    continuation_input = None;
                     request.input = refresh.compose_input().await?;
                     request.input = merge_current_turn_tool_history_into_input(
                         request.input,
@@ -178,9 +187,25 @@ impl AiRuntime {
             let (mut iteration_request, lifecycle_before) =
                 prepare_iteration_request(&request, &options, iteration, iteration_reason.as_str())
                     .await?;
+            let standalone_iteration_input = iteration_request.input.clone();
+            if request.supports_responses
+                && options.iterative_context_refresh.is_none()
+                && !continuation_disabled
+            {
+                if let (Some(previous_response_id), Some(delta_input)) = (
+                    request.previous_response_id.clone(),
+                    continuation_input.clone(),
+                ) {
+                    iteration_request.previous_response_id = Some(previous_response_id);
+                    iteration_request.input = append_runtime_input_items(
+                        delta_input,
+                        lifecycle_before.input_items.as_slice(),
+                    );
+                }
+            } else {
+                iteration_request.previous_response_id = None;
+            }
 
-            let input_item_count = input_item_count(&iteration_request.input);
-            let input_bytes = json_value_size_bytes(&iteration_request.input);
             let tool_count = iteration_request.tools.len();
             let mut transient_retry_count = 0usize;
             let mut recovery_request_handler: Option<AiRequestHandler> = None;
@@ -193,6 +218,8 @@ impl AiRuntime {
                     .unwrap_or(&self.request_handler);
                 let force_identity_encoding = recovery_request_handler.is_some();
                 let provider_stream = !force_non_stream;
+                let input_item_count = input_item_count(&iteration_request.input);
+                let input_bytes = json_value_size_bytes(&iteration_request.input);
                 let response = dispatch_model_request(
                     request_handler,
                     &iteration_request,
@@ -211,6 +238,26 @@ impl AiRuntime {
                 match response {
                     Ok(response) => break response,
                     Err(err) => {
+                        if iteration_request.previous_response_id.is_some()
+                            && (is_previous_response_id_unsupported_error(err.as_str())
+                                || is_missing_tool_call_error(err.as_str()))
+                        {
+                            warn!(
+                                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                                conversation_turn_id = options
+                                    .conversation_turn_id
+                                    .as_deref()
+                                    .unwrap_or(""),
+                                iteration,
+                                "provider rejected Responses continuation; retrying with standalone input"
+                            );
+                            iteration_request.previous_response_id = None;
+                            iteration_request.input = standalone_iteration_input.clone();
+                            request.previous_response_id = None;
+                            continuation_input = None;
+                            continuation_disabled = true;
+                            continue;
+                        }
                         match handle_model_request_error(
                             err,
                             &iteration_request,
@@ -297,6 +344,14 @@ impl AiRuntime {
                     FinalResponseAction::AskForFollowup => {
                         empty_final_response_followup_attempted = true;
                         runtime_followup_items = vec![empty_final_response_followup_item()];
+                        set_next_continuation(
+                            &mut request,
+                            &mut continuation_input,
+                            continuation_disabled,
+                            &options,
+                            response.response_id.as_deref(),
+                            runtime_followup_items.as_slice(),
+                        );
                         runtime_followup_appended_to_request = false;
                         iteration_reason = "empty_final_response_followup".to_string();
                         continue;
@@ -322,6 +377,14 @@ impl AiRuntime {
                                     reason,
                                 } => {
                                     runtime_followup_items = input_items;
+                                    set_next_continuation(
+                                        &mut request,
+                                        &mut continuation_input,
+                                        continuation_disabled,
+                                        &options,
+                                        response.response_id.as_deref(),
+                                        runtime_followup_items.as_slice(),
+                                    );
                                     runtime_followup_appended_to_request = false;
                                     iteration_reason = if reason.trim().is_empty() {
                                         "lifecycle_followup".to_string()
@@ -389,6 +452,7 @@ impl AiRuntime {
 
             let mut tool_execution =
                 execute_runtime_tools(executor.as_ref(), &tool_calls, &options, iteration).await?;
+            let provider_tool_call_count = tool_execution.tool_call_items.len();
             self.save_tool_records(&options, tool_execution.tool_results.as_slice())
                 .await?;
             let recovery_calls = automatic_file_write_recovery_calls(
@@ -445,6 +509,11 @@ impl AiRuntime {
                 );
             }
             let executed_tool_calls = Value::Array(tool_execution.tool_calls.clone());
+            let continuation_tool_items = continuation_tool_input_items(
+                tool_execution.tool_call_items.as_slice(),
+                tool_execution.tool_output_items.as_slice(),
+                provider_tool_call_count,
+            );
             pending_tool_calls = Some(tool_execution.tool_call_items);
             pending_tool_outputs = Some(tool_execution.tool_output_items);
             if options.iterative_context_refresh.is_none() {
@@ -455,6 +524,14 @@ impl AiRuntime {
                     &executed_tool_calls,
                     tool_execution.tool_results,
                     options.tool_result_model_budget_limits,
+                );
+                set_next_continuation(
+                    &mut request,
+                    &mut continuation_input,
+                    continuation_disabled,
+                    &options,
+                    response.response_id.as_deref(),
+                    continuation_tool_items.as_slice(),
                 );
             }
             iteration_reason = "tool_results".to_string();
@@ -539,6 +616,46 @@ impl AiRuntime {
         }
         writer.save_tool_records(records).await
     }
+}
+
+fn set_next_continuation(
+    request: &mut ModelRequest,
+    continuation_input: &mut Option<Value>,
+    continuation_disabled: bool,
+    options: &AiRuntimeOptions,
+    response_id: Option<&str>,
+    input_items: &[Value],
+) {
+    let response_id = normalized_option(response_id);
+    if request.supports_responses
+        && options.iterative_context_refresh.is_none()
+        && !continuation_disabled
+        && response_id.is_some()
+        && !input_items.is_empty()
+    {
+        request.previous_response_id = response_id;
+        *continuation_input = Some(Value::Array(input_items.to_vec()));
+    } else {
+        request.previous_response_id = None;
+        *continuation_input = None;
+    }
+}
+
+fn continuation_tool_input_items(
+    tool_call_items: &[Value],
+    tool_output_items: &[Value],
+    provider_tool_call_count: usize,
+) -> Vec<Value> {
+    let provider_tool_call_count = provider_tool_call_count
+        .min(tool_call_items.len())
+        .min(tool_output_items.len());
+    let mut items = tool_output_items[..provider_tool_call_count].to_vec();
+
+    // Runtime-generated recovery calls are not present in the provider's previous
+    // response, so their call items must accompany their outputs.
+    items.extend_from_slice(&tool_call_items[provider_tool_call_count..]);
+    items.extend_from_slice(&tool_output_items[provider_tool_call_count..]);
+    items
 }
 
 fn merge_record_metadata(base: Option<Value>, overlay: Option<Value>) -> Option<Value> {

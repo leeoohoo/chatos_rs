@@ -157,6 +157,14 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
     }
   }, [open]);
 
+  const closeDetail = useCallback(() => {
+    setDetailTask(null);
+  }, []);
+
+  const closeRun = useCallback(() => {
+    setRunDetail(null);
+  }, []);
+
   return {
     tasks,
     sourceUserMessageId,
@@ -170,7 +178,7 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
     openDetail,
     openRun,
     loadMoreRunEvents,
-    closeDetail: () => setDetailTask(null),
-    closeRun: () => setRunDetail(null),
+    closeDetail,
+    closeRun,
   };
 }

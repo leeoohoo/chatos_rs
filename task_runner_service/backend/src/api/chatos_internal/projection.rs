@@ -168,7 +168,11 @@ fn trim_event_for_chatos_detail(
     });
     event.payload = event.payload.map(|value| {
         let projected = project_plugin_event_payload_for_chatos(event.event_type.as_str(), value);
-        truncate_json_value(projected, RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES)
+        if matches!(event.event_type.as_str(), "tool_stream" | "tools_start") {
+            projected
+        } else {
+            truncate_json_value(projected, RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES)
+        }
     });
     event
 }
@@ -236,12 +240,123 @@ fn replace_plugin_arguments_with_audit(object: &mut serde_json::Map<String, Valu
 
 fn project_plugin_event_payload_for_chatos(event_type: &str, payload: Value) -> Value {
     match event_type {
+        "tool_stream" => project_tool_stream_payload_for_chatos(&payload),
+        "tools_start" => project_tools_start_payload_for_chatos(&payload),
         "plugin_runtime" => project_plugin_runtime_payload(&payload),
         "plugin_hook_blocked" => project_plugin_hook_blocked_payload(&payload),
         "plugin_ui_ready" => project_plugin_ui_ready_payload(&payload),
         "plugin_artifact_ready" => project_plugin_artifact_ready_payload(&payload),
         _ => payload,
     }
+}
+
+fn project_tool_stream_payload_for_chatos(payload: &Value) -> Value {
+    let Some(source) = payload.as_object() else {
+        return payload.clone();
+    };
+    let mut projected = serde_json::Map::new();
+    copy_bounded_string_fields(
+        source,
+        &mut projected,
+        &[
+            ("tool_call_id", 256),
+            ("call_id", 256),
+            ("id", 256),
+            ("name", 512),
+            ("conversation_turn_id", 256),
+            ("invocation_id", 256),
+        ],
+    );
+    for field in ["success", "is_error", "is_stream", "fatal_error"] {
+        copy_bool(source, &mut projected, field);
+    }
+
+    if let Some(result) = source.get("result").filter(|value| !value.is_null()) {
+        projected.insert(
+            "result".to_string(),
+            truncate_json_value(result.clone(), 20 * 1024),
+        );
+    }
+    let should_include_content = !projected.contains_key("result")
+        || source.get("is_error").and_then(Value::as_bool) == Some(true)
+        || source.get("success").and_then(Value::as_bool) == Some(false);
+    if should_include_content {
+        if let Some(content) = source.get("content").and_then(Value::as_str) {
+            projected.insert(
+                "content".to_string(),
+                Value::String(
+                    truncate_text_bytes(content, 20 * 1024).unwrap_or_else(|| content.to_string()),
+                ),
+            );
+        }
+    }
+    Value::Object(projected)
+}
+
+fn project_tools_start_payload_for_chatos(payload: &Value) -> Value {
+    if let Some(calls) = payload.as_array() {
+        return Value::Array(
+            calls
+                .iter()
+                .take(64)
+                .map(project_tool_call_for_chatos)
+                .collect(),
+        );
+    }
+    let Some(source) = payload.as_object() else {
+        return payload.clone();
+    };
+    let mut projected = source.clone();
+    for field in ["tool_calls", "toolCalls", "calls", "tools"] {
+        let Some(calls) = source.get(field).and_then(Value::as_array) else {
+            continue;
+        };
+        projected.insert(
+            field.to_string(),
+            Value::Array(
+                calls
+                    .iter()
+                    .take(64)
+                    .map(project_tool_call_for_chatos)
+                    .collect(),
+            ),
+        );
+    }
+    Value::Object(projected)
+}
+
+fn project_tool_call_for_chatos(call: &Value) -> Value {
+    let Some(source) = call.as_object() else {
+        return call.clone();
+    };
+    let mut projected = serde_json::Map::new();
+    copy_bounded_string_fields(
+        source,
+        &mut projected,
+        &[
+            ("id", 256),
+            ("call_id", 256),
+            ("tool_call_id", 256),
+            ("type", 64),
+            ("name", 512),
+            ("invocation_id", 256),
+        ],
+    );
+    if let Some(function) = source.get("function").and_then(Value::as_object) {
+        let mut projected_function = serde_json::Map::new();
+        copy_bounded_string_fields(
+            function,
+            &mut projected_function,
+            &[("name", 512), ("arguments", 512)],
+        );
+        projected.insert("function".to_string(), Value::Object(projected_function));
+    } else if let Some(arguments) = source.get("arguments") {
+        projected.insert(
+            "arguments".to_string(),
+            truncate_json_value(arguments.clone(), 512),
+        );
+    }
+    Value::Object(projected)
 }
 
 fn project_plugin_runtime_payload(payload: &Value) -> Value {

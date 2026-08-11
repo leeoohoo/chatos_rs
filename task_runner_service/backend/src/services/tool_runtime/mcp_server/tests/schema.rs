@@ -233,6 +233,36 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
 }
 
 #[test]
+fn read_only_code_task_cannot_be_misclassified_as_requiring_execution() {
+    let request = CreateTaskArgs {
+        title: "review task".to_string(),
+        description: None,
+        objective: "read the project without changing files".to_string(),
+        input_payload: None,
+        priority: None,
+        tags: None,
+        default_model_config_id: None,
+        requires_execution: Some(true),
+        is_planning_task: Some(false),
+        schedule: None,
+        enabled_builtin_kinds: Some(vec!["CodeMaintainerRead".to_string()]),
+        external_mcp_config_ids: None,
+        plugin_device_id: None,
+        plugin_workspace_id: None,
+        selected_plugins: None,
+        prerequisite_task_ids: None,
+        mcp_config: None,
+    }
+    .into_request()
+    .expect("read-only task request");
+
+    assert_eq!(
+        request.mcp_config.expect("MCP request").requires_execution,
+        Some(false)
+    );
+}
+
+#[test]
 fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
     let error = CreateTaskArgs {
         title: "browser task".to_string(),

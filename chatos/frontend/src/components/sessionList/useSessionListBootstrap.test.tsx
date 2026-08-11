@@ -5,11 +5,20 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { StrictMode, type ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { localRuntimeBridgeAvailable } from '../../lib/api/localRuntime';
 import { useSessionListBootstrap } from './useSessionListBootstrap';
 
+vi.mock('../../lib/api/localRuntime', () => ({
+  localRuntimeBridgeAvailable: vi.fn(() => false),
+}));
+
 describe('useSessionListBootstrap', () => {
+  beforeEach(() => {
+    vi.mocked(localRuntimeBridgeAvailable).mockReturnValue(false);
+  });
+
   it('completes the one-time bootstrap under React StrictMode', async () => {
     const loadProjects = vi.fn();
     const loadContacts = vi.fn();
@@ -144,5 +153,34 @@ describe('useSessionListBootstrap', () => {
       expect(loadTerminals).toHaveBeenCalledTimes(1);
       expect(loadRemoteConnections).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('skips memory bootstrap on the desktop surface', async () => {
+    vi.mocked(localRuntimeBridgeAvailable).mockReturnValue(true);
+    const loadProjects = vi.fn();
+    const loadContacts = vi.fn();
+    const loadAgents = vi.fn();
+    const loadSessions = vi.fn();
+
+    renderHook(() => useSessionListBootstrap({
+      loadSessions,
+      loadProjects,
+      loadAgents,
+      loadContacts,
+      loadTerminals: vi.fn(),
+      loadRemoteConnections: vi.fn(),
+      isCollapsed: false,
+      terminalsEnabled: false,
+      remoteEnabled: false,
+      terminalsExpanded: false,
+      remoteExpanded: false,
+    }));
+
+    await waitFor(() => {
+      expect(loadSessions).toHaveBeenCalledWith({ silent: true });
+    });
+    expect(loadProjects).not.toHaveBeenCalled();
+    expect(loadContacts).not.toHaveBeenCalled();
+    expect(loadAgents).not.toHaveBeenCalled();
   });
 });

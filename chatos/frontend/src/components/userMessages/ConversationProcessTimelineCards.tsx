@@ -135,7 +135,11 @@ const ToolCallCard: React.FC<{
       </button>
 
       {expanded ? (
-        <div className="grid gap-3 border-t border-border/70 bg-muted/10 p-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <div className={cn(
+          'grid gap-3 border-t border-border/70 bg-muted/10 p-3',
+          (item.error || item.hasResult) && 'lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]',
+        )}
+        >
           <ValueSection
             title="主要参数"
             value={item.toolCall.arguments}
@@ -151,15 +155,15 @@ const ToolCallCard: React.FC<{
               emptyArrayText="工具返回错误"
               emptyObjectText="工具返回错误"
             />
-          ) : (
+          ) : item.hasResult ? (
             <ValueSection
               title="返回结果"
-              value={item.hasResult ? item.result : undefined}
-              emptyText={item.hasResult ? '返回为空内容' : '暂无返回'}
+              value={item.result}
+              emptyText="返回为空内容"
               emptyArrayText="返回为空数组"
               emptyObjectText="返回为空对象"
             />
-          )}
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -195,12 +199,12 @@ const ToolResultCard: React.FC<{
           <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
         </span>
       </button>
-      {expanded ? (
+      {expanded && (item.error || item.hasResult) ? (
         <div className="border-t border-border/70 bg-muted/10 p-3">
           <ValueSection
             title={item.error ? '错误' : '返回结果'}
             value={resultValue}
-            emptyText={item.hasResult ? '返回为空内容' : '暂无返回'}
+            emptyText="返回为空内容"
             emptyArrayText="返回为空数组"
             emptyObjectText="返回为空对象"
           />

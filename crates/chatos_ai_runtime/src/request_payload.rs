@@ -19,6 +19,7 @@ pub fn build_responses_request_payload(
     model: String,
     instructions: Option<String>,
     prompt_cache_key: Option<String>,
+    previous_response_id: Option<String>,
     tools: Option<Vec<Value>>,
     request_cwd: Option<String>,
     temperature: Option<f64>,
@@ -45,6 +46,9 @@ pub fn build_responses_request_payload(
     }
     if has_prompt_cache_key && include_prompt_cache_retention {
         payload["prompt_cache_retention"] = Value::String(CHAT_PROMPT_CACHE_RETENTION.to_string());
+    }
+    if let Some(response_id) = normalized_option(previous_response_id.as_deref()) {
+        payload["previous_response_id"] = Value::String(response_id);
     }
     if let Some(tools) = tools.filter(|items| !items.is_empty()) {
         payload["tools"] = Value::Array(tools);

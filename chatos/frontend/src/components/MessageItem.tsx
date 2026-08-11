@@ -12,6 +12,7 @@ import { MessageAvatar } from './messageItem/MessageAvatar';
 import { MessageEditForm } from './messageItem/MessageEditForm';
 import { MessageHeader } from './messageItem/MessageHeader';
 import { SessionSummaryCard } from './messageItem/SessionSummaryCard';
+import { MessageTaskInlinePanel } from './messageTasks/MessageTaskInlinePanel';
 import type { MessageItemProps } from './messageItem/messageItemTypes';
 import { useMessageItemModel } from './messageItem/useMessageItemModel';
 import PluginCommandAuditList from './pluginCommands/PluginCommandAuditList';
@@ -218,6 +219,9 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                     collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
                     onApplyCode={handleApplyCode}
                   />
+                  {showAssistantChrome ? (
+                    <MessageTaskInlinePanel message={message} />
+                  ) : null}
                 </div>
               </AssistantMessageBubble>
             )

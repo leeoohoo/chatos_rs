@@ -134,6 +134,7 @@ Reading rules:
 4. If you are about to change reused code, search the main callers first so you fix the root cause without leaving sibling paths broken.
 5. Before writing code, look for existing implementation, local conventions, tests, or neighboring files. Reusing the local path is usually safer than creating a new one beside it.
 6. Do not let "read first" become an unbounded repo scan. Read enough to locate the smallest correct change.
+7. Within one turn, if a file has not been written, no external change was reported, and no `stale_context` reread was requested, do not read the same file or line range again. Reuse the returned content and hash; if more context is needed, read only a range that has not already been covered.
 
 If you need to modify code afterward and read tools exist, read the target file first.
 

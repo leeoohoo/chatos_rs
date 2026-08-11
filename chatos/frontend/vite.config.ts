@@ -287,6 +287,12 @@ export default defineConfig({
     strictPort: true,
     open: true,
     proxy: {
+      '/api/chatos': {
+        target: 'http://localhost:3997',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (path) => path.replace(/^\/api\/chatos/, '/api'),
+      },
       '/api': {
         target: 'http://localhost:3997',
         changeOrigin: true,

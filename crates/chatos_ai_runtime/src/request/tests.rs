@@ -100,6 +100,7 @@ fn deepseek_thinking_chat_payload_skips_temperature() {
 fn responses_payload_supports_prompt_cache_and_cwd() {
     let options = AiRequestOptions {
         prompt_cache_key: Some("session_1".to_string()),
+        previous_response_id: Some("resp_1".to_string()),
         request_cwd: Some("/workspace".to_string()),
         include_prompt_cache_retention: true,
         request_body_limit_bytes: None,
@@ -112,6 +113,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         "gpt-4.1".to_string(),
         Some("system".to_string()),
         options.prompt_cache_key,
+        options.previous_response_id,
         None,
         options.request_cwd,
         None,
@@ -129,6 +131,10 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
     assert_eq!(
         payload.get("prompt_cache_retention"),
         Some(&Value::String("24h".to_string()))
+    );
+    assert_eq!(
+        payload.get("previous_response_id"),
+        Some(&Value::String("resp_1".to_string()))
     );
     assert_eq!(
         payload.get("cwd"),
@@ -171,6 +177,7 @@ fn responses_payload_normalizes_legacy_text_parts_by_message_role() {
         None,
         None,
         None,
+        None,
         Some("openai".to_string()),
         None,
         true,
@@ -202,6 +209,7 @@ fn responses_payload_requests_summary_for_gpt_model_on_compatible_provider() {
         None,
         None,
         None,
+        None,
         Some("openai_compatible".to_string()),
         Some("xhigh".to_string()),
         true,
@@ -223,6 +231,7 @@ fn responses_payload_omits_summary_for_generic_compatible_model() {
     let payload = build_responses_request_payload(
         json!([]),
         "generic-compatible-model".to_string(),
+        None,
         None,
         None,
         None,

@@ -461,6 +461,46 @@ ensure_dirs() {
     "$STATE_DIR/local-connector"
 }
 
+prepare_sandbox_docker_config() {
+  local default_config_dir="$STATE_DIR/docker-public-config"
+  local config_file plugin_dir
+  local -a plugin_dirs=()
+
+  # Custom Docker configs are user-managed. The local default intentionally
+  # contains no registry credentials, but still needs Docker CLI plugins.
+  if [[ "$SANDBOX_MANAGER_DOCKER_CONFIG" != "$default_config_dir" ]]; then
+    return 0
+  fi
+  for plugin_dir in \
+    "$HOME/.docker/cli-plugins" \
+    "/Applications/Docker.app/Contents/Resources/cli-plugins" \
+    "/opt/homebrew/lib/docker/cli-plugins" \
+    "/usr/local/lib/docker/cli-plugins"; do
+    if [[ -d "$plugin_dir" ]]; then
+      plugin_dirs+=("$plugin_dir")
+    fi
+  done
+  if (( ${#plugin_dirs[@]} == 0 )); then
+    return 0
+  fi
+
+  config_file="$default_config_dir/config.json"
+  python3 - "$config_file" "${plugin_dirs[@]}" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+plugin_dirs = list(dict.fromkeys(sys.argv[2:]))
+payload = {"cliPluginsExtraDirs": plugin_dirs}
+temporary = f"{path}.tmp"
+with open(temporary, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, separators=(",", ":"))
+    handle.write("\n")
+os.replace(temporary, path)
+PY
+}
+
 prepare_local_dev_apisix_config() {
   local source_config="$ROOT_DIR/docker/apisix/apisix.yaml"
   local target_config="$CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH"

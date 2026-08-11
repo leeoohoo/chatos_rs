@@ -17,6 +17,7 @@ pub(crate) struct NodeSupplyChainPolicy {
 #[derive(Debug, Clone, Default)]
 pub(super) struct SupplyChainEvidenceState {
     node_project_observed: bool,
+    dependency_activity_observed: bool,
     lockfile_observed: bool,
     package_manager: Option<String>,
     install: Option<CommandEvidence>,
@@ -147,6 +148,7 @@ impl SupplyChainEvidenceState {
                             if let Some(update) = update {
                                 applied_manifest_update = true;
                                 self.node_project_observed = true;
+                                self.dependency_activity_observed = true;
                                 self.package_manifest = update;
                             }
                         }
@@ -165,7 +167,12 @@ impl SupplyChainEvidenceState {
             observe_project_paths(payload, self);
             if !applied_manifest_update && result_mutates_package_manifest(payload) {
                 self.node_project_observed = true;
+                self.dependency_activity_observed = true;
                 self.package_manifest = None;
+            }
+            if result_mutates_node_dependency_files(payload) {
+                self.node_project_observed = true;
+                self.dependency_activity_observed = true;
             }
             if let Some(manifest) = package_manifest_from_tool_result(payload) {
                 self.node_project_observed = true;
@@ -190,9 +197,11 @@ impl SupplyChainEvidenceState {
             self.package_manager = Some(manager.to_string());
         }
         if is_lockfile_command(&normalized) {
+            self.dependency_activity_observed = true;
             self.lockfile_observed = exit_code == Some(0);
         }
         if is_node_install_command(&normalized) {
+            self.dependency_activity_observed = true;
             self.install = Some(CommandEvidence {
                 command: command.to_string(),
                 exit_code,
@@ -205,6 +214,7 @@ impl SupplyChainEvidenceState {
             }
         }
         if let Some(packages) = approved_rebuild_packages(&normalized) {
+            self.dependency_activity_observed = true;
             self.rebuilds.push(RebuildEvidence {
                 command: command.to_string(),
                 exit_code,
@@ -212,6 +222,7 @@ impl SupplyChainEvidenceState {
             });
         }
         if is_node_audit_command(&normalized) {
+            self.dependency_activity_observed = true;
             self.audit = Some(AuditEvidence {
                 command: command.to_string(),
                 exit_code,
@@ -222,7 +233,7 @@ impl SupplyChainEvidenceState {
     }
 
     pub(super) fn evaluate(&self, policy: &NodeSupplyChainPolicy) -> SupplyChainAuditReport {
-        if !self.node_project_observed {
+        if !self.node_project_observed || !self.dependency_activity_observed {
             return SupplyChainAuditReport {
                 applicable: false,
                 status: "not_applicable",
@@ -485,6 +496,34 @@ fn result_mutates_package_manifest(payload: &Value) -> bool {
         return false;
     };
     name.ends_with("commit_edit_session") && value_mentions_package_manifest(payload)
+}
+
+fn result_mutates_node_dependency_files(payload: &Value) -> bool {
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    name.ends_with("commit_edit_session") && value_mentions_node_dependency_file(payload)
+}
+
+fn value_mentions_node_dependency_file(value: &Value) -> bool {
+    match value {
+        Value::String(value) => {
+            let normalized = value.replace('\\', "/").to_ascii_lowercase();
+            normalized.ends_with("package.json")
+                || [
+                    "package-lock.json",
+                    "pnpm-lock.yaml",
+                    "yarn.lock",
+                    "bun.lock",
+                    "bun.lockb",
+                ]
+                .iter()
+                .any(|lockfile| normalized.ends_with(lockfile))
+        }
+        Value::Array(items) => items.iter().any(value_mentions_node_dependency_file),
+        Value::Object(map) => map.values().any(value_mentions_node_dependency_file),
+        _ => false,
+    }
 }
 
 fn value_mentions_package_manifest(value: &Value) -> bool {
@@ -1219,6 +1258,61 @@ mod tests {
         }));
 
         assert!(!evidence.evaluate(&policy()).applicable);
+    }
+
+    #[test]
+    fn read_only_node_project_inspection_does_not_make_gate_applicable() {
+        let mut evidence = SupplyChainEvidenceState::default();
+        evidence.observe_tool_result(&json!({
+            "name": "code_maintainer_read_list_dir",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "entries": [
+                    { "path": "package.json", "type": "file" },
+                    { "path": "pnpm-lock.yaml", "type": "file" }
+                ]
+            }
+        }));
+        evidence.observe_tool_result(&json!({
+            "name": "code_maintainer_read_read_file_raw",
+            "success": true,
+            "is_error": false,
+            "content": serde_json::to_string(&json!({
+                "path": "package.json",
+                "content": serde_json::to_string(&json!({
+                    "dependencies": { "react": "^19.2.7" },
+                    "devDependencies": { "vite": "^8.1.4" }
+                })).expect("manifest")
+            })).expect("tool content")
+        }));
+
+        let report = evidence.evaluate(&policy());
+        assert!(!report.applicable);
+        assert_eq!(report.status, "not_applicable");
+    }
+
+    #[test]
+    fn committed_dependency_file_change_makes_gate_applicable() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&json!({
+            "name": "code_maintainer_write_commit_edit_session",
+            "success": true,
+            "is_error": false,
+            "result": { "committed_paths": [{ "path": "pnpm-lock.yaml" }] }
+        }));
+
+        let report = evidence.evaluate(&policy());
+        assert!(report.applicable);
+        assert_eq!(report.status, "blocked");
+        assert!(report
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("installation was not executed")));
+        assert!(report
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("audit was not executed")));
     }
 
     #[test]

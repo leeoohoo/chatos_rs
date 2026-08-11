@@ -93,6 +93,12 @@ pub(crate) fn local_sandbox_runtime_specs() -> Vec<Value> {
                     false,
                 ),
                 (
+                    "1.94.0",
+                    "Rust 1.94.0",
+                    "Pinned Rust 1.94.0 toolchain",
+                    false,
+                ),
+                (
                     "1.96.1",
                     "Rust 1.96.1",
                     "Pinned Rust 1.96.1 toolchain",

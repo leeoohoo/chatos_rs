@@ -100,7 +100,7 @@ fi
 
 (
   cd "$CHATOS_FRONTEND_DIR"
-  VITE_API_BASE_URL="${LOCAL_CONNECTOR_CHATOS_API_BASE_URL:-https://app.jgoool.com/api}" npm run build
+  VITE_API_BASE_URL="${LOCAL_CONNECTOR_CHATOS_API_BASE_URL:-https://app.jgoool.com/api/chatos}" npm run build
 )
 
 (

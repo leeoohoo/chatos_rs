@@ -312,6 +312,66 @@ mod plugin_projection_tests {
         );
     }
 
+    #[test]
+    fn oversized_tool_results_keep_pairing_fields_and_a_visible_preview() {
+        let events = vec![
+            event(
+                "event-tools-start",
+                "tools_start",
+                json!([{
+                    "id": "call-large",
+                    "type": "function",
+                    "function": {
+                        "name": "code_maintainer_read_read_file_raw",
+                        "arguments": {"path": "src/large.rs"}
+                    }
+                }]),
+            ),
+            event(
+                "event-tool-result",
+                "tool_stream",
+                json!({
+                    "tool_call_id": "call-large",
+                    "name": "code_maintainer_read_read_file_raw",
+                    "success": true,
+                    "is_error": false,
+                    "is_stream": false,
+                    "content": "x".repeat(RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES * 2),
+                    "result": {
+                        "path": "src/large.rs",
+                        "content": "y".repeat(RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES * 2)
+                    }
+                }),
+            ),
+        ];
+
+        let (events, total, has_more) = paginate_run_events(events, 10, 0);
+
+        assert_eq!(total, 2);
+        assert!(!has_more);
+        assert_eq!(
+            events[1]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("tool_call_id"))
+                .and_then(Value::as_str),
+            Some("call-large")
+        );
+        assert_eq!(
+            events[1]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.pointer("/result/truncated")),
+            Some(&Value::Bool(true))
+        );
+        assert!(events[1]
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.pointer("/result/preview"))
+            .and_then(Value::as_str)
+            .is_some_and(|preview| preview.contains("src/large.rs")));
+    }
+
     fn event(id: &str, event_type: &str, payload: Value) -> TaskRunEventRecord {
         TaskRunEventRecord {
             id: id.to_string(),

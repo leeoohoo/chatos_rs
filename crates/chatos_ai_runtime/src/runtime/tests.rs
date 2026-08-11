@@ -296,6 +296,164 @@ async fn iterative_context_refresh_keeps_prior_tool_batches_in_later_model_reque
     assert!(requests[1].to_string().contains("result-call_1"));
     assert!(requests[2].to_string().contains("result-call_1"));
     assert!(requests[2].to_string().contains("result-call_2"));
+    assert!(requests
+        .iter()
+        .all(|payload| payload.get("previous_response_id").is_none()));
+}
+
+#[tokio::test]
+async fn responses_tool_loop_uses_previous_response_id_and_delta_input() {
+    let (base_url, requests, _connection_headers, server) = start_lifecycle_mock_provider(vec![
+        json!({
+            "id": "response-page-1",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+                "name": "list_page",
+                "arguments": "{\"offset\":0}",
+                "status": "completed"
+            }]
+        }),
+        json!({
+            "id": "response-final",
+            "status": "completed",
+            "output_text": "done"
+        }),
+    ])
+    .await;
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "verify every page"}]),
+    )
+    .with_responses_support(true)
+    .with_prompt_cache_key(Some("conversation:session-continuation".to_string()));
+
+    let result = AiRuntime::new(Some(Arc::new(PagingToolExecutor)))
+        .with_max_iterations(3)
+        .run_turn(
+            request,
+            AiRuntimeOptions::for_conversation("session-continuation"),
+        )
+        .await
+        .expect("continued tool turn");
+    server.abort();
+
+    assert_eq!(result.content, "done");
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1]
+            .get("previous_response_id")
+            .and_then(Value::as_str),
+        Some("response-page-1")
+    );
+    assert_eq!(
+        requests[0].get("prompt_cache_key").and_then(Value::as_str),
+        Some("conversation:session-continuation")
+    );
+    assert_eq!(
+        requests[1].get("prompt_cache_key").and_then(Value::as_str),
+        Some("conversation:session-continuation")
+    );
+    let continuation_input = requests[1]
+        .get("input")
+        .and_then(Value::as_array)
+        .expect("continuation input");
+    assert_eq!(continuation_input.len(), 1);
+    assert_eq!(
+        continuation_input[0].get("type").and_then(Value::as_str),
+        Some("function_call_output")
+    );
+    assert!(!requests[1].to_string().contains("verify every page"));
+}
+
+#[derive(Clone, Default)]
+struct ContinuationFallbackProviderState {
+    requests: Arc<AsyncMutex<Vec<Value>>>,
+}
+
+async fn mock_continuation_fallback_provider(
+    State(state): State<ContinuationFallbackProviderState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let mut requests = state.requests.lock().await;
+    requests.push(payload.clone());
+    let request_count = requests.len();
+    drop(requests);
+
+    if payload.get("previous_response_id").is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": {"message": "unknown parameter previous_response_id"}})),
+        )
+            .into_response();
+    }
+    if request_count == 1 {
+        return Json(json!({
+            "id": "response-tool",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "list_page",
+                "arguments": "{\"offset\":0}"
+            }]
+        }))
+        .into_response();
+    }
+    Json(json!({
+        "id": "response-final",
+        "status": "completed",
+        "output_text": "fallback complete"
+    }))
+    .into_response()
+}
+
+#[tokio::test]
+async fn unsupported_continuation_falls_back_to_full_input_once() {
+    let state = ContinuationFallbackProviderState::default();
+    let requests = Arc::clone(&state.requests);
+    let app = Router::new()
+        .route("/responses", post(mock_continuation_fallback_provider))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind continuation fallback provider");
+    let address = listener.local_addr().expect("fallback provider address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let request = ModelRequest::openai_compatible(
+        format!("http://{address}"),
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "keep the full prompt"}]),
+    )
+    .with_responses_support(true);
+
+    let result = AiRuntime::new(Some(Arc::new(PagingToolExecutor)))
+        .with_max_iterations(3)
+        .run_turn(
+            request,
+            AiRuntimeOptions::for_conversation("fallback-session"),
+        )
+        .await
+        .expect("standalone fallback");
+    server.abort();
+
+    assert_eq!(result.content, "fallback complete");
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1].get("previous_response_id").is_some());
+    assert!(requests[2].get("previous_response_id").is_none());
+    assert!(requests[2].to_string().contains("keep the full prompt"));
+    assert!(requests[2].to_string().contains("result-call-1"));
 }
 
 #[derive(Clone, Default)]
@@ -481,9 +639,12 @@ async fn lifecycle_continuation_runs_hidden_review_and_restores_visible_response
         .is_none_or(Vec::is_empty));
     assert!(captured[1].to_string().contains("visible summary"));
     assert!(captured[1].to_string().contains("TASK_REVIEW: pass"));
-    assert!(captured
-        .iter()
-        .all(|payload| payload.get("prev_id").is_none()));
+    assert_eq!(
+        captured[1]
+            .get("previous_response_id")
+            .and_then(Value::as_str),
+        Some("response-visible")
+    );
 }
 
 #[tokio::test]

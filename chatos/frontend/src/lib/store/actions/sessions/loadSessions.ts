@@ -4,6 +4,7 @@
 import type { Session } from '../../../../types';
 import { debugLog } from '@/lib/utils';
 import { ApiRequestError } from '../../../api/client/shared';
+import { localRuntimeBridgeAvailable } from '../../../api/localRuntime';
 import { normalizeSession } from '../../helpers/sessions';
 import type { ContactRecord } from '../../types';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
@@ -137,7 +138,10 @@ export function createLoadSessionActions({
         }
 
         const executeLoad = async (): Promise<{ contacts: ContactRecord[]; sessions: Session[] }> => {
-          const contacts = await get().loadContacts();
+          const desktopSurface = localRuntimeBridgeAvailable();
+          const contacts = desktopSurface
+            ? ((get().contacts || []) as ContactRecord[])
+            : await get().loadContacts();
           const memoryContacts = toMemoryContacts(contacts, userId);
           const rawSessions = await client.getSessions(
             userId,
@@ -148,11 +152,9 @@ export function createLoadSessionActions({
             ? rawSessions.map(normalizeSession)
             : [];
 
-          const { matchedSessions: filteredByContacts } = splitSessionsByMappedContacts(
-            sessions,
-            memoryContacts,
-          );
-          const mergedByContact = filteredByContacts;
+          const mergedByContact = memoryContacts.length > 0
+            ? splitSessionsByMappedContacts(sessions, memoryContacts).matchedSessions
+            : sessions;
           debugLog('🔍 loadSessions 返回结果:', mergedByContact);
 
           const existing = options.append ? (get().sessions || []) : [];

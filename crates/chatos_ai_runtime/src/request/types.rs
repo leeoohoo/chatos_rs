@@ -32,6 +32,7 @@ pub enum AiTransport {
 #[derive(Clone, Debug)]
 pub struct AiRequestOptions {
     pub prompt_cache_key: Option<String>,
+    pub previous_response_id: Option<String>,
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
@@ -47,6 +48,7 @@ impl Default for AiRequestOptions {
     fn default() -> Self {
         Self {
             prompt_cache_key: None,
+            previous_response_id: None,
             request_cwd: None,
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,

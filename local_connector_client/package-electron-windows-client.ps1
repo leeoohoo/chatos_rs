@@ -132,7 +132,7 @@ function Invoke-ChatosFrontendBuild {
     $env:VITE_API_BASE_URL = if ($env:LOCAL_CONNECTOR_CHATOS_API_BASE_URL) {
       $env:LOCAL_CONNECTOR_CHATOS_API_BASE_URL
     } else {
-      "https://app.jgoool.com/api"
+      "https://app.jgoool.com/api/chatos"
     }
     npm run build
   } finally {

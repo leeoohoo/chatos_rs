@@ -81,11 +81,18 @@ impl CreateTaskArgs {
         }
         let enabled_builtin_kinds = self.enabled_builtin_kinds.unwrap_or_default();
         let external_mcp_config_ids = self.external_mcp_config_ids.unwrap_or_default();
-        let mcp_config = (self.requires_execution.is_some()
+        let requires_execution = if external_mcp_config_ids.is_empty()
+            && only_code_maintainer_read_selected(&enabled_builtin_kinds)
+        {
+            Some(false)
+        } else {
+            self.requires_execution
+        };
+        let mcp_config = (requires_execution.is_some()
             || !enabled_builtin_kinds.is_empty()
             || !external_mcp_config_ids.is_empty())
         .then_some(TaskMcpRequestConfig {
-            requires_execution: self.requires_execution,
+            requires_execution,
             enabled_builtin_kinds,
             external_mcp_config_ids,
         });
@@ -108,6 +115,13 @@ impl CreateTaskArgs {
             prerequisite_task_ids: self.prerequisite_task_ids,
         })
     }
+}
+
+fn only_code_maintainer_read_selected(enabled_builtin_kinds: &[String]) -> bool {
+    !enabled_builtin_kinds.is_empty()
+        && enabled_builtin_kinds
+            .iter()
+            .all(|kind| kind.trim().eq_ignore_ascii_case("CodeMaintainerRead"))
 }
 
 pub(in crate::mcp_server) fn reject_ai_runtime_config(

@@ -367,6 +367,7 @@ fn build_request_payload(
             model,
             instructions,
             options.prompt_cache_key.clone(),
+            options.previous_response_id.clone(),
             tools,
             options.request_cwd.clone(),
             temperature,

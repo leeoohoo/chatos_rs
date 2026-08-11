@@ -23,8 +23,8 @@ ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/
 ENV CARGO_NET_RETRY=10
 ENV CARGO_HTTP_TIMEOUT=600
-ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
-ENV RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
+ENV RUSTUP_DIST_SERVER=https://rsproxy.cn
+ENV RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
 
 RUN mkdir -p /root/.cargo \
     && printf '%s\n' \
@@ -77,8 +77,8 @@ ENV RUSTUP_HOME=/opt/chatos/rustup
 ENV UV_INSTALL_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/chatos/python
 ENV PATH=/usr/local/go/bin:/usr/local/dotnet:/opt/chatos/cargo/bin:/usr/local/bin:$PATH
-ENV RUSTUP_DIST_SERVER=https://static.rust-lang.org
-ENV RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
+ENV RUSTUP_DIST_SERVER=https://rsproxy.cn
+ENV RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
 
 RUN set -eux; \
     java_version=""; \
@@ -118,12 +118,17 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     if [ -n "$java_version" ]; then \
       case "$java_version" in 8|11|17|21|25) true ;; *) echo "unsupported Java/JDK version: $java_version" >&2; exit 2 ;; esac; \
-      mkdir -p /etc/apt/keyrings; \
-      wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | tee /etc/apt/keyrings/adoptium.asc >/dev/null; \
-      . /etc/os-release; \
-      echo "deb [signed-by=/etc/apt/keyrings/adoptium.asc] https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" > /etc/apt/sources.list.d/adoptium.list; \
-      apt-get update; \
-      apt-get install -y --no-install-recommends "temurin-${java_version}-jdk"; \
+      if [ "$java_version" = "21" ]; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends openjdk-21-jdk-headless; \
+      else \
+        mkdir -p /etc/apt/keyrings; \
+        wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | tee /etc/apt/keyrings/adoptium.asc >/dev/null; \
+        . /etc/os-release; \
+        echo "deb [signed-by=/etc/apt/keyrings/adoptium.asc] https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" > /etc/apt/sources.list.d/adoptium.list; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends "temurin-${java_version}-jdk"; \
+      fi; \
       ln -sfn "$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")" "$JAVA_HOME"; \
       apt-get clean; \
       rm -rf /var/lib/apt/lists/*; \
@@ -177,12 +182,12 @@ RUN set -eux; \
       rm /tmp/go.tgz; \
     fi; \
     if [ -n "$rust_channel" ]; then \
-      case "$rust_channel" in stable|beta|nightly|1.85.1|1.88.0|1.92.0|1.96.1) true ;; *) echo "unsupported Rust channel: $rust_channel" >&2; exit 2 ;; esac; \
+      case "$rust_channel" in stable|beta|nightly|1.85.1|1.88.0|1.92.0|1.94.0|1.96.1) true ;; *) echo "unsupported Rust channel: $rust_channel" >&2; exit 2 ;; esac; \
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | CARGO_HOME=/opt/chatos/cargo \
           RUSTUP_HOME="$RUSTUP_HOME" \
-          RUSTUP_DIST_SERVER=https://static.rust-lang.org \
-          RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup \
+          RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER" \
+          RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT" \
           sh -s -- -y --profile minimal --default-toolchain "$rust_channel" \
             --component rustfmt \
             --component clippy; \

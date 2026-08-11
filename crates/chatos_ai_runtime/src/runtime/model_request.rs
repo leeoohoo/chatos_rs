@@ -62,6 +62,7 @@ pub(super) async fn dispatch_model_request(
         "request_attempt": request_attempt,
         "stream": provider_stream,
         "thinking_level": request.thinking_level.clone(),
+        "previous_response_id": request.previous_response_id.clone(),
         "connection_mode": if force_identity_encoding { "isolated_retry" } else { "pooled" },
         "read_timeout_seconds": request_handler.read_timeout_seconds(),
     });
@@ -96,6 +97,7 @@ pub(super) async fn dispatch_model_request(
             on_before_send_model_request,
             AiRequestOptions {
                 prompt_cache_key: request.prompt_cache_key.clone(),
+                previous_response_id: request.previous_response_id.clone(),
                 request_cwd: request.request_cwd.clone(),
                 include_prompt_cache_retention: request.include_prompt_cache_retention,
                 request_body_limit_bytes: request.request_body_limit_bytes,

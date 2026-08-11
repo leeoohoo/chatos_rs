@@ -25,6 +25,20 @@ const hasOwn = (record: UnknownRecord, key: string): boolean => (
   Object.prototype.hasOwnProperty.call(record, key)
 );
 
+const hasDisplayValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  const record = readRecord(value);
+  return record ? Object.keys(record).length > 0 : true;
+};
+
 const eventType = (event: MessageTaskRunnerRunEvent): string => (
   readString(event.event_type).toLowerCase()
 );
@@ -150,10 +164,13 @@ const buildKnownToolCallIds = (events: MessageTaskRunnerRunEvent[]): Set<string>
 };
 
 const toolResultValue = (payload: UnknownRecord): unknown => {
-  if (hasOwn(payload, 'result') && payload.result !== null) {
+  if (hasOwn(payload, 'result') && hasDisplayValue(payload.result)) {
     return payload.result;
   }
-  return payload.content;
+  if (hasDisplayValue(payload.content)) {
+    return payload.content;
+  }
+  return payload.preview;
 };
 
 const stringifyError = (value: unknown): string => {
@@ -189,7 +206,8 @@ const buildToolCallItem = (
     return null;
   }
   const error = result ? toolResultError(result.payload) : '';
-  const hasResult = Boolean(result);
+  const resultValue = result ? toolResultValue(result.payload) : undefined;
+  const hasResult = hasDisplayValue(resultValue);
   const status: TimelineStatus = error
     ? 'error'
     : hasResult
@@ -209,7 +227,7 @@ const buildToolCallItem = (
     error,
     hasResult,
     id: `run-tool-${event.id}-${callId || index}`,
-    result: result ? toolResultValue(result.payload) : undefined,
+    result: resultValue,
     status,
     toolCall,
     type: 'tool_call',
@@ -258,16 +276,20 @@ const buildLifecycleModelItem = (
 const buildUnmatchedToolResultItem = (
   event: MessageTaskRunnerRunEvent,
   payload: UnknownRecord,
-): Extract<TimelineItem, { type: 'tool_result' }> => {
+): Extract<TimelineItem, { type: 'tool_result' }> | null => {
   const callId = readToolResultCallId(payload);
   const error = toolResultError(payload);
+  const result = toolResultValue(payload);
+  if (!error && !hasDisplayValue(result)) {
+    return null;
+  }
   return {
     callId,
     createdAt: eventDate(event),
     error,
     hasResult: true,
     id: `run-tool-result-${event.id}`,
-    result: toolResultValue(payload),
+    result,
     status: error ? 'error' : 'completed',
     type: 'tool_result',
   };
@@ -325,7 +347,10 @@ export const buildRunProcessTimelineItems = (
       const payload = readRecord(event.payload);
       const callId = payload ? readToolResultCallId(payload) : '';
       if (payload && isFinalToolResult(payload) && (!callId || !knownToolCallIds.has(callId))) {
-        items.push(buildUnmatchedToolResultItem(event, payload));
+        const item = buildUnmatchedToolResultItem(event, payload);
+        if (item) {
+          items.push(item);
+        }
       }
       index += 1;
       continue;

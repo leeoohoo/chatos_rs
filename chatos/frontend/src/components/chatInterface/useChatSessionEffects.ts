@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 
+import { localRuntimeBridgeAvailable } from '../../lib/api/localRuntime';
 import type { Session } from '../../types';
 
 interface UseChatSessionEffectsParams {
@@ -32,6 +33,7 @@ export const useChatSessionEffects = ({
 }: UseChatSessionEffectsParams) => {
   const didInitRef = useRef(false);
   const lastHydratedChatSessionRef = useRef<string | null>(null);
+  const desktopSurface = localRuntimeBridgeAvailable();
 
   const sessionSummaryPaneVisible = useMemo(
     () => Boolean(activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id),
@@ -44,10 +46,12 @@ export const useChatSessionEffects = ({
     }
     didInitRef.current = true;
 
-    void loadProjects();
+    if (!desktopSurface) {
+      void loadProjects();
+      void loadAgents();
+    }
     void loadAiModelConfigs();
-    void loadAgents();
-  }, [loadProjects, loadAiModelConfigs, loadAgents]);
+  }, [desktopSurface, loadProjects, loadAiModelConfigs, loadAgents]);
 
   useEffect(() => {
     if (!currentSession || activePanel !== 'chat') {

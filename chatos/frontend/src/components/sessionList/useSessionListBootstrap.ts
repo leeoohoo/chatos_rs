@@ -3,6 +3,8 @@
 
 import { useEffect, useRef } from 'react';
 
+import { localRuntimeBridgeAvailable } from '../../lib/api/localRuntime';
+
 interface UseSessionListBootstrapOptions {
   loadSessions: (options?: { silent?: boolean }) => Promise<unknown> | unknown;
   loadProjects: (options?: { force?: boolean; throwOnError?: boolean }) => Promise<unknown> | unknown;
@@ -73,12 +75,21 @@ export const useSessionListBootstrap = ({
   const didLoadAgentsRef = useRef(false);
   const didLoadTerminalsRef = useRef(false);
   const didLoadRemoteRef = useRef(false);
+  const desktopSurface = localRuntimeBridgeAvailable();
 
   useEffect(() => {
     if (didLoadProjectsRef.current || didLoadSessionsRef.current) return;
     didLoadProjectsRef.current = true;
     didLoadSessionsRef.current = true;
     void (async () => {
+      if (desktopSurface) {
+        try {
+          await loadSessions({ silent: true });
+        } catch (error) {
+          console.error('Failed to load sessions:', error);
+        }
+        return;
+      }
       try {
         await loadBootstrapResource(
           () => loadProjects({ force: true, throwOnError: true }),
@@ -101,13 +112,14 @@ export const useSessionListBootstrap = ({
         console.error('Failed to load sessions:', error);
       }
     })();
-  }, [loadContacts, loadProjects, loadSessions]);
+  }, [desktopSurface, loadContacts, loadProjects, loadSessions]);
 
   useEffect(() => {
+    if (desktopSurface) return;
     if (didLoadAgentsRef.current) return;
     didLoadAgentsRef.current = true;
     void loadAgents();
-  }, [loadAgents]);
+  }, [desktopSurface, loadAgents]);
 
   useEffect(() => {
     if (!terminalsEnabled) return;

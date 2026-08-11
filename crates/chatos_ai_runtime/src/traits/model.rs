@@ -27,6 +27,7 @@ pub struct ModelRuntimeConfig {
     pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
     pub prompt_cache_key: Option<String>,
+    pub previous_response_id: Option<String>,
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
@@ -84,6 +85,11 @@ impl ModelRuntimeConfig {
         self
     }
 
+    pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
+        self.previous_response_id = previous_response_id;
+        self
+    }
+
     pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
         self.request_cwd = request_cwd;
         self
@@ -121,6 +127,7 @@ impl ModelRuntimeConfig {
             max_output_tokens: self.max_output_tokens,
             thinking_level: self.thinking_level.clone(),
             prompt_cache_key: self.prompt_cache_key.clone(),
+            previous_response_id: self.previous_response_id.clone(),
             request_cwd: self.request_cwd.clone(),
             include_prompt_cache_retention: self.include_prompt_cache_retention,
             request_body_limit_bytes: self.request_body_limit_bytes,
@@ -160,6 +167,7 @@ pub struct ModelRequest {
     pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
     pub prompt_cache_key: Option<String>,
+    pub previous_response_id: Option<String>,
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
@@ -195,6 +203,7 @@ impl ModelRequest {
             max_output_tokens: None,
             thinking_level: None,
             prompt_cache_key: None,
+            previous_response_id: None,
             request_cwd: None,
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
@@ -234,6 +243,11 @@ impl ModelRequest {
 
     pub fn with_prompt_cache_key(mut self, prompt_cache_key: Option<String>) -> Self {
         self.prompt_cache_key = prompt_cache_key;
+        self
+    }
+
+    pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
+        self.previous_response_id = previous_response_id;
         self
     }
 

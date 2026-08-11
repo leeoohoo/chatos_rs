@@ -139,4 +139,56 @@ describe('buildRunProcessTimelineItems', () => {
       status: 'error',
     });
   });
+
+  it('uses a truncation preview instead of showing a false empty result', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'tool_stream', {
+        truncated: true,
+        original_bytes: 64000,
+        preview: '{"path":"src/large.rs","content":"visible preview"}',
+      }),
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      type: 'tool_result',
+      hasResult: true,
+      result: '{"path":"src/large.rs","content":"visible preview"}',
+    });
+  });
+
+  it('falls back to content when a structured result is empty', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'tools_start', [{
+        id: 'call-read',
+        function: { name: 'read_file', arguments: '{}' },
+      }]),
+      event('2', 'tool_stream', {
+        tool_call_id: 'call-read',
+        success: true,
+        is_stream: false,
+        result: {},
+        content: 'visible content',
+      }),
+    ]);
+
+    expect(items[0]).toMatchObject({
+      type: 'tool_call',
+      hasResult: true,
+      result: 'visible content',
+    });
+  });
+
+  it('does not create a card for a genuinely empty unpaired result', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'tool_stream', {
+        success: true,
+        is_stream: false,
+        result: {},
+        content: '',
+      }),
+    ]);
+
+    expect(items).toEqual([]);
+  });
 });
