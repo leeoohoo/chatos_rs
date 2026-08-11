@@ -3,8 +3,8 @@
 ## 首次启动
 
 ```bash
-cp docker/.env.example docker/.env
-# 修改 docker/.env
+cp docker/bootstrap.conf.example docker/bootstrap.conf
+# 只填写配置中心启动前必需的引导配置
 docker/deploy.sh up
 ```
 

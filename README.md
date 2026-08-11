@@ -267,11 +267,11 @@ Set `LOCAL_CONNECTOR_STATE_PATH` to change the state file location. The SQLite d
 Docker Engine and Docker Compose v2 are required:
 
 ```bash
-cp docker/.env.example docker/.env
+cp docker/bootstrap.conf.example docker/bootstrap.conf
 make docker-up
 ```
 
-The main application is available at <http://localhost:8088> by default. The development administrator is `admin / admin123456`; production deployments must change the default password and internal secrets in `docker/.env`.
+The main application is available at <http://localhost:8088> by default. Business configuration is published through Configuration Center. `docker/bootstrap.conf` contains only the infrastructure and credentials required before Configuration Center can be reached and must not be committed.
 
 Build images from the current source:
 

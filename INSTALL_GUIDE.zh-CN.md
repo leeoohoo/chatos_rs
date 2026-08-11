@@ -16,22 +16,19 @@
 ## 2. 准备配置
 
 ```bash
-cp docker/.env.example docker/.env
+cp docker/bootstrap.conf.example docker/bootstrap.conf
 ```
 
-至少检查这些值：
+至少检查这些引导值：
 
-- `OPENAI_API_KEY`
 - `MONGODB_USER`
 - `MONGODB_PASSWORD`
-- `AUTH_JWT_SECRET`
-- `USER_SERVICE_JWT_SECRET`
-- `PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET`
-- `PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET`
-- `CHATOS_TASK_RUNNER_INTERNAL_API_SECRET`
-- `USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET`
+- `RABBITMQ_DEFAULT_PASS`
+- `VALKEY_PASSWORD`
 - `HARNESS_ADMIN_PASSWORD`
 - 10 个 `CONFIG_CENTER_*_CALLER_SIGNING_SECRET`
+
+JWT、OpenAI、SMTP 和服务间业务密钥不放在该文件中，统一通过配置中心发布。
 
 Configuration Center 的内部 Snapshot/heartbeat 只监听独立 mTLS 端口。Compose 从
 `CONFIG_CENTER_MTLS_DIR` 挂载私有 CA、服务端证书和每个调用方独立的客户端身份；这些
@@ -88,7 +85,7 @@ docker/deploy.sh build-services
 make docker-rebuild SERVICES="task-runner-backend"
 ```
 
-部署脚本默认会在成功更新镜像后自动清理 `<none>:<none>` dangling 镜像。如果调试时需要保留这些镜像，可以在 `docker/.env` 里设置：
+部署脚本默认会在成功更新镜像后自动清理 `<none>:<none>` dangling 镜像。如果调试时需要保留这些镜像，可以在 `docker/bootstrap.conf` 里设置：
 
 ```env
 CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=false
@@ -144,7 +141,7 @@ make local-dev-stop
 - Official Website backend：`39250`
 - MongoDB host port：`27018`
 
-端口可以在 `docker/.env` 里覆盖。
+端口可以在 `docker/bootstrap.conf` 里覆盖。
 
 ## 6. CI 镜像
 
@@ -159,7 +156,7 @@ CHATOS_IMAGE_TAG=latest
 部署机器只需要 Docker 和 Compose：
 
 ```bash
-cp docker/.env.example docker/.env
+cp docker/bootstrap.conf.example docker/bootstrap.conf
 docker/deploy.sh up
 ```
 
