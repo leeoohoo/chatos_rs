@@ -9,7 +9,15 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
 COMPOSE_PLATFORM_FILE="$SCRIPT_DIR/compose.platform.yml"
 COMPOSE_BUILD_FILE="$SCRIPT_DIR/compose.build.yml"
-ENV_FILE="${CHATOS_DOCKER_ENV_FILE:-$SCRIPT_DIR/.env}"
+BOOTSTRAP_FILE="$SCRIPT_DIR/bootstrap.conf"
+LEGACY_ENV_FILE="$SCRIPT_DIR/.env"
+if [[ -n "${CHATOS_DOCKER_ENV_FILE:-}" ]]; then
+  ENV_FILE="$CHATOS_DOCKER_ENV_FILE"
+elif [[ -f "$BOOTSTRAP_FILE" ]]; then
+  ENV_FILE="$BOOTSTRAP_FILE"
+else
+  ENV_FILE="$LEGACY_ENV_FILE"
+fi
 EXTRA_COMPOSE_FILES="${CHATOS_DOCKER_EXTRA_COMPOSE_FILES:-${CHATOS_DOCKER_EXTRA_COMPOSE_FILE:-}}"
 ACTION="${1:-up}"
 
@@ -255,7 +263,10 @@ validate_plugin_ui_origins() {
 
 validate_production_secrets() {
   local failures=0
-  validate_plugin_ui_origins || failures=1
+  # Plugin UI origins and service-to-service credentials are managed by the
+  # Configuration Center. Validate them here only when explicitly supplied as
+  # a legacy deployment override.
+  validate_plugin_ui_origins false || failures=1
   if ! is_production_environment; then
     if (( failures > 0 )); then
       exit 2
@@ -272,13 +283,9 @@ validate_production_secrets() {
     fi
   done <<'EOF'
 MONGODB_PASSWORD|admin
-CHATOS_ADMIN_PASSWORD|admin123456
 HARNESS_ADMIN_PASSWORD|admin123456
-AUTH_JWT_SECRET|dev-only-change-me-please
-USER_SERVICE_JWT_SECRET|change_me_user_service_secret
-PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET|change_me_project_service_user_service_secret
-PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET|change_me_project_service_task_runner_secret
-CHATOS_TASK_RUNNER_INTERNAL_API_SECRET|change_me_chatos_task_runner_internal_secret
+RABBITMQ_DEFAULT_PASS|change_me_rabbitmq_password
+VALKEY_PASSWORD|change_me_valkey_password
 CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET|change_me_config_center_chatos_backend_signing_secret
 CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_local_connector_signing_secret
 CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_mcp_management_signing_secret
@@ -289,30 +296,6 @@ CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_proj
 CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET|change_me_config_center_sandbox_manager_signing_secret
 CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET|change_me_config_center_task_runner_signing_secret
 CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_user_service_signing_secret
-PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET|change_me_plugin_management_task_runner_secret
-PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_project_service_secret
-PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET|change_me_plugin_management_local_connector_secret
-PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_plugin_management_memory_engine_secret
-PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET|change_me_plugin_management_mcp_management_secret
-CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_chatos_project_service_secret
-TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_task_runner_project_service_secret
-PROJECT_SERVICE_SELF_INTERNAL_API_SECRET|change_me_project_service_self_secret
-MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET|change_me_mcp_management_project_service_secret
-MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET|change_me_mcp_management_task_runner_secret
-CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_chatos_local_connector_secret
-TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_task_runner_local_connector_secret
-PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_project_service_local_connector_secret
-MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET|change_me_mcp_management_local_connector_secret
-MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET|change_me_configuration_center_mcp_management_secret
-MCP_MANAGEMENT_RUNTIME_GRANT_SECRET|change_me_mcp_management_runtime_grant_secret
-CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_chatos_memory_engine_secret
-TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_task_runner_memory_engine_secret
-PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_project_service_memory_engine_secret
-USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET|change_me_user_service_memory_engine_secret
-SANDBOX_MANAGER_AGENT_TOKEN_SECRET|chatos-sandbox-agent-dev-secret
-TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_task_runner_sandbox_manager_secret
-PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_project_service_sandbox_manager_secret
-MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET|change_me_mcp_management_sandbox_manager_secret
 EOF
 
   if (( failures > 0 )); then

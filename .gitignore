@@ -20,6 +20,7 @@ logs/
 **/.env.*
 !.env.example
 !**/.env.example
+/docker/bootstrap.conf
 *.pid
 npm-debug.log*
 yarn-debug.log*
