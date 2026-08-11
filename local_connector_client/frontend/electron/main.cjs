@@ -18,6 +18,7 @@ const { isTrustedMainFrameEvent } = require('./ipc-trust.cjs');
 const { createLocalApiBridge } = require('./local-api-bridge.cjs');
 const { createDesktopTicketAuthenticator } = require('./desktop-auth.cjs');
 const { attachRetryingViewLoader } = require('./retrying-view-loader.cjs');
+const { loadChatosPage, reloadChatosPage } = require('./chatos-page-loader.cjs');
 const { createCoreRuntime } = require('./core-runtime.cjs');
 const {
   resolveChatosWebUrl,
@@ -215,7 +216,11 @@ function createChatosView() {
   });
   chatosViewLoader = attachRetryingViewLoader({
     webContents: createdView.webContents,
-    load: () => createdView.webContents.loadURL(chatosUrlWithDesktopParam()),
+    load: () => loadChatosPage({
+      webContents: createdView.webContents,
+      url: chatosUrlWithDesktopParam(),
+      bypassCache: developerMode,
+    }),
     shouldRetry: () => (
       developerMode
       && chatosView === createdView
@@ -614,7 +619,10 @@ app.whenReady().then(async () => {
       return false;
     }
     if (chatosView) {
-      chatosView.webContents.reload();
+      reloadChatosPage({
+        webContents: chatosView.webContents,
+        bypassCache: developerMode,
+      });
     }
     return true;
   });
