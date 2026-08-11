@@ -39,6 +39,7 @@ describe('requirement execution process actions', () => {
         onTogglePause={noop}
         pausing={false}
         phase="stopped"
+        isLocalExecution={false}
         queuedTaskCount={1}
         rerunSettling
         rerunning={false}
@@ -79,6 +80,7 @@ describe('requirement execution process actions', () => {
         onTogglePause={noop}
         pausing={false}
         phase="awaiting_confirmation"
+        isLocalExecution={false}
         queuedTaskCount={0}
         rerunSettling={false}
         rerunning={false}
@@ -93,6 +95,47 @@ describe('requirement execution process actions', () => {
     const executeButton = screen.getByRole('button', { name: '初始化环境中' });
     expect((executeButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('流程图已就绪，执行环境正在初始化，完成后自动开放执行。')).toBeTruthy();
+  });
+
+  it('explains that local connector execution is still orchestrated by the cloud', () => {
+    render(
+      <RequirementExecutionProcessActions
+        actuallyStarted={false}
+        canRegenerate={false}
+        canRerun={false}
+        cancellationSettling={false}
+        confirming={false}
+        executionPaused={false}
+        graphReady
+        hasActiveRuns={false}
+        runtimeEnvironmentReady={false}
+        runtimeEnvironmentStatus="analyzing"
+        onCancelRequirementExecution={noop}
+        onClose={noop}
+        onConfirmExecution={noop}
+        onOpenCancelConfirm={noop}
+        onOpenDiscardConfirm={noop}
+        onOpenFailedTaskRetry={noop}
+        onOpenRerunConfirm={noop}
+        onRegenerate={noop}
+        onTogglePause={noop}
+        pausing={false}
+        phase="awaiting_confirmation"
+        isLocalExecution
+        queuedTaskCount={0}
+        rerunSettling={false}
+        rerunning={false}
+        retryableFailedTaskCount={0}
+        retryingTaskId={null}
+        revising={false}
+        runningTaskCount={0}
+        stopping={false}
+      />,
+    );
+
+    expect(
+      screen.getByText('流程图已就绪，云端正在通过 Local Connector 准备本地执行环境，完成后自动开放执行。'),
+    ).toBeTruthy();
   });
 });
 

@@ -43,8 +43,16 @@ export const RequirementExecutionStartingModal: React.FC<{
               </div>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {starting
-                  ? '正在读取需求、项目任务和技术文档，并整理完整的任务依赖关系。'
-                  : '点击“开始生成执行计划”后会先整理任务和依赖关系；检查无误后，再由你确认开始执行。'}
+                  ? (
+                    isLocalExecution
+                      ? '云端正在读取需求、项目任务和技术文档，并为 Local Connector 本地承载整理完整的任务依赖关系。'
+                      : '云端正在读取需求、项目任务和技术文档，并整理完整的任务依赖关系。'
+                  )
+                  : (
+                    isLocalExecution
+                      ? '点击“开始生成执行计划”后，云端会先整理任务和依赖关系；确认后再通过 Local Connector 调度本机能力执行。'
+                      : '点击“开始生成执行计划”后会先整理任务和依赖关系；检查无误后，再由你确认开始执行。'
+                  )}
               </p>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -118,7 +126,11 @@ export const RequirementExecutionStartingModal: React.FC<{
                 <div className="mt-1 text-xs leading-5 text-muted-foreground">
                   {starting
                     ? '这里只展示计划结果，不会提前启动任务。'
-                    : '你开始生成计划后，新增的任务节点会显示在这里。'}
+                    : (
+                      isLocalExecution
+                        ? '你开始生成计划后，云端新增的任务节点会显示在这里，本机能力只会在确认后通过 Local Connector 介入。'
+                        : '你开始生成计划后，新增的任务节点会显示在这里。'
+                    )}
                 </div>
               </div>
             </div>
@@ -126,7 +138,11 @@ export const RequirementExecutionStartingModal: React.FC<{
               <span className="text-xs text-muted-foreground">
                 {starting
                   ? '正在生成任务依赖图；此阶段不会启动执行。'
-                  : '开始生成与最终执行是两个独立操作。'}
+                  : (
+                    isLocalExecution
+                      ? '开始生成与最终执行是两个独立操作；本地命令和目录访问仍需等到云端确认后再通过 Local Connector 触发。'
+                      : '开始生成与最终执行是两个独立操作。'
+                  )}
               </span>
               <div className="flex items-center gap-2">
                 <button

@@ -251,6 +251,7 @@ export const RequirementExecutionProcessActions: React.FC<{
   onTogglePause: () => void;
   pausing: boolean;
   phase: RequirementExecutionProcessPhase;
+  isLocalExecution: boolean;
   queuedTaskCount: number;
   rerunSettling: boolean;
   rerunning: boolean;
@@ -280,6 +281,7 @@ export const RequirementExecutionProcessActions: React.FC<{
   onTogglePause,
   pausing,
   phase,
+  isLocalExecution,
   queuedTaskCount,
   rerunSettling,
   rerunning,
@@ -298,7 +300,11 @@ export const RequirementExecutionProcessActions: React.FC<{
             ? `正在取消本次执行，等待 ${queuedTaskCount} 个排队任务回写取消状态。`
             : '正在取消本次执行，等待任务回写取消状态。')
         : graphReady && !runtimeEnvironmentReady
-        ? '流程图已就绪，执行环境正在初始化，完成后自动开放执行。'
+        ? (
+          isLocalExecution
+            ? '流程图已就绪，云端正在通过 Local Connector 准备本地执行环境，完成后自动开放执行。'
+            : '流程图已就绪，执行环境正在初始化，完成后自动开放执行。'
+        )
         : graphReady
         ? '流程图和执行环境均已就绪，当前还没有任务开始运行。'
         : phase === 'paused'
@@ -310,7 +316,11 @@ export const RequirementExecutionProcessActions: React.FC<{
         : phase === 'failed'
           ? '当前批次存在失败或阻塞任务，可查看详情、重试或重新规划。'
         : actuallyStarted
-          ? '执行确认已收到，任务正在按依赖顺序启动。'
+          ? (
+            isLocalExecution
+              ? '执行确认已收到，云端正在按依赖顺序通过 Local Connector 调度本机任务。'
+              : '执行确认已收到，任务正在按依赖顺序启动。'
+          )
           : '完整任务依赖图生成前，执行按钮保持禁用。'}
     </div>
     <div className="flex flex-wrap items-center gap-2">

@@ -387,7 +387,11 @@ export const RequirementExecutionProcessModal: React.FC<{
       setMessage(withProcessStatus(message, next));
       setExecutionConfirmed(true);
       onProcessChange(next);
-      setActionMessage('已确认执行，任务将按照依赖顺序开始运行。');
+      setActionMessage(
+        isLocalExecution
+          ? '已确认执行，云端会按照依赖顺序通过 Local Connector 启动本机任务。'
+          : '已确认执行，任务将按照依赖顺序开始运行。',
+      );
       await refreshSessionById(liveProcess.conversationId);
       await syncSessionMessagesInBackground(liveProcess.conversationId);
       await refreshAll(false);
@@ -758,6 +762,7 @@ export const RequirementExecutionProcessModal: React.FC<{
               onTogglePause={() => void setExecutionPause(!liveProcess.executionPaused)}
               pausing={pausing}
               phase={phase}
+              isLocalExecution={isLocalExecution}
               queuedTaskCount={queuedTaskCount}
               rerunSettling={rerunCancellationSettling}
               rerunning={rerunning}
