@@ -46,9 +46,9 @@ describe('direct API transport surface header', () => {
       { id: 'model-1', model_name: 'gpt-test', provider: 'openai' },
     );
 
-    expect(requestedHeaders(fetchMock).has('X-Chatos-Client-Surface')).toBe(false);
-    expect(requestedHeaders(fetchMock).get('X-Requested-With'))
+    expect(requestedHeaders(fetchMock).get('X-Chatos-Client-Surface'))
       .toBe('local-connector-desktop');
+    expect(requestedHeaders(fetchMock).has('X-Requested-With')).toBe(false);
   });
 
   it('forwards the exact user Plugin selection with the cloud chat command', async () => {
@@ -108,8 +108,8 @@ describe('direct API transport surface header', () => {
       '/workspace/file.txt',
     );
 
-    expect(requestedHeaders(fetchMock).has('X-Chatos-Client-Surface')).toBe(false);
-    expect(requestedHeaders(fetchMock).get('X-Requested-With'))
+    expect(requestedHeaders(fetchMock).get('X-Chatos-Client-Surface'))
       .toBe('local-connector-desktop');
+    expect(requestedHeaders(fetchMock).has('X-Requested-With')).toBe(false);
   });
 });

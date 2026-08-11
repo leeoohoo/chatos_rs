@@ -11,8 +11,7 @@ use axum::http::{
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::core::project_execution::{
-    CHATOS_CLIENT_SURFACE_COMPAT_HEADER, CHATOS_CLIENT_SURFACE_HEADER,
-    LOCAL_CONNECTOR_DESKTOP_SURFACE,
+    CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
 };
 
 pub(super) fn layer(configured_origins: &[String], exposed_header: HeaderName) -> CorsLayer {
@@ -35,7 +34,6 @@ fn allowed_headers() -> Vec<HeaderName> {
         AUTHORIZATION,
         CONTENT_TYPE,
         ORIGIN,
-        HeaderName::from_static(CHATOS_CLIENT_SURFACE_COMPAT_HEADER),
         HeaderName::from_static("x-api-key"),
         HeaderName::from_static("x-openai-key"),
         HeaderName::from_static("x-user-id"),
@@ -86,10 +84,7 @@ fn is_bundled_desktop_origin(origin: &HeaderValue) -> bool {
 }
 
 fn request_has_desktop_surface(request: &Parts) -> bool {
-    let surface_headers = [
-        CHATOS_CLIENT_SURFACE_HEADER,
-        CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-    ];
+    let surface_headers = [CHATOS_CLIENT_SURFACE_HEADER];
     let has_actual_header = surface_headers.iter().any(|header| {
         request
             .headers
@@ -123,8 +118,7 @@ mod tests {
         allowed_headers, is_bundled_desktop_origin, origin_is_allowed, request_has_desktop_surface,
     };
     use crate::core::project_execution::{
-        CHATOS_CLIENT_SURFACE_COMPAT_HEADER, CHATOS_CLIENT_SURFACE_HEADER,
-        LOCAL_CONNECTOR_DESKTOP_SURFACE,
+        CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
     };
 
     fn request_parts() -> axum::http::request::Parts {
@@ -151,10 +145,9 @@ mod tests {
 
     #[test]
     fn desktop_surface_is_recognized_on_actual_and_preflight_requests() {
-        for (header, requested_header) in [
-            (CHATOS_CLIENT_SURFACE_HEADER, "X-Chatos-Client-Surface"),
-            (CHATOS_CLIENT_SURFACE_COMPAT_HEADER, "X-Requested-With"),
-        ] {
+        for (header, requested_header) in
+            [(CHATOS_CLIENT_SURFACE_HEADER, "X-Chatos-Client-Surface")]
+        {
             let mut actual = request_parts();
             actual.headers.insert(
                 header,
@@ -175,10 +168,7 @@ mod tests {
 
     #[test]
     fn desktop_header_is_part_of_the_cors_allowlist() {
-        for expected in [
-            CHATOS_CLIENT_SURFACE_HEADER,
-            CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-        ] {
+        for expected in [CHATOS_CLIENT_SURFACE_HEADER] {
             assert!(allowed_headers()
                 .iter()
                 .any(|header| header.as_str() == expected));
@@ -209,10 +199,7 @@ mod tests {
             &plain_request
         ));
 
-        for header in [
-            CHATOS_CLIENT_SURFACE_HEADER,
-            CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-        ] {
+        for header in [CHATOS_CLIENT_SURFACE_HEADER] {
             let mut desktop_request = request_parts();
             desktop_request.headers.insert(
                 header,

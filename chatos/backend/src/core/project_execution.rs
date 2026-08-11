@@ -14,7 +14,6 @@ use crate::models::session::Session;
 use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
 
 pub const CHATOS_CLIENT_SURFACE_HEADER: &str = "x-chatos-client-surface";
-pub const CHATOS_CLIENT_SURFACE_COMPAT_HEADER: &str = "x-requested-with";
 pub const LOCAL_CONNECTOR_DESKTOP_SURFACE: &str = "local-connector-desktop";
 
 pub fn project_is_visible_on_request(_project: &Project, _headers: &HeaderMap) -> bool {
@@ -69,8 +68,8 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     use super::{
-        project_is_visible_on_request, CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-        CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
+        project_is_visible_on_request, CHATOS_CLIENT_SURFACE_HEADER,
+        LOCAL_CONNECTOR_DESKTOP_SURFACE,
     };
     use crate::models::project::Project;
 
@@ -101,15 +100,5 @@ mod tests {
             HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
         );
         assert!(project_is_visible_on_request(&local, &desktop_headers));
-
-        let mut compatibility_headers = HeaderMap::new();
-        compatibility_headers.insert(
-            CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-            HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
-        );
-        assert!(project_is_visible_on_request(
-            &local,
-            &compatibility_headers
-        ));
     }
 }
