@@ -127,8 +127,9 @@ local_connector_client/dist/electron-linux/
 ```
 
 Linux currently ships the explicit `linux-browser` runtime profile. It contains the desktop app,
-Local Connector Core, sandbox MCP server, bundled `rg`, Plugin/Skill catalogs, ChatOS frontend,
-SQLite migrations, the fixed-identity Chrome extension, and the Linux native messaging host. The
+Local Connector Core, sandbox MCP server, bundled `rg`, Plugin/Skill catalogs, SQLite migrations,
+the fixed-identity Chrome extension, and the Linux native messaging host. The desktop shell loads
+the hosted ChatOS web application at runtime instead of packaging a local ChatOS frontend bundle. The
 client registers user-scoped manifests for both Google Chrome and Chromium when the user explicitly
 enables Chrome integration. When Ubuntu's Snap Chromium is installed, the client also writes the
 Snap profile manifest, copies the Native Host into the Snap-accessible user directory, and publishes
