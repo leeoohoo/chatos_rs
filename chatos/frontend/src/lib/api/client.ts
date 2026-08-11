@@ -17,7 +17,6 @@ import type {
   ConversationMessagePayload,
   WebSocketTicketResponse,
 } from './client/types';
-import { LocalRuntimeClient } from './localRuntime';
 import * as workspaceApi from './client/workspace';
 
 // 统一通过 ChatOS 网关入口访问 API，便于桌面端、浏览器端与部署环境保持一致。
@@ -28,7 +27,6 @@ const API_BASE_URL = ENV_API_BASE_URL || '/api/chatos';
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
-  private readonly localRuntime = new LocalRuntimeClient();
   private tokenRefreshListeners = new Set<(token: string) => void>();
   private authenticationFailureListeners = new Set<() => void>();
   private readonly requestFn: workspaceApi.ApiRequestFn = (endpoint, options) => this.request(endpoint, options);
@@ -43,10 +41,6 @@ class ApiClient {
 
   getRequestFn(): workspaceApi.ApiRequestFn {
     return this.requestFn;
-  }
-
-  getLocalRuntimeClient(): LocalRuntimeClient {
-    return this.localRuntime;
   }
 
   setAccessToken(token?: string | null): void {
