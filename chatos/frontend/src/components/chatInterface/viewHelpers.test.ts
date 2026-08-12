@@ -42,4 +42,9 @@ describe('resolveModelSupportFlags', () => {
     expect(resolveModelSupportFlags('model-1', [model({})], 'high'))
       .toEqual({ supportsImages: false, supportsReasoning: true });
   });
+
+  it('keeps the reasoning control visible for every selected model', () => {
+    expect(resolveModelSupportFlags('model-1', [model({})]))
+      .toEqual({ supportsImages: false, supportsReasoning: true });
+  });
 });

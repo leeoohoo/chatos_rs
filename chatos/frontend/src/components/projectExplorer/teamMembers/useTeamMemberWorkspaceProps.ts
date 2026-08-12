@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import type { ComponentProps } from 'react';
 
 import TeamMemberWorkspace from './TeamMemberWorkspace';
+import { resolveModelSupportFlags } from '../../chatInterface/viewHelpers';
 import type { UseTeamMembersPaneViewPropsOptions } from './teamMembersPaneViewPropTypes';
 
 export const useTeamMemberWorkspaceProps = ({
@@ -18,11 +19,10 @@ export const useTeamMemberWorkspaceProps = ({
     && store.sessionMessagePaginationState?.[selectedSessionId]?.nextBefore
   );
   const selectedRuntimeModelId = resources.composer.composerSelectedModelId;
-  const selectedRuntimeModel = (store.aiModelConfigs || [])
-    .find((item) => item.id === selectedRuntimeModelId);
-  const supportsReasoning = Boolean(
-    selectedRuntimeModelId
-    && (selectedRuntimeModel?.supports_reasoning === true || selectedRuntimeModel?.thinking_level),
+  const { supportsReasoning } = resolveModelSupportFlags(
+    selectedRuntimeModelId,
+    store.aiModelConfigs || [],
+    resources.composer.composerSelectedThinkingLevel,
   );
   const handleSend: ComponentProps<typeof TeamMemberWorkspace>['onSend'] = async (
     content,

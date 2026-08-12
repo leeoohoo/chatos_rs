@@ -22,9 +22,8 @@ export const resolveModelCapabilities = (
   reasoningEnabled: boolean;
 } => {
   const supportsImages = selectedModel?.supports_images === true;
-  const supportsReasoning = selectedModel?.supports_reasoning === true || !!selectedModel?.thinking_level;
-  const reasoningEnabled = supportsReasoning
-    && reasoningEnabledSetting === true;
+  const supportsReasoning = Boolean(selectedModel?.id);
+  const reasoningEnabled = reasoningEnabledSetting === true;
   return {
     supportsImages,
     supportsReasoning,
