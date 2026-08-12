@@ -26,6 +26,12 @@ impl ChatosTaskRunnerToolProfile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentExecutionLocation {
+    CloudEventDriven,
+    ClientLocalLoop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentDescriptor {
     pub key: SystemAgentKey,
     pub display_name: &'static str,
@@ -33,6 +39,7 @@ pub struct AgentDescriptor {
     pub description: &'static str,
     pub include_user_resources: bool,
     pub tool_plane: AgentToolPlane,
+    pub execution_location: AgentExecutionLocation,
 }
 
 impl AgentDescriptor {
@@ -43,6 +50,7 @@ impl AgentDescriptor {
         description: &'static str,
         include_user_resources: bool,
         tool_plane: AgentToolPlane,
+        execution_location: AgentExecutionLocation,
     ) -> Self {
         Self {
             key,
@@ -51,6 +59,7 @@ impl AgentDescriptor {
             description,
             include_user_resources,
             tool_plane,
+            execution_location,
         }
     }
 }
@@ -62,6 +71,7 @@ pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
     "Runs normal Chat OS conversations while applying the selected contact as user-specific role context.",
     false,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -71,6 +81,7 @@ pub static CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDe
     "Runs Chat OS conversations for Local Connector projects with an independently configurable local execution identity.",
     false,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 static RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -80,6 +91,7 @@ static RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
     "Retired compatibility identity. Chat OS plan mode now submits a Task Runner planning task programmatically, and task_runner_plan_phase performs the planning.",
     false,
     AgentToolPlane::None,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescriptor =
@@ -90,6 +102,7 @@ pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescript
         "Splits project-management work items into concrete Task Runner execution tasks for Chat OS project requirement execution.",
         true,
         AgentToolPlane::Managed,
+        AgentExecutionLocation::CloudEventDriven,
     );
 
 pub static PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR: AgentDescriptor =
@@ -100,6 +113,7 @@ pub static PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR: AgentDe
         "Splits local-project work items into concrete Task Runner execution tasks for Chat OS project requirement execution with a separate local configuration surface.",
         true,
         AgentToolPlane::Managed,
+        AgentExecutionLocation::CloudEventDriven,
     );
 
 pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -109,6 +123,7 @@ pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor:
     "Runs non-mutating Task Runner planning tasks in the cloud execution plane with a planning-specific Prompt and capability boundary.",
     true,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -118,6 +133,7 @@ pub static TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescr
     "Runs non-mutating Task Runner planning tasks for Local Connector projects with an independently configurable local execution identity.",
     true,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -127,6 +143,7 @@ pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     "Executes implementation, testing, repair, deployment, and other mutating Task Runner work in the cloud execution plane.",
     true,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -136,6 +153,7 @@ pub static TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor
     "Executes implementation, testing, repair, deployment, and other mutating Task Runner work for Local Connector projects with a separate local configuration surface.",
     true,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static PROJECT_MANAGEMENT_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -145,6 +163,7 @@ pub static PROJECT_MANAGEMENT_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescripto
     "Inspects project files, resolves sandbox images, and persists the project runtime environment.",
     false,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -154,6 +173,7 @@ pub static PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDes
     "Inspects Local Connector project files, resolves project runtime dependencies, and persists the local project runtime environment with an independently configurable local identity.",
     false,
     AgentToolPlane::Managed,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR: AgentDescriptor =
@@ -164,6 +184,7 @@ pub static LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR: AgentDescriptor =
         "Reviews local shell commands with read-only project tools and returns an approval decision.",
         false,
         AgentToolPlane::LocalOnly,
+        AgentExecutionLocation::ClientLocalLoop,
     );
 
 pub static MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -173,6 +194,7 @@ pub static MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescri
     "Compresses raw conversation records into a high-signal level-zero thread summary.",
     false,
     AgentToolPlane::None,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -182,6 +204,7 @@ pub static MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescrip
     "Consolidates lower-level thread summaries into durable higher-level project knowledge.",
     false,
     AgentToolPlane::None,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static MEMORY_ENGINE_SUBJECT_MEMORY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -191,6 +214,7 @@ pub static MEMORY_ENGINE_SUBJECT_MEMORY_AGENT_DESCRIPTOR: AgentDescriptor = Agen
     "Distills thread summaries into durable subject memories for long-term recall.",
     false,
     AgentToolPlane::None,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static MEMORY_ENGINE_MEMORY_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -200,6 +224,7 @@ pub static MEMORY_ENGINE_MEMORY_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     "Consolidates lower-level subject memories into stable higher-level long-term memory.",
     false,
     AgentToolPlane::None,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -209,6 +234,7 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     "Builds a user-grounded repair summary when conversation context has drifted.",
     false,
     AgentToolPlane::None,
+    AgentExecutionLocation::CloudEventDriven,
 );
 
 static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 16] = [
@@ -523,5 +549,30 @@ mod tests {
         assert!(!requires_expected_project_task_ids(
             SystemAgentKey::ChatosConversationAgent
         ));
+    }
+
+    #[test]
+    fn desktop_approval_is_the_only_client_local_loop_agent() {
+        let local_loop_agents = system_agent_catalog()
+            .iter()
+            .filter(|descriptor| {
+                descriptor.execution_location == AgentExecutionLocation::ClientLocalLoop
+            })
+            .map(|descriptor| descriptor.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            local_loop_agents,
+            vec![SystemAgentKey::LocalConnectorCommandApprovalAgent]
+        );
+        assert_eq!(
+            system_agent_catalog()
+                .iter()
+                .filter(|descriptor| {
+                    descriptor.execution_location == AgentExecutionLocation::CloudEventDriven
+                })
+                .count(),
+            15
+        );
     }
 }

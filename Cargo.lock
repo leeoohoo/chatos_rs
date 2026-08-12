@@ -923,6 +923,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_cloud_agent_protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chatos_config_sdk"
 version = "0.1.0"
 dependencies = [
