@@ -11,6 +11,7 @@ use crate::services::{
     TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
+use chatos_cloud_agent_runtime::CloudAgentStateStore;
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 use chatos_queue_observability::RabbitMqQueueInspector;
 use memory_engine_sdk::UpsertSourceRequest;
@@ -356,6 +357,12 @@ impl AppState {
             None
         };
         let store = AppStore::new(&config).await?;
+        let cloud_agent_store = match config.store_mode {
+            crate::config::StoreMode::Memory => CloudAgentStateStore::memory(),
+            crate::config::StoreMode::Mongo => {
+                CloudAgentStateStore::connect(config.database_url.as_str()).await?
+            }
+        };
         let auth_service = AuthService::new(config.clone(), store.clone());
         auth_service.ensure_default_admin(&config).await?;
         let plugin_management_config = PluginManagementClientConfig::from_env("task-runner")
@@ -386,6 +393,7 @@ impl AppState {
             ask_user_prompt_service.clone(),
             plugin_management_client,
             runtime_stats.clone(),
+            cloud_agent_store,
         );
         let mcp_catalog_service =
             McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());

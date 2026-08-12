@@ -90,6 +90,12 @@ pub struct TaskRunRecord {
     pub id: String,
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_ordering_lane_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_lane_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_lane_key: Option<String>,
     pub model_config_id: String,
     pub memory_thread_id: String,
@@ -169,6 +175,9 @@ impl TaskRunRecord {
         Self {
             id,
             task_id,
+            agent_run_id: None,
+            agent_ordering_lane_key: None,
+            agent_lane_seq: None,
             execution_lane_key: None,
             model_config_id,
             memory_thread_id,

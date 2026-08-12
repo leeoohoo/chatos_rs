@@ -301,6 +301,9 @@ fn run_record(task: &TaskRecord) -> TaskRunRecord {
     TaskRunRecord {
         id: "run-1".to_string(),
         task_id: task.id.clone(),
+        agent_run_id: None,
+        agent_ordering_lane_key: None,
+        agent_lane_seq: None,
         execution_lane_key: None,
         model_config_id: "model-1".to_string(),
         memory_thread_id: task.memory_thread_id.clone(),

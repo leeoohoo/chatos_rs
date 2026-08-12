@@ -151,7 +151,21 @@ impl MongoCloudAgentRunStore {
     }
 
     pub async fn insert_run(&self, record: CloudAgentRunRecord) -> Result<(), String> {
+        self.insert_run_with_outbox(record, Vec::new()).await
+    }
+
+    pub async fn insert_run_with_outbox(
+        &self,
+        record: CloudAgentRunRecord,
+        outbox: Vec<CloudAgentOutboxIntent>,
+    ) -> Result<(), String> {
         record.validate()?;
+        for intent in &outbox {
+            intent.validate()?;
+            if intent.ordering != record.ordering {
+                return Err("initial outbox ordering does not match Cloud Agent run".to_string());
+            }
+        }
         let lane = self
             .lanes
             .find_one(
@@ -164,19 +178,60 @@ impl MongoCloudAgentRunStore {
         if record.ordering.lane_seq == 0 || record.ordering.lane_seq > lane.next_lane_seq {
             return Err("Cloud Agent run lane_seq was not allocated by the lane store".to_string());
         }
-        self.runs
-            .insert_one(
-                CloudAgentRunDocument {
-                    id: record.ordering.agent_run_id.clone(),
-                    record,
-                    claim_token: None,
-                    claim_until: None,
-                },
-                None,
-            )
+        let mut session =
+            self.client.start_session(None).await.map_err(|error| {
+                format!("start Cloud Agent creation transaction failed: {error}")
+            })?;
+        session
+            .start_transaction(None)
             .await
-            .map(|_| ())
-            .map_err(|error| format!("insert Cloud Agent run failed: {error}"))
+            .map_err(|error| format!("begin Cloud Agent creation transaction failed: {error}"))?;
+        let result = async {
+            self.runs
+                .insert_one_with_session(
+                    CloudAgentRunDocument {
+                        id: record.ordering.agent_run_id.clone(),
+                        record,
+                        claim_token: None,
+                        claim_until: None,
+                    },
+                    None,
+                    &mut session,
+                )
+                .await
+                .map_err(|error| format!("insert Cloud Agent run failed: {error}"))?;
+            for intent in &outbox {
+                self.outbox
+                    .insert_one_with_session(
+                        CloudAgentOutboxDocument {
+                            event_id: intent.event_id.clone(),
+                            intent: intent.clone(),
+                            status: "pending".to_string(),
+                            publish_attempts: 0,
+                            created_at: DateTime::now(),
+                            updated_at: DateTime::now(),
+                        },
+                        None,
+                        &mut session,
+                    )
+                    .await
+                    .map_err(|error| {
+                        format!("insert initial Cloud Agent outbox intent failed: {error}")
+                    })?;
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        match result {
+            Ok(()) => session
+                .commit_transaction()
+                .await
+                .map_err(|error| format!("commit Cloud Agent creation failed: {error}")),
+            Err(error) => {
+                let _ = session.abort_transaction().await;
+                Err(error)
+            }
+        }
     }
 
     pub async fn advance_lane_after_terminal(
@@ -425,6 +480,9 @@ impl MongoCloudAgentRunStore {
                         "record.ordering.step_seq": i64::try_from(transition.next_step_seq).unwrap_or(i64::MAX),
                         "record.iteration": i64::from(transition.next_iteration),
                         "record.retry_count": i64::from(transition.next_retry_count),
+                        "record.previous_response_id": bson::to_bson(&transition.previous_response_id).map_err(|error| error.to_string())?,
+                        "record.continuation_mode": bson::to_bson(&transition.continuation_mode).map_err(|error| error.to_string())?,
+                        "record.current_input_items_ref": transition.current_input_items_ref.as_str(),
                         "record.pending_batch_id": bson::to_bson(&transition.pending_batch_id).map_err(|error| error.to_string())?,
                         "record.pending_tool_calls": bson::to_bson(&transition.pending_tool_calls).map_err(|error| error.to_string())?,
                         "record.pending_tool_results": bson::to_bson(&transition.pending_tool_results).map_err(|error| error.to_string())?,

@@ -7,6 +7,12 @@ use crate::models::{
     normalize_execution_environment_mode, normalize_project_id, PUBLIC_PROJECT_ID,
 };
 use crate::services::project_management_api_client;
+use chatos_agent::AgentIdentity;
+use chatos_cloud_agent_protocol::{
+    CloudAgentOrdering, CloudAgentRunPhase, CloudAgentRunRecord, CloudAgentRunStatus,
+};
+use chatos_cloud_agent_runtime::CloudAgentOutboxIntent;
+use chrono::Utc;
 
 impl RunService {
     pub async fn start_run(
@@ -208,6 +214,90 @@ impl RunService {
             "sandbox_enabled": sandbox_enabled,
             "retry_of_run_id": retry_of_run_id,
         });
+        let agent = chatos_agent::TaskRunnerAgent::new(agent_key);
+        let agent_prompt =
+            crate::services::plugin_management_prompts::resolve_task_runner_agent_prompt(
+                self,
+                &agent,
+                model_config.prompt_vendor.as_deref(),
+                model_config.provider.as_str(),
+            )
+            .await?;
+        let max_iterations =
+            u32::try_from(self.effective_task_execution_max_iterations().await?)
+                .map_err(|_| "Task Runner max iterations exceeds Cloud Agent range".to_string())?;
+        let ordering_lane_key = task
+            .execution_lane_key()
+            .unwrap_or_else(|| format!("task:{}", task.id));
+        let lane_seq = self
+            .cloud_agent_store
+            .allocate_lane_seq(ordering_lane_key.as_str())
+            .await?;
+        let agent_run_id = format!("task_runner_agent_{run_id}");
+        let ordering = CloudAgentOrdering {
+            ordering_lane_key: ordering_lane_key.clone(),
+            lane_seq,
+            agent_run_id: agent_run_id.clone(),
+            generation: 1,
+            step_seq: 1,
+        };
+        let cloud_now = Utc::now();
+        let cloud_run = CloudAgentRunRecord {
+            ordering: ordering.clone(),
+            owner_service: "task-runner".to_string(),
+            owner_entity_type: "task_run".to_string(),
+            owner_entity_id: run_id.clone(),
+            owner_user_id: task
+                .owner_user_id
+                .as_deref()
+                .or(task.creator_user_id.as_deref())
+                .unwrap_or(task.subject_id.as_str())
+                .to_string(),
+            agent_key: agent.descriptor().key.as_str().to_string(),
+            status: CloudAgentRunStatus::ModelReady,
+            phase: CloudAgentRunPhase::Ready,
+            iteration: 0,
+            model_config_ref: model_config_id.clone(),
+            model_runtime_snapshot_ref: format!("task_run:{run_id}:model_runtime"),
+            agent_prompt_revision: agent_prompt.revision.to_string(),
+            agent_prompt_checksum: agent_prompt.checksum.clone(),
+            capability_policy_revision: capability_policy
+                .as_ref()
+                .map(|policy| policy.policy_revision())
+                .unwrap_or("unmanaged")
+                .to_string(),
+            mcp_runtime_session_ref: None,
+            previous_response_id: None,
+            continuation_mode: Some("run_started".to_string()),
+            pending_batch_id: None,
+            pending_tool_calls: Vec::new(),
+            pending_tool_results: Vec::new(),
+            current_input_items_ref: format!("task_run:{run_id}:input_snapshot"),
+            usage_accumulator: Value::Null,
+            max_iterations,
+            retry_count: 0,
+            deadline_at: None,
+            cancel_requested: false,
+            terminal_outcome: None,
+            version: 1,
+            created_at: cloud_now,
+            updated_at: cloud_now,
+        };
+        let start_event_id = format!("cloud_agent_run_started_{agent_run_id}_1");
+        let start_outbox = CloudAgentOutboxIntent {
+            event_id: start_event_id.clone(),
+            topic: "run_started".to_string(),
+            routing_key: "cloud_agent.task_runner.runtime".to_string(),
+            ordering,
+            causation_id: run_id.clone(),
+            correlation_id: agent_run_id.clone(),
+            available_at: cloud_now,
+            payload: json!({
+                "event_type": "run_started",
+                "event_id": start_event_id,
+                "task_run_id": run_id,
+            }),
+        };
         let now = now_rfc3339();
         let mut run = TaskRunRecord::queued(
             run_id.clone(),
@@ -218,10 +308,24 @@ impl RunService {
             plugin_snapshots,
             now,
         );
+        run.agent_run_id = Some(agent_run_id);
+        run.agent_ordering_lane_key = Some(ordering_lane_key);
+        run.agent_lane_seq = Some(lane_seq);
         run.execution_lane_key = task.execution_lane_key();
         let requested_dispatch_paused = task.task_tool_state.execution_paused;
         run.dispatch_paused = requested_dispatch_paused || retry_of_run_id.is_some();
-        self.store.save_run(run.clone()).await?;
+        self.cloud_agent_store
+            .insert_run_with_outbox(cloud_run, vec![start_outbox])
+            .await?;
+        if let Err(error) = self.store.save_run(run.clone()).await {
+            warn!(
+                run_id = run.id.as_str(),
+                agent_run_id = run.agent_run_id.as_deref().unwrap_or_default(),
+                error = error.as_str(),
+                "Task Run persistence failed after Cloud Agent creation"
+            );
+            return Err(error);
+        }
         if let Some(previous_run_id) = retry_of_run_id {
             Box::pin(self.prepare_retry_task_session(
                 task.id.as_str(),

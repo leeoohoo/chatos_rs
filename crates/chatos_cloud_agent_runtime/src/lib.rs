@@ -86,6 +86,11 @@ pub struct CloudAgentAtomicTransition {
     pub next_iteration: u32,
     pub next_retry_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_mode: Option<String>,
+    pub current_input_items_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_batch_id: Option<String>,
     #[serde(default)]
     pub pending_tool_calls: Vec<Value>,
@@ -102,6 +107,9 @@ impl CloudAgentAtomicTransition {
         self.claim.validate()?;
         if self.next_step_seq < self.claim.ordering.step_seq {
             return Err("next_step_seq cannot move backwards".to_string());
+        }
+        if self.current_input_items_ref.trim().is_empty() {
+            return Err("current_input_items_ref must not be empty".to_string());
         }
         if self.next_status.is_terminal() != (self.next_phase == CloudAgentRunPhase::Terminal) {
             return Err("terminal status and terminal phase must change together".to_string());
@@ -291,7 +299,10 @@ pub fn reduce_single_step(
         .ok_or_else(|| "step_seq overflow".to_string())?;
     let next_iteration = run.iteration.saturating_add(1);
     let transition = match outcome {
-        AiSingleStepOutcome::ToolCommand { tool_calls, .. } => {
+        AiSingleStepOutcome::ToolCommand {
+            response,
+            tool_calls,
+        } => {
             let batch_id = stable_batch_id(&claim.ordering);
             CloudAgentAtomicTransition {
                 claim: claim.clone(),
@@ -300,6 +311,12 @@ pub fn reduce_single_step(
                 next_step_seq,
                 next_iteration,
                 next_retry_count: 0,
+                previous_response_id: response.response_id.clone(),
+                continuation_mode: Some("mcp_tool_results".to_string()),
+                current_input_items_ref: format!(
+                    "cloud_agent:{}:{}:{}:tool_results",
+                    claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
+                ),
                 pending_batch_id: Some(batch_id.clone()),
                 pending_tool_calls: tool_calls.as_array().cloned().unwrap_or_default(),
                 pending_tool_results: Vec::new(),
@@ -313,15 +330,16 @@ pub fn reduce_single_step(
                         "batch_id": batch_id,
                         "source_step_seq": claim.ordering.step_seq,
                         "calls": tool_calls,
+                        "response_id": response.response_id,
                     }),
                     Utc::now(),
                 )],
             }
         }
         AiSingleStepOutcome::Continue {
+            response,
             input_items,
             reason,
-            ..
         } => CloudAgentAtomicTransition {
             claim: claim.clone(),
             next_status: CloudAgentRunStatus::ModelReady,
@@ -329,6 +347,12 @@ pub fn reduce_single_step(
             next_step_seq,
             next_iteration,
             next_retry_count: 0,
+            previous_response_id: response.response_id.clone(),
+            continuation_mode: Some(reason.clone()),
+            current_input_items_ref: format!(
+                "cloud_agent:{}:{}:{}:continuation",
+                claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
+            ),
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
@@ -338,7 +362,11 @@ pub fn reduce_single_step(
                 causation_id,
                 "ai_runtime_continuation",
                 result_routing_key,
-                serde_json::json!({"reason": reason, "input_items": input_items}),
+                serde_json::json!({
+                    "reason": reason,
+                    "input_items": input_items,
+                    "response_id": response.response_id,
+                }),
                 Utc::now(),
             )],
         },
@@ -357,6 +385,9 @@ pub fn reduce_single_step(
             next_iteration: run.iteration,
             next_retry_count: u32::try_from(next_model_attempt.saturating_sub(1))
                 .unwrap_or(u32::MAX),
+            previous_response_id: run.previous_response_id.clone(),
+            continuation_mode: run.continuation_mode.clone(),
+            current_input_items_ref: run.current_input_items_ref.clone(),
             pending_batch_id: run.pending_batch_id.clone(),
             pending_tool_calls: run.pending_tool_calls.clone(),
             pending_tool_results: run.pending_tool_results.clone(),
@@ -384,6 +415,9 @@ pub fn reduce_single_step(
             next_step_seq,
             next_iteration,
             next_retry_count: 0,
+            previous_response_id: result.response_id.clone(),
+            continuation_mode: None,
+            current_input_items_ref: run.current_input_items_ref.clone(),
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
@@ -422,6 +456,10 @@ fn terminal_transition(
     next_iteration: u32,
     terminal_outcome: Value,
 ) -> CloudAgentAtomicTransition {
+    let current_input_items_ref = format!(
+        "cloud_agent:{}:{}:{}:terminal",
+        claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
+    );
     CloudAgentAtomicTransition {
         claim,
         next_status: status,
@@ -429,6 +467,9 @@ fn terminal_transition(
         next_step_seq,
         next_iteration,
         next_retry_count: 0,
+        previous_response_id: None,
+        continuation_mode: None,
+        current_input_items_ref,
         pending_batch_id: None,
         pending_tool_calls: Vec::new(),
         pending_tool_results: Vec::new(),

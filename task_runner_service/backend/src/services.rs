@@ -6,6 +6,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
+use chatos_cloud_agent_runtime::CloudAgentStateStore;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::PluginManagementClient;
 use chrono::{DateTime, Utc};
@@ -183,6 +184,7 @@ pub struct RunService {
     plugin_management_client: Option<PluginManagementClient>,
     ask_user_prompt_service: AskUserPromptService,
     runtime_stats: crate::state::TaskRunnerRuntimeStats,
+    cloud_agent_store: CloudAgentStateStore,
     start_locks: Arc<KeyedAsyncLockRegistry>,
     callback_delivery_locks: Arc<KeyedAsyncLockRegistry>,
     runtime_abort_tokens:

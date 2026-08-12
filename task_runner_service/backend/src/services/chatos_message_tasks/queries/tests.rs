@@ -113,6 +113,9 @@ fn failed_run_for_task(task: &TaskRecord, run_id: &str) -> TaskRunRecord {
     TaskRunRecord {
         id: run_id.to_string(),
         task_id: task.id.clone(),
+        agent_run_id: None,
+        agent_ordering_lane_key: None,
+        agent_lane_seq: None,
         execution_lane_key: None,
         model_config_id: "model-1".to_string(),
         memory_thread_id: task.memory_thread_id.clone(),

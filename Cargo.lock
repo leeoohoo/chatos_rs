@@ -5834,6 +5834,8 @@ dependencies = [
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
+ "chatos_cloud_agent_protocol",
+ "chatos_cloud_agent_runtime",
  "chatos_config_sdk",
  "chatos_mcp",
  "chatos_mcp_gateway",

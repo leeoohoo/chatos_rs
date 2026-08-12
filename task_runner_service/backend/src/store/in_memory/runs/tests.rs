@@ -13,6 +13,9 @@ fn queued_run() -> TaskRunRecord {
     TaskRunRecord {
         id: "run-1".to_string(),
         task_id: "task-1".to_string(),
+        agent_run_id: None,
+        agent_ordering_lane_key: None,
+        agent_lane_seq: None,
         execution_lane_key: None,
         model_config_id: "model-1".to_string(),
         memory_thread_id: "thread-1".to_string(),

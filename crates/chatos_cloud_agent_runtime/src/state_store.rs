@@ -57,7 +57,16 @@ impl InMemoryCloudAgentRunStore {
     }
 
     pub async fn insert_run(&self, record: CloudAgentRunRecord) -> Result<(), String> {
+        self.insert_run_with_outbox(record, Vec::new()).await
+    }
+
+    pub async fn insert_run_with_outbox(
+        &self,
+        record: CloudAgentRunRecord,
+        outbox: Vec<CloudAgentOutboxIntent>,
+    ) -> Result<(), String> {
         record.validate()?;
+        validate_initial_outbox(&record, &outbox)?;
         let mut state = self.state.lock().await;
         let lane = state
             .lanes
@@ -74,10 +83,18 @@ impl InMemoryCloudAgentRunStore {
         }
         if state
             .runs
-            .insert(record.ordering.agent_run_id.clone(), record)
-            .is_some()
+            .contains_key(record.ordering.agent_run_id.as_str())
         {
             return Err("Cloud Agent run id is already assigned".to_string());
+        }
+        state
+            .runs
+            .insert(record.ordering.agent_run_id.clone(), record);
+        for intent in outbox {
+            state
+                .outbox
+                .entry(intent.event_id.clone())
+                .or_insert(intent);
         }
         Ok(())
     }
@@ -206,6 +223,9 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
             run.ordering.step_seq = transition.next_step_seq;
             run.iteration = transition.next_iteration;
             run.retry_count = transition.next_retry_count;
+            run.previous_response_id = transition.previous_response_id;
+            run.continuation_mode = transition.continuation_mode;
+            run.current_input_items_ref = transition.current_input_items_ref;
             run.pending_batch_id = transition.pending_batch_id;
             run.pending_tool_calls = transition.pending_tool_calls;
             run.pending_tool_results = transition.pending_tool_results;
@@ -271,9 +291,17 @@ impl CloudAgentStateStore {
     }
 
     pub async fn insert_run(&self, record: CloudAgentRunRecord) -> Result<(), String> {
+        self.insert_run_with_outbox(record, Vec::new()).await
+    }
+
+    pub async fn insert_run_with_outbox(
+        &self,
+        record: CloudAgentRunRecord,
+        outbox: Vec<CloudAgentOutboxIntent>,
+    ) -> Result<(), String> {
         match self {
-            Self::Memory(store) => store.insert_run(record).await,
-            Self::Mongo(store) => store.insert_run(record).await,
+            Self::Memory(store) => store.insert_run_with_outbox(record, outbox).await,
+            Self::Mongo(store) => store.insert_run_with_outbox(record, outbox).await,
         }
     }
 
@@ -312,6 +340,19 @@ impl CloudAgentStateStore {
             Self::Mongo(store) => store.mark_outbox_published(event_id).await,
         }
     }
+}
+
+fn validate_initial_outbox(
+    record: &CloudAgentRunRecord,
+    outbox: &[CloudAgentOutboxIntent],
+) -> Result<(), String> {
+    for intent in outbox {
+        intent.validate()?;
+        if intent.ordering != record.ordering {
+            return Err("initial outbox ordering does not match Cloud Agent run".to_string());
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -428,6 +469,9 @@ mod tests {
                 next_step_seq: 2,
                 next_iteration: 1,
                 next_retry_count: 0,
+                previous_response_id: None,
+                continuation_mode: None,
+                current_input_items_ref: "task_run:run-1:terminal".to_string(),
                 pending_batch_id: None,
                 pending_tool_calls: Vec::new(),
                 pending_tool_results: Vec::new(),
