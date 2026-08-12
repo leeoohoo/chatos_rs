@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chatos_cloud_agent_protocol::CloudAgentRunRecord;
 use mongodb::bson::{self, doc, DateTime};
 use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
-use mongodb::{Client, Collection, IndexModel};
+use mongodb::{Client, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -65,6 +65,10 @@ impl MongoCloudAgentRunStore {
         let database = client
             .default_database()
             .ok_or_else(|| "Cloud Agent database URL must include a database name".to_string())?;
+        Self::from_database(client, database).await
+    }
+
+    pub async fn from_database(client: Client, database: Database) -> Result<Self, String> {
         let store = Self {
             client,
             runs: database.collection(RUN_COLLECTION),

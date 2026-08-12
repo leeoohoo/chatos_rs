@@ -66,3 +66,11 @@ impl Default for DatabaseConfig {
 pub enum Database {
     Mongo { _client: Client, db: MongoDatabase },
 }
+
+impl Database {
+    pub fn mongodb_parts(&self) -> (Client, MongoDatabase) {
+        match self {
+            Self::Mongo { _client, db } => (_client.clone(), db.clone()),
+        }
+    }
+}

@@ -285,6 +285,15 @@ impl CloudAgentStateStore {
         ))
     }
 
+    pub async fn from_mongodb_database(
+        client: mongodb::Client,
+        database: mongodb::Database,
+    ) -> Result<Self, String> {
+        Ok(Self::Mongo(
+            MongoCloudAgentRunStore::from_database(client, database).await?,
+        ))
+    }
+
     pub async fn allocate_lane_seq(&self, ordering_lane_key: &str) -> Result<u64, String> {
         match self {
             Self::Memory(store) => store.allocate_lane_seq(ordering_lane_key).await,

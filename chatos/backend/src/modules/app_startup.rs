@@ -28,6 +28,13 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         .map_err(|err| format!("Failed to init database: {err}"))?;
     core::runtime_health::mark_runtime_check_ok("database", true, "database initialized");
 
+    super::cloud_agent_runtime::initialize().await?;
+    core::runtime_health::mark_runtime_check_ok(
+        "cloud_agent_store",
+        true,
+        "Cloud Agent store initialized",
+    );
+
     match crate::repositories::user_settings::purge_managed_runtime_settings().await {
         Ok(modified_count) => {
             info!(
