@@ -3,7 +3,10 @@
 
 use std::time::Duration;
 
-use chatos_cloud_agent_runtime::{CloudAgentRabbitMqTopology, CloudAgentServiceRuntime};
+use chatos_cloud_agent_runtime::{
+    CloudAgentProfileRegistry, CloudAgentRabbitMqTopology, CloudAgentServiceRuntime,
+};
+use chatos_plugin_management_sdk::SystemAgentKey;
 use tokio::task::JoinHandle;
 
 use crate::state::AppState;
@@ -11,8 +14,18 @@ use crate::state::AppState;
 pub(crate) const PROJECT_CLOUD_AGENT_ROUTING_KEY: &str = "cloud_agent.project.runtime";
 pub(crate) const PROJECT_CLOUD_AGENT_RETRY_ROUTING_KEY: &str = "cloud_agent.project.runtime.retry";
 
-fn runtime(state: AppState) -> CloudAgentServiceRuntime<AppState> {
-    CloudAgentServiceRuntime::new(state, PROJECT_CLOUD_AGENT_ROUTING_KEY)
+fn runtime(state: AppState) -> CloudAgentServiceRuntime<CloudAgentProfileRegistry> {
+    let registry =
+        CloudAgentProfileRegistry::new("project-service", state.cloud_agent_store.clone())
+            .register(
+                [
+                    SystemAgentKey::ProjectManagementAgent.as_str(),
+                    SystemAgentKey::ProjectManagementLocalAgent.as_str(),
+                ],
+                crate::services::environment_agent::cloud_agent_profile(state),
+            )
+            .expect("Project Cloud Agent profiles must be valid");
+    CloudAgentServiceRuntime::new(registry, PROJECT_CLOUD_AGENT_ROUTING_KEY)
 }
 
 fn topology(state: &AppState) -> CloudAgentRabbitMqTopology {

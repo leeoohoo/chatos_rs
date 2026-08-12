@@ -13,50 +13,20 @@ use chatos_ai_runtime::{
 use chatos_cloud_agent_protocol::{CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_trigger_execution_identity, cloud_agent_trigger_input_items,
-    create_cloud_agent_run, CloudAgentModelTrigger, CloudAgentRunStore, CloudAgentServiceAdapter,
-    CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor, CloudAgentSingleStepOutput,
-    NewCloudAgentRun,
+    create_cloud_agent_run, CloudAgentModelTrigger, CloudAgentProfile,
+    CloudAgentSingleStepExecution, CloudAgentSingleStepOutput, NewCloudAgentRun,
 };
 use chatos_mcp_runtime::McpExecutor;
 use chrono::Utc;
 use std::sync::Arc;
 
+#[derive(Clone)]
 struct ProjectEnvironmentSingleStepExecutor {
     state: AppState,
 }
 
 #[async_trait::async_trait]
-impl CloudAgentSingleStepExecutor for AppState {
-    async fn execute_single_step(
-        &self,
-        cloud_run: &CloudAgentRunRecord,
-        trigger: &CloudAgentModelTrigger,
-    ) -> Result<CloudAgentSingleStepExecution, String> {
-        ProjectEnvironmentSingleStepExecutor {
-            state: self.clone(),
-        }
-        .execute_single_step(cloud_run, trigger)
-        .await
-    }
-}
-
-#[async_trait::async_trait]
-impl CloudAgentServiceAdapter for AppState {
-    fn owner_service(&self) -> &'static str {
-        "project-service"
-    }
-
-    fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
-        self.cloud_agent_store.clone()
-    }
-
-    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
-        finalize_cloud_agent_terminal(self, agent_run_id).await
-    }
-}
-
-#[async_trait::async_trait]
-impl CloudAgentSingleStepExecutor for ProjectEnvironmentSingleStepExecutor {
+impl CloudAgentProfile for ProjectEnvironmentSingleStepExecutor {
     async fn execute_single_step(
         &self,
         cloud_run: &CloudAgentRunRecord,
@@ -195,20 +165,23 @@ impl CloudAgentSingleStepExecutor for ProjectEnvironmentSingleStepExecutor {
                 .with_retry_input_items(retry_input_items),
         ))
     }
+
+    async fn finalize_terminal(&self, cloud_run: &CloudAgentRunRecord) -> Result<(), String> {
+        finalize_cloud_agent_terminal(&self.state, cloud_run).await
+    }
+}
+
+pub(crate) fn cloud_agent_profile(
+    state: AppState,
+) -> impl CloudAgentProfile + Clone + Send + Sync + 'static {
+    ProjectEnvironmentSingleStepExecutor { state }
 }
 
 pub(crate) async fn finalize_cloud_agent_terminal(
     state: &AppState,
-    agent_run_id: &str,
+    cloud_run: &CloudAgentRunRecord,
 ) -> Result<(), String> {
-    let cloud_run = state
-        .cloud_agent_store
-        .load_run(agent_run_id)
-        .await?
-        .ok_or_else(|| format!("Cloud Agent run not found: {agent_run_id}"))?;
-    if !cloud_run.status.is_terminal() {
-        return Err("Project Environment lifecycle arrived before terminal state".to_string());
-    }
+    let agent_run_id = cloud_run.ordering.agent_run_id.as_str();
     let run_input =
         serde_json::from_value::<ProjectEnvironmentAgentRunInput>(cloud_run.input.clone())
             .map_err(|error| format!("decode Project Environment Agent input failed: {error}"))?;

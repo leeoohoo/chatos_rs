@@ -68,6 +68,7 @@ mod project_service;
 mod remote_server_service;
 mod remote_servers;
 mod run_control;
+pub(crate) use run_control::cloud_agent_profile;
 mod run_execution_support;
 mod run_model_phase;
 mod run_post_process;

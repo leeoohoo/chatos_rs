@@ -4,9 +4,10 @@
 use std::time::Duration;
 
 use chatos_cloud_agent_runtime::{
-    publish_cloud_agent_intent, CloudAgentOutboxIntent, CloudAgentRabbitMqTopology,
-    CloudAgentRunStore, CloudAgentServiceRuntime,
+    publish_cloud_agent_intent, CloudAgentOutboxIntent, CloudAgentProfileRegistry,
+    CloudAgentRabbitMqTopology, CloudAgentRunStore, CloudAgentServiceRuntime,
 };
+use chatos_plugin_management_sdk::SystemAgentKey;
 use tokio::task::JoinHandle;
 
 use crate::platform_queue::TaskQueueTopology;
@@ -16,8 +17,23 @@ pub(crate) const TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY: &str = "cloud_agent.task_r
 pub(crate) const TASK_RUNNER_CLOUD_AGENT_RETRY_ROUTING_KEY: &str =
     "cloud_agent.task_runner.runtime.retry";
 
-fn runtime(run_service: RunService) -> CloudAgentServiceRuntime<RunService> {
-    CloudAgentServiceRuntime::new(run_service, TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY)
+fn runtime(
+    run_service: RunService,
+) -> Result<CloudAgentServiceRuntime<CloudAgentProfileRegistry>, String> {
+    let store = run_service.cloud_agent_store();
+    let registry = CloudAgentProfileRegistry::new("task-runner", store).register(
+        [
+            SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
+            SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
+        ],
+        crate::services::cloud_agent_profile(run_service),
+    )?;
+    Ok(CloudAgentServiceRuntime::new(
+        registry,
+        TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY,
+    ))
 }
 
 fn cloud_agent_topology(
@@ -47,7 +63,7 @@ pub fn spawn_cloud_agent_outbox_reconciler(
         .expect("Task Runner Cloud Agent RabbitMQ topology must be configured");
     chatos_cloud_agent_runtime::spawn_cloud_agent_outbox_reconciler(
         cloud_topology,
-        runtime(run_service),
+        runtime(run_service).expect("Task Runner Cloud Agent profiles must be valid"),
     )
 }
 
@@ -57,7 +73,10 @@ pub fn spawn_cloud_agent_consumer(
 ) -> JoinHandle<()> {
     let cloud_topology = cloud_agent_topology(&topology)
         .expect("Task Runner Cloud Agent RabbitMQ topology must be configured");
-    chatos_cloud_agent_runtime::spawn_cloud_agent_consumer(cloud_topology, runtime(run_service))
+    chatos_cloud_agent_runtime::spawn_cloud_agent_consumer(
+        cloud_topology,
+        runtime(run_service).expect("Task Runner Cloud Agent profiles must be valid"),
+    )
 }
 
 pub(crate) async fn publish_dependency_resume(
@@ -98,7 +117,7 @@ pub(crate) async fn publish_dependency_resume(
     };
     publish_cloud_agent_intent(
         &cloud_agent_topology(topology)?,
-        &runtime(run_service.clone()),
+        &runtime(run_service.clone())?,
         &intent,
     )
     .await

@@ -165,6 +165,7 @@ mod compose_refresh_tests {
 }
 
 mod runtime;
+pub(crate) use runtime::analysis::cloud_agent_profile;
 
 pub async fn start_project_runtime_environment(
     state: &AppState,

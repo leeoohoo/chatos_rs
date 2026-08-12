@@ -22,8 +22,9 @@ use tracing::{info, warn};
 
 use crate::{
     consume_cloud_agent_single_step, materialize_mcp_command, CloudAgentConsumeDisposition,
-    CloudAgentConsumeInput, CloudAgentModelTrigger, CloudAgentOutboxIntent, CloudAgentRunStore,
-    CloudAgentSingleStepExecutor, CloudAgentStateStore,
+    CloudAgentConsumeInput, CloudAgentModelTrigger, CloudAgentOutboxIntent,
+    CloudAgentProfileRegistry, CloudAgentRunStore, CloudAgentSingleStepExecutor,
+    CloudAgentStateStore,
 };
 
 #[derive(Debug, Clone)]
@@ -93,6 +94,29 @@ pub trait CloudAgentServiceAdapter:
     fn cloud_agent_store(&self) -> CloudAgentStateStore;
 
     async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String>;
+}
+
+#[async_trait]
+impl CloudAgentServiceAdapter for CloudAgentProfileRegistry {
+    fn owner_service(&self) -> &'static str {
+        self.owner_service
+    }
+
+    fn cloud_agent_store(&self) -> CloudAgentStateStore {
+        self.store.clone()
+    }
+
+    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
+        let run = self
+            .store
+            .load_run(agent_run_id)
+            .await?
+            .ok_or_else(|| format!("Cloud Agent run not found: {agent_run_id}"))?;
+        if !run.status.is_terminal() {
+            return Err("Cloud Agent lifecycle arrived before terminal state".to_string());
+        }
+        self.profile_for(&run)?.finalize_terminal(&run).await
+    }
 }
 
 #[derive(Clone)]

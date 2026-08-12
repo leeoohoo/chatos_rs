@@ -19,4 +19,5 @@ use super::{
 
 mod cancellation;
 mod execution;
+pub(crate) use execution::cloud_agent_profile;
 mod start;

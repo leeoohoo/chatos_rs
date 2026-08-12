@@ -14,9 +14,8 @@ use chatos_cloud_agent_protocol::{CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_mcp_result_callback_payload, cloud_agent_trigger_execution_identity,
     cloud_agent_trigger_input_items, create_cloud_agent_run, CloudAgentModelTrigger,
-    CloudAgentRunStore, CloudAgentServiceAdapter, CloudAgentServiceRuntime,
-    CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor, CloudAgentSingleStepOutput,
-    NewCloudAgentRun,
+    CloudAgentProfile, CloudAgentProfileRegistry, CloudAgentServiceRuntime,
+    CloudAgentSingleStepExecution, CloudAgentSingleStepOutput, NewCloudAgentRun,
 };
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde::{Deserialize, Serialize};
@@ -265,7 +264,7 @@ pub async fn start_chatos_cloud_agent(input: StartChatosCloudAgent<'_>) -> Resul
 pub struct ChatosCloudAgentAdapter;
 
 #[async_trait]
-impl CloudAgentSingleStepExecutor for ChatosCloudAgentAdapter {
+impl CloudAgentProfile for ChatosCloudAgentAdapter {
     async fn execute_single_step(
         &self,
         run: &CloudAgentRunRecord,
@@ -468,39 +467,39 @@ impl CloudAgentSingleStepExecutor for ChatosCloudAgentAdapter {
                 .with_next_input(next_input),
         ))
     }
+
+    async fn finalize_terminal(&self, run: &CloudAgentRunRecord) -> Result<(), String> {
+        finalize_terminal(run).await
+    }
 }
 
-#[async_trait]
-impl CloudAgentServiceAdapter for ChatosCloudAgentAdapter {
-    fn owner_service(&self) -> &'static str {
-        "chatos"
-    }
-
-    fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
-        crate::modules::cloud_agent_runtime::store()
-            .expect("ChatOS Cloud Agent store must be initialized before consumers")
-    }
-
-    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
-        finalize_terminal(agent_run_id).await
-    }
+fn runtime() -> Result<CloudAgentServiceRuntime<CloudAgentProfileRegistry>, String> {
+    let store = crate::modules::cloud_agent_runtime::store()?;
+    let registry = CloudAgentProfileRegistry::new("chatos", store).register(
+        [
+            SystemAgentKey::ChatosConversationAgent.as_str(),
+            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
+            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
+        ],
+        ChatosCloudAgentAdapter,
+    )?;
+    Ok(CloudAgentServiceRuntime::new(
+        registry,
+        CHATOS_CLOUD_AGENT_ROUTING_KEY,
+    ))
 }
 
 pub fn spawn_outbox_reconciler() -> Result<JoinHandle<()>, String> {
     let topology = topology()?;
-    Ok(
-        chatos_cloud_agent_runtime::spawn_cloud_agent_outbox_reconciler(
-            topology,
-            CloudAgentServiceRuntime::new(ChatosCloudAgentAdapter, CHATOS_CLOUD_AGENT_ROUTING_KEY),
-        ),
-    )
+    Ok(chatos_cloud_agent_runtime::spawn_cloud_agent_outbox_reconciler(topology, runtime()?))
 }
 
 pub fn spawn_consumer() -> Result<JoinHandle<()>, String> {
     let topology = topology()?;
     Ok(chatos_cloud_agent_runtime::spawn_cloud_agent_consumer(
         topology,
-        CloudAgentServiceRuntime::new(ChatosCloudAgentAdapter, CHATOS_CLOUD_AGENT_ROUTING_KEY),
+        runtime()?,
     ))
 }
 
@@ -521,14 +520,8 @@ fn topology() -> Result<chatos_cloud_agent_runtime::CloudAgentRabbitMqTopology, 
     })
 }
 
-async fn finalize_terminal(agent_run_id: &str) -> Result<(), String> {
-    let run = crate::modules::cloud_agent_runtime::store()?
-        .load_run(agent_run_id)
-        .await?
-        .ok_or_else(|| format!("ChatOS Cloud Agent run not found: {agent_run_id}"))?;
-    if !run.status.is_terminal() {
-        return Err("ChatOS terminal lifecycle arrived before terminal state".to_string());
-    }
+async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
+    let agent_run_id = run.ordering.agent_run_id.as_str();
     let input: ChatosCloudAgentRunInput = serde_json::from_value(run.input.clone())
         .map_err(|error| format!("decode ChatOS Cloud Agent input failed: {error}"))?;
     input.validate_identity(&run)?;

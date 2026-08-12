@@ -7,8 +7,8 @@ use crate::services::TaskRunnerCapabilityPolicy;
 use chatos_ai_runtime::TaskRunReport;
 use chatos_cloud_agent_protocol::CloudAgentRunStatus;
 use chatos_cloud_agent_runtime::{
-    cloud_agent_trigger_execution_identity, CloudAgentModelTrigger, CloudAgentRunStore,
-    CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor, CloudAgentSingleStepOutput,
+    cloud_agent_trigger_execution_identity, CloudAgentModelTrigger, CloudAgentProfile,
+    CloudAgentRunStore, CloudAgentSingleStepExecution, CloudAgentSingleStepOutput,
 };
 
 impl RunService {
@@ -337,6 +337,7 @@ impl RunService {
     }
 }
 
+#[derive(Clone)]
 struct TaskRunnerSingleStepResolver {
     service: RunService,
 }
@@ -473,7 +474,7 @@ impl TaskRunnerSingleStepResolver {
 }
 
 #[async_trait::async_trait]
-impl CloudAgentSingleStepExecutor for TaskRunnerSingleStepResolver {
+impl CloudAgentProfile for TaskRunnerSingleStepResolver {
     async fn execute_single_step(
         &self,
         cloud_run: &chatos_cloud_agent_protocol::CloudAgentRunRecord,
@@ -499,36 +500,21 @@ impl CloudAgentSingleStepExecutor for TaskRunnerSingleStepResolver {
                 .with_retry_input_items(retry_input_items),
         ))
     }
-}
 
-#[async_trait::async_trait]
-impl CloudAgentSingleStepExecutor for RunService {
-    async fn execute_single_step(
+    async fn finalize_terminal(
         &self,
         cloud_run: &chatos_cloud_agent_protocol::CloudAgentRunRecord,
-        trigger: &CloudAgentModelTrigger,
-    ) -> Result<CloudAgentSingleStepExecution, String> {
-        TaskRunnerSingleStepResolver {
-            service: self.clone(),
-        }
-        .execute_single_step(cloud_run, trigger)
-        .await
+    ) -> Result<(), String> {
+        self.service
+            .finalize_cloud_agent_terminal(cloud_run.ordering.agent_run_id.as_str())
+            .await
     }
 }
 
-#[async_trait::async_trait]
-impl chatos_cloud_agent_runtime::CloudAgentServiceAdapter for RunService {
-    fn owner_service(&self) -> &'static str {
-        "task-runner"
-    }
-
-    fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
-        self.cloud_agent_store()
-    }
-
-    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
-        RunService::finalize_cloud_agent_terminal(self, agent_run_id).await
-    }
+pub(crate) fn cloud_agent_profile(
+    service: RunService,
+) -> impl CloudAgentProfile + Clone + Send + Sync + 'static {
+    TaskRunnerSingleStepResolver { service }
 }
 
 fn ensure_queued_mcp_scope_unchanged(task: &TaskRecord, run: &TaskRunRecord) -> Result<(), String> {

@@ -13,6 +13,8 @@ use chatos_cloud_agent_protocol::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 mod mongo_store;
 mod rabbitmq_driver;
@@ -478,6 +480,103 @@ pub trait CloudAgentSingleStepExecutor: Send + Sync {
         run: &CloudAgentRunRecord,
         trigger: &CloudAgentModelTrigger,
     ) -> Result<CloudAgentSingleStepExecution, String>;
+}
+
+/// Business profile for one or more Agent keys owned by the same cloud
+/// service. Profiles only implement one model step and terminal domain work;
+/// delivery, ordering, claims, retries and outbox transitions remain in the
+/// shared runtime.
+#[async_trait]
+pub trait CloudAgentProfile: Send + Sync {
+    async fn execute_single_step(
+        &self,
+        run: &CloudAgentRunRecord,
+        trigger: &CloudAgentModelTrigger,
+    ) -> Result<CloudAgentSingleStepExecution, String>;
+
+    async fn finalize_terminal(&self, run: &CloudAgentRunRecord) -> Result<(), String>;
+}
+
+/// Routes all Agent keys owned by a service through the same durable cloud
+/// runtime. A profile may be registered for several keys when those Agents
+/// differ only by configuration/locality.
+#[derive(Clone)]
+pub struct CloudAgentProfileRegistry {
+    owner_service: &'static str,
+    store: CloudAgentStateStore,
+    profiles: HashMap<String, Arc<dyn CloudAgentProfile>>,
+}
+
+impl CloudAgentProfileRegistry {
+    pub fn new(owner_service: &'static str, store: CloudAgentStateStore) -> Self {
+        Self {
+            owner_service,
+            store,
+            profiles: HashMap::new(),
+        }
+    }
+
+    pub fn register<I, K, P>(mut self, agent_keys: I, profile: P) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = K>,
+        K: Into<String>,
+        P: CloudAgentProfile + 'static,
+    {
+        let profile: Arc<dyn CloudAgentProfile> = Arc::new(profile);
+        let mut registered = 0usize;
+        for key in agent_keys {
+            let key = key.into();
+            let key = key.trim();
+            if key.is_empty() {
+                return Err("Cloud Agent profile key must not be empty".to_string());
+            }
+            if self
+                .profiles
+                .insert(key.to_string(), Arc::clone(&profile))
+                .is_some()
+            {
+                return Err(format!(
+                    "Cloud Agent profile key is registered twice: {key}"
+                ));
+            }
+            registered = registered.saturating_add(1);
+        }
+        if registered == 0 {
+            return Err("Cloud Agent profile must register at least one key".to_string());
+        }
+        Ok(self)
+    }
+
+    fn profile_for(&self, run: &CloudAgentRunRecord) -> Result<Arc<dyn CloudAgentProfile>, String> {
+        if run.owner_service != self.owner_service {
+            return Err(format!(
+                "Cloud Agent owner mismatch: expected {}, got {}",
+                self.owner_service, run.owner_service
+            ));
+        }
+        self.profiles
+            .get(run.agent_key.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Cloud Agent profile is not registered for owner {} and key {}",
+                    self.owner_service, run.agent_key
+                )
+            })
+    }
+}
+
+#[async_trait]
+impl CloudAgentSingleStepExecutor for CloudAgentProfileRegistry {
+    async fn execute_single_step(
+        &self,
+        run: &CloudAgentRunRecord,
+        trigger: &CloudAgentModelTrigger,
+    ) -> Result<CloudAgentSingleStepExecution, String> {
+        self.profile_for(run)?
+            .execute_single_step(run, trigger)
+            .await
+    }
 }
 
 /// Owns the complete durable transaction around one cloud Agent model step:
@@ -1312,5 +1411,109 @@ mod tests {
         let persisted = store.load_run("run-1").await.unwrap().unwrap();
         assert_eq!(persisted.input, serde_json::json!({"lifecycle_round": 2}));
         assert_eq!(persisted.status, CloudAgentRunStatus::Succeeded);
+    }
+
+    #[derive(Clone)]
+    struct TestProfile {
+        executions: Arc<Mutex<Vec<String>>>,
+        finalizations: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl CloudAgentProfile for TestProfile {
+        async fn execute_single_step(
+            &self,
+            run: &CloudAgentRunRecord,
+            _trigger: &CloudAgentModelTrigger,
+        ) -> Result<CloudAgentSingleStepExecution, String> {
+            self.executions.lock().unwrap().push(run.agent_key.clone());
+            Ok(CloudAgentSingleStepExecution::Apply(
+                CloudAgentSingleStepOutput::new(AiSingleStepOutcome::Final(AiRuntimeResult {
+                    content: "done".to_string(),
+                    reasoning: None,
+                    tool_calls: None,
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                    response_id: Some("response-final".to_string()),
+                })),
+            ))
+        }
+
+        async fn finalize_terminal(&self, run: &CloudAgentRunRecord) -> Result<(), String> {
+            self.finalizations
+                .lock()
+                .unwrap()
+                .push(run.agent_key.clone());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn one_profile_registration_serves_multiple_agent_keys() {
+        let executions = Arc::new(Mutex::new(Vec::new()));
+        let finalizations = Arc::new(Mutex::new(Vec::new()));
+        let registry =
+            CloudAgentProfileRegistry::new("task-runner", CloudAgentStateStore::memory())
+                .register(
+                    ["task_runner_plan_phase", "task_runner_run_phase"],
+                    TestProfile {
+                        executions: Arc::clone(&executions),
+                        finalizations: Arc::clone(&finalizations),
+                    },
+                )
+                .unwrap();
+        let trigger = CloudAgentModelTrigger::RunStarted {
+            event_id: "start-1".to_string(),
+            payload: Value::Null,
+        };
+
+        for key in ["task_runner_plan_phase", "task_runner_run_phase"] {
+            let mut record = run();
+            record.agent_key = key.to_string();
+            registry
+                .execute_single_step(&record, &trigger)
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(
+            executions.lock().unwrap().as_slice(),
+            ["task_runner_plan_phase", "task_runner_run_phase"]
+        );
+        assert!(finalizations.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn registry_rejects_unknown_agent_keys_and_wrong_owners() {
+        let registry =
+            CloudAgentProfileRegistry::new("task-runner", CloudAgentStateStore::memory())
+                .register(
+                    ["task_runner_run_phase"],
+                    TestProfile {
+                        executions: Arc::new(Mutex::new(Vec::new())),
+                        finalizations: Arc::new(Mutex::new(Vec::new())),
+                    },
+                )
+                .unwrap();
+        let trigger = CloudAgentModelTrigger::RunStarted {
+            event_id: "start-1".to_string(),
+            payload: Value::Null,
+        };
+
+        let mut unknown = run();
+        unknown.agent_key = "unknown_agent".to_string();
+        assert!(registry
+            .execute_single_step(&unknown, &trigger)
+            .await
+            .unwrap_err()
+            .contains("not registered"));
+
+        let mut wrong_owner = run();
+        wrong_owner.owner_service = "chatos".to_string();
+        assert!(registry
+            .execute_single_step(&wrong_owner, &trigger)
+            .await
+            .unwrap_err()
+            .contains("owner mismatch"));
     }
 }
