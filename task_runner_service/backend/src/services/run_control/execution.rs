@@ -4,6 +4,7 @@
 use super::*;
 use crate::models::TaskMcpConfig;
 use crate::services::TaskRunnerCapabilityPolicy;
+use chatos_ai_runtime::TaskRunReport;
 use chatos_cloud_agent_protocol::{CloudAgentRunPhase, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     reduce_single_step, CloudAgentClaim, CloudAgentClaimResult, CloudAgentConsumeDisposition,
@@ -12,6 +13,112 @@ use chatos_cloud_agent_runtime::{
 use chrono::Utc;
 
 impl RunService {
+    pub(crate) async fn finalize_cloud_agent_terminal(
+        &self,
+        agent_run_id: &str,
+    ) -> Result<(), String> {
+        let cloud_run = self
+            .cloud_agent_store
+            .load_run(agent_run_id)
+            .await?
+            .ok_or_else(|| format!("Cloud Agent run not found: {agent_run_id}"))?;
+        if !cloud_run.status.is_terminal() {
+            return Err("Cloud Agent lifecycle event arrived before terminal state".to_string());
+        }
+        let mut run = self
+            .store
+            .get_run(cloud_run.owner_entity_id.as_str())
+            .await?
+            .ok_or_else(|| format!("Task Run not found: {}", cloud_run.owner_entity_id))?;
+        if matches!(
+            run.status,
+            TaskRunStatus::Succeeded
+                | TaskRunStatus::Failed
+                | TaskRunStatus::Cancelled
+                | TaskRunStatus::Blocked
+        ) {
+            return Ok(());
+        }
+        let task = self
+            .store
+            .get_task(run.task_id.as_str())
+            .await?
+            .ok_or_else(|| format!("Task not found: {}", run.task_id))?;
+        let outcome = cloud_run.terminal_outcome.unwrap_or(Value::Null);
+        let ai_report = match cloud_run.status {
+            CloudAgentRunStatus::Succeeded => chatos_ai_runtime::AiTurnReport {
+                status: chatos_ai_runtime::AiTurnStatus::Completed,
+                content: outcome
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                reasoning: outcome
+                    .get("reasoning")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                error: None,
+                tool_calls: None,
+                finish_reason: outcome
+                    .get("finish_reason")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                usage: outcome
+                    .get("usage")
+                    .cloned()
+                    .filter(|value| !value.is_null()),
+                response_id: outcome
+                    .get("response_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                completed_at: now_rfc3339(),
+            },
+            CloudAgentRunStatus::Cancelled => chatos_ai_runtime::AiTurnReport::aborted(),
+            CloudAgentRunStatus::Failed | CloudAgentRunStatus::Blocked => {
+                chatos_ai_runtime::AiTurnReport::failed(
+                    outcome
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Cloud Agent execution failed"),
+                )
+            }
+            _ => return Err("Cloud Agent terminal lifecycle has non-terminal status".to_string()),
+        };
+        let report = TaskRunReport::from_ai_report(
+            task.id.clone(),
+            run.id.clone(),
+            Some(run.model_config_id.clone()),
+            ai_report,
+        );
+        let effective_workspace_dir = run
+            .input_snapshot
+            .get("effective_workspace_dir")
+            .and_then(Value::as_str)
+            .unwrap_or(self.config.default_workspace_dir.as_str())
+            .to_string();
+        self.finalize_model_phase(
+            &task,
+            &mut run,
+            report,
+            effective_workspace_dir.as_str(),
+            None,
+            None,
+        )
+        .await;
+        if let Some(session_ref) = cloud_run.mcp_runtime_session_ref {
+            let config =
+                chatos_mcp_management_sdk::McpManagementClientConfig::from_env("task-runner")
+                    .await
+                    .map_err(|error| error.to_string())?;
+            let client = chatos_mcp_management_sdk::McpManagementClient::new(config)
+                .map_err(|error| error.to_string())?;
+            client
+                .close_runtime_session(session_ref.as_str())
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn consume_cloud_agent_event(
         &self,
         event_id: String,

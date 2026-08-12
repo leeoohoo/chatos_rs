@@ -419,7 +419,7 @@ pub fn reduce_single_step(
             )],
         },
         AiSingleStepOutcome::Final(result) => CloudAgentAtomicTransition {
-            claim,
+            claim: claim.clone(),
             next_status: CloudAgentRunStatus::Succeeded,
             next_phase: CloudAgentRunPhase::Terminal,
             next_step_seq,
@@ -439,7 +439,18 @@ pub fn reduce_single_step(
                 "usage": result.usage,
                 "response_id": result.response_id,
             })),
-            outbox: Vec::new(),
+            outbox: vec![terminal_outbox_intent(
+                &claim.ordering,
+                causation_id,
+                CloudAgentRunStatus::Succeeded,
+                serde_json::json!({
+                    "content": result.content,
+                    "reasoning": result.reasoning,
+                    "finish_reason": result.finish_reason,
+                    "usage": result.usage,
+                    "response_id": result.response_id,
+                }),
+            )],
         },
         AiSingleStepOutcome::Failed { error } => terminal_transition(
             claim,
@@ -549,6 +560,12 @@ fn terminal_transition(
         "cloud_agent:{}:{}:{}:terminal",
         claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
     );
+    let terminal_event = terminal_outbox_intent(
+        &claim.ordering,
+        claim.claim_token.as_str(),
+        status,
+        terminal_outcome.clone(),
+    );
     CloudAgentAtomicTransition {
         claim,
         next_status: status,
@@ -564,8 +581,27 @@ fn terminal_transition(
         pending_tool_calls: Vec::new(),
         pending_tool_results: Vec::new(),
         terminal_outcome: Some(terminal_outcome),
-        outbox: Vec::new(),
+        outbox: vec![terminal_event],
     }
+}
+
+fn terminal_outbox_intent(
+    ordering: &CloudAgentOrdering,
+    causation_id: &str,
+    status: CloudAgentRunStatus,
+    terminal_outcome: Value,
+) -> CloudAgentOutboxIntent {
+    outbox_intent(
+        ordering,
+        causation_id,
+        "owner_lifecycle_terminal",
+        "owner_lifecycle_terminal",
+        serde_json::json!({
+            "status": status,
+            "terminal_outcome": terminal_outcome,
+        }),
+        Utc::now(),
+    )
 }
 
 fn stable_batch_id(ordering: &CloudAgentOrdering) -> String {

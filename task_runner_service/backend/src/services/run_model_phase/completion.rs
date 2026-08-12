@@ -10,7 +10,7 @@ mod harness;
 mod tests;
 
 impl RunService {
-    pub(super) async fn finalize_model_phase(
+    pub(in crate::services) async fn finalize_model_phase(
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,

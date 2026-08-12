@@ -174,6 +174,12 @@ async fn consume_delivery(
     let intent = serde_json::from_slice::<CloudAgentOutboxIntent>(payload)
         .map_err(|error| format!("invalid Cloud Agent delivery: {error}"))?;
     let (trigger, expected_status, expected_phase) = match intent.topic.as_str() {
+        "owner_lifecycle_terminal" => {
+            run_service
+                .finalize_cloud_agent_terminal(intent.ordering.agent_run_id.as_str())
+                .await?;
+            return Ok(CloudAgentConsumeDisposition::Committed);
+        }
         "run_started" => (
             CloudAgentModelTrigger::RunStarted {
                 event_id: intent.event_id.clone(),
