@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_ai_runtime::{
-    AiRuntimeOptions, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput, TaskRunExecution,
-    TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
+    AiRuntimeOptions, AiSingleStepOutcome, ModelRuntimeConfig, RuntimeRecordOptions,
+    SaveRecordInput, TaskRunExecution, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
 };
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
@@ -122,6 +122,20 @@ impl TaskRunnerAgent {
     ) -> TaskRunReport {
         TaskRunExecution::new(runtime_config, run_spec)
             .run_report_with_runtime_options(runtime, runtime_options)
+            .await
+    }
+
+    pub async fn execute_once_with_runtime_options(
+        &self,
+        run_spec: TaskRunSpec,
+        runtime: &TaskRuntime,
+        runtime_options: AiRuntimeOptions,
+        iteration: usize,
+        reason: impl Into<String>,
+        model_attempt: usize,
+    ) -> Result<AiSingleStepOutcome, String> {
+        runtime
+            .execute_task_once(run_spec, runtime_options, iteration, reason, model_attempt)
             .await
     }
 

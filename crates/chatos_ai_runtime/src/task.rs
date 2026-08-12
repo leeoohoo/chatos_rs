@@ -7,6 +7,7 @@ use chatos_mcp_runtime::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale, Mc
 
 use crate::runtime::AiRuntimeOptions;
 use crate::turn::ContextualTurnRunner;
+use crate::AiSingleStepOutcome;
 
 mod config;
 mod execution;
@@ -112,6 +113,25 @@ impl TaskRuntime {
     ) -> TaskRunReport {
         self.runner
             .run_task_report_with_options(self.prepare_spec(spec), runtime_options)
+            .await
+    }
+
+    pub async fn execute_task_once(
+        &self,
+        spec: TaskRunSpec,
+        runtime_options: AiRuntimeOptions,
+        iteration: usize,
+        reason: impl Into<String>,
+        model_attempt: usize,
+    ) -> Result<AiSingleStepOutcome, String> {
+        self.runner
+            .execute_once(
+                self.prepare_spec(spec)
+                    .into_contextual_turn_request_with_options(runtime_options),
+                iteration,
+                reason,
+                model_attempt,
+            )
             .await
     }
 }

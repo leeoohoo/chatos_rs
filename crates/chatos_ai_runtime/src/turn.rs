@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::runtime::{
-    AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiTurnReport, IterativeContextRefresh,
-    MemoryContextOverflowRecovery,
+    AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepOutcome, AiSingleStepRequest,
+    AiTurnReport, IterativeContextRefresh, MemoryContextOverflowRecovery,
 };
 use crate::traits::{ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput};
 
@@ -101,6 +101,44 @@ impl ContextualTurnRunner {
                 runtime_options.with_iterative_context_refresh(iterative_context_refresh),
             )
             .await
+    }
+
+    pub async fn execute_once(
+        &self,
+        request: ContextualTurnRequest,
+        iteration: usize,
+        reason: impl Into<String>,
+        model_attempt: usize,
+    ) -> Result<AiSingleStepOutcome, String> {
+        let ContextualTurnRequest {
+            mut model_request,
+            runtime_options,
+            memory_scope,
+            prefixed_input_items,
+            current_input_items,
+            user_record,
+        } = request;
+        model_request.input = build_contextual_input(
+            self.memory_composer.as_ref(),
+            memory_scope.as_ref(),
+            prefixed_input_items.as_slice(),
+            current_input_items.as_slice(),
+            model_request.input.clone(),
+        )
+        .await?;
+        if let Some(user_record) = user_record {
+            self.runtime.save_record(user_record).await?;
+        }
+        let single_step = AiSingleStepRequest {
+            model_request,
+            runtime_options,
+            iteration,
+            reason: reason.into(),
+            model_attempt,
+            force_non_stream: false,
+            force_identity_encoding: false,
+        };
+        self.runtime.execute_once(single_step).await
     }
 
     pub async fn run_turn_report(&self, request: ContextualTurnRequest) -> AiTurnReport {
