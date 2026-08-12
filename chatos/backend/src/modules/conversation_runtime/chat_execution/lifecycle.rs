@@ -5,6 +5,7 @@ use chatos_ai_runtime::{
     AiResponse, RuntimeBeforeModelRequest, RuntimeCallbacks, RuntimeFinalResponseAction,
     RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::core::internal_context_locale::InternalContextLocale;
@@ -31,7 +32,7 @@ pub(super) struct ChatosRuntimeLifecycleHook {
     pub(super) task_turn: Arc<Mutex<TaskTurnLifecycleState>>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct TaskTurnLifecycleState {
     pub(super) follow_up_rounds: usize,
     pub(super) mode: Option<TaskTurnFollowUpMode>,

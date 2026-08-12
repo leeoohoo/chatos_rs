@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::user_context::load_runtime_user_context;
@@ -15,13 +16,15 @@ use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
 const TASK_BOARD_ACTIVE_LIMIT: usize = 200;
 const TASK_BOARD_DONE_HISTORY_LIMIT: usize = 200;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskTurnFollowUpMode {
     ContinueExecution,
     ReviewExecution,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskTurnReviewOutcome {
     Pass,
     NeedsMoreWork,

@@ -118,6 +118,7 @@ fn runtime_context(
         enabled_mcp_ids_for_snapshot: Vec::new(),
         mcp_server_bundle: empty_mcp_server_bundle(),
         mcp_management_runtime_session: None,
+        mcp_command_queue: None,
         use_tools: true,
         memory_summary_prompt: None,
         runtime_error: None,

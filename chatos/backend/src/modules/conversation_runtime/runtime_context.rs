@@ -20,7 +20,10 @@ use chatos_plugin_management_sdk::PluginCommandInvocation;
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
-use self::mcp_management_gateway::{resolve_mcp_management_gateway, McpManagementGatewayRequest};
+use self::mcp_management_gateway::{
+    resolve_existing_mcp_management_gateway, resolve_mcp_management_gateway,
+    McpManagementGatewayRequest,
+};
 use self::policy::merge_optional_system_prompts;
 use self::support::{is_concrete_project_id, normalize_optional_text};
 use self::task_runner::{normalize_plugin_command_invocations, normalize_selected_plugin_ids};
@@ -84,6 +87,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub enabled_mcp_ids_for_snapshot: Vec<String>,
     pub mcp_server_bundle: McpServerBundle,
     pub mcp_management_runtime_session: Option<McpManagementRuntimeSessionHandle>,
+    pub mcp_command_queue: Option<String>,
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
     pub runtime_error: Option<String>,
@@ -91,6 +95,26 @@ pub struct ResolvedConversationRuntimeContext {
 }
 
 pub type ToolMetadataMap = std::collections::HashMap<String, ToolInfo>;
+
+pub struct ResumedMcpManagementGateway {
+    pub server: crate::services::mcp_loader::McpHttpServer,
+    pub command_queue: String,
+    pub runtime_session: McpManagementRuntimeSessionHandle,
+}
+
+pub async fn resume_mcp_management_gateway(
+    session_id: &str,
+) -> Result<ResumedMcpManagementGateway, String> {
+    let (server, _, _, command_queue, runtime_session) =
+        resolve_existing_mcp_management_gateway(session_id)
+            .await?
+            .into_parts();
+    Ok(ResumedMcpManagementGateway {
+        server,
+        command_queue,
+        runtime_session,
+    })
+}
 
 pub async fn resolve_runtime_context(
     session_id: &str,
@@ -209,6 +233,7 @@ pub async fn resolve_runtime_context(
     let mut effective_mcp_resource_ids = Vec::new();
     let mut gateway_provider_skills_prompt = None;
     let mut mcp_management_runtime_session = None;
+    let mut mcp_command_queue = None;
     let agent_profile = ChatosAgentProfile::from_project_locality(
         req.plan_mode,
         req.project_requirement_execution_planner,
@@ -291,11 +316,12 @@ pub async fn resolve_runtime_context(
     };
 
     if let Some(gateway) = mcp_management_gateway {
-        let (server, effective_mcp_ids, provider_skills_prompt, runtime_session) =
+        let (server, effective_mcp_ids, provider_skills_prompt, command_queue, runtime_session) =
             gateway.into_parts();
         http_servers.push(server);
         effective_mcp_resource_ids = effective_mcp_ids;
         gateway_provider_skills_prompt = provider_skills_prompt;
+        mcp_command_queue = Some(command_queue);
         mcp_management_runtime_session = Some(runtime_session);
     }
 
@@ -338,6 +364,7 @@ pub async fn resolve_runtime_context(
         enabled_mcp_ids_for_snapshot,
         mcp_server_bundle: (http_servers, stdio_servers, builtin_servers),
         mcp_management_runtime_session,
+        mcp_command_queue,
         use_tools,
         memory_summary_prompt,
         runtime_error,
