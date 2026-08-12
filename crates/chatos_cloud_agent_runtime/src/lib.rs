@@ -182,6 +182,111 @@ pub struct CloudAgentConsumeInput {
     pub output_routing_key: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct NewCloudAgentRun {
+    pub ordering_lane_key: String,
+    pub agent_run_id: String,
+    pub owner_service: String,
+    pub owner_entity_type: String,
+    pub owner_entity_id: String,
+    pub owner_user_id: String,
+    pub agent_key: String,
+    pub input: Value,
+    pub model_config_ref: String,
+    pub model_runtime_snapshot_ref: String,
+    pub agent_prompt_revision: String,
+    pub agent_prompt_checksum: String,
+    pub capability_policy_revision: String,
+    pub mcp_runtime_session_ref: Option<String>,
+    pub current_input_items_ref: String,
+    pub max_iterations: u32,
+    pub deadline_at: Option<DateTime<Utc>>,
+    pub runtime_routing_key: String,
+    pub start_causation_id: String,
+    pub start_payload: Value,
+}
+
+pub async fn create_cloud_agent_run(
+    store: &CloudAgentStateStore,
+    new_run: NewCloudAgentRun,
+) -> Result<CloudAgentRunRecord, String> {
+    if new_run.max_iterations == 0 {
+        return Err("Cloud Agent max_iterations must be greater than zero".to_string());
+    }
+    let lane_seq = store
+        .allocate_lane_seq(new_run.ordering_lane_key.as_str())
+        .await?;
+    let ordering = CloudAgentOrdering {
+        ordering_lane_key: new_run.ordering_lane_key,
+        lane_seq,
+        agent_run_id: new_run.agent_run_id,
+        generation: 1,
+        step_seq: 1,
+    };
+    let now = Utc::now();
+    let record = CloudAgentRunRecord {
+        ordering: ordering.clone(),
+        owner_service: new_run.owner_service,
+        owner_entity_type: new_run.owner_entity_type,
+        owner_entity_id: new_run.owner_entity_id,
+        owner_user_id: new_run.owner_user_id,
+        agent_key: new_run.agent_key,
+        input: new_run.input,
+        status: CloudAgentRunStatus::ModelReady,
+        phase: CloudAgentRunPhase::Ready,
+        iteration: 0,
+        model_config_ref: new_run.model_config_ref,
+        model_runtime_snapshot_ref: new_run.model_runtime_snapshot_ref,
+        agent_prompt_revision: new_run.agent_prompt_revision,
+        agent_prompt_checksum: new_run.agent_prompt_checksum,
+        capability_policy_revision: new_run.capability_policy_revision,
+        mcp_runtime_session_ref: new_run.mcp_runtime_session_ref,
+        previous_response_id: None,
+        continuation_mode: Some("run_started".to_string()),
+        pending_batch_id: None,
+        pending_tool_calls: Vec::new(),
+        pending_tool_results: Vec::new(),
+        current_input_items_ref: new_run.current_input_items_ref,
+        usage_accumulator: Value::Null,
+        max_iterations: new_run.max_iterations,
+        retry_count: 0,
+        deadline_at: new_run.deadline_at,
+        cancel_requested: false,
+        terminal_outcome: None,
+        version: 1,
+        created_at: now,
+        updated_at: now,
+    };
+    let start_event_id = format!(
+        "cloud_agent_run_started_{}_{}_{}",
+        ordering.agent_run_id, ordering.generation, ordering.step_seq
+    );
+    let start_outbox = CloudAgentOutboxIntent {
+        event_id: start_event_id.clone(),
+        topic: "run_started".to_string(),
+        routing_key: new_run.runtime_routing_key,
+        ordering,
+        causation_id: new_run.start_causation_id,
+        correlation_id: record.ordering.agent_run_id.clone(),
+        available_at: now,
+        payload: merge_start_event_identity(new_run.start_payload, start_event_id),
+    };
+    store
+        .insert_run_with_outbox(record.clone(), vec![start_outbox])
+        .await?;
+    Ok(record)
+}
+
+fn merge_start_event_identity(payload: Value, event_id: String) -> Value {
+    let mut payload = payload.as_object().cloned().unwrap_or_default();
+    payload.insert(
+        "event_type".to_string(),
+        Value::String("run_started".to_string()),
+    );
+    payload.insert("event_id".to_string(), Value::String(event_id));
+    Value::Object(payload)
+}
+
 pub fn cloud_agent_trigger_execution_identity(trigger: &CloudAgentModelTrigger) -> (String, usize) {
     match trigger {
         CloudAgentModelTrigger::RunStarted { .. } => ("initial".to_string(), 1),
@@ -1061,5 +1166,45 @@ mod tests {
             outbox[0].payload["input_items"],
             serde_json::json!([{"type": "message"}])
         );
+    }
+
+    #[tokio::test]
+    async fn shared_run_factory_allocates_the_lane_and_start_event_atomically() {
+        let store = CloudAgentStateStore::memory();
+        let record = create_cloud_agent_run(
+            &store,
+            NewCloudAgentRun {
+                ordering_lane_key: "conversation:session-1".to_string(),
+                agent_run_id: "turn-1".to_string(),
+                owner_service: "chatos".to_string(),
+                owner_entity_type: "conversation_turn".to_string(),
+                owner_entity_id: "turn-1".to_string(),
+                owner_user_id: "user-1".to_string(),
+                agent_key: "chatos_conversation_agent".to_string(),
+                input: serde_json::json!({"content": "hello"}),
+                model_config_ref: "model-1".to_string(),
+                model_runtime_snapshot_ref: "turn-1:model".to_string(),
+                agent_prompt_revision: "1".to_string(),
+                agent_prompt_checksum: "checksum-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                mcp_runtime_session_ref: Some("session-1".to_string()),
+                current_input_items_ref: "turn-1:initial".to_string(),
+                max_iterations: 10,
+                deadline_at: None,
+                runtime_routing_key: "cloud_agent.chatos.runtime".to_string(),
+                start_causation_id: "message-1".to_string(),
+                start_payload: serde_json::json!({"conversation_id": "session-1"}),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(record.ordering.lane_seq, 1);
+        assert_eq!(record.status, CloudAgentRunStatus::ModelReady);
+        let outbox = store.list_ready_outbox(10).await.unwrap();
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0].ordering, record.ordering);
+        assert_eq!(outbox[0].payload["event_type"], "run_started");
+        assert_eq!(outbox[0].payload["conversation_id"], "session-1");
     }
 }

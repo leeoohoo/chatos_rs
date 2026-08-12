@@ -10,14 +10,13 @@ use chatos_ai_runtime::{
     AiRuntime, AiRuntimeOptions, ContextualTurnRequest, ContextualTurnRunner,
     McpRuntimeToolExecutor, MemoryContextOverflowRecovery, RuntimeRecordOptions, SaveRecordInput,
 };
-use chatos_cloud_agent_protocol::{
-    CloudAgentOrdering, CloudAgentRunPhase, CloudAgentRunRecord, CloudAgentRunStatus,
-};
+use chatos_cloud_agent_protocol::{CloudAgentRunPhase, CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_trigger_execution_identity, cloud_agent_trigger_input_items,
-    consume_cloud_agent_single_step, CloudAgentConsumeDisposition, CloudAgentConsumeInput,
-    CloudAgentModelTrigger, CloudAgentOutboxIntent, CloudAgentRunStore,
+    consume_cloud_agent_single_step, create_cloud_agent_run, CloudAgentConsumeDisposition,
+    CloudAgentConsumeInput, CloudAgentModelTrigger, CloudAgentRunStore,
     CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor, CloudAgentSingleStepOutput,
+    NewCloudAgentRun,
 };
 use chatos_mcp_runtime::McpExecutor;
 use chrono::Utc;
@@ -601,17 +600,6 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         let agent_key = agent.descriptor().key.as_str().to_string();
         let max_iterations = chatos_agent::load_agent_max_iterations("project-service").await;
         let lane_key = format!("project_environment:{}", project.id);
-        let lane_seq = state
-            .cloud_agent_store
-            .allocate_lane_seq(lane_key.as_str())
-            .await?;
-        let ordering = CloudAgentOrdering {
-            ordering_lane_key: lane_key,
-            lane_seq,
-            agent_run_id: run_id.clone(),
-            generation: 1,
-            step_seq: 1,
-        };
         let cloud_now = Utc::now();
         let now = now_rfc3339();
         let run_input = ProjectEnvironmentAgentRunInput {
@@ -630,62 +618,38 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             created_at: now.clone(),
             updated_at: now,
         };
-        let cloud_run = CloudAgentRunRecord {
-            ordering: ordering.clone(),
-            owner_service: "project-service".to_string(),
-            owner_entity_type: "project_runtime_environment".to_string(),
-            owner_entity_id: project.id.clone(),
-            owner_user_id: owner_user_id.to_string(),
-            agent_key: agent_key.clone(),
-            input: serde_json::to_value(run_input).map_err(|error| {
-                format!("encode Project Environment Agent input failed: {error}")
-            })?,
-            status: CloudAgentRunStatus::ModelReady,
-            phase: CloudAgentRunPhase::Ready,
-            iteration: 0,
-            model_config_ref: model_runtime.model_config_id.clone(),
-            model_runtime_snapshot_ref: format!("project_environment_agent:{run_id}:input"),
-            agent_prompt_revision: agent_prompt.revision.to_string(),
-            agent_prompt_checksum: agent_prompt.checksum.clone(),
-            capability_policy_revision: "mcp_runtime_session".to_string(),
-            mcp_runtime_session_ref: Some(gateway.session_id().to_string()),
-            previous_response_id: None,
-            continuation_mode: Some("run_started".to_string()),
-            pending_batch_id: None,
-            pending_tool_calls: Vec::new(),
-            pending_tool_results: Vec::new(),
-            current_input_items_ref: format!("project_environment_agent:{run_id}:initial"),
-            usage_accumulator: Value::Null,
-            max_iterations: u32::try_from(max_iterations).unwrap_or(u32::MAX),
-            retry_count: 0,
-            deadline_at: chrono::Duration::from_std(state.config.environment_analysis_timeout)
-                .ok()
-                .map(|duration| cloud_now + duration),
-            cancel_requested: false,
-            terminal_outcome: None,
-            version: 1,
-            created_at: cloud_now,
-            updated_at: cloud_now,
-        };
-        let start_event_id = format!("cloud_agent_run_started_{run_id}_1");
-        let start_outbox = CloudAgentOutboxIntent {
-            event_id: start_event_id.clone(),
-            topic: "run_started".to_string(),
-            routing_key: crate::cloud_agent_queue::PROJECT_CLOUD_AGENT_ROUTING_KEY.to_string(),
-            ordering,
-            causation_id: project.id.clone(),
-            correlation_id: run_id.clone(),
-            available_at: cloud_now,
-            payload: json!({
-                "event_type": "run_started",
-                "event_id": start_event_id,
-                "project_id": project.id,
-            }),
-        };
-        state
-            .cloud_agent_store
-            .insert_run_with_outbox(cloud_run, vec![start_outbox])
-            .await
+        create_cloud_agent_run(
+            &state.cloud_agent_store,
+            NewCloudAgentRun {
+                ordering_lane_key: lane_key,
+                agent_run_id: run_id.clone(),
+                owner_service: "project-service".to_string(),
+                owner_entity_type: "project_runtime_environment".to_string(),
+                owner_entity_id: project.id.clone(),
+                owner_user_id: owner_user_id.to_string(),
+                agent_key,
+                input: serde_json::to_value(run_input).map_err(|error| {
+                    format!("encode Project Environment Agent input failed: {error}")
+                })?,
+                model_config_ref: model_runtime.model_config_id.clone(),
+                model_runtime_snapshot_ref: format!("project_environment_agent:{run_id}:input"),
+                agent_prompt_revision: agent_prompt.revision.to_string(),
+                agent_prompt_checksum: agent_prompt.checksum.clone(),
+                capability_policy_revision: "mcp_runtime_session".to_string(),
+                mcp_runtime_session_ref: Some(gateway.session_id().to_string()),
+                current_input_items_ref: format!("project_environment_agent:{run_id}:initial"),
+                max_iterations: u32::try_from(max_iterations).unwrap_or(u32::MAX),
+                deadline_at: chrono::Duration::from_std(state.config.environment_analysis_timeout)
+                    .ok()
+                    .map(|duration| cloud_now + duration),
+                runtime_routing_key: crate::cloud_agent_queue::PROJECT_CLOUD_AGENT_ROUTING_KEY
+                    .to_string(),
+                start_causation_id: project.id.clone(),
+                start_payload: json!({"project_id": project.id}),
+            },
+        )
+        .await
+        .map(|_| ())
     }
     .await;
     if let Err(error) = persist_result {
