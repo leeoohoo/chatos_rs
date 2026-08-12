@@ -17,8 +17,6 @@ use crate::services::RunService;
 pub(crate) const TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY: &str = "cloud_agent.task_runner.runtime";
 pub(crate) const TASK_RUNNER_CLOUD_AGENT_RETRY_ROUTING_KEY: &str =
     "cloud_agent.task_runner.runtime.retry";
-pub(crate) const TASK_RUNNER_CLOUD_AGENT_MCP_RESULT_ROUTING_KEY: &str =
-    "cloud_agent.task_runner.mcp_results";
 
 #[derive(Clone)]
 struct TaskRunnerCloudAgentOwner {
@@ -71,7 +69,6 @@ fn cloud_agent_topology(
         exchange: topology.rabbitmq_exchange.clone(),
         runtime_queue: TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY.to_string(),
         retry_queue: TASK_RUNNER_CLOUD_AGENT_RETRY_ROUTING_KEY.to_string(),
-        mcp_result_routing_key: TASK_RUNNER_CLOUD_AGENT_MCP_RESULT_ROUTING_KEY.to_string(),
         consumer_tag: "task-runner-cloud-agent-runtime".to_string(),
         reconnect_delay: topology.rabbitmq_reconnect_delay,
         outbox_reconcile_interval: Duration::from_secs(1),

@@ -17,8 +17,8 @@ use crate::services::environment_agent::{
 };
 use crate::services::runtime_environment::{
     apply_environment_variable_overrides, default_runtime_environment_for_project,
-    enforce_project_runtime_boundary, ensure_runtime_environment_for_project,
-    refresh_environment_variable_values, replace_legacy_internal_routing_summary,
+    enforce_project_runtime_boundary, refresh_environment_variable_values,
+    replace_legacy_internal_routing_summary,
 };
 use crate::state::AppState;
 
@@ -291,108 +291,37 @@ pub(in crate::api) async fn analyze_project_runtime_environment_handler(
     let selected_dependencies = normalize_selected_dependencies(payload.selected_dependencies)?;
     let prefer_china_mirrors = payload.prefer_china_mirrors;
 
+    if let Some(environment) = state
+        .store
+        .get_project_runtime_environment(&project_id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .filter(|environment| environment.status == ProjectRuntimeEnvironmentStatus::Analyzing)
     {
-        let mut active = state.runtime_environment_analysis_jobs.lock().await;
-        if !active.insert(project_id.clone()) {
-            let environment = state
-                .store
-                .get_project_runtime_environment(&project_id)
-                .await
-                .map_err(ApiError::bad_request)?
-                .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
-            let images = state
-                .store
-                .list_project_runtime_environment_images(&project_id)
-                .await
-                .map_err(ApiError::bad_request)?;
-            return Ok(Json(ProjectRuntimeEnvironmentResponse {
-                environment,
-                images,
-            }));
-        }
-    }
-
-    let run_id = format!("project_env_agent_{}", Uuid::new_v4());
-    let queued = async {
-        let mut environment =
-            ensure_runtime_environment_for_project(&state.store, &project, None).await?;
-        reset_environment_for_analysis(&mut environment, run_id.as_str());
-        let environment = state
-            .store
-            .upsert_project_runtime_environment(&environment)
-            .await?;
-        state
-            .store
-            .replace_project_runtime_environment_images(&project_id, &[])
-            .await?;
         let images = state
             .store
             .list_project_runtime_environment_images(&project_id)
-            .await?;
-        Ok::<ProjectRuntimeEnvironmentResponse, String>(ProjectRuntimeEnvironmentResponse {
+            .await
+            .map_err(ApiError::bad_request)?;
+        return Ok(Json(ProjectRuntimeEnvironmentResponse {
             environment,
             images,
-        })
+        }));
     }
-    .await;
-    let response = match queued {
-        Ok(response) => response,
-        Err(err) => {
-            state
-                .runtime_environment_analysis_jobs
-                .lock()
-                .await
-                .remove(&project_id);
-            return Err(ApiError::bad_request(err));
-        }
-    };
 
-    let worker_state = state.clone();
-    let worker_project = project.clone();
-    let worker_project_id = project_id.clone();
-    let worker_run_id = run_id.clone();
-    let worker_access_token = access_token.0.clone();
-    let worker_analysis_requirement = analysis_requirement;
-    let worker_selected_dependencies = selected_dependencies;
-    let worker_prefer_china_mirrors = prefer_china_mirrors;
-    tokio::spawn(async move {
-        let task_state = worker_state.clone();
-        let task_project = worker_project.clone();
-        let task_run_id = worker_run_id.clone();
-        let task = tokio::spawn(async move {
-            analyze_project_runtime_environment(
-                &task_state,
-                &task_project,
-                Some(worker_access_token.as_str()),
-                task_run_id.as_str(),
-                worker_analysis_requirement.as_deref(),
-                worker_selected_dependencies.as_slice(),
-                worker_prefer_china_mirrors,
-            )
-            .await
-        });
-        let failure = match task.await {
-            Ok(Ok(_)) => None,
-            Ok(Err(err)) => Some(err),
-            Err(err) => Some(format!("project environment analysis task failed: {err}")),
-        };
-        if let Some(err) = failure {
-            persist_background_analysis_failure(
-                &worker_state,
-                worker_project_id.as_str(),
-                worker_run_id.as_str(),
-                err.as_str(),
-            )
-            .await;
-        }
-        worker_state
-            .runtime_environment_analysis_jobs
-            .lock()
-            .await
-            .remove(worker_project_id.as_str());
-    });
-
-    Ok(Json(response))
+    let run_id = format!("project_env_agent_{}", Uuid::new_v4());
+    analyze_project_runtime_environment(
+        &state,
+        &project,
+        Some(access_token.0.as_str()),
+        run_id.as_str(),
+        analysis_requirement.as_deref(),
+        selected_dependencies.as_slice(),
+        prefer_china_mirrors,
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::bad_gateway)
 }
 
 fn normalize_analysis_requirement(value: Option<String>) -> Result<Option<String>, ApiError> {
@@ -435,75 +364,9 @@ fn normalize_selected_dependencies(values: Vec<String>) -> Result<Vec<String>, A
     Ok(normalized)
 }
 
-fn reset_environment_for_analysis(environment: &mut ProjectRuntimeEnvironmentRecord, run_id: &str) {
-    environment.status = ProjectRuntimeEnvironmentStatus::Analyzing;
-    environment.sandbox_provider = RuntimeEnvironmentProvider::None;
-    environment.file_provider = RuntimeEnvironmentProvider::None;
-    environment.analysis_summary = Some("正在重新分析项目并准备沙箱运行环境。".to_string());
-    environment.not_runnable_reason = None;
-    environment.execution_service_id = None;
-    environment.detected_stack = empty_object();
-    environment.required_services = empty_array();
-    refresh_environment_variable_values(environment);
-    environment.generated_config_files.clear();
-    environment.last_agent_run_id = Some(run_id.to_string());
-    environment.last_error = None;
-    environment.updated_at = now_rfc3339();
-}
-
-async fn persist_background_analysis_failure(
-    state: &AppState,
-    project_id: &str,
-    run_id: &str,
-    error: &str,
-) {
-    let Ok(Some(mut environment)) = state
-        .store
-        .get_project_runtime_environment(project_id)
-        .await
-    else {
-        tracing::error!(
-            project_id,
-            run_id,
-            error,
-            "load failed project environment analysis"
-        );
-        return;
-    };
-    if environment.last_agent_run_id.as_deref() != Some(run_id)
-        || environment.status != ProjectRuntimeEnvironmentStatus::Analyzing
-    {
-        return;
-    }
-    environment.status = ProjectRuntimeEnvironmentStatus::Failed;
-    environment.analysis_summary = Some("项目运行环境后台分析失败。".to_string());
-    environment.last_error = Some(error.to_string());
-    environment.updated_at = now_rfc3339();
-    if let Err(persist_error) = state
-        .store
-        .upsert_project_runtime_environment(&environment)
-        .await
-    {
-        tracing::error!(
-            project_id,
-            run_id,
-            error = persist_error.as_str(),
-            "persist failed project environment analysis"
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        normalize_analysis_requirement, normalize_selected_dependencies,
-        reset_environment_for_analysis,
-    };
-    use crate::models::{
-        ProjectRuntimeEnvironmentRecord, ProjectRuntimeEnvironmentStatus,
-        RuntimeEnvironmentProvider,
-    };
-    use serde_json::json;
+    use super::{normalize_analysis_requirement, normalize_selected_dependencies};
 
     #[test]
     fn analysis_requirement_is_trimmed_and_length_limited() {
@@ -533,56 +396,5 @@ mod tests {
             (0..65).map(|index| format!("service-{index}")).collect()
         )
         .is_err());
-    }
-
-    #[test]
-    fn reanalysis_clears_stale_provisioning_failure_state() {
-        let mut environment = ProjectRuntimeEnvironmentRecord {
-            project_id: "project-1".to_string(),
-            status: ProjectRuntimeEnvironmentStatus::Failed,
-            sandbox_enabled: true,
-            sandbox_provider: RuntimeEnvironmentProvider::LocalConnector,
-            file_provider: RuntimeEnvironmentProvider::Harness,
-            analysis_summary: Some("old summary".to_string()),
-            not_runnable_reason: Some("old reason".to_string()),
-            execution_service_id: Some("old-service".to_string()),
-            detected_stack: json!({"stale": true}),
-            required_services: json!([{"stale": true}]),
-            env_vars: json!({"STALE": "1"}),
-            environment_variables: Vec::new(),
-            generated_config_files: vec![
-                crate::models::ProjectRuntimeEnvironmentConfigFileRecord {
-                    path: "application-sandbox.yml".to_string(),
-                    format: "yaml".to_string(),
-                    content: "stale: true".to_string(),
-                    description: None,
-                    source_files: Vec::new(),
-                },
-            ],
-            last_agent_run_id: Some("run-old".to_string()),
-            last_error: Some("Docker is not installed".to_string()),
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-        };
-
-        reset_environment_for_analysis(&mut environment, "run-new");
-
-        assert_eq!(
-            environment.status,
-            ProjectRuntimeEnvironmentStatus::Analyzing
-        );
-        assert_eq!(
-            environment.sandbox_provider,
-            RuntimeEnvironmentProvider::None
-        );
-        assert_eq!(environment.file_provider, RuntimeEnvironmentProvider::None);
-        assert_eq!(environment.last_agent_run_id.as_deref(), Some("run-new"));
-        assert!(environment.last_error.is_none());
-        assert!(environment.not_runnable_reason.is_none());
-        assert!(environment.execution_service_id.is_none());
-        assert_eq!(environment.detected_stack, json!({}));
-        assert_eq!(environment.required_services, json!([]));
-        assert_eq!(environment.env_vars, json!({"STALE": "1"}));
-        assert!(environment.generated_config_files.is_empty());
     }
 }

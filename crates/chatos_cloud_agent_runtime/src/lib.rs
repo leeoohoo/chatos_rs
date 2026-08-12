@@ -6,14 +6,13 @@
 //! orchestrator: it performs one claimed transition and returns outbox intents.
 
 use async_trait::async_trait;
-use chatos_ai_runtime::{AiSingleStepOutcome, AiSingleStepRequest};
+use chatos_ai_runtime::AiSingleStepOutcome;
 use chatos_cloud_agent_protocol::{
     CloudAgentOrdering, CloudAgentRunPhase, CloudAgentRunRecord, CloudAgentRunStatus,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::future::Future;
 
 mod mongo_store;
 mod rabbitmq_driver;
@@ -171,15 +170,6 @@ pub trait CloudAgentRunStore: Send + Sync {
     async fn release_short_claim(&self, claim: &CloudAgentClaim) -> Result<(), String>;
 }
 
-#[async_trait]
-pub trait CloudAgentModelResolver: Send + Sync {
-    async fn resolve_single_step(
-        &self,
-        run: &CloudAgentRunRecord,
-        trigger: CloudAgentModelTrigger,
-    ) -> Result<AiSingleStepRequest, String>;
-}
-
 #[derive(Debug, Clone)]
 pub struct CloudAgentConsumeInput {
     pub agent_run_id: String,
@@ -192,6 +182,90 @@ pub struct CloudAgentConsumeInput {
     pub output_routing_key: String,
 }
 
+pub fn cloud_agent_trigger_execution_identity(trigger: &CloudAgentModelTrigger) -> (String, usize) {
+    match trigger {
+        CloudAgentModelTrigger::RunStarted { .. } => ("initial".to_string(), 1),
+        CloudAgentModelTrigger::ToolResults { .. } => ("tool_results".to_string(), 1),
+        CloudAgentModelTrigger::Continuation { payload, .. } => (
+            payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("continuation")
+                .to_string(),
+            1,
+        ),
+        CloudAgentModelTrigger::Retry {
+            model_attempt,
+            payload,
+            ..
+        } => (
+            payload
+                .get("retry_kind")
+                .or_else(|| payload.get("reason"))
+                .and_then(Value::as_str)
+                .unwrap_or("model_retry")
+                .to_string(),
+            (*model_attempt).max(1),
+        ),
+    }
+}
+
+pub fn cloud_agent_trigger_input_items(
+    run: &CloudAgentRunRecord,
+    trigger: &CloudAgentModelTrigger,
+    initial_input_items: Vec<Value>,
+) -> Result<Vec<Value>, String> {
+    match trigger {
+        CloudAgentModelTrigger::RunStarted { .. } => Ok(initial_input_items),
+        CloudAgentModelTrigger::Continuation { payload, .. }
+        | CloudAgentModelTrigger::Retry { payload, .. } => Ok(payload
+            .get("input_items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or(initial_input_items)),
+        CloudAgentModelTrigger::ToolResults { items, .. } => {
+            cloud_agent_mcp_result_input_items(run.pending_tool_calls.as_slice(), items.as_slice())
+        }
+    }
+}
+
+pub fn cloud_agent_mcp_result_input_items(
+    calls: &[Value],
+    results: &[Value],
+) -> Result<Vec<Value>, String> {
+    if calls.len() != results.len() {
+        return Err("MCP aggregate result count does not match pending tool calls".to_string());
+    }
+    calls
+        .iter()
+        .zip(results)
+        .enumerate()
+        .map(|(index, (call, result))| {
+            let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
+                .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
+            let output = if result.get("status").and_then(Value::as_str) == Some("completed") {
+                result
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(Value::Null)
+                    .to_string()
+            } else {
+                result
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("MCP tool call failed")
+                    .to_string()
+            };
+            Ok(
+                chatos_ai_runtime::tool_call::build_function_call_output_item(
+                    call_id,
+                    output.as_str(),
+                ),
+            )
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudAgentConsumeDisposition {
     Committed,
@@ -201,19 +275,66 @@ pub enum CloudAgentConsumeDisposition {
     Terminal,
 }
 
-/// Handles one AI Runtime delivery. The supplied executor must itself perform
-/// exactly one model request; `AiRuntime::execute_once` satisfies that contract.
-pub async fn consume_once<S, R, E, Fut>(
+#[derive(Debug)]
+pub struct CloudAgentSingleStepOutput {
+    pub outcome: AiSingleStepOutcome,
+    pub mcp_runtime_session_ref: Option<String>,
+    pub mcp_command_queue: Option<String>,
+    pub retry_input_items: Option<Vec<Value>>,
+}
+
+impl CloudAgentSingleStepOutput {
+    pub fn new(outcome: AiSingleStepOutcome) -> Self {
+        Self {
+            outcome,
+            mcp_runtime_session_ref: None,
+            mcp_command_queue: None,
+            retry_input_items: None,
+        }
+    }
+
+    pub fn with_mcp_runtime(
+        mut self,
+        session_ref: impl Into<String>,
+        command_queue: impl Into<String>,
+    ) -> Self {
+        self.mcp_runtime_session_ref = Some(session_ref.into());
+        self.mcp_command_queue = Some(command_queue.into());
+        self
+    }
+
+    pub fn with_retry_input_items(mut self, input_items: Vec<Value>) -> Self {
+        self.retry_input_items = Some(input_items);
+        self
+    }
+}
+
+#[derive(Debug)]
+pub enum CloudAgentSingleStepExecution {
+    Apply(CloudAgentSingleStepOutput),
+    AckWithoutTransition,
+}
+
+#[async_trait]
+pub trait CloudAgentSingleStepExecutor: Send + Sync {
+    async fn execute_single_step(
+        &self,
+        run: &CloudAgentRunRecord,
+        trigger: &CloudAgentModelTrigger,
+    ) -> Result<CloudAgentSingleStepExecution, String>;
+}
+
+/// Owns the complete durable transaction around one cloud Agent model step:
+/// load, batch identity validation, short CAS claim, one owner execution,
+/// reducer, outbox materialization and atomic commit.
+pub async fn consume_cloud_agent_single_step<S, E>(
     store: &S,
-    resolver: &R,
+    executor: &E,
     input: CloudAgentConsumeInput,
-    execute: E,
 ) -> Result<CloudAgentConsumeDisposition, String>
 where
     S: CloudAgentRunStore,
-    R: CloudAgentModelResolver,
-    E: FnOnce(AiSingleStepRequest) -> Fut,
-    Fut: Future<Output = Result<AiSingleStepOutcome, String>>,
+    E: CloudAgentSingleStepExecutor,
 {
     if input.agent_run_id.trim().is_empty()
         || input.event_id.trim().is_empty()
@@ -227,6 +348,20 @@ where
     };
     if run.status.is_terminal() {
         return Ok(CloudAgentConsumeDisposition::Terminal);
+    }
+    if let CloudAgentModelTrigger::ToolResults {
+        batch_id,
+        source_step_seq,
+        items,
+        ..
+    } = &input.trigger
+    {
+        if run.pending_batch_id.as_deref() != Some(batch_id.as_str())
+            || run.ordering.step_seq != source_step_seq.saturating_add(1)
+            || run.pending_tool_calls.len() != items.len()
+        {
+            return Ok(CloudAgentConsumeDisposition::Conflict);
+        }
     }
     let claim = CloudAgentClaim {
         ordering: run.ordering.clone(),
@@ -244,23 +379,59 @@ where
         CloudAgentClaimResult::Terminal => return Ok(CloudAgentConsumeDisposition::Terminal),
     }
     let result = async {
-        let request = resolver.resolve_single_step(&run, input.trigger).await?;
-        let outcome = execute(request).await?;
-        let transition = reduce_single_step(
+        let execution = executor.execute_single_step(&run, &input.trigger).await?;
+        let CloudAgentSingleStepExecution::Apply(output) = execution else {
+            return Ok(None);
+        };
+        let mut transition = reduce_single_step(
             &run,
             claim.clone(),
             input.event_id.as_str(),
             input.output_routing_key.as_str(),
-            outcome,
+            output.outcome,
         )?;
-        store.commit_transition(transition).await
+        if let Some(session_ref) = output.mcp_runtime_session_ref {
+            transition.mcp_runtime_session_ref = Some(session_ref);
+        }
+        for intent in &mut transition.outbox {
+            if intent.topic == "ai_runtime_retry" {
+                if let Some(input_items) = output.retry_input_items.as_ref() {
+                    intent.payload["input_items"] = Value::Array(input_items.clone());
+                }
+            } else if intent.topic == "mcp_tool_call_command" {
+                let command_queue = output
+                    .mcp_command_queue
+                    .as_deref()
+                    .ok_or_else(|| "Cloud Agent MCP command queue was not provided".to_string())?;
+                intent.routing_key = command_queue.to_string();
+                let session_ref = transition
+                    .mcp_runtime_session_ref
+                    .as_deref()
+                    .ok_or_else(|| "Cloud Agent MCP session was not persisted".to_string())?;
+                let transition_run = CloudAgentRunRecord {
+                    mcp_runtime_session_ref: Some(session_ref.to_string()),
+                    ..run.clone()
+                };
+                materialize_mcp_command(
+                    &transition_run,
+                    intent,
+                    session_ref,
+                    input.output_routing_key.as_str(),
+                )?;
+            }
+        }
+        store.commit_transition(transition).await.map(Some)
     }
     .await;
     match result {
-        Ok(true) => Ok(CloudAgentConsumeDisposition::Committed),
-        Ok(false) => {
+        Ok(Some(true)) => Ok(CloudAgentConsumeDisposition::Committed),
+        Ok(Some(false)) => {
             store.release_short_claim(&claim).await?;
             Ok(CloudAgentConsumeDisposition::Conflict)
+        }
+        Ok(None) => {
+            store.release_short_claim(&claim).await?;
+            Ok(CloudAgentConsumeDisposition::Committed)
         }
         Err(error) => {
             store.release_short_claim(&claim).await?;
@@ -459,6 +630,7 @@ pub fn reduce_single_step(
         },
         AiSingleStepOutcome::Failed { error } => terminal_transition(
             claim,
+            run.mcp_runtime_session_ref.clone(),
             CloudAgentRunStatus::Failed,
             next_step_seq,
             next_iteration,
@@ -466,6 +638,7 @@ pub fn reduce_single_step(
         ),
         AiSingleStepOutcome::Cancelled => terminal_transition(
             claim,
+            run.mcp_runtime_session_ref.clone(),
             CloudAgentRunStatus::Cancelled,
             next_step_seq,
             next_iteration,
@@ -556,6 +729,7 @@ pub fn materialize_mcp_command(
 
 fn terminal_transition(
     claim: CloudAgentClaim,
+    mcp_runtime_session_ref: Option<String>,
     status: CloudAgentRunStatus,
     next_step_seq: u64,
     next_iteration: u32,
@@ -581,7 +755,7 @@ fn terminal_transition(
         previous_response_id: None,
         continuation_mode: None,
         current_input_items_ref,
-        mcp_runtime_session_ref: None,
+        mcp_runtime_session_ref,
         pending_batch_id: None,
         pending_tool_calls: Vec::new(),
         pending_tool_results: Vec::new(),
@@ -643,6 +817,7 @@ fn outbox_intent(
 mod tests {
     use super::*;
     use chatos_ai_runtime::AiRuntimeResult;
+    use std::sync::{Arc, Mutex};
 
     fn ordering() -> CloudAgentOrdering {
         CloudAgentOrdering {
@@ -663,6 +838,7 @@ mod tests {
             owner_entity_id: "run-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
+            input: Value::Null,
             status: CloudAgentRunStatus::ModelRequesting,
             phase: CloudAgentRunPhase::ModelRequest,
             iteration: 2,
@@ -752,5 +928,138 @@ mod tests {
         assert_eq!(transition.next_step_seq, 2);
         assert_eq!(transition.next_retry_count, 1);
         assert_eq!(transition.outbox.len(), 1);
+    }
+
+    #[derive(Clone)]
+    struct TestSingleStepExecutor {
+        outcome: AiSingleStepOutcome,
+        seen_triggers: Arc<Mutex<Vec<CloudAgentModelTrigger>>>,
+    }
+
+    #[async_trait]
+    impl CloudAgentSingleStepExecutor for TestSingleStepExecutor {
+        async fn execute_single_step(
+            &self,
+            _run: &CloudAgentRunRecord,
+            trigger: &CloudAgentModelTrigger,
+        ) -> Result<CloudAgentSingleStepExecution, String> {
+            self.seen_triggers.lock().unwrap().push(trigger.clone());
+            Ok(CloudAgentSingleStepExecution::Apply(
+                CloudAgentSingleStepOutput::new(self.outcome.clone())
+                    .with_mcp_runtime("session-1", "mcp.commands")
+                    .with_retry_input_items(vec![serde_json::json!({"type": "message"})]),
+            ))
+        }
+    }
+
+    async fn inserted_ready_run() -> InMemoryCloudAgentRunStore {
+        let store = InMemoryCloudAgentRunStore::new();
+        store.allocate_lane_seq("task:task-1").await.unwrap();
+        let mut record = run();
+        record.status = CloudAgentRunStatus::ModelReady;
+        record.phase = CloudAgentRunPhase::Ready;
+        record.ordering.step_seq = 1;
+        record.iteration = 0;
+        record.version = 1;
+        store.insert_run(record).await.unwrap();
+        store
+    }
+
+    fn consume_input() -> CloudAgentConsumeInput {
+        CloudAgentConsumeInput {
+            agent_run_id: "run-1".to_string(),
+            event_id: "run-started-1".to_string(),
+            trigger: CloudAgentModelTrigger::RunStarted {
+                event_id: "run-started-1".to_string(),
+                payload: Value::Null,
+            },
+            expected_status: CloudAgentRunStatus::ModelReady,
+            expected_phase: CloudAgentRunPhase::Ready,
+            claim_token: "claim-single-step".to_string(),
+            claim_until: Utc::now() + chrono::Duration::seconds(30),
+            output_routing_key: "cloud_agent.task_runner.runtime".to_string(),
+        }
+    }
+
+    fn tool_outcome(call_count: usize) -> AiSingleStepOutcome {
+        AiSingleStepOutcome::ToolCommand {
+            response: AiRuntimeResult {
+                content: String::new(),
+                reasoning: None,
+                tool_calls: None,
+                finish_reason: Some("tool_calls".to_string()),
+                usage: None,
+                response_id: Some("response-1".to_string()),
+            },
+            tool_calls: Value::Array(
+                (0..call_count)
+                    .map(|index| {
+                        serde_json::json!({
+                            "id": format!("call-{index}"),
+                            "function": {
+                                "name": format!("tool-{index}"),
+                                "arguments": "{}",
+                            },
+                        })
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn single_and_multiple_tools_use_the_same_single_step_transaction() {
+        for call_count in [1, 3] {
+            let store = inserted_ready_run().await;
+            let executor = TestSingleStepExecutor {
+                outcome: tool_outcome(call_count),
+                seen_triggers: Arc::new(Mutex::new(Vec::new())),
+            };
+
+            assert_eq!(
+                consume_cloud_agent_single_step(&store, &executor, consume_input())
+                    .await
+                    .unwrap(),
+                CloudAgentConsumeDisposition::Committed
+            );
+            let persisted = store.load_run("run-1").await.unwrap().unwrap();
+            assert_eq!(persisted.status, CloudAgentRunStatus::WaitingToolResult);
+            assert_eq!(persisted.pending_tool_calls.len(), call_count);
+            let outbox = store.list_ready_outbox(10).await.unwrap();
+            assert_eq!(outbox.len(), 1);
+            assert_eq!(outbox[0].topic, "mcp_tool_call_command");
+            assert_eq!(outbox[0].routing_key, "mcp.commands");
+            assert_eq!(
+                outbox[0].payload["calls"].as_array().unwrap().len(),
+                call_count
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_keeps_exact_input_items_in_the_durable_event() {
+        let store = inserted_ready_run().await;
+        let executor = TestSingleStepExecutor {
+            outcome: AiSingleStepOutcome::Retry {
+                error: "timeout".to_string(),
+                retry_kind: "network".to_string(),
+                next_model_attempt: 2,
+                backoff_ms: 0,
+                disable_stream: false,
+                downgrade_thinking_to: None,
+            },
+            seen_triggers: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        consume_cloud_agent_single_step(&store, &executor, consume_input())
+            .await
+            .unwrap();
+        let outbox = store.list_ready_outbox(10).await.unwrap();
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0].topic, "ai_runtime_retry");
+        assert_eq!(
+            outbox[0].payload["input_items"],
+            serde_json::json!([{"type": "message"}])
+        );
     }
 }

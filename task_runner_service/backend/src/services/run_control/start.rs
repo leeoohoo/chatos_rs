@@ -254,6 +254,7 @@ impl RunService {
                 .unwrap_or(task.subject_id.as_str())
                 .to_string(),
             agent_key: agent.descriptor().key.as_str().to_string(),
+            input: Value::Null,
             status: CloudAgentRunStatus::ModelReady,
             phase: CloudAgentRunPhase::Ready,
             iteration: 0,

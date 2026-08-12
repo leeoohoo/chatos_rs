@@ -417,6 +417,7 @@ mod tests {
             owner_entity_id: run_id.to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
+            input: Value::Null,
             status: CloudAgentRunStatus::ModelReady,
             phase: CloudAgentRunPhase::Ready,
             iteration: 0,

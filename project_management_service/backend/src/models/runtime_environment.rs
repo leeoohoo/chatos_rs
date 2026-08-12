@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use chatos_ai_runtime::ModelRuntimeConfig;
+
 use super::DbStatus;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -211,6 +213,24 @@ pub struct ProjectRuntimeEnvironmentRecord {
     pub generated_config_files: Vec<ProjectRuntimeEnvironmentConfigFileRecord>,
     pub last_agent_run_id: Option<String>,
     pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectEnvironmentAgentRunInput {
+    pub agent_run_id: String,
+    pub project_id: String,
+    pub owner_user_id: String,
+    pub model_config_id: String,
+    pub model_config: ModelRuntimeConfig,
+    pub agent_key: String,
+    pub agent_prompt: chatos_plugin_management_sdk::ResolvedAgentPrompt,
+    pub prompt: String,
+    pub mcp_command_queue: String,
+    pub file_provider: RuntimeEnvironmentProvider,
+    pub sandbox_provider: RuntimeEnvironmentProvider,
+    pub analysis_started_at: String,
     pub created_at: String,
     pub updated_at: String,
 }

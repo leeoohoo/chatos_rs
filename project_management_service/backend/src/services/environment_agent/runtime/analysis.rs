@@ -5,6 +5,332 @@ use super::super::source_snapshot::{
     bind_source_snapshot, capture_harness_source_snapshot, set_analysis_progress,
 };
 use super::super::*;
+use chatos_agent::{AgentIdentity, SystemAgentDefinition};
+use chatos_ai_runtime::{
+    AiRuntime, AiRuntimeOptions, ContextualTurnRequest, ContextualTurnRunner,
+    McpRuntimeToolExecutor, MemoryContextOverflowRecovery, RuntimeRecordOptions, SaveRecordInput,
+};
+use chatos_cloud_agent_protocol::{
+    CloudAgentOrdering, CloudAgentRunPhase, CloudAgentRunRecord, CloudAgentRunStatus,
+};
+use chatos_cloud_agent_runtime::{
+    cloud_agent_trigger_execution_identity, cloud_agent_trigger_input_items,
+    consume_cloud_agent_single_step, CloudAgentConsumeDisposition, CloudAgentConsumeInput,
+    CloudAgentModelTrigger, CloudAgentOutboxIntent, CloudAgentRunStore,
+    CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor, CloudAgentSingleStepOutput,
+};
+use chatos_mcp_runtime::McpExecutor;
+use chrono::Utc;
+use std::sync::Arc;
+
+pub(crate) async fn consume_cloud_agent_event(
+    state: &AppState,
+    event_id: String,
+    agent_run_id: String,
+    trigger: CloudAgentModelTrigger,
+    expected_status: CloudAgentRunStatus,
+    expected_phase: CloudAgentRunPhase,
+) -> Result<CloudAgentConsumeDisposition, String> {
+    consume_cloud_agent_single_step(
+        &state.cloud_agent_store,
+        &ProjectEnvironmentSingleStepExecutor {
+            state: state.clone(),
+        },
+        CloudAgentConsumeInput {
+            agent_run_id,
+            event_id,
+            trigger,
+            expected_status,
+            expected_phase,
+            claim_token: uuid::Uuid::new_v4().to_string(),
+            claim_until: Utc::now() + chrono::Duration::seconds(30),
+            output_routing_key: crate::cloud_agent_queue::PROJECT_CLOUD_AGENT_ROUTING_KEY
+                .to_string(),
+        },
+    )
+    .await
+}
+
+struct ProjectEnvironmentSingleStepExecutor {
+    state: AppState,
+}
+
+#[async_trait::async_trait]
+impl CloudAgentSingleStepExecutor for ProjectEnvironmentSingleStepExecutor {
+    async fn execute_single_step(
+        &self,
+        cloud_run: &CloudAgentRunRecord,
+        trigger: &CloudAgentModelTrigger,
+    ) -> Result<CloudAgentSingleStepExecution, String> {
+        let state = &self.state;
+        let run_input =
+            serde_json::from_value::<ProjectEnvironmentAgentRunInput>(cloud_run.input.clone())
+                .map_err(|error| {
+                    format!("decode Project Environment Agent input failed: {error}")
+                })?;
+        if run_input.project_id != cloud_run.owner_entity_id
+            || run_input.owner_user_id != cloud_run.owner_user_id
+            || run_input.model_config_id != cloud_run.model_config_ref
+            || run_input.agent_key != cloud_run.agent_key
+        {
+            return Err("Project Environment Agent persisted input identity changed".to_string());
+        }
+        let project = state
+            .store
+            .get_project(run_input.project_id.as_str())
+            .await?
+            .ok_or_else(|| format!("Project not found: {}", run_input.project_id))?;
+        let session_id = cloud_run
+            .mcp_runtime_session_ref
+            .as_deref()
+            .ok_or_else(|| "Project Environment Agent has no MCP runtime session".to_string())?;
+        let gateway = resolve_existing_project_environment_mcp(
+            &project,
+            run_input.owner_user_id.as_str(),
+            cloud_run.ordering.agent_run_id.as_str(),
+            run_input.model_config_id.as_str(),
+            session_id,
+        )
+        .await?;
+        let executor = McpExecutor::builder()
+            .with_http_server(gateway.server().clone())
+            .build_initialized()
+            .await?;
+        ensure_agent_required_tools_available(
+            &executor,
+            &RuntimeEnvironmentPlan {
+                file_provider: run_input.file_provider,
+                sandbox_provider: run_input.sandbox_provider,
+            },
+        )?;
+        let memory = build_project_agent_memory(
+            &state.config,
+            run_input.owner_user_id.as_str(),
+            run_input.project_id.as_str(),
+            None,
+        )
+        .await?;
+        let agent = chatos_agent::ProjectEnvironmentAgent::for_project_locality(matches!(
+            project.source_type,
+            crate::models::ProjectSourceType::Local
+                | crate::models::ProjectSourceType::LocalConnector
+        ));
+        if agent.descriptor().key.as_str() != run_input.agent_key {
+            return Err("Project Environment Agent locality changed during the run".to_string());
+        }
+        let metadata = json!({
+            "agent": "project_management_environment_agent",
+            "run_id": cloud_run.ordering.agent_run_id,
+            "project_id": project.id,
+            "agent_prompt_vendor": run_input.agent_prompt.vendor.as_str(),
+            "agent_prompt_revision": run_input.agent_prompt.revision,
+            "agent_prompt_checksum": run_input.agent_prompt.checksum,
+        });
+        let mut model_config = agent.configure_model_with_prompt(
+            run_input.model_config.clone(),
+            run_input.agent_prompt.content.as_str(),
+        );
+        model_config.previous_response_id = cloud_run.previous_response_id.clone();
+        let current_input_items = cloud_agent_trigger_input_items(
+            cloud_run,
+            trigger,
+            vec![chatos_ai_runtime::user_text_item(run_input.prompt.clone())],
+        )?;
+        let retry_input_items = current_input_items.clone();
+        let user_record = matches!(trigger, CloudAgentModelTrigger::RunStarted { .. }).then(|| {
+            SaveRecordInput::user_message(memory.conversation_id.clone(), run_input.prompt.clone())
+                .with_conversation_turn_id(cloud_run.ordering.agent_run_id.clone())
+                .with_message_mode(agent.message_mode())
+                .with_message_source(agent.message_source())
+                .with_metadata(metadata.clone())
+        });
+        let record_options = RuntimeRecordOptions::persist_all()
+            .with_assistant_message_mode(agent.message_mode())
+            .with_assistant_message_source(agent.message_source())
+            .with_assistant_metadata(metadata.clone())
+            .with_tool_message_mode(agent.message_mode())
+            .with_tool_message_source(agent.message_source())
+            .with_tool_metadata(metadata);
+        let runtime_options = AiRuntimeOptions::new(
+            Some(memory.conversation_id.clone()),
+            Some(cloud_run.ordering.agent_run_id.clone()),
+        )
+        .with_caller_model(Some(model_config.model.clone()))
+        .with_caller_model_runtime(Some(model_config.to_tool_caller_model_runtime()))
+        .with_record_options(record_options);
+        let model_request = model_config.to_model_request(Value::Null, executor.available_tools());
+        let request =
+            ContextualTurnRequest::new(model_request, runtime_options, current_input_items)
+                .with_memory_scope(Some(memory.scope.clone()))
+                .with_user_record(user_record);
+        let runtime = AiRuntime::new(Some(Arc::new(McpRuntimeToolExecutor::new(executor))))
+            .with_max_iterations(usize::try_from(cloud_run.max_iterations).unwrap_or(usize::MAX))
+            .with_record_writer(Some(Arc::new(memory.writer)));
+        let runner = ContextualTurnRunner::new(runtime, Some(memory.composer))
+            .with_context_overflow_recovery(Some(
+                MemoryContextOverflowRecovery::new()
+                    .with_trigger_reason(agent.context_overflow_trigger()),
+            ));
+        let (reason, model_attempt) = cloud_agent_trigger_execution_identity(trigger);
+        let outcome = if cloud_run
+            .deadline_at
+            .is_some_and(|deadline| deadline <= Utc::now())
+        {
+            chatos_ai_runtime::AiSingleStepOutcome::Failed {
+                error: "project environment analysis deadline reached".to_string(),
+            }
+        } else {
+            runner
+                .execute_once(
+                    request,
+                    usize::try_from(cloud_run.iteration.saturating_add(1)).unwrap_or(usize::MAX),
+                    reason,
+                    model_attempt,
+                )
+                .await?
+        };
+        Ok(CloudAgentSingleStepExecution::Apply(
+            CloudAgentSingleStepOutput::new(outcome)
+                .with_mcp_runtime(session_id, run_input.mcp_command_queue)
+                .with_retry_input_items(retry_input_items),
+        ))
+    }
+}
+
+pub(crate) async fn finalize_cloud_agent_terminal(
+    state: &AppState,
+    agent_run_id: &str,
+) -> Result<(), String> {
+    let cloud_run = state
+        .cloud_agent_store
+        .load_run(agent_run_id)
+        .await?
+        .ok_or_else(|| format!("Cloud Agent run not found: {agent_run_id}"))?;
+    if !cloud_run.status.is_terminal() {
+        return Err("Project Environment lifecycle arrived before terminal state".to_string());
+    }
+    let run_input =
+        serde_json::from_value::<ProjectEnvironmentAgentRunInput>(cloud_run.input.clone())
+            .map_err(|error| format!("decode Project Environment Agent input failed: {error}"))?;
+    let Some(mut environment) = state
+        .store
+        .get_project_runtime_environment(run_input.project_id.as_str())
+        .await?
+    else {
+        return Err("project environment disappeared before Agent finalization".to_string());
+    };
+    if environment.last_agent_run_id.as_deref() == Some(agent_run_id) {
+        if cloud_run.status == CloudAgentRunStatus::Succeeded
+            && environment.status == ProjectRuntimeEnvironmentStatus::Analyzing
+        {
+            environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+            environment.analysis_summary =
+                Some("项目管理 Agent 已执行，但没有写入运行环境初始化结果。".to_string());
+            environment.last_error =
+                Some("agent did not call update_current_project_runtime_environment".to_string());
+        } else if matches!(
+            cloud_run.status,
+            CloudAgentRunStatus::Failed
+                | CloudAgentRunStatus::Blocked
+                | CloudAgentRunStatus::Cancelled
+        ) && environment.status == ProjectRuntimeEnvironmentStatus::Analyzing
+        {
+            let error = cloud_run
+                .terminal_outcome
+                .as_ref()
+                .and_then(|outcome| outcome.get("error"))
+                .and_then(Value::as_str)
+                .unwrap_or("Project Environment Agent execution failed")
+                .to_string();
+            environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+            environment.analysis_summary = Some("项目管理 Agent 初始化运行环境失败。".to_string());
+            environment.last_error = Some(error);
+        }
+        environment.updated_at = now_rfc3339();
+        set_analysis_progress(
+            &mut environment.detected_stack,
+            agent_run_id,
+            if environment.status == ProjectRuntimeEnvironmentStatus::Failed {
+                "agent_analysis_failed"
+            } else {
+                "agent_analysis_completed"
+            },
+            run_input.analysis_started_at.as_str(),
+            environment.updated_at.as_str(),
+            Some(environment.updated_at.as_str()),
+            environment.last_error.as_deref(),
+        );
+        state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await?;
+    }
+    if let Some(session_ref) = cloud_run.mcp_runtime_session_ref.as_deref() {
+        let config =
+            chatos_mcp_management_sdk::McpManagementClientConfig::from_env("project-service")
+                .await
+                .map_err(|error| error.to_string())?;
+        let client = chatos_mcp_management_sdk::McpManagementClient::new(config)
+            .map_err(|error| error.to_string())?;
+        if let Err(error) = client.close_runtime_session(session_ref).await {
+            tracing::warn!(
+                agent_run_id,
+                session_id = session_ref,
+                error = %error,
+                "close Project Environment MCP runtime session failed"
+            );
+        }
+    }
+    if environment.last_agent_run_id.as_deref() == Some(agent_run_id)
+        && cloud_run.status == CloudAgentRunStatus::Succeeded
+    {
+        let project = state
+            .store
+            .get_project(run_input.project_id.as_str())
+            .await?
+            .ok_or_else(|| format!("Project not found: {}", run_input.project_id))?;
+        let mut response = response_for_project(state, environment).await?;
+        if enforce_project_runtime_boundary(
+            &project,
+            &mut response.environment,
+            &mut response.images,
+        ) {
+            response.environment = state
+                .store
+                .upsert_project_runtime_environment(&response.environment)
+                .await?;
+            response.images = state
+                .store
+                .replace_project_runtime_environment_images(
+                    project.id.as_str(),
+                    response.images.as_slice(),
+                )
+                .await?;
+        }
+        if response.environment.sandbox_provider == RuntimeEnvironmentProvider::CloudSandboxManager
+        {
+            if let Some(image_record_id) = pending_workspace_image_id(&response) {
+                if let Err(error) = super::super::generate_project_runtime_environment_image(
+                    state,
+                    &project,
+                    None,
+                    image_record_id.as_str(),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        agent_run_id,
+                        project_id = project.id.as_str(),
+                        image_record_id = image_record_id.as_str(),
+                        error = error.as_str(),
+                        "automatic Project Environment image preparation failed"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 pub(in crate::services::environment_agent) async fn analyze_project_runtime_environment_impl(
     state: &AppState,
@@ -205,7 +531,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         }
     };
 
-    let memory = match build_project_agent_memory(
+    if let Err(err) = build_project_agent_memory(
         &state.config,
         owner_user_id,
         project.id.as_str(),
@@ -213,141 +539,162 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     )
     .await
     {
-        Ok(memory) => memory,
-        Err(err) => {
-            environment.status = ProjectRuntimeEnvironmentStatus::Failed;
-            environment.analysis_summary =
-                Some("项目管理 Agent Memory Engine 初始化失败。".to_string());
-            environment.last_error = Some(err);
-            environment.updated_at = now_rfc3339();
-            set_analysis_progress(
-                &mut environment.detected_stack,
-                run_id.as_str(),
-                "memory_initialization_failed",
-                analysis_started_at.as_str(),
-                environment.updated_at.as_str(),
-                Some(environment.updated_at.as_str()),
-                environment.last_error.as_deref(),
-            );
-            let environment = state
-                .store
-                .upsert_project_runtime_environment(&environment)
-                .await?;
-            return response_for_project(state, environment).await;
-        }
-    };
+        environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+        environment.analysis_summary =
+            Some("项目管理 Agent Memory Engine 初始化失败。".to_string());
+        environment.last_error = Some(err);
+        environment.updated_at = now_rfc3339();
+        set_analysis_progress(
+            &mut environment.detected_stack,
+            run_id.as_str(),
+            "memory_initialization_failed",
+            analysis_started_at.as_str(),
+            environment.updated_at.as_str(),
+            Some(environment.updated_at.as_str()),
+            environment.last_error.as_deref(),
+        );
+        let environment = state
+            .store
+            .upsert_project_runtime_environment(&environment)
+            .await?;
+        return response_for_project(state, environment).await;
+    }
     let source_snapshot = environment.detected_stack.get("source_snapshot").cloned();
-    let agent_result = run_project_environment_agent(
+    let agent_prompt = resolve_project_environment_agent_prompt(
         state,
         project,
-        environment_plan,
         model_runtime.prompt_vendor.as_deref(),
-        &model_runtime.model_config,
-        &memory,
-        &ProjectEnvironmentAgentRunContext {
-            run_id: run_id.as_str(),
-            owner_user_id,
-            model_config_id: model_runtime.model_config_id.as_str(),
+        model_runtime.model_config.provider.as_str(),
+    )
+    .await?;
+    let gateway = resolve_project_environment_mcp(
+        project,
+        owner_user_id,
+        run_id.as_str(),
+        model_runtime.model_config_id.as_str(),
+    )
+    .await?;
+    let persist_result = async {
+        let executor = McpExecutor::builder()
+            .with_http_server(gateway.server().clone())
+            .build_initialized()
+            .await?;
+        ensure_agent_required_tools_available(&executor, &environment_plan)?;
+        let mut prompt = build_project_environment_agent_prompt(
+            project,
+            run_id.as_str(),
             analysis_requirement,
             selected_dependencies,
             prefer_china_mirrors,
-            source_snapshot: source_snapshot.as_ref(),
-        },
-    )
-    .await;
-
-    match agent_result {
-        Ok(()) => {
-            let Some(environment) = state
-                .store
-                .get_project_runtime_environment(project.id.as_str())
-                .await?
-            else {
-                return Err(
-                    "project environment agent did not persist runtime environment".to_string(),
-                );
-            };
-            if environment.status == ProjectRuntimeEnvironmentStatus::Analyzing {
-                let mut failed = environment;
-                failed.status = ProjectRuntimeEnvironmentStatus::Failed;
-                failed.analysis_summary =
-                    Some("项目管理 Agent 已执行，但没有写入运行环境初始化结果。".to_string());
-                failed.last_error = Some(
-                    "agent did not call update_current_project_runtime_environment".to_string(),
-                );
-                failed.updated_at = now_rfc3339();
-                set_analysis_progress(
-                    &mut failed.detected_stack,
-                    run_id.as_str(),
-                    "agent_result_missing",
-                    analysis_started_at.as_str(),
-                    failed.updated_at.as_str(),
-                    Some(failed.updated_at.as_str()),
-                    failed.last_error.as_deref(),
-                );
-                let failed = state
-                    .store
-                    .upsert_project_runtime_environment(&failed)
-                    .await?;
-                return response_for_project(state, failed).await;
-            }
-            let mut response = response_for_project(state, environment).await?;
-            if enforce_project_runtime_boundary(
-                project,
-                &mut response.environment,
-                &mut response.images,
-            ) {
-                response.environment = state
-                    .store
-                    .upsert_project_runtime_environment(&response.environment)
-                    .await?;
-                response.images = state
-                    .store
-                    .replace_project_runtime_environment_images(
-                        project.id.as_str(),
-                        response.images.as_slice(),
-                    )
-                    .await?;
-            }
-            let Some(image_record_id) = pending_workspace_image_id(&response) else {
-                return Ok(response);
-            };
-            super::super::generate_project_runtime_environment_image(
-                state,
-                project,
-                user_access_token,
-                image_record_id.as_str(),
-            )
+            source_snapshot.as_ref(),
+        )?;
+        let provider_skills_prompt = gateway.provider_skills_prompt();
+        if let Some(provider_skills_prompt) = provider_skills_prompt.as_deref() {
+            prompt.push_str("\n\n");
+            prompt.push_str(provider_skills_prompt.trim());
+        }
+        let agent = chatos_agent::ProjectEnvironmentAgent::for_project_locality(matches!(
+            project.source_type,
+            crate::models::ProjectSourceType::Local
+                | crate::models::ProjectSourceType::LocalConnector
+        ));
+        let agent_key = agent.descriptor().key.as_str().to_string();
+        let max_iterations = chatos_agent::load_agent_max_iterations("project-service").await;
+        let lane_key = format!("project_environment:{}", project.id);
+        let lane_seq = state
+            .cloud_agent_store
+            .allocate_lane_seq(lane_key.as_str())
+            .await?;
+        let ordering = CloudAgentOrdering {
+            ordering_lane_key: lane_key,
+            lane_seq,
+            agent_run_id: run_id.clone(),
+            generation: 1,
+            step_seq: 1,
+        };
+        let cloud_now = Utc::now();
+        let now = now_rfc3339();
+        let run_input = ProjectEnvironmentAgentRunInput {
+            agent_run_id: run_id.clone(),
+            project_id: project.id.clone(),
+            owner_user_id: owner_user_id.to_string(),
+            model_config_id: model_runtime.model_config_id.clone(),
+            model_config: model_runtime.model_config.clone(),
+            agent_key: agent_key.clone(),
+            agent_prompt: agent_prompt.clone(),
+            prompt,
+            mcp_command_queue: gateway.command_queue().to_string(),
+            file_provider: environment_plan.file_provider,
+            sandbox_provider: environment_plan.sandbox_provider,
+            analysis_started_at,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        let cloud_run = CloudAgentRunRecord {
+            ordering: ordering.clone(),
+            owner_service: "project-service".to_string(),
+            owner_entity_type: "project_runtime_environment".to_string(),
+            owner_entity_id: project.id.clone(),
+            owner_user_id: owner_user_id.to_string(),
+            agent_key: agent_key.clone(),
+            input: serde_json::to_value(run_input).map_err(|error| {
+                format!("encode Project Environment Agent input failed: {error}")
+            })?,
+            status: CloudAgentRunStatus::ModelReady,
+            phase: CloudAgentRunPhase::Ready,
+            iteration: 0,
+            model_config_ref: model_runtime.model_config_id.clone(),
+            model_runtime_snapshot_ref: format!("project_environment_agent:{run_id}:input"),
+            agent_prompt_revision: agent_prompt.revision.to_string(),
+            agent_prompt_checksum: agent_prompt.checksum.clone(),
+            capability_policy_revision: "mcp_runtime_session".to_string(),
+            mcp_runtime_session_ref: Some(gateway.session_id().to_string()),
+            previous_response_id: None,
+            continuation_mode: Some("run_started".to_string()),
+            pending_batch_id: None,
+            pending_tool_calls: Vec::new(),
+            pending_tool_results: Vec::new(),
+            current_input_items_ref: format!("project_environment_agent:{run_id}:initial"),
+            usage_accumulator: Value::Null,
+            max_iterations: u32::try_from(max_iterations).unwrap_or(u32::MAX),
+            retry_count: 0,
+            deadline_at: chrono::Duration::from_std(state.config.environment_analysis_timeout)
+                .ok()
+                .map(|duration| cloud_now + duration),
+            cancel_requested: false,
+            terminal_outcome: None,
+            version: 1,
+            created_at: cloud_now,
+            updated_at: cloud_now,
+        };
+        let start_event_id = format!("cloud_agent_run_started_{run_id}_1");
+        let start_outbox = CloudAgentOutboxIntent {
+            event_id: start_event_id.clone(),
+            topic: "run_started".to_string(),
+            routing_key: crate::cloud_agent_queue::PROJECT_CLOUD_AGENT_ROUTING_KEY.to_string(),
+            ordering,
+            causation_id: project.id.clone(),
+            correlation_id: run_id.clone(),
+            available_at: cloud_now,
+            payload: json!({
+                "event_type": "run_started",
+                "event_id": start_event_id,
+                "project_id": project.id,
+            }),
+        };
+        state
+            .cloud_agent_store
+            .insert_run_with_outbox(cloud_run, vec![start_outbox])
             .await
-        }
-        Err(err) => {
-            environment.status = ProjectRuntimeEnvironmentStatus::Failed;
-            environment.analysis_summary = Some("项目管理 Agent 初始化运行环境失败。".to_string());
-            environment.last_error = Some(err.clone());
-            environment.updated_at = now_rfc3339();
-            set_analysis_progress(
-                &mut environment.detected_stack,
-                run_id.as_str(),
-                "agent_analysis_failed",
-                analysis_started_at.as_str(),
-                environment.updated_at.as_str(),
-                Some(environment.updated_at.as_str()),
-                Some(err.as_str()),
-            );
-            tracing::warn!(
-                project_id = project.id.as_str(),
-                model_config_id = model_runtime.model_config_id.as_str(),
-                model = model_runtime.model_config.model.as_str(),
-                error = err.as_str(),
-                "project environment agent failed"
-            );
-            let environment = state
-                .store
-                .upsert_project_runtime_environment(&environment)
-                .await?;
-            response_for_project(state, environment).await
-        }
     }
+    .await;
+    if let Err(error) = persist_result {
+        return Err(match gateway.close().await {
+            Ok(()) => error,
+            Err(close_error) => format!("{error}; {close_error}"),
+        });
+    }
+    response_for_project(state, environment).await
 }
 
 fn pending_workspace_image_id(response: &ProjectRuntimeEnvironmentResponse) -> Option<String> {
@@ -376,14 +723,60 @@ fn pending_workspace_image_id(response: &ProjectRuntimeEnvironmentResponse) -> O
         .map(|image| image.id.clone())
 }
 
-struct ProjectEnvironmentAgentRunContext<'a> {
-    run_id: &'a str,
-    owner_user_id: &'a str,
-    model_config_id: &'a str,
-    analysis_requirement: Option<&'a str>,
-    selected_dependencies: &'a [String],
-    prefer_china_mirrors: bool,
-    source_snapshot: Option<&'a Value>,
+#[cfg(test)]
+mod cloud_agent_input_tests {
+    use super::*;
+    use chatos_ai_runtime::ModelRuntimeConfig;
+    use chatos_plugin_management_sdk::{AgentPromptVendor, ResolvedAgentPrompt};
+
+    #[test]
+    fn durable_owner_input_round_trips_without_losing_runtime_identity() {
+        let input = ProjectEnvironmentAgentRunInput {
+            agent_run_id: "agent-run-1".to_string(),
+            project_id: "project-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            model_config_id: "model-config-1".to_string(),
+            model_config: ModelRuntimeConfig::openai_compatible(
+                "https://model.example/v1",
+                "secret-key",
+                "gpt-test",
+                "openai",
+            )
+            .with_thinking_level(Some("high".to_string())),
+            agent_key: "project_management_agent".to_string(),
+            agent_prompt: ResolvedAgentPrompt {
+                agent_key: "project_management_agent".to_string(),
+                vendor: AgentPromptVendor::Gpt,
+                content: "system prompt".to_string(),
+                revision: 7,
+                checksum: "checksum-7".to_string(),
+                published_at: "2026-08-12T00:00:00Z".to_string(),
+            },
+            prompt: "initial input".to_string(),
+            mcp_command_queue: "mcp.commands".to_string(),
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            analysis_started_at: "2026-08-12T00:00:00Z".to_string(),
+            created_at: "2026-08-12T00:00:00Z".to_string(),
+            updated_at: "2026-08-12T00:00:00Z".to_string(),
+        };
+
+        let decoded: ProjectEnvironmentAgentRunInput =
+            serde_json::from_value(serde_json::to_value(&input).unwrap()).unwrap();
+
+        assert_eq!(decoded.agent_run_id, input.agent_run_id);
+        assert_eq!(decoded.project_id, input.project_id);
+        assert_eq!(decoded.agent_key, input.agent_key);
+        assert_eq!(decoded.mcp_command_queue, input.mcp_command_queue);
+        assert_eq!(decoded.model_config.api_key, "secret-key");
+        assert_eq!(decoded.model_config.thinking_level.as_deref(), Some("high"));
+        assert_eq!(decoded.agent_prompt.revision, 7);
+        assert_eq!(decoded.file_provider, RuntimeEnvironmentProvider::Harness);
+        assert_eq!(
+            decoded.sandbox_provider,
+            RuntimeEnvironmentProvider::CloudSandboxManager
+        );
+    }
 }
 
 async fn response_for_project(
@@ -517,129 +910,6 @@ mod automatic_image_preparation_tests {
 
         assert_eq!(pending_workspace_image_id(&response), None);
     }
-}
-
-async fn run_project_environment_agent(
-    state: &AppState,
-    project: &ProjectRecord,
-    environment_plan: RuntimeEnvironmentPlan,
-    prompt_vendor: Option<&str>,
-    model_config: &ModelRuntimeConfig,
-    memory: &ProjectAgentMemory,
-    run_context: &ProjectEnvironmentAgentRunContext<'_>,
-) -> Result<(), String> {
-    let agent_prompt = resolve_project_environment_agent_prompt(
-        state,
-        project,
-        prompt_vendor,
-        model_config.provider.as_str(),
-    )
-    .await?;
-    let gateway = resolve_project_environment_mcp(
-        project,
-        run_context.owner_user_id,
-        run_context.run_id,
-        run_context.model_config_id,
-    )
-    .await?;
-    let provider_skills_prompt = gateway.provider_skills_prompt();
-    let result = tokio::time::timeout(state.config.environment_analysis_timeout, async {
-        let executor = McpExecutor::builder()
-            .with_http_server(gateway.server().clone())
-            .build_initialized()
-            .await?;
-        ensure_agent_required_tools_available(&executor, &environment_plan)?;
-        execute_project_environment_agent(
-            project,
-            model_config,
-            memory,
-            run_context.run_id,
-            run_context.analysis_requirement,
-            run_context.selected_dependencies,
-            run_context.prefer_china_mirrors,
-            run_context.source_snapshot,
-            agent_prompt,
-            executor,
-            provider_skills_prompt,
-        )
-        .await
-    })
-    .await
-    .unwrap_or_else(|_| {
-        Err(format!(
-            "project environment analysis exceeded configured timeout of {} ms",
-            state.config.environment_analysis_timeout.as_millis()
-        ))
-    });
-    gateway.close(project.id.as_str(), run_context.run_id).await;
-    result
-}
-
-async fn execute_project_environment_agent(
-    project: &ProjectRecord,
-    model_config: &ModelRuntimeConfig,
-    memory: &ProjectAgentMemory,
-    run_id: &str,
-    analysis_requirement: Option<&str>,
-    selected_dependencies: &[String],
-    prefer_china_mirrors: bool,
-    source_snapshot: Option<&Value>,
-    agent_prompt: chatos_plugin_management_sdk::ResolvedAgentPrompt,
-    executor: McpExecutor,
-    provider_skills_prompt: Option<String>,
-) -> Result<(), String> {
-    let mut prompt = build_project_environment_agent_prompt(
-        project,
-        run_id,
-        analysis_requirement,
-        selected_dependencies,
-        prefer_china_mirrors,
-        source_snapshot,
-    )?;
-    if let Some(provider_skills_prompt) = provider_skills_prompt {
-        prompt.push_str("\n\n");
-        prompt.push_str(provider_skills_prompt.trim());
-    }
-    let metadata = json!({
-        "agent": "project_management_environment_agent",
-        "run_id": run_id,
-        "project_id": project.id,
-        "agent_prompt_vendor": agent_prompt.vendor.as_str(),
-        "agent_prompt_revision": agent_prompt.revision,
-        "agent_prompt_checksum": agent_prompt.checksum,
-    });
-    let agent_memory = AgentTurnMemory::new(
-        memory.composer.clone(),
-        memory.writer.clone(),
-        memory.scope.clone(),
-        memory.conversation_id.clone(),
-    );
-    let request = AgentTurnRequest::new(
-        model_config.clone(),
-        memory.conversation_id.clone(),
-        run_id,
-        prompt,
-    )
-    .with_system_prompt(agent_prompt.content)
-    .with_mcp_executor(executor)
-    .with_memory(Some(agent_memory))
-    .with_max_iterations(chatos_agent::load_agent_max_iterations("project-service").await)
-    .with_metadata(metadata);
-    let agent = chatos_agent::ProjectEnvironmentAgent::for_project_locality(matches!(
-        project.source_type,
-        crate::models::ProjectSourceType::Local | crate::models::ProjectSourceType::LocalConnector
-    ));
-    let result = AgentExecutor::new()
-        .run(&agent, request)
-        .await
-        .map_err(|error| error.message().to_string())?;
-    tracing::info!(
-        project_id = project.id.as_str(),
-        run_id,
-        finish_reason = result.finish_reason.as_deref().unwrap_or(""),
-        "project environment agent completed"
-    );
-    Ok(())
 }
 
 fn bind_analysis_request(

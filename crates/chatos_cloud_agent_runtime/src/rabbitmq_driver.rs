@@ -31,7 +31,6 @@ pub struct CloudAgentRabbitMqTopology {
     pub exchange: String,
     pub runtime_queue: String,
     pub retry_queue: String,
-    pub mcp_result_routing_key: String,
     pub consumer_tag: String,
     pub reconnect_delay: Duration,
     pub outbox_reconcile_interval: Duration,
@@ -47,10 +46,6 @@ impl CloudAgentRabbitMqTopology {
             ("exchange", self.exchange.as_str()),
             ("runtime_queue", self.runtime_queue.as_str()),
             ("retry_queue", self.retry_queue.as_str()),
-            (
-                "mcp_result_routing_key",
-                self.mcp_result_routing_key.as_str(),
-            ),
             ("consumer_tag", self.consumer_tag.as_str()),
         ] {
             if value.trim().is_empty() {
@@ -397,21 +392,16 @@ async fn ensure_topology(
         )
         .await
         .map_err(|error| error.to_string())?;
-    for routing_key in [
-        topology.runtime_queue.as_str(),
-        topology.mcp_result_routing_key.as_str(),
-    ] {
-        channel
-            .queue_bind(
-                topology.runtime_queue.as_str(),
-                topology.exchange.as_str(),
-                routing_key,
-                QueueBindOptions::default(),
-                FieldTable::default(),
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-    }
+    channel
+        .queue_bind(
+            topology.runtime_queue.as_str(),
+            topology.exchange.as_str(),
+            topology.runtime_queue.as_str(),
+            QueueBindOptions::default(),
+            FieldTable::default(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     let mut retry_arguments = FieldTable::default();
     retry_arguments.insert(
         "x-dead-letter-exchange".into(),
@@ -496,7 +486,7 @@ async fn publish_intent(
             &run,
             intent,
             session_ref,
-            topology.mcp_result_routing_key.as_str(),
+            topology.runtime_queue.as_str(),
         )?)
         .map_err(|error| error.to_string())?
     } else {
@@ -563,7 +553,6 @@ mod tests {
             exchange: "cloud_agent".to_string(),
             runtime_queue: "cloud_agent.project.runtime".to_string(),
             retry_queue: "cloud_agent.project.runtime.retry".to_string(),
-            mcp_result_routing_key: "cloud_agent.project.mcp_results".to_string(),
             consumer_tag: "project-cloud-agent".to_string(),
             reconnect_delay: Duration::from_secs(1),
             outbox_reconcile_interval: Duration::from_secs(1),

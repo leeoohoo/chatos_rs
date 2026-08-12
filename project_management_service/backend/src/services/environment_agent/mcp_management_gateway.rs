@@ -7,7 +7,7 @@ use chatos_mcp_gateway::McpManagementGatewayBuilder;
 use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
 use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::SystemAgentKey;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::models::ProjectRecord;
 
@@ -28,17 +28,27 @@ impl ProjectEnvironmentMcpGateway {
         self.provider_skills_prompt.clone()
     }
 
-    pub(super) async fn close(self, project_id: &str, run_id: &str) {
-        let session_id = self.runtime_session.session_id().to_string();
-        if let Err(error) = self.runtime_session.close().await {
-            warn!(
-                project_id,
-                run_id,
-                session_id,
-                error = %error,
-                "close Project Environment MCP Management runtime session failed"
-            );
-        }
+    pub(super) fn session_id(&self) -> &str {
+        self.runtime_session.session_id()
+    }
+
+    pub(super) fn command_queue(&self) -> &str {
+        self.server
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get("x-chatos-mcp-command-queue"))
+            .map(String::as_str)
+            .unwrap_or_default()
+    }
+
+    pub(super) async fn close(self) -> Result<(), String> {
+        self.runtime_session
+            .close()
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                format!("close Project Environment MCP runtime session failed: {error}")
+            })
     }
 }
 
@@ -63,6 +73,28 @@ pub(super) async fn resolve_project_environment_mcp(
         exposed_tool_count = resolved.exposed_tool_count,
         "Project Environment Agent resolved MCP Management runtime session"
     );
+    Ok(ProjectEnvironmentMcpGateway {
+        runtime_session: resolved.runtime_session,
+        server: resolved.server,
+        provider_skills_prompt: resolved.provider_skills_prompt,
+    })
+}
+
+pub(super) async fn resolve_existing_project_environment_mcp(
+    project: &ProjectRecord,
+    owner_user_id: &str,
+    run_id: &str,
+    model_config_id: &str,
+    session_id: &str,
+) -> Result<ProjectEnvironmentMcpGateway, String> {
+    let request = runtime_session_request(project, owner_user_id, run_id, model_config_id);
+    let resolved = McpManagementGatewayBuilder::new("project-service", request, tool_timeout())
+        .with_async_result_transport(chatos_mcp_runtime::McpAsyncResultTransport::RabbitMq)
+        .resolve_existing(session_id)
+        .await
+        .map_err(|error| {
+            format!("resolve existing Project Environment MCP gateway failed: {error}")
+        })?;
     Ok(ProjectEnvironmentMcpGateway {
         runtime_session: resolved.runtime_session,
         server: resolved.server,

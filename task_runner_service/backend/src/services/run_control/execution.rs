@@ -7,8 +7,10 @@ use crate::services::TaskRunnerCapabilityPolicy;
 use chatos_ai_runtime::TaskRunReport;
 use chatos_cloud_agent_protocol::{CloudAgentRunPhase, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
-    reduce_single_step, CloudAgentClaim, CloudAgentClaimResult, CloudAgentConsumeDisposition,
-    CloudAgentModelTrigger, CloudAgentRunStore,
+    cloud_agent_trigger_execution_identity, consume_cloud_agent_single_step,
+    CloudAgentConsumeDisposition, CloudAgentConsumeInput, CloudAgentModelTrigger,
+    CloudAgentRunStore, CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor,
+    CloudAgentSingleStepOutput,
 };
 use chrono::Utc;
 
@@ -127,123 +129,25 @@ impl RunService {
         expected_status: CloudAgentRunStatus,
         expected_phase: CloudAgentRunPhase,
     ) -> Result<CloudAgentConsumeDisposition, String> {
-        let resolver = TaskRunnerSingleStepResolver {
+        let executor = TaskRunnerSingleStepResolver {
             service: self.clone(),
         };
-        let Some(cloud_run) = self
-            .cloud_agent_store
-            .load_run(agent_run_id.as_str())
-            .await?
-        else {
-            return Ok(CloudAgentConsumeDisposition::Conflict);
-        };
-        if cloud_run.status.is_terminal() {
-            return Ok(CloudAgentConsumeDisposition::Terminal);
-        }
-        match &trigger {
-            CloudAgentModelTrigger::ToolResults {
-                batch_id,
-                source_step_seq,
-                items,
-                ..
-            } => {
-                if cloud_run.pending_batch_id.as_deref() != Some(batch_id.as_str())
-                    || cloud_run.ordering.step_seq != source_step_seq.saturating_add(1)
-                    || cloud_run.pending_tool_calls.len() != items.len()
-                {
-                    return Ok(CloudAgentConsumeDisposition::Conflict);
-                }
-            }
-            CloudAgentModelTrigger::RunStarted { .. }
-            | CloudAgentModelTrigger::Continuation { .. }
-            | CloudAgentModelTrigger::Retry { .. } => {}
-        }
-        let claim_token = uuid::Uuid::new_v4().to_string();
-        let claim = CloudAgentClaim {
-            ordering: cloud_run.ordering.clone(),
-            expected_status,
-            expected_phase,
-            expected_version: cloud_run.version,
-            claim_token,
-            claim_until: Utc::now() + chrono::Duration::seconds(30),
-        };
-        match self.cloud_agent_store.acquire_short_claim(&claim).await? {
-            CloudAgentClaimResult::Acquired => {}
-            CloudAgentClaimResult::Duplicate => return Ok(CloudAgentConsumeDisposition::Duplicate),
-            CloudAgentClaimResult::OutOfOrder => {
-                return Ok(CloudAgentConsumeDisposition::OutOfOrder)
-            }
-            CloudAgentClaimResult::Conflict => return Ok(CloudAgentConsumeDisposition::Conflict),
-            CloudAgentClaimResult::Terminal => return Ok(CloudAgentConsumeDisposition::Terminal),
-        }
-        let result = async {
-            let executable = match resolver
-                .prepare(&cloud_run, agent_run_id.as_str(), &trigger)
-                .await
-            {
-                Ok(executable) => executable,
-                Err(error) if error == crate::services::CLOUD_AGENT_DEPENDENCY_WAITING => {
-                    return Ok(None);
-                }
-                Err(error) => return Err(error),
-            };
-            let mcp_command_queue = executable.prepared.mcp_command_queue.clone();
-            let mcp_runtime_session_ref = executable.prepared.mcp_runtime_session_ref.clone();
-            let continuation_input_items = executable.prepared.continuation_input_items();
-            let outcome = executable.execute().await?;
-            let mut transition = reduce_single_step(
-                &cloud_run,
-                claim.clone(),
-                event_id.as_str(),
-                crate::cloud_agent_queue::TASK_RUNNER_CLOUD_AGENT_MCP_RESULT_ROUTING_KEY,
-                outcome,
-            )?;
-            transition.mcp_runtime_session_ref = Some(mcp_runtime_session_ref);
-            for intent in &mut transition.outbox {
-                if intent.topic == "ai_runtime_retry" {
-                    intent.payload["input_items"] = Value::Array(continuation_input_items.clone());
-                }
-            }
-            let command_session_ref = transition
-                .mcp_runtime_session_ref
-                .as_deref()
-                .ok_or_else(|| "Cloud Agent MCP session was not persisted".to_string())?;
-            let transition_run = chatos_cloud_agent_protocol::CloudAgentRunRecord {
-                mcp_runtime_session_ref: Some(command_session_ref.to_string()),
-                ..cloud_run.clone()
-            };
-            for intent in &mut transition.outbox {
-                if intent.topic == "mcp_tool_call_command" {
-                    intent.routing_key = mcp_command_queue.clone();
-                    chatos_cloud_agent_runtime::materialize_mcp_command(
-                        &transition_run,
-                        intent,
-                        command_session_ref,
-                        crate::cloud_agent_queue::TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY,
-                    )?;
-                }
-            }
-            self.cloud_agent_store
-                .commit_transition(transition)
-                .await
-                .map(Some)
-        }
-        .await;
-        match result {
-            Ok(Some(true)) => Ok(CloudAgentConsumeDisposition::Committed),
-            Ok(Some(false)) => {
-                self.cloud_agent_store.release_short_claim(&claim).await?;
-                Ok(CloudAgentConsumeDisposition::Conflict)
-            }
-            Ok(None) => {
-                self.cloud_agent_store.release_short_claim(&claim).await?;
-                Ok(CloudAgentConsumeDisposition::Committed)
-            }
-            Err(error) => {
-                self.cloud_agent_store.release_short_claim(&claim).await?;
-                Err(error)
-            }
-        }
+        consume_cloud_agent_single_step(
+            &self.cloud_agent_store,
+            &executor,
+            CloudAgentConsumeInput {
+                agent_run_id,
+                event_id,
+                trigger,
+                expected_status,
+                expected_phase,
+                claim_token: uuid::Uuid::new_v4().to_string(),
+                claim_until: Utc::now() + chrono::Duration::seconds(30),
+                output_routing_key: crate::cloud_agent_queue::TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY
+                    .to_string(),
+            },
+        )
+        .await
     }
 
     pub async fn execute_claimed_run(&self, mut run: TaskRunRecord) {
@@ -590,36 +494,42 @@ impl TaskRunnerSingleStepResolver {
             .prepare_single_model_step(&task, &run, &model_config, prepared)
             .await?
             .prepare_for_trigger(cloud_run, trigger)?;
-        let (reason, model_attempt) = match trigger {
-            CloudAgentModelTrigger::RunStarted { .. } => ("initial".to_string(), 1),
-            CloudAgentModelTrigger::Continuation { payload, .. } => (
-                payload
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .unwrap_or("continuation")
-                    .to_string(),
-                1,
-            ),
-            CloudAgentModelTrigger::ToolResults { .. } => ("tool_results".to_string(), 1),
-            CloudAgentModelTrigger::Retry {
-                model_attempt,
-                payload,
-                ..
-            } => (
-                payload
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .unwrap_or("retry")
-                    .to_string(),
-                *model_attempt,
-            ),
-        };
+        let (reason, model_attempt) = cloud_agent_trigger_execution_identity(trigger);
         Ok(TaskRunnerSingleStepExecutable {
             prepared,
             iteration: usize::try_from(cloud_run.iteration.saturating_add(1)).unwrap_or(usize::MAX),
             reason,
             model_attempt,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl CloudAgentSingleStepExecutor for TaskRunnerSingleStepResolver {
+    async fn execute_single_step(
+        &self,
+        cloud_run: &chatos_cloud_agent_protocol::CloudAgentRunRecord,
+        trigger: &CloudAgentModelTrigger,
+    ) -> Result<CloudAgentSingleStepExecution, String> {
+        let executable = match self
+            .prepare(cloud_run, &cloud_run.ordering.agent_run_id, trigger)
+            .await
+        {
+            Ok(executable) => executable,
+            Err(error) if error == crate::services::CLOUD_AGENT_DEPENDENCY_WAITING => {
+                return Ok(CloudAgentSingleStepExecution::AckWithoutTransition);
+            }
+            Err(error) => return Err(error),
+        };
+        let mcp_command_queue = executable.prepared.mcp_command_queue.clone();
+        let mcp_runtime_session_ref = executable.prepared.mcp_runtime_session_ref.clone();
+        let retry_input_items = executable.prepared.continuation_input_items();
+        let outcome = executable.execute().await?;
+        Ok(CloudAgentSingleStepExecution::Apply(
+            CloudAgentSingleStepOutput::new(outcome)
+                .with_mcp_runtime(mcp_runtime_session_ref, mcp_command_queue)
+                .with_retry_input_items(retry_input_items),
+        ))
     }
 }
 

@@ -13,6 +13,7 @@ use chatos_ai_runtime::{
     TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
     ToolResultModelBudgetLimits, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
+use chatos_cloud_agent_runtime::cloud_agent_mcp_result_input_items;
 use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
 use chatos_mcp_runtime::{BuiltinMcpPromptLocale, McpExecutorBuilder};
 use memory_engine_sdk::ComposeContextPolicy;
@@ -98,7 +99,7 @@ impl PreparedSingleModelStep {
             }
             chatos_cloud_agent_runtime::CloudAgentModelTrigger::ToolResults { items, .. } => {
                 self.run_spec.user_record = None;
-                self.run_spec.current_input_items = mcp_result_input_items(
+                self.run_spec.current_input_items = cloud_agent_mcp_result_input_items(
                     cloud_run.pending_tool_calls.as_slice(),
                     items.as_slice(),
                 )?;
@@ -130,40 +131,6 @@ impl PreparedSingleModelStep {
             )
             .await
     }
-}
-
-fn mcp_result_input_items(calls: &[Value], results: &[Value]) -> Result<Vec<Value>, String> {
-    if calls.len() != results.len() {
-        return Err("MCP aggregate result count does not match pending tool calls".to_string());
-    }
-    calls
-        .iter()
-        .zip(results)
-        .enumerate()
-        .map(|(index, (call, result))| {
-            let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
-                .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
-            let output = if result.get("status").and_then(Value::as_str) == Some("completed") {
-                result
-                    .get("result")
-                    .cloned()
-                    .unwrap_or(Value::Null)
-                    .to_string()
-            } else {
-                result
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("MCP tool call failed")
-                    .to_string()
-            };
-            Ok(
-                chatos_ai_runtime::tool_call::build_function_call_output_item(
-                    call_id,
-                    output.as_str(),
-                ),
-            )
-        })
-        .collect()
 }
 
 impl RunService {

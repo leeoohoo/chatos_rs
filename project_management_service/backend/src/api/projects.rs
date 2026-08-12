@@ -180,41 +180,24 @@ async fn queue_cloud_runtime_environment_bootstrap(
     project: ProjectRecord,
     access_token: String,
 ) {
-    let project_id = project.id.clone();
-    if !state
-        .runtime_environment_analysis_jobs
-        .lock()
-        .await
-        .insert(project_id.clone())
+    let run_id = format!("project_env_bootstrap_{}", uuid::Uuid::new_v4());
+    if let Err(error) = analyze_project_runtime_environment(
+        state,
+        &project,
+        Some(access_token.as_str()),
+        run_id.as_str(),
+        None,
+        &[],
+        false,
+    )
+    .await
     {
-        return;
+        warn!(
+            project_id = project.id.as_str(),
+            error = error.as_str(),
+            "automatic cloud project runtime initialization failed"
+        );
     }
-    let worker_state = state.clone();
-    tokio::spawn(async move {
-        let run_id = format!("project_env_bootstrap_{}", uuid::Uuid::new_v4());
-        if let Err(error) = analyze_project_runtime_environment(
-            &worker_state,
-            &project,
-            Some(access_token.as_str()),
-            run_id.as_str(),
-            None,
-            &[],
-            false,
-        )
-        .await
-        {
-            warn!(
-                project_id = project_id.as_str(),
-                error = error.as_str(),
-                "automatic cloud project runtime initialization failed"
-            );
-        }
-        worker_state
-            .runtime_environment_analysis_jobs
-            .lock()
-            .await
-            .remove(project_id.as_str());
-    });
 }
 
 #[cfg(test)]

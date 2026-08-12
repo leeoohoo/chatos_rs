@@ -166,7 +166,7 @@ async fn has_enabled_local_sandbox_pairing(
     project_ref: Option<&LocalConnectorProjectRef>,
 ) -> Result<bool, String> {
     Ok(
-        find_enabled_local_sandbox_pairing(config, user_access_token, project_ref)
+        find_enabled_local_sandbox_pairing(config, user_access_token, project_ref, None)
             .await?
             .is_some(),
     )
@@ -176,13 +176,8 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
     config: &AppConfig,
     user_access_token: Option<&str>,
     project_ref: Option<&LocalConnectorProjectRef>,
+    owner_user_id: Option<&str>,
 ) -> Result<Option<LocalConnectorSandboxPairing>, String> {
-    let Some(token) = user_access_token
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(None);
-    };
     let base = config
         .local_connector_service_base_url
         .trim()
@@ -193,8 +188,37 @@ pub(super) async fn find_enabled_local_sandbox_pairing(
     let mut request = config
         .local_connector_http_client
         .get(format!("{base}/api/local-connectors/sandbox-pairings"))
-        .bearer_auth(token)
         .query(&[("active_only", "true")]);
+    if let Some(token) = user_access_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        request = request.bearer_auth(token);
+    } else {
+        let owner_user_id = owner_user_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Local Connector workspace owner user id is required".to_string())?;
+        let secret = std::env::var("PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET is required".to_string()
+            })?;
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            secret.as_str(),
+            "project-service",
+            "local-connector-service",
+            "sandbox-routing.read",
+            60,
+            owner_user_id,
+        )?;
+        request = request
+            .header("x-local-connector-caller", "project-service")
+            .header("x-local-connector-internal-token", token)
+            .header("x-local-connector-owner-user-id", owner_user_id);
+    }
     if let Some(project_ref) = project_ref {
         request = request.query(&[
             ("device_id", project_ref.device_id.as_str()),

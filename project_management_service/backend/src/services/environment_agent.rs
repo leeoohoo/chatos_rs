@@ -4,9 +4,6 @@
 use crate::models::*;
 use crate::state::AppState;
 use crate::user_model_runtime_client::resolve_default_environment_initialization_model_runtime;
-use chatos_agent::{AgentExecutor, AgentTurnMemory, AgentTurnRequest};
-use chatos_ai_runtime::ModelRuntimeConfig;
-use chatos_mcp_runtime::McpExecutor;
 use serde_json::{json, Value};
 
 use super::runtime_environment::{
@@ -25,14 +22,16 @@ mod tool_provider;
 pub use self::progress::get_project_runtime_environment_progress;
 
 use self::agent_prompt::resolve_project_environment_agent_prompt;
-use self::mcp_management_gateway::resolve_project_environment_mcp;
+use self::mcp_management_gateway::{
+    resolve_existing_project_environment_mcp, resolve_project_environment_mcp,
+};
 use self::mcp_servers::{
     create_sandbox_image_from_plan, ensure_agent_required_tools_available,
     get_local_project_compose_environment_status, get_sandbox_image_catalog,
     prepare_sandbox_dependency_images, restart_local_project_compose_environment,
     start_local_project_compose_environment, stop_local_project_compose_environment,
 };
-use self::memory::{build_project_agent_memory, ProjectAgentMemory};
+use self::memory::build_project_agent_memory;
 use self::routing::{
     resolve_runtime_environment_plan, RuntimeEnvironmentDecision, RuntimeEnvironmentPlan,
     StopDecision,
@@ -242,6 +241,8 @@ pub async fn analyze_project_runtime_environment(
     )
     .await
 }
+
+pub(crate) use runtime::analysis::{consume_cloud_agent_event, finalize_cloud_agent_terminal};
 
 pub(super) fn compose_dependency_image_ref(
     image: &ProjectRuntimeEnvironmentImageRecord,

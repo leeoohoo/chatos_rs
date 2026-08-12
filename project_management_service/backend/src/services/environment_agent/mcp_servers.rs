@@ -196,10 +196,14 @@ pub(super) async fn start_local_project_compose_environment(
         .as_deref()
         .and_then(parse_local_connector_project_root)
         .ok_or_else(|| "当前项目不是有效的 Local Connector 本地项目".to_string())?;
-    let pairing =
-        find_enabled_local_sandbox_pairing(&state.config, Some(access_token), Some(&project_ref))
-            .await?
-            .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
+    let pairing = find_enabled_local_sandbox_pairing(
+        &state.config,
+        Some(access_token),
+        Some(&project_ref),
+        project.owner_user_id.as_deref(),
+    )
+    .await?
+    .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
     let response = state
         .config
@@ -302,10 +306,14 @@ async fn call_local_project_compose_action(
         .as_deref()
         .and_then(parse_local_connector_project_root)
         .ok_or_else(|| "当前项目不是有效的 Local Connector 本地项目".to_string())?;
-    let pairing =
-        find_enabled_local_sandbox_pairing(&state.config, Some(access_token), Some(&project_ref))
-            .await?
-            .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
+    let pairing = find_enabled_local_sandbox_pairing(
+        &state.config,
+        Some(access_token),
+        Some(&project_ref),
+        project.owner_user_id.as_deref(),
+    )
+    .await?
+    .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
     let response = state
         .config
@@ -477,10 +485,14 @@ async fn local_connector_sandbox_image_mcp_server(
         .root_path
         .as_deref()
         .and_then(parse_local_connector_project_root);
-    let pairing =
-        find_enabled_local_sandbox_pairing(&state.config, Some(access_token), project_ref.as_ref())
-            .await?
-            .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
+    let pairing = find_enabled_local_sandbox_pairing(
+        &state.config,
+        Some(access_token),
+        project_ref.as_ref(),
+        project.owner_user_id.as_deref(),
+    )
+    .await?
+    .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = local_connector_facade_base(state, &pairing)?;
     let mut headers = HashMap::new();
     headers.insert(
