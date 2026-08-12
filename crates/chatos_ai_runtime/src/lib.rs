@@ -57,8 +57,8 @@ pub use memory_context::{
 };
 pub use request::{AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks};
 pub use runtime::{
-    AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus,
-    IterativeContextRefresh, MemoryContextOverflowRecovery,
+    AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepOutcome, AiSingleStepRequest,
+    AiTurnReport, AiTurnStatus, IterativeContextRefresh, MemoryContextOverflowRecovery,
 };
 pub use simple_prompt::{
     base_url_disallows_system_messages, base_url_requires_responses_input_list,

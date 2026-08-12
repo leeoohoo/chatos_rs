@@ -29,11 +29,13 @@ mod options;
 mod persistence;
 mod report;
 mod request_error;
+mod single_step;
 mod summaries;
 mod tool_execution;
 
 pub use self::options::{AiRuntimeOptions, IterativeContextRefresh, MemoryContextOverflowRecovery};
 pub use self::report::{AiRuntimeResult, AiTurnReport, AiTurnStatus};
+pub use self::single_step::{AiSingleStepOutcome, AiSingleStepRequest};
 
 use self::final_response::{
     handle_response_without_tool_calls, runtime_result_from_response, FinalResponseAction,
@@ -107,6 +109,15 @@ impl AiRuntime {
             return Ok(());
         };
         writer.save_record(input).await
+    }
+
+    /// Executes one model request and returns any tool work or retry as data.
+    /// Cloud consumers persist that outcome and end the current MQ delivery.
+    pub async fn execute_once(
+        &self,
+        request: AiSingleStepRequest,
+    ) -> Result<AiSingleStepOutcome, String> {
+        single_step::execute_once(self, request).await
     }
 
     pub async fn run_turn(
