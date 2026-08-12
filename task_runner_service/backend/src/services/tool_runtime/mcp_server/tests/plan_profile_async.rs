@@ -25,6 +25,8 @@ async fn chatos_async_reuse_is_scoped_by_task_profile() {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })
@@ -144,6 +146,8 @@ async fn chatos_async_create_task_inherits_selected_conversation_model() {
                 max_output_tokens: None,
                 model_request_max_retries: 5,
                 thinking_level: None,
+                supports_images: None,
+                supports_reasoning: None,
                 enabled: Some(true),
                 supports_responses: Some(true),
             })
@@ -326,6 +330,8 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })
@@ -419,6 +425,8 @@ async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })

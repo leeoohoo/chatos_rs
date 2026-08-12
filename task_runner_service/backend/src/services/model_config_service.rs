@@ -138,6 +138,14 @@ impl ModelConfigService {
                 .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
             model_request_max_retries: input.model_request_max_retries,
             thinking_level,
+            supports_images: input
+                .supports_images
+                .or_else(|| existing.as_ref().map(|item| item.supports_images))
+                .unwrap_or(false),
+            supports_reasoning: input
+                .supports_reasoning
+                .or_else(|| existing.as_ref().map(|item| item.supports_reasoning))
+                .unwrap_or(false),
             supports_responses: input
                 .supports_responses
                 .unwrap_or_else(|| provider == "openai"),

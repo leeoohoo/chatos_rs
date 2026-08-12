@@ -35,6 +35,28 @@ pub use types::{
 
 use types::UserServiceTaskRunnerTokenResponse;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatosModelRuntimeConfig {
+    pub id: String,
+    pub owner_user_id: Option<String>,
+    pub name: String,
+    pub provider: String,
+    pub prompt_vendor: Option<String>,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub usage_scenario: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
+    pub thinking_level: Option<String>,
+    pub supports_images: bool,
+    pub supports_reasoning: bool,
+    pub supports_responses: bool,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 pub async fn exchange_task_runner_token_via_user_service(
     request: &UserServiceTaskRunnerExchange,
 ) -> Result<String, String> {
@@ -108,6 +130,44 @@ pub async fn list_task_runner_available_plugins(
     .await
     .query(&query);
     send_task_runner_response(request).await
+}
+
+pub async fn list_chatos_model_configs(
+    owner_user_id: &str,
+    include_all: bool,
+) -> Result<Value, String> {
+    let owner_user_id = owner_user_id.trim();
+    if owner_user_id.is_empty() {
+        return Err("owner_user_id is required".to_string());
+    }
+    let path = format!(
+        "/internal/chatos/users/{}/model-configs",
+        urlencoding::encode(owner_user_id)
+    );
+    let query = [("include_all", if include_all { "true" } else { "false" })];
+    get_internal_json_with_scope(path.as_str(), &query, "chatos.models.read").await
+}
+
+pub async fn get_chatos_model_runtime_config(
+    owner_user_id: &str,
+    model_config_id: &str,
+    include_all: bool,
+) -> Result<ChatosModelRuntimeConfig, String> {
+    let owner_user_id = owner_user_id.trim();
+    let model_config_id = model_config_id.trim();
+    if owner_user_id.is_empty() || model_config_id.is_empty() {
+        return Err("owner_user_id and model_config_id are required".to_string());
+    }
+    let path = format!(
+        "/internal/chatos/users/{}/model-configs/{}/runtime",
+        urlencoding::encode(owner_user_id),
+        urlencoding::encode(model_config_id),
+    );
+    let query = [("include_all", if include_all { "true" } else { "false" })];
+    let value =
+        get_internal_json_with_scope(path.as_str(), &query, "chatos.models.runtime").await?;
+    serde_json::from_value(value)
+        .map_err(|err| format!("decode task runner model runtime config failed: {err}"))
 }
 
 pub async fn cancel_task_runner_task(
@@ -299,13 +359,22 @@ async fn get_internal_json(
     path: &str,
     query: &[(&str, &str)],
 ) -> Result<Value, String> {
+    get_internal_json_with_scope(path, query, "chatos.messages.read").await
+}
+
+async fn get_internal_json_with_scope(
+    path: &str,
+    query: &[(&str, &str)],
+    scope: &str,
+) -> Result<Value, String> {
     let base_url = Config::try_get()?.task_runner_internal_base_url.as_str();
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
     send_task_runner_response_with_limit(
-        signed_chatos_internal_request(
+        signed_chatos_internal_request_with_scope(
             task_runner_internal_http_client()?
                 .get(endpoint)
                 .timeout(task_runner_request_timeout()),
+            scope,
         )?
         .query(query),
         TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES,
@@ -342,12 +411,6 @@ async fn post_internal_json_with_scope<T: Serialize + ?Sized>(
         "Task Runner internal request failed",
     )
     .await
-}
-
-fn signed_chatos_internal_request(
-    request: reqwest::RequestBuilder,
-) -> Result<reqwest::RequestBuilder, String> {
-    signed_chatos_internal_request_with_scope(request, "chatos.messages.read")
 }
 
 fn signed_chatos_internal_request_with_scope(

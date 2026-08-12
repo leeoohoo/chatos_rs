@@ -35,6 +35,10 @@ pub struct ModelConfigRecord {
     #[serde(default = "default_model_request_max_retries")]
     pub model_request_max_retries: usize,
     pub thinking_level: Option<String>,
+    #[serde(default)]
+    pub supports_images: bool,
+    #[serde(default)]
+    pub supports_reasoning: bool,
     pub supports_responses: bool,
     pub instructions: Option<String>,
     pub request_cwd: Option<String>,
@@ -183,6 +187,8 @@ mod tests {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: Some(thinking_level.to_string()),
+            supports_images: false,
+            supports_reasoning: true,
             supports_responses: true,
             instructions: None,
             request_cwd: None,
@@ -231,6 +237,10 @@ pub struct ChatosSyncedModelConfigRequest {
     #[serde(default = "default_model_request_max_retries")]
     pub model_request_max_retries: usize,
     pub thinking_level: Option<String>,
+    #[serde(default)]
+    pub supports_images: Option<bool>,
+    #[serde(default)]
+    pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
     pub enabled: Option<bool>,
 }

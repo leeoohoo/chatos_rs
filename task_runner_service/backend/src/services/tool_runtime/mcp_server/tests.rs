@@ -352,6 +352,8 @@ fn model_config(id: &str, owner_user_id: &str, enabled: bool) -> ModelConfigReco
         max_output_tokens: None,
         model_request_max_retries: 5,
         thinking_level: None,
+        supports_images: false,
+        supports_reasoning: false,
         supports_responses: true,
         instructions: None,
         request_cwd: None,

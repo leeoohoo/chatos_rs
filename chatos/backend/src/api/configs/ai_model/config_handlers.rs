@@ -11,7 +11,7 @@ use crate::core::ai_model_config_access::{
 };
 use crate::core::auth::AuthUser;
 use crate::repositories::ai_model_configs;
-use crate::services::user_service_api_client;
+use crate::services::{task_runner_api_client, user_service_api_client};
 
 use super::super::{AiModelConfigRequest, UserQuery};
 use super::model::{
@@ -39,55 +39,21 @@ pub(in crate::api::configs) async fn list_ai_model_configs(
         );
     }
 
-    if let Some(base_url) = configured_user_service_base_url() {
-        let access_token = match user_service_access_token_for_auth(&auth) {
-            Ok(token) => token,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "build user_service access token failed", "detail": err})),
-                );
-            }
-        };
-        return match user_service_api_client::list_model_configs(
-            base_url.as_str(),
-            access_token.as_str(),
-            Some(auth.user_id.as_str()),
-            user_service_timeout_ms(),
-        )
+    let include_all = matches!(auth.role.trim(), "admin" | "super_admin");
+    match task_runner_api_client::list_chatos_model_configs(auth.user_id.as_str(), include_all)
         .await
-        {
-            Ok(items) => (
-                StatusCode::OK,
-                Json(Value::Array(
-                    items
-                        .into_iter()
-                        .map(from_user_service_model_config)
-                        .map(|item| to_response_value(&item))
-                        .collect(),
-                )),
-            ),
-            Err(err) => (
-                proxy_status_from_user_service_error(err.as_str()),
-                Json(json!({
-                    "error": "load ai model configs via user_service failed",
-                    "detail": err
-                })),
-            ),
-        };
-    }
-
-    match ai_model_configs::list_ai_model_configs(Some(auth.user_id.as_str())).await {
-        Ok(items) => {
-            let out = items
-                .into_iter()
-                .map(|item| to_response_value(&item))
-                .collect::<Vec<_>>();
-            (StatusCode::OK, Json(Value::Array(out)))
-        }
+    {
+        Ok(Value::Array(items)) => (StatusCode::OK, Json(Value::Array(items))),
+        Ok(_) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "task_runner returned an invalid model catalog"})),
+        ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "获取 AI 模型配置失败", "detail": err})),
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "load ai model configs via task_runner failed",
+                "detail": err
+            })),
         ),
     }
 }

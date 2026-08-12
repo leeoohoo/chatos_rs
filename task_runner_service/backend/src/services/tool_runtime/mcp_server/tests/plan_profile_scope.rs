@@ -353,6 +353,8 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })

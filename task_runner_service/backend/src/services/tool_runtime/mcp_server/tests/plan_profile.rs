@@ -264,6 +264,8 @@ async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })
@@ -349,6 +351,8 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })

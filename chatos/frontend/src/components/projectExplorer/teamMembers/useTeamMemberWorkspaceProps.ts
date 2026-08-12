@@ -18,9 +18,11 @@ export const useTeamMemberWorkspaceProps = ({
     && store.sessionMessagePaginationState?.[selectedSessionId]?.nextBefore
   );
   const selectedRuntimeModelId = resources.composer.composerSelectedModelId;
+  const selectedRuntimeModel = (store.aiModelConfigs || [])
+    .find((item) => item.id === selectedRuntimeModelId);
   const supportsReasoning = Boolean(
     selectedRuntimeModelId
-    && (store.aiModelConfigs || []).find((item) => item.id === selectedRuntimeModelId)?.supports_reasoning === true,
+    && (selectedRuntimeModel?.supports_reasoning === true || selectedRuntimeModel?.thinking_level),
   );
   const handleSend: ComponentProps<typeof TeamMemberWorkspace>['onSend'] = async (
     content,

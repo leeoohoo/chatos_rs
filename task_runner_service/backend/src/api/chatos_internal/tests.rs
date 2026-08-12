@@ -3,6 +3,62 @@
 
 use super::*;
 
+#[test]
+fn chatos_model_catalog_item_exposes_runtime_metadata_without_api_key() {
+    let record = ModelConfigRecord {
+        id: "model-1".to_string(),
+        owner_user_id: Some("user-1".to_string()),
+        owner_username: Some("user".to_string()),
+        owner_display_name: Some("User".to_string()),
+        name: "Primary".to_string(),
+        provider: "openai".to_string(),
+        prompt_vendor: Some("gpt".to_string()),
+        base_url: "https://api.example.test/v1".to_string(),
+        api_key: "super-secret".to_string(),
+        model: "gpt-test".to_string(),
+        usage_scenario: Some("default".to_string()),
+        temperature: Some(0.2),
+        max_output_tokens: Some(4096),
+        model_request_max_retries: 5,
+        thinking_level: Some("high".to_string()),
+        supports_images: true,
+        supports_reasoning: true,
+        supports_responses: true,
+        instructions: None,
+        request_cwd: None,
+        include_prompt_cache_retention: false,
+        request_body_limit_bytes: None,
+        enabled: true,
+        created_at: "2026-08-11T00:00:00Z".to_string(),
+        updated_at: "2026-08-11T00:00:00Z".to_string(),
+    };
+    let runtime = ChatosModelRuntimeConfig::from(record.clone());
+    let item = ChatosModelConfigCatalogItem::from(record);
+
+    let value = serde_json::to_value(item).expect("serialize catalog item");
+    assert_eq!(
+        value.get("has_api_key").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(value.get("model").and_then(Value::as_str), Some("gpt-test"));
+    assert_eq!(value.get("supports_images").and_then(Value::as_bool), Some(true));
+    assert_eq!(value.get("supports_reasoning").and_then(Value::as_bool), Some(true));
+    assert!(value.get("api_key").is_none());
+    assert!(!value.to_string().contains("super-secret"));
+
+    let runtime_value = serde_json::to_value(runtime).expect("serialize runtime config");
+    assert_eq!(
+        runtime_value.get("supports_images").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        runtime_value
+            .get("supports_reasoning")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+}
+
 mod retry_tests {
     use axum::http::StatusCode;
 

@@ -49,6 +49,8 @@ impl ModelConfigService {
             max_output_tokens: None,
             model_request_max_retries: chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             thinking_level: None,
+            supports_images: false,
+            supports_reasoning: false,
             supports_responses: input
                 .supports_responses
                 .unwrap_or_else(|| provider == "openai"),

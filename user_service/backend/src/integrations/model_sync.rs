@@ -391,6 +391,8 @@ async fn sync_task_runner_model_config(
         "temperature": config.temperature,
         "max_output_tokens": config.max_output_tokens,
         "model_request_max_retries": model_request_max_retries,
+        "supports_images": config.supports_images,
+        "supports_reasoning": config.supports_reasoning,
         "supports_responses": config.supports_responses,
         "enabled": config.enabled,
     });
