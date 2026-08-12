@@ -8,7 +8,6 @@ mod responses;
 use std::time::Instant;
 
 use reqwest::Client;
-use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
@@ -32,6 +31,24 @@ pub struct AiClient {
     supports_responses: bool,
     disable_thinking: bool,
     max_transient_retries: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AiGenerateTextError {
+    Retryable {
+        message: String,
+        retry_kind: String,
+        backoff_ms: u64,
+    },
+    Fatal(String),
+}
+
+impl std::fmt::Display for AiGenerateTextError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Retryable { message, .. } | Self::Fatal(message) => formatter.write_str(message),
+        }
+    }
 }
 
 impl AiClient {
@@ -78,12 +95,35 @@ impl AiClient {
         input_chars: Option<usize>,
         title_present: bool,
     ) -> Result<String, String> {
+        self.generate_text_once(
+            system_prompt,
+            user_prompt,
+            max_tokens,
+            input_chars,
+            title_present,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    /// Performs one provider request. Queue consumers own delayed retry and
+    /// must end the current delivery when this returns `Retryable`.
+    pub async fn generate_text_once(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_tokens: Option<i64>,
+        input_chars: Option<usize>,
+        title_present: bool,
+    ) -> Result<String, AiGenerateTextError> {
         let api_key = self
             .api_key
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| "missing MEMORY_ENGINE_OPENAI_API_KEY".to_string())?;
+            .ok_or_else(|| {
+                AiGenerateTextError::Fatal("missing MEMORY_ENGINE_OPENAI_API_KEY".to_string())
+            })?;
         let started_at = Instant::now();
         let requested_max_tokens = max_tokens.map(|value| value.clamp(128, 4000));
         let requested_max_tokens_label = requested_max_tokens
@@ -110,74 +150,71 @@ impl AiClient {
             self.disable_thinking
         );
 
-        let mut retry_count = 0usize;
-        let text = loop {
-            match send_text_request(
-                self,
-                api_key,
-                system_prompt,
-                user_prompt,
-                requested_max_tokens,
-                effective_temperature,
-            )
-            .await
-            {
-                Ok(text) => break text,
-                Err(err) => {
-                    if let Some(backoff_ms) =
-                        transient_retry_backoff_ms(&err, retry_count, self.max_transient_retries)
-                    {
-                        retry_count += 1;
-                        warn!(
-                            "[MEMORY-ENGINE-AI] transient-retry model={} base_url={} request_kind={} retry={}/{} backoff_ms={} error={}",
-                            self.model,
-                            self.base_url,
-                            request_kind,
-                            retry_count,
-                            self.max_transient_retries,
-                            backoff_ms,
-                            err
-                        );
-                        sleep(Duration::from_millis(backoff_ms)).await;
-                        continue;
-                    }
-
-                    let log_label = if err.contains("timed out") {
-                        "request-timeout"
-                    } else {
-                        "request-failed"
-                    };
-                    warn!(
-                        "[MEMORY-ENGINE-AI] {} model={} base_url={} request_kind={} elapsed_ms={} max_tokens={} input_chars={} error={}",
-                        log_label,
-                        self.model,
-                        self.base_url,
-                        request_kind,
-                        started_at.elapsed().as_millis(),
-                        requested_max_tokens_label,
-                        input_chars,
-                        err
-                    );
-                    return Err(err);
-                }
-            }
-        };
+        let text = send_text_request(
+            self,
+            api_key,
+            system_prompt,
+            user_prompt,
+            requested_max_tokens,
+            effective_temperature,
+        )
+        .await
+        .map_err(|err| {
+            let log_label = if err.contains("timed out") {
+                "request-timeout"
+            } else {
+                "request-failed"
+            };
+            warn!(
+                "[MEMORY-ENGINE-AI] {} model={} base_url={} request_kind={} elapsed_ms={} max_tokens={} input_chars={} error={}",
+                log_label,
+                self.model,
+                self.base_url,
+                request_kind,
+                started_at.elapsed().as_millis(),
+                requested_max_tokens_label,
+                input_chars,
+                err
+            );
+            classify_generate_text_error(err, self.max_transient_retries)
+        })?;
         validate_summary_text(self, request_kind, started_at, text)
+            .map_err(AiGenerateTextError::Fatal)
     }
 }
 
-fn transient_retry_backoff_ms(
-    err: &str,
-    retry_count: usize,
-    max_transient_retries: usize,
-) -> Option<u64> {
-    if retry_count >= max_transient_retries || !is_transient_summary_error(err) {
-        return None;
+fn classify_generate_text_error(err: String, max_transient_retries: usize) -> AiGenerateTextError {
+    if max_transient_retries > 0 && is_transient_summary_error(err.as_str()) {
+        return AiGenerateTextError::Retryable {
+            retry_kind: chatos_ai_runtime::transient_retry_kind_label(err.as_str()).to_string(),
+            backoff_ms: chatos_ai_runtime::transient_retry_backoff_ms(err.as_str(), 1),
+            message: err,
+        };
     }
-    let next_retry = retry_count + 1;
-    Some(200_u64 * next_retry as u64)
+    AiGenerateTextError::Fatal(err)
 }
 
 fn is_transient_summary_error(err: &str) -> bool {
     chatos_ai_runtime::is_transient_transport_or_parse_error(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transient_error_is_returned_to_the_queue_without_local_sleep() {
+        let error = classify_generate_text_error("connection reset".to_string(), 5);
+        match error {
+            AiGenerateTextError::Retryable {
+                backoff_ms,
+                retry_kind,
+                ..
+            } => {
+                assert!(backoff_ms > 0);
+                assert!(!retry_kind.is_empty());
+            }
+            other => panic!("expected retryable error, got {other:?}"),
+        }
+    }
 }
