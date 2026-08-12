@@ -16,9 +16,14 @@ use serde_json::Value;
 use std::future::Future;
 
 mod mongo_store;
+mod rabbitmq_driver;
 mod state_store;
 
 pub use mongo_store::{CloudAgentLaneRecord, MongoCloudAgentRunStore};
+pub use rabbitmq_driver::{
+    publish_cloud_agent_intent, spawn_cloud_agent_consumer, spawn_cloud_agent_outbox_reconciler,
+    CloudAgentQueueOwner, CloudAgentRabbitMqTopology,
+};
 pub use state_store::{CloudAgentStateStore, InMemoryCloudAgentRunStore};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

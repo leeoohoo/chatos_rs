@@ -654,26 +654,8 @@ impl RunService {
         &self.task_queue_topology
     }
 
-    pub(crate) async fn cloud_agent_ready_outbox(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<chatos_cloud_agent_runtime::CloudAgentOutboxIntent>, String> {
-        self.cloud_agent_store.list_ready_outbox(limit).await
-    }
-
-    pub(crate) async fn cloud_agent_run(
-        &self,
-        agent_run_id: &str,
-    ) -> Result<Option<chatos_cloud_agent_protocol::CloudAgentRunRecord>, String> {
-        use chatos_cloud_agent_runtime::CloudAgentRunStore;
-        self.cloud_agent_store.load_run(agent_run_id).await
-    }
-
-    pub(crate) async fn mark_cloud_agent_outbox_published(
-        &self,
-        event_id: &str,
-    ) -> Result<bool, String> {
-        self.cloud_agent_store.mark_outbox_published(event_id).await
+    pub(crate) fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
+        self.cloud_agent_store.clone()
     }
 
     pub(crate) async fn enqueue_run_dispatch_if_needed(

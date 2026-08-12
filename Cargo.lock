@@ -941,10 +941,12 @@ dependencies = [
  "chatos_mcp_service",
  "chrono",
  "futures-util",
+ "lapin",
  "mongodb",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
