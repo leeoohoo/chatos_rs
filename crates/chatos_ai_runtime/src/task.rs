@@ -10,6 +10,7 @@ use crate::turn::ContextualTurnRunner;
 use crate::AiSingleStepOutcome;
 
 mod config;
+#[cfg(feature = "local-agent-loop")]
 mod execution;
 mod memory;
 mod progress_review;
@@ -18,6 +19,7 @@ mod runtime_builder;
 mod spec;
 
 pub use self::config::{TaskMcpInitMode, TaskRuntimeConfig};
+#[cfg(feature = "local-agent-loop")]
 pub use self::execution::TaskRunExecution;
 pub use self::memory::TaskMemoryRuntimeConfig;
 pub use self::progress_review::{
@@ -102,10 +104,12 @@ impl TaskRuntime {
         }
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report(&self, spec: TaskRunSpec) -> TaskRunReport {
         self.runner.run_task_report(self.prepare_spec(spec)).await
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report_with_options(
         &self,
         spec: TaskRunSpec,
@@ -137,6 +141,7 @@ impl TaskRuntime {
 }
 
 impl ContextualTurnRunner {
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report(&self, spec: TaskRunSpec) -> TaskRunReport {
         let task_id = spec.task_id.clone();
         let run_id = spec.run_id.clone();
@@ -147,6 +152,7 @@ impl ContextualTurnRunner {
         TaskRunReport::from_ai_report(task_id, run_id, model_config_id, report)
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report_with_options(
         &self,
         spec: TaskRunSpec,

@@ -6,9 +6,11 @@ use serde_json::{json, Value};
 
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::runtime::{
-    AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepOutcome, AiSingleStepRequest,
-    AiTurnReport, IterativeContextRefresh, MemoryContextOverflowRecovery,
+    AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest,
+    MemoryContextOverflowRecovery,
 };
+#[cfg(feature = "local-agent-loop")]
+use crate::runtime::{AiRuntimeResult, AiTurnReport, IterativeContextRefresh};
 use crate::traits::{ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput};
 
 pub struct ContextualTurnRunner {
@@ -62,6 +64,7 @@ impl ContextualTurnRunner {
         self
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_turn(
         &self,
         request: ContextualTurnRequest,
@@ -141,6 +144,7 @@ impl ContextualTurnRunner {
         self.runtime.execute_once(single_step).await
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_turn_report(&self, request: ContextualTurnRequest) -> AiTurnReport {
         match self.run_turn(request).await {
             Ok(result) => result.into_report(),
@@ -150,6 +154,7 @@ impl ContextualTurnRunner {
 }
 
 impl ContextualTurnRunner {
+    #[cfg(feature = "local-agent-loop")]
     fn build_iterative_context_refresh(
         &self,
         runtime_options: &AiRuntimeOptions,

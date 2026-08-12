@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(feature = "local-agent-loop")]
 use tracing::{info, warn};
 
 use crate::request::AiResponse;
 
+#[cfg(feature = "local-agent-loop")]
 use super::options::AiRuntimeOptions;
 use super::report::AiRuntimeResult;
+#[cfg(feature = "local-agent-loop")]
 use super::EMPTY_FINAL_RESPONSE_ERROR;
 
+#[cfg(feature = "local-agent-loop")]
 pub(super) enum FinalResponseAction {
     AskForFollowup,
     Complete,
 }
 
+#[cfg(feature = "local-agent-loop")]
 pub(super) fn handle_response_without_tool_calls(
     response: &AiResponse,
     options: &AiRuntimeOptions,

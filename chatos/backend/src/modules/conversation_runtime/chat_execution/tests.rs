@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::empty_mcp_server_bundle;
-use crate::models::memory_runtime_types::TurnRuntimeSnapshotPluginCommandInvocationDto;
 use crate::services::mcp_loader::McpHttpServer;
 
 fn lifecycle_hook_with_state(state: TaskTurnLifecycleState) -> ChatosRuntimeLifecycleHook {
@@ -187,14 +186,6 @@ fn mcp_management_gateway_is_always_executed_by_chatos_runtime() {
 }
 
 #[test]
-fn initializes_stream_agent_with_resolved_profile() {
-    let profile = ChatosAgentProfile::from_flags(true, false);
-    let agent = init_chatos_stream_agent(&model_runtime(false), profile);
-
-    assert_eq!(agent.profile(), profile);
-}
-
-#[test]
 fn project_context_prompt_contains_only_dynamic_project_facts() {
     let mut context = runtime_context(false);
     context.resolved_project_name = Some("CubeSandbox".to_string());
@@ -237,85 +228,6 @@ fn agent_instructions_apply_user_language_to_project_artifacts() {
 
     assert!(english.contains("English (en-US)"));
     assert!(!english.contains("简体中文（zh-CN）"));
-}
-
-#[test]
-fn builds_shared_runtime_execution_contract_from_chat_context() {
-    let mut context = runtime_context(false);
-    context.plugin_command_invocations_for_snapshot =
-        vec![TurnRuntimeSnapshotPluginCommandInvocationDto {
-            plugin_id: "plugin-a".to_string(),
-            command_id: "review".to_string(),
-            arguments_present: true,
-            arguments_sha256: Some("a".repeat(64)),
-        }];
-    let options = build_agent_chat_options(
-        "session-1",
-        &model_runtime(true),
-        &context,
-        &json!({
-            "MAX_ITERATIONS": 42,
-            "TASK_FOLLOW_UP_MAX_ROUNDS": 4,
-            "AI_REQUEST_BODY_LIMIT_BYTES": 123456
-        }),
-        vec![json!({"role": "system", "content": "prefix"})],
-        ChatExecutionInput {
-            use_tools: true,
-            max_tokens: Some(2048),
-            attachments: Vec::new(),
-            callbacks: AiClientCallbacks::default(),
-            turn_id: "turn-1".to_string(),
-            user_message_id: "user-1".to_string(),
-            message_source: "model-source".to_string(),
-            persisted_user_message_content: Some("执行需求的 2 个关联任务。".to_string()),
-            persisted_user_message_metadata: Some(json!({
-                "project_requirement_execution": {
-                    "requirement_title": "JDK 21 upgrade"
-                }
-            })),
-        },
-    );
-
-    assert!(options.use_tools);
-    assert_eq!(options.turn_id, "turn-1");
-    assert_eq!(options.prefixed_input_items.len(), 1);
-    assert_eq!(options.shared_max_iterations, 42);
-    assert!(!options.project_requirement_execution_planner);
-    assert_eq!(options.shared_model_config.max_output_tokens, Some(2048));
-    assert!(options.shared_model_config.request_cwd.is_none());
-    assert!(options.shared_model_config.include_prompt_cache_retention);
-    assert_eq!(
-        options.persisted_user_message_content.as_deref(),
-        Some("执行需求的 2 个关联任务。")
-    );
-    assert_eq!(
-        options
-            .persisted_user_message_metadata
-            .as_ref()
-            .and_then(|value| value["project_requirement_execution"]["requirement_title"].as_str()),
-        Some("JDK 21 upgrade")
-    );
-    assert_eq!(
-        options
-            .persisted_user_message_metadata
-            .as_ref()
-            .and_then(|value| { value["plugin_command_invocations"][0]["plugin_id"].as_str() }),
-        Some("plugin-a")
-    );
-    assert_eq!(
-        options
-            .persisted_user_message_metadata
-            .as_ref()
-            .and_then(|value| {
-                value["plugin_command_invocations"][0]["arguments_sha256"].as_str()
-            }),
-        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-    );
-    assert!(options
-        .persisted_user_message_metadata
-        .as_ref()
-        .and_then(|value| value["plugin_command_invocations"][0].as_object())
-        .is_some_and(|value| !value.contains_key("arguments")));
 }
 
 #[test]

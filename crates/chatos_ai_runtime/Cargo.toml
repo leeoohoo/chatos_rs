@@ -6,6 +6,10 @@ name = "chatos_ai_runtime"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+local-agent-loop = []
+
 [dependencies]
 async-trait = "0.1"
 bytes = "1"

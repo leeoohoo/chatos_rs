@@ -39,8 +39,10 @@ pub use config::{
 pub use core::{
     merge_system_instructions, resolve_managed_prompt_by_key_for_model,
     resolve_managed_prompt_for_model, resolve_managed_prompt_for_model_with_client, AgentError,
-    AgentExecutor, AgentIdentity, AgentTurnMemory, AgentTurnRequest, SystemAgentDefinition,
+    AgentIdentity, SystemAgentDefinition,
 };
+#[cfg(feature = "local-agent-loop")]
+pub use core::{AgentExecutor, AgentTurnMemory, AgentTurnRequest};
 #[cfg(feature = "runtime")]
 pub use implementations::{
     ChatosAgentProfile, ChatosStreamAgent, ChatosStreamRuntime, CommandApprovalAgent,

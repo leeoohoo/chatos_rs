@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(feature = "local-agent-loop")]
 use serde_json::Value;
+#[cfg(feature = "local-agent-loop")]
 use tracing::{info, warn};
 
+#[cfg(feature = "local-agent-loop")]
 use crate::error_policy::{
     handle_transient_retry_with_abort, is_context_length_exceeded_error,
     is_missing_tool_call_error, is_request_body_too_large_error, is_response_parse_error,
     is_upstream_connection_interrupted_error, should_retry_without_stream,
 };
+#[cfg(feature = "local-agent-loop")]
 use crate::traits::ModelRequest;
+#[cfg(feature = "local-agent-loop")]
 use crate::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
 
+#[cfg(feature = "local-agent-loop")]
 use super::input_items::merge_pending_tool_turn_into_input;
+#[cfg(feature = "local-agent-loop")]
 use super::options::AiRuntimeOptions;
 
+#[cfg(feature = "local-agent-loop")]
 pub(super) enum ModelRequestErrorAction {
     ReplayMissingToolTurn(Value),
     ContextRecovered,
@@ -34,6 +42,7 @@ pub(super) fn downgraded_thinking_level(level: Option<&str>) -> Option<String> {
     }
 }
 
+#[cfg(feature = "local-agent-loop")]
 pub(super) async fn handle_model_request_error(
     err: String,
     request: &ModelRequest,

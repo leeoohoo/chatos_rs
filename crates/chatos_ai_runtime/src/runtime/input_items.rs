@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(feature = "local-agent-loop")]
 use std::collections::HashMap;
 
 use serde_json::{json, Value};
 
+#[cfg(feature = "local-agent-loop")]
 use crate::tool_runtime::{
     merge_pending_tool_turn_items, ToolResultModelBudget, ToolResultModelBudgetLimits,
 };
@@ -36,6 +38,7 @@ pub(super) fn attach_runtime_debug(mut payload: Value, runtime_debug: &Value) ->
     }
 }
 
+#[cfg(feature = "local-agent-loop")]
 pub(super) fn merge_pending_tool_turn_into_input(
     input: Value,
     pending_tool_calls: Option<&[Value]>,
@@ -56,6 +59,7 @@ pub(super) fn merge_pending_tool_turn_into_input(
     Value::Array(items)
 }
 
+#[cfg(feature = "local-agent-loop")]
 pub(super) fn merge_current_turn_tool_history_into_input(
     input: Value,
     tool_call_items: &[Value],
@@ -83,6 +87,7 @@ pub(super) fn merge_current_turn_tool_history_into_input(
     Value::Array(items)
 }
 
+#[cfg(feature = "local-agent-loop")]
 fn sanitize_current_turn_tool_outputs(
     tool_call_items: &[Value],
     tool_output_items: &[Value],

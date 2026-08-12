@@ -3,8 +3,10 @@
 
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiSingleStepOutcome, ModelRuntimeConfig, RuntimeRecordOptions,
-    SaveRecordInput, TaskRunExecution, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
+    SaveRecordInput, TaskRunSpec, TaskRuntime,
 };
+#[cfg(feature = "local-agent-loop")]
+use chatos_ai_runtime::{TaskRunExecution, TaskRunReport, TaskRuntimeConfig};
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
@@ -113,6 +115,7 @@ impl TaskRunnerAgent {
         spec
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_report_with_runtime_options(
         &self,
         runtime_config: TaskRuntimeConfig,

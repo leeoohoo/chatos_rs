@@ -5,22 +5,27 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+#[cfg(feature = "local-agent-loop")]
 use chatos_mcp_runtime::ToolResult;
+#[cfg(feature = "local-agent-loop")]
 use tracing::{info, warn};
 
+#[cfg(feature = "local-agent-loop")]
 use crate::error_policy::is_missing_tool_call_error;
 use crate::request::AiRequestHandler;
+#[cfg(feature = "local-agent-loop")]
 use crate::request_retry::is_previous_response_id_unsupported_error;
 use crate::tool_call::tool_calls_value_has_items;
+#[cfg(feature = "local-agent-loop")]
 use crate::tool_runtime::append_tool_results_with_budget;
+#[cfg(feature = "local-agent-loop")]
+use crate::traits::SaveToolRecordInput;
 use crate::traits::{
-    MemoryRecordWriter, ModelRequest, SaveAssistantRecordInput, SaveRecordInput,
-    SaveToolRecordInput, ToolExecutor,
+    MemoryRecordWriter, ModelRequest, SaveAssistantRecordInput, SaveRecordInput, ToolExecutor,
 };
-use crate::{
-    RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
-    RuntimeIterationContext,
-};
+use crate::{RuntimeBeforeModelRequest, RuntimeIterationContext};
+#[cfg(feature = "local-agent-loop")]
+use crate::{RuntimeFinalResponseAction, RuntimeFinalResponseContext};
 
 mod final_response;
 mod input_items;
@@ -30,27 +35,37 @@ mod persistence;
 mod report;
 mod request_error;
 mod single_step;
+#[cfg(feature = "local-agent-loop")]
 mod summaries;
+#[cfg(feature = "local-agent-loop")]
 mod tool_execution;
 
 pub use self::options::{AiRuntimeOptions, IterativeContextRefresh, MemoryContextOverflowRecovery};
 pub use self::report::{AiRuntimeResult, AiTurnReport, AiTurnStatus};
 pub use self::single_step::{AiSingleStepOutcome, AiSingleStepRequest};
 
-use self::final_response::{
-    handle_response_without_tool_calls, runtime_result_from_response, FinalResponseAction,
-};
+use self::final_response::runtime_result_from_response;
+#[cfg(feature = "local-agent-loop")]
+use self::final_response::{handle_response_without_tool_calls, FinalResponseAction};
+use self::input_items::append_runtime_input_items;
+#[cfg(feature = "local-agent-loop")]
+use self::input_items::empty_final_response_followup_item;
+#[cfg(feature = "local-agent-loop")]
 use self::input_items::{
-    append_runtime_input_items, empty_final_response_followup_item, input_item_count,
-    json_value_size_bytes, merge_current_turn_tool_history_into_input,
+    input_item_count, json_value_size_bytes, merge_current_turn_tool_history_into_input,
     merge_pending_tool_turn_into_input,
 };
+#[cfg(feature = "local-agent-loop")]
 use self::model_request::dispatch_model_request;
-use self::persistence::{normalized_option, should_persist_tool_result};
-use self::request_error::{
-    downgraded_thinking_level, handle_model_request_error, ModelRequestErrorAction,
-};
+use self::persistence::normalized_option;
+#[cfg(feature = "local-agent-loop")]
+use self::persistence::should_persist_tool_result;
+use self::request_error::downgraded_thinking_level;
+#[cfg(feature = "local-agent-loop")]
+use self::request_error::{handle_model_request_error, ModelRequestErrorAction};
+#[cfg(feature = "local-agent-loop")]
 use self::summaries::summarize_tool_call_names;
+#[cfg(feature = "local-agent-loop")]
 use self::tool_execution::{
     automatic_file_write_recovery_calls, execute_runtime_tools,
     next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
@@ -58,13 +73,16 @@ use self::tool_execution::{
 
 pub struct AiRuntime {
     request_handler: AiRequestHandler,
+    #[cfg_attr(not(feature = "local-agent-loop"), allow(dead_code))]
     tool_executor: Option<Arc<dyn ToolExecutor>>,
     record_writer: Option<Arc<dyn MemoryRecordWriter>>,
     max_iterations: usize,
 }
 
 const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请先检查当前任务是否已经真实完成：如果已经满足目标且不需要更多验证，直接输出最终结果；如果仍有未完成工作、未处理的任务状态/门禁反馈、缺少关键事实或缺少验证，请继续使用必要工具完成工作或记录明确阻塞。不要把未完成工作包装成最终结果。";
+#[cfg(feature = "local-agent-loop")]
 const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
+#[cfg(feature = "local-agent-loop")]
 const MAX_CONSECUTIVE_FAILED_TOOL_BATCHES: usize = 8;
 
 impl AiRuntime {
@@ -120,6 +138,7 @@ impl AiRuntime {
         single_step::execute_once(self, request).await
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_turn(
         &self,
         mut request: ModelRequest,
@@ -593,6 +612,7 @@ impl AiRuntime {
             .await
     }
 
+    #[cfg(feature = "local-agent-loop")]
     async fn save_tool_records(
         &self,
         options: &AiRuntimeOptions,
@@ -635,6 +655,7 @@ impl AiRuntime {
     }
 }
 
+#[cfg(feature = "local-agent-loop")]
 fn set_next_continuation(
     request: &mut ModelRequest,
     continuation_input: &mut Option<Value>,
@@ -658,6 +679,7 @@ fn set_next_continuation(
     }
 }
 
+#[cfg(feature = "local-agent-loop")]
 fn continuation_tool_input_items(
     tool_call_items: &[Value],
     tool_output_items: &[Value],
