@@ -475,6 +475,7 @@ impl MongoCloudAgentRunStore {
                 },
                 doc! {
                     "$set": {
+                        "record.input": bson::to_bson(&transition.next_input).map_err(|error| error.to_string())?,
                         "record.status": status,
                         "record.phase": phase,
                         "record.ordering.step_seq": i64::try_from(transition.next_step_seq).unwrap_or(i64::MAX),

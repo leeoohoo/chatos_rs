@@ -84,6 +84,8 @@ impl CloudAgentOutboxIntent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CloudAgentAtomicTransition {
     pub claim: CloudAgentClaim,
+    #[serde(default)]
+    pub next_input: Value,
     pub next_status: CloudAgentRunStatus,
     pub next_phase: CloudAgentRunPhase,
     pub next_step_seq: u64,
@@ -383,6 +385,7 @@ pub enum CloudAgentConsumeDisposition {
 #[derive(Debug)]
 pub struct CloudAgentSingleStepOutput {
     pub outcome: AiSingleStepOutcome,
+    pub next_input: Option<Value>,
     pub mcp_runtime_session_ref: Option<String>,
     pub mcp_command_queue: Option<String>,
     pub retry_input_items: Option<Vec<Value>>,
@@ -392,6 +395,7 @@ impl CloudAgentSingleStepOutput {
     pub fn new(outcome: AiSingleStepOutcome) -> Self {
         Self {
             outcome,
+            next_input: None,
             mcp_runtime_session_ref: None,
             mcp_command_queue: None,
             retry_input_items: None,
@@ -410,6 +414,11 @@ impl CloudAgentSingleStepOutput {
 
     pub fn with_retry_input_items(mut self, input_items: Vec<Value>) -> Self {
         self.retry_input_items = Some(input_items);
+        self
+    }
+
+    pub fn with_next_input(mut self, input: Value) -> Self {
+        self.next_input = Some(input);
         self
     }
 }
@@ -495,6 +504,9 @@ where
             input.output_routing_key.as_str(),
             output.outcome,
         )?;
+        if let Some(next_input) = output.next_input {
+            transition.next_input = next_input;
+        }
         if let Some(session_ref) = output.mcp_runtime_session_ref {
             transition.mcp_runtime_session_ref = Some(session_ref);
         }
@@ -594,6 +606,7 @@ pub fn reduce_single_step(
             let batch_id = stable_batch_id(&claim.ordering);
             CloudAgentAtomicTransition {
                 claim: claim.clone(),
+                next_input: run.input.clone(),
                 next_status: CloudAgentRunStatus::WaitingToolResult,
                 next_phase: CloudAgentRunPhase::ToolBatch,
                 next_step_seq,
@@ -631,6 +644,7 @@ pub fn reduce_single_step(
             reason,
         } => CloudAgentAtomicTransition {
             claim: claim.clone(),
+            next_input: run.input.clone(),
             next_status: CloudAgentRunStatus::ModelReady,
             next_phase: CloudAgentRunPhase::Ready,
             next_step_seq,
@@ -669,6 +683,7 @@ pub fn reduce_single_step(
             downgrade_thinking_to,
         } => CloudAgentAtomicTransition {
             claim: claim.clone(),
+            next_input: run.input.clone(),
             next_status: CloudAgentRunStatus::RetryScheduled,
             next_phase: CloudAgentRunPhase::RetryDelay,
             next_step_seq: claim.ordering.step_seq,
@@ -701,6 +716,7 @@ pub fn reduce_single_step(
         },
         AiSingleStepOutcome::Final(result) => CloudAgentAtomicTransition {
             claim: claim.clone(),
+            next_input: run.input.clone(),
             next_status: CloudAgentRunStatus::Succeeded,
             next_phase: CloudAgentRunPhase::Terminal,
             next_step_seq,
@@ -735,6 +751,7 @@ pub fn reduce_single_step(
         },
         AiSingleStepOutcome::Failed { error } => terminal_transition(
             claim,
+            run.input.clone(),
             run.mcp_runtime_session_ref.clone(),
             CloudAgentRunStatus::Failed,
             next_step_seq,
@@ -743,6 +760,7 @@ pub fn reduce_single_step(
         ),
         AiSingleStepOutcome::Cancelled => terminal_transition(
             claim,
+            run.input.clone(),
             run.mcp_runtime_session_ref.clone(),
             CloudAgentRunStatus::Cancelled,
             next_step_seq,
@@ -834,6 +852,7 @@ pub fn materialize_mcp_command(
 
 fn terminal_transition(
     claim: CloudAgentClaim,
+    next_input: Value,
     mcp_runtime_session_ref: Option<String>,
     status: CloudAgentRunStatus,
     next_step_seq: u64,
@@ -852,6 +871,7 @@ fn terminal_transition(
     );
     CloudAgentAtomicTransition {
         claim,
+        next_input,
         next_status: status,
         next_phase: CloudAgentRunPhase::Terminal,
         next_step_seq,
@@ -1206,5 +1226,49 @@ mod tests {
         assert_eq!(outbox[0].ordering, record.ordering);
         assert_eq!(outbox[0].payload["event_type"], "run_started");
         assert_eq!(outbox[0].payload["conversation_id"], "session-1");
+    }
+
+    #[tokio::test]
+    async fn owner_input_update_commits_with_the_same_model_step() {
+        let store = inserted_ready_run().await;
+        let executor = TestSingleStepExecutor {
+            outcome: AiSingleStepOutcome::Final(AiRuntimeResult {
+                content: "done".to_string(),
+                reasoning: None,
+                tool_calls: None,
+                finish_reason: Some("stop".to_string()),
+                usage: None,
+                response_id: Some("response-final".to_string()),
+            }),
+            seen_triggers: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        #[derive(Clone)]
+        struct InputUpdatingExecutor(TestSingleStepExecutor);
+
+        #[async_trait]
+        impl CloudAgentSingleStepExecutor for InputUpdatingExecutor {
+            async fn execute_single_step(
+                &self,
+                run: &CloudAgentRunRecord,
+                trigger: &CloudAgentModelTrigger,
+            ) -> Result<CloudAgentSingleStepExecution, String> {
+                let CloudAgentSingleStepExecution::Apply(output) =
+                    self.0.execute_single_step(run, trigger).await?
+                else {
+                    unreachable!();
+                };
+                Ok(CloudAgentSingleStepExecution::Apply(
+                    output.with_next_input(serde_json::json!({"lifecycle_round": 2})),
+                ))
+            }
+        }
+
+        consume_cloud_agent_single_step(&store, &InputUpdatingExecutor(executor), consume_input())
+            .await
+            .unwrap();
+        let persisted = store.load_run("run-1").await.unwrap().unwrap();
+        assert_eq!(persisted.input, serde_json::json!({"lifecycle_round": 2}));
+        assert_eq!(persisted.status, CloudAgentRunStatus::Succeeded);
     }
 }

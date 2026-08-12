@@ -218,6 +218,7 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
             {
                 return Ok(false);
             }
+            run.input = transition.next_input;
             run.status = transition.next_status;
             run.phase = transition.next_phase;
             run.ordering.step_seq = transition.next_step_seq;
@@ -466,6 +467,7 @@ mod tests {
         assert!(store
             .commit_transition(CloudAgentAtomicTransition {
                 claim,
+                next_input: Value::Null,
                 next_status: CloudAgentRunStatus::Succeeded,
                 next_phase: CloudAgentRunPhase::Terminal,
                 next_step_seq: 2,
