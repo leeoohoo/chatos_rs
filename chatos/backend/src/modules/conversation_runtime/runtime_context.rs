@@ -45,6 +45,7 @@ use crate::services::{
 #[derive(Debug, Clone)]
 pub struct ConversationRuntimeRequest {
     pub effective_user_id: Option<String>,
+    pub owner_role: Option<String>,
     pub contact_agent_id: Option<String>,
     pub project_id: Option<String>,
     pub project_root: Option<String>,
@@ -262,6 +263,7 @@ pub async fn resolve_runtime_context(
         match resolve_mcp_management_gateway(McpManagementGatewayRequest {
             tenant_id: effective_user_id.as_deref(),
             owner_user_id: effective_user_id.as_deref(),
+            owner_role: req.owner_role.as_deref(),
             agent_profile,
             project_id: task_runner_project_id,
             source_session_id: Some(session_id),

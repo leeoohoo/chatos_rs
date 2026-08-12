@@ -32,6 +32,18 @@ fn truncate_text_bytes(value: &str, max_bytes: usize) -> Option<String> {
     ))
 }
 
+fn truncate_text_chars(value: &str, max_chars: usize) -> Option<String> {
+    let original_chars = value.chars().count();
+    if original_chars <= max_chars {
+        return None;
+    }
+    let preview = value.chars().take(max_chars).collect::<String>();
+    Some(format!(
+        "{}\n\n...（内容已截断，原始大小 {} chars）",
+        preview, original_chars
+    ))
+}
+
 fn preview_json_value(value: &Value, max_bytes: usize) -> String {
     let text = value
         .as_str()
@@ -52,6 +64,28 @@ fn truncate_json_value(value: Value, max_bytes: usize) -> Value {
         "truncated": true,
         "original_bytes": bytes.len(),
         "preview": preview_json_value(&value, max_bytes),
+    })
+}
+
+fn truncate_json_value_chars(value: Value, max_chars: usize) -> Value {
+    let Ok(compact) = serde_json::to_string(&value) else {
+        return value;
+    };
+    let original_bytes = compact.len();
+    let original_chars = compact.chars().count();
+    if original_chars <= max_chars {
+        return value;
+    }
+    let preview = value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| serde_json::to_string_pretty(&value).ok())
+        .unwrap_or(compact);
+    json!({
+        "truncated": true,
+        "original_chars": original_chars,
+        "original_bytes": original_bytes,
+        "preview": truncate_text_chars(preview.as_str(), max_chars).unwrap_or(preview),
     })
 }
 
@@ -159,15 +193,20 @@ fn project_plugin_snapshot_summaries_for_chatos(value: &Value) -> Value {
     )
 }
 
-fn trim_event_for_chatos_detail(
+pub(super) fn trim_event_for_chatos_detail(
     mut event: crate::models::TaskRunEventRecord,
+    tool_text_limit_chars: usize,
 ) -> crate::models::TaskRunEventRecord {
     event.message = event.message.map(|message| {
         truncate_text_bytes(message.as_str(), RUN_EVENT_MESSAGE_PREVIEW_LIMIT_BYTES)
             .unwrap_or(message)
     });
     event.payload = event.payload.map(|value| {
-        let projected = project_plugin_event_payload_for_chatos(event.event_type.as_str(), value);
+        let projected = project_plugin_event_payload_for_chatos(
+            event.event_type.as_str(),
+            value,
+            tool_text_limit_chars,
+        );
         if matches!(event.event_type.as_str(), "tool_stream" | "tools_start") {
             projected
         } else {
@@ -238,10 +277,14 @@ fn replace_plugin_arguments_with_audit(object: &mut serde_json::Map<String, Valu
     );
 }
 
-fn project_plugin_event_payload_for_chatos(event_type: &str, payload: Value) -> Value {
+fn project_plugin_event_payload_for_chatos(
+    event_type: &str,
+    payload: Value,
+    tool_text_limit_chars: usize,
+) -> Value {
     match event_type {
-        "tool_stream" => project_tool_stream_payload_for_chatos(&payload),
-        "tools_start" => project_tools_start_payload_for_chatos(&payload),
+        "tool_stream" => project_tool_stream_payload_for_chatos(&payload, tool_text_limit_chars),
+        "tools_start" => project_tools_start_payload_for_chatos(&payload, tool_text_limit_chars),
         "plugin_runtime" => project_plugin_runtime_payload(&payload),
         "plugin_hook_blocked" => project_plugin_hook_blocked_payload(&payload),
         "plugin_ui_ready" => project_plugin_ui_ready_payload(&payload),
@@ -250,7 +293,7 @@ fn project_plugin_event_payload_for_chatos(event_type: &str, payload: Value) -> 
     }
 }
 
-fn project_tool_stream_payload_for_chatos(payload: &Value) -> Value {
+fn project_tool_stream_payload_for_chatos(payload: &Value, tool_text_limit_chars: usize) -> Value {
     let Some(source) = payload.as_object() else {
         return payload.clone();
     };
@@ -274,7 +317,7 @@ fn project_tool_stream_payload_for_chatos(payload: &Value) -> Value {
     if let Some(result) = source.get("result").filter(|value| !value.is_null()) {
         projected.insert(
             "result".to_string(),
-            truncate_json_value(result.clone(), 20 * 1024),
+            truncate_json_value_chars(result.clone(), tool_text_limit_chars),
         );
     }
     let should_include_content = !projected.contains_key("result")
@@ -285,7 +328,8 @@ fn project_tool_stream_payload_for_chatos(payload: &Value) -> Value {
             projected.insert(
                 "content".to_string(),
                 Value::String(
-                    truncate_text_bytes(content, 20 * 1024).unwrap_or_else(|| content.to_string()),
+                    truncate_text_chars(content, tool_text_limit_chars)
+                        .unwrap_or_else(|| content.to_string()),
                 ),
             );
         }
@@ -293,13 +337,13 @@ fn project_tool_stream_payload_for_chatos(payload: &Value) -> Value {
     Value::Object(projected)
 }
 
-fn project_tools_start_payload_for_chatos(payload: &Value) -> Value {
+fn project_tools_start_payload_for_chatos(payload: &Value, tool_text_limit_chars: usize) -> Value {
     if let Some(calls) = payload.as_array() {
         return Value::Array(
             calls
                 .iter()
                 .take(64)
-                .map(project_tool_call_for_chatos)
+                .map(|call| project_tool_call_for_chatos(call, tool_text_limit_chars))
                 .collect(),
         );
     }
@@ -317,7 +361,7 @@ fn project_tools_start_payload_for_chatos(payload: &Value) -> Value {
                 calls
                     .iter()
                     .take(64)
-                    .map(project_tool_call_for_chatos)
+                    .map(|call| project_tool_call_for_chatos(call, tool_text_limit_chars))
                     .collect(),
             ),
         );
@@ -325,7 +369,7 @@ fn project_tools_start_payload_for_chatos(payload: &Value) -> Value {
     Value::Object(projected)
 }
 
-fn project_tool_call_for_chatos(call: &Value) -> Value {
+fn project_tool_call_for_chatos(call: &Value, tool_text_limit_chars: usize) -> Value {
     let Some(source) = call.as_object() else {
         return call.clone();
     };
@@ -344,16 +388,21 @@ fn project_tool_call_for_chatos(call: &Value) -> Value {
     );
     if let Some(function) = source.get("function").and_then(Value::as_object) {
         let mut projected_function = serde_json::Map::new();
-        copy_bounded_string_fields(
-            function,
-            &mut projected_function,
-            &[("name", 512), ("arguments", 512)],
-        );
+        copy_bounded_string_fields(function, &mut projected_function, &[("name", 512)]);
+        if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+            projected_function.insert(
+                "arguments".to_string(),
+                Value::String(
+                    truncate_text_chars(arguments, tool_text_limit_chars)
+                        .unwrap_or_else(|| arguments.to_string()),
+                ),
+            );
+        }
         projected.insert("function".to_string(), Value::Object(projected_function));
     } else if let Some(arguments) = source.get("arguments") {
         projected.insert(
             "arguments".to_string(),
-            truncate_json_value(arguments.clone(), 512),
+            truncate_json_value_chars(arguments.clone(), tool_text_limit_chars),
         );
     }
     Value::Object(projected)
@@ -589,13 +638,14 @@ pub(super) fn paginate_run_events(
     events: Vec<crate::models::TaskRunEventRecord>,
     limit: usize,
     offset: usize,
+    tool_text_limit_chars: usize,
 ) -> (Vec<ChatosMessageTaskRunEvent>, usize, bool) {
     let total = events.len();
     let items = events
         .into_iter()
         .skip(offset)
         .take(limit)
-        .map(trim_event_for_chatos_detail)
+        .map(|event| trim_event_for_chatos_detail(event, tool_text_limit_chars))
         .map(ChatosMessageTaskRunEvent::from)
         .collect::<Vec<_>>();
     let has_more = offset.saturating_add(items.len()) < total;

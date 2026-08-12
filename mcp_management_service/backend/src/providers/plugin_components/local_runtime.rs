@@ -56,6 +56,9 @@ impl PluginComponentProvider {
             ),
             ("operation".to_string(), json!(binding.operation)),
         ]);
+        if let Some(max_chars) = snapshot.tool_result_max_chars {
+            body.insert("tool_result_max_chars".to_string(), json!(max_chars.max(1)));
+        }
         let mut invoked_command_arguments = None;
         match binding.runtime.component.kind {
             PluginComponentKind::SkillCollection => {

@@ -142,7 +142,7 @@ export const requirementDocumentTypeLabel = (type?: string): string => {
 export const canShowRequirementExecutionAction = (status?: string): boolean => {
   const normalizedStatus = readText(status).toLowerCase();
   return !isCompletedStatus(normalizedStatus)
-    && !['reviewing', 'cancelled', 'archived'].includes(normalizedStatus);
+    && !['cancelled', 'archived'].includes(normalizedStatus);
 };
 
 export const statusClassName = (status?: string): string => {

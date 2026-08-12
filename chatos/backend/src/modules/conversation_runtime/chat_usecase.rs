@@ -145,6 +145,7 @@ fn build_common_bootstrap_input(
         session_id: session_id.to_string(),
         content: content.to_string(),
         user_id: req.user_id.clone(),
+        user_role: req.user_role.clone(),
         contact_agent_id: req.contact_agent_id.clone(),
         project_id: req.project_id.clone(),
         project_root: req.project_root.clone(),

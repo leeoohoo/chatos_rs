@@ -15,14 +15,18 @@ struct NoopTerminalStore;
 impl TerminalControllerStore for NoopTerminalStore {
     async fn execute_command(
         &self,
-        _context: TerminalControllerContext,
+        context: TerminalControllerContext,
         _path: String,
         command: String,
         _background: bool,
         permissions: TerminalCommandPermissions,
     ) -> Result<Value, String> {
         assert!(permissions.is_empty());
-        Ok(json!({ "common": command, "output": "" }))
+        Ok(json!({
+            "common": command,
+            "output": "",
+            "max_output_chars": context.max_output_chars,
+        }))
     }
 
     async fn get_recent_logs(
@@ -244,6 +248,28 @@ fn terminal_controller_registers_process_tools() {
         "process_wait schema should expose timeout alias (seconds)"
     );
 
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn managed_output_limit_overrides_the_host_default_for_one_call() {
+    let root = temp_root();
+    std::fs::create_dir_all(&root).expect("create temp root");
+    let service = test_service(root.clone());
+
+    let result = service
+        .call_tool_with_max_output_chars(
+            "execute_command",
+            json!({"common": "pwd"}),
+            None,
+            Some(40_000),
+        )
+        .expect("execute command");
+
+    assert_eq!(
+        result["_structured_result"]["max_output_chars"].as_u64(),
+        Some(40_000)
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 

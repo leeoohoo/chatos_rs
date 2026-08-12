@@ -387,6 +387,7 @@ pub(super) async fn resolve_runtime_session(
             trace_id: trace_id.clone(),
             tenant_id: request.tenant_id.trim().to_string(),
             owner_user_id: request.owner_user_id.trim().to_string(),
+            owner_role: normalized(request.owner_role),
             agent_key: agent_key.as_str().to_string(),
             task_profile: normalized(request.task_profile),
             project_id: request.project_id.trim().to_string(),
@@ -398,6 +399,7 @@ pub(super) async fn resolve_runtime_session(
             source_user_message_id: normalized(request.source_user_message_id),
             contact_agent_id,
             default_model_config_id: normalized(request.default_model_config_id),
+            tool_result_max_chars: request.tool_result_max_chars,
             expected_project_task_ids,
             sandbox_target,
             project_context,
@@ -688,6 +690,14 @@ fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(),
         if value.trim().is_empty() {
             return Err(ApiError::bad_request(format!("{field} is required")));
         }
+    }
+    if request
+        .tool_result_max_chars
+        .is_some_and(|value| !(1..=10_000_000).contains(&value))
+    {
+        return Err(ApiError::bad_request(
+            "tool_result_max_chars must be between 1 and 10000000",
+        ));
     }
     Ok(())
 }

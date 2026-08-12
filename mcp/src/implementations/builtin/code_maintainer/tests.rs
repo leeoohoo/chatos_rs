@@ -21,11 +21,18 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
 
 fn build_service(enable_write_tools: bool) -> (CodeMaintainerService, PathBuf) {
     let root = unique_temp_dir("code_maintainer_alias_workspace");
+    (
+        build_service_for_root(root.clone(), enable_write_tools),
+        root,
+    )
+}
+
+fn build_service_for_root(root: PathBuf, enable_write_tools: bool) -> CodeMaintainerService {
     let db_path = unique_temp_dir("code_maintainer_alias_db")
         .join("changes.jsonl")
         .to_string_lossy()
         .to_string();
-    let service = CodeMaintainerService::new(CodeMaintainerOptions {
+    CodeMaintainerService::new(CodeMaintainerOptions {
         server_name: "code_maintainer_alias_test".to_string(),
         root: root.clone(),
         project_id: Some("project_alias".to_string()),
@@ -40,8 +47,7 @@ fn build_service(enable_write_tools: bool) -> (CodeMaintainerService, PathBuf) {
         db_path: Some(db_path),
         hooks: None,
     })
-    .expect("build code maintainer service");
-    (service, root)
+    .expect("build code maintainer service")
 }
 
 fn response_text(value: &serde_json::Value) -> String {
@@ -201,6 +207,65 @@ fn stage_and_commit_create_new_file_from_absent_path() {
 }
 
 #[test]
+fn later_stage_batch_accepts_the_current_staged_revision() {
+    let (service, root) = build_service(true);
+    let path = root.join("revision.txt");
+    fs::write(&path, "first").expect("seed file");
+    let read = service
+        .call_tool("read_file_raw", json!({ "path": "revision.txt" }), None)
+        .expect("read initial file");
+    let initial_hash = response_json(&read)["sha256"]
+        .as_str()
+        .expect("initial hash")
+        .to_string();
+    let session_id = open_session(&service, None);
+    let first_stage = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "second",
+                    "expected_sha256": initial_hash
+                }]
+            }),
+            None,
+        )
+        .expect("stage first write");
+    let staged_hash = response_json(&first_stage)["result"]["pending_paths"][0]["staged_sha256"]
+        .as_str()
+        .expect("staged hash")
+        .to_string();
+
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "third",
+                    "expected_sha256": staged_hash
+                }]
+            }),
+            None,
+        )
+        .expect("stage second write from staged revision");
+    service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            None,
+        )
+        .expect("commit both staged batches");
+
+    assert_eq!(fs::read_to_string(path).expect("read result"), "third");
+}
+
+#[test]
 fn failed_stage_batch_does_not_leave_partial_session_changes() {
     let (service, root) = build_service(true);
     let session_id = open_session(&service, None);
@@ -323,6 +388,132 @@ fn stage_existing_file_requires_latest_read_revision() {
 }
 
 #[test]
+fn repeated_full_file_write_is_already_applied_with_stale_revision() {
+    let (service, root) = build_service(true);
+    let path = root.join("revision.txt");
+    fs::write(&path, "first").expect("seed file");
+    let read = service
+        .call_tool("read_file_raw", json!({ "path": "revision.txt" }), None)
+        .expect("read initial file");
+    let initial_hash = response_json(&read)["sha256"]
+        .as_str()
+        .expect("initial hash")
+        .to_string();
+    let first_session = open_session(&service, None);
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": first_session,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "second",
+                    "expected_sha256": initial_hash
+                }]
+            }),
+            None,
+        )
+        .expect("stage initial write");
+    service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": first_session }),
+            None,
+        )
+        .expect("commit initial write");
+
+    let repeated_session = open_session(&service, None);
+    let repeated = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": repeated_session,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "second",
+                    "expected_sha256": initial_hash
+                }]
+            }),
+            None,
+        )
+        .expect("identical write should not require the obsolete revision");
+    let payload = response_json(&repeated);
+    assert_eq!(payload["outcome"], "already_applied");
+    assert_eq!(payload["changed"], false);
+    assert_eq!(fs::read_to_string(path).expect("read result"), "second");
+}
+
+#[test]
+fn repeated_replace_batch_is_already_applied_with_stale_revision() {
+    let (service, root) = build_service(true);
+    let path = root.join("revision.txt");
+    fs::write(&path, "before value\nremove me\nafter\n").expect("seed file");
+    let read = service
+        .call_tool("read_file_raw", json!({ "path": "revision.txt" }), None)
+        .expect("read initial file");
+    let initial_hash = response_json(&read)["sha256"]
+        .as_str()
+        .expect("initial hash")
+        .to_string();
+    let operations = json!([{
+        "kind": "replace_text",
+        "path": "revision.txt",
+        "old_text": "before value",
+        "new_text": "updated value",
+        "start_line": 1,
+        "end_line": 1,
+        "after_context": "\nremove me",
+        "expected_matches": 1,
+        "expected_sha256": initial_hash
+    }, {
+        "kind": "replace_text",
+        "path": "revision.txt",
+        "old_text": "remove me\n",
+        "new_text": "",
+        "start_line": 2,
+        "end_line": 2,
+        "before_context": "updated value\n",
+        "after_context": "after",
+        "expected_matches": 1,
+        "expected_sha256": initial_hash
+    }]);
+
+    let first_session = open_session(&service, None);
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({ "session_id": first_session, "operations": operations.clone() }),
+            None,
+        )
+        .expect("stage initial replacement batch");
+    service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": first_session }),
+            None,
+        )
+        .expect("commit initial replacement batch");
+
+    let repeated_session = open_session(&service, None);
+    let repeated = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({ "session_id": repeated_session, "operations": operations }),
+            None,
+        )
+        .expect("already-applied replacement batch should ignore the obsolete revision");
+    let payload = response_json(&repeated);
+    assert_eq!(payload["outcome"], "already_applied");
+    assert_eq!(payload["changed"], false);
+    assert_eq!(
+        fs::read_to_string(path).expect("read result"),
+        "updated value\nafter\n"
+    );
+}
+
+#[test]
 fn stage_replace_text_rejects_external_revision_drift_until_reread() {
     let (service, root) = build_service(true);
     let path = root.join("src.rs");
@@ -414,6 +605,111 @@ fn stage_replace_text_rejects_external_revision_drift_until_reread() {
             None,
         )
         .expect("commit after reread");
+
+    assert_eq!(
+        fs::read_to_string(path).expect("read edited file"),
+        "fn value() -> i32 { 3 }\n"
+    );
+}
+
+#[test]
+fn fresh_read_allows_safe_stage_when_model_reuses_an_older_hash() {
+    let (service, root) = build_service(true);
+    let path = root.join("src.rs");
+    fs::write(&path, "fn value() -> i32 { 1 }\n").expect("write source");
+    let initial_read = service
+        .call_tool("read_file_raw", json!({ "path": "src.rs" }), None)
+        .expect("initial read");
+    let initial_hash = response_json(&initial_read)["sha256"]
+        .as_str()
+        .expect("initial hash")
+        .to_string();
+
+    fs::write(&path, "fn value() -> i32 { 2 }\n").expect("external update");
+    let current_read = service
+        .call_tool("read_file_raw", json!({ "path": "src.rs" }), None)
+        .expect("fresh read");
+    assert_ne!(
+        response_json(&current_read)["sha256"].as_str(),
+        Some(initial_hash.as_str())
+    );
+
+    let session_id = open_session(&service, None);
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "src.rs",
+                    "old_text": "{ 2 }",
+                    "new_text": "{ 3 }",
+                    "expected_sha256": initial_hash
+                }]
+            }),
+            None,
+        )
+        .expect("fresh server-observed read should protect the stale model hash");
+    service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            None,
+        )
+        .expect("commit edit");
+
+    assert_eq!(
+        fs::read_to_string(path).expect("read edited file"),
+        "fn value() -> i32 { 3 }\n"
+    );
+}
+
+#[test]
+fn fresh_read_survives_service_recreation_when_model_reuses_an_older_hash() {
+    let root = unique_temp_dir("code_maintainer_recreated_workspace");
+    let first_service = build_service_for_root(root.clone(), true);
+    let path = root.join("src.rs");
+    fs::write(&path, "fn value() -> i32 { 1 }\n").expect("write source");
+    let initial_read = first_service
+        .call_tool("read_file_raw", json!({ "path": "src.rs" }), None)
+        .expect("initial read");
+    let initial_hash = response_json(&initial_read)["sha256"]
+        .as_str()
+        .expect("initial hash")
+        .to_string();
+
+    fs::write(&path, "fn value() -> i32 { 2 }\n").expect("external update");
+    first_service
+        .call_tool("read_file_raw", json!({ "path": "src.rs" }), None)
+        .expect("fresh read before recreation");
+    drop(first_service);
+
+    let recreated_service = build_service_for_root(root.clone(), true);
+    let session_id = open_session(&recreated_service, None);
+    recreated_service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "replace_text",
+                    "path": "src.rs",
+                    "old_text": "{ 2 }",
+                    "new_text": "{ 3 }",
+                    "expected_sha256": initial_hash
+                }]
+            }),
+            None,
+        )
+        .expect("fresh read state should survive service recreation");
+    recreated_service
+        .call_tool(
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            None,
+        )
+        .expect("commit edit");
 
     assert_eq!(
         fs::read_to_string(path).expect("read edited file"),

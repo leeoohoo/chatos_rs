@@ -13,6 +13,7 @@ use crate::runtime::RuntimeSessionSnapshot;
 use super::super::project_service::decode_jsonrpc_response;
 use super::manager_client::required_pairing_id;
 use super::{LocalSandboxProvider, ProviderCallError, SANDBOX_SERVICE_SCOPE};
+use crate::providers::managed_tool_call_params;
 
 impl LocalSandboxProvider {
     pub(in crate::providers) async fn call_tool(
@@ -49,10 +50,11 @@ impl LocalSandboxProvider {
                 "jsonrpc": "2.0",
                 "id": invocation_id,
                 "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
+                "params": managed_tool_call_params(
+                    original_tool_name,
+                    arguments,
+                    snapshot.tool_result_max_chars,
+                )
             }))
             .timeout(self.request_timeout)
             .send()

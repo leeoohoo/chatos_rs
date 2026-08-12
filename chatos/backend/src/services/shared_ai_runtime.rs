@@ -228,6 +228,7 @@ impl chatos_ai_runtime::ToolExecutor for ChatosToolExecutorAdapter {
                 context.conversation_turn_id.as_deref(),
                 context.caller_model.as_deref(),
                 context.caller_model_runtime.as_ref(),
+                context.tool_result_max_chars,
                 on_tool_result,
             )
             .await

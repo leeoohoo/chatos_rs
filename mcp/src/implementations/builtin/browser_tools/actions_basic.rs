@@ -231,6 +231,89 @@ pub(super) async fn browser_press_with_context(
     .await
 }
 
+pub(super) async fn browser_set_viewport_with_context(
+    ctx: BoundContext,
+    conversation_id: Option<&str>,
+    width: u32,
+    height: u32,
+) -> Result<Value, String> {
+    let session = super::super::context::conversation_key(conversation_id);
+    let result = run_browser_command(
+        &ctx,
+        session.as_str(),
+        "set",
+        vec![
+            "viewport".to_string(),
+            width.to_string(),
+            height.to_string(),
+        ],
+        ctx.command_timeout_seconds,
+    )
+    .await?;
+    if !is_success(&result) {
+        return Ok(fail_json(&result, "Failed to set browser viewport"));
+    }
+
+    let verification = run_browser_command(
+        &ctx,
+        session.as_str(),
+        "eval",
+        vec![
+            r#"JSON.stringify({width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio})"#
+                .to_string(),
+        ],
+        ctx.command_timeout_seconds,
+    )
+    .await?;
+    if !is_success(&verification) {
+        return Ok(fail_json(
+            &verification,
+            "Browser viewport changed but could not be verified",
+        ));
+    }
+    let metrics = verification
+        .pointer("/data/result")
+        .cloned()
+        .map(parse_browser_eval_payload)
+        .unwrap_or(Value::Null);
+    let actual_width = metrics.get("width").and_then(Value::as_u64);
+    let actual_height = metrics.get("height").and_then(Value::as_u64);
+    if actual_width != Some(u64::from(width)) || actual_height != Some(u64::from(height)) {
+        return Ok(json!({
+            "_summary_text": format!(
+                "Browser viewport verification failed: requested {}x{}, observed {}x{}.",
+                width,
+                height,
+                actual_width.map(|value| value.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                actual_height.map(|value| value.to_string()).unwrap_or_else(|| "unknown".to_string())
+            ),
+            "success": false,
+            "error": "browser viewport did not match the requested dimensions",
+            "requested_width": width,
+            "requested_height": height,
+            "actual_width": actual_width,
+            "actual_height": actual_height,
+        }));
+    }
+
+    let response = json!({
+        "success": true,
+        "requested_width": width,
+        "requested_height": height,
+        "actual_width": actual_width,
+        "actual_height": actual_height,
+        "device_pixel_ratio": metrics.get("devicePixelRatio").cloned().unwrap_or(Value::Null),
+    });
+    Ok(finalize_browser_action_response(
+        &ctx,
+        session.as_str(),
+        response,
+        format!("Set browser viewport to {}x{}.", width, height).as_str(),
+        Some("Inspect or evaluate the page again to capture responsive layout evidence."),
+    )
+    .await)
+}
+
 pub(super) async fn browser_get_images_with_context(
     ctx: BoundContext,
     conversation_id: Option<&str>,

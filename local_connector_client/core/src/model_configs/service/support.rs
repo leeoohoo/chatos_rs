@@ -6,23 +6,11 @@ use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::config::{api_url, normalize_optional};
+use crate::config::api_url;
 use crate::{local_now_rfc3339, AuthState, LocalState};
 
 use super::super::provider_catalog::normalize_provider;
 use super::super::types::{LocalModelConfigRecord, LocalModelSettings};
-
-pub(super) fn server_model_id_for_local(
-    state: &LocalState,
-    local_model_config_id: &str,
-) -> Option<String> {
-    state
-        .model_configs
-        .configs
-        .iter()
-        .find(|item| item.id == local_model_config_id)
-        .and_then(|item| item.server_model_config_id.clone())
-}
 
 pub(super) fn owner_user_id_from_auth(auth: &AuthState) -> Result<String> {
     auth.user
@@ -81,17 +69,6 @@ pub(super) fn extract_error_message(body: &str) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_else(|| body.trim().to_string())
-}
-
-pub(super) fn is_user_service_not_found(error: &anyhow::Error) -> bool {
-    error
-        .to_string()
-        .starts_with("user_service request failed: 404 ")
-}
-
-pub(super) fn required_text(value: Option<String>, field: &str) -> Result<String> {
-    normalize_optional(value.as_deref())
-        .ok_or_else(|| anyhow!("{field} is required and cannot be empty"))
 }
 
 pub(super) fn normalize_configured_provider(provider: Option<String>) -> Result<String> {
@@ -196,13 +173,6 @@ pub(super) fn repair_model_settings_with_credential_fallbacks(state: &mut LocalS
         state.model_configs.settings.updated_at = Some(local_now_rfc3339());
     }
     repaired
-}
-
-pub(super) fn optional_text_update(draft: Option<&str>, existing: Option<&str>) -> Option<String> {
-    match draft {
-        Some(value) => normalize_optional(Some(value)),
-        None => existing.and_then(|value| normalize_optional(Some(value))),
-    }
 }
 
 impl LocalModelSettings {

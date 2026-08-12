@@ -129,6 +129,45 @@ start_backend() {
   fi
 }
 
+ensure_local_dev_sandbox_runtime_proxy() {
+  if [[ "${CHATOS_LOCAL_DEV_MANAGED_SANDBOX_RUNTIME_PROXY:-false}" != "true" ]]; then
+    return 0
+  fi
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+
+  local name="sandbox-runtime-proxy"
+  local host_address="${CHATOS_LOCAL_DEV_HOST_ADDRESS:-}"
+  local port="${CHATOS_LOCAL_DEV_SANDBOX_RUNTIME_PROXY_PORT:-17897}"
+  local log_file pid_file proxy_script spawned_pid
+  if [[ -z "$host_address" || ! "$port" =~ ^[1-9][0-9]*$ || "$port" -gt 65535 ]]; then
+    echo "[ERROR] invalid managed sandbox runtime proxy address: ${host_address}:${port}" >&2
+    return 1
+  fi
+  if [[ -n "$(pid_for_port "$port")" ]]; then
+    echo "[OK] sandbox runtime proxy is already listening on ${host_address}:${port}"
+    return 0
+  fi
+  if ! command -v ruby >/dev/null 2>&1 \
+    || ! ruby -rwebrick -rwebrick/httpproxy -e 'exit 0' >/dev/null 2>&1; then
+    echo "[ERROR] managed sandbox runtime proxy requires Ruby with WEBrick" >&2
+    return 1
+  fi
+
+  log_file="$(log_file_for "$name")"
+  pid_file="$(pid_file_for "$name")"
+  stop_service_pid "$name"
+  : >"$log_file"
+  proxy_script='logger=WEBrick::Log.new($stderr, WEBrick::Log::INFO); server=WEBrick::HTTPProxyServer.new(Port: Integer(ARGV.fetch(1)), BindAddress: ARGV.fetch(0), Logger: logger, AccessLog: []); ["INT", "TERM"].each { |signal| trap(signal) { server.shutdown } }; server.start'
+  spawned_pid="$(
+    spawn_detached "$ROOT_DIR" "$log_file" \
+      ruby -rwebrick -rwebrick/httpproxy -e "$proxy_script" "$host_address" "$port"
+  )"
+  echo "$spawned_pid" >"$pid_file"
+  wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
+}
+
 ensure_config_center_mtls_material() {
   "$ROOT_DIR/scripts/generate-config-center-mtls.sh" "$CONFIG_CENTER_MTLS_DIR"
 }
@@ -841,6 +880,7 @@ start_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  ensure_local_dev_sandbox_runtime_proxy
   prepare_sandbox_docker_config
   ensure_config_center_mtls_material
   ensure_mcp_management_mtls_material
@@ -898,6 +938,7 @@ stop_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  stop_service_pid "sandbox-runtime-proxy"
   cleanup_legacy_local_connector_client_state
   deregister_local_dev_services
   local item name unused port

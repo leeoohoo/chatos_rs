@@ -151,6 +151,8 @@ impl std::fmt::Debug for TerminalControllerStoreRef {
 #[derive(Clone)]
 pub struct TerminalControllerService {
     registry: ToolRegistry<ToolHandler>,
+    bound: TerminalControllerContext,
+    store: TerminalControllerStoreRef,
 }
 
 type ToolHandler = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
@@ -161,9 +163,6 @@ impl TerminalControllerService {
             .map_err(|err| format!("create terminal controller root failed: {err}"))?;
         let root = canonicalize_path(&opts.root)?;
 
-        let mut service = Self {
-            registry: ToolRegistry::new(),
-        };
         let bound = TerminalControllerContext {
             root: root.clone(),
             user_id: opts.user_id.clone(),
@@ -175,18 +174,24 @@ impl TerminalControllerService {
                 .map(ToOwned::to_owned),
             idle_timeout_ms: opts.idle_timeout_ms.max(1_000),
             max_wait_ms: opts.max_wait_ms.max(5_000),
-            max_output_chars: opts.max_output_chars.max(1_000),
+            max_output_chars: opts.max_output_chars.max(1),
+        };
+        let store = opts.store.clone();
+        let mut service = Self {
+            registry: ToolRegistry::new(),
+            bound: bound.clone(),
+            store: store.clone(),
         };
 
-        service.register_execute_command(bound.clone(), opts.store.clone());
-        service.register_get_recent_logs(bound.clone(), opts.store.clone());
-        service.register_process_list(bound.clone(), opts.store.clone());
-        service.register_process_poll(bound.clone(), opts.store.clone());
-        service.register_process_log(bound.clone(), opts.store.clone());
-        service.register_process_wait(bound.clone(), opts.store.clone());
-        service.register_process_write(bound.clone(), opts.store.clone());
-        service.register_process_kill(bound.clone(), opts.store.clone());
-        service.register_process_compat(bound, opts.store);
+        service.register_execute_command(bound.clone(), store.clone());
+        service.register_get_recent_logs(bound.clone(), store.clone());
+        service.register_process_list(bound.clone(), store.clone());
+        service.register_process_poll(bound.clone(), store.clone());
+        service.register_process_log(bound.clone(), store.clone());
+        service.register_process_wait(bound.clone(), store.clone());
+        service.register_process_write(bound.clone(), store.clone());
+        service.register_process_kill(bound.clone(), store.clone());
+        service.register_process_compat(bound, store);
         Ok(service)
     }
 
@@ -205,6 +210,31 @@ impl TerminalControllerService {
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
         (tool.handler)(args)
+    }
+
+    pub fn call_tool_with_max_output_chars(
+        &self,
+        name: &str,
+        args: Value,
+        conversation_id: Option<&str>,
+        max_output_chars: Option<usize>,
+    ) -> Result<Value, String> {
+        let Some(max_output_chars) = max_output_chars.map(|value| value.max(1)) else {
+            return self.call_tool(name, args, conversation_id);
+        };
+        if max_output_chars == self.bound.max_output_chars {
+            return self.call_tool(name, args, conversation_id);
+        }
+        Self::new(TerminalControllerOptions {
+            root: self.bound.root.clone(),
+            user_id: self.bound.user_id.clone(),
+            project_id: self.bound.project_id.clone(),
+            idle_timeout_ms: self.bound.idle_timeout_ms,
+            max_wait_ms: self.bound.max_wait_ms,
+            max_output_chars,
+            store: self.store.clone(),
+        })?
+        .call_tool(name, args, conversation_id)
     }
 
     fn register_tool(

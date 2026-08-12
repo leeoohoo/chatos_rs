@@ -115,10 +115,12 @@ pub(super) async fn dispatch_bound_browser_tools(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
+    let tool_result_max_chars =
+        chatos_mcp_service::tool_result_max_chars_from_params(&request.params);
     if let Err(message) = reject_browser_identity_overrides(&arguments) {
         return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message);
     }
-    match call_cloud_browser_tool(browser_binding, name, arguments).await {
+    match call_cloud_browser_tool(browser_binding, name, arguments, tool_result_max_chars).await {
         Ok(result) => jsonrpc_ok(id, result),
         Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
     }

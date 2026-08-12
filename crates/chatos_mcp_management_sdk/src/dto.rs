@@ -254,6 +254,8 @@ pub struct McpCatalogResponse {
 pub struct CreateRuntimeSessionRequest {
     pub tenant_id: String,
     pub owner_user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_role: Option<String>,
     pub agent_key: String,
     pub project_id: String,
     #[serde(default)]
@@ -266,6 +268,8 @@ pub struct CreateRuntimeSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_result_max_chars: Option<usize>,
     #[serde(default)]
     pub expected_project_task_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

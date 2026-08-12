@@ -634,6 +634,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent
             .as_str()
             .to_string(),
@@ -647,6 +648,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         sandbox_target: None,
         project_context: ProjectExecutionContext {

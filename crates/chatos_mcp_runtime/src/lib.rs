@@ -67,6 +67,7 @@ pub use task_types::TaskUpdatePatch;
 pub use text::{
     inject_agent_builder_args, to_text_and_structured_result,
     to_text_and_structured_result_with_transient,
+    to_text_and_structured_result_with_transient_limit,
 };
 pub use types::{
     McpAsyncResultTransport, McpBuiltinServer, McpHttpHeaderProvider, McpHttpServer,

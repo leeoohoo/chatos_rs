@@ -35,6 +35,8 @@ mod task_runner;
 
 use std::time::Duration;
 
+use serde_json::{json, Value};
+
 pub(super) use cancel_response::decode_cancel_notification_response;
 pub(crate) use chatos::memory_provider_ref as chatos_memory_provider_ref;
 use chatos::ChatosProvider;
@@ -105,4 +107,23 @@ pub struct ProviderDispatcher {
     sandbox_images: SandboxImagesProvider,
     embedded: EmbeddedProvider,
     external_http: ExternalHttpProvider,
+}
+
+const TOOL_RESULT_MAX_CHARS_META_KEY: &str = "chatos/toolResultMaxChars";
+
+fn managed_tool_call_params(
+    original_tool_name: &str,
+    arguments: Value,
+    tool_result_max_chars: Option<usize>,
+) -> Value {
+    let mut params = json!({
+        "name": original_tool_name,
+        "arguments": arguments,
+    });
+    if let Some(max_chars) = tool_result_max_chars {
+        params["_meta"] = json!({
+            TOOL_RESULT_MAX_CHARS_META_KEY: max_chars.max(1),
+        });
+    }
+    params
 }

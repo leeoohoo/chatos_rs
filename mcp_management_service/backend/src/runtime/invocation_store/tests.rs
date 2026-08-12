@@ -122,6 +122,67 @@ async fn completed_invocation_cannot_be_changed_to_cancel_requested() {
 }
 
 #[tokio::test]
+async fn terminal_process_wait_timeout_is_recorded_as_failed_with_result_preserved() {
+    let store = RuntimeInvocationStore::memory();
+    let mut invocation = record();
+    invocation.exposed_tool_name = "sandbox_process_wait".to_string();
+    invocation.original_tool_name = "process_wait".to_string();
+    store.register(invocation).await.unwrap();
+
+    let result = serde_json::json!({
+        "_structured_result": {
+            "terminal_id": "terminal-1",
+            "wait_status": "timeout",
+            "completed": false,
+            "timed_out": true,
+            "waited_ms": 600_000
+        }
+    });
+    assert!(store
+        .complete("invocation-1", result.clone())
+        .await
+        .unwrap());
+
+    let failed = store
+        .get_for_caller("invocation-1", "task-runner")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed.status, RuntimeInvocationStatus::Failed);
+    assert_eq!(failed.terminal_result, Some(result));
+    assert_eq!(
+        failed.terminal_error_code,
+        Some(chatos_mcp_service::MCP_ERROR_INTERNAL)
+    );
+    assert_eq!(
+        failed.terminal_error_message.as_deref(),
+        Some("terminal process wait timed out")
+    );
+}
+
+#[tokio::test]
+async fn unrelated_timed_out_result_is_not_reclassified_as_process_wait_failure() {
+    let store = RuntimeInvocationStore::memory();
+    store.register(record()).await.unwrap();
+
+    assert!(store
+        .complete(
+            "invocation-1",
+            serde_json::json!({"timed_out": true, "completed": false})
+        )
+        .await
+        .unwrap());
+
+    let completed = store
+        .get_for_caller("invocation-1", "task-runner")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(completed.status, RuntimeInvocationStatus::Completed);
+    assert_eq!(completed.terminal_error_code, None);
+}
+
+#[tokio::test]
 async fn completed_request_id_can_be_reused_after_the_prior_call_is_terminal() {
     let store = RuntimeInvocationStore::memory();
     store.register(record()).await.unwrap();

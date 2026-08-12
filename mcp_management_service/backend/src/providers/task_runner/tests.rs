@@ -86,6 +86,7 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
     assert_eq!(system_key, SystemMcpKey::TaskProcessLog.as_str());
     assert_eq!(headers["x-task-runner-caller"], CALLER_SERVICE);
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
+    assert_eq!(headers["x-mcp-management-owner-role"], "super_admin");
     assert_eq!(
         headers["x-mcp-management-agent-key"],
         chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase.as_str()
@@ -305,6 +306,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: Some("super_admin".to_string()),
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
             .as_str()
             .to_string(),
@@ -318,6 +320,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("chatos-agent-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
+        tool_result_max_chars: None,
         expected_project_task_ids: vec!["project-task-1".to_string()],
         sandbox_target: None,
         project_context: ProjectExecutionContext {

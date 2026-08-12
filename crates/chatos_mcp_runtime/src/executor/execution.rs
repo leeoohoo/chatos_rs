@@ -8,7 +8,10 @@ use sha2::{Digest, Sha256};
 
 use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 use crate::rpc::{jsonrpc_http_tool_call_cancellable_with_client, jsonrpc_stdio_call};
-use crate::text::{inject_agent_builder_args, to_text_and_structured_result_with_transient};
+use crate::text::{
+    inject_agent_builder_args, to_text_and_structured_result_with_transient,
+    to_text_and_structured_result_with_transient_limit,
+};
 use crate::types::{
     ToolCallContext, ToolCallError, ToolInfo, ToolLifecycleEvent, ToolLifecycleOutcome, ToolResult,
     ToolResultCallback, ToolStreamChunkCallback,
@@ -98,6 +101,7 @@ impl McpExecutor {
         context: ToolCallContext,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<(String, Option<Value>), ToolCallError> {
+        let tool_result_max_chars = context.tool_result_max_chars.or(self.tool_result_max_chars);
         let info = self
             .tool_metadata
             .get(tool_name)
@@ -135,7 +139,7 @@ impl McpExecutor {
                     )
                     .await
                     .map_err(classify_remote_tool_call_error)?;
-                    Ok(to_text_and_structured_result_with_transient(&result))
+                    Ok(self.normalize_tool_result(&result, tool_result_max_chars))
                 }
                 "stdio" => {
                     let config = info.server_config.clone().ok_or("missing server config")?;
@@ -146,7 +150,7 @@ impl McpExecutor {
                         context.conversation_id.as_deref(),
                     )
                     .await?;
-                    Ok(to_text_and_structured_result_with_transient(&result))
+                    Ok(self.normalize_tool_result(&result, tool_result_max_chars))
                 }
                 "builtin" => {
                     let provider = self
@@ -161,7 +165,7 @@ impl McpExecutor {
                     let result = provider
                         .call_tool(info.original_name.as_str(), args, context, on_stream_chunk)
                         .await?;
-                    Ok(to_text_and_structured_result_with_transient(&result))
+                    Ok(self.normalize_tool_result(&result, tool_result_max_chars))
                 }
                 other => Err(ToolCallError::non_fatal(format!(
                     "unsupported server type: {other}"
@@ -189,6 +193,16 @@ impl McpExecutor {
                 })?;
         }
         result
+    }
+
+    fn normalize_tool_result(
+        &self,
+        result: &Value,
+        max_chars: Option<usize>,
+    ) -> (String, Option<Value>) {
+        max_chars
+            .map(|max_chars| to_text_and_structured_result_with_transient_limit(result, max_chars))
+            .unwrap_or_else(|| to_text_and_structured_result_with_transient(result))
     }
 }
 

@@ -47,34 +47,6 @@ pub(crate) struct LocalModelConfigRecord {
     pub(crate) updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct LocalModelConfigDraft {
-    pub(crate) id: Option<String>,
-    pub(crate) server_model_config_id: Option<String>,
-    pub(crate) name: String,
-    pub(crate) provider: Option<String>,
-    pub(crate) prompt_vendor: Option<String>,
-    pub(crate) model: Option<String>,
-    pub(crate) base_url: Option<String>,
-    pub(crate) api_key: Option<String>,
-    #[serde(default)]
-    pub(crate) copy_api_key_from_id: Option<String>,
-    pub(crate) clear_api_key: Option<bool>,
-    pub(crate) enabled: Option<bool>,
-    pub(crate) supports_images: Option<bool>,
-    pub(crate) supports_reasoning: Option<bool>,
-    pub(crate) supports_responses: Option<bool>,
-    pub(crate) thinking_level: Option<String>,
-    pub(crate) task_usage_scenario: Option<String>,
-    pub(crate) task_thinking_level: Option<String>,
-    pub(crate) temperature: Option<f64>,
-    #[serde(default)]
-    pub(crate) clear_temperature: Option<bool>,
-    pub(crate) max_output_tokens: Option<i64>,
-    #[serde(default)]
-    pub(crate) clear_max_output_tokens: Option<bool>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct LocalModelConfigPublic {
     pub(crate) id: String,
@@ -97,26 +69,6 @@ pub(crate) struct LocalModelConfigPublic {
     pub(crate) max_output_tokens: Option<i64>,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct LocalProviderModelRecord {
-    pub(crate) id: String,
-    pub(crate) owned_by: Option<String>,
-    pub(crate) context_length: Option<i64>,
-    pub(crate) supports_images: bool,
-    pub(crate) supports_reasoning: bool,
-    pub(crate) supports_responses: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct LocalModelCatalogResponse {
-    pub(crate) provider: String,
-    pub(crate) base_url: String,
-    pub(crate) source: String,
-    pub(crate) fetched_at: Option<String>,
-    pub(crate) models: Vec<LocalProviderModelRecord>,
-    pub(crate) error: Option<String>,
 }
 
 impl LocalModelConfigRecord {

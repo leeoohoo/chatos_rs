@@ -18,6 +18,7 @@ const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
 pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) tenant_id: Option<&'a str>,
     pub(super) owner_user_id: Option<&'a str>,
+    pub(super) owner_role: Option<&'a str>,
     pub(super) agent_profile: ChatosAgentProfile,
     pub(super) project_id: Option<&'a str>,
     pub(super) source_session_id: Option<&'a str>,
@@ -68,6 +69,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     let session_request = CreateRuntimeSessionRequest {
         tenant_id: tenant_id.to_string(),
         owner_user_id: owner_user_id.to_string(),
+        owner_role: normalized(request.owner_role),
         agent_key: agent_key.clone(),
         project_id: project_id.to_string(),
         run_id: None,
@@ -81,6 +83,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         source_user_message_id: Some(source_user_message_id.to_string()),
         contact_agent_id: normalized(request.contact_agent_id),
         default_model_config_id: normalized(request.default_model_config_id),
+        tool_result_max_chars: None,
         expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
         requested_mcp_ids: None,
         locale: normalized(request.locale),

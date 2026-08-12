@@ -22,6 +22,14 @@
   overflow: hidden;
 }
 
+.cloudModelList {
+  margin-top: 12px;
+}
+
+.modelRow.muted {
+  opacity: 0.58;
+}
+
 .modelSectionTitle {
   align-items: center;
   background: var(--panel-subtle);

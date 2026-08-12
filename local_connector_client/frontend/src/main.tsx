@@ -100,7 +100,7 @@ const TABS: Array<{
     id: 'models',
     label: '模型配置',
     eyebrow: 'MODELS',
-    description: '配置本地 Agent 使用的模型与运行参数。',
+    description: '同步云端模型，并选择本机命令审批使用的模型。',
     icon: Brain,
   },
   {

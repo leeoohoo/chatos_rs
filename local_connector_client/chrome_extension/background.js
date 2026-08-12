@@ -6,7 +6,7 @@ const CLAIMED_TABS_KEY = 'claimed_tabs';
 const TARGET_STATES_KEY = 'target_states';
 const TARGET_ATTRIBUTE = 'data-chatos-target';
 const MAX_CLAIMED_TABS = 64;
-const MAX_COMMAND_CHARS = 50_000;
+const MAX_COMMAND_CHARS = 10_000_000;
 const MAX_COMMAND_RESULTS = 500;
 const MAX_TEXT_CHARS = 2_000;
 const MAX_SCREENSHOT_BYTES = 700 * 1024;
@@ -396,7 +396,7 @@ async function snapshotConnectedTab(argumentsValue) {
   const tabId = parseStableTabId(argumentsValue?.tab_id);
   const requestedMax = Number(argumentsValue?.max_chars || 20_000);
   const maxChars = Number.isInteger(requestedMax)
-    ? Math.min(Math.max(requestedMax, 1_000), MAX_COMMAND_CHARS)
+    ? Math.min(Math.max(requestedMax, 1), MAX_COMMAND_CHARS)
     : 20_000;
   const tab = await authorizedClaimedTab(tabId);
   const site = safeOriginAndPattern(tab.url || '');

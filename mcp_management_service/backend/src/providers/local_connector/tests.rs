@@ -34,6 +34,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
             .as_str()
             .to_string(),
@@ -47,6 +48,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         sandbox_target: None,
         project_context: ProjectExecutionContext {
@@ -156,7 +158,8 @@ async fn start_local_connector(
             ResponseMode::Oversized => json!({"content": "x".repeat(2048)}),
             ResponseMode::Valid | ResponseMode::WrongId => json!({
                 "forwarded_name": request.pointer("/params/name"),
-                "forwarded_arguments": request.pointer("/params/arguments")
+                "forwarded_arguments": request.pointer("/params/arguments"),
+                "forwarded_max_chars": request.pointer("/params/_meta/chatos~1toolResultMaxChars"),
             }),
         };
         Json(json!({"jsonrpc": "2.0", "id": id, "result": result}))
@@ -188,9 +191,11 @@ async fn call_uses_signed_identity_workspace_snapshot_and_original_tool_name() {
     let mut route = code_read_route();
     route.server_name = "browser_tools".to_string();
     assert!(provider.supports(&route));
+    let mut runtime_snapshot = snapshot();
+    runtime_snapshot.tool_result_max_chars = Some(40_000);
     let outcome = provider
         .call_tool(
-            &snapshot(),
+            &runtime_snapshot,
             &route,
             "read_file",
             json!({"path": "src/lib.rs"}),
@@ -202,7 +207,8 @@ async fn call_uses_signed_identity_workspace_snapshot_and_original_tool_name() {
         outcome.result,
         json!({
             "forwarded_name": "read_file",
-            "forwarded_arguments": {"path": "src/lib.rs"}
+            "forwarded_arguments": {"path": "src/lib.rs"},
+            "forwarded_max_chars": 40_000,
         })
     );
     server.abort();

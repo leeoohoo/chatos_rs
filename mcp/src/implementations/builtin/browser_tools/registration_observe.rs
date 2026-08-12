@@ -38,7 +38,7 @@ impl BrowserToolsService {
             async_browser_text_tool_handler(move |args, browser_context| {
                 let clear = optional_bool(&args, "clear");
                 let expression = optional_trimmed_string(&args, "expression");
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_console_with_context(
                         ctx,
@@ -96,7 +96,7 @@ impl BrowserToolsService {
                     .unwrap_or_default();
                 let method = optional_trimmed_string(&args, "method");
                 let status = optional_trimmed_string(&args, "status");
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_network_with_context(
                         ctx,
@@ -136,7 +136,7 @@ impl BrowserToolsService {
                 let max_body_chars = optional_usize(&args, "max_body_chars")
                     .unwrap_or(DEFAULT_BROWSER_NETWORK_BODY_CHARS)
                     .clamp(1, MAX_BROWSER_NETWORK_BODY_CHARS);
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_network_request_with_context(
                         ctx,
@@ -162,7 +162,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |_args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_har_start_with_context(
                         ctx,
@@ -200,7 +200,7 @@ impl BrowserToolsService {
                 let max_entries = optional_usize(&args, "max_entries")
                     .unwrap_or(DEFAULT_BROWSER_HAR_MAX_ENTRIES)
                     .clamp(1, MAX_BROWSER_HAR_ENTRIES);
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_har_stop_with_context(
                         ctx,
@@ -227,7 +227,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |_args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_websocket_start_with_context(
                         ctx,
@@ -266,7 +266,7 @@ impl BrowserToolsService {
                 let max_payload_chars = optional_usize(&args, "max_payload_chars")
                     .unwrap_or(DEFAULT_BROWSER_WEBSOCKET_PAYLOAD_CHARS)
                     .clamp(1, MAX_BROWSER_WEBSOCKET_PAYLOAD_CHARS);
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_websocket_frames_with_context(
                         ctx,
@@ -294,7 +294,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |_args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_websocket_stop_with_context(
                         ctx,
@@ -323,7 +323,7 @@ impl BrowserToolsService {
                 let question = optional_trimmed_string(&args, "question");
                 let full = optional_bool(&args, "full");
                 let annotate = optional_bool(&args, "annotate");
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_inspect_with_context(
                         ctx,
@@ -371,7 +371,7 @@ impl BrowserToolsService {
                     .map(|value| value.min(MAX_BROWSER_RESEARCH_EXTRACT_URLS));
                 let full = optional_bool(&args, "full");
                 let annotate = optional_bool(&args, "annotate");
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_research_with_context(
                         ctx,
@@ -407,7 +407,7 @@ impl BrowserToolsService {
             async_browser_text_tool_handler(move |args, browser_context| {
                 let question = required_trimmed_string(&args, "question")?;
                 let annotate = optional_bool(&args, "annotate");
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_vision_with_context(
                         ctx,

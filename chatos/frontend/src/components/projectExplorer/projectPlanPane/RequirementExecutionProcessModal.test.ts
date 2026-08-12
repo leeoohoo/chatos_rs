@@ -157,7 +157,7 @@ describe('requirement execution process phase', () => {
       hasActiveRuns: false,
       phase: 'stopped',
       recoveryAction: 'rerun',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: true });
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: true });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
@@ -179,6 +179,20 @@ describe('requirement execution process phase', () => {
       phase: 'failed',
       recoveryAction: 'regenerate',
     })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
+
+    expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: false,
+      hasActiveRuns: false,
+      phase: 'awaiting_confirmation',
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
+
+    expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: false,
+      hasActiveRuns: true,
+      phase: 'awaiting_confirmation',
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
@@ -258,7 +272,7 @@ describe('requirement execution process phase', () => {
       hasActiveRuns: false,
       phase: 'stopped',
       recoveryAction: 'none',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
 
     const process = buildRequirementExecutionProcess({
       projectId: 'project-1',

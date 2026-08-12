@@ -168,6 +168,38 @@ fn execution_lane_allows_only_one_running_project_task() {
     assert_eq!(claimed_second.id, "run-2");
 }
 
+#[test]
+fn lane_less_dependency_can_run_while_parent_holds_the_project_lane() {
+    let store = test_store();
+    let mut parent = queued_run();
+    parent.execution_lane_key = Some("project:one".to_string());
+    store.save_run(parent).expect("save parent run");
+
+    let claimed_parent = store
+        .claim_next_queued_run("worker-1", "claim-1", "2999-01-01T00:00:00Z")
+        .expect("claim parent lane");
+    assert_eq!(claimed_parent.id, "run-1");
+
+    let mut blocked_sibling = queued_run();
+    blocked_sibling.id = "run-2".to_string();
+    blocked_sibling.task_id = "task-2".to_string();
+    blocked_sibling.execution_lane_key = Some("project:one".to_string());
+    store
+        .save_run(blocked_sibling)
+        .expect("save blocked sibling");
+
+    let mut dependency = queued_run();
+    dependency.id = "run-3".to_string();
+    dependency.task_id = "task-3".to_string();
+    dependency.execution_lane_key = None;
+    store.save_run(dependency).expect("save dependency run");
+
+    let claimed_dependency = store
+        .claim_next_queued_run("worker-2", "claim-2", "2999-01-01T00:00:00Z")
+        .expect("claim lane-less dependency");
+    assert_eq!(claimed_dependency.id, "run-3");
+}
+
 fn run_event(id: &str, created_at: &str) -> TaskRunEventRecord {
     TaskRunEventRecord {
         id: id.to_string(),

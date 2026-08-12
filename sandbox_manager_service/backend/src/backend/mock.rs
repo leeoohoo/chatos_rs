@@ -156,6 +156,7 @@ mod tests {
     use super::*;
     use crate::backend::{SandboxEnvironmentServiceSpec, SandboxExecResult};
     use crate::models::{NetworkPolicy, ResourceLimits};
+    use chatos_sandbox_contract::{legacy_policy_permission_snapshot, EffectiveSandboxPolicy};
     use std::collections::BTreeMap;
 
     #[tokio::test]
@@ -186,6 +187,10 @@ mod tests {
                 agent_token: "program-token".to_string(),
                 resource_limits: ResourceLimits::default(),
                 network: NetworkPolicy::default(),
+                effective_permissions: legacy_policy_permission_snapshot(
+                    &EffectiveSandboxPolicy::default(),
+                    vec!["/workspace".to_string()],
+                ),
             })
             .await
             .expect("create environment");

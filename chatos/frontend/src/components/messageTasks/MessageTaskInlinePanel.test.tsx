@@ -149,4 +149,25 @@ describe('MessageTaskInlinePanel', () => {
     expect(screen.queryByRole('button', { name: /查看过程/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /查看详情/i })).not.toBeInTheDocument();
   });
+
+  it('keeps the detail button icon static while detail content is loading', () => {
+    useMessageTasksMock.mockReturnValue({
+      tasks: [baseTask],
+      loading: false,
+      error: null,
+      detailTask: null,
+      runDetail: null,
+      loadingDetailId: baseTask.id,
+      loadingRunId: null,
+      openDetail: vi.fn(),
+      openRun: vi.fn(),
+      closeDetail: vi.fn(),
+      closeRun: vi.fn(),
+    });
+
+    const { container } = render(<MessageTaskInlinePanel message={message} />);
+
+    expect(screen.getByRole('button', { name: /查看详情/i })).toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).not.toBeInTheDocument();
+  });
 });

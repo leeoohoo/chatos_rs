@@ -19,6 +19,7 @@ pub(super) fn mcp_management_binding_from_headers(
         .ok_or_else(|| "x-mcp-management-agent-key is not a registered System Agent".to_string())?;
     Ok(McpManagementBinding {
         owner_user_id,
+        owner_role: header_text(headers, "x-mcp-management-owner-role"),
         agent_key,
         session_id: required("x-mcp-management-session-id")?,
         session_expires_at_unix: required("x-mcp-management-session-expires-at-unix")?

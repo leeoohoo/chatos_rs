@@ -42,9 +42,8 @@ pub(super) use mcp_configs::{
     local_test_mcp_config, local_update_mcp_config,
 };
 pub(super) use model_configs::{
-    local_delete_model_config, local_model_configs, local_model_settings,
-    local_preview_model_catalog, local_save_model_config, local_sync_model_config,
-    local_update_model_config, local_update_model_settings,
+    local_model_configs, local_model_settings, local_refresh_model_configs,
+    local_update_model_settings,
 };
 pub(crate) use plugins::spawn_plugin_auto_update_checker;
 pub(super) use plugins::{

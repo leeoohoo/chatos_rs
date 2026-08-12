@@ -338,9 +338,9 @@ describe('buildVisibleMessageState', () => {
         },
       }),
       buildAssistant({
-        id: 'assistant-callback-later',
-        content: '任务稍后完成',
-        createdAt: new Date('2026-08-11T09:28:00.000Z'),
+        id: 'assistant-callback-earlier',
+        content: '任务第一次执行失败',
+        createdAt: new Date('2026-08-11T09:16:00.000Z'),
         messageMode: 'task_runner_callback',
         metadata: {
           task_runner_async: {
@@ -352,9 +352,9 @@ describe('buildVisibleMessageState', () => {
         },
       }),
       buildAssistant({
-        id: 'assistant-callback-earlier',
-        content: '任务第一次执行失败',
-        createdAt: new Date('2026-08-11T09:16:00.000Z'),
+        id: 'assistant-callback-later',
+        content: '任务稍后完成',
+        createdAt: new Date('2026-08-11T09:28:00.000Z'),
         messageMode: 'task_runner_callback',
         metadata: {
           task_runner_async: {

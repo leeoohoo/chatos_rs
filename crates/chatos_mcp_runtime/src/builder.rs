@@ -21,6 +21,7 @@ pub struct McpExecutorBuilder {
     allowed_tool_names: Option<BTreeSet<String>>,
     declared_allowed_tool_names: BTreeSet<String>,
     tool_lifecycle_hook: Option<Arc<dyn ToolLifecycleHook>>,
+    tool_result_max_chars: Option<usize>,
 }
 
 impl McpExecutorBuilder {
@@ -121,6 +122,11 @@ impl McpExecutorBuilder {
         self
     }
 
+    pub fn with_tool_result_max_chars(mut self, max_chars: usize) -> Self {
+        self.tool_result_max_chars = Some(max_chars.max(1));
+        self
+    }
+
     pub fn build(self) -> McpExecutor {
         McpExecutor::new_with_tool_constraints(
             self.http_servers,
@@ -130,6 +136,7 @@ impl McpExecutorBuilder {
             self.allowed_tool_names,
             self.declared_allowed_tool_names,
             self.tool_lifecycle_hook,
+            self.tool_result_max_chars,
         )
     }
 
@@ -348,6 +355,49 @@ mod tests {
         let tools = executor.available_tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"].as_str(), Some("echo_say"));
+    }
+
+    #[tokio::test]
+    async fn builder_applies_explicit_tool_result_limit() {
+        let executor = crate::McpExecutor::builder()
+            .with_builtin_server(McpBuiltinServer {
+                name: "echo".to_string(),
+                kind: "Echo".to_string(),
+                workspace_dir: String::new(),
+                user_id: None,
+                project_id: None,
+                remote_connection_id: None,
+                contact_agent_id: None,
+                auto_create_task: false,
+                allow_writes: false,
+                max_file_bytes: 0,
+                max_write_bytes: 0,
+                search_limit: 0,
+            })
+            .with_builtin_provider(EchoProvider)
+            .with_tool_result_max_chars(40_000)
+            .build_builtin_only()
+            .expect("builtin executor");
+        let text = "x".repeat(20_000);
+
+        let results = executor
+            .execute_tools_stream(
+                &[json!({
+                    "id": "call-large-echo",
+                    "function": {
+                        "name": "echo_say",
+                        "arguments": serde_json::to_string(&json!({"text": text}))
+                            .expect("arguments")
+                    }
+                })],
+                ToolCallContext::default(),
+                None,
+            )
+            .await;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content.chars().count(), 20_000);
+        assert!(!results[0].content.contains("...[truncated"));
     }
 
     #[tokio::test]

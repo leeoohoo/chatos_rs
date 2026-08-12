@@ -57,7 +57,18 @@ impl RunService {
                 return;
             }
         }
-        let context = self.task_terminal_context(task, workspace_dir);
+        let context = match self.task_terminal_context(task, workspace_dir).await {
+            Ok(context) => context,
+            Err(err) => {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run.id.as_str(),
+                    "task runner skipped local task terminal because tool result limits could not be loaded: {}",
+                    err
+                );
+                return;
+            }
+        };
         match TaskRunnerTerminalControllerStore
             .start_shell_session(context, ".".to_string())
             .await
@@ -177,13 +188,17 @@ impl RunService {
         subject_id: &str,
         workspace_dir: &str,
     ) -> Result<(), String> {
+        let max_output_chars = self
+            .effective_tool_result_model_budget_limits()
+            .await?
+            .per_result_max_chars;
         let context = TerminalControllerContext {
             root: workspace_dir.into(),
             user_id: Some(subject_id.to_string()),
             project_id: Some(task_id.to_string()),
             idle_timeout_ms: 5_000,
             max_wait_ms: 60_000,
-            max_output_chars: 20_000,
+            max_output_chars,
         };
         match TaskRunnerTerminalControllerStore
             .kill_sessions_for_context(context)
@@ -246,19 +261,23 @@ impl RunService {
         Ok(())
     }
 
-    fn task_terminal_context(
+    async fn task_terminal_context(
         &self,
         task: &TaskRecord,
         workspace_dir: &str,
-    ) -> TerminalControllerContext {
-        TerminalControllerContext {
+    ) -> Result<TerminalControllerContext, String> {
+        let max_output_chars = self
+            .effective_tool_result_model_budget_limits()
+            .await?
+            .per_result_max_chars;
+        Ok(TerminalControllerContext {
             root: workspace_dir.into(),
             user_id: Some(task.subject_id.clone()),
             project_id: Some(task.id.clone()),
             idle_timeout_ms: 5_000,
             max_wait_ms: 60_000,
-            max_output_chars: 20_000,
-        }
+            max_output_chars,
+        })
     }
 }
 

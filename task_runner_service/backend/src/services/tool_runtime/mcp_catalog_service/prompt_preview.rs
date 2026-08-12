@@ -26,10 +26,11 @@ impl McpCatalogService {
             workspace_dir: task.mcp_config.workspace_dir,
             default_remote_server_id: task.mcp_config.default_remote_server_id,
         })
+        .await
         .map(Some)
     }
 
-    pub fn preview_prompt(
+    pub async fn preview_prompt(
         &self,
         request: McpPromptPreviewRequest,
     ) -> Result<McpPromptPreviewResponse, String> {
@@ -92,10 +93,16 @@ impl McpCatalogService {
         }
         let builtin_servers =
             builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
+        let tool_result_max_chars = self
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await?
+            .per_result_max_chars;
         let (builtin_registry, builtin_init_errors) = build_builtin_registry(
             &builtin_servers,
             self.task_service.clone(),
             self.ask_user_prompt_service.clone(),
+            tool_result_max_chars,
         );
         if !builtin_init_errors.is_empty() {
             return Err(format!(
@@ -106,6 +113,7 @@ impl McpCatalogService {
         let executor = McpExecutorBuilder::new()
             .with_builtin_servers(builtin_servers)
             .with_builtin_registry(builtin_registry)
+            .with_tool_result_max_chars(tool_result_max_chars)
             .build_builtin_only()?;
         let locale = BuiltinMcpPromptLocale::from_key(Some(&builtin_prompt_locale));
         let build = match builtin_prompt_mode {
@@ -239,6 +247,7 @@ mod tests {
                 workspace_dir: None,
                 default_remote_server_id: None,
             })
+            .await
             .expect("preview prompt");
 
         assert!(!preview

@@ -27,6 +27,7 @@ pub(super) struct SupplyChainEvidenceState {
     package_manifest: Option<NodePackageManifestEvidence>,
     pending_package_manifest_events: BTreeMap<String, PackageManifestSessionEvent>,
     staged_package_manifest_updates: BTreeMap<String, Option<NodePackageManifestEvidence>>,
+    pending_terminal_commands: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,13 +66,21 @@ struct AuditEvidence {
 #[derive(Debug, Clone)]
 struct RebuildEvidence {
     command: String,
-    exit_code: Option<i64>,
     packages: Vec<String>,
+    completed_successfully: bool,
 }
 
 #[derive(Debug, Clone)]
 struct TerminalCommandResult {
     command: String,
+    exit_code: Option<i64>,
+    output: String,
+    output_truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TerminalWaitResult {
+    process_id: String,
     exit_code: Option<i64>,
     output: String,
     output_truncated: bool,
@@ -182,12 +191,46 @@ impl SupplyChainEvidenceState {
         let Some(name) = payload.get("name").and_then(Value::as_str) else {
             return;
         };
+        if name.ends_with("terminal_controller_process_wait") {
+            let Some(result) = terminal_wait_result(payload) else {
+                return;
+            };
+            let Some(command) = self
+                .pending_terminal_commands
+                .remove(result.process_id.as_str())
+            else {
+                return;
+            };
+            if result.exit_code.is_none() {
+                self.pending_terminal_commands
+                    .insert(result.process_id, command);
+                return;
+            }
+            self.observe_terminal_command_result(TerminalCommandResult {
+                command,
+                exit_code: result.exit_code,
+                output: result.output,
+                output_truncated: result.output_truncated,
+            });
+            return;
+        }
         if !name.ends_with("terminal_controller_execute_command") {
             return;
         }
         let Some(result) = terminal_result(payload) else {
             return;
         };
+        if result.exit_code.is_none() {
+            if let Some(process_id) = terminal_process_id(payload) {
+                self.pending_terminal_commands
+                    .insert(process_id, result.command);
+            }
+            return;
+        }
+        self.observe_terminal_command_result(result);
+    }
+
+    fn observe_terminal_command_result(&mut self, result: TerminalCommandResult) {
         let command = result.command.as_str();
         let normalized = command.to_ascii_lowercase();
         let exit_code = result.exit_code;
@@ -202,10 +245,17 @@ impl SupplyChainEvidenceState {
         }
         if is_node_install_command(&normalized) {
             self.dependency_activity_observed = true;
-            self.install = Some(CommandEvidence {
-                command: command.to_string(),
-                exit_code,
-            });
+            let succeeded = exit_code == Some(0) && !command_masks_failure(command);
+            if succeeded
+                || self.install.as_ref().is_none_or(|install| {
+                    install.exit_code != Some(0) || command_masks_failure(install.command.as_str())
+                })
+            {
+                self.install = Some(CommandEvidence {
+                    command: command.to_string(),
+                    exit_code,
+                });
+            }
             if exit_code == Some(0) && !normalized.contains("--no-package-lock") {
                 self.lockfile_observed = true;
             }
@@ -217,8 +267,12 @@ impl SupplyChainEvidenceState {
             self.dependency_activity_observed = true;
             self.rebuilds.push(RebuildEvidence {
                 command: command.to_string(),
-                exit_code,
                 packages,
+                completed_successfully: rebuild_completed_successfully(
+                    command,
+                    exit_code,
+                    result.output.as_str(),
+                ),
             });
         }
         if is_node_audit_command(&normalized) {
@@ -307,11 +361,21 @@ impl SupplyChainEvidenceState {
                 unapproved_rebuilds.join(", ")
             ));
         }
+        let successfully_rebuilt_packages = self
+            .rebuilds
+            .iter()
+            .filter(|rebuild| rebuild.completed_successfully)
+            .flat_map(|rebuild| rebuild.packages.iter().cloned())
+            .collect::<BTreeSet<_>>();
         let failed_rebuilds = self
             .rebuilds
             .iter()
             .filter(|rebuild| {
-                rebuild.exit_code != Some(0) || command_masks_failure(rebuild.command.as_str())
+                !rebuild.completed_successfully
+                    && rebuild
+                        .packages
+                        .iter()
+                        .any(|package| !successfully_rebuilt_packages.contains(package))
             })
             .map(|rebuild| rebuild.command.clone())
             .collect::<Vec<_>>();
@@ -619,11 +683,7 @@ fn observe_project_paths(value: &Value, evidence: &mut SupplyChainEvidenceState)
 }
 
 fn terminal_result(payload: &Value) -> Option<TerminalCommandResult> {
-    let content = payload
-        .get("content")
-        .and_then(Value::as_str)
-        .and_then(|content| serde_json::from_str::<Value>(content).ok())
-        .filter(Value::is_object);
+    let content = terminal_content(payload);
     let result = payload.get("result").filter(|value| value.is_object());
     let command = content
         .as_ref()
@@ -671,6 +731,84 @@ fn terminal_result(payload: &Value) -> Option<TerminalCommandResult> {
         output: output.to_string(),
         output_truncated,
     })
+}
+
+fn terminal_wait_result(payload: &Value) -> Option<TerminalWaitResult> {
+    let content = terminal_content(payload);
+    let result = payload.get("result").filter(|value| value.is_object());
+    let process_id = result
+        .and_then(|value| value.get("process_id"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("process_id"))
+                .and_then(Value::as_str)
+        })?
+        .trim();
+    if process_id.is_empty() {
+        return None;
+    }
+    let exit_code = result
+        .and_then(|value| value.get("exit_code"))
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("exit_code"))
+                .and_then(Value::as_i64)
+        });
+    let output = result
+        .and_then(|value| value.get("output"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("output"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or_default();
+    let output_truncated = result
+        .and_then(|value| value.get("truncated"))
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("truncated"))
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(false);
+    Some(TerminalWaitResult {
+        process_id: process_id.to_string(),
+        exit_code,
+        output: output.to_string(),
+        output_truncated,
+    })
+}
+
+fn terminal_process_id(payload: &Value) -> Option<String> {
+    let content = terminal_content(payload);
+    payload
+        .get("result")
+        .and_then(|value| value.get("process_id"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            content
+                .as_ref()
+                .and_then(|value| value.get("process_id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn terminal_content(payload: &Value) -> Option<Value> {
+    payload
+        .get("content")
+        .and_then(Value::as_str)
+        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .filter(Value::is_object)
 }
 
 fn node_package_manager(command: &str) -> Option<&'static str> {
@@ -750,6 +888,29 @@ fn approved_rebuild_packages(command: &str) -> Option<Vec<String>> {
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     Some(packages)
+}
+
+fn rebuild_completed_successfully(command: &str, exit_code: Option<i64>, output: &str) -> bool {
+    if command_masks_failure(command) {
+        return false;
+    }
+    if exit_code == Some(0) {
+        return true;
+    }
+
+    let segments = shell_command_segments(command).collect::<Vec<_>>();
+    let rebuild_index = segments.iter().position(|segment| {
+        command_invocation_segment(segment, &["npm", "rebuild"]).is_some()
+            || command_invocation_segment(segment, &["pnpm", "rebuild"]).is_some()
+    });
+    let rebuild_preceded_a_later_command =
+        rebuild_index.is_some_and(|index| index + 1 < segments.len());
+
+    rebuild_preceded_a_later_command
+        && output.lines().any(|line| {
+            line.trim()
+                .eq_ignore_ascii_case("rebuilt dependencies successfully")
+        })
 }
 
 fn is_node_audit_command(command: &str) -> bool {
@@ -923,6 +1084,38 @@ mod tests {
         })
     }
 
+    fn background_terminal_start(command: &str, process_id: &str) -> Value {
+        json!({
+            "name": "sandbox_terminal_controller_execute_command",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "background": true,
+                "busy": true,
+                "common": command,
+                "process_id": process_id,
+                "output": "",
+                "truncated": false
+            }
+        })
+    }
+
+    fn background_terminal_wait(process_id: &str, exit_code: i64, output: &str) -> Value {
+        json!({
+            "name": "sandbox_terminal_controller_process_wait",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "busy": false,
+                "completed": true,
+                "exit_code": exit_code,
+                "process_id": process_id,
+                "output": output,
+                "truncated": false
+            }
+        })
+    }
+
     #[test]
     fn clean_audit_passes_with_safe_install_and_lockfile() {
         let mut evidence = evidence_with_manifest();
@@ -988,6 +1181,76 @@ mod tests {
         ));
 
         assert_eq!(evidence.evaluate(&policy()).status, "passed");
+    }
+
+    #[test]
+    fn background_terminal_wait_supplies_final_audit_evidence() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&background_terminal_start(
+            "npm audit --registry=https://registry.npmjs.org --audit-level=high --json",
+            "process-audit",
+        ));
+        evidence.observe_tool_result(&background_terminal_wait(
+            "process-audit",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "passed");
+        assert_eq!(report.audit_exit_code, Some(0));
+        assert_eq!(report.vulnerabilities.expect("audit counts").total, 0);
+    }
+
+    #[test]
+    fn later_failed_compound_command_does_not_erase_successful_install_or_rebuild() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&terminal_result(
+            "npm install --ignore-scripts --no-audit --no-fund",
+            0,
+            "added packages",
+        ));
+        evidence.observe_tool_result(&terminal_result("npm rebuild esbuild", 0, "rebuilt"));
+        evidence.observe_tool_result(&terminal_result(
+            "npm rebuild esbuild && npm run build && npm audit --audit-level=high --json",
+            1,
+            "audit endpoint unavailable",
+        ));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --registry=https://registry.npmjs.org --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "passed");
+        assert!(report.blocking_reasons.is_empty());
+        assert_eq!(report.install_exit_code, Some(0));
+    }
+
+    #[test]
+    fn failed_later_step_does_not_misclassify_a_confirmed_compound_rebuild() {
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        evidence.observe_tool_result(&terminal_result(
+            "npm rebuild esbuild && npm test && npm run build",
+            1,
+            "rebuilt dependencies successfully\n\n> test\nfailed test",
+        ));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "passed");
+        assert!(report.blocking_reasons.is_empty());
+        assert_eq!(
+            report.approved_install_script_packages,
+            vec!["esbuild".to_string()]
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
         definition(
             TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
             "单工具结果字符上限",
-            "单个工具结果进入模型上下文的最大字符数",
+            "Task Runner 单个工具调用的通用文本预算，用于工具结果转换、进入模型上下文以及运行详情中的工具参数和结果展示",
             "Task Runner / AI",
             "service",
             Some("task-runner"),

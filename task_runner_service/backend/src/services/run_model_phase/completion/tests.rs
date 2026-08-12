@@ -876,7 +876,7 @@ fn execution_outcome_reference_validation_accepts_real_workspace_evidence() {
     outcome.referenced_endpoints = vec!["http://127.0.0.1:4000/health".to_string()];
 
     validate_task_execution_outcome_references(
-        &outcome,
+        &mut outcome,
         workspace.to_string_lossy().as_ref(),
         true,
     )
@@ -894,7 +894,7 @@ fn execution_outcome_reference_validation_rejects_missing_or_escaping_paths() {
     );
     outcome.referenced_paths = vec!["missing.txt".to_string()];
     let missing = validate_task_execution_outcome_references(
-        &outcome,
+        &mut outcome,
         workspace.to_string_lossy().as_ref(),
         true,
     )
@@ -903,7 +903,7 @@ fn execution_outcome_reference_validation_rejects_missing_or_escaping_paths() {
 
     outcome.referenced_paths = vec!["../outside.txt".to_string()];
     let escaping = validate_task_execution_outcome_references(
-        &outcome,
+        &mut outcome,
         workspace.to_string_lossy().as_ref(),
         false,
     )
@@ -923,12 +923,79 @@ fn execution_outcome_reference_validation_rejects_endpoint_credentials() {
     outcome.referenced_endpoints = vec!["https://admin:secret@example.com/health".to_string()];
 
     let error = validate_task_execution_outcome_references(
-        &outcome,
+        &mut outcome,
         workspace.to_string_lossy().as_ref(),
         false,
     )
     .expect_err("endpoint credentials must fail");
     assert!(error.contains("must not contain credentials"));
+
+    std::fs::remove_dir_all(workspace).expect("remove workspace");
+}
+
+#[test]
+fn execution_outcome_reference_validation_corrects_unique_single_character_typo() {
+    let workspace = temporary_reference_workspace("single-character-typo");
+    let migrations = workspace.join("src/server/database/migrations");
+    std::fs::create_dir_all(&migrations).expect("create migrations directory");
+    std::fs::write(migrations.join("0000_baseline.sql"), "select 1;").expect("write migration");
+    let mut outcome = TaskExecutionOutcome::succeeded(
+        "migration verified",
+        vec!["migration command passed".to_string()],
+    );
+    outcome.referenced_paths = vec!["src/server/database/migrations/000_baseline.sql".to_string()];
+
+    validate_task_execution_outcome_references(
+        &mut outcome,
+        workspace.to_string_lossy().as_ref(),
+        true,
+    )
+    .expect("unique one-character typo should be corrected");
+    assert_eq!(
+        outcome.referenced_paths,
+        vec!["src/server/database/migrations/0000_baseline.sql"]
+    );
+
+    std::fs::remove_dir_all(workspace).expect("remove workspace");
+}
+
+#[test]
+fn execution_outcome_reference_validation_corrects_unique_directory_typo() {
+    let workspace = temporary_reference_workspace("single-character-directory-typo");
+    let seeds = workspace.join("db/seeds");
+    std::fs::create_dir_all(&seeds).expect("create seeds directory");
+    std::fs::write(seeds.join("tasks.sql"), "select 1;").expect("write seed file");
+    let mut outcome =
+        TaskExecutionOutcome::succeeded("seed verified", vec!["seed command passed".to_string()]);
+    outcome.referenced_paths = vec!["db/seds/tasks.sql".to_string()];
+
+    validate_task_execution_outcome_references(
+        &mut outcome,
+        workspace.to_string_lossy().as_ref(),
+        true,
+    )
+    .expect("unique one-character directory typo should be corrected");
+    assert_eq!(outcome.referenced_paths, vec!["db/seeds/tasks.sql"]);
+
+    std::fs::remove_dir_all(workspace).expect("remove workspace");
+}
+
+#[test]
+fn execution_outcome_reference_validation_rejects_ambiguous_directory_typo() {
+    let workspace = temporary_reference_workspace("ambiguous-directory-typo");
+    std::fs::create_dir_all(workspace.join("db/seeds")).expect("create seeds directory");
+    std::fs::create_dir_all(workspace.join("db/sods")).expect("create sods directory");
+    let mut outcome =
+        TaskExecutionOutcome::succeeded("seed verified", vec!["seed command passed".to_string()]);
+    outcome.referenced_paths = vec!["db/seds/tasks.sql".to_string()];
+
+    let error = validate_task_execution_outcome_references(
+        &mut outcome,
+        workspace.to_string_lossy().as_ref(),
+        true,
+    )
+    .expect_err("ambiguous correction must fail closed");
+    assert!(error.contains("more than one one-character correction exists"));
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }

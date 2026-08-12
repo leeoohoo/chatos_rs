@@ -421,6 +421,7 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
@@ -432,6 +433,7 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         sandbox_target: Some(target),
         project_context: ProjectExecutionContext {

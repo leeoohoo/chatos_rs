@@ -437,6 +437,7 @@ pub struct ToolCallContext {
     pub conversation_turn_id: Option<String>,
     pub caller_model: Option<String>,
     pub caller_model_runtime: Option<ToolCallerModelRuntime>,
+    pub tool_result_max_chars: Option<usize>,
     pub is_aborted: Option<ToolAbortCheckCallback>,
 }
 
@@ -451,6 +452,7 @@ impl ToolCallContext {
             conversation_turn_id,
             caller_model,
             caller_model_runtime: None,
+            tool_result_max_chars: None,
             is_aborted: None,
         }
     }
@@ -471,6 +473,11 @@ impl ToolCallContext {
 
     pub fn with_abort_checker(mut self, is_aborted: ToolAbortCheckCallback) -> Self {
         self.is_aborted = Some(is_aborted);
+        self
+    }
+
+    pub fn with_tool_result_max_chars(mut self, max_chars: Option<usize>) -> Self {
+        self.tool_result_max_chars = max_chars.map(|value| value.max(1));
         self
     }
 
@@ -495,6 +502,7 @@ impl std::fmt::Debug for ToolCallContext {
             .field("conversation_turn_id", &self.conversation_turn_id)
             .field("caller_model", &self.caller_model)
             .field("caller_model_runtime", &self.caller_model_runtime)
+            .field("tool_result_max_chars", &self.tool_result_max_chars)
             .field("has_abort_checker", &self.is_aborted.is_some())
             .finish()
     }

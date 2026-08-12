@@ -6,6 +6,16 @@ import { describe, expect, it } from 'vitest';
 import { formatToolDetailText, stringifyJsonPreview } from './textPreview';
 
 describe('tool detail text preview', () => {
+  it('keeps complete text and json in expanded details by default', () => {
+    const text = 'x'.repeat(40_000);
+    const jsonText = 'y'.repeat(700);
+
+    expect(formatToolDetailText(text)).toEqual({ content: text, meta: undefined });
+    const jsonPreview = stringifyJsonPreview({ content: jsonText });
+    expect(jsonPreview.meta).toBeUndefined();
+    expect(JSON.parse(jsonPreview.content)).toEqual({ content: jsonText });
+  });
+
   it('clips long text blocks before rendering', () => {
     const preview = formatToolDetailText('x'.repeat(20_000), 128);
 

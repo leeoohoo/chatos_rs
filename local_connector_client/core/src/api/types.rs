@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::approval::{ApprovalMode, ProjectApprovalState};
-use crate::model_configs::{LocalModelConfigDraft, LocalModelConfigPublic, LocalModelSettings};
+use crate::model_configs::{LocalModelConfigPublic, LocalModelSettings};
 use crate::AuthUserState;
 
 #[derive(Debug, Deserialize)]
@@ -268,20 +268,6 @@ pub(super) struct LocalModelConfigListResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct SaveLocalModelConfigRequest {
-    #[serde(flatten)]
-    pub(super) draft: LocalModelConfigDraft,
-    #[serde(default)]
-    pub(super) sync: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct PreviewLocalModelCatalogRequest {
-    #[serde(flatten)]
-    pub(super) draft: LocalModelConfigDraft,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct UpdateLocalModelSettingsRequest {
     #[serde(default)]
     pub(super) model_request_max_retries: Option<usize>,
@@ -289,8 +275,6 @@ pub(super) struct UpdateLocalModelSettingsRequest {
     pub(super) command_approval_model_config_id: Option<String>,
     #[serde(default)]
     pub(super) command_approval_thinking_level: Option<String>,
-    #[serde(default)]
-    pub(super) sync: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

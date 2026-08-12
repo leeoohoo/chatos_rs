@@ -68,7 +68,7 @@ fn register_read_file_raw_tool(
             revision_guard
                 .lock()
                 .map_err(|_| "file revision guard unavailable".to_string())?
-                .record_read(ctx.run_id, path.as_str());
+                .record_read(ctx.run_id, path.as_str(), Some(sha256.as_str()));
             let normalized_lines: Vec<String> = content
                 .split('\n')
                 .map(|line| line.trim_end_matches('\r').to_string())
@@ -153,7 +153,7 @@ fn register_read_file_range_tool(
             revision_guard
                 .lock()
                 .map_err(|_| "file revision guard unavailable".to_string())?
-                .record_read(ctx.run_id, path.as_str());
+                .record_read(ctx.run_id, path.as_str(), Some(sha256.as_str()));
             Ok(text_result(json!({
                 "path": path,
                 "size_bytes": size,

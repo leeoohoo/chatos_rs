@@ -174,6 +174,7 @@
 `browser_tools_browser_scroll`
 `browser_tools_browser_back`
 `browser_tools_browser_press`
+`browser_tools_browser_set_viewport`
 `browser_tools_browser_upload`
 `browser_tools_browser_download`
 `browser_tools_browser_console`
@@ -204,10 +205,11 @@
 7. 只有用户明确需要可复用的网络归档或跨请求时序诊断时，才用 `browser_tools_browser_har_start` 在目标操作前开始捕获，并尽快用 `browser_tools_browser_har_stop` 导出新的工作区相对 `.har` 文件。
 8. 需要诊断 WebSocket 时，在目标操作前立即调用 `browser_tools_browser_websocket_start`，用 `browser_tools_browser_websocket_frames` 读取有界元数据，并尽快调用 `browser_tools_browser_websocket_stop`。文本载荷必须显式请求且会脱敏，二进制载荷永不返回。
 9. 只有明确需要在当前会话中阻断请求或返回固定 JSON mock 时，才调用 `browser_tools_browser_route_add` 并等待本机审批；用 list/remove/clear 管理 ChatOS 自己的规则。
-10. `browser_tools_browser_cdp_command` 只有设备端已开启高风险完整 CDP 模式时才会出现。普通工具能完成时不要使用；确需使用时，每次只发送最窄的一条 method/params，并等待本机逐次审批。
-11. 只有在截图布局、视觉细节、纯视觉判断是关键时，才优先 `browser_tools_browser_vision`。
-12. 当答案既依赖当前页，又依赖外部公开来源时，优先 `browser_tools_browser_research`。
-13. 上传文件时只使用 `browser_tools_browser_upload` 读取工作区内已存在的相对路径；下载时使用 `browser_tools_browser_download` 写入新的工作区相对路径，父目录必须存在且不会覆盖已有文件。
+10. 需要验证响应式布局时，用 `browser_tools_browser_set_viewport` 设置真实 CSS 像素视口并回读实际尺寸；不要依赖通常无效的 `window.resizeTo`。
+11. `browser_tools_browser_cdp_command` 只有设备端已开启高风险完整 CDP 模式时才会出现。普通工具能完成时不要使用；确需使用时，每次只发送最窄的一条 method/params，并等待本机逐次审批。
+12. 只有在截图布局、视觉细节、纯视觉判断是关键时，才优先 `browser_tools_browser_vision`。
+13. 当答案既依赖当前页，又依赖外部公开来源时，优先 `browser_tools_browser_research`。
+14. 上传文件时只使用 `browser_tools_browser_upload` 读取工作区内已存在的相对路径；下载时使用 `browser_tools_browser_download` 写入新的工作区相对路径，父目录必须存在且不会覆盖已有文件。
 
 不要这样做：
 1. 不要把纯页内问题直接升级成公网搜索。

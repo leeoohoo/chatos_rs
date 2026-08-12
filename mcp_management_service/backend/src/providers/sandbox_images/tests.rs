@@ -46,6 +46,7 @@ fn snapshot(provider: SandboxProviderKind, pairing_id: Option<&str>) -> RuntimeS
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
             .as_str()
             .to_string(),
@@ -59,6 +60,7 @@ fn snapshot(provider: SandboxProviderKind, pairing_id: Option<&str>) -> RuntimeS
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         sandbox_target: None,
         project_context: ProjectExecutionContext {

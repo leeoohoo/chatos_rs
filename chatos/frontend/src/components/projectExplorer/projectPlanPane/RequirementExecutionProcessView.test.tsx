@@ -15,6 +15,85 @@ afterEach(() => cleanup());
 const noop = vi.fn();
 
 describe('requirement execution process actions', () => {
+  it('offers both regeneration and rerun after an executed batch is fully cancelled', () => {
+    render(
+      <RequirementExecutionProcessActions
+        actuallyStarted
+        canRegenerate
+        canRerun
+        cancellationSettling={false}
+        confirming={false}
+        executionPaused={false}
+        graphReady={false}
+        hasActiveRuns={false}
+        runtimeEnvironmentReady
+        runtimeEnvironmentStatus="ready"
+        onCancelRequirementExecution={noop}
+        onClose={noop}
+        onConfirmExecution={noop}
+        onOpenCancelConfirm={noop}
+        onOpenDiscardConfirm={noop}
+        onOpenFailedTaskRetry={noop}
+        onOpenRerunConfirm={noop}
+        onRegenerate={noop}
+        onTogglePause={noop}
+        pausing={false}
+        phase="stopped"
+        isLocalExecution={false}
+        queuedTaskCount={0}
+        rerunSettling={false}
+        rerunning={false}
+        retryableFailedTaskCount={3}
+        retryingTaskId={null}
+        revising={false}
+        runningTaskCount={0}
+        stopping={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '重新生成执行流程' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重新执行' })).toBeTruthy();
+  });
+
+  it('offers regeneration while a completed graph is still awaiting confirmation', () => {
+    render(
+      <RequirementExecutionProcessActions
+        actuallyStarted={false}
+        canRegenerate
+        canRerun={false}
+        cancellationSettling={false}
+        confirming={false}
+        executionPaused={false}
+        graphReady
+        hasActiveRuns={false}
+        runtimeEnvironmentReady
+        runtimeEnvironmentStatus="ready"
+        onCancelRequirementExecution={noop}
+        onClose={noop}
+        onConfirmExecution={noop}
+        onOpenCancelConfirm={noop}
+        onOpenDiscardConfirm={noop}
+        onOpenFailedTaskRetry={noop}
+        onOpenRerunConfirm={noop}
+        onRegenerate={noop}
+        onTogglePause={noop}
+        pausing={false}
+        phase="awaiting_confirmation"
+        isLocalExecution={false}
+        queuedTaskCount={0}
+        rerunSettling={false}
+        rerunning={false}
+        retryableFailedTaskCount={0}
+        retryingTaskId={null}
+        revising={false}
+        runningTaskCount={0}
+        stopping={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '重新生成执行流程' })).toBeTruthy();
+  });
+
   it('keeps rerun disabled and visibly loading while old batch cancellation is settling', () => {
     render(
       <RequirementExecutionProcessActions

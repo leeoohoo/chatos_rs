@@ -105,6 +105,7 @@ impl PluginCloudProvider {
                         arguments,
                         invocation_id,
                         "Plugin Cloud HTTP MCP",
+                        snapshot.tool_result_max_chars,
                     )
                     .await
             }

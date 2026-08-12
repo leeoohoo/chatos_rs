@@ -56,7 +56,7 @@ impl SandboxManager {
         .to_rfc3339();
         let run_workspace =
             self.prepare_run_workspace(input.workspace_root.as_str(), run_id.as_str())?;
-        let effective_permissions = legacy_policy_permission_snapshot(
+        let effective_permissions = sandbox_manager_effective_permissions(
             &effective_policy,
             vec![run_workspace.to_string_lossy().to_string()],
         );
@@ -205,7 +205,7 @@ impl SandboxManager {
         record: SandboxLeaseRecord,
     ) -> Result<CreateSandboxLeaseResponse, ApiError> {
         let effective_permissions = record.effective_permissions.clone().unwrap_or_else(|| {
-            legacy_policy_permission_snapshot(
+            sandbox_manager_effective_permissions(
                 &record.effective_policy,
                 vec![record.run_workspace.clone()],
             )
@@ -254,6 +254,12 @@ impl SandboxManager {
                 agent_token: Some(agent_token.clone()),
                 resource_limits: record.resource_limits.clone(),
                 network: record.network.clone(),
+                effective_permissions: record.effective_permissions.clone().unwrap_or_else(|| {
+                    sandbox_manager_effective_permissions(
+                        &record.effective_policy,
+                        vec![record.run_workspace.clone()],
+                    )
+                }),
             })
             .await;
 
@@ -291,7 +297,7 @@ impl SandboxManager {
                 .await;
                 let effective_permissions =
                     record.effective_permissions.clone().unwrap_or_else(|| {
-                        legacy_policy_permission_snapshot(
+                        sandbox_manager_effective_permissions(
                             &record.effective_policy,
                             vec![record.run_workspace.clone()],
                         )

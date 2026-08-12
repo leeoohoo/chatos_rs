@@ -57,8 +57,15 @@ pub(super) struct PluginConnectorWorkspaceView {
     status: String,
 }
 
-pub(super) async fn list_mcp_catalog(State(state): State<AppState>) -> Json<Vec<McpCatalogEntry>> {
-    Json(state.mcp_catalog_service.list_catalog())
+pub(super) async fn list_mcp_catalog(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<McpCatalogEntry>>, ApiError> {
+    state
+        .mcp_catalog_service
+        .list_catalog()
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_request)
 }
 
 pub(super) async fn list_task_capability_catalog(
@@ -205,6 +212,7 @@ pub(super) async fn preview_mcp_prompt(
     let preview = state
         .mcp_catalog_service
         .preview_prompt(input)
+        .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(redact_workspace_paths(&state, preview)?))
 }
@@ -328,6 +336,7 @@ pub(super) async fn mcp_entrypoint(
 #[derive(Debug, Clone)]
 struct McpManagementBinding {
     owner_user_id: String,
+    owner_role: Option<String>,
     agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     session_id: String,
     session_expires_at_unix: i64,
@@ -488,7 +497,15 @@ fn bound_task_creator(
         id: creator_id.clone(),
         username: creator_id.clone(),
         display_name: creator_id,
-        role: crate::models::UserRole::Agent,
+        role: if binding
+            .owner_role
+            .as_deref()
+            .is_some_and(|role| matches!(role.trim(), "admin" | "super_admin"))
+        {
+            crate::models::UserRole::Admin
+        } else {
+            crate::models::UserRole::Agent
+        },
         owner_user_id: Some(binding.owner_user_id.clone()),
         owner_username: None,
         owner_display_name: None,

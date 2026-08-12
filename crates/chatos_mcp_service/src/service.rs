@@ -76,6 +76,7 @@ impl McpJsonRpcService {
         params: Value,
         context: McpRequestContext,
     ) -> JsonRpcResponse {
+        let context = context.with_tool_call_params(&params);
         let name = params
             .get("name")
             .and_then(Value::as_str)
@@ -135,10 +136,14 @@ mod tests {
             &self,
             name: &str,
             args: Value,
-            _context: McpRequestContext,
+            context: McpRequestContext,
         ) -> Result<Value, String> {
             if name == "echo" {
-                Ok(json!({ "ok": true, "args": args }))
+                Ok(json!({
+                    "ok": true,
+                    "args": args,
+                    "tool_result_max_chars": context.tool_result_max_chars(),
+                }))
             } else {
                 Err(format!("tool not found: {name}"))
             }
@@ -235,7 +240,35 @@ mod tests {
             .await;
         assert_eq!(
             response.result,
-            Some(json!({ "ok": true, "args": { "value": 1 } }))
+            Some(json!({
+                "ok": true,
+                "args": { "value": 1 },
+                "tool_result_max_chars": null,
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn forwards_managed_tool_result_budget_from_call_metadata() {
+        let response = service()
+            .handle(JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("call-budget")),
+                method: METHOD_TOOLS_CALL.to_string(),
+                params: json!({
+                    "name": "echo",
+                    "arguments": {"value": 1},
+                    "_meta": {"chatos/toolResultMaxChars": 40_000},
+                }),
+            })
+            .await;
+        assert_eq!(
+            response
+                .result
+                .as_ref()
+                .and_then(|value| value.get("tool_result_max_chars"))
+                .and_then(Value::as_u64),
+            Some(40_000),
         );
     }
 

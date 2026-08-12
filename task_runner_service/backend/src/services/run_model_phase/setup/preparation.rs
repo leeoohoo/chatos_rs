@@ -126,8 +126,14 @@ pub(super) async fn prepare_model_execution(
     let prepared_plugin_runtime = service
         .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
         .await?;
-    let mcp_management_gateway =
-        resolve_mcp_management_gateway(task, run, task_agent_key, sandbox_context.as_ref()).await?;
+    let mcp_management_gateway = resolve_mcp_management_gateway(
+        task,
+        run,
+        task_agent_key,
+        sandbox_context.as_ref(),
+        tool_result_model_budget_limits.per_result_max_chars,
+    )
+    .await?;
     let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
     let plugin_tool_lifecycle_hook =
         prepared_plugin_runtime.tool_lifecycle_hook(task_agent_key.as_str());
@@ -158,7 +164,9 @@ pub(super) async fn prepare_model_execution(
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
     let (mcp_management_server, mcp_management_runtime_session) =
         mcp_management_gateway.into_parts();
-    let mut mcp_builder = McpExecutorBuilder::new().with_http_server(mcp_management_server);
+    let mut mcp_builder = McpExecutorBuilder::new()
+        .with_http_server(mcp_management_server)
+        .with_tool_result_max_chars(tool_result_model_budget_limits.per_result_max_chars);
     for allowed_tools in command_constraints.tool_allowlists {
         mcp_builder = mcp_builder.with_allowed_tool_names(allowed_tools);
     }

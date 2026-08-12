@@ -106,7 +106,6 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
     error,
     detailTask,
     runDetail,
-    loadingDetailId,
     loadingRunId,
     openDetail,
     openRun,
@@ -120,7 +119,6 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
 
   const selectedTask = pickTask(tasks, selectedTaskId);
   const selectedRunId = readString(selectedTask?.last_run_id);
-  const detailLoading = loadingDetailId === selectedTaskId;
   const processLoading = Boolean(selectedRunId && loadingRunId === selectedRunId);
   const detailSourceTask = detailTask?.id === selectedTaskId ? detailTask : selectedTask;
   const processSourceTask = runDetail?.task?.id === selectedTaskId ? runDetail.task : selectedTask;
@@ -240,11 +238,7 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
           className={`inline-flex items-center gap-1 font-medium transition-colors ${viewButtonClass(expandedView === 'detail')}`}
           onClick={() => handleOpenView('detail')}
         >
-          {detailLoading ? (
-            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <ScrollText className="h-3.5 w-3.5" />
-          )}
+          <ScrollText className="h-3.5 w-3.5" />
           查看详情
           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expandedView === 'detail' ? 'rotate-180' : ''}`} />
         </button>

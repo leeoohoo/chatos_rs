@@ -145,9 +145,13 @@ mod tests {
             search_limit: 10,
         };
 
-        let provider =
-            build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
-                .expect("terminal provider");
+        let provider = build_task_runner_builtin_provider(
+            &server,
+            task_service,
+            ask_user_prompt_service,
+            40_000,
+        )
+        .expect("terminal provider");
         let tools = provider.list_tools();
         let execute = tools
             .iter()
@@ -193,9 +197,13 @@ mod tests {
             search_limit: 10,
         };
 
-        let provider =
-            build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
-                .expect("project management provider");
+        let provider = build_task_runner_builtin_provider(
+            &server,
+            task_service,
+            ask_user_prompt_service,
+            40_000,
+        )
+        .expect("project management provider");
         let tools = provider.list_tools();
 
         assert!(tools.iter().any(|tool| {

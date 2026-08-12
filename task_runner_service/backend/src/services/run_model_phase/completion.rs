@@ -181,7 +181,7 @@ fn fail_report_when_outcome_references_invalid(
     if report.status != chatos_ai_runtime::AiTurnStatus::Completed {
         return;
     }
-    let Some(outcome) = report.execution_outcome.as_ref() else {
+    let Some(outcome) = report.execution_outcome.as_mut() else {
         return;
     };
     if outcome.status != chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded {
@@ -198,12 +198,12 @@ fn fail_report_when_outcome_references_invalid(
 }
 
 fn validate_task_execution_outcome_references(
-    outcome: &chatos_ai_runtime::TaskExecutionOutcome,
+    outcome: &mut chatos_ai_runtime::TaskExecutionOutcome,
     workspace_dir: &str,
     require_existing_paths: bool,
 ) -> Result<(), String> {
-    for path in &outcome.referenced_paths {
-        validate_workspace_reference(workspace_dir, path, require_existing_paths)?;
+    for path in &mut outcome.referenced_paths {
+        *path = validate_workspace_reference(workspace_dir, path, require_existing_paths)?;
     }
     for endpoint in &outcome.referenced_endpoints {
         validate_endpoint_reference(endpoint)?;
@@ -215,7 +215,7 @@ fn validate_workspace_reference(
     workspace_dir: &str,
     reference: &str,
     require_exists: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let reference = reference.trim();
     let relative_path = std::path::Path::new(reference);
     if relative_path.is_absolute()
@@ -233,19 +233,118 @@ fn validate_workspace_reference(
         ));
     }
     if !require_exists {
-        return Ok(());
+        return Ok(reference.to_string());
     }
 
     let workspace_root = std::fs::canonicalize(workspace_dir)
         .map_err(|err| format!("failed to resolve workspace root {workspace_dir}: {err}"))?;
-    let resolved = std::fs::canonicalize(workspace_root.join(relative_path))
-        .map_err(|err| format!("referenced path does not exist: {reference}: {err}"))?;
+    let resolved = match std::fs::canonicalize(workspace_root.join(relative_path)) {
+        Ok(resolved) => resolved,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            resolve_unique_single_edit_workspace_reference(&workspace_root, relative_path).map_err(
+                |correction_error| {
+                    format!(
+                        "referenced path does not exist: {reference}: {err}; {correction_error}"
+                    )
+                },
+            )?
+        }
+        Err(err) => {
+            return Err(format!(
+                "referenced path does not exist: {reference}: {err}"
+            ));
+        }
+    };
     if !resolved.starts_with(&workspace_root) {
         return Err(format!(
             "referenced path resolves outside the workspace: {reference}"
         ));
     }
-    Ok(())
+    resolved
+        .strip_prefix(&workspace_root)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| format!("referenced path resolves outside the workspace: {reference}"))
+}
+
+fn resolve_unique_single_edit_workspace_reference(
+    workspace_root: &std::path::Path,
+    relative_path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let mut current = workspace_root.to_path_buf();
+    let mut correction_used = false;
+
+    for component in relative_path.components() {
+        let std::path::Component::Normal(requested_name) = component else {
+            continue;
+        };
+        let requested_name = requested_name
+            .to_str()
+            .ok_or_else(|| "reference contains a non-UTF-8 path component".to_string())?;
+        let exact = current.join(requested_name);
+        let next = if exact.exists() {
+            exact
+        } else {
+            if correction_used {
+                return Err("reference requires more than one one-character correction".to_string());
+            }
+            let mut candidates = std::fs::read_dir(&current)
+                .map_err(|err| format!("failed to inspect referenced parent directory: {err}"))?
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let candidate_name = entry.file_name().to_str()?.to_string();
+                    is_single_edit_away(requested_name, candidate_name.as_str())
+                        .then(|| entry.path())
+                });
+            let candidate = candidates
+                .next()
+                .ok_or_else(|| "no unique one-character correction exists".to_string())?;
+            if candidates.next().is_some() {
+                return Err("more than one one-character correction exists".to_string());
+            }
+            correction_used = true;
+            candidate
+        };
+        current = std::fs::canonicalize(next)
+            .map_err(|err| format!("failed to resolve corrected workspace reference: {err}"))?;
+        if !current.starts_with(workspace_root) {
+            return Err("corrected reference resolves outside the workspace".to_string());
+        }
+    }
+
+    if !correction_used {
+        return Err("no one-character correction was applied".to_string());
+    }
+    Ok(current)
+}
+
+fn is_single_edit_away(left: &str, right: &str) -> bool {
+    let left = left.chars().collect::<Vec<_>>();
+    let right = right.chars().collect::<Vec<_>>();
+    if left == right || left.len().abs_diff(right.len()) > 1 {
+        return false;
+    }
+
+    let (mut left_index, mut right_index, mut edits) = (0, 0, 0);
+    while left_index < left.len() && right_index < right.len() {
+        if left[left_index] == right[right_index] {
+            left_index += 1;
+            right_index += 1;
+            continue;
+        }
+        edits += 1;
+        if edits > 1 {
+            return false;
+        }
+        match left.len().cmp(&right.len()) {
+            std::cmp::Ordering::Less => right_index += 1,
+            std::cmp::Ordering::Greater => left_index += 1,
+            std::cmp::Ordering::Equal => {
+                left_index += 1;
+                right_index += 1;
+            }
+        }
+    }
+    edits + usize::from(left_index < left.len() || right_index < right.len()) == 1
 }
 
 fn validate_endpoint_reference(reference: &str) -> Result<(), String> {

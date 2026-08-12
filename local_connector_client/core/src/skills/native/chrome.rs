@@ -31,8 +31,8 @@ use super::required_text;
 const DEFAULT_TAB_LIMIT: usize = 20;
 const MAX_TAB_LIMIT: usize = 50;
 const DEFAULT_SNAPSHOT_CHARS: usize = 20_000;
-const MIN_SNAPSHOT_CHARS: usize = 1_000;
-const MAX_SNAPSHOT_CHARS: usize = 50_000;
+const MIN_SNAPSHOT_CHARS: usize = 1;
+const MAX_SNAPSHOT_CHARS: usize = chatos_mcp_service::TOOL_RESULT_MAX_CHARS_UPPER_BOUND;
 const MIN_SCREENSHOT_QUALITY: u64 = 40;
 const MAX_SCREENSHOT_QUALITY: u64 = 85;
 const DEFAULT_SCREENSHOT_QUALITY: u64 = 65;
@@ -874,6 +874,20 @@ fn snapshot_chars(arguments: &Value) -> Result<usize> {
         })
 }
 
+pub(super) fn apply_managed_snapshot_limit(arguments: &mut Value, max_chars: Option<usize>) {
+    let Some(max_chars) =
+        max_chars.filter(|value| (MIN_SNAPSHOT_CHARS..=MAX_SNAPSHOT_CHARS).contains(value))
+    else {
+        return;
+    };
+    let Some(object) = arguments.as_object_mut() else {
+        return;
+    };
+    object
+        .entry("max_chars".to_string())
+        .or_insert_with(|| json!(max_chars));
+}
+
 fn chrome_tab_id(arguments: &Value) -> Result<String> {
     let value = required_text(arguments, "tab_id")?;
     if !valid_prefixed_numeric_id(value, "ct") {
@@ -1387,7 +1401,7 @@ fn chrome_tab_snapshot_tool() -> Value {
     );
     properties.insert(
         "max_chars".to_string(),
-        json!({"type":"integer","minimum":MIN_SNAPSHOT_CHARS,"maximum":MAX_SNAPSHOT_CHARS,"default":DEFAULT_SNAPSHOT_CHARS}),
+        json!({"type":"integer","minimum":MIN_SNAPSHOT_CHARS,"maximum":MAX_SNAPSHOT_CHARS,"description":"Optional per-call override. When omitted, the platform-managed tool result budget is used."}),
     );
     tool(
         "chrome_tab_snapshot",

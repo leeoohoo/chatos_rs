@@ -19,6 +19,7 @@ use super::{
     is_memory_reader, memory_provider_ref, ChatosProvider, ChatosRequestBinding, ProviderCallError,
     CLOUD_BROWSER_EXECUTION_AUTHORIZE_METHOD, CLOUD_BROWSER_SESSION_CLOSE_METHOD,
 };
+use crate::providers::managed_tool_call_params;
 
 impl ChatosProvider {
     pub(in crate::providers) async fn call_tool(
@@ -94,10 +95,11 @@ impl ChatosProvider {
                             "jsonrpc": "2.0",
                             "id": invocation_id,
                             "method": METHOD_TOOLS_CALL,
-                            "params": {
-                                "name": original_tool_name,
-                                "arguments": arguments,
-                            }
+                            "params": managed_tool_call_params(
+                                original_tool_name,
+                                arguments,
+                                snapshot.tool_result_max_chars,
+                            )
                         }),
                         self.browser_request_timeout,
                     )
@@ -129,10 +131,11 @@ impl ChatosProvider {
                 "jsonrpc": "2.0",
                 "id": invocation_id,
                 "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
+                "params": managed_tool_call_params(
+                    original_tool_name,
+                    arguments,
+                    snapshot.tool_result_max_chars,
+                )
             }))
             .send()
             .await

@@ -285,15 +285,7 @@ pub(crate) fn model_has_cloud_runtime_credentials(model: &ModelConfigRecord) -> 
 }
 
 pub(crate) fn model_visible_to_user(model: &ModelConfigRecord, current_user: &CurrentUser) -> bool {
-    let Some(expected_owner_user_id) = current_user.effective_owner_user_id() else {
-        return false;
-    };
-    model
-        .owner_user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        == Some(expected_owner_user_id)
+    current_user.can_access_owned_resource(model.owner_user_id.as_deref())
 }
 
 pub(crate) fn select_model_config_id_for_task(

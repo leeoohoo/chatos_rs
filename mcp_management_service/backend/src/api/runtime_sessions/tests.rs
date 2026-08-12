@@ -15,6 +15,7 @@ fn request() -> CreateRuntimeSessionRequest {
     CreateRuntimeSessionRequest {
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         project_id: "project-1".to_string(),
         run_id: Some("run-1".to_string()),
@@ -25,6 +26,7 @@ fn request() -> CreateRuntimeSessionRequest {
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: Some(40_000),
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
         locale: None,

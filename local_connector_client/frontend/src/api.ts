@@ -14,9 +14,6 @@ import type {
   FsListResponse,
   LocalMcpConfig,
   LocalMcpConfigDraft,
-  LocalModelCatalogResponse,
-  LocalModelConfig,
-  LocalModelConfigDraft,
   LocalModelConfigListResponse,
   LocalModelSettings,
   LocalRuntimeSettings,
@@ -244,33 +241,21 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   modelConfigs: () => request<LocalModelConfigListResponse>('/api/local/model-configs'),
-  previewModelCatalog: (draft: LocalModelConfigDraft) =>
-    request<LocalModelCatalogResponse>('/api/local/model-configs/catalog/preview', {
-      method: 'POST',
-      body: JSON.stringify(draft),
-    }),
-  saveModelConfig: (draft: LocalModelConfigDraft, sync = true) =>
-    request<LocalModelConfig>('/api/local/model-configs', {
-      method: 'POST',
-      body: JSON.stringify({ ...draft, sync }),
-    }),
-  updateModelConfig: (id: string, draft: LocalModelConfigDraft, sync = true) =>
-    request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}`, {
-      method: 'POST',
-      body: JSON.stringify({ ...draft, sync }),
-    }),
-  deleteModelConfig: (id: string) =>
-    request<{ ok: boolean }>(`/api/local/model-configs/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
-  syncModelConfig: (id: string) =>
-    request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}/sync`, {
+  refreshModelConfigs: () =>
+    request<LocalModelConfigListResponse>('/api/local/model-configs/refresh', {
       method: 'POST',
     }),
-  saveModelSettings: (payload: LocalModelSettings, sync = false) =>
+  saveModelSettings: (
+    payload: Pick<
+      LocalModelSettings,
+      | 'model_request_max_retries'
+      | 'command_approval_model_config_id'
+      | 'command_approval_thinking_level'
+    >,
+  ) =>
     request<LocalModelSettings>('/api/local/model-settings', {
       method: 'POST',
-      body: JSON.stringify({ ...payload, sync }),
+      body: JSON.stringify(payload),
     }),
   mcpConfigs: () => request<LocalMcpConfig[]>('/api/local/mcp-configs'),
   plugins: () => request<LocalPluginStoreSnapshot>('/api/local/plugins/catalog'),

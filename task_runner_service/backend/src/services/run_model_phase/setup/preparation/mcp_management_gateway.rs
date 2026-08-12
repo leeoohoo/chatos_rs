@@ -25,6 +25,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     run: &TaskRunRecord,
     agent_key: SystemAgentKey,
     sandbox_context: Option<&SandboxRuntimeContext>,
+    tool_result_max_chars: usize,
 ) -> Result<ResolvedMcpManagementGateway, String> {
     let owner_user_id = normalized_task_owner_user_id(task)
         .ok_or_else(|| "task owner user id is required for MCP Management".to_string())?;
@@ -34,6 +35,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     let request = CreateRuntimeSessionRequest {
         tenant_id: task.tenant_id.trim().to_string(),
         owner_user_id,
+        owner_role: None,
         agent_key: agent_key.as_str().to_string(),
         project_id: crate::models::normalize_project_id(Some(task.project_id.clone())),
         run_id: Some(run.id.clone()),
@@ -44,6 +46,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         source_user_message_id: task.source_user_message_id.clone(),
         contact_agent_id: None,
         default_model_config_id: task.default_model_config_id.clone(),
+        tool_result_max_chars: Some(tool_result_max_chars.max(1)),
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: Some(requested_mcp_resource_ids(&task.mcp_config)),
         locale: Some(if task.mcp_config.locale().is_english() {

@@ -21,6 +21,7 @@ const TASK_RUNNER_ASK_USER_PROVIDER_REF: &str = "task-runner";
 
 pub(super) struct TaskRunnerRequestBinding<'a> {
     owner_user_id: &'a str,
+    owner_role: Option<&'a str>,
     agent_key: &'a str,
     session_id: &'a str,
     expires_at_unix: i64,
@@ -40,6 +41,7 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for TaskRunnerRequestBinding<'a> {
     fn from(snapshot: &'a RuntimeSessionSnapshot) -> Self {
         Self {
             owner_user_id: snapshot.owner_user_id.as_str(),
+            owner_role: snapshot.owner_role.as_deref(),
             agent_key: snapshot.agent_key.as_str(),
             session_id: snapshot.session_id.as_str(),
             expires_at_unix: snapshot.expires_at_unix,

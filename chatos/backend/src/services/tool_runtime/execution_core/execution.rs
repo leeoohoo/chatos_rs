@@ -13,7 +13,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use crate::core::mcp_tools::{
     execute_tools_stream as execute_tools_stream_common, inject_agent_builder_args,
     jsonrpc_http_call, jsonrpc_stdio_call, to_text_and_structured_result_with_transient,
-    BuiltinToolService, ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+    to_text_and_structured_result_with_transient_limit, BuiltinToolService, ToolInfo, ToolResult,
+    ToolResultCallback, ToolStreamChunkCallback,
 };
 use crate::core::tool_call::extract_tool_call_name;
 use crate::utils::abort_registry;
@@ -52,6 +53,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
+    tool_result_max_chars: Option<usize>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
     tool_aliases: &HashMap<String, String>,
@@ -64,6 +66,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
         caller_model.map(ToOwned::to_owned),
     )
     .with_caller_model_runtime(caller_model_runtime.cloned())
+    .with_tool_result_max_chars(tool_result_max_chars)
     .with_abort_checker(Arc::new(abort_registry::is_aborted));
 
     if should_parallelize_tool_batch(normalized_tool_calls.as_slice(), tool_metadata) {
@@ -92,6 +95,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
                 conversation_turn_id,
                 caller_model,
                 caller_model_runtime,
+                tool_result_max_chars,
                 tool_aliases,
                 on_stream_chunk,
             )
@@ -111,6 +115,7 @@ pub(crate) async fn call_tool_once(
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
+    tool_result_max_chars: Option<usize>,
     tool_aliases: &HashMap<String, String>,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 ) -> Result<(String, Option<Value>), String> {
@@ -132,7 +137,7 @@ pub(crate) async fn call_tool_once(
             json!({"name": info.original_name, "arguments": args}),
         )
         .await?;
-        Ok(to_text_and_structured_result_with_transient(&result))
+        Ok(normalize_tool_result(&result, tool_result_max_chars))
     } else if info.server_type == "builtin" {
         let service = builtin_services
             .get(&info.server_name)
@@ -157,7 +162,7 @@ pub(crate) async fn call_tool_once(
             &tool_call_context,
             on_stream_chunk,
         )?;
-        Ok(to_text_and_structured_result_with_transient(&result))
+        Ok(normalize_tool_result(&result, tool_result_max_chars))
     } else {
         let config = info.server_config.clone().ok_or("missing server config")?;
         let result = jsonrpc_stdio_call(
@@ -167,8 +172,14 @@ pub(crate) async fn call_tool_once(
             session_id,
         )
         .await?;
-        Ok(to_text_and_structured_result_with_transient(&result))
+        Ok(normalize_tool_result(&result, tool_result_max_chars))
     }
+}
+
+fn normalize_tool_result(result: &Value, max_chars: Option<usize>) -> (String, Option<Value>) {
+    max_chars
+        .map(|max_chars| to_text_and_structured_result_with_transient_limit(result, max_chars))
+        .unwrap_or_else(|| to_text_and_structured_result_with_transient(result))
 }
 
 async fn acquire_heavy_io_tool_permits(
@@ -278,6 +289,7 @@ async fn execute_tools_stream_parallel_with_registry(
                     context.conversation_turn_id.as_deref(),
                     context.caller_model.as_deref(),
                     context.caller_model_runtime.as_ref(),
+                    context.tool_result_max_chars,
                     &tool_aliases,
                     on_stream_chunk,
                 )

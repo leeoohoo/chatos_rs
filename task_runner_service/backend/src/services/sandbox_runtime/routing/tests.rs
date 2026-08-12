@@ -221,6 +221,32 @@ fn local_pairing_policy_caps_task_permissions_and_discards_extra_roots() {
 }
 
 #[test]
+fn local_process_execution_does_not_require_a_workspace_image() {
+    let runtime = ProjectSandboxRuntimeSettings {
+        environment: ProjectRuntimeEnvironmentSettings {
+            sandbox_enabled: true,
+            status: "pending".to_string(),
+            not_runnable_reason: None,
+            execution_service_id: None,
+            env_vars: serde_json::json!({}),
+            generated_config_files: Vec::new(),
+        },
+        images: Vec::new(),
+    };
+    let mut task = task();
+    task.mcp_config.requires_execution = true;
+    let local_process_image =
+        local_sandbox_image_id_for_task(&task, &runtime, Some(SandboxBackendKind::LocalProcess))
+            .expect("native local execution must not require a Docker image");
+    let docker_error =
+        local_sandbox_image_id_for_task(&task, &runtime, Some(SandboxBackendKind::Docker))
+            .expect_err("Docker execution must still require a managed workspace image");
+
+    assert_eq!(local_process_image, None);
+    assert!(docker_error.contains("no ready program-managed local workspace image"));
+}
+
+#[test]
 fn execution_without_a_ready_project_workspace_is_rejected() {
     let runtime = ProjectSandboxRuntimeSettings {
         environment: ProjectRuntimeEnvironmentSettings {

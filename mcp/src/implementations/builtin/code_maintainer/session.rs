@@ -53,8 +53,24 @@ impl EditSessionStore {
         conversation_id: &str,
     ) -> EditSessionHandle {
         self.prune_expired();
+        let reusable_session_id = self
+            .sessions
+            .values()
+            .filter(|session| {
+                session.run_id == run_id && session.conversation_id == conversation_id
+            })
+            .max_by_key(|session| (session.staged_operation_count > 0, session.last_touched))
+            .map(|session| session.id.clone());
+        if let Some(session_id) = reusable_session_id {
+            let session = self
+                .sessions
+                .get_mut(session_id.as_str())
+                .expect("selected edit session must still exist");
+            session.touch();
+            return session.handle(true);
+        }
         let session = EditSession::new(run_id, conversation_id);
-        let handle = session.handle();
+        let handle = session.handle(false);
         self.sessions.insert(session.id.clone(), session);
         handle
     }
@@ -107,6 +123,7 @@ pub(super) struct EditSessionHandle {
     pub updated_at: String,
     pub staged_operation_count: usize,
     pub staged_path_count: usize,
+    pub reused: bool,
 }
 
 impl EditSessionHandle {
@@ -119,6 +136,7 @@ impl EditSessionHandle {
             "updated_at": self.updated_at,
             "staged_operation_count": self.staged_operation_count,
             "staged_path_count": self.staged_path_count,
+            "reused": self.reused,
         })
     }
 }
@@ -155,7 +173,7 @@ impl EditSession {
         self.last_touched = Instant::now();
     }
 
-    pub(super) fn handle(&self) -> EditSessionHandle {
+    pub(super) fn handle(&self, reused: bool) -> EditSessionHandle {
         EditSessionHandle {
             id: self.id.clone(),
             run_id: self.run_id.clone(),
@@ -164,6 +182,7 @@ impl EditSession {
             updated_at: self.updated_at.clone(),
             staged_operation_count: self.staged_operation_count,
             staged_path_count: self.changed_paths().len(),
+            reused,
         }
     }
 
@@ -269,5 +288,32 @@ mod tests {
         let mut store = second_store.lock().expect("second lock");
         store.open_session("run-b", "conversation-b");
         assert!(store.get_mut(first_session.as_str(), "run-a").is_ok());
+    }
+
+    #[test]
+    fn opening_again_reuses_the_active_session_for_the_same_run_and_conversation() {
+        let mut store = EditSessionStore::default();
+        let first = store.open_session("run-a", "conversation-a");
+        assert!(!first.reused);
+
+        let repeated = store.open_session("run-a", "conversation-a");
+
+        assert!(repeated.reused);
+        assert_eq!(repeated.id, first.id);
+        assert_eq!(store.sessions.len(), 1);
+    }
+
+    #[test]
+    fn opening_keeps_sessions_isolated_between_runs_and_conversations() {
+        let mut store = EditSessionStore::default();
+        let first = store.open_session("run-a", "conversation-a");
+        let other_run = store.open_session("run-b", "conversation-a");
+        let other_conversation = store.open_session("run-a", "conversation-b");
+
+        assert_ne!(other_run.id, first.id);
+        assert_ne!(other_conversation.id, first.id);
+        assert!(!other_run.reused);
+        assert!(!other_conversation.reused);
+        assert_eq!(store.sessions.len(), 3);
     }
 }

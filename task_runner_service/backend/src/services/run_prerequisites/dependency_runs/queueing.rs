@@ -81,7 +81,11 @@ impl RunService {
             plugin_snapshots,
             now,
         );
-        run.execution_lane_key = task.execution_lane_key();
+        // The parent run keeps the project lane while it waits for this prerequisite to finish.
+        // Giving the child the same lane makes it permanently ineligible for claiming. The parent
+        // already serializes the project and waits for this exact run, so the dependency must be
+        // lane-less to execute alongside the waiting parent.
+        run.execution_lane_key = None;
         self.store.save_run(run.clone()).await?;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
             if task_record.status != TaskStatus::Cancelled {

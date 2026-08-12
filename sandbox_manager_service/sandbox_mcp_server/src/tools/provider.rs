@@ -65,14 +65,19 @@ impl McpToolProvider for SandboxMcpToolProvider {
         &self,
         name: &str,
         args: Value,
-        _context: McpRequestContext,
+        context: McpRequestContext,
     ) -> Result<Value, String> {
         self.workspace_quota.check().await?;
         let result = if self.file_tool_names.contains(name) {
             authorize_file_tool_call(self.file_access_policy.as_ref(), name, &args)?;
             self.file_service.call_tool(name, args, None)
         } else if self.terminal_tool_names.contains(name) {
-            self.terminal_service.call_tool(name, args, None)
+            self.terminal_service.call_tool_with_max_output_chars(
+                name,
+                args,
+                None,
+                context.tool_result_max_chars(),
+            )
         } else {
             return Err(format!("tool not found: {name}"));
         };

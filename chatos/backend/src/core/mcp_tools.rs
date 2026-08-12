@@ -21,7 +21,8 @@ pub(crate) use chatos_mcp_runtime::text::truncate_tool_text;
 pub use chatos_mcp_runtime::{
     build_function_tool_schema, execute_tool_calls_stream as execute_tools_stream,
     inject_agent_builder_args, parse_mcp_tool_definition as parse_tool_definition,
-    to_text_and_structured_result_with_transient, ToolResult, ToolResultCallback,
+    to_text_and_structured_result_with_transient,
+    to_text_and_structured_result_with_transient_limit, ToolResult, ToolResultCallback,
     ToolStreamChunkCallback,
 };
 

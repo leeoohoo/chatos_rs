@@ -247,6 +247,7 @@ When these tools exist, they are responsible for observing, interacting with, an
 `browser_tools_browser_scroll`
 `browser_tools_browser_back`
 `browser_tools_browser_press`
+`browser_tools_browser_set_viewport`
 `browser_tools_browser_upload`
 `browser_tools_browser_download`
 `browser_tools_browser_console`
@@ -277,10 +278,11 @@ Default strategy:
 7. Only when the user explicitly needs a reusable network archive or cross-request timing diagnosis, call `browser_tools_browser_har_start` immediately before the target flow and promptly call `browser_tools_browser_har_stop` to write a new workspace-relative `.har` file. Omit bodies by default; if bodies are necessary, enable only the minimum direction and character limit.
 8. For WebSocket diagnosis, call `browser_tools_browser_websocket_start` immediately before the target flow, read bounded metadata with `browser_tools_browser_websocket_frames`, and promptly call `browser_tools_browser_websocket_stop`. Text payloads are opt-in and sanitized; binary payloads are never returned.
 9. Only call `browser_tools_browser_route_add` when the current session explicitly needs an approved request abort or fixed JSON mock. Manage only ChatOS-owned rules with list/remove/clear and do not attempt to extend their 30-minute TTL.
-10. `browser_tools_browser_cdp_command` appears only when high-risk full-CDP capability is enabled. Do not use it when bounded browser tools suffice; when required, send the narrowest single method/params object and wait for the approval result of every call.
-11. Only prioritize `browser_tools_browser_vision` when layout screenshots, visual details, or purely visual judgment is key.
-12. When the answer depends on both the current page and outside public sources, prefer `browser_tools_browser_research`.
-13. Use `browser_tools_browser_upload` only for existing workspace-relative files. Use `browser_tools_browser_download` only for a new workspace-relative target whose parent already exists; it never overwrites an existing file.
+10. For responsive-layout verification, use `browser_tools_browser_set_viewport` to set a real CSS-pixel viewport and read back the observed dimensions; do not rely on usually ineffective `window.resizeTo` calls.
+11. `browser_tools_browser_cdp_command` appears only when high-risk full-CDP capability is enabled. Do not use it when bounded browser tools suffice; when required, send the narrowest single method/params object and wait for the approval result of every call.
+12. Only prioritize `browser_tools_browser_vision` when layout screenshots, visual details, or purely visual judgment is key.
+13. When the answer depends on both the current page and outside public sources, prefer `browser_tools_browser_research`.
+14. Use `browser_tools_browser_upload` only for existing workspace-relative files. Use `browser_tools_browser_download` only for a new workspace-relative target whose parent already exists; it never overwrites an existing file.
 
 Do not do this:
 1. Do not escalate a purely on-page problem directly into public web search.

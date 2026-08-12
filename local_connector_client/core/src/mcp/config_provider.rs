@@ -47,13 +47,14 @@ impl McpToolProvider for LocalConnectorMcpToolProvider {
         &self,
         name: &str,
         args: Value,
-        _context: McpRequestContext,
+        context: McpRequestContext,
     ) -> std::result::Result<Value, String> {
-        call_builtin_compatible_local_tool(
+        call_builtin_compatible_local_tool_with_limit(
             &self.request,
             &self.state,
             name,
             args,
+            context.tool_result_max_chars(),
             &self.history_recorder,
         )
         .await
@@ -99,11 +100,31 @@ pub(crate) fn local_mcp_builtin_compatible_tools(
     Ok(tools)
 }
 
+#[cfg(test)]
 pub(crate) async fn call_builtin_compatible_local_tool(
     request: &RelayRequest,
     state: &LocalState,
     name: &str,
     arguments: Value,
+    history_recorder: &CommandHistoryRecorder,
+) -> Result<Option<Value>> {
+    call_builtin_compatible_local_tool_with_limit(
+        request,
+        state,
+        name,
+        arguments,
+        None,
+        history_recorder,
+    )
+    .await
+}
+
+async fn call_builtin_compatible_local_tool_with_limit(
+    request: &RelayRequest,
+    state: &LocalState,
+    name: &str,
+    arguments: Value,
+    tool_result_max_chars: Option<usize>,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Option<Value>> {
     let workspace = workspace_for_request(state, request.workspace_id.as_str())?;
@@ -144,6 +165,7 @@ pub(crate) async fn call_builtin_compatible_local_tool(
             workspace,
             name,
             arguments,
+            tool_result_max_chars,
             history_recorder,
         )
         .await?;
@@ -199,10 +221,13 @@ pub(crate) async fn call_builtin_compatible_local_tool(
             state.runtime_settings.browser_full_cdp_access_enabled,
         )?;
         let mut result = service
-            .call_tool(
+            .call_tool_with_context(
                 name,
                 arguments,
-                Some(local_browser_conversation_id(request).as_str()),
+                chatos_mcp::BrowserToolCallContext::from_conversation_id(Some(
+                    local_browser_conversation_id(request).as_str(),
+                ))
+                .with_tool_result_max_chars(tool_result_max_chars),
             )
             .map_err(anyhow::Error::msg)?;
         annotate_browser_session_context(

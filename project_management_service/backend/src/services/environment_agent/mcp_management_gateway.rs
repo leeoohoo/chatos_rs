@@ -87,6 +87,7 @@ fn runtime_session_request(
     CreateRuntimeSessionRequest {
         tenant_id: owner_user_id.trim().to_string(),
         owner_user_id: owner_user_id.trim().to_string(),
+        owner_role: None,
         agent_key: agent_key.as_str().to_string(),
         project_id: project.id.trim().to_string(),
         run_id: Some(run_id.trim().to_string()),
@@ -97,6 +98,7 @@ fn runtime_session_request(
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: Some(model_config_id.trim().to_string()),
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
         locale: Some("zh-CN".to_string()),

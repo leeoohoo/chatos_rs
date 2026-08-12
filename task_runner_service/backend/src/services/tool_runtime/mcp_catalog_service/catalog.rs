@@ -14,7 +14,12 @@ impl McpCatalogService {
         }
     }
 
-    pub fn list_catalog(&self) -> Vec<McpCatalogEntry> {
+    pub async fn list_catalog(&self) -> Result<Vec<McpCatalogEntry>, String> {
+        let tool_result_max_chars = self
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await?
+            .per_result_max_chars;
         let server_options =
             BuiltinMcpServerOptions::new(self.task_service.config.default_workspace_dir.clone())
                 .with_auto_create_task(true);
@@ -22,7 +27,7 @@ impl McpCatalogService {
             .into_iter()
             .map(|kind| kind.kind_name().to_string())
             .collect::<Vec<_>>();
-        configurable_builtin_kinds()
+        Ok(configurable_builtin_kinds()
             .into_iter()
             .map(|kind| {
                 let server = kind.server_with_options(&server_options);
@@ -42,6 +47,7 @@ impl McpCatalogService {
                     &server,
                     self.task_service.clone(),
                     self.ask_user_prompt_service.clone(),
+                    tool_result_max_chars,
                 ) {
                     Ok(provider) => {
                         let available_tool_names = provider
@@ -103,6 +109,6 @@ impl McpCatalogService {
                     },
                 }
             })
-            .collect()
+            .collect())
     }
 }

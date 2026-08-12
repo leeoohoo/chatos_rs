@@ -2,6 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_mcp_service::MCP_ERROR_INTERNAL;
+
+const TERMINAL_PROCESS_WAIT_TIMEOUT_MESSAGE: &str = "terminal process wait timed out";
 
 impl RuntimeInvocationStore {
     pub async fn mark_running(&self, invocation_id: &str) -> Result<bool, String> {
@@ -23,6 +26,21 @@ impl RuntimeInvocationStore {
     }
 
     pub async fn complete(&self, invocation_id: &str, result: Value) -> Result<bool, String> {
+        if terminal_process_wait_timed_out(&result) {
+            return self
+                .transition_terminal(
+                    invocation_id,
+                    &[
+                        RuntimeInvocationStatus::Running,
+                        RuntimeInvocationStatus::WaitingForUser,
+                    ],
+                    RuntimeInvocationStatus::Failed,
+                    Some(result),
+                    Some(MCP_ERROR_INTERNAL),
+                    Some(TERMINAL_PROCESS_WAIT_TIMEOUT_MESSAGE.to_string()),
+                )
+                .await;
+        }
         self.transition_terminal(
             invocation_id,
             &[
@@ -351,6 +369,13 @@ impl RuntimeInvocationStore {
         }
         Ok(transitioned_record.is_some())
     }
+}
+
+fn terminal_process_wait_timed_out(result: &Value) -> bool {
+    let payload = result.get("_structured_result").unwrap_or(result);
+    payload.get("timed_out").and_then(Value::as_bool) == Some(true)
+        && payload.get("completed").and_then(Value::as_bool) == Some(false)
+        && payload.get("wait_status").and_then(Value::as_str) == Some("timeout")
 }
 
 fn pending_result_event_from_record(

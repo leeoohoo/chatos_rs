@@ -331,6 +331,7 @@ pub async fn run_bootstrapped_project_planning(input: BootstrappedProjectPlannin
                     None,
                     None,
                     None,
+                    None,
                 )
                 .await;
             MessageManager::new()

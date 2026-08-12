@@ -86,3 +86,15 @@ pub(in crate::service::manager) fn sandbox_manager_effective_policy(
         additional_writable_roots: Vec::new(),
     }
 }
+
+pub(in crate::service::manager) fn sandbox_manager_effective_permissions(
+    policy: &EffectiveSandboxPolicy,
+    runtime_workspace_roots: Vec<String>,
+) -> EffectivePermissionSnapshot {
+    let mut permissions = legacy_policy_permission_snapshot(policy, runtime_workspace_roots);
+    // Project execution runs inside an isolated container/network namespace and needs outbound
+    // access for package managers and source dependencies. Filesystem access remains constrained
+    // to the managed workspace by the workspace permission profile.
+    permissions.network = NetworkPermissionPolicy::Unrestricted;
+    permissions
+}

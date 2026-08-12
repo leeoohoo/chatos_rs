@@ -14,6 +14,7 @@ use super::{
     CloudStdioProviderBinding, ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome,
     ResolvedMcpRoute, RuntimeSessionSnapshot, SandboxExecutionTarget,
 };
+use crate::providers::managed_tool_call_params;
 
 impl CloudStdioProvider {
     pub(super) async fn list_tools(
@@ -164,10 +165,11 @@ impl CloudStdioProvider {
             plugin_artifact: binding.plugin_artifact.as_ref(),
             plugin_workspace_write: binding.plugin_artifact.is_some() && binding.allow_writes,
             method: METHOD_TOOLS_CALL,
-            params: json!({
-                "name": original_tool_name,
-                "arguments": arguments,
-            }),
+            params: managed_tool_call_params(
+                original_tool_name,
+                arguments,
+                snapshot.tool_result_max_chars,
+            ),
             expires_at_unix: snapshot.expires_at_unix,
             timeout_ms: self.request_timeout.as_millis().min(u128::from(u64::MAX)) as u64,
         };

@@ -41,6 +41,7 @@ fn list_tools_contains_browser_navigate_and_vision() {
         assert!(names.contains(&"browser_tab_switch".to_string()));
         assert!(names.contains(&"browser_tab_close".to_string()));
         assert!(names.contains(&"browser_navigate".to_string()));
+        assert!(names.contains(&"browser_set_viewport".to_string()));
         assert!(names.contains(&"browser_inspect".to_string()));
         assert!(names.contains(&"browser_research".to_string()));
         assert!(names.contains(&"browser_network".to_string()));
@@ -66,6 +67,7 @@ fn list_tools_contains_browser_navigate_and_vision() {
         assert!(names.contains(&"browser_tab_switch".to_string()));
         assert!(names.contains(&"browser_tab_close".to_string()));
         assert!(names.contains(&"browser_navigate".to_string()));
+        assert!(names.contains(&"browser_set_viewport".to_string()));
         assert!(names.contains(&"browser_inspect".to_string()));
         assert!(names.contains(&"browser_research".to_string()));
         assert!(names.contains(&"browser_network".to_string()));
@@ -89,7 +91,7 @@ fn list_tools_contains_browser_navigate_and_vision() {
             .unwrap_or(false));
     } else {
         assert!(names.is_empty());
-        assert_eq!(unavailable.len(), 30);
+        assert_eq!(unavailable.len(), 31);
         assert!(unavailable
             .iter()
             .all(|(_, reason)| reason.contains("agent-browser")));
@@ -549,6 +551,22 @@ fn real_tab_lifecycle_uses_stable_ids_and_preserves_last_tab_when_explicitly_ena
             }),
             Some(conversation_id.as_str()),
         )?)?;
+        let viewport = ensure_browser_tool_success(service.call_tool(
+            "browser_set_viewport",
+            serde_json::json!({"width": 480, "height": 720}),
+            Some(conversation_id.as_str()),
+        )?)?;
+        if viewport
+            .get("actual_width")
+            .and_then(serde_json::Value::as_u64)
+            != Some(480)
+            || viewport
+                .get("actual_height")
+                .and_then(serde_json::Value::as_u64)
+                != Some(720)
+        {
+            return Err("browser_set_viewport did not verify the requested viewport".to_string());
+        }
         let opened = ensure_browser_tool_success(service.call_tool(
             "browser_tab_new",
             serde_json::json!({

@@ -4,7 +4,8 @@
 use super::chatos_async_planner;
 use super::support::{
     agent_tool_allowed, create_task_schema, enrich_tool_schemas_with_model_configs,
-    filter_model_configs_for_user, model_configs_for_user, update_task_schema,
+    filter_model_configs_for_user, model_configs_for_user, model_visible_to_user,
+    update_task_schema,
 };
 use super::{CreateTaskArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 use crate::ask_user_prompt_service::AskUserPromptService;
@@ -363,4 +364,15 @@ fn model_config(id: &str, owner_user_id: &str, enabled: bool) -> ModelConfigReco
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     }
+}
+
+#[test]
+fn administrator_can_use_cloud_models_owned_by_another_user() {
+    let model = model_config("shared-model", "model-owner", true);
+    assert!(model_visible_to_user(&model, &admin_user("administrator")));
+    assert!(!model_visible_to_user(
+        &model,
+        &agent_user("different-owner")
+    ));
+    assert!(model_visible_to_user(&model, &agent_user("model-owner")));
 }

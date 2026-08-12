@@ -47,6 +47,7 @@ pub fn classify_file_modification_error(error: &str) -> FileModificationOutcome 
         "target not found for replace",
         "stale_context",
         "file revision does not match",
+        "does not match the active session baseline",
     ]
     .iter()
     .any(|marker| normalized.contains(marker))
@@ -114,6 +115,7 @@ mod tests {
         for error in [
             "old_text not found in file.",
             "Patch context not found in file.",
+            "expected_sha256 for src/app/App.test.tsx does not match the active session baseline",
         ] {
             assert_eq!(
                 classify_file_modification_error(error),

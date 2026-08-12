@@ -23,5 +23,8 @@ pub use protocol::{
     MCP_ERROR_UNKNOWN_EXECUTION_STATE, METHOD_INITIALIZE, METHOD_NOTIFICATIONS_CANCELLED,
     METHOD_NOTIFICATIONS_INITIALIZED, METHOD_PING, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
 };
-pub use provider::{CompositeToolProvider, McpRequestContext, McpToolProvider};
+pub use provider::{
+    tool_result_max_chars_from_params, CompositeToolProvider, McpRequestContext, McpToolProvider,
+    TOOL_RESULT_MAX_CHARS_META_KEY, TOOL_RESULT_MAX_CHARS_UPPER_BOUND,
+};
 pub use service::{McpJsonRpcService, McpServerInfo};

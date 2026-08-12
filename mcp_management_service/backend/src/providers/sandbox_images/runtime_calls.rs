@@ -6,6 +6,7 @@ use chatos_mcp_service::METHOD_TOOLS_CALL;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
+use crate::providers::managed_tool_call_params;
 use crate::runtime::RuntimeSessionSnapshot;
 
 use super::support::call_timeout;
@@ -47,10 +48,11 @@ impl SandboxImagesProvider {
                 "jsonrpc": "2.0",
                 "id": invocation_id,
                 "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
+                "params": managed_tool_call_params(
+                    original_tool_name,
+                    arguments,
+                    snapshot.tool_result_max_chars,
+                )
             }))
             .send()
             .await

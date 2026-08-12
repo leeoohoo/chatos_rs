@@ -294,6 +294,7 @@ pub(super) async fn execute_requirement_inner(
             .or_else(|| session.selected_model_id.clone()),
         ai_model_config: None,
         user_id: Some(auth.user_id.clone()),
+        user_role: Some(auth.role.clone()),
         attachments: None,
         reasoning_enabled: None,
         plan_mode: false,

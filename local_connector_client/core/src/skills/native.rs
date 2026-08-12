@@ -159,6 +159,17 @@ pub(crate) fn redact_approval_arguments(skill_id: &str, operation: &str) -> bool
             && matches!(operation, "browser_route_add" | "browser_cdp_command"))
 }
 
+pub(crate) fn apply_managed_tool_result_limit(
+    skill_id: &str,
+    operation: &str,
+    arguments: &mut Value,
+    max_chars: Option<usize>,
+) {
+    if skill_id == "internal_skill_chrome" && operation == "chrome_tab_snapshot" {
+        chrome::apply_managed_snapshot_limit(arguments, max_chars);
+    }
+}
+
 pub(crate) fn execute_approved(
     skill_id: &str,
     operation: &str,

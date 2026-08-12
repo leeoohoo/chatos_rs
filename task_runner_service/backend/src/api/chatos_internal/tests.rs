@@ -41,14 +41,22 @@ fn chatos_model_catalog_item_exposes_runtime_metadata_without_api_key() {
         Some(true)
     );
     assert_eq!(value.get("model").and_then(Value::as_str), Some("gpt-test"));
-    assert_eq!(value.get("supports_images").and_then(Value::as_bool), Some(true));
-    assert_eq!(value.get("supports_reasoning").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        value.get("supports_images").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        value.get("supports_reasoning").and_then(Value::as_bool),
+        Some(true)
+    );
     assert!(value.get("api_key").is_none());
     assert!(!value.to_string().contains("super-secret"));
 
     let runtime_value = serde_json::to_value(runtime).expect("serialize runtime config");
     assert_eq!(
-        runtime_value.get("supports_images").and_then(Value::as_bool),
+        runtime_value
+            .get("supports_images")
+            .and_then(Value::as_bool),
         Some(true)
     );
     assert_eq!(
@@ -330,7 +338,7 @@ mod plugin_projection_tests {
             ),
         ];
 
-        let (events, total, has_more) = paginate_run_events(events, 10, 0);
+        let (events, total, has_more) = paginate_run_events(events, 10, 0, 40_000);
         let serialized = serde_json::to_string(&events).expect("serialize projected events");
 
         assert_eq!(total, 4);
@@ -401,7 +409,7 @@ mod plugin_projection_tests {
             ),
         ];
 
-        let (events, total, has_more) = paginate_run_events(events, 10, 0);
+        let (events, total, has_more) = paginate_run_events(events, 10, 0, 40_000);
 
         assert_eq!(total, 2);
         assert!(!has_more);
@@ -426,6 +434,61 @@ mod plugin_projection_tests {
             .and_then(|payload| payload.pointer("/result/preview"))
             .and_then(Value::as_str)
             .is_some_and(|preview| preview.contains("src/large.rs")));
+    }
+
+    #[test]
+    fn tool_arguments_and_results_use_the_managed_per_tool_limit() {
+        let arguments = json!({
+            "path": "",
+            "command": "x".repeat(700),
+        })
+        .to_string();
+        let events = vec![
+            event(
+                "event-tools-start",
+                "tools_start",
+                json!([{
+                    "id": "call-configured-limit",
+                    "type": "function",
+                    "function": {
+                        "name": "terminal_controller_execute_command",
+                        "arguments": arguments.clone()
+                    }
+                }]),
+            ),
+            event(
+                "event-tool-result",
+                "tool_stream",
+                json!({
+                    "tool_call_id": "call-configured-limit",
+                    "name": "terminal_controller_execute_command",
+                    "success": true,
+                    "is_error": false,
+                    "is_stream": false,
+                    "content": "y".repeat(700)
+                }),
+            ),
+        ];
+
+        let (events, _, _) = paginate_run_events(events, 10, 0, 1_000);
+
+        assert_eq!(
+            events[0]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.pointer("/0/function/arguments"))
+                .and_then(Value::as_str),
+            Some(arguments.as_str())
+        );
+        assert_eq!(
+            events[1]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("content"))
+                .and_then(Value::as_str)
+                .map(str::len),
+            Some(700)
+        );
     }
 
     fn event(id: &str, event_type: &str, payload: Value) -> TaskRunEventRecord {

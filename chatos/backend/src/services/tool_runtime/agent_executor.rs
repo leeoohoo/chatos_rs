@@ -65,6 +65,7 @@ impl McpToolExecute {
         conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
         caller_model_runtime: Option<&ToolCallerModelRuntime>,
+        tool_result_max_chars: Option<usize>,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         self.shared
@@ -74,6 +75,7 @@ impl McpToolExecute {
                 conversation_turn_id,
                 caller_model,
                 caller_model_runtime,
+                tool_result_max_chars,
                 on_tool_result,
             )
             .await

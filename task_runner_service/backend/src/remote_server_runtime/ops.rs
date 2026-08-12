@@ -130,7 +130,7 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
             .clamp(1, context.max_command_timeout_seconds);
         let output_limit = max_output_chars
             .unwrap_or(context.max_output_chars)
-            .clamp(128, context.max_output_chars.max(128));
+            .clamp(1, context.max_output_chars.max(1));
 
         let output = run_remote_command(
             &self.config,

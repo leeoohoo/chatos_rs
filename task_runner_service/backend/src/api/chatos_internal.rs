@@ -37,7 +37,7 @@ use project_execution::{
 };
 use projection::{
     paginate_run_events, redact_workspace_paths_internal, run_event_page,
-    trim_run_for_chatos_detail,
+    trim_event_for_chatos_detail, trim_run_for_chatos_detail,
 };
 
 const DEFAULT_RUN_EVENT_LIMIT: usize = 40;
@@ -649,8 +649,14 @@ async fn get_chatos_message_run(
         .list_run_events(run.id.as_str())
         .await
         .map_err(InternalApiError::internal)?;
+    let tool_text_limit_chars = state
+        .task_service
+        .effective_tool_result_model_budget_limits()
+        .await
+        .map_err(InternalApiError::internal)?
+        .per_result_max_chars;
     let (events, events_total, events_has_more) =
-        paginate_run_events(events, event_limit, event_offset);
+        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars);
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())
@@ -782,9 +788,15 @@ async fn get_chatos_message_run_event(
         .into_iter()
         .find(|event| event.id == event_id && event.run_id == run.id)
         .ok_or_else(|| InternalApiError::not_found("run event not found for message"))?;
+    let tool_text_limit_chars = state
+        .task_service
+        .effective_tool_result_model_budget_limits()
+        .await
+        .map_err(InternalApiError::internal)?
+        .per_result_max_chars;
     Ok(Json(redact_workspace_paths_internal(
         &state,
-        ChatosMessageTaskRunEvent::from(event),
+        ChatosMessageTaskRunEvent::from(trim_event_for_chatos_detail(event, tool_text_limit_chars)),
     )?))
 }
 
@@ -903,8 +915,14 @@ async fn get_chatos_message_graph_run(
         .list_run_events(run.id.as_str())
         .await
         .map_err(InternalApiError::internal)?;
+    let tool_text_limit_chars = state
+        .task_service
+        .effective_tool_result_model_budget_limits()
+        .await
+        .map_err(InternalApiError::internal)?
+        .per_result_max_chars;
     let (events, events_total, events_has_more) =
-        paginate_run_events(events, event_limit, event_offset);
+        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars);
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())

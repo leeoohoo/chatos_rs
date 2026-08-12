@@ -123,7 +123,7 @@ impl RunService {
             None
         };
         let image_id = if local_project.is_some() {
-            local_sandbox_image_id_for_task(task, &runtime)?
+            local_sandbox_image_id_for_task(task, &runtime, policy.sandbox_mode)?
         } else {
             sandbox_image_id_for_task(
                 task,
@@ -451,7 +451,11 @@ fn ensure_project_runtime_ready(runtime: &ProjectSandboxRuntimeSettings) -> Resu
 fn local_sandbox_image_id_for_task(
     task: &TaskRecord,
     runtime: &ProjectSandboxRuntimeSettings,
+    sandbox_mode: Option<SandboxBackendKind>,
 ) -> Result<Option<String>, String> {
+    if sandbox_mode == Some(SandboxBackendKind::LocalProcess) {
+        return Ok(None);
+    }
     if !task.mcp_config.requires_execution {
         return Ok(Some(normalize_base_image_id(
             crate::config::configured_sandbox_base_image_id().as_str(),

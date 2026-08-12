@@ -169,6 +169,7 @@ describe('projectPlanPane model', () => {
     expect(canShowRequirementExecutionAction('success')).toBe(false);
     expect(canShowRequirementExecutionAction('cancelled')).toBe(false);
     expect(canShowRequirementExecutionAction('archived')).toBe(false);
+    expect(canShowRequirementExecutionAction('reviewing')).toBe(true);
     expect(canShowRequirementExecutionAction('in_progress')).toBe(true);
     expect(canShowRequirementExecutionAction('approved')).toBe(true);
   });

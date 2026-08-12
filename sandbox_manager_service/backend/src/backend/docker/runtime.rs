@@ -62,6 +62,12 @@ impl DockerSandboxBackend {
                             let _ = self.destroy_environment(spec.environment_id.as_str()).await;
                             return Err(error);
                         }
+                        if let Err(error) =
+                            initialize_environment_dependency(container.as_str(), service).await
+                        {
+                            let _ = self.destroy_environment(spec.environment_id.as_str()).await;
+                            return Err(error);
+                        }
                     }
                     instances.push(instance)
                 }
@@ -145,7 +151,8 @@ impl DockerSandboxBackend {
             .arg(service.service_id.as_str())
             .arg("--security-opt")
             .arg("no-new-privileges");
-        for (name, value) in &service.environment {
+        let container_environment = dependency_container_environment(service)?;
+        for (name, value) in &container_environment {
             command.arg("-e").arg(format!("{name}={value}"));
         }
 
@@ -198,8 +205,12 @@ impl DockerSandboxBackend {
                 .arg("-e")
                 .arg(format!("CHATOS_AGENT_PORT={}", self.config.agent_port))
                 .arg("-e")
-                .arg("CHATOS_WORKSPACE=/workspace");
-            append_sandbox_runtime_environment(&mut command);
+                .arg("CHATOS_WORKSPACE=/workspace")
+                .arg("-e")
+                .arg(effective_permissions_environment_value(
+                    &environment.effective_permissions,
+                )?);
+            append_sandbox_runtime_environment(&mut command, &self.config);
             command.arg("-p").arg(format!(
                 "{}::{}",
                 self.config.docker_agent_bind_host, self.config.agent_port
@@ -461,13 +472,14 @@ impl DockerSandboxBackend {
             .arg("chatos.backend=docker");
         append_sandbox_create_runtime_args(
             &mut command,
+            &self.config,
             &spec,
             network,
             cpu.as_str(),
             memory.as_str(),
             pids.as_str(),
             disk_limit_bytes,
-        );
+        )?;
         if publish_agent {
             command.arg("-p").arg(format!(
                 "{}::{}",
@@ -543,8 +555,9 @@ impl DockerSandboxBackend {
             format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id),
             "CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write".to_string(),
             format!("CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"),
+            effective_permissions_environment_value(&spec.effective_permissions)?,
         ];
-        env.extend(sandbox_runtime_environment_values());
+        env.extend(sandbox_runtime_environment_values(&self.config));
         if let Some(agent_token) = spec.agent_token.as_deref() {
             env.push(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
         }

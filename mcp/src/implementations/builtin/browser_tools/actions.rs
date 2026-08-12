@@ -126,6 +126,15 @@ pub(super) async fn browser_cdp_command_with_context(
     actions_cdp::browser_cdp_command_with_context(ctx, conversation_id, arguments).await
 }
 
+pub(super) async fn browser_set_viewport_with_context(
+    ctx: BoundContext,
+    conversation_id: Option<&str>,
+    width: u32,
+    height: u32,
+) -> Result<Value, String> {
+    actions_basic::browser_set_viewport_with_context(ctx, conversation_id, width, height).await
+}
+
 pub(super) fn discard_browser_routes(ctx: &BoundContext, conversation_key: &str) {
     actions_routes::discard_browser_routes(ctx, conversation_key);
 }

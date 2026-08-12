@@ -13,9 +13,10 @@ use crate::config::{AppConfig, DockerAgentEndpointMode};
 
 use super::{
     append_sandbox_create_runtime_args, append_sandbox_runtime_environment,
-    sandbox_runtime_environment_values, SandboxBackend, SandboxCreateSpec,
-    SandboxEnvironmentCreateSpec, SandboxEnvironmentInstance, SandboxEnvironmentServiceInstance,
-    SandboxEnvironmentServiceSpec, SandboxExecResult, SandboxInstance,
+    effective_permissions_environment_value, sandbox_runtime_environment_values, SandboxBackend,
+    SandboxCreateSpec, SandboxEnvironmentCreateSpec, SandboxEnvironmentInstance,
+    SandboxEnvironmentServiceInstance, SandboxEnvironmentServiceSpec, SandboxExecResult,
+    SandboxInstance,
 };
 
 mod runtime;
@@ -23,6 +24,157 @@ mod runtime;
 const MANAGED_PLAYWRIGHT_IMAGE_PREFIX: &str = "chatos-sandbox-agent:";
 const MANAGED_PLAYWRIGHT_CACHE_TARGET: &str = "/ms-playwright";
 const MANAGED_PLAYWRIGHT_WORKSPACE_LINK: &str = ".chatos/ms-playwright";
+const POSTGRES_APP_ROLE_BOOTSTRAP_SCRIPT: &str = r#"
+psql --set=ON_ERROR_STOP=1 \
+  --username "$POSTGRES_USER" \
+  --dbname "$POSTGRES_DB" \
+  --set=app_user="$CHATOS_POSTGRES_APP_USER" \
+  --set=app_password="$CHATOS_POSTGRES_APP_PASSWORD" <<'SQL'
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+WHERE NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = :'app_user'
+)
+\gexec
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'app_user', :'app_password')
+\gexec
+SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'app_user')
+\gexec
+SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'app_user')
+\gexec
+SELECT format(
+  'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I',
+  current_user,
+  :'app_user'
+)
+\gexec
+SELECT format(
+  'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %I',
+  current_user,
+  :'app_user'
+)
+\gexec
+SQL
+"#;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PostgresRoleBootstrap {
+    app_user: String,
+    app_password: String,
+    migration_user: String,
+    migration_password: String,
+}
+
+fn postgres_role_bootstrap(
+    service: &SandboxEnvironmentServiceSpec,
+) -> Result<Option<PostgresRoleBootstrap>, String> {
+    if !matches!(service.service_id.as_str(), "postgres" | "postgresql") {
+        return Ok(None);
+    }
+    let migration_user = service
+        .environment
+        .get("POSTGRES_MIGRATION_USER")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .trim();
+    let migration_password = service
+        .environment
+        .get("POSTGRES_MIGRATION_PASSWORD")
+        .map(String::as_str)
+        .unwrap_or_default();
+    if migration_user.is_empty() && migration_password.is_empty() {
+        return Ok(None);
+    }
+    if migration_user.is_empty() || migration_password.is_empty() {
+        return Err(
+            "PostgreSQL migration role requires both POSTGRES_MIGRATION_USER and POSTGRES_MIGRATION_PASSWORD"
+                .to_string(),
+        );
+    }
+    let app_user = service
+        .environment
+        .get("POSTGRES_USER")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .trim();
+    let app_password = service
+        .environment
+        .get("POSTGRES_PASSWORD")
+        .map(String::as_str)
+        .unwrap_or_default();
+    if app_user.is_empty() || app_password.is_empty() {
+        return Err(
+            "PostgreSQL application role requires both POSTGRES_USER and POSTGRES_PASSWORD"
+                .to_string(),
+        );
+    }
+    if app_user == migration_user {
+        if app_password == migration_password {
+            return Ok(None);
+        }
+        return Err(
+            "PostgreSQL application and migration roles share a username but use different passwords"
+                .to_string(),
+        );
+    }
+    Ok(Some(PostgresRoleBootstrap {
+        app_user: app_user.to_string(),
+        app_password: app_password.to_string(),
+        migration_user: migration_user.to_string(),
+        migration_password: migration_password.to_string(),
+    }))
+}
+
+fn dependency_container_environment(
+    service: &SandboxEnvironmentServiceSpec,
+) -> Result<HashMap<String, String>, String> {
+    let mut environment = service
+        .environment
+        .clone()
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    if let Some(bootstrap) = postgres_role_bootstrap(service)? {
+        environment.insert("POSTGRES_USER".to_string(), bootstrap.migration_user);
+        environment.insert(
+            "POSTGRES_PASSWORD".to_string(),
+            bootstrap.migration_password,
+        );
+    }
+    Ok(environment)
+}
+
+async fn initialize_environment_dependency(
+    container: &str,
+    service: &SandboxEnvironmentServiceSpec,
+) -> Result<(), String> {
+    let Some(bootstrap) = postgres_role_bootstrap(service)? else {
+        return Ok(());
+    };
+    let output = Command::new("docker")
+        .arg("exec")
+        .arg("-e")
+        .arg(format!("PGPASSWORD={}", bootstrap.migration_password))
+        .arg("-e")
+        .arg(format!("CHATOS_POSTGRES_APP_USER={}", bootstrap.app_user))
+        .arg("-e")
+        .arg(format!(
+            "CHATOS_POSTGRES_APP_PASSWORD={}",
+            bootstrap.app_password
+        ))
+        .arg(container)
+        .arg("sh")
+        .arg("-ec")
+        .arg(POSTGRES_APP_ROLE_BOOTSTRAP_SCRIPT)
+        .output()
+        .await
+        .map_err(|error| format!("initialize PostgreSQL application role failed: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "initialize PostgreSQL application role failed: {}",
+        String::from_utf8_lossy(output.stderr.as_slice()).trim()
+    ))
+}
 
 fn uses_managed_playwright_cache(image: &str) -> bool {
     image

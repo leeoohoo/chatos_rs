@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-const TEXT_PREVIEW_MAX_CHARS = 16_000;
-const JSON_PREVIEW_MAX_CHARS = 20_000;
 const JSON_STRING_MAX_CHARS = 512;
 const JSON_ARRAY_MAX_ITEMS = 32;
 const JSON_OBJECT_MAX_KEYS = 80;
@@ -30,9 +28,12 @@ const truncateString = (value: string, maxChars: number): PreviewResult<string> 
 
 export const formatToolDetailText = (
   value: string,
-  maxChars: number = TEXT_PREVIEW_MAX_CHARS,
+  maxChars?: number,
 ): ToolDetailTextPreview => {
   const trimmed = value.trim();
+  if (maxChars === undefined) {
+    return { content: trimmed, meta: undefined };
+  }
   const preview = truncateString(trimmed, maxChars);
   return {
     content: preview.value,
@@ -118,8 +119,15 @@ const previewJsonValue = (
 
 export const stringifyJsonPreview = (
   value: unknown,
-  maxChars: number = JSON_PREVIEW_MAX_CHARS,
+  maxChars?: number,
 ): ToolDetailTextPreview => {
+  if (maxChars === undefined) {
+    try {
+      return { content: JSON.stringify(value, null, 2) ?? '', meta: undefined };
+    } catch {
+      return { content: '', meta: undefined };
+    }
+  }
   const preview = previewJsonValue(value, 0, new WeakSet<object>());
   try {
     const serialized = JSON.stringify(preview.value, null, 2);

@@ -332,7 +332,12 @@ impl AiRuntimeOptions {
             self.conversation_turn_id.clone(),
             self.caller_model.clone(),
         )
-        .with_caller_model_runtime(self.caller_model_runtime.clone());
+        .with_caller_model_runtime(self.caller_model_runtime.clone())
+        .with_tool_result_max_chars(Some(
+            self.tool_result_model_budget_limits
+                .unwrap_or_else(ToolResultModelBudgetLimits::from_env)
+                .per_result_max_chars,
+        ));
         let abort_checker = match (&self.abort_checker, &self.abort_token) {
             (None, None) => None,
             (Some(checker), None) => Some(Arc::clone(checker)),

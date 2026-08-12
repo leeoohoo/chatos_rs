@@ -180,6 +180,7 @@ impl PreparedPluginMcp {
         invocation_id: &str,
         tool_name: &str,
         arguments: Value,
+        tool_result_max_chars: Option<usize>,
     ) -> Result<Value> {
         validate_invocation_id(invocation_id)?;
         self.ensure_recent_health().await?;
@@ -200,12 +201,20 @@ impl PreparedPluginMcp {
             }
             invocations.insert(invocation_id.to_string(), active.clone());
         }
+        let mut params = json!({"name": tool_name, "arguments": arguments});
+        if let Some(max_chars) = tool_result_max_chars.filter(|value| {
+            (1..=chatos_mcp_service::TOOL_RESULT_MAX_CHARS_UPPER_BOUND).contains(value)
+        }) {
+            params["_meta"] = json!({
+                chatos_mcp_service::TOOL_RESULT_MAX_CHARS_META_KEY: max_chars,
+            });
+        }
         let result = self
             .invoker
             .call(
                 &self.transport,
                 "tools/call",
-                json!({"name": tool_name, "arguments": arguments}),
+                params,
                 Some(active.cancellation.clone()),
             )
             .await;

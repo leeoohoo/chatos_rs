@@ -7,7 +7,8 @@ use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
 use crate::providers::{
-    decode_cancel_notification_response, ProviderCallOutcome, ProviderCancelOutcome,
+    decode_cancel_notification_response, managed_tool_call_params, ProviderCallOutcome,
+    ProviderCancelOutcome,
 };
 use crate::runtime::RuntimeSessionSnapshot;
 
@@ -77,10 +78,11 @@ impl CloudSandboxProvider {
                 "jsonrpc": "2.0",
                 "id": invocation_id,
                 "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
+                "params": managed_tool_call_params(
+                    original_tool_name,
+                    arguments,
+                    snapshot.tool_result_max_chars,
+                )
             }))
             .send()
             .await

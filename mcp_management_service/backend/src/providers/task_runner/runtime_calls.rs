@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 
 use crate::providers::project_service::decode_jsonrpc_response;
 use crate::providers::{
-    decode_cancel_notification_response, ProviderCallOutcome, ProviderCancelOutcome,
+    decode_cancel_notification_response, managed_tool_call_params, ProviderCallOutcome,
+    ProviderCancelOutcome,
 };
 use crate::runtime::RuntimeSessionSnapshot;
 
@@ -70,10 +71,11 @@ impl TaskRunnerProvider {
                 "jsonrpc": "2.0",
                 "id": invocation_id,
                 "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
+                "params": managed_tool_call_params(
+                    original_tool_name,
+                    arguments,
+                    snapshot.tool_result_max_chars,
+                )
             }))
             .send()
             .await
@@ -161,6 +163,10 @@ impl TaskRunnerProvider {
             .header("x-chatos-project-id", snapshot.project_id.as_str())
             .timeout(Duration::from_secs(5));
         for (header, value) in [
+            (
+                "x-mcp-management-owner-role",
+                snapshot.owner_role.as_deref(),
+            ),
             ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
             ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
             ("x-mcp-management-task-id", snapshot.task_id.as_deref()),

@@ -634,48 +634,6 @@ export interface SystemPermissionsResponse {
   items: SystemPermissionItem[];
 }
 
-export interface LocalProviderModel {
-  id: string;
-  owned_by?: string | null;
-  context_length?: number | null;
-  supports_images: boolean;
-  supports_reasoning: boolean;
-  supports_responses: boolean;
-}
-
-export interface LocalModelCatalogResponse {
-  provider: string;
-  base_url: string;
-  source: string;
-  fetched_at?: string | null;
-  models: LocalProviderModel[];
-  error?: string | null;
-}
-
-export interface LocalModelConfigDraft {
-  id?: string | null;
-  server_model_config_id?: string | null;
-  name: string;
-  provider?: string | null;
-  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi' | null;
-  model?: string | null;
-  base_url?: string | null;
-  api_key?: string | null;
-  copy_api_key_from_id?: string | null;
-  clear_api_key?: boolean | null;
-  enabled?: boolean | null;
-  supports_images?: boolean | null;
-  supports_reasoning?: boolean | null;
-  supports_responses?: boolean | null;
-  thinking_level?: string | null;
-  task_usage_scenario?: string | null;
-  task_thinking_level?: string | null;
-  temperature?: number | null;
-  clear_temperature?: boolean | null;
-  max_output_tokens?: number | null;
-  clear_max_output_tokens?: boolean | null;
-}
-
 export type LocalMcpTransport = 'stdio' | 'http';
 
 export interface LocalMcpConfig {
