@@ -50,8 +50,8 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onPlanModeToggle,
 }) => {
   const { supportsImages } = useMemo(
-    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
-    [aiModelConfigs, selectedModelId],
+    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs, selectedThinkingLevel),
+    [aiModelConfigs, selectedModelId, selectedThinkingLevel],
   );
 
   const supportedFileTypes = useMemo(

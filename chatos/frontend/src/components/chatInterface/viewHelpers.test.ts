@@ -37,4 +37,9 @@ describe('resolveModelSupportFlags', () => {
     expect(resolveModelSupportFlags('model-1', [model({ thinking_level: 'high' })]))
       .toEqual({ supportsImages: false, supportsReasoning: true });
   });
+
+  it('shows reasoning after the user selects a session thinking level', () => {
+    expect(resolveModelSupportFlags('model-1', [model({})], 'high'))
+      .toEqual({ supportsImages: false, supportsReasoning: true });
+  });
 });

@@ -41,6 +41,7 @@ export const useChatInterfaceModel = ({
     currentSession: store.currentSession,
     contacts: store.contacts,
     selectedModelId: effectiveSelectedModelId,
+    selectedThinkingLevel: runtimeSettings.selectedThinkingLevel,
     aiModelConfigs: store.aiModelConfigs,
     activePanel: store.activePanel,
     currentProject: store.currentProject,
